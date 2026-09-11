@@ -8,82 +8,14 @@ import { SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS } from "./schedule-send-
 import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-service.js";
 
 /**
- * THE RECONCILING PASS FOR STRANDED SEND RESERVATIONS — the piece that resolves an
- * `outbound_sends` row left `pending` by an attempt nobody is coming back for.
- *
- * ── WHAT IS STRANDED, AND WHY IT STOPPED BEING AN ACCIDENT ─────────────────────────────────
- *
- * A `pending` reservation is written BEFORE SMTP is touched and cleared by whichever finalizer
- * learns the outcome. If the process holding it dies in between — a crashed worker, a platform
- * kill, a serverless invocation that reached its ceiling mid-submission — the row survives with
- * nobody to finish it, and the draft it belongs to sits at `sending`, which every client renders
- * as "Sending…" for ever.
- *
- * Until the attempt ceiling landed, reaching that state took a crash. It does not any more: a
- * send that passes the ceiling ends its invocation with the reservation `pending` by DESIGN, and
- * the sole resolver was the client's own same-key retry (`SendService.resumeExisting`). That
- * resolver requires the person to come back to the same browser, with its durable key intact,
- * more than {@link SEND_STALE_AFTER_MS} later. Lose any of those — the tab closed, storage
- * cleared, the send started on another device — and the draft is permanently unreadable and
- * unretryable, which `finalizeFailed`'s own docblock calls "the same lie one surface over".
- *
- * This pass is that resolver, moved somewhere that does not depend on a browser tab being open.
- * It runs the IDENTICAL resolution — {@link SendService.resolveStale}, the single writer — so
- * there is no second opinion about what a stale reservation means.
- *
- * ── WHY IT LIVES IN `services`, AND WHERE IT RUNS ──────────────────────────────────────────
- *
- * `schedule-send-pass.ts`'s placement argument, verbatim and for the same measured reasons: the
- * hosted deployment runs it on the API HOST (`GET /internal/sends/reconcile/run`, poked every
- * minute by the worker's `api-cron.ts`) because the sync worker's platform blocks outbound SMTP
- * and `@trafficflow/services` is not in that app's runtime dependency set at all. `apps/server`
- * runs the same function from its own send clock.
- *
- * **TWO HOSTS TODAY, NOT THREE — the desktop does NOT run this yet.** `apps/sidecar/src/engine.ts`
- * calls `runScheduledSendPass` and nothing here, so a LOCAL install's only resolver is still the
- * client's own same-key retry: exactly the gap this pass closes everywhere else. The hook belongs
- * in that file's drain beside `sendScheduled` and is owned by the multi-mailbox lane while it
- * holds the file. Stated because the sentence above it used to claim all three hosts, which would
- * have made this file's own docblock the evidence that a desktop install was covered when it was
- * not — and `stuckSendMs` was widened on the strength of a reconciler those installs do not have.
- *
- * It is a SEPARATE route from the scheduled-send pass rather than folded into it: that
- * invocation already budgets three sends of up to twenty seconds each against its own
- * sixty-second platform kill, and appending an unrelated batch of probes to it would spend the
- * scheduled sender's remaining budget on this one's work.
- *
- * ── WHY NOTHING HERE CAN SEND ──────────────────────────────────────────────────────────────
- *
- * NEVER RESEND ON AMBIGUITY is the whole subject of this file, so the guarantee
- * is structural rather than a rule somebody follows:
- *
- *  · {@link SendService.resolveStale} contains no call to `send`, and this pass calls nothing
- *    else on the service;
- *  · the adapter this pass hands over is a PROBE-ONLY wrapper whose `send` throws
- *    ({@link probeOnly}), so a future edit that reached for it fails loudly rather than quietly
- *    putting an envelope on the wire;
- *  · the pass never enters `reserve`, which is the one path that would INSERT-and-send were the
- *    reservation row to have vanished underneath it;
- *  · every finalizer is compare-and-swap on `status='pending'`, so a second resolver is a no-op
- *    rather than an overwrite.
- *
- * ── THE BOUND ──────────────────────────────────────────────────────────────────────────────
- *
- * TWO numbers, because the two costs are two orders of magnitude apart and one bound cannot serve
- * both. **LOGINS** are capped at {@link SEND_RECONCILE_BATCH} per invocation — that is the
- * expensive thing, it is what the 60-second platform ceiling is budgeted against, and it is
- * counted where a connection is actually opened rather than where one is intended.
- * **ROWS EXAMINED** are capped at `SEND_RECONCILE_BATCH × SEND_RECONCILE_SCAN_FACTOR` from EACH
- * of the two claim windows — twelve and twelve, twenty-four today — because a row's mirror arm is
- * one indexed read and making it wait a minute for that buys nothing. The `error` window is sized
- * off the examination factor and NOT off the login budget, deliberately: rows in it are never
- * dialled, so pinning them to the number of logins would have throttled the one thing they can
- * still get (the mirror arm, and the give-up that ends them) to a quarter of its rate.
- *
- * One connection per DISTINCT mailbox (so N ids on one mailbox cost one LOGIN, not N, and a
- * mailbox already open is free rather than charged a slot), dialled only for a mailbox whose
- * status is `connected`, and on the hosted host wrapped in the same per-mailbox IMAP admission
- * counter every other dialler on that host goes through. No transaction spans a probe.
+ * THE RECONCILING PASS FOR STRANDED SEND RESERVATIONS — resolves an `outbound_sends` row left
+ * `pending` by an attempt nobody is coming back for, running the IDENTICAL resolution:
+ * `SendService.resolveStale`, the single writer. TWO HOSTS, NOT THREE — the API host (`GET
+ * /internal/sends/reconcile/run`) and `apps/server`; the desktop does NOT run it yet. NOTHING
+ * HERE CAN SEND: `resolveStale` has no `send`; the adapter is PROBE-ONLY (its `send` throws); the
+ * pass never enters `reserve`; every finalizer is compare-and-swap on `status='pending'`. LOGINS
+ * cap at `SEND_RECONCILE_BATCH`, rows examined at batch × `SEND_RECONCILE_SCAN_FACTOR` per
+ * window. One connection per DISTINCT mailbox; no transaction spans a probe.
  */
 
 /**
@@ -98,34 +30,14 @@ import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-servi
 export const SEND_RECONCILE_BATCH = SCHEDULED_SEND_BATCH;
 
 /**
- * How many stale rows one invocation EXAMINES FROM EACH CLAIM WINDOW, as a multiple of the
- * logins it may attempt. There are TWO windows, so the examination total is twice this times
- * the batch — twenty-four against a login budget of three, not four times it.
- *
- * ── THE STARVATION THIS EXISTS TO PREVENT, WHICH A FIXED `LIMIT 3` HAD ──────────────────────
- *
- * The claim writes nothing — there is no status to flip — so its `SKIP LOCKED` is released when
- * the short transaction commits, before any probe. A row that DEFERS is therefore left exactly
- * as it was found, and being ordered oldest-first it is selected again on the very next cycle.
- * Three permanently-deferring rows (a mailbox stuck in `error`, a suspended account, a probe that
- * keeps throwing) would fill the whole window every minute until the 24-hour give-up, and **no
- * newer stranded reservation would be examined for a day** — every draft behind them reading
- * "Sending…" the entire time. That is the head-of-line failure `schedule-send-pass.ts` documents
- * and answers with a paged scan.
- *
- * Three things together bound it here, and the third names what is left:
- *
- *  1. **The two costs are separated.** The MIRROR arm is one indexed read; the IMAP arm is a
- *     LOGIN. The batch bounds LOGINS, this factor bounds EXAMINATIONS, and a deferring row now
- *     costs one indexed read instead of a dial slot.
- *  2. **`error` mailboxes have their own window** (`claimStale`), so the source that can never be
- *     resolved by dialling cannot crowd out the rows this pass can actually finish.
- *  3. **A suspended account's rows are still in the dialable window**, because suspension is not
- *     a column this query can read — it is the injected `accountEligible` gate. One parked
- *     account with more than this many stranded sends can therefore still delay newer rows until
- *     its suspension lifts or the give-up fires. BOUNDED, NOT REMOVED, and said out loud rather
- *     than left for somebody to discover: the fix, if it is ever observed, is the paged
- *     eligibility-filtered keyset scan `schedule-send-pass.ts` already carries.
+ * How many stale rows one invocation EXAMINES FROM EACH CLAIM WINDOW, a multiple of the login
+ * budget — two windows, twenty-four against three logins. The starvation a fixed `LIMIT 3` had:
+ * the claim writes nothing, so a deferring row is left as found and, oldest-first, re-selected
+ * next cycle — three permanently-deferring rows filled the window every minute and no newer
+ * reservation was examined for a day. Three bounds: the costs are separated (the MIRROR arm is
+ * one indexed read, the IMAP arm a LOGIN); `error` mailboxes have their own window; and the
+ * residual is NAMED — a suspended account's rows sit in the dialable window, so one parked
+ * account can still delay newer rows.
  */
 export const SEND_RECONCILE_SCAN_FACTOR = 4;
 
@@ -143,39 +55,13 @@ export const SEND_RECONCILE_GIVE_UP_MS = SCHEDULED_SEND_EXPIRY_MS;
 
 /**
  * THE DEADLINES THIS PASS HANDS ITS ADAPTER — threaded into the connection, never raced from
- * outside it.
- *
- * Racing was tried and removed, and the reason is worth keeping: imapflow serialises commands, so
- * a caller that abandons a timed-out operation does not stop it — the command still owns the
- * queue, the socket lives on, and a graceful close then waits out the very hang it was escaping
- * (`ImapAdapter.forceClose` records this). Worse, a caller-side ceiling BELOW the adapter's own
- * connect allowance makes every slow-but-working mailbox breach on every cycle, and a breach that
- * cannot be told from unreachability either strands the row for ever or closes it wrongly.
- *
- * Handing the adapter shorter deadlines removes all of that. A breach is now the adapter's own
- * answer — "this mailbox did not respond in the time we allowed" — which is a fact about the
- * mailbox, so the ordinary defer applies and the 24-hour give-up may legitimately act on it.
- *
- * Eight, eight and ten against the defaults' fifteen, fifteen and twenty-five: this pass budgets
- * {@link SEND_RECONCILE_BATCH} dials inside the one invocation those defaults were sized for a
- * single send to fit. A cold LOGIN measures 1–3 s, so eight is still generous.
- *
- * ── WHAT THESE DO **NOT** BOUND, WHICH THE PREVIOUS VERSION OF THIS COMMENT GOT WRONG ───────
- *
- * They bound the TCP+TLS connect, the greeting, and socket INACTIVITY. They do not bound a
- * command whose responses keep arriving: `ImapAdapter.connect()` issues a LIST after the
- * greeting, and every command through `ImapAdapter.bounded()` carries
- * `IMAP_READ_DEADLINE_MS` — 180 seconds, three times this whole invocation. A server that
- * greets, accepts LOGIN and then dribbles its LIST is inside every one of these numbers.
- *
- * That is a KNOWN, ACCEPTED RESIDUAL and not an oversight: the pass runs no caller-side race on
- * the dial, because racing does not stop the command (imapflow serialises them, so the socket
- * lives on and the abandoning caller learns nothing) and a caller-side ceiling below the
- * adapter's own allowance made every slow-but-working mailbox breach on every cycle. What the
- * residual costs is bounded and self-healing: the invocation is killed at the platform ceiling,
- * the teardown does not run, and the admission slots those handles hold are returned by the
- * stale-window reclaim. What it never costs is a wrong answer about somebody's mail — nothing
- * is written on that path at all.
+ * outside. Racing was tried and removed: imapflow serialises commands, so an abandoning caller
+ * does not stop a timed-out operation — a graceful close waits out the very hang it escaped
+ * (`ImapAdapter.forceClose`); and a caller-side ceiling below the adapter's own allowance
+ * breached every slow-but-working mailbox. Handed shorter deadlines, a breach is the adapter's
+ * own answer. Eight, eight and ten (defaults: fifteen, fifteen, twenty-five); a cold LOGIN is 1–3
+ * s. These bound connect, greeting and INACTIVITY, not a command whose responses keep arriving
+ * (`IMAP_READ_DEADLINE_MS`, 180 s) — a KNOWN residual: nothing is written on that path.
  */
 export const SEND_RECONCILE_NET_TIMEOUTS = {
   connectionMs: 8_000,
@@ -184,19 +70,14 @@ export const SEND_RECONCILE_NET_TIMEOUTS = {
 } as const;
 
 /**
- * PER-CALL CEILING on the Sent-folder SEARCH, and on nothing else.
- *
- * The dial is handed {@link SEND_RECONCILE_NET_TIMEOUTS} instead of being raced, for the reasons
- * recorded there. This one ceiling remains because the SEARCH's own adapter-side bound is
- * `IMAP_READ_DEADLINE_MS` — 180 seconds, three times this invocation — so "the adapter will stop
- * it" is true only on a timescale that has already lost. (`socketMs` does not help: it is an
- * INACTIVITY timer, and a server trickling untagged responses is never idle. `imap-bounds.ts`
- * documents that as the slow-loris instrument.)
- *
- * A breach here is this pass's own impatience rather than the mailbox's failure, so it never
- * counts as evidence — but past the day-long give-up it is still UNDECIDABLE, and undecidable is
- * what that deadline exists to end. The handle is destroyed either way, because the abandoned
- * SEARCH still owns the command queue.
+ * PER-CALL CEILING on the Sent-folder SEARCH, and nothing else. The dial is handed
+ * `SEND_RECONCILE_NET_TIMEOUTS` instead of being raced; this one remains because the SEARCH's
+ * adapter-side bound is `IMAP_READ_DEADLINE_MS` — 180 seconds, three times this invocation — so
+ * "the adapter will stop it" is true only on a timescale that has already lost (`socketMs` is an
+ * INACTIVITY timer, and a server trickling untagged responses is never idle — `imap-bounds.ts`'s
+ * slow-loris instrument). A breach here is this pass's own impatience, never evidence — but past
+ * the day-long give-up it is still UNDECIDABLE, which that deadline exists to end. The handle is
+ * destroyed either way: the abandoned SEARCH still owns the command queue.
  */
 export const SEND_RECONCILE_CALL_CEILING_MS = 10_000;
 
@@ -209,35 +90,25 @@ export const SEND_RECONCILE_CALL_CEILING_MS = 10_000;
 export const SEND_RECONCILE_CLOSE_CEILING_MS = 5_000;
 
 /**
- * How late into an invocation any NEW socket work may still be started. Past this the remaining
- * rows are deferred exactly as if the login budget were spent — they keep their mirror arm, and
- * they are first in line next minute.
- *
- * TWELVE, and the number IS the arithmetic rather than a feeling. The worst case is this
- * deadline (a row starting the instant before it), plus that row's dial bounded inside the
- * adapter by {@link SEND_RECONCILE_NET_TIMEOUTS} (8 + 8), plus its probe ceiling
- * ({@link SEND_RECONCILE_CALL_CEILING_MS}), plus the concurrent teardown
- * ({@link SEND_RECONCILE_CLOSE_CEILING_MS}) — 53 s inside the platform's 60.
- *
- * The suite DERIVES that sum from the constants rather than restating it, and it has now caught
- * two wrong versions of it: twenty-five seconds put the total at 61, and a first attempt at the
- * derivation omitted `socketMs` — which is what actually bounds the LOGIN and the LIST — so the
- * one constant most likely to be raised was the one the guard could not see. A normal dial
- * measures 1–3 s, so twelve seconds is ample for all {@link SEND_RECONCILE_BATCH} to have
- * started.
+ * How late into an invocation NEW socket work may still start; past this, remaining rows defer as
+ * if the login budget were spent — they keep their mirror arm and are first in line next minute.
+ * TWELVE, and the number IS the arithmetic: this deadline + the dial bounded by
+ * `SEND_RECONCILE_NET_TIMEOUTS` (8 + 8) + the probe ceiling (`SEND_RECONCILE_CALL_CEILING_MS`) +
+ * the concurrent teardown (`SEND_RECONCILE_CLOSE_CEILING_MS`) = 53 s inside the platform's 60.
+ * The suite DERIVES that sum from the constants and has caught two wrong versions: twenty-five
+ * seconds put the total at 61, and a first derivation omitted `socketMs` — the constant most
+ * likely to be raised was the one the guard could not see. A normal dial is 1–3 s.
  */
 export const SEND_RECONCILE_DIAL_DEADLINE_MS = 12_000;
 
 /**
- * A CEILING BREACH, kept apart from a work rejection.
- *
- * `send-service.ts`'s own `raceCeiling` returns `{timedOut:true}` rather than throwing for
- * exactly this reason: "the mailbox did not answer in time" and "the mailbox refused" are
- * different facts and a caller that collapses them logs a hung provider and a broken socket
- * identically. This pass needs the distinction for something sharper than a log line — a row
- * whose probe merely RAN OUT OF TIME must never reach the give-up, because a mailbox that is
- * simply slower than our ceiling is reachable, and closing its reservation `unverified` would be
- * the wrong terminal write for a mailbox that was answering the whole time.
+ * A CEILING BREACH, kept apart from a work rejection. `send-service.ts`'s own `raceCeiling`
+ * returns `{timedOut:true}` rather than throwing for the same reason: "did not answer in time"
+ * and "refused" are different facts, and a caller that collapses them logs a hung provider and a
+ * broken socket identically. This pass needs the distinction for more than a log line: a row
+ * whose probe merely RAN OUT OF TIME must never reach the give-up — a mailbox slower than our
+ * ceiling is reachable, and closing its reservation `unverified` would be the wrong terminal
+ * write for a mailbox that was answering the whole time.
  */
 export class SendReconcileCeilingExceeded extends Error {
   constructor(what: string, ceilingMs: number) {
@@ -247,17 +118,13 @@ export class SendReconcileCeilingExceeded extends Error {
 }
 
 /**
- * Tear an adapter down without waiting for it — the ONLY safe teardown for a handle whose
- * operation we have abandoned.
- *
- * `ImapAdapter.forceClose`'s docblock is the whole argument and it names this caller's mistake:
- * imapflow serialises commands, so a graceful LOGOUT queues BEHIND the hung command, and
- * "a caller abandoning a timed-out operation that then awaited `close` would wait exactly as long
- * as the hang it was escaping". This pass did precisely that — a 10-second probe ceiling followed
- * by an awaited `close()` cost the ceiling PLUS the underlying socket timeout, three times over.
- *
- * An adapter without `forceClose` (a spy) is closed politely, but never awaited by the caller:
- * the promise is followed only to keep a rejection from going unhandled.
+ * Tear an adapter down without waiting — the ONLY safe teardown for a handle whose operation we
+ * abandoned. `ImapAdapter.forceClose`'s docblock names this caller's mistake: imapflow serialises
+ * commands, so a graceful LOGOUT queues BEHIND the hung command, and a caller awaiting `close`
+ * waits exactly as long as the hang it was escaping — this pass did precisely that: a 10-second
+ * ceiling followed by an awaited `close()` cost the ceiling PLUS the socket timeout, three times
+ * over. An adapter without `forceClose` (a spy) is closed politely but never awaited: the promise
+ * is followed only to keep a rejection from going unhandled.
  */
 function abandon(adapter: SendAdapter): void {
   // NOTHING HERE MAY THROW, and the two guards are separate hazards rather than belt-and-braces.
@@ -309,23 +176,13 @@ export interface SendReconcilePassDeps {
   openSendAdapter: OpenSendAdapter;
   /**
    * MAY THIS ACCOUNT'S AUTOMATION STILL DIAL? — the suspension gate, injected for
-   * `ScheduledSendPassDeps.accountEligible`'s reason (the fact lives in the cloud half and this
-   * pass ships in the desktop engine bundle, which may not name a cloud table), read on the
-   * HANDED handle for its deadlock reason, and ABSENT ⇒ eligible for its reason too.
-   *
-   * ── IT GATES THE DIAL, NOT THE CLAIM, AND THAT IS A DELIBERATE DIFFERENCE ─────────────────
-   *
-   * The scheduled pass excludes an ineligible account's rows from the claim, and needs a paged,
-   * eligibility-filtered scan to stop a parked account's backlog starving everyone behind it.
-   * Here, excluding is worse than useless: a stranded row is by construction among the OLDEST
-   * candidates (nothing else resolves it), so a parked account's strandings would fill this
-   * batch's `ORDER BY created_at` window every minute, for ever, and the rows behind them would
-   * never be examined — the exact starvation, without the paging that answers it.
-   *
-   * Gating the DIAL keeps the invariant the suspension exists for (a suspended account's
-   * credentials are never used to open a socket) while letting the row be examined, counted, and
-   * closed by the give-up. The mirror arm still runs for it, and that is not automation: it is a
-   * read of our own database recording a send that has ALREADY happened.
+   * `ScheduledSendPassDeps.accountEligible`'s reasons (cloud-half fact; read on the HANDED
+   * handle; absent ⇒ eligible). IT GATES THE DIAL, NOT THE CLAIM: a stranded row is by
+   * construction among the OLDEST candidates, so excluding a parked account from the claim would
+   * fill the `ORDER BY created_at` window every minute and nothing behind it would be examined.
+   * Gating the DIAL keeps the invariant (suspended credentials never open a socket) while the row
+   * is examined, counted, and closed by the give-up. The mirror arm still runs — reading our own
+   * record of a send that ALREADY happened is not automation.
    */
   accountEligible?: (accountId: string, db: Db) => Promise<boolean>;
   log?: Logger;
@@ -409,20 +266,14 @@ export async function runSendReconcilePass(
     const cached = shared.get(mailboxId);
     if (cached) return cached;
     /**
-     * CHARGE THE ATTEMPT, NOT THE SUCCESS — and the difference is the whole point of the cap.
-     *
-     * `makeSendAdapter` connects, which LOGS IN. A mailbox with a rotated password or an
-     * unreachable host therefore costs a real login and then throws, and charging only the
-     * successful path meant those cost NOTHING: `mayDial` is satisfied by `status='connected'`,
-     * and nothing in this pass ever demotes a mailbox (only the sync worker writes `'error'`), so
-     * every dialable row of a broken-but-`connected` mailbox would attempt a fresh login every
-     * minute — up to the whole examination window rather than the batch. That is verbatim the
-     * hazard the `error` window exists to avoid ("another failed LOGIN is how a recoverable fault
-     * becomes a locked account"), made worse by the change meant to remove head-of-line blocking.
-     *
-     * A {@link TransientDialRefusal} is the one throw that costs nothing, because it is raised
-     * BEFORE the wire: the admission counter refusing, or failing to answer. Everything else
-     * touched the network and is charged.
+     * CHARGE THE ATTEMPT, NOT THE SUCCESS — the difference is the whole point of the cap.
+     * `makeSendAdapter` connects, which LOGS IN: a rotated password or unreachable host costs a
+     * real login and then throws, and charging only success meant those cost NOTHING — `mayDial`
+     * is satisfied by `status='connected'` and nothing here demotes a mailbox, so every dialable
+     * row of a broken-but-`connected` mailbox attempted a fresh login every minute; another
+     * failed LOGIN is how a recoverable fault becomes a locked account. A `TransientDialRefusal`
+     * is the one throw that costs nothing — raised BEFORE the wire (the admission counter
+     * refusing, or failing to answer). Everything else touched the network and is charged.
      */
     let real: SendAdapter;
     try {
@@ -471,18 +322,13 @@ export async function runSendReconcilePass(
       const givingUp = ageMs > SEND_RECONCILE_GIVE_UP_MS;
 
       /**
-       * THE DIAL GATE. `connected` is the only status this pass opens a socket on, and the two
-       * refusals are refusals for different reasons:
-       *
-       *  · `disabled` — the person disconnected this mailbox. There is nothing to dial and there
-       *    never will be, so the row is decided NOW as `unverified` rather than left to page.
-       *  · `error` — the mailbox is already failing authentication or connection. Dialling it
-       *    adds another failed LOGIN to whatever the provider is counting, which is how a
-       *    recoverable error becomes a locked account; so the row waits, and the give-up closes
-       *    it if the mailbox never comes back.
-       *
-       * An account whose automation is parked is treated exactly as `error`: no socket, wait,
-       * and the give-up still applies. See {@link SendReconcilePassDeps.accountEligible}.
+       * THE DIAL GATE. `connected` is the only status this pass opens a socket on; the two
+       * refusals differ: `disabled` — the person disconnected the mailbox; nothing to dial, ever,
+       * so the row is decided NOW as `unverified` rather than left to page. `error` — the mailbox
+       * is already failing; dialling adds another failed LOGIN to whatever the provider counts,
+       * which is how a recoverable error becomes a locked account — so the row waits, and the
+       * give-up closes it if the mailbox never returns. An account whose automation is parked is
+       * treated exactly as `error`: no socket, wait, give-up still applies (`accountEligible`).
        */
       const mayDial = row.mailboxStatus === "connected" && row.eligible;
       /**
@@ -554,33 +400,25 @@ export async function runSendReconcilePass(
         );
       } catch (err) {
         // The probe threw (a dead socket, a deadline, `ImapBoundExceeded`). The row is UNTOUCHED
-        // — writing a terminal state off a connection that failed is the ambiguity this path
-        // exists to avoid — unless it is old enough that no further cycle is worth waiting for,
-        // in which case the mirror arm gets one last read and then the honest ambiguous answer.
-        //
-        // A WRITE THAT FAILED AFTER THE EVIDENCE WAS IN NEVER GIVES UP, whatever the row's age.
-        // The give-up's mirror-only re-resolution would take a probe answer of "the message IS in
-        // Sent", throw it away, and record `unverified` — terminally — for a message the server
-        // had confirmed milliseconds earlier. The database is what failed; the next cycle
-        // re-probes and re-writes, and `pending` is exactly what a failed commit should leave.
-        // A CEILING BREACH NEVER REACHES THE GIVE-UP. The mailbox did not refuse and did not
-        // fail — it was slower than our ten seconds, which for a dial is BELOW the adapter's own
-        // connect-plus-greeting allowance. Giving up on that would write terminal `unverified`
-        // for a mailbox that was reachable the whole time, every minute, until the day expired.
-        // It is charged a login (the wire was touched) and it waits.
+        // — a terminal state off a failed connection is the ambiguity this path exists to avoid —
+        // unless it is old enough that no cycle is worth waiting for: then the mirror arm gets
+        // one last read and the honest ambiguous answer. A WRITE THAT FAILED AFTER THE EVIDENCE
+        // WAS IN NEVER GIVES UP, whatever the row's age: the give-up's mirror-only re-resolution
+        // would take a probe answer of "the message IS in Sent", throw it away, and record
+        // `unverified` terminally. The database is what failed; the next cycle re-probes, and
+        // `pending` is exactly what a failed commit should leave. A CEILING BREACH NEVER REACHES
+        // THE GIVE-UP: the mailbox was merely slower than our ten seconds — charged a login (the
+        // wire was touched), and it waits.
         if (err instanceof SendReconcileCeilingExceeded && !givingUp) {
           // BEFORE the give-up, and only before it. A breach is not evidence about the mailbox,
           // so a fresh row waits — but a row a whole DAY of cycles could not decide is exactly
-          // what the give-up is for, and exempting it outright (which the previous round did)
-          // strands the draft at "Sending…" for ever with `gaveUp: 0`, charging a login a minute
-          // to a mailbox whose Sent SEARCH is simply slower than ten seconds. That is the state
-          // this module exists to end, reintroduced by a rule meant to protect it.
-          //
-          // THE HANDLE MUST GO FIRST. The abandoned SEARCH still owns imapflow's command queue,
-          // so leaving it memoised would queue every following row on this mailbox behind a
-          // command that can never answer — each burning the full ceiling, none of them charged a
-          // login because the connection is "already open", and the socket only destroyed at the
-          // end of the pass. That is the hang this ceiling exists to escape, multiplied.
+          // what the give-up is for; exempting it outright strands the draft at "Sending…" for
+          // ever with `gaveUp: 0`, charging a login a minute to a mailbox whose Sent SEARCH is
+          // simply slower than ten seconds — the state this module exists to end, reintroduced by
+          // a rule meant to protect it. THE HANDLE MUST GO FIRST: the abandoned SEARCH still owns
+          // imapflow's command queue, so leaving it memoised queues every following row on this
+          // mailbox behind a command that can never answer — each burning the full ceiling, none
+          // charged a login ("already open"), the socket destroyed only at pass end.
           await forget(row.mailboxId);
           result.deferred += 1;
           log.warn("send_reconcile_timed_out", {
@@ -700,16 +538,13 @@ export async function runSendReconcilePass(
 }
 
 /**
- * THE ADAPTER THIS PASS PROBES THROUGH — the one that CANNOT send.
- *
- * `send` throws rather than being omitted, because omitting it would mean typing the seam as
- * something narrower and the compiler would then be the only thing standing between a future
- * edit and an envelope; a throw is a guarantee that survives a cast. The message names the
- * invariant so the stack trace explains itself.
- *
- * `close` is a no-op ON PURPOSE: {@link SendService.resolveStale} closes the adapter it was
- * handed in a `finally`, which is right for a per-request caller and wrong for a batch that
- * probes several ids on one connection. The real handle is closed once, by the pass.
+ * THE ADAPTER THIS PASS PROBES THROUGH — the one that CANNOT send. `send` throws rather than
+ * being omitted: omitting means typing the seam narrower, and the compiler would be the only
+ * thing between a future edit and an envelope; a throw survives a cast, and the message names the
+ * invariant so the stack trace explains itself. `close` is a no-op ON PURPOSE:
+ * `SendService.resolveStale` closes the adapter it was handed in a `finally` — right for a
+ * per-request caller, wrong for a batch probing several ids on one connection. The real handle is
+ * closed once, by the pass.
  */
 function probeOnly(real: SendAdapter): SendAdapter {
   return {
@@ -732,27 +567,14 @@ function probeOnly(real: SendAdapter): SendAdapter {
 }
 
 /**
- * Select the stale reservations this invocation will examine.
- *
- * `FOR UPDATE OF outbound_sends SKIP LOCKED` — `OF` because a bare `FOR UPDATE` over this join
- * would also lock the `drafts` and `mailboxes` rows, and a row lock on `mailboxes` is the one
- * thing `finalizeSent`'s doorbell note forbids: the finalize of a message that has ALREADY left
- * must never queue behind anybody holding that row.
- *
- * The lock is a courtesy rather than the guarantee. This claim writes nothing — there is no
- * status to flip, because the row's `pending` state IS the durable job and inventing a claim
- * column would be a migration to buy what the compare-and-swap already provides — so the lock
- * lives only as long as this short transaction and two pokes a moment apart can still select the
- * same row. What they CANNOT do is both write it: the finalizers are compare-and-swap, so the
- * second resolver reads the first's answer and reports it. Overlapping pokes cost a duplicate
- * probe, never a wrong outcome.
- *
- * **No predicate on `drafts.status`.** The subject here is the RESERVATION, and it must stop
- * paging the stuck-send alarm whatever became of the draft — a draft somebody already recovered
- * by hand still leaves a `pending` row nobody will ever resolve. The draft is protected by its
- * own compare-and-swap inside the finalizers instead.
- *
- * `ORDER BY created_at` so the oldest — the ones a person has been staring at longest — go first.
+ * Select the stale reservations this invocation will examine. `FOR UPDATE OF outbound_sends SKIP
+ * LOCKED` — `OF` because a bare `FOR UPDATE` over this join would also lock `drafts` and
+ * `mailboxes`, and a `mailboxes` row lock is what `finalizeSent`'s doorbell note forbids. The
+ * lock is a courtesy: this claim writes nothing, so two pokes can select the same row — but not
+ * both write it (the finalizers are compare-and-swap); overlap costs a duplicate probe, never a
+ * wrong outcome. NO predicate on `drafts.status`: the subject is the RESERVATION, which must stop
+ * paging whatever became of the draft — a hand-recovered draft still leaves a `pending` row.
+ * `ORDER BY created_at`, oldest first.
  */
 async function claimStale(
   db: Db, now: Date, dialWindow: number, waitWindow: number,
@@ -795,29 +617,13 @@ async function claimStale(
 
     /**
      * TWO WINDOWS, because a mailbox in `error` can never be resolved by dialling and would
-     * otherwise monopolise the one window there was.
-     *
-     * A row on an `error` mailbox is never dialled — a probe there is another failed LOGIN, which
-     * is how a recoverable fault becomes a locked account — so it defers on every cycle until the
-     * give-up, and being among the oldest by construction it is re-selected every minute. One
-     * mailbox stuck in `error` with a dozen strandings would therefore fill a single oldest-first
-     * window for a full day and no other account's reservation would be examined at all.
-     *
-     * Giving those rows their OWN window removes that structurally: they still get the MIRROR arm
-     * (a disconnected mailbox does not un-send the mail that already left it, and the mirror may
-     * well hold it) and the give-up still closes them, but they cannot crowd out the rows this
-     * pass can actually finish. It is the SAME SIZE as the dialable window, not a small one —
-     * sized off the examination factor because these rows are never dialled, so pinning them to
-     * the login budget would throttle the only two things they can still get. The honest cost:
-     * an invocation now examines up to twice what it did before the split, all of it indexed
-     * reads.
-     *
-     * **The residual, stated rather than papered over:** a SUSPENDED account's rows sit in the
-     * dialable window (suspension is not a column this query can read — it is the injected
-     * `accountEligible` gate), so one parked account with more than `dialWindow` stranded sends
-     * can still delay newer rows until its suspension lifts or the give-up fires. Bounded, not
-     * removed. `schedule-send-pass.ts` answers the same shape with a paged, eligibility-filtered
-     * keyset scan, which is the fix if this is ever observed.
+     * monopolise the one window: its rows defer every cycle and, oldest by construction, are
+     * re-selected every minute — one `error` mailbox with a dozen strandings would fill an
+     * oldest-first window for a day. Their OWN window removes that structurally: they still get
+     * the MIRROR arm and the give-up still closes them. SAME SIZE as the dialable window — sized
+     * off the examination factor, since these rows are never dialled. The residual, stated: a
+     * SUSPENDED account's rows sit in the dialable window (suspension is the injected gate, not a
+     * column), so one parked account can still delay newer rows; bounded, not removed.
      */
     const found = [
       ...await page(true, dialWindow),

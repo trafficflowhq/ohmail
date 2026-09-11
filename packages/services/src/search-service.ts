@@ -8,38 +8,14 @@ import { ServiceError } from "./errors.js";
 import type { MessageDTO } from "./dto/types.js";
 
 /**
- * Hybrid search (lexical + fuzzy), the user's top HEY pain point
- * ("search is not fast/optimal/smart"). TWO SQL arms, and — this is the part that changed —
- * they are TIERS rather than contributors to one score:
- *   • lexical — `websearch_to_tsquery('english', q)` against the DB-generated
- *     `subject_tsv` (subject+from) and `body_tsv` (redacted body), ranked by
- *     `ts_rank`. Core Postgres, present in PGlite too. This is THE answer.
- *   • fuzzy   — pg_trgm `word_similarity(q, subject|from_address)` so a TYPO
- *     ("invoce" → "Invoice") still surfaces the right message a pure tsvector
- *     match MISSES. It runs ONLY when the lexical arm found nothing. When pg_trgm is
- *     absent (PGlite), it DEGRADES to an ILIKE-contains so the service still works offline.
- *
- * ── WHY THE RANK FUSION IS GONE ──────────────────────────────────────────────────────────
- *
- * The two arms used to be fused by Reciprocal-Rank Fusion — per-arm `row_number()` over a
- * bounded top-N window, fused score `sum(1/(k+rank))`. RRF fuses arms that are both trying to
- * answer the question; typo tolerance is not that. It is a GUESS about what the reader meant,
- * and RRF ranks by POSITION, so a guess at the top of the fuzzy arm scored `1/(60+1)` and beat
- * a real lexical match at rank five, `1/(60+5)`. Measured against real Postgres on a seeded
- * corpus: the query `graphite` put five messages about a mountain ridge ("Grat", trigram
- * similarity 0.33, no lexical match at all) into a five-answer result, one of them ABOVE the
- * message whose body says `graphite` — and `total` said ten, so the count on screen was a claim
- * about the noise.
- *
- * The tier rule that replaces it lives in `@trafficflow/core/search-rank`, shared with the
- * client engine's local index, because two doors answering one search in two different orders
- * is the same defect wearing different clothes. A third SEMANTIC (pgvector) arm, if it ever
- * lands, is a fusion candidate WITH the lexical arm — it is an attempt at the question — and
- * would not change where typo tolerance sits.
- *
- * Sensitivity: search runs ONLY over subject / from_address / the STORED
- * `message_bodies.text` (already redacted when sensitive) — it never re-derives a
- * secret and joins no raw-secret source. Everything is accountId-scoped.
+ * Hybrid search (lexical + fuzzy). TWO SQL arms as TIERS, not one fused score: lexical —
+ * `websearch_to_tsquery('english', q)` against `subject_tsv`/`body_tsv`, `ts_rank` — is THE
+ * answer; fuzzy — pg_trgm `word_similarity`, so a typo ("invoce" → "Invoice") still surfaces the
+ * message — runs ONLY when the lexical arm found nothing (ILIKE degrade without pg_trgm). RANK
+ * FUSION IS GONE: RRF ranks by POSITION, so a fuzzy guess at rank one beat a real lexical match
+ * at rank five — `graphite` returned mountain-ridge mail ("Grat") above the message whose body
+ * says `graphite`. The tier rule lives in `@trafficflow/core/search-rank`, shared with the client
+ * index. Search reads only subject / from_address / the STORED redacted body.
  */
 
 /** pg_trgm word-similarity floor for the fuzzy arm (Postgres default is 0.3). */
@@ -75,55 +51,26 @@ export function isSearchSort(v: unknown): v is SearchSort {
 }
 
 /**
- * THE LONGEST SEARCH TERM THIS SERVICE ACCEPTS.
- *
- * `q` had no length bound anywhere, and it is not merely stored — it reaches three predicates
- * whose cost is superlinear in its length and is paid ONCE PER CANDIDATE ROW:
- *
- *   · `websearch_to_tsquery('english', q)` parses it into a tsquery; a megabyte of text is a
- *     megabyte of lexemes,
- *   · `word_similarity(q, m.subject)` and `word_similarity(q, m.from_address)` are pg_trgm
- *     trigram comparisons, i.e. O(len(q) × len(column)) per row, evaluated over the account's
- *     whole message table by the fuzzy arm, and
- *   · the offline degrade is `m.subject ilike '%' || q || '%'`, the same shape without an index.
- *
- * So one authenticated GET with a large `q` buys an arbitrary amount of CPU on a database every
- * other account shares. This is the read-side twin of the bound `admin.ts#accountQueryOf`
- * already applies for a smaller reason — *"so a megabyte of query string cannot become a
- * megabyte of `normalize('NFD')`"* — and it takes the same number.
- *
- * 200 characters. Longer than any phrase a person types into a mail search (a full subject line
- * is ~78 by RFC convention) and far shorter than anything whose trigram cost is interesting.
- *
- * **Over the limit is a 400, not a truncation and not an empty page.** Truncating would answer a
- * different question than the one asked, silently; an empty page is indistinguishable from "no
- * mail matches", which is the shape a caller cannot debug.
+ * THE LONGEST SEARCH TERM THIS SERVICE ACCEPTS. `q` had no bound and reaches three predicates
+ * whose cost is superlinear in its length, paid ONCE PER CANDIDATE ROW: `websearch_to_tsquery`
+ * parses it; `word_similarity(q, …)` is O(len(q) × len(column)) per row over the whole table; the
+ * offline degrade is `ilike '%' || q || '%'`. One authenticated GET with a large `q` buys
+ * arbitrary CPU on a shared database. 200 characters — longer than any phrase a person types (a
+ * subject line is ~78 by RFC convention), far shorter than anything whose trigram cost is
+ * interesting. Over the limit is a 400, not a truncation and not an empty page: truncating
+ * answers a different question silently; an empty page reads as "no mail matches".
  */
 export const SEARCH_QUERY_MAX_CHARS = 200;
 
 /**
- * THE FACET FILTERS ARE DELIBERATELY UNBOUNDED, and this is the argument for that.
- *
- * `folder` and `sender` were briefly given a 512-character ceiling in the same slice that bounded
- * `q`, on the reasoning that a bound costs nothing and removes the need to re-check the argument
- * later. It was removed for a reason worth writing down, because it is the failure mode a bound
- * can have: **it refused a facet this service itself had just emitted.**
- *
- * `messages.from_address` is a `text` column written from whatever `From:` the sending server
- * delivered, scrubbed for case and NULs and bounded by nothing else. So `facets()` can legitimately
- * return a sender longer than any ceiling, the client renders it as a clickable facet, and clicking
- * it would have answered 400 — a refusal aimed at a value the product produced.
- *
- * And the cost these predicates carry does not need a bound. Both are EQUALITY comparisons
- * (`folderExpr = $1`, `lower(from_address) = lower($1)`), where Postgres compares lengths before
- * bytes, so a long value is one length check per row rather than work proportional to it. That is
- * the difference from `q`, whose trigram and `ILIKE` predicates ARE proportional — see
- * {@link SEARCH_QUERY_MAX_CHARS}, which is where the ceiling belongs.
- *
- * The remaining bound on these is whatever request-line limit the host in front imposes — they
- * arrive in a URL, so `JSON_BODY_MAX_BYTES` (a BODY ceiling) is not it. That is the honest answer
- * for a value whose cost is linear and paid once, and it is a different number on every
- * deployment.
+ * THE FACET FILTERS ARE DELIBERATELY UNBOUNDED. `folder` and `sender` briefly had a 512-character
+ * ceiling, removed for the failure a bound can have: IT REFUSED A FACET THIS SERVICE ITSELF
+ * EMITTED. `from_address` is `text` from whatever `From:` was delivered, so `facets()` can return
+ * a sender longer than any ceiling — rendered clickable, and clicking answered 400. These
+ * predicates need no bound: both are EQUALITY comparisons, one length check per row — unlike `q`,
+ * whose trigram and `ILIKE` predicates ARE proportional (`SEARCH_QUERY_MAX_CHARS` is where the
+ * ceiling belongs). The remaining bound is the host's request-line limit — they arrive in a URL,
+ * so `JSON_BODY_MAX_BYTES` (a BODY ceiling) is not it.
  */
 
 export interface SearchOptions {
@@ -166,37 +113,14 @@ export interface SearchResult {
 }
 
 /**
- * ═══ THE ADDRESS ARM — one address, an EQUALITY, and only in the FROM direction ═════════════
- *
- * `GET /search?address=<addr>&direction=from`. It is not a filter on {@link SearchService.search}
- * and could not be: that method requires a `q` and answers `emptyResult()` without one, because
- * every one of its predicates is built out of the reader's words. An address query has no words.
- *
- * ── WHY `from` IS THE ONLY DIRECTION THIS DOOR ANSWERS ─────────────────────────────────────
- *
- * Measured on a private database at 20 000 rows with `EXPLAIN (ANALYZE, BUFFERS)`:
- *
- *   · `lower(from_address) = $1`, account-scoped   INDEX SCAN, `messages_account_from_addr_idx`,
- *                                                  4 shared buffers.
- *   · the recipients, either spelling               SEQ SCAN. They are two JSONB columns —
- *     (`jsonb_array_elements(to_addresses)`,        `messages.to_addresses` / `.cc_addresses`,
- *      or `to_addresses @> …`)                      `EmailAddress[]` — and NO index exists on
- *                                                   either one. There is no recipients table.
- *   · `lower(from_address) = $1 OR exists(to) …`    SEQ SCAN — **the OR loses the from-index
- *                                                   too**, which is why this is one predicate
- *                                                   and never a union of the two questions.
- *
- * A recipient index is a migration with a backfill (a lowercased `text[]` maintained at ingest
- * plus a GIN — JSONB containment cannot case-fold, so a GIN on the JSONB columns is not the
- * answer), and it is not this change. So this door answers the direction it can serve from an
- * index and **REFUSES the other two BY NAME** rather than answering them partially:
- * `search_direction_unsupported`, 400.
- *
- * A refusal and not an empty page, and not a silent from-only answer either. An empty list is
- * indistinguishable from "this address never received mail from you", and a from-only answer to
- * `direction=any` is a claim about the whole archive that is false by exactly the recipients.
- * The client's own request builder therefore asks for `from` whatever its toggle says, and the
- * view states the archive's half as "by sender" — see `apps/webapp/app/shell/address-view.ts`.
+ * THE ADDRESS ARM — one address, an EQUALITY, only in the FROM direction. Not a filter on
+ * `search`, which requires a `q` — an address query has no words. Why `from` only, measured with
+ * `EXPLAIN (ANALYZE, BUFFERS)` at 20 000 rows: `lower(from_address) = $1` is an INDEX SCAN
+ * (`messages_account_from_addr_idx`); the recipients are two JSONB columns with NO index — SEQ
+ * SCAN — and the OR loses the from-index too, so this is one predicate, never a union. A
+ * recipient index is a migration with a backfill, not this change. The other two directions are
+ * REFUSED BY NAME (`search_direction_unsupported`, 400): an empty list reads as "this address
+ * never wrote you", and a from-only answer to `direction=any` is false by exactly the recipients.
  */
 export const ADDRESS_DIRECTIONS = ["any", "from", "to"] as const;
 export type AddressSearchDirection = (typeof ADDRESS_DIRECTIONS)[number];
@@ -295,34 +219,23 @@ export class SearchService {
   private readonly folderExpr = sql`coalesce(fs.desired_folder, m.native_locator->>'folder', 'INBOX')`;
 
   async search(ctx: ServiceContext, opts: SearchOptions): Promise<SearchResult> {
-    // ── THE CEILING IS CONSULTED BEFORE ANYTHING SCANS THE STRING ─────────────────────────
-    //
-    // `.length` is O(1); `.trim()` is O(n) and would have scanned a ten-megabyte caller string
-    // before the ceiling below ever ran — and an all-whitespace one would then have paid for that
-    // scan and returned a silent empty result, which is the exact failure shape this class is
-    // named for. So the RAW length decides, and the refusal reports it because that is the number
-    // the caller has to bring down.
-    //
-    // It allows exactly ONE character over, which is one trailing space on a term at the ceiling
-    // — the only case the trim was ever for. Two spaces on such a term are refused, and that is
-    // the deliberate trade: the alternatives are trimming first, which is the unbounded scan, and
-    // slicing first, which silently ACCEPTED a truncated query. This comment twice said the
-    // ceiling is measured on the trimmed value; it is not, and the difference is a character.
+    // THE CEILING IS CONSULTED BEFORE ANYTHING SCANS THE STRING. `.length` is O(1); `.trim()` is
+    // O(n) and would scan a ten-megabyte caller string before the ceiling ran — and an
+    // all-whitespace one would pay the scan and return a silent empty result. So the RAW length
+    // decides, and the refusal reports it — the number the caller has to bring down. It allows
+    // exactly ONE character over: one trailing space on a term at the ceiling, the only case the
+    // trim was for. Two spaces are refused — the alternatives are trimming first (the unbounded
+    // scan) or slicing first (silently ACCEPTING a truncated query).
     const raw = opts.q ?? "";
     /**
-     * THE RAW LENGTH DECIDES, and the version that sliced first was silently wrong.
-     *
-     * Slicing to the ceiling PLUS ONE and then trimming looks equivalent and is not: a term of
-     * exactly `MAX` characters followed by a space and more text slices to `MAX + 1`, trims the
-     * boundary space away, and passes as a `MAX`-character query — so the caller's search ran
-     * against a PREFIX of what they typed, with a 200 and no indication. That is the silent
-     * truncation this bound's own docstring refuses, produced by the bound.
-     *
-     * So the ceiling is consulted on the raw LENGTH first (`.length` is O(1), which was the whole
-     * reason for slicing at all), and it allows exactly ONE character over — which is exactly one
-     * trailing space on a term at the ceiling, the case the trim exists for. Two characters over
-     * cannot trim back to the ceiling without losing a non-space, so it is refused here; anything
-     * that survives to the check below is refused there. Neither path truncates.
+     * THE RAW LENGTH DECIDES, and the version that sliced first was silently wrong. Slicing to
+     * the ceiling PLUS ONE and then trimming looks equivalent and is not: a term of exactly `MAX`
+     * characters followed by a space and more text slices to `MAX + 1`, trims the boundary space,
+     * and passes — the caller's search ran against a PREFIX of what they typed, with a 200 and no
+     * indication. The silent truncation this bound's own docstring refuses, produced by the
+     * bound. So the raw LENGTH is consulted first (O(1)), allowing exactly ONE character over —
+     * one trailing space at the ceiling. Two over cannot trim back without losing a non-space, so
+     * it is refused. Neither path truncates.
      */
     if (raw.length > SEARCH_QUERY_MAX_CHARS + 1) {
       throw new ServiceError(
@@ -366,35 +279,14 @@ export class SearchService {
     const fuzzRank = fuzz.rank;
 
     /**
-     * ── THE VERBATIM ARM: A PUNCTUATED QUERY IS ONE LEXEME, AND A LEXEME MATCH IS ALL-OR-NOTHING
-     *
-     * `to_tsvector('english','Alpha/Beta merger')` is `'alpha/beta':1 'merger':2` — one lexeme
-     * for the slashed pair — so `websearch_to_tsquery('english','pha/Bet')` (`'pha/bet'`) matches
-     * NOTHING, however plainly those characters sit in the subject. That is not a stemming
-     * near-miss the fuzzy arm should be guessing about; the reader's characters are present, in
-     * order, in the field. So they are matched as characters.
-     *
-     * Three bounds on it, and each is load-bearing:
-     *
-     *  · **Gated on punctuation** ({@link holdsPunctuation}, shared with the client index's
-     *    tokenizer). Running an unindexed `ILIKE '%…%'` for every query would widen every search
-     *    in the product to a substring scan AND change what a match means — `pha` would start
-     *    finding `Alpha/Beta`, which is not the question asked. `search-punctuation.pg.test.ts`
-     *    case (d) is the pair that tells the gate apart: the same characters, punctuation the
-     *    only difference, and the tier flips.
-     *  · **Never the only arm.** It is OR'd with `lexPred`, so it can only ever ADD rows.
-     *  · **Ranked below the lexical arm** — and the expression below is why that needed care:
-     *    `ts_rank` is NOT zero for a row the tsquery fails to match. Measured on this exact
-     *    subject: `ts_rank(to_tsvector('english','Marker xD-U-N-Sx only'), 'D-U-N-S')` is
-     *    0.0991 with `@@` false, because the rank function scores whatever query lexemes are
-     *    present and knows nothing about the phrase operator that refused. So the tier cannot be
-     *    inferred from the rank; it is stated — `1 + ts_rank` for a lexical row, `0` for a
-     *    verbatim-only one — which puts every verbatim row below every lexical one regardless of
-     *    what `ts_rank` returns, and leaves the order AMONG lexical rows exactly as it was.
-     *
-     * Subject only. `message_bodies.text` has no index that could serve this predicate and a
-     * body scan is a different cost argument; the query length is already bounded by
-     * {@link SEARCH_QUERY_MAX_CHARS}, which is what keeps the `ILIKE` itself cheap per row.
+     * THE VERBATIM ARM: A PUNCTUATED QUERY IS ONE LEXEME, AND A LEXEME MATCH IS ALL-OR-NOTHING.
+     * `to_tsvector('english','Alpha/Beta merger')` is `'alpha/beta':1 'merger':2`, so `'pha/Bet'`
+     * matches NOTHING — the characters are matched as characters instead. Three bounds: GATED on
+     * punctuation (`holdsPunctuation`; `search-punctuation.pg.test.ts` case (d) tells the gate
+     * apart); NEVER the only arm — OR'd with `lexPred`, it can only ADD rows; RANKED BELOW the
+     * lexical arm, stated not inferred — `ts_rank` is NOT zero for a row the tsquery fails to
+     * match, so the tier is `1 + ts_rank` for lexical, `0` for verbatim-only. Subject only: the
+     * body has no index for this, and the query length is already bounded.
      */
     // THROUGH THE SEAM, like the fuzzy degrade that used to share this line: `ilike` is the
     // server's word for it and the device store has no such operator — it folds both sides
@@ -407,21 +299,14 @@ export class SearchService {
       : sql`(case when ${lexPred} then 1 + ${lexRank} else 0 end)`;
 
     /**
-     * ── THE TIER IS DECIDED BEFORE A SINGLE ROW IS RANKED ──────────────────────────────────
-     *
-     * The EXACT arm is counted first, and that count IS `total` whenever it is non-zero — so
-     * in the common case (a query with an answer) this costs nothing: `total` was always going
-     * to be counted, and it is now counted over one predicate instead of two. The fuzzy arm's
-     * count is paid only on a query the corpus does not literally answer, which is the case a
-     * reader is already waiting on a guess for.
-     *
-     * "Exact" is `lexPred`, plus the verbatim arm on a punctuated query — see {@link
-     * SearchService.search}'s verbatim block above. It is deliberately the count over the
-     * predicate the ROWS come from: counting the lexical arm alone would have put a query whose
-     * only answers are verbatim into the SIMILAR tier and filed real matches as guesses.
-     *
-     * `showSimilar` rather than `=== 0` so the floor exists in exactly one place; the argument
-     * for its value is in `@trafficflow/core/search-rank`, measured on both doors.
+     * THE TIER IS DECIDED BEFORE A SINGLE ROW IS RANKED. The EXACT arm is counted first, and that
+     * count IS `total` whenever non-zero — the common case costs nothing: `total` was always
+     * going to be counted, now over one predicate. The fuzzy arm's count is paid only on a query
+     * the corpus does not literally answer — the case a reader is already waiting on a guess for.
+     * "Exact" is `lexPred` plus the verbatim arm on a punctuated query — deliberately the count
+     * over the predicate the ROWS come from: counting the lexical arm alone would put a query
+     * whose only answers are verbatim into the SIMILAR tier. `showSimilar` rather than `=== 0`,
+     * so the floor exists in exactly one place (`@trafficflow/core/search-rank`).
      */
     const exactTotal = await this.count(ctx, d, where, exactPred);
     const tier: SearchTier = showSimilar(exactTotal) ? "similar" : "exact";
@@ -430,15 +315,12 @@ export class SearchService {
     const total = tier === "exact" ? exactTotal : await this.count(ctx, d, where, fuzzPred);
 
     /**
-     * THE RELEVANCE QUERY — one arm, the tier's own, over the tier's own predicate.
-     *
-     * No candidate window. The RRF version bounded each arm at 100 rows before fusing, which
-     * meant the final `limit` was applied to a SELECTION rather than to the match set — and the
-     * row it silently dropped was the one outside the window. With one arm the `order by`
-     * decides which `limit` rows come back, which is what a relevance ranking is.
-     *
-     * The key sequence is `SQL_RANK_ORDER`'s and it is the client comparator's: relevance, then
-     * recency as a TIE-BREAK, then id so two rows that tie on both never swap between calls.
+     * THE RELEVANCE QUERY — one arm, the tier's own, over the tier's own predicate. No candidate
+     * window: the RRF version bounded each arm at 100 rows before fusing, so the final `limit`
+     * applied to a SELECTION rather than the match set — the row silently dropped was the one
+     * outside the window. With one arm the `order by` decides which `limit` rows come back, which
+     * is what a relevance ranking is. The key sequence is `SQL_RANK_ORDER`'s and the client
+     * comparator's: relevance, recency as tie-break, then id so ties never swap between calls;
      * `nulls last` is the SQL spelling of "an undated message has no place on a timeline".
      */
     const ranked = sql`
@@ -449,28 +331,14 @@ export class SearchService {
       limit ${limit}`;
 
     /**
-     * ── THE ONE THING THIS FEATURE MUST NOT DO ────────────────────────────────────────────
-     *
-     * A user-chosen order is a DIFFERENT QUERY, never an `order by` bolted onto the fused one.
-     * The fused query is a RANKED SELECTION: each arm keeps its top {@link ARM_LIMIT}
-     * candidates and the final select keeps `limit` of the fusion. Sorting THAT by date answers
-     * "of the most relevant few, which is newest" — which is not the question, and the row it
-     * silently drops is exactly the one the reader asked for: the newest match sitting outside
-     * the relevance window. On a corpus larger than the window it is invisibly wrong, which is
-     * the worst kind.
-     *
-     * The relevance query no longer HAS a candidate window (the fusion it came from is gone —
-     * see the class header), so the two shapes are closer than they were. The distinction still
-     * stands, and the file keeps it: a non-relevance sort runs over the SAME predicates
-     * (`where` + `matchPred`, the identical match set facets and total are counted over) with a
-     * different order key, and the sort key decides which `limit` rows come back.
-     * `search-sort.r12.test.ts` plants a low-relevance newest match and watches this.
-     *
-     * **`matchPred` IS THE TIER'S PREDICATE, and passing it here is load-bearing.** Ordering by
-     * date over `lexical or fuzzy` would re-admit every typo guess the tier rule just excluded,
-     * and put the newest of them at the top — the reader would pick "Newest first" and watch
-     * the noise come back. One predicate, decided once, used by the hits, the facets and the
-     * total alike.
+     * THE ONE THING THIS FEATURE MUST NOT DO: a user-chosen order is a DIFFERENT QUERY, never an
+     * `order by` bolted onto the ranked one. Sorting a ranked SELECTION by date answers "of the
+     * most relevant few, which is newest" — not the question — and the row dropped is exactly the
+     * one asked for: the newest match outside the relevance window. A non-relevance sort runs
+     * over the SAME predicates (`where` + `matchPred`, the identical match set) with a different
+     * order key; `search-sort.r12.test.ts` plants a low-relevance newest match and watches.
+     * `matchPred` IS THE TIER'S PREDICATE: ordering by date over `lexical or fuzzy` re-admits
+     * every typo guess the tier just excluded — "Newest first" brings the noise back.
      */
     const hitQuery = sort === "relevance" ? ranked : this.orderedArm(where, matchPred, sort, limit);
     // Positional rows on both stores — the seam's one shape, and this statement selects one
@@ -478,22 +346,13 @@ export class SearchService {
     const hitRows = (await d.exec(ctx.db, hitQuery)).map((r) => ({ id: String(r[0]) }));
 
     /**
-     * Re-materialize the hits into canonical MessageDTOs (folder + sensitivity), preserving
-     * fused order. `materializeMessages` re-checks accountId, exactly as the singular
-     * form does — it is the same function; the singular one is a one-element wrapper over it.
-     *
-     * ── WHY THE BATCH FORM, AND WHY IT MATTERED THE DAY THIS GOT A CALLER ──────────────────
-     *
-     * This was `for (const h of hitRows) await materializeMessage(...)`. Each call issues FOUR
-     * queries (messages, folder_state, message_states, message_tags), so a default page of 50
-     * hits was 200 statements, awaited one after another, on a pool the API runs at `max: 1`.
-     * That was invisible for as long as `GET /search` had zero callers on any surface — which
-     * it did, for its whole life until now. Wiring the client is what turns it into a hot path,
-     * so it is fixed in the same change: 4 statements for the page, regardless of its size.
-     *
-     * NOT parallelised — batched. Firing the per-hit calls concurrently would have been the
-     * other way to make the numbers look better and is the shape that deadlocked the admin
-     * console on the same `max: 1` pool.
+     * Re-materialize the hits into canonical MessageDTOs, preserving order; `materializeMessages`
+     * re-checks accountId, exactly as the singular form (a one-element wrapper). WHY THE BATCH
+     * FORM: this was `for … await materializeMessage(...)` — four queries each, so a page of 50
+     * hits was 200 statements awaited serially on a `max: 1` pool. Invisible while `GET /search`
+     * had zero callers; wiring the client makes it a hot path, so it is fixed in the same change:
+     * 4 statements per page, regardless of size. NOT parallelised — batched: firing per-hit calls
+     * concurrently is the shape that deadlocked the admin console on the same `max: 1` pool.
      */
     const byId = await materializeMessages(ctx.db, ctx.accountId, hitRows.map((h) => h.id));
     const items: MessageDTO[] = [];
@@ -507,28 +366,14 @@ export class SearchService {
   }
 
   /**
-   * EVERY MESSAGE IN THE ARCHIVE FROM ONE ADDRESS — the address view's archive half.
-   *
-   * See {@link AddressSearchOptions} for why `from` is the only direction served and why the
-   * other two are refused by name. Three properties are the whole of the query:
-   *
-   *  · `lower(m.from_address) = lower($1)` — byte-for-byte {@link SearchService.whereSql}'s
-   *    `sender` filter, so the two doors into "mail from this person" cannot answer differently,
-   *    and the index `messages_account_from_addr_idx` (`(account_id, lower(from_address), id)`)
-   *    serves it. An EQUALITY: no `like`, no `%`, no tokenizing. A substring match here would put
-   *    a stranger's mail on screen under somebody else's name, which is why the pg twin asserts
-   *    a substring returns nothing rather than merely asserting the exact match returns something.
-   *  · `whereSql` supplies the account scope and `deleted_at is null`. The account LEADS the
-   *    index for the reason that index's own comment gives: a sender address is attacker-choosable,
-   *    so it can never be a filter applied to a cross-account result.
-   *  · The order is `date desc nulls last, id desc` — `SQL_RANK_ORDER` with the relevance term
-   *    dropped, because there is none. Newest first is the view's order, and the `id` tail keeps
-   *    two rows sharing an instant from swapping between calls.
-   *
-   * An EMPTY address answers empty rather than matching the rows whose `from_address` is `''`
-   * (the column is `NOT NULL DEFAULT ''`, so those rows are real). A caller reaches this by
-   * handing the service an address it failed to parse, and the honest answer to "show me
-   * everything from nobody" is nothing.
+   * EVERY MESSAGE IN THE ARCHIVE FROM ONE ADDRESS — the address view's archive half; `from` is
+   * the only direction served. `lower(m.from_address) = lower($1)` — byte-for-byte `whereSql`'s
+   * `sender` filter, served by `messages_account_from_addr_idx`; an EQUALITY — a substring match
+   * would put a stranger's mail under somebody else's name (the pg twin asserts a substring
+   * returns NOTHING). `whereSql` supplies account scope and `deleted_at is null`; the account
+   * LEADS the index — a sender address is attacker-choosable. Order: `date desc nulls last, id
+   * desc`. An EMPTY address answers empty rather than matching rows whose `from_address` is `''`:
+   * the honest answer to "everything from nobody" is nothing.
    */
   async searchByAddress(
     ctx: ServiceContext, opts: AddressSearchOptions,
@@ -583,25 +428,14 @@ export class SearchService {
   // ── the user-chosen orders ────────────────────────────────────────────────
 
   /**
-   * ONE ARM, over the whole match set, ordered by the key the caller asked for.
-   *
-   * NO MIGRATION AND NO NEW INDEX: every key is a column that already exists. The `tsv` GIN
-   * indexes still carry the MATCH — this is `where ${where} and ${matchPred}`, the same
-   * predicates {@link SearchService.total} and {@link SearchService.facets} run over — and the
-   * sort happens across the rows that match, which is the definition of the feature.
-   *
-   * ── THE JOIN IS `left`, DELIBERATELY ────────────────────────────────────────────────────
-   *
-   * `messages.mailbox_id` is NOT NULL with a foreign key, so an inner join would be equivalent
-   * today. It is a `left join` anyway because the invariant worth protecting is that **a sort
-   * never changes WHICH rows match, only the order they come back in.** An inner join makes the
-   * ordering clause capable of dropping a hit, and a search that returns fewer results when you
-   * reorder it is the same class of quiet wrongness as sorting the fused window. `nulls last`
-   * on the address is the other half of that.
-   *
-   * Every order ends in `m.id`, so two rows that tie on the key (same instant, same sender)
-   * still come back in a fixed order. Without it a tie is free to flip between calls, which
-   * reads as a list that reshuffles itself while you look at it.
+   * ONE ARM, over the whole match set, ordered by the key the caller asked for. No migration, no
+   * new index: every key is an existing column, the `tsv` GINs still carry the MATCH (`where` +
+   * `matchPred`, the same predicates `total` and `facets` run over), and the sort happens across
+   * the rows that match. THE JOIN IS `left`, DELIBERATELY: `mailbox_id` is NOT NULL, so an inner
+   * join is equivalent today — but the invariant worth protecting is that a sort never changes
+   * WHICH rows match, only their order; an inner join makes the ordering clause capable of
+   * dropping a hit. `nulls last` on the address is the other half. Every order ends in `m.id`, so
+   * ties come back in a fixed order rather than reshuffling between calls.
    */
   private orderedArm(
     where: SQL, matchPred: SQL, sort: Exclude<SearchSort, "relevance">, limit: number,
@@ -709,21 +543,14 @@ export class SearchService {
   // ── filter → WHERE (account scope always first) ───────────────────────
 
   /**
-   * The two date bounds are the only filter values that are CAST rather than compared.
-   *
-   * `${f.dateFrom}::timestamptz` is parameterized, so there is no injection here — but the cast
-   * is evaluated by Postgres, and a string that is not an instant raises 22007
-   * `invalid input syntax for type timestamp with time zone`. That reaches `withErrorEnvelope`
-   * as an unhandled error and answers **500 `internal`** for what is plainly a bad request:
-   * `GET /search?q=x&dateFrom=notadate`.
-   *
-   * It is refused HERE rather than in `routes/search.ts` because the route is not the only door.
-   * `apps/sidecar/src/cloud-read.ts` calls `searchService.search` directly, so a check living in
-   * the route would guard the hosted door and not the desktop one — the shape this repository
-   * treats as a finding in its own right.
-   *
-   * The message matches the one `MessageService.list` already gives for `beforeDate`, because
-   * they are the same refusal about the same kind of value.
+   * The two date bounds are the only filter values CAST rather than compared.
+   * `${f.dateFrom}::timestamptz` is parameterized — no injection — but the cast is evaluated by
+   * Postgres, and a non-instant raises 22007, reaching `withErrorEnvelope` as a 500 `internal`
+   * for a plainly bad request (`dateFrom=notadate`). Refused HERE rather than in
+   * `routes/search.ts` because the route is not the only door: `apps/sidecar/src/cloud-read.ts`
+   * calls `searchService.search` directly, so a route check guards the hosted door and not the
+   * desktop one. The message matches `MessageService.list`'s for `beforeDate` — the same refusal
+   * about the same kind of value.
    */
   private static instantOr400(value: string, field: string): string {
     if (Number.isNaN(new Date(value).getTime())) {

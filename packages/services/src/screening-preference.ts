@@ -17,19 +17,16 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 // `resolveOhboxPolicy` in `rules.ts`.
 export { resolveOhboxPolicy };
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE EDITABLE OHBOX PREFERENCE — read/write helpers for `account_settings.ohbox_*` (mail 0042).
-
-   Two facts about the same account: the POSTURE (`ohbox_policy`) that turns the automated-mail
-   demotion on, and the BAR (`ohbox_bar`) — the account owner's own words, threaded into the classifier's
-   user turn. Both are nullable, and an absent `account_settings` row is every account that has never
-   changed anything: the read below returns defaults for it, never an error.
-
-   THE ONE INVARIANT THIS FILE EXISTS TO HOLD: a failed or absent read resolves to the LENIENT
-   posture. `people_only` is the strict one, and defaulting to it on a fetch error would demote a
-   real person's mail on a transient blip — the same "absent-config-selects-safe" rule
-   `consent-seed.ts#consentSettings` states for `auto_suggest_at` (absent ⇒ OFF, because ON spends).
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * THE EDITABLE OHBOX PREFERENCE — read/write helpers for `account_settings.ohbox_*` (mail 0042).
+ * Two facts about one account: the POSTURE (`ohbox_policy`) that turns the automated-mail
+ * demotion on, and the BAR (`ohbox_bar`) — the account's own words, threaded into the classifier's
+ * user turn. Both nullable; an absent `account_settings` row is every account that never changed
+ * anything — the read returns defaults, never an error. THE ONE INVARIANT: a failed or absent
+ * read resolves to the LENIENT posture. `people_only` is the strict one, and defaulting to it on
+ * a fetch error would demote a real person's mail on a transient blip — the
+ * absent-config-selects-safe rule `consent-seed.ts#consentSettings` states for `auto_suggest_at`.
+ */
 
 /** The two literals `account_settings.ohbox_policy` may hold (or NULL). The CHECK mirrors these. */
 export const OHBOX_POLICIES: readonly OhboxPolicy[] = ["people_only", "people_and_replied"];
@@ -163,20 +160,15 @@ export async function setScreeningPreference(
     values.ohboxPolicy = p ?? null;
     set.ohboxPolicy = p ?? null;
 
-    // ARM THE BACKLOG RE-ROUTE, but ONLY on the TRANSITION into `people_only` (mail 0043).
-    //
-    // The demotion posture only ever changes NEW mail; the mail already misfiled into the Ohbox is
-    // moved by the worker's tidy pass, and that pass is owed work exactly when
-    // `ohbox_tidy_requested_at` is set past `ohbox_tidy_done_at`. Stamping it on the flip is what
-    // "run once on the policy flip" means. `ohbox_tidy_cursor` is NULLed in the SAME write — a
-    // re-arm that left the cursor at the end of a previous run would resume there and move nothing.
-    //
-    // Only on the TRANSITION — a re-save that leaves the posture on `people_only` (e.g. editing the
-    // bar) must NOT re-run the backlog, so we read the prior posture and stamp only when it was not
-    // already `people_only`. The read is not a race hazard: a double-flip that double-stamps merely
-    // re-arms an idempotent pass, which re-examines the drained backlog and writes zero. The
-    // explicit re-run affordance is {@link requestOhboxTidy} (the "tidy now" button), which arms
-    // unconditionally.
+    // ARM THE BACKLOG RE-ROUTE, ONLY on the TRANSITION into `people_only` (mail 0043). The
+    // posture only changes NEW mail; mail already misfiled into the Ohbox is moved by the
+    // worker's tidy pass, owed work exactly when `ohbox_tidy_requested_at` is set past
+    // `ohbox_tidy_done_at` — stamping on the flip is what "run once on the policy flip" means.
+    // `ohbox_tidy_cursor` is NULLed in the SAME write: a re-arm leaving the cursor at a previous
+    // run's end would resume there and move nothing. Only on the TRANSITION — a re-save that
+    // keeps `people_only` (editing the bar) must not re-run the backlog, so the prior posture is
+    // read first. Not a race hazard: a double-stamp merely re-arms an idempotent pass that writes
+    // zero. The explicit re-run affordance is `requestOhboxTidy`, which arms unconditionally.
     if (p === "people_only") {
       const prior = await getScreeningPreference(ctx);
       if (prior.ohboxPolicy !== "people_only") {
@@ -270,19 +262,14 @@ export async function setScreeningPreference(
 }
 
 /**
- * ARM THE OHBOX BACKLOG RE-ROUTE ON DEMAND — the "tidy now" affordance's service half (mail 0043).
- *
- * Stamps `ohbox_tidy_requested_at = now()` and NULLs `ohbox_tidy_cursor` in one write, so the
- * worker's tidy pass is owed a fresh, from-the-top run. Unlike the transition stamp in
- * {@link setScreeningPreference} this is UNCONDITIONAL — it is what a user presses when they have
- * added the posture already and want the existing Ohbox re-filed again (or after dragging a few
- * messages back and wanting the rest cleaned).
- *
- * It does NOT change the posture and does NOT itself demote anything: with `ohbox_policy` still
- * lenient the pass no-ops, so arming a lenient account is a harmless request that moves no mail —
- * the demotion is the posture's job, this only asks the pass to look. Racing the seed/auto-suggest
- * writers on the same PK is safe for the reason `setScreeningPreference` states: the upsert touches
- * only these two columns plus `updated_at`.
+ * ARM THE OHBOX BACKLOG RE-ROUTE ON DEMAND — the "tidy now" affordance's service half (mail
+ * 0043). Stamps `ohbox_tidy_requested_at = now()` and NULLs `ohbox_tidy_cursor` in one write, so
+ * the tidy pass owes a fresh, from-the-top run. Unlike the transition stamp in
+ * `setScreeningPreference` this is UNCONDITIONAL — what a user presses to re-file the existing
+ * Ohbox again. It does NOT change the posture and does NOT demote: with `ohbox_policy` still
+ * lenient the pass no-ops, so arming a lenient account moves no mail — this only asks the pass to
+ * look. Racing the seed/auto-suggest writers on the same PK is safe: the upsert touches only
+ * these two columns plus `updated_at`.
  */
 export async function requestOhboxTidy(ctx: ServiceContext): Promise<void> {
   // Fenced in a transaction for `setScreeningPreference`'s reason: the FOR SHARE interlock
