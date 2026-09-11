@@ -13,6 +13,29 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The phone shows the same waiting senders as the web
+
+Your Screener settings — when screening started, how far back it looks, and whether it looks all
+the way back — now reach the phone. Before this the phone applied its own sixty-day window, so a
+mailbox with six senders waiting could show two on the phone and six in the browser.
+
+### The door chooser clears the status bar
+
+On a phone with a notch the ohmail wordmark on the first screen sat on top of the clock.
+
+### The doorbell shows four faces and a count
+
+With a lot of senders waiting, the Screener knock drew one circle each and pushed the count — and
+the way into the Screener — off the edge of the screen.
+
+### A storage write your browser refuses is reported
+
+The app keeps a few things in the browser's own storage: your appearance choice, the pairing a
+phone uses to reach this computer, the local copy of your mailbox. Three of those places dropped a
+refused write without a word, so the app went on showing a choice it had not managed to keep. Each
+of them answers now, and one line says once per session that this browser is not keeping things
+between reloads.
+
 ### The phone's chooser counts its own doors
 
 The sentence above the list of places that can organize your mailbox said "One question, three
