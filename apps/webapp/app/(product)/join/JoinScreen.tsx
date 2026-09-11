@@ -470,56 +470,44 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   };
 
   /**
-   * ═══ RECOVERY CODES BELONG TO AN ACCOUNT, SO ASK WHICH ONE FIRST ══════════════════════════
-   *
-   * `POST /auth/2fa/recovery-codes` generates for whatever session the browser holds AT THAT
-   * MOMENT, and it DELETES the previous set — so under the wrong session it both hands somebody
-   * else's codes to whoever is looking at this screen and destroys the codes that account may
-   * already have written down. It is the most consequential button in the wizard.
-   *
-   * Everything else signed-in is protected by the account boundary in `api-client.ts`, which
-   * compares the browser's owner marker against the account the client is bound to. This screen
-   * is outside it by construction: an ENROLMENT session sets no marker at all
-   * (`enrollmentCookies` writes none), so there is nothing readable to compare and nothing to
-   * bind. Absence here is not the "silence" the gate reasons about — it is the normal state of
-   * being half signed up.
-   *
-   * So the question goes to the only party that can answer it. One extra round trip, immediately
-   * before the generate, and the answer is compared to the account this wizard started as. A
-   * mismatch STOPS: no codes are requested, nothing is deleted, and the screen says which account
-   * the browser is signed in as now, because that is the fact the person needs in order to act.
-   *
-   * Deliberately not a boundary and not a lock: those order writes or refuse them, and neither
-   * can tell that the enrolment session under this wizard has been replaced.
+   * Recovery codes belong to an account, so ask which one first. `POST /auth/2fa/recovery-codes` generates for
+   * whatever session the browser holds AT THAT MOMENT, and it DELETES the previous set — under the wrong session it
+   * both hands somebody else's codes to whoever is looking at this screen and destroys the codes that account may
+   * have written down: the most consequential button in the wizard. Everything else signed-in is protected by the
+   * account boundary in `api-client.ts`, but an enrolment session sets no owner marker (`enrollmentCookies` writes
+   * none), so there is nothing to compare — absence here is the normal state of being half signed up, not the
+   * "silence" the gate reasons about. So the question goes to the only party that can answer: one extra round trip
+   * immediately before the generate, compared to the account this wizard started as.
+   */
+
+  /**
+   * A mismatch STOPS — no codes requested, nothing deleted, and the screen says which account the browser is signed
+   * in as now. Deliberately not a boundary and not a lock: those order writes or refuse them, and neither can tell
+   * that the enrolment session under this wizard has been replaced.
    */
   /**
-   * ═══ IS THE BROWSER STILL SIGNED IN AS THE ACCOUNT THIS WIZARD IS FOR? ════════════════════
-   *
-   * Asked immediately before every action that acts on an account, and it FAILS CLOSED: an
-   * unknown wizard account refuses rather than waving through, because "we never learned who
-   * this is" is not evidence that it is the right one. That was the hole review found — the
-   * comparison was written `wizardAccount !== null && …`, and on the ordinary first signup
-   * `wizardAccount` was null, so the guard turned itself off on the one path everybody takes.
-   *
-   * ── WHY EVERY ACTION AND NOT JUST THE CODES ───────────────────────────────────────────────
-   *
-   * The codes step is the worst of them and it is not the only one. On an enrolment session the
-   * server accepts a passkey registration, a TOTP secret and its activation, a verification
-   * resend, a mailbox create and a checkout — each for whatever session the browser holds. Under
-   * a switched session that is a passkey enrolled on somebody else's account, their authenticator
-   * secret on this screen, their mail credentials attached, a plan and a payment customer
- * bound to their account.
-   *
-   * ── WHY IT CANNOT BE THE ACCOUNT BOUNDARY ─────────────────────────────────────────────────
-   *
-   * `enrollmentCookies` writes no owner marker, so there is nothing readable for `pendApiOwner`
-   * to bind to and nothing for it to compare — `pending` would refuse every request on this
-   * screen. The only party that knows is the server, so it is asked. One round trip per action,
-   * on a wizard where each action is a deliberate press.
-   *
-   * WHAT IT DOES NOT CLOSE: the window between this answer and the request that follows it. That
-   * needs the server to carry an expected account on the write itself, which is the same thing
-   * `AF-RESPONSE-NOT-OWNER-BOUND` is waiting for. Stated rather than implied.
+   * Is the browser still signed in as the account this wizard is for? Asked immediately before every action that acts
+   * on an account, and it FAILS CLOSED: an unknown wizard account refuses rather than waving through — "we never
+   * learned who this is" is not evidence it is the right one. That was the hole review found: the comparison was
+   * written `wizardAccount !== null && …`, and on the ordinary first signup `wizardAccount` was null, so the guard
+   * turned itself off on the one path everybody takes.
+   */
+
+  /**
+   * Every action and not just the codes, because on an enrolment session the server accepts a passkey registration, a
+   * TOTP secret and its activation, a verification resend, a mailbox create and a checkout — each for whatever
+   * session the browser holds: under a switched session that is a passkey on somebody else's account, their
+   * authenticator secret on this screen, their mail credentials attached, a plan bound to their account.
+   */
+
+  /**
+   * It cannot be the account boundary: `enrollmentCookies` writes no owner marker, so there is
+   * nothing for `pendApiOwner` to bind to or compare — `pending` would refuse every request on
+   * this screen. The only party that knows is the server, so it is asked: one round trip per
+   * action, on a wizard where each action is a deliberate press. What it does not close: the
+   * window between this answer and the request that follows it. That needs the server to carry
+   * an expected account on the write itself — the same thing `AF-RESPONSE-NOT-OWNER-BOUND` is
+   * waiting for. Stated rather than implied.
    */
   const sameAccount = async (): Promise<boolean> => {
     const now = await auth.session();
