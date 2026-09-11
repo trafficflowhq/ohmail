@@ -1,99 +1,49 @@
 /**
- * ═══ LINKS IN A MESSAGE, ON A DESKTOP THAT HAS NO SECOND WINDOW ════════════════════════════
- *
- * In a browser tab, `<a target="_blank">` opens a tab and there is nothing to write. In the
- * desktop window there is no tab to open, and what happens instead is the defect this module
- * exists for: **nothing at all, silently.**
- *
- * ── THE MECHANISM, BECAUSE IT IS NOT ANY OF THE THREE THINGS IT LOOKS LIKE ──────────────────
- *
- * Every outbound link this product renders carries `target="_blank"` — the mail sanitizer forces
- * it onto every `<a>` in a body (`MessageBody.tsx`), and the five hand-written link-outs in the
- * shell spell it out. A `_blank` click is not a navigation: it is a request for a NEW WINDOW,
- * which the webview forwards to whatever the host application registered to answer it. This app
- * registers nothing, and a webview with no new-window handler drops the request on the floor and
- * returns no window. So:
- *
- *  · it is NOT the navigation policy refusing — no navigation is ever attempted;
- *  · it is NOT the CSP — `connect-src 'none'` governs fetches, not window opening;
- *  · it is NOT a missing Tauri permission — nothing was invoked to be denied.
- *
- * The click is answered correctly, by a component whose correct answer is "no window". Which is
- * why it produced no error anywhere, in any log, on any platform.
- *
- * ── WHY THIS IS A CLICK INTERCEPTOR AND NOT A NEW-WINDOW HANDLER ────────────────────────────
- *
- * The webview CAN be given a new-window handler, and that would be one seam covering both
- * documents. It is not the one taken, for a reason about the OTHER artifact: attaching it means
- * this process owning the creation of the main window, and the window is created from
- * `tauri.conf.json` — shared by the interface preview, whose published claim is that it spawns no
- * process and calls no command. Buying one seam by moving both artifacts' window construction
- * into Rust, to add a browser-spawn to the one that must not have it, is the expensive way round.
- *
- * So the seam is here, and it is still ONE mechanism: one handler, installed on the two
- * documents that exist. It is not a per-component patch — no link surface in the shell knows
- * this module exists, and a link added tomorrow is covered by having been rendered.
- *
- * ── THE WHOLE SCHEME TABLE, IN ONE PLACE ────────────────────────────────────────────────────
- *
- *   http:, https:     the shell's opener → the user's own browser. Never this window.
- *                     {@link externalTargetOf} decides; `external_url` in `engine.rs` decides
- *                     again, because the argument comes out of a message.
- *   mailto:           THIS window → the compose form, through the one RFC 6068 parser.
- *                     {@link mailtoTargetOf} decides, {@link setMailtoSink} is where it lands.
- *                     Never the opener, never a process.
- *   everything else   cancelled, and nothing happens. No dialog, no toast, no log — there is
- *                     nothing a person could act on. `cid:` above all: it names a part of the
- *                     message being read and must not leave this machine.
- *
- * The `mailto:` row was `everything else` for two releases, which is the second half of the
- * defect this file was written for: the fix was reasoned about in terms of the browser, so the
- * one scheme a MAIL CLIENT answers itself was swept into "refuse". Nothing had to be built to
- * close it — `apps/desktop/src/mailto.ts` and the gate's compose seam were already there,
- * reachable only by a link the operating system delivered.
- *
- * ── THE TWO DOCUMENTS, AND WHY EVENTS DO NOT REACH ACROSS ───────────────────────────────────
- *
- * A message body is drawn one of two ways: as the app's own elements (the prose path), or inside
- * a sandboxed `<iframe srcdoc>` carrying the sender's own markup. A click in the frame does not
- * bubble to the embedder — they are separate documents — so the handler is installed on each.
- * The frame is reachable at all because its sandbox keeps `allow-same-origin`; without that, the
- * links inside a designed HTML mail could not be fixed from here by any means.
- *
- * ── OFF EVERYWHERE EXCEPT THE ONE BUILD THAT NEEDS IT ───────────────────────────────────────
- *
- * {@link enableExternalLinks} is called by the desktop entry point of the engine-bearing build
- * and by nothing else, so:
- *
- *  · in the WEB app nothing is installed, no listener exists, and an anchor keeps exactly the
- *    semantics the browser gives it. This module is imported by shared code and is inert there
- *    by construction rather than by a branch that could be got wrong;
- *  · in the desktop PREVIEW nothing is installed either. That artifact's grant is empty and its
- *    claim is that it calls no command; a click that invoked one and was refused by the ACL
- *    would make the claim false while still opening nothing.
+ * Links in a message, on a desktop that has no second window. Every outbound link carries
+ * `target="_blank"` (the sanitizer forces it; the shell's five link-outs spell it out), and a
+ * `_blank` click is a request for a NEW WINDOW, forwarded to whatever the host registered — this
+ * app registers nothing, so the webview dropped the request silently: not the navigation policy,
+ * not the CSP, not a missing permission, which is why no log anywhere showed it. A click
+ * interceptor rather than a new-window handler, because attaching one means this process owning the
+ * main window's creation, shared with the interface preview whose published claim is that it spawns
+ * no process — so the seam is here: one handler on the two documents that exist, no link surface
+ * knows this module exists, and a link added tomorrow is covered by having been rendered.
+ */
+
+/**
+ * The scheme table, in one place. `http:`/`https:` — the shell's opener → the user's own browser,
+ * never this window ({@link externalTargetOf} decides; `external_url` in `engine.rs` decides again,
+ * because the argument comes out of a message). `mailto:` — THIS window → the compose form through
+ * the one RFC 6068 parser ({@link mailtoTargetOf} decides, {@link setMailtoSink} is where it
+ * lands); never the opener, never a process. Everything else is cancelled with nothing — `cid:`
+ * above all: it names a part of the message being read and must not leave this machine. The
+ * `mailto:` row was "everything else" for two releases — the fix was reasoned about as a browser,
+ * and the one scheme a MAIL CLIENT answers itself was swept into refuse.
+ */
+
+/**
+ * Two documents: a body is the app's own elements or a sandboxed `<iframe srcdoc>`, and a click in
+ * the frame does not bubble to the embedder, so the handler is installed on each (the frame is
+ * reachable because its sandbox keeps `allow-same-origin`). Off everywhere except the one build
+ * that needs it: {@link enableExternalLinks} is called by the desktop entry point of the
+ * engine-bearing build and nothing else — the web app installs no listener and anchors keep browser
+ * semantics (inert by construction, not by a branch), and the desktop preview installs nothing
+ * either: its grant is empty, and a click that invoked a command and was refused by the ACL would
+ * make its no-command claim false while still opening nothing.
  */
 
 /** The shell command that hands one address to the platform's opener. `engine.rs` owns the gate. */
 export const OPEN_EXTERNAL_COMMAND = "open_external";
 
 /**
- * THE CLASSIFIER — pure, and the whole of the decision.
- *
- * Answers the address to open in the user's own browser, or `null` for "this is not one". Split
- * out from the handler so the rule can be driven directly by the suite rather than through a
- * synthesised event, and so it is the same rule for both documents.
- *
- * `base` decides two things: what a relative href resolves against, and what counts as this
- * app's own origin. The second is why the frame passes `trustSameOrigin: false` — see
- * {@link interceptLinkClicks}.
- *
- * Only `http:` and `https:` are ever an address. Everything else — `mailto:`, `tel:`, `cid:`,
- * and anything the sanitizer would have removed — answers `null`, and `cid:` is the reason the
- * default for an unrecognised scheme is "refuse" rather than "pass through": it names a part of
- * the message being read, and it must not leave this machine.
- *
- * `mailto:` answering `null` here is not the end of its story — see {@link mailtoTargetOf}. It
- * must answer `null` HERE regardless, because what this function feeds is a process spawn.
+ * The classifier — pure, and the whole of the decision. Answers the address to open in the user's
+ * own browser, or `null` for "this is not one"; split from the handler so the rule is driven
+ * directly by the suite and is the same rule for both documents. `base` decides what a relative
+ * href resolves against and what counts as this app's own origin (the frame passes
+ * `trustSameOrigin: false` — see {@link interceptLinkClicks}). Only `http:` and `https:` are ever
+ * an address; everything else answers `null`, and `cid:` is why the default for an unrecognised
+ * scheme is refuse — it names a part of the message being read. `mailto:` answering `null` here is
+ * not the end of its story ({@link mailtoTargetOf}), but this function feeds a process spawn.
  */
 export function externalTargetOf(href: string, base: string): string | null {
   const raw = href.trim();
@@ -111,51 +61,25 @@ export function externalTargetOf(href: string, base: string): string | null {
 }
 
 /**
- * THE SECOND CLASSIFIER — pure, and the one scheme this app answers ITSELF.
- *
- * Answers the mailto string to open a compose form from, or `null` for "this is not one".
- *
- * ── WHY THIS EXISTS, WHICH IS THE SAME BUG AS THE FILE'S HEADER, ONE SCHEME LATER ───────────
- *
- * The header's fix was written about the BROWSER, so its rule became "http and https go out,
- * everything else is cancelled". Cancelling is correct for `cid:` (it names a part of the
- * message being read), for `javascript:`, `data:` and `file:`. It is WRONG for `mailto:`, and
- * wrong in the one product where that is least excusable: **this app is the mail client.** An
- * address clicked in a newsletter, in a signature, or on a receipt's "contact us" line got
- * exactly what the original defect gave every link — nothing, silently.
- *
- * Nothing had to be built to answer it. `apps/desktop/src/mailto.ts` already reads a mailto
- * into a bounded compose prefill, and the gate already seeds the compose form from it — but
- * only for a link the OPERATING SYSTEM delivered. A link clicked inside the window never
- * reached that parser, because this seam refused it two layers earlier.
- *
- * ── THE RAW HREF IS RETURNED, NOT A PARSED ANYTHING, AND THAT IS THE BOUNDARY ────────────────
- *
- * `URL.href` is deliberately NOT used. It normalises the opaque path of a `mailto:` — the
- * WHATWG parser is entitled to re-encode it — and the one parser that reads these fields
- * (`parseMailto`, RFC 6068, split-then-decode) is written against the bytes a link author
- * wrote. Two normalisations in a row is how `%26` inside a subject becomes a new header. So
- * this function only DECIDES; it hands the original string on untouched.
- *
- * That string is untrusted, and it stays untrusted: it goes to a parser whose stated contract
- * is what its output can never contain, and it becomes text in a compose form. It never
- * reaches {@link OPEN_EXTERNAL_COMMAND}, never reaches a process spawn, and the shell's own
- * gate (`external_url` in `engine.rs`) refuses it a second time if it ever did.
- *
- * ── THE SCHEME IS READ OFF THE BYTES, NOT OFF A `URL` — AND THAT IS THE WHOLE RULE ───────────
- *
- * `new URL(raw, base)` was the obvious spelling and it is the wrong one, for the reason
- * `external_url` states on the other side of this file: **whatever decides must be the same
- * bytes as whatever is handed on.** The WHATWG parser STRIPS ASCII tab and newline before it
- * parses, so `"mail\nto:a@b.test"` parses as a `mailto:` URL — and this function would then
- * have approved one string and returned a different one, whose scheme `parseMailto`'s own
- * `/^mailto:/i` does not match. That divergence happened to be fail-closed (the parser returns
- * null and the click quietly does nothing), which is exactly the kind of luck that stops being
- * luck when a caller changes.
- *
- * So the test is on the string that travels, and it is the SAME test the parser applies. One
- * rule, one place to mutate, and no dependency on a URL quirk. Nothing legitimate is turned
- * away: a real `mailto:` link begins with its scheme, and a relative href never can.
+ * The second classifier — the one scheme this app answers ITSELF: the mailto string to open a
+ * compose form from, or `null`. The header's rule ("http and https go out, everything else
+ * cancelled") was wrong for `mailto:` in the one product where that is least excusable — this app
+ * IS the mail client, and an address clicked in a newsletter got nothing, silently;
+ * `apps/desktop/src/mailto.ts` and the gate's compose seam already existed, reachable only by a link
+ * the OS delivered. The RAW href is returned, never `URL.href`: the WHATWG parser may re-encode a
+ * mailto's opaque path, and two normalisations in a row is how `%26` in a subject becomes a new
+ * header — `parseMailto` (RFC 6068, split-then-decode) reads the bytes the author wrote.
+ */
+
+/**
+ * The scheme is read off the bytes, not off a `URL` — whatever decides must be the same bytes as
+ * whatever is handed on (`external_url` states the same rule on the other side). `new URL` strips
+ * ASCII tab and newline before parsing, so `"mail\nto:a@b.test"` parses as a `mailto:` URL — this
+ * function would then approve one string and return another whose scheme `parseMailto`'s own
+ * `/^mailto:/i` does not match; that divergence happened to fail closed, which is the kind of luck
+ * that stops being luck when a caller changes. So the test is the parser's own, on the string that
+ * travels. The string stays untrusted: it becomes text in a compose form and never reaches
+ * {@link OPEN_EXTERNAL_COMMAND} or a process spawn.
  */
 export function mailtoTargetOf(href: string, base: string): string | null {
   void base; // deliberately unused — a mailto is absolute or it is not a mailto. See the header.
@@ -167,38 +91,14 @@ export function mailtoTargetOf(href: string, base: string): string | null {
 }
 
 /**
- * Whether this link is the CLIENT'S OWN NAVIGATION — its scheme and host, not its "origin".
- *
- * ── WHY NOT `.origin`, WHICH IS WHAT THIS WAS AND WHAT IT LOOKS LIKE IT SHOULD BE ────────────
- *
- * Because on macOS the app document is served from `tauri://localhost`, and `tauri:` is not a
- * "special" scheme, so its WHATWG origin is OPAQUE and serialises to the literal string
- * `"null"`. Every opaque origin serialises to that same string. So an `.origin === .origin`
- * test on that platform does not ask "is this the app's own page", it asks "do these both
- * happen to have no origin" — and it answers YES for `mailto:`, `cid:`, `javascript:`,
- * `data:` and `file:`, every one of which also has an opaque origin. Measured, not reasoned:
- * `new URL("javascript:alert(1)", "tauri://localhost/").origin === new URL("tauri://localhost/").origin`
- * is `true`.
- *
- * The consequence was that on macOS this function returned early for those schemes and the
- * click was LEFT TO THE WEBVIEW — the exact opposite of the "refuse everything else with
- * nothing" rule the handler below is built on, and the reason the `mailto:` arm was dead on
- * that platform while passing every test (jsdom's document has a real http origin, so the
- * suite could not see it). It is the mirror image of the ordering bug this file already
- * records: that one hid on macOS and bit on Windows and Linux; this one hides on Windows and
- * Linux and bites on macOS.
- *
- * ── AND WHY NOT "REJECT OPAQUE ORIGINS", WHICH IS THE OBVIOUS REPAIR AND IS WRONG ────────────
- *
- * On macOS the app's OWN routes are opaque too — `new URL("/mailbox#/settings",
- * "tauri://localhost/").origin` is `"null"`. Refusing opaque origins would therefore stop
- * trusting the client's own navigation on macOS, and every in-app link would fall through to
- * the final `preventDefault()`. The app would stop routing.
- *
- * Scheme AND host is the test that answers the real question on all three platforms:
- * `tauri:`+`localhost` matches itself and nothing else; `mailto:` has no host; `javascript:`
- * and `cid:` have neither the scheme nor the host. On Windows and Linux, where the document is
- * `http://tauri.localhost`, it is exactly the origin comparison it replaces.
+ * Whether this link is the client's own navigation — its scheme and host, not its "origin". On macOS the app
+ * document is served from `tauri://localhost`, and `tauri:` is not a special scheme, so its WHATWG origin is
+ * OPAQUE and serialises to `"null"` — as does every opaque origin, so an `.origin === .origin` test answers YES
+ * for `mailto:`, `cid:`, `javascript:`, `data:` and `file:` (measured, not reasoned). Those clicks were left to
+ * the webview on macOS while every test passed (jsdom has a real http origin). "Reject opaque origins" is the
+ * obvious repair and wrong: the app's OWN routes are opaque on macOS too — the app would stop routing. Scheme
+ * AND host answers the real question on all three platforms: `tauri:`+`localhost` matches itself and nothing
+ * else, and on Windows/Linux (`http://tauri.localhost`) it is exactly the origin comparison it replaces.
  */
 export function isAppsOwnNavigation(href: string, base: string): boolean {
   try {
@@ -230,22 +130,14 @@ export function externalLinksEnabled(): boolean {
 }
 
 /**
- * What this window does with a clicked `mailto:` — a compose form, or nothing.
- *
- * A registration rather than an argument to {@link enableExternalLinks}, because the two are
- * armed at different moments and by different owners: the interceptor is armed once by the
- * desktop entry point, before React mounts, while the thing that can open a compose form is a
- * component's own state and does not exist until the gate has mounted. A sink that had to be
- * supplied at arming time would have to be a mutable box anyway; this is that box, named.
- *
- * `null` — the default, and the web app's permanent state — means a mailto is CANCELLED and
- * nothing else, which is the behaviour before this seam existed. It is also the desktop's
- * state for the short window before the gate mounts, so the arm degrades to the old outcome
- * rather than to an exception.
- *
- * Registering a sink does NOT arm anything on its own: no listener is installed unless
- * {@link enableExternalLinks} has been called, so shared code may register one and the web app
- * stays inert by construction.
+ * What this window does with a clicked `mailto:` — a compose form, or nothing. A registration
+ * rather than an argument to {@link enableExternalLinks}: the two are armed at different moments by
+ * different owners — the interceptor once, by the desktop entry point, before React mounts; the
+ * thing that can open a compose form is a component's own state and does not exist until the gate
+ * has mounted. `null` — the default and the web app's permanent state — means a mailto is
+ * cancelled, the behaviour before this seam existed; also the desktop's state before the gate
+ * mounts, so the arm degrades to the old outcome rather than an exception. Registering a sink arms
+ * nothing on its own: no listener exists unless {@link enableExternalLinks} was called.
  */
 let mailtoSink: ((raw: string) => void) | null = null;
 

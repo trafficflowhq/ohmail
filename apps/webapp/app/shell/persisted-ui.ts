@@ -2,29 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { durableSet } from "./durable";
 
 /**
- * UI state that must survive a reload — "saved if it's collapsed or not so ui stays as one
- * left it" (owner, on the Tags rail group).
- *
- * ── WHY LOCAL, NOT SERVER ───────────────────────────────────────────────────────────────
- *
- * This is chrome, not data. Whether a rail group is folded says nothing about the mailbox and
- * is worth neither a column, a migration, nor a request on every toggle. It is also the kind
- * of preference that is legitimately per-machine: a 13" laptop and a 27" display want
- * different answers, and syncing it would make the small screen dictate to the large one.
- *
- * ── WHY IT IS NOT SIMPLY `useState(localStorage.getItem(...))` ──────────────────────────
- *
- * Two reasons, and both are real rather than theoretical here.
- *
- * **Hydration.** The first render happens on the server, where `localStorage` does not exist.
- * Reading it in the initial state makes the server and client render different markup, which
- * React reports as a hydration mismatch and — worse — resolves by keeping the SERVER's value.
- * So the stored preference would be read and then silently discarded. The read therefore
- * happens in an effect, after mount, which is one frame of the default and then the truth.
- *
- * **Storage can refuse.** Safari in private mode throws on `setItem`, and a browser with
- * site data blocked throws on read. A preference is never worth breaking the shell over, so
- * every access is wrapped and a failure simply means the preference does not persist.
+ * UI state that must survive a reload — "saved if it's collapsed or not so ui stays as one left
+ * it" (owner, on the Tags rail group). Local, not server: this is chrome, worth neither a column
+ * nor a request per toggle, and legitimately per-machine — a 13" laptop and a 27" display want
+ * different answers. Not simply `useState(localStorage.getItem(...))` for two real reasons:
+ * hydration — the first render happens on the server, and a mismatch resolves by keeping the
+ * SERVER's value, so the stored preference would be read and silently discarded; the read happens in
+ * an effect, one frame of the default and then the truth. And storage can refuse — Safari private
+ * mode throws on `setItem`, a site-data-blocked browser on read — so every access is wrapped.
  */
 export function usePersistedFlag(
   key: string,
@@ -55,24 +40,14 @@ export function usePersistedFlag(
 }
 
 /**
- * A CAPPED SET OF IDS UNDER ONE KEY — the store behind the dark viewer's per-message "show
- * the original (light) rendering" override.
- *
- * ── WHY ONE KEY, AND WHY CAPPED ─────────────────────────────────────────────────────────
- *
- * The alternative is a key per message, which is unbounded in a different, worse way — a
- * reader who opens ten thousand messages leaves ten thousand keys nobody ever collects. One
- * JSON array under one key is bounded to `cap` ids and evicted oldest-first, so the footprint
- * is fixed and the thing forgotten is the least surprising one (the message read longest ago).
- * An override is a viewing preference, not data: dropping the oldest one silently is fine, and
- * the message simply falls back to following the theme the next time it is opened.
- *
- * ── SAME TWO HAZARDS AS `usePersistedFlag`, HANDLED THE SAME WAY ─────────────────────────
- *
- * The read is a POST-MOUNT effect — the server has no `localStorage`, and reading it during
- * render is a hydration mismatch that resolves by keeping the server's value. And every access
- * is wrapped, because Safari private mode throws on write and a site-data-blocked browser
- * throws on read; a viewing preference is never worth breaking the surface over.
+ * A capped set of ids under one key — the store behind the dark viewer's per-message "show the
+ * original (light) rendering" override. One key, capped: a key per message is unbounded the worse
+ * way (ten thousand opened messages leave ten thousand keys nobody collects); one JSON array is
+ * bounded to `cap` ids, evicted oldest-first, and the thing forgotten is the least surprising one.
+ * An override is a viewing preference, not data — a dropped id just follows the theme next open.
+ * Same two hazards as `usePersistedFlag`, handled the same way: the read is a post-mount effect
+ * (hydration keeps the server's value otherwise) and every access is wrapped (Safari private mode
+ * throws on write).
  */
 const OVERRIDE_CAP = 300;
 
@@ -115,25 +90,14 @@ export function usePersistedIdSet(
 }
 
 /**
- * ONE VALUE OUT OF A CLOSED SET — the store behind Search's result ordering.
- *
- * ── WHY A THIRD HOOK RATHER THAN `usePersistedFlag` WITH MORE STATES ────────────────────────
- *
- * The two above answer yes/no questions, and the shape of THIS one is the part that matters:
- * `allowed` is passed in and a stored value outside it is discarded, not repaired. A preference
- * naming a sort order is about to be sent to a server that REFUSES an unknown value with a 400
- * rather than quietly substituting a default, so a stale key written by a build that offered an
- * option this one no longer does must read as "no preference" — otherwise every search a
- * returning user runs fails until they clear their site data, and nothing on screen says why.
- *
- * ── SAME TWO HAZARDS AS ITS SIBLINGS, HANDLED THE SAME WAY ─────────────────────────────────
- *
- * The read is a POST-MOUNT effect (the server has no `localStorage`, and a read during the
- * hydration render is discarded as a mismatch — which would silently keep the server's default
- * and make the preference look like it never saved), and every access is wrapped, because
- * Safari private mode throws on write and a site-data-blocked browser throws on read. A refused
- * store means the choice holds for this session and no longer, which is the right failure for a
- * preference and the wrong one for anything that authorises.
+ * One value out of a closed set — the store behind Search's result ordering. A third hook because
+ * the shape matters: `allowed` is passed in and a stored value outside it is DISCARDED, not
+ * repaired. The preference is about to be sent to a server that refuses an unknown value with a 400
+ * rather than substituting a default, so a stale key from a build that offered an option this one no
+ * longer does must read as "no preference" — otherwise every search a returning user runs fails
+ * until they clear site data, and nothing says why. Same two hazards as its siblings: post-mount
+ * read (hydration) and wrapped access (Safari private mode); a refused store means the choice holds
+ * for this session only, the right failure for a preference.
  */
 export function usePersistedChoice<T extends string>(
   key: string,
@@ -187,36 +151,26 @@ export const UI_KEYS = {
   /** Ids the reader chose to view in their ORIGINAL (light) rendering, despite a dark theme. */
   mailOriginal: "ohmail.ui.mail.original",
   /**
-   * THE THREE COLUMNS' WIDTHS — `{"v":1,"rail":<px>,"list":<px>}`, a field absent meaning the
-   * default and the key removed when both are.
-   *
-   * Named here so everything this app stores stays greppable from one prefix, but read and
-   * written by `column-store.ts` rather than by any hook above: the two widths are ONE record
-   * (a reset of one must not rewrite the other), they are stamped on `<html>` before first
-   * paint by a script that has no React at all, and a drag writes at 60 Hz and persists once —
-   * none of which is what a post-mount `useState` hook is for.
-   *
-   * PER MACHINE, and it SURVIVES SIGN-OUT with the rail's disclosures and the face pin: a
-   * column width is a fact about the screen and there is no mail in a number of pixels
-   * (`test/sign-out-clears-durable-stores.test.ts` is where that decision is recorded).
+   * The three columns' widths — `{"v":1,"rail":<px>,"list":<px>}`, a field absent meaning the
+   * default and the key removed when both are. Named here so everything this app stores stays
+   * greppable from one prefix, but read and written by `column-store.ts`: the two widths are ONE
+   * record (a reset of one must not rewrite the other), they are stamped on `<html>` before first
+   * paint by a script with no React, and a drag writes at 60 Hz and persists once — none of which
+   * suits a post-mount hook. Per machine, and it survives sign-out with the rail's disclosures and
+   * the face pin: there is no mail in a number of pixels
+   * (`test/sign-out-clears-durable-stores.test.ts` records that decision).
    */
   columns: "ohmail.ui.columns",
 } as const;
 
 /**
- * The Search result order, PER ACCOUNT and per device.
- *
- * Per account because two people sharing a browser must not inherit each other's preferences —
- * the same rule `boot-cache.ts` keys on, and for a weaker reason here (an order reveals nothing)
- * but the same habit. Per device because it is chrome: this is not a fact about the mailbox, and
- * a laptop and a phone are allowed to disagree about it.
- *
- * `owner` is `storageOwner()` — the account cookie where there is one, and otherwise whatever
- * identity the HOST established for this surface (`storage-owner.ts`). It is `null` only before
- * sign-in and on a surface with genuinely no account; that case gets its own stable key rather
- * than a blank suffix — a device with no account is a real situation, not a missing value. It is
- * NOT `readOwner()`, which is null on the whole standalone desktop and so gave every mailbox on
- * an install one shared key.
+ * The Search result order, per account and per device. Per account because two people sharing a
+ * browser must not inherit each other's preferences — the rule `boot-cache.ts` keys on, for a weaker
+ * reason here but the same habit. Per device because it is chrome: a laptop and a phone may
+ * disagree. `owner` is `storageOwner()` — the account cookie where there is one, otherwise whatever
+ * identity the HOST established (`storage-owner.ts`); `null` only before sign-in and on a surface
+ * with genuinely no account, which gets its own stable key rather than a blank suffix. NOT
+ * `readOwner()`, which is null on the whole standalone desktop and gave every mailbox one shared key.
  */
 export function searchSortKey(owner: string | null): string {
   return `ohmail.ui.search.sort.${owner ?? "local"}`;

@@ -1,89 +1,39 @@
 "use client";
 
 /**
- * ── THE SPY-PIXEL BLOCKER'S CONSENT HALF, AND THE FIRST CONSUMER `GET /img` HAS EVER
- *    HAD ────────────────────────────────────────────────────────────────────────────────
- *
- * `MessageBody.tsx` has blocked every remote reference from the day it landed, and its
- * header states the
- * one thing it deliberately does NOT do: *"It does not fetch a blocked image after consent,
- * and the consent button is therefore absent rather than dead."* This module is that consent
- * path. It is the whole of what was missing, and it is small on purpose — the sanitizer,
- * the frame CSP and the SSRF gate are all somewhere else, already built and already watched.
- *
- * ── WHY A PROXY AT ALL, RATHER THAN JUST LETTING THE `<img>` LOAD ───────────────────────
- *
- * Because the reader's IP address is the thing being protected, and "load images" in every
- * other mail client hands it to the sender. A remote image in bulk mail is a request to a
- * host the sender chose, from the reader's own machine, carrying their address, their
- * approximate location, their user agent and the fact that they opened this message at this
- * minute. Routing it through `GET /img` makes that request OURS: `PrivacyService.proxyImage`
- * fetches server-side through a port whose signature takes ONLY a url — there is no
- * parameter through which a client header could travel, which is a structural guarantee
- * rather than a remembered one.
- *
- * ── THE URL IS SAME-ORIGIN, AND THAT IS LOAD-BEARING IN TWO PLACES ──────────────────────
- *
- * The message frame's `img-src` admits `data:` and **this function's own origin and path**,
- * and nothing else — there is no policy under which the frame may name a sender's host, and
- * since the narrowing there is none under which it may name any other path of ours either.
- * `MessageBody`'s `proxyImgSource` derives that source by calling {@link imageProxyUrl}
- * through the chrome and reading the answer, so the policy cannot drift from the url: change
- * the path here and the CSP follows in the same edit. What it must NOT do is return a
- * cross-origin url — the frame refuses to name a foreign host, so the source would be `null`
- * and consented images would stay blocked (visibly, not silently: the button goes with it).
- *
- * The app's own policy (`security-headers.ts`) is `img-src 'self' data: blob:`. A `srcdoc`
- * document inherits the embedder's policy container, so what is enforced is the INTERSECTION,
- * and the frame's half is the strict one. `/api/*` is a Next rewrite onto `api.ohmail.app`
- * (`next.config.mjs`), so the browser only ever talks to its own origin and the host-only
- * `tf_session` cookie rides along on the subresource GET — which is what authenticates the
- * proxy.
- *
- * The url is built ABSOLUTE against `location.origin` rather than left root-relative. A
- * relative url in a `srcdoc` document resolves against the PARENT's base url, which is the
- * behaviour we want and is also the kind of inherited subtlety that changes under a `<base>`
- * somebody adds later. Absolute costs nothing and depends on nothing.
- *
- * ── CONSENT IS AWAITED, NOT ASSUMED ─────────────────────────────────────────────────────
- *
- * The optimistic shape — flip locally, POST in the background — is wrong here and the reason
- * is specific rather than stylistic: the local flag decides what THIS render fetches, and the
- * server flag decides what the NEXT one does. Flipping locally on a POST that then fails
- * gives a reader images now and no images after a reload, with nothing said in between. So
- * the click awaits the write, and a refusal is reported and loads nothing.
- *
- * ── AND THE BUTTON IS NOW THE MINORITY CASE ─────────────────────────────────────────────
- *
- * The product default moved: a message's remote images load on open, through the proxy, and the
- * per-message consent flow above is what an account gets when it OPTS OUT (mail 0048,
- * `account_settings.block_remote_images_at`). Everything in this file still exists and still runs
- * unchanged in that mode — the module did not become dead code, it became the second branch.
- *
- * What did not move by default: **a tracking pixel is not fetched in either images mode** unless
- * the account's own pixel switch says otherwise (mail 0072, {@link RemoteImagesChrome.loadPixels}).
- * That refusal lives in the sanitizer, where a 1×1, a zero-dimension image and a beacon-shaped url
- * override the proxy (`MessageBody.tsx`), and it is not reachable from this file at all. Remote
- * stylesheets stay blocked in every mode — they have no proxied form to load. The default that
- * changed is which PICTURES a reader has to ask for, and it is affordable precisely because of the
- * paragraph above it: the proxy's port takes a url and nothing else, so an image the reader never
- * pressed a button for still hands the sender none of the reader's network — no IP, no location,
- * no device.
+ * The spy-pixel blocker's consent half — the first consumer `GET /img` has ever had.
+ * `MessageBody.tsx` blocks every remote reference; this module is the consent path. Why a proxy at
+ * all: the reader's IP is the thing being protected, and "load images" in every other mail client
+ * hands it to the sender. Routing through `GET /img` makes the request ours —
+ * `PrivacyService.proxyImage` fetches server-side through a port whose signature takes ONLY a url,
+ * so no client header can travel, structurally. The url is same-origin and load-bearing: the frame's
+ * `img-src` admits `data:` and this function's own origin+path only ({@link imageProxyUrl} is what
+ * `proxyImgSource` derives from, so the CSP cannot drift from the url), and `/api/*` is a Next
+ * rewrite so the host-only `tf_session` cookie rides the subresource GET. Built absolute:
+ * a relative url in `srcdoc` resolves against the parent's base — a later `<base>` would change it.
+ */
+
+/**
+ * Consent is awaited, not assumed: the local flag decides what this render fetches and the server
+ * flag what the next one does, so flipping locally on a POST that fails gives images now and none
+ * after a reload — the click awaits the write, and a refusal loads nothing. The button is now the
+ * minority case: the default moved to loading pictures on open, through the proxy (mail 0048,
+ * `account_settings.block_remote_images_at`); this module is the opt-out branch, unchanged. A
+ * tracking pixel is not fetched in either mode unless the pixel switch says so (mail 0072,
+ * {@link RemoteImagesChrome.loadPixels}) — that refusal lives in the sanitizer; remote stylesheets
+ * stay blocked in every mode. The proxy is why the new default is affordable: an unpressed image
+ * still hands the sender none of the reader's network.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE, apiConfigured, messageOf, privacy } from "../api-client";
 
 /**
- * Everything a rendered message needs in order to offer "Show images" — or ABSENT, which is
- * a real answer and not an oversight.
- *
- * `undefined` means this client cannot proxy an image: `?demo=1` (fixtures, zero network,
- * and a self-contained surface makes no external request), the desktop shell, and any test that
- * mounts a view without an API.
- * `MessageBody` renders NO BUTTON for it rather than a dead one — `MessageBodyProps.imageProxy`
- * says so in as many words. The same rule `AttachmentsChrome` follows, for the same reason:
- * a control over a capability nothing can serve is worse than no control.
+ * Everything a rendered message needs in order to offer "Show images" — or ABSENT, a real answer:
+ * `undefined` means this client cannot proxy an image (`?demo=1`, the desktop shell, a test mounting
+ * a view without an API), and `MessageBody` renders NO button for it rather than a dead one —
+ * `MessageBodyProps.imageProxy` says so. The same rule `AttachmentsChrome` follows: a control over a
+ * capability nothing can serve is worse than no control.
  */
 export interface RemoteImagesChrome {
   /**
@@ -97,50 +47,33 @@ export interface RemoteImagesChrome {
   /** The reader pressed "Show images". Awaits the server, then admits the images. */
   consent: (messageId: string) => void;
   /**
-   * DOES THIS ACCOUNT LOAD REMOTE IMAGES WITHOUT BEING ASKED? The account setting, carried on the
+   * Does this account load remote images without being asked? The account setting, carried on the
    * chrome so the two surfaces that render a message (`MessagePane`, `Conversation`) read one
-   * answer instead of each reaching for the consent state themselves.
-   *
-   * `true` ⇒ every message's pictures come through the proxy on open and there is no per-message
-   * button, because there is nothing left for it to do. `false` ⇒ exactly today's behaviour: the
-   * bar counts what was blocked and offers "Show images".
-   *
-   * **It changes NOTHING about pixels.** A beacon or a 1×1 is refused the proxy in both modes,
-   * inside the sanitizer — {@link loadPixels} below is the one thing that can lift that, and it
-   * is its own switch. Remote stylesheets are blocked in both modes because a sheet cannot be
-   * proxied at all. What moves here is which PICTURES load.
-   *
-   * It is deliberately not folded into {@link consented}: that function answers "did this person
-   * press the button for this message", which is a per-message fact the auto mode does not make
-   * true, and a caller that needed to tell the two apart would have no way left to.
+   * answer. `true` ⇒ pictures come through the proxy on open and there is no per-message button;
+   * `false` ⇒ the bar counts what was blocked and offers "Show images". It changes NOTHING about
+   * pixels — a beacon or 1×1 is refused in both modes, inside the sanitizer; {@link loadPixels} is
+   * the one thing that can lift that. Deliberately not folded into {@link consented}: that answers
+   * "did this person press the button for this message", a per-message fact auto does not make true.
    */
   auto: boolean;
   /**
-   * MAY A TRACKING PIXEL RIDE THE PROXY WITH THE PICTURES? The account setting (mail 0072), carried
-   * on the chrome beside {@link auto} for the same reason: every surface that renders a message
-   * reads one answer.
-   *
-   * `false` — the product default — keeps the refusal the sanitizer has always made: a 1×1, a
-   * zero-dimension image or a beacon-shaped url is blanked whatever else loads. `true` hands those
-   * to the proxy like any other image. What the sender then learns: the open, and — because bulk
-   * senders mint a per-recipient token into the pixel's url — usually WHICH recipient opened it.
-   * What the proxy still hides is the reader's network: IP, location, device. The switch's copy
-   * says exactly that; this flag must never be described as anonymous opens. It reaches the
+   * May a tracking pixel ride the proxy with the pictures? The account setting (mail 0072), carried
+   * on the chrome beside {@link auto}. `false` — the default — keeps the sanitizer's refusal: a 1×1,
+   * a zero-dimension image or a beacon-shaped url is blanked whatever else loads. `true` hands them
+   * to the proxy; the sender then learns the open and usually WHICH recipient (bulk senders mint a
+   * per-recipient token into the url), while the proxy still hides the reader's network — IP,
+   * location, device. This flag must never be described as anonymous opens. It reaches the
    * sanitizer as `SanitizeOptions.loadPixels` and does nothing where no proxy exists.
    */
   loadPixels: boolean;
 }
 
 /**
- * `GET /img?mid=…&u=…` for one image, as an absolute same-origin url.
- *
- * Exported and pure so the property that matters can be asserted directly rather than
- * inferred from a rendered attribute: **the sender's host never appears in the request's
- * ORIGIN, only in its query**. A test that only read the `src` string would pass on
- * `https://evil.example/x.png` too.
- *
- * `origin` is a parameter for the same reason `createEngine` takes its env: it lets a test
- * drive the real function instead of a copy of it.
+ * `GET /img?mid=…&u=…` for one image, as an absolute same-origin url. Exported and pure so the
+ * property that matters is asserted directly: the sender's host never appears in the request's
+ * ORIGIN, only in its query — a test that only read the `src` string would pass on
+ * `https://evil.example/x.png` too. `origin` is a parameter for the reason `createEngine` takes its
+ * env: a test drives the real function instead of a copy.
  */
 export function imageProxyUrl(
   base: string,
