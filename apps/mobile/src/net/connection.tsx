@@ -47,8 +47,7 @@ import {
   type ReopenOutcome, type StandaloneEngine,
 } from "../engine/standalone-door";
 import { phoneEngineReopen } from "../engine/engine-artifact";
-import { installGeneration } from "../state/install-marker";
-import { settleInstallGeneration } from "../state/install-marker";
+import { installGeneration, settleInstallGeneration } from "../state/install-marker";
 import { nativeServerProfiles } from "../state/servers-native";
 import { installPinning } from "./host-pinning";
 import { nativeHostPinning } from "./host-pinning-native";
