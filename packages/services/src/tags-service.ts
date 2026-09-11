@@ -12,23 +12,13 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
 /**
  * The hues the client can render — `TagHueName` in `packages/ui`, the ten the Blanc token
- * families actually paint. This list MUST equal that one: a hue accepted here but with no rule
- * in `chip.css` is an invisible dot, which is why the tag recolour verb waited on the two sets
- * being reconciled (see `client-engine`'s `tag_recolor`). A closed set validated here rather
- * than at the DB — it is presentation, and a new hue must not need a migration, which is why
- * `tags.hue` is a plain `text` column with no CHECK (mail 0031) and this widening ships without
- * one. The API's tag suite round-trips every member and refuses a non-member, so a name cannot
- * creep back in without a matching family being drawn first.
- *
- * ORDER IS `TAG_HUES`' ORDER (hue wheel), and it carries no data: the column stores the NAME.
- * `moss|ochre|rosewood` keep their exact spelling so tags written before the palette grew are
- * unaffected, and the seven new names deliberately avoid `clay|slate|plum|amber|teal` — the set
- * this service accepted alone before the reconciliation, whose rows are still in the database
- * and which the client clamps to moss. Re-admitting one would repaint an existing tag.
- *
- * Exported so `test/tag-hues.test.ts` and the HTTP round-trip can compare this set to the
- * client's rather than to a copy of it written down in a test — a copy is what let the two
- * lists diverge in the first place.
+ * families paint. This list MUST equal that one: a hue accepted here with no rule in `chip.css`
+ * is an invisible dot. Validated here, not at the DB — a new hue must not need a migration
+ * (`tags.hue` is plain `text`, no CHECK, mail 0031). The API's tag suite round-trips every member
+ * and refuses a non-member. ORDER IS `TAG_HUES`' ORDER; the column stores the NAME. The seven new
+ * names avoid `clay|slate|plum|amber|teal` — rows once accepted, still in the database, clamped
+ * to moss — because re-admitting one would repaint an existing tag. Exported so
+ * `test/tag-hues.test.ts` compares this set to the client's, not a copy.
  */
 export const RENDERABLE_HUES = [
   "rosewood", "ochre", "olive", "moss", "verdigris",
@@ -62,47 +52,14 @@ export interface AssignResult {
 }
 
 /**
- * TagsService — the account's own labels, keyed by message.
- *
- * ══ WHAT A TAG IS, AND THE ONE THING IT IS NOT ═══════════════════════════════════════════
- *
- * A tag is a row in OUR Postgres. It is NEVER an IMAP folder and never an IMAP keyword: ohmail
- * organizes the mailbox in place with a fixed folder set (`INBOX` +
- * `ohmail/Screener|Reads|Receipts|Screened|Quarantine`) and the mailbox is the master, so a tag
- * is a cross-cutting dimension OVER those places rather than a seventh place. Nothing in this
- * file opens an IMAP connection or writes a folder, and `tags.no-imap.test.ts` fails the build
- * if it ever does.
- *
- * The honest consequence is in the UI copy, worded to what actually happens: a disconnect KEEPS
- * tags (it is a soft delete to `status='disabled'` and re-enabling is supported, so dropping
- * them there would destroy data on a reversible action), but erasing the account takes them and
- * a tag never outlives its message. Folders survive a cancellation because they are real IMAP
- * folders; tags do not, because they are ours.
- *
- * ══ THE WIRE IS A DELTA, AND THAT IS THE CONCURRENCY DESIGN ══════════════════════════════
- *
- * `assign` takes ONE tag and a boolean, never the full next label array. The array shape the
- * client engine originally proposed is a read-modify-write: two concurrent toggles of DIFFERENT
- * tags on one message read the same starting array and the second write silently drops the
- * first one's tag. Here, assign is `INSERT … ON CONFLICT DO NOTHING` on the `(message_id,
- * tag_id)` PK and unassign is a `DELETE` — both idempotent, both touching exactly the one row
- * the user asked about, so two concurrent toggles cannot lose each other's work.
- *
- * ══ WHERE `FOR UPDATE` IS, AND WHY IT IS NOT ANYWHERE ELSE ═══════════════════════════════
- *
- * Exactly one method takes a row lock: {@link remove}. Deleting a tag is a two-table write
- * (assignments, then the parent) and it races an `assign` of the same tag — the deleter clears
- * `message_tags`, the inserter adds a row, and the parent `DELETE FROM tags` then fails its FK
- * with a 500 nobody can attribute. Locking the `tags` row FIRST inverts that: a concurrent
- * inserter blocks on the parent row until the delete commits, then fails its own FK lookup,
- * which this service maps to `404 tag not found` — the truthful answer for a tag that no longer
- * exists.
- *
- * `assign` deliberately takes NO lock. Its writes are already idempotent and single-row, and a
- * lock there would serialize every tag click on a busy account to buy nothing.
- *
- * This is asserted on REAL Postgres (`tags.pg.test.ts`, :5433) and not in PGlite, which cannot
- * observe lock behaviour and has been blind to exactly this class of bug three times.
+ * TagsService — the account's own labels, keyed by message. A tag is a row in OUR Postgres —
+ * NEVER an IMAP folder or keyword (`tags.no-imap.test.ts` guards). A disconnect KEEPS tags;
+ * erasure takes them. THE WIRE IS A DELTA: `assign` takes ONE tag and a boolean, never the full
+ * label array — a read-modify-write array loses one of two concurrent toggles; assign is `INSERT
+ * … ON CONFLICT DO NOTHING`, unassign a `DELETE`, both idempotent. Exactly one method locks:
+ * `remove` — deleting a tag races an `assign` (the parent delete dies on its FK); locking the
+ * `tags` row FIRST makes the inserter wait, then fail as a 404. `assign` takes NO lock. Asserted
+ * on REAL Postgres (`tags.pg.test.ts`).
  */
 export class TagsService {
   private validName(raw: unknown): string {
@@ -137,16 +94,13 @@ export class TagsService {
   }
 
   /**
-   * POST /tags — mint a tag.
-   *
-   * The `change_log` row is emitted IN the transaction, which is the difference between a tag
-   * that exists and a tag the client can see: the mirror is fed only by the sync drain, so a
-   * tag created without a change row would sit in Postgres and never reach the rail — the
-   * "built, tested, unreachable" shape this slice exists to close.
-   *
-   * A duplicate name is a 409 rather than a silent no-op or a second row: the unique index is
-   * on `lower(name)`, so "Invoices" and "invoices" collide, and the user needs to know which of
-   * the two survived rather than discovering later that their new tag went nowhere.
+   * POST /tags — mint a tag. The `change_log` row is emitted IN the transaction, which is the
+   * difference between a tag that exists and one the client can see: the mirror is fed only by
+   * the sync drain, so a tag created without a change row would sit in Postgres and never reach
+   * the rail — the "built, tested, unreachable" shape. A duplicate name is a 409 rather than a
+   * silent no-op or a second row: the unique index is on `lower(name)`, so "Invoices" and
+   * "invoices" collide, and the user needs to know which survived rather than discovering later
+   * that their new tag went nowhere.
    */
   async create(ctx: ServiceContext, body: TagBody): Promise<{ dto: TagDTO; seq: number | null }> {
     const name = this.validName(body?.name);
@@ -209,16 +163,13 @@ export class TagsService {
   }
 
   /**
-   * DELETE /tags/:id — the tag and every assignment of it.
-   *
-   * THE `FOR UPDATE` IS THE POINT OF THIS METHOD. See the class comment: without it, a
-   * concurrent `assign` of this same tag inserts a `message_tags` row between the child delete
+   * DELETE /tags/:id — the tag and every assignment of it. THE `FOR UPDATE` IS THE POINT: without
+   * it, a concurrent `assign` of this tag inserts a `message_tags` row between the child delete
    * and the parent delete, and the parent delete dies on its FK. Taking the parent row's lock
-   * first makes that inserter wait and then fail cleanly as a 404.
-   *
-   * Every affected message gets a `message` change, because each of their `labels` arrays just
-   * changed — a client that heard only the tag's `delete` would drop the tag from the rail and
-   * keep rendering it on the rows until the next unrelated update.
+   * first makes the inserter wait and then fail cleanly as a 404. Every affected message gets a
+   * `message` change, because each of their `labels` arrays just changed — a client that heard
+   * only the tag's `delete` would drop it from the rail and keep rendering it on the rows until
+   * the next unrelated update.
    */
   async remove(ctx: ServiceContext, id: string): Promise<{ seq: number | null }> {
     const seq = await asTx(ctx).transaction(async (tx) => {
@@ -256,16 +207,13 @@ export class TagsService {
   }
 
   /**
-   * POST /messages/:id/tags — assign or unassign ONE tag. The delta verb.
-   *
-   * Both directions are idempotent, which is what makes this safe to retry and safe to race:
-   * assigning twice leaves one row (`ON CONFLICT DO NOTHING` on the PK) and unassigning twice
-   * deletes nothing the second time. Neither direction reads the label array first, so there is
-   * no window in which a concurrent toggle of a DIFFERENT tag can be lost.
-   *
-   * The emitted change is a `message` update, not a new entity kind — the client re-reads the
-   * message and gets its whole `labels` array from `materializeMessages`, so it can never hold
-   * an assignment naming a tag it has not seen.
+   * POST /messages/:id/tags — assign or unassign ONE tag; the delta verb. Both directions are
+   * idempotent, which makes this safe to retry and safe to race: assigning twice leaves one row
+   * (`ON CONFLICT DO NOTHING` on the PK) and unassigning twice deletes nothing the second time.
+   * Neither direction reads the label array first, so there is no window in which a concurrent
+   * toggle of a DIFFERENT tag can be lost. The emitted change is a `message` update, not a new
+   * entity kind — the client re-reads the message and gets its whole `labels` array from
+   * `materializeMessages`, so it can never hold an assignment naming a tag it has not seen.
    */
   async assign(
     ctx: ServiceContext, messageId: string, tagId: string, assigned: boolean, createName?: string,
@@ -285,16 +233,14 @@ export class TagsService {
       const [msg] = await tx.select({ id: messages.id, mailboxId: messages.mailboxId }).from(messages)
         .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
-      /* -- A READER DOES NOT ASSIGN TAGS (mail 0083) ---------------------------------------
-       *
-       * A tag looks like a label and is not only a label: `message_tags` is read by the rules
-       * path and by the retro passes, so an assignment on a mailbox this install does not
-       * organize is an input to filing that this install will never perform and the organizer
-       * will never see (the travelling profile carries tag NAMES and no per-message state).
-       *
-       * The tag DEFINITIONS — create, rename, delete — are account configuration and are gated
-       * differently, on whether the account organizes anything at all. Naming a colour is not a
-       * statement about one mailbox; putting that colour on one message is.
+      /**
+       * A READER DOES NOT ASSIGN TAGS (mail 0083). A tag looks like a label and is not only a
+       * label: `message_tags` is read by the rules path and the retro passes, so an assignment on
+       * a mailbox this install does not organize is an input to filing this install will never
+       * perform and the organizer will never see (the travelling profile carries tag NAMES, no
+       * per-message state). The tag DEFINITIONS — create, rename, delete — are account
+       * configuration, gated on whether the account organizes anything at all. Naming a colour is
+       * not a statement about one mailbox; putting that colour on one message is.
        */
       await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
@@ -333,22 +279,16 @@ export class TagsService {
           resolved = existing.id;
         }
       } else {
-        // A SHARED LOCK, AND THE LOCK IS THE WHOLE POINT — a plain SELECT here is a bug that
-        // `tags.pg.test.ts` caught on real Postgres and PGlite could never have shown.
-        //
-        // Under READ COMMITTED an unlocked read sees a tag whose DELETE has not yet committed,
-        // waves the assign through, and the INSERT then blocks on the FK's own parent-row lock
-        // and finally raises `23503` — a 500 for what is really "that tag is gone". Taking the
-        // share lock at CHECK time moves the wait one statement earlier: this select blocks on
-        // the deleter's exclusive lock, and when the delete commits the row is simply not there,
-        // so the caller gets the truthful 404.
-        //
-        // SHARE and not UPDATE: share locks are compatible with each other, so concurrent
-        // assigns of the same tag still run in parallel. Only the exclusive lock `remove` takes
-        // conflicts with it, which is exactly the pair that must be ordered.
-        // The STRENGTH travels with the call: this is share and must stay share. Promoting it to
-        // the exclusive lock while porting would serialize concurrent assigns of one tag, which is
-        // exactly what the paragraph above says must keep running in parallel.
+        // A SHARED LOCK, AND THE LOCK IS THE WHOLE POINT — a plain SELECT here is a bug
+        // `tags.pg.test.ts` caught on real Postgres and PGlite could never show. Under READ
+        // COMMITTED an unlocked read sees a tag whose DELETE has not committed, waves the assign
+        // through, and the INSERT blocks on the FK's parent-row lock and raises `23503` — a 500
+        // for "that tag is gone". The share lock moves the wait one statement earlier: this
+        // select blocks on the deleter's exclusive lock, and when the delete commits the row is
+        // simply not there — a truthful 404. SHARE, not UPDATE: share locks are compatible with
+        // each other, so concurrent assigns of one tag still run in parallel; only `remove`'s
+        // exclusive lock conflicts, exactly the pair that must be ordered. The STRENGTH travels
+        // with the call: promoting it while porting would serialize what must stay parallel.
         const [tag] = await dialect(ctx.db).forUpdate(
           tx.select({ id: tags.id }).from(tags)
             .where(and(eq(tags.id, tagId), eq(tags.accountId, ctx.accountId)))

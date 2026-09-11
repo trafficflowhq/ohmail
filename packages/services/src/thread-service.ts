@@ -12,22 +12,14 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * HOW MANY THREADS ONE `POST /threads/merge` MAY COMBINE.
- *
- * 50. The gesture behind this route is a person selecting rows in a list and pressing Merge, so
- * the bound only has to be far above what a hand does and far below what a script can ask for.
- *
- * The number is set by what one id COSTS rather than by taste. Every id in the list takes a
- * `FOR UPDATE` lock on its `threads` row that is held until the transaction commits, and the
- * transaction then rewrites every message, note and draft pointing at it and appends a
- * change-log row per message moved. So the lock set, the write volume and the transaction's
- * lifetime are all linear in a number the caller types — on the exact lock order this method's
- * comment describes as shared with ingest and with the worker's thread-join heal, which means
- * an oversized merge does not merely cost itself: it holds threads that two other writers take
- * in the same order.
- *
- * 50 is a quarter of {@link MARK_SEEN_MAX_IDS} (200), deliberately, because a merged id is
- * several statements where a marked id is one.
+ * HOW MANY THREADS ONE `POST /threads/merge` MAY COMBINE. 50: the gesture is a person selecting
+ * rows and pressing Merge, so the bound only has to be far above a hand and far below a script.
+ * Set by what one id COSTS: every id takes a `FOR UPDATE` lock on its `threads` row held to
+ * commit, and the transaction rewrites every message, note and draft pointing at it plus a change
+ * row per message moved — all linear in a number the caller types, on the lock order shared with
+ * ingest and the worker's thread-join heal, so an oversized merge holds threads two other writers
+ * take in the same order. A quarter of `MARK_SEEN_MAX_IDS`, deliberately: a merged id is several
+ * statements where a marked id is one.
  */
 export const THREAD_MERGE_MAX_IDS = 50;
 

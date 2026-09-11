@@ -51,15 +51,13 @@ export interface PowerThroughView {
 }
 
 /**
- * TriageService. The bottom-pile states (`reply_later`, `set_aside`,
- * `bubbled_up`, `muted`) live in `message_states`; every transition is user-wins
- * (no If-Match) and emits a `message_state` `update` change — plus the `message` update its
- * DTO's embedded `triage` needs — through the same `change_log` seam SyncService reads. The
- * Reply Run and Power Through are pure read views over these states + the Imbox — no separate
- * write logic.
- *
- * `resurfaced` is settable here too, and it is NOT a bottom pile: it pins the row at the top of
- * the Ohbox. See {@link TriageService.resurfaceNow} and `dto/types.ts#TriageState`.
+ * TriageService. The bottom-pile states (`reply_later`, `set_aside`, `bubbled_up`, `muted`) live
+ * in `message_states`; every transition is user-wins (no If-Match) and emits a `message_state`
+ * `update` change — plus the `message` update its DTO's embedded `triage` needs — through the
+ * same `change_log` seam SyncService reads. The Reply Run and Power Through are pure read views
+ * over these states + the Imbox — no separate write logic. `resurfaced` is settable here too, and
+ * it is NOT a bottom pile: it pins the row at the top of the Ohbox (`resurfaceNow`,
+ * `dto/types.ts#TriageState`).
  */
 export class TriageService {
   /**
@@ -97,17 +95,14 @@ export class TriageService {
         .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)))
         .limit(1));
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
-      /* -- A READER DOES NOT TRIAGE (mail 0083) --------------------------------------------
-       *
-       * Triage is not a label: `bubbled_up` and the pile transitions re-home mail, and the passes
-       * that act on them (`bubbleUpPass`, the re-homing below, the retro passes that follow) run
-       * on the organizer's authority against the organizer's store. A reader recording a state
-       * would be writing an intent nothing on this install will ever carry out, on a mailbox
-       * another install is actively arranging.
-       *
-       * PER MAILBOX, not per account. An account may hold several mailboxes with different roles
-       * — one organized here, one organized on somebody's laptop — and the question this door
-       * asks is about the message in front of it.
+      /**
+       * A READER DOES NOT TRIAGE (mail 0083). Triage is not a label: `bubbled_up` and the pile
+       * transitions re-home mail, and the passes that act on them run on the organizer's
+       * authority against the organizer's store. A reader recording a state would be writing an
+       * intent nothing on this install will carry out, on a mailbox another install is actively
+       * arranging. PER MAILBOX, not per account: an account may hold mailboxes with different
+       * roles — one organized here, one on somebody's laptop — and this door's question is about
+       * the message in front of it.
        */
       await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
@@ -133,46 +128,27 @@ export class TriageService {
       }).returning({ id: messageStates.id });
 
       /**
-       * ── UN-PARKING RE-HOMES THE ROW AT ITS OWN DATE, NOT AT THE TOP OF "EARLIER" ─────────
-       *
-       * Owner-ratified (2026-08-24, the §16 UI wave): a message that LEAVES a bottom pile —
-       * un-queued from Answer Later, un-parked, a booking cleared — must return to the Ohbox's
-       * "Earlier" at its CHRONOLOGICAL position, not at the top and not lost. "Earlier" is
-       * ordered by `lastReadAt` (`ohboxView`), and both stamps a parked row can carry put it
-       * somewhere wrong: the glance that preceded the parking press stamps it NOW-ish, so a
-       * three-week-old message un-parked today surfaced ABOVE yesterday's mail; and a row read
-       * in another client carries no stamp at all, which files it under everything ever
-       * stamped — effectively lost. So leaving a pile disowns the parked interlude: the row is
-       * re-stamped as though it was read when it was SENT (`lastReadAt = date`) — its
-       * chronological slot, and the idiom `readTimeOf` already uses for the
-       * account's own sent mail, whose reading order IS its send order.
-       *
-       * Scoped three ways, each deliberate:
-       *  · only the `none` transition — entering a pile keeps every stamp;
-       *  · only FROM a bottom pile (`reply_later`/`set_aside`/`bubbled_up`/`muted`) — a stray
-       *    `none` over a stateless or pinned row must not move mail the user never parked
-       *    (`spendResurface`'s release deliberately keeps its just-read NOW stamp);
-       *  · only a READ row — an unread row returns to "New for you", whose order is arrival
-       *    date already, and writing a reading stamp onto unread mail would claim a reading
-       *    that never happened.
-       *
-       * The `message` change emitted below already carries the projection, so every mirror
-       * adopts the re-homed stamp on its next drain; the client overlay writes the same value
-       * for the round trip (`mutations.ts#triage_set`, wire parity).
+       * UN-PARKING RE-HOMES THE ROW AT ITS OWN DATE, NOT AT THE TOP OF "EARLIER". A message that
+       * LEAVES a bottom pile returns to "Earlier" at its CHRONOLOGICAL position. "Earlier" orders
+       * by `lastReadAt`, and both stamps a parked row can carry are wrong: the glance before the
+       * parking press stamps it NOW-ish; a row read in another client carries no stamp —
+       * effectively lost. So leaving a pile disowns the parked interlude: `lastReadAt = date`
+       * (`readTimeOf`'s idiom). Scoped three ways: only the `none` transition; only FROM a bottom
+       * pile (a stray `none` must not move mail never parked); only a READ row — a reading stamp
+       * on unread mail claims a reading that never happened.
        */
       const LEFT_PILE = prior !== undefined
         && ["reply_later", "set_aside", "bubbled_up", "muted"].includes(prior.state);
       if (b.state === "none" && LEFT_PILE) {
         /**
-         * The scopes live IN the row predicate, atomically:
-         *  · `unread = false` — an unread row returns to "New for you"; a raced mark-unread
-         *    must not leave `unread = true` beside a fresh stamp;
-         *  · `date is not null` — a dateless row KEEPS whatever stamp it has rather than
-         *    being nulled into the unstamped basement (the very "lost" this fix removes);
-         *  · `last_read_at <= prior.setAt` — only the PARKED INTERLUDE's stamp (the glance
-         *    that preceded the parking press) is disowned. A stamp newer than the pile entry
-         *    is a fresh deliberate act — `resurface_done`'s un-awaited sibling `mark_seen`
-         *    landing first — and the later word wins whichever order the two commit in.
+         * The scopes live IN the row predicate, atomically: `unread = false` — an unread row
+         * returns to "New for you", and a raced mark-unread must not leave `unread = true` beside
+         * a fresh stamp; `date is not null` — a dateless row KEEPS whatever stamp it has rather
+         * than being nulled into the unstamped basement (the very "lost" this fix removes);
+         * `last_read_at <= prior.setAt` — only the PARKED INTERLUDE's stamp is disowned. A stamp
+         * newer than the pile entry is a fresh deliberate act — `resurface_done`'s un-awaited
+         * sibling `mark_seen` landing first — and the later word wins whichever order the two
+         * commit in.
          */
         await tx.update(messages)
           .set({ lastReadAt: msg.date, updatedAt: now })
@@ -189,44 +165,27 @@ export class TriageService {
       }
 
       /**
-       * ── RESURFACING DOES NOT TOUCH READ STATE (removed 2026-08-26) ────────────────────────
-       *
-       * This arm used to force `unread = true`, disown `lastReadAt` and queue a `\Seen` removal
-       * against the real mailbox for `state === "resurfaced"` — "unread is the one honest way
-       * this product draws an eye to a row". The idea was removed from its measured
-       * consequence: pins arrived bold whatever their real state, and reading one did not stick
-       * (the glance filter dropped the read to protect the pin, so the row turned back to
-       * unread). PLACEMENT in Resurface is the attention signal; a resurfaced message keeps its
-       * GENUINE read state, and reading it sticks like anywhere else. `bubbleUpPass` (the
-       * scheduled trigger) and `mutations.ts#triage_set` (the overlay) dropped their halves of
-       * the same stamp in the same change — no writer of the artificial mark remains.
+       * RESURFACING DOES NOT TOUCH READ STATE. This arm used to force `unread = true`, disown
+       * `lastReadAt` and queue a `\Seen` removal for `state === "resurfaced"`. Removed from its
+       * measured consequence: pins arrived bold whatever their real state, and reading one did
+       * not stick (the glance filter dropped the read to protect the pin, so the row turned back
+       * to unread). PLACEMENT in Resurface is the attention signal; a resurfaced message keeps
+       * its GENUINE read state, and reading it sticks like anywhere else. `bubbleUpPass` and
+       * `mutations.ts#triage_set` dropped their halves of the same stamp in the same change — no
+       * writer of the artificial mark remains.
        */
       await recordChange(tx, {
         accountId: ctx.accountId, entityType: "message_state", entityId: row!.id, op: "update", meta: null,
       });
 
       /**
-       * ── AND THE MESSAGE, BECAUSE ITS DTO EMBEDS THIS STATE ────────────────────────────────
-       *
-       * `MessageDTO.triage` is a projection of the row just written, so a delta that moves the
-       * row without re-emitting its projection leaves every mirror internally inconsistent: the
-       * `message_state` entity says one thing and the `message` entity's `triage` field, applied
-       * at an earlier seq and never touched again, goes on saying another.
-       *
-       * That is not a theoretical inconsistency. `selectors.ts#isResurfaced` — the whole of how
-       * the Ohbox pins a resurfaced row — reads `message.triage.state`, and the client joins
-       * nothing: `apply.ts` is a keyed upsert per (type,id) and has no business deriving one
-       * entity from another. So with only the `message_state` change on the wire, a resurfaced
-       * row pinned on the device that set it (its optimistic effect writes BOTH entities —
-       * `mutations.ts`) and pinned nowhere else, including on this device after the overlay was
-       * dropped. The two halves of the mutation meant different things.
-       *
-       * Emitted for EVERY state, not just `resurfaced`: the projection is stale after any of
-       * them, and a conditional here would be a second rule about when `message.triage` can be
-       * trusted. `MessageService.markSeen` already emits the pair for the same reason.
-       *
-       * SECOND, so the returned seq is the highest of the two — a caller that echoes it as
-       * `X-Sync-Seq` is naming the point at which BOTH changes are visible.
+       * AND THE MESSAGE, BECAUSE ITS DTO EMBEDS THIS STATE. `MessageDTO.triage` projects the row
+       * just written; moving the row without re-emitting its projection leaves every mirror
+       * inconsistent. Not theoretical: `selectors.ts#isResurfaced` reads `message.triage.state`,
+       * and `apply.ts` derives nothing from other entities — with only the `message_state` change
+       * on the wire, a resurfaced row pinned on the device that set it and nowhere else. Emitted
+       * for EVERY state: the projection is stale after any of them. SECOND, so the returned seq
+       * is the highest of the two — `X-Sync-Seq` names the point at which BOTH are visible.
        */
       const seqBig = await recordChange(tx, {
         accountId: ctx.accountId, entityType: "message", entityId: messageId, op: "update", meta: null,
@@ -319,23 +278,14 @@ export class TriageService {
   }
 
   /**
-   * Power Through — one-by-one over the "New" group (unread Ohbox / INBOX).
-   *
-   * TWO BOUNDED QUERIES, AND THE REASON IS THE PILE THIS FEATURE IS FOR.
-   *
-   * This used to be one query with NO `limit` at all: it ordered every unread INBOX id for the
-   * account, sent all N to the process, and then used exactly two things — `rows[0]` for the
-   * message on screen and `rows.length` for `remaining`. So the response is one message and a
-   * number, and the cost of producing it was the whole pile.
-   *
-   * The pile is the point. Power Through exists to clear a large inbox, so the user with the
-   * most unread mail — the one this feature is for — paid the most for every screen, and
-   * advancing repeated it: N ids, then N-1, then N-2, one full transfer per message dismissed.
-   * A big enough mailbox cannot open the feature at all.
-   *
-   * `remaining` is now a scalar `count(*)` over the same predicates, and the page query takes
-   * `limit(2)` — two rows, because "is there another after this one" is exactly what the cursor
-   * needs and one extra row answers it. Same three answers, same values, off the same index.
+   * Power Through — one-by-one over the "New" group (unread Ohbox / INBOX). TWO BOUNDED QUERIES,
+   * AND THE REASON IS THE PILE THIS FEATURE IS FOR. This was one query with NO `limit`: every
+   * unread INBOX id sent to the process, for two uses — `rows[0]` and `rows.length`. The pile is
+   * the point: Power Through exists to clear a large inbox, so the user with the most unread mail
+   * paid the most for every screen, and advancing repeated it — a big enough mailbox could not
+   * open the feature at all. `remaining` is now a scalar `count(*)` over the same predicates, and
+   * the page query takes `limit(2)` — "is there another after this one" is exactly what the
+   * cursor needs. Same three answers, same values, off the same index.
    */
   async powerThrough(ctx: ServiceContext, opts: ListOptions = {}): Promise<PowerThroughView> {
     const filters = [
