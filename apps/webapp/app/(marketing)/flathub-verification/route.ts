@@ -1,22 +1,14 @@
+import { verificationBody } from "./token";
+
 /**
- * Flathub's domain verification for `app.ohmail.desktop`.
+ * Flathub's domain verification for the `app.ohmail.Desktop` app id.
  *
  * Flathub proves an app id belongs to the domain it is named for by reading a token from
- * `/.well-known/org.flathub.VerifiedApps.txt` on that domain — `next.config.mjs` rewrites that
- * path here, because a Next route segment cannot be named `.well-known`.
- *
- * The token is read from the environment and NOT committed: a placeholder served at this path
- * would be a verification that fails while looking configured. Unset, the route is 404 — the
- * same answer the path gave before it existed — so the two states are distinguishable from the
- * outside and neither one pretends.
+ * `/.well-known/org.flathub.VerifiedApps.txt` on that domain. `next.config.mjs` rewrites that path
+ * here, because a Next route segment cannot be named `.well-known`. The token comes from the
+ * environment and is not committed; unset, this answers 404.
  */
 export const dynamic = "force-dynamic";
-
-/** Flathub's own format: one app id and its token per line. Ours is one line. */
-export function verificationBody(token: string | undefined): string | null {
-  const trimmed = token?.trim();
-  return trimmed ? `${trimmed}\n` : null;
-}
 
 export function GET(): Response {
   const body = verificationBody(process.env.FLATHUB_VERIFICATION_TOKEN);
