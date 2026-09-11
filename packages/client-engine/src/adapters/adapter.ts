@@ -27,64 +27,49 @@ export interface MutationOutcome {
   /** The X-Sync-Seq of the mutation (null when the endpoint does not echo one). */
   seq: number | null;
   /**
-   * THE SERVER'S OWN ID FOR A ROW THIS MUTATION CREATED, when the caller has to keep using it.
-   *
-   * Absent for every mutation that acts on something already named — which is nearly all of them —
-   * and for a creation whose id the caller never needs again: `tag_create` mints a client-local id
-   * for its overlay, the server's row arrives in {@link changes}, the two never coexist, and
-   * nothing asks which is which afterwards.
-   *
-   * `draft_save` is the exception, and it is a real one rather than a convenience. A compose that
-   * autosaves must go on PATCHing THE SAME ROW, and must then SEND that row — one draft from first
-   * keystroke to delivery. Without the id here the surface would have to invent one and hope, or
-   * hunt the mirror for a row that looks like what it just wrote, which is the sort of matching
-   * that eventually sends the wrong message.
+   * The server's own id for a row this mutation created, when the caller
+   * must keep using it. Absent for mutations on something already named and
+   * for creations whose id the caller never needs again (`tag_create` mints
+   * a client-local overlay id; the server's row arrives in {@link changes}).
+   * `draft_save` is the real exception: an autosaving compose must keep
+   * PATCHing the same row and then send that row — one draft from first
+   * keystroke to delivery. Without the id here the surface would hunt the
+   * mirror for a lookalike row, the matching that sends the wrong message.
    */
   entityId?: string;
   /**
-   * THE DELIVERED MESSAGE-ID of a send the server CONFIRMED sent, and present ONLY then.
-   *
-   * `mail_send` alone carries it — `POST /drafts/:id/send` answers `{status:"sent",
-   * providerMessageId}` — and only on the `sent` status, never `unverified`/`failed`/`in_flight`.
-   * It is the Message-ID header the server minted up front and appended to the Sent folder, so it
-   * is the exact `messageIdHeader` the real Sent copy will carry when the worker's Sent-folder watch
-   * ingests it minutes later. That identity is what lets the engine reconcile its optimistic Sent
-   * overlay against the real row and drop the overlay the moment a drain delivers it, rather than
-   * leaving a fabricated twin behind. Absent ⇒ the engine materialises no Sent overlay, which is
-   * exactly the FixturesAdapter's answer (the demo has no server to mint an id).
+   * The delivered Message-ID of a send the server confirmed sent — present
+   * only on `mail_send` with status `sent` (never unverified/failed/
+   * in_flight). It is the header the server minted and appended to the Sent
+   * folder, so it is the exact `messageIdHeader` the real Sent copy carries
+   * when the worker ingests it later. That identity lets the engine drop its
+   * optimistic Sent overlay the moment a drain delivers the real row instead
+   * of leaving a fabricated twin. Absent ⇒ no Sent overlay is materialised,
+   * which is the FixturesAdapter's answer (the demo mints no ids).
    */
   providerMessageId?: string | null;
   /**
-   * THE DECISION WAS ACCEPTED FOR SOMEBODY ELSE TO CARRY OUT — who, by name.
-   *
-   * `screener_decide` alone carries it, and only where the mailbox is organized by another
-   * install: the server records the decision and answers 202 instead of filing anything. Nothing
-   * moved, no rule was written, and the mail is still in the Screener folder — so this is NOT a
-   * confirmation that the decision took effect, and a surface that treats it as one would be
-   * making the claim this whole path exists to stop making.
-   *
-   * It has to travel back to the caller because the mirror cannot say it. A queued decision emits
-   * no `change_log` row anywhere, so the reconciling drain carries nothing, the optimistic overlay
-   * is dropped on confirm, and the sender reappears in the queue as though the press had never
-   * happened. This is the only evidence that it did.
-   *
-   * `name` is `null` where the holder is real but unnamed — a claim written by a version that
-   * recorded none — which is the same three-state shape every other holder sentence renders.
+   * The decision was accepted for somebody else to carry out — who, by
+   * name. Only `screener_decide` carries it, and only where the mailbox is
+   * organized by another install: the server records the decision, answers
+   * 202, nothing moved and no rule was written — this is NOT a confirmation
+   * the decision took effect. It travels back because a queued decision
+   * emits no `change_log` row, so this is the only evidence the press
+   * happened. `name` is `null` where the holder is real but unnamed — the
+   * three-state shape every holder sentence renders.
    */
   pendingWith?: { name: string | null } | null;
 }
 
 /**
- * One attachment's METADATA as the server sends it (`GET /messages/:id/attachments`).
- *
- * Deliberately the wire shape, field-for-field, including `contentType` rather than the UI's
- * `mimeType` and a nullable `filename`: the adapter's job is to read the protocol, and exactly one
- * place — `toAttachmentItem` in the engine — decides what the surface sees. Renaming here would
- * put that decision in two files and let them drift.
- *
- * `inline` is a `cid:` part referenced by the HTML body (a newsletter's logo, a signature image),
- * NOT something a user thinks of as a file. It arrives so the engine can filter on it rather than
- * guess.
+ * One attachment's metadata as the server sends it
+ * (`GET /messages/:id/attachments`). Deliberately the wire shape,
+ * field-for-field — `contentType`, not the UI's `mimeType`; a nullable
+ * `filename` — because the adapter reads the protocol and exactly one place
+ * (`toAttachmentItem` in the engine) decides what the surface sees.
+ * `inline` is a `cid:` part referenced by the HTML body (a logo, a signature
+ * image), not something a user thinks of as a file; it arrives so the engine
+ * can filter on it rather than guess.
  */
 export interface AttachmentWire {
   id: string;
@@ -107,20 +92,14 @@ export interface EngineAdapter {
   /** Fetch one /sync page. Throws CursorExpiredError on a 410 (§3.2). */
   sync(params: SyncParams): Promise<SyncResponse>;
   /**
-   * `POST /sync/pull` — ring the WORKER's doorbell (`mailboxes.sync_requested_at`) so the next
-   * IMAP scan of the caller's mailboxes happens now instead of at the poll rotation's leisure.
-   *
-   * This is the half of "pull to refresh" that {@link sync} cannot be: a drain answers "show me
-   * what the worker already has", and a user who was just told "I sent it" is asking about mail
-   * the worker has NOT seen yet. The gesture rings this first, then drains as it always did; the
-   * arrivals reach the mirror through the ordinary wake channel a few seconds later.
-   *
-   * `requestedAt` is the honest-settle baseline: a mailbox whose `lastSyncAt` moves past it has
-   * been scanned since the pull (the worker stamps woken visits eagerly).
-   *
-   * OPTIONAL, for the reason {@link fetchBodies} is: absence is a real answer. The
-   * FixturesAdapter has no server and no worker — the demo is self-contained and must issue zero
-   * requests — and a caller treats absence as "this world has no doorbell", never as an error.
+   * `POST /sync/pull` — ring the worker's doorbell
+   * (`mailboxes.sync_requested_at`) so the next IMAP scan happens now: a
+   * drain shows what the worker already has, and the user is asking about
+   * mail it has not seen. The gesture rings this, then drains; arrivals use
+   * the ordinary wake channel. `requestedAt` is the honest-settle baseline:
+   * a mailbox whose `lastSyncAt` moves past it has been scanned since the
+   * pull. Optional — the FixturesAdapter must issue zero requests, and
+   * callers read absence as "no doorbell here".
    */
   requestPull?(): Promise<{
     requested: number;
@@ -141,22 +120,13 @@ export interface EngineAdapter {
   mutate(m: EngineMutation, opts: { idempotencyKey: string }): Promise<MutationOutcome>;
   /**
    * Fetch one message's body text, or `null` when this adapter serves no
-   * bodies at all.
-   *
-   * `null` is the FixturesAdapter's answer and it is not a stub: the demo world's message
-   * rows carry `body` in the mirror already, so there is nothing to fetch and nothing that
-   * may touch the network — the demo is self-contained. The engine writes no record for a
-   * `null`, which
-   * keeps `?demo=1` at exactly zero requests — `demo-zero-network.test.ts` asserts it.
-   *
-   * It is on the ADAPTER rather than beside the surfaces because there are four surfaces
-   * and one protocol. `GET /messages/:id/body` existed, spend-gated and contract-tested,
-   * with zero callers for the whole of Stage 2; the reason every pile rendered a one-line
-   * snippet was that nothing in the client had ever asked.
-   *
-   * A rejection MUST throw rather than resolve empty — the engine turns a throw into a
-   * `failed` record and the surface says so. Resolving `{text: ""}` on a 500 would render
-   * an empty message as though that were the mail.
+   * bodies at all. `null` is the FixturesAdapter's answer and not a stub:
+   * demo rows carry `body` in the mirror already, and the engine writes no
+   * record for a `null`, keeping `?demo=1` at exactly zero requests
+   * (`demo-zero-network.test.ts` asserts it). It sits on the adapter because
+   * there are four surfaces and one protocol. A rejection MUST throw rather
+   * than resolve empty — the engine turns a throw into a `failed` record;
+   * resolving `{text: ""}` on a 500 would render an empty message as mail.
    */
   fetchBody(messageId: string): Promise<MessageBodyWire | null>;
 
@@ -172,27 +142,14 @@ export interface EngineAdapter {
   fetchDraftBody?(draftId: string): Promise<string | null>;
 
   /**
-   * `GET /messages/bodies?ids=…` — EVERY body a thread needs, in ONE request.
-   *
-   * Opening a conversation asks for the opened message and each of its siblings, and until this
-   * existed that was N calls issued from one effect: a thread of eight opened eight requests
-   * through a four-wide limiter, so the last two siblings waited for a whole round trip before
-   * their fetch even started, and the reader watched the stack fill in in visible steps.
-   *
-   * OPTIONAL, for the reason `searchServer` and `listMessages` are: absence is a real answer, not
-   * a broken adapter. The FixturesAdapter has no server — the demo is self-contained and must
-   * issue zero requests — so it keeps NOT having this, and {@link OhmailEngine.hydrateThread}
-   * falls back to asking per message rather than pretending the capability is there.
-   *
-   * ── WHAT IT MAY AND MAY NOT ANSWER ────────────────────────────────────────────────────────
-   *
-   * Rows come back keyed by `messageId` and in ANY order. An id the server does not own is simply
-   * absent — not `null`, not an error — so the caller matches on the id and falls back per message
-   * for anything unanswered. That fallback is what makes a server which ignores the parameter
-   * (an older deploy) merely slower rather than a thread of empty messages.
-   *
-   * A rejection THROWS, exactly as `fetchBody` does, and the engine turns it into a `failed`
-   * record for every id in the batch — the same state each of them would have reached alone.
+   * Fetch one message's body text, or `null` when this adapter serves no
+   * bodies at all. `null` is the FixturesAdapter's answer, not a stub: demo
+   * rows carry `body` in the mirror, and the engine writes no record for a
+   * `null`, keeping `?demo=1` at zero requests
+   * (`demo-zero-network.test.ts`). On the adapter because there are four
+   * surfaces and one protocol. A rejection MUST throw, never resolve empty:
+   * the engine turns a throw into a `failed` record; `{text: ""}` on a 500
+   * would render an empty message as though that were the mail.
    */
   fetchBodies?(messageIds: string[]): Promise<MessageBodyBatchWire[] | null>;
 
@@ -208,22 +165,14 @@ export interface EngineAdapter {
   searchServer?(query: string, opts: ServerSearchOpts): Promise<ServerSearchWire | null>;
 
   /**
-   * `GET /search?address=&direction=from` — every message in the archive FROM one address, or
-   * absent when this client has no archive.
-   *
-   * Optional on `searchServer`'s rule, and a SEPARATE member rather than a parameter on it: the
-   * two answer different questions (an equality on one column against a tokenized full-text
-   * ranking) and return different shapes, and an adapter may legitimately have one and not the
-   * other — a wrapper that forwards capabilities explicitly forwards them one at a time, and a
-   * build that predates this arm has the text search alone. `null` means "no archive here";
-   * `{items: []}` means the archive answered and this address sent nothing. The two must never
-   * be conflated.
-   *
-   * ONLY THE `from` DIRECTION IS ANSWERABLE, so the direction is not an argument. The
-   * recipients live in two unindexed JSONB columns on the server and an `OR` across the two
-   * questions loses the sender index as well, so the route refuses the other directions by
-   * name; the implementation sends `direction=from` always and the wire says which direction
-   * came back. See {@link ServerAddressWire}.
+   * `GET /messages/bodies?ids=…` — every body a thread needs in one request
+   * (a thread of eight once issued eight calls through a four-wide
+   * limiter). Optional: the FixturesAdapter issues zero requests, and
+   * {@link OhmailEngine.hydrateThread} falls back to asking per message.
+   * Rows come back keyed by `messageId` in any order; an unowned id is
+   * simply absent (not `null`, not an error), and the per-message fallback
+   * makes an older server merely slower. A rejection throws, and the engine
+   * fails every id in the batch.
    */
   searchAddressServer?(address: string, opts: ServerAddressOpts): Promise<ServerAddressWire | null>;
 
@@ -241,17 +190,14 @@ export interface EngineAdapter {
 
   // ── attachments ──────────────────────────────────────────────────────────
   //
-  // ohmail STORES NO ATTACHMENT BYTES. Metadata is synced at ingest and lives server-side; the
-  // bytes are fetched from the user's own IMAP mailbox at the moment they are asked for, held for
-  // the session, and never written anywhere. That is why this is three methods and not a field on
-  // MessageDTO: `listAttachments` is a cheap row read, and the two byte methods each open a real
-  // IMAP connection to the user's mail server.
-  //
-  // ALL THREE ARE OPTIONAL, for the reason `searchServer` is: absence is a real answer. The
-  // FixturesAdapter has no server to fetch from, and a `?demo=1` tab must issue zero requests
-  // — the demo is self-contained — so it must keep NOT having these, and the surface reads
-  // their absence as
-  // "this client cannot open attachments" instead of rendering a control that cannot work.
+  // ohmail stores no attachment bytes: metadata is synced at ingest; the
+  // bytes are fetched from the user's own IMAP mailbox when asked for, held
+  // for the session, never written anywhere. Hence three methods and not a
+  // field on MessageDTO — `listAttachments` is a cheap row read, the two
+  // byte methods each open a real IMAP connection. All three are optional:
+  // absence is a real answer (the FixturesAdapter must issue zero requests),
+  // and the surface reads absence as "this client cannot open attachments"
+  // instead of rendering a control that cannot work.
 
   /**
    * `GET /messages/:id/attachments` — metadata for one message, WITHOUT fetching any bytes.

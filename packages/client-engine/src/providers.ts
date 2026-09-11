@@ -1,69 +1,12 @@
 /**
- * The mailbox providers the app offers to connect, and what each one needs.
- *
- * ── WHY THIS LIVES IN THE CLIENT ENGINE, WHICH IS THE ONE PLACE ALL FOUR SURFACES REACH ──
- *
- * FOUR surfaces now ask somebody which mailbox they have: the hosted client's first-run step,
- * its Settings → Mailboxes pane, the desktop app's local door, and the phone's standalone
- * door. A second copy for any of them would be a second answer to "which providers work and
- * what host do they use", drifting in whichever direction nobody looked.
- *
- * The phone is what moved it here: a vendor name must never appear in the phone app's own
- * sources, so the labels and hosts below cannot be written there — and the web client's shell
- * is not a package, so the React Native bundler cannot import it either. `@ohmail/client-engine`
- * is the one module every client already depends on, and the web shell's own providers module
- * re-exports this file, so no existing import moved.
- *
- * ITS ONLY IMPORT IS `domainOfAddress`, and that is deliberate: the engine already answers "what
- * is this address's domain" for the consent cutline, and a second answer here would be a second
- * rule for the same question, drifting the day one of them learned about a new address shape.
- *
- * ── THE LIST IS NOT INVENTED HERE ────────────────────────────────────────────────────────
- *
- * It is exactly the list `messages/en.json` → `providers` already names, in the
- * same order, plus the generic "any IMAP server" that section's `any` line promises. That
- * matters more than it looks: the landing is a public claim about what works, so a provider
- * offered here that is not on the landing is a claim nobody reviewed, and a provider on the
- * landing that is missing here is a promise the product does not keep. A parity check asserts
- * the two lists are the same set, and it bites in both directions.
- *
- * ── APP PASSWORDS, HONESTLY ──────────────────────────────────────────────────────────────
- *
- * ohmail connects over IMAP with a password. For every provider below that means an APP
- * PASSWORD (a provider-issued, revocable, per-application secret) and not the account
- * password — several of them will not accept the account password at all once 2FA is on,
- * and telling someone to type their real password into a third-party form would be
- * indefensible advice even where it works.
- *
- * `note` is what the user is told, and it is written to be TRUE for that provider today.
- * Microsoft in particular gets the landing's own caveat repeated rather than softened: we
- * connect over IMAP like everything else, native Graph sync is not shipped, and app
- * passwords require security defaults to be off — which for many tenants means it will not
- * work, and saying so before someone types credentials is better than a failed connection.
- *
- * ── OAUTH: MICROSOFT ONLY, AND ONLY WHERE IT IS ACTUALLY CONFIGURED ─────────────────────
- *
- * This paragraph used to read "An OAuth auth kind is described in the mailbox API and nothing
- * implements it". That stopped being true and is corrected here rather than left to mislead the
- * next reader: the Microsoft consent ceremony IS implemented end to end
- * (`packages/api/src/routes/mailbox-oauth.ts`), and Microsoft is the provider that most needs
- * it — Microsoft has been switching basic authentication off, and on the tenants where it is
- * already off the app-password row below cannot connect at all.
- *
- * The rule the old paragraph was really protecting is the one that survives, and it is
- * unchanged: NO BUTTON THAT CANNOT WORK. The Outlook affordance is not rendered from this
- * table. `MailboxSection` asks `GET /mailboxes/oauth/microsoft/availability` and shows it only
- * when that answers `true`, which is the same predicate `POST …/start` enforces
- * (`microsoftOAuthAvailable`) — so a deployment with no application registration shows no
- * button, rather than a button that 503s. A failed availability read leaves it hidden.
- *
- * GMAIL STILL HAS NONE, and the original reasoning stands for it: Google's OAuth app needs a
- * verification we have not done, so a "Sign in with Google" button would be exactly the
- * misleading thing that paragraph refused. Gmail is app-password only.
- *
- * The `note` on each row below is the APP-PASSWORD path. It stays for every provider, including
- * Microsoft, because plenty of tenants still allow it — but where the Outlook sign-in is
- * available it is the better door, and the Microsoft note says so without promising it is there.
+ * The mailbox providers the app offers to connect, and what each needs.
+ * Four surfaces ask, and the phone may not carry vendor names in its own
+ * sources, so the list lives in the one package every client imports; the
+ * web shell re-exports it. It is exactly `messages/en.json` → `providers`,
+ * same order plus the generic IMAP entry (a parity check bites both ways).
+ * Every `note` is the app-password path, written to be true today. OAuth is
+ * Microsoft-only and gated live by `GET …/oauth/microsoft/availability` —
+ * no button that cannot work; Gmail stays app-password only.
  */
 
 import { domainOfAddress } from "./consent-cutline.js";
@@ -197,38 +140,24 @@ export const providerById = (id: string): ProviderPreset =>
   PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[PROVIDERS.length - 1]!;
 
 /**
- * THE HOSTS A NEWLY CHOSEN PRESET IMPOSES — which, for the generic entry, is NEITHER OF THEM.
- *
- * All three connect surfaces answer a provider choice by writing the preset's hosts into their
- * form state. For the seven NAMED presets that is the whole point: the host is a fact the app
- * knows and the person does not have to type. The generic entry's hosts are the empty string —
- * it has nothing to say about them, which is exactly why it renders the fields — and copying
- * that emptiness over the form DELETED WHAT SOMEBODY HAD ALREADY TYPED.
- *
- * It is reachable without changing your mind about anything. The picker is a radiogroup whose
- * checked tile is the group's tab stop, so Space or Enter on it re-fires the choice; so does
- * clicking the tile you already chose, which is a natural thing to do when a submit has just
- * failed and the error banner sits directly above the provider grid. Both wiped the IMAP and
- * SMTP hosts, silently, from fields far enough down the form to be off screen — and the next
- * submit then failed for a missing host the person could see themselves having typed.
- *
- * So: a preset with a host imposes it, and a preset without one leaves what is there. Empty is
- * not a value here; it is the absence of one, and absence must not overwrite.
+ * The hosts a newly chosen preset imposes — for the generic entry, neither.
+ * Named presets write their hosts into the form; the generic entry's hosts
+ * are empty strings, and copying that emptiness deleted what somebody had
+ * typed. Reachable without changing your mind: the checked tile is the
+ * radiogroup's tab stop, so Space/Enter or a click re-fires the choice —
+ * both wiped IMAP and SMTP hosts silently, off screen. A preset with a host
+ * imposes it; one without leaves what is there. Empty is not a value here;
+ * absence must not overwrite.
  */
 /**
- * ── PROVENANCE IS THE WHOLE RULE, AND LEAVING IT OUT WAS A CREDENTIAL LEAK ──────────────────
- *
- * The first version of this took only the current values and kept them whenever the incoming
- * preset had none. That is wrong in a way that is worse than the bug it fixed, and a review
- * caught it: the form's host field does not record WHO put the value there. Choose Gmail (the
- * form fills in `imap.gmail.com`), then choose "any other IMAP mailbox" — the generic preset has
- * no host, so the Gmail host was kept, and the fields now show a host the person never typed,
- * pre-filled and easy to miss. They then enter THEIR OWN server's password and submit, and the
- * probe dials Gmail with it.
- *
- * So the previous choice is a parameter. Values are the person's own exactly when the previous
- * choice was ALSO the manual entry — every other value in that field was put there by a preset,
- * and a preset's value must never survive into a different provider's attempt.
+ * Provenance is the whole rule; leaving it out was a credential leak: the
+ * host field does not record who put the value there. Choose Gmail (form
+ * fills `imap.gmail.com`), then "any other IMAP mailbox" (no host) — the
+ * Gmail host survived, pre-filled and easy to miss; the person typed their
+ * own server's password and the probe dialed Gmail with it. The previous
+ * choice is a parameter: values are the person's own exactly when the
+ * previous choice was also manual — a preset's value never survives into a
+ * different provider's attempt.
  */
 export const hostsFor = (
   next: ProviderPreset,

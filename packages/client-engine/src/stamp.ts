@@ -1,71 +1,24 @@
 /**
- * ═══ WHEN A MESSAGE ARRIVED, AS A READER READS IT — every stamp in the product, from here ═══
- *
- * A time of day used to be composed in seven places across three packages, and the copies had
- * already drifted in the way that matters: two of them asked `Intl` for `hour12: false`, which is
- * NOT a synonym for a 24-hour clock — it resolves to h24 on some builds and renders midnight as
- * "24:10". Six sites carried a hand-written repair for that; the seventh did not, and it also read
- * the BROWSER's zone rather than the reader's, so it was the one stamp in the product that could
- * disagree with every other stamp beside it about what time it was.
- *
- * So there is one module. Every hour in the tree goes through {@link clock}.
- *
- * ── THE BANDS, AND WHY THERE ARE THREE OF THEM ──────────────────────────────────────────────
- *
- * A list is scanned by its stamps, so each band shows the least that still tells rows apart:
- *
- *   · the same calendar day  → `09:12` — the day is not in question, only the time;
- *   · the last six days      → `Mon 09:12` — a weekday name is unique for six days and repeats on
- *                              the seventh, which is exactly where this band ends;
- *   · beyond                 → `2 Aug`, and `30 Dec 2025` outside the current year, because a bare
- *                              day-and-month on a message from another year is the same ambiguity
- *                              in a slower form.
- *
- * The middle band used to be the weekday ALONE, and the time simply vanished from a message the
- * moment the reader's midnight passed. The shape now is a superset: a message stamped `09:12`
- * today reads `Fri 09:12` tomorrow and keeps its time for six days.
- *
- * `Yesterday 09:12` was considered and is not what this does. It is a word among numbers and
- * abbreviations, it is the widest non-dated stamp on the list, and it would need a catalogue this
- * package deliberately does not have — the whole reason the shape is weekday-plus-clock is that
- * `Intl` names the weekday and the digits come from the reader's own zone, so no translation
- * exists to go missing.
- *
- * ── TWO PARTS, NEVER ONE COMBINED PATTERN ───────────────────────────────────────────────────
- *
- * `weekdayClock` asks `Intl` for the WEEKDAY and composes the clock itself, rather than asking for
- * one formatter with both. A combined German pattern renders `Sa., 00:07` — a comma the caller
- * never chose and cannot remove — and the separator would then vary by locale in a column that is
- * read by its shape. The weekday is a word and belongs to `Intl`; the clock is digits and belongs
- * to the reader's zone.
- *
- * ── AND THE CLOCK IS NEVER `Intl`-FORMATTED ─────────────────────────────────────────────────
- *
- * {@link clock} reads {@link zonedFields}, which already pins `hourCycle: "h23"` and folds a 24
- * hour back to 0, and pads the two numbers itself. That is what makes it exact rather than
- * approximately right: there is no second formatter for the hour to come out of wrong, and the
- * separator is ours, which is what the callers that put a weekday or a date in front of it depend
- * on. A 24-hour clock in both languages is deliberate — this product has two locales carrying no
- * region, and ICU resolves a bare `en` to a 12-hour cycle, which would be a guess about the reader
- * rather than a fact about them.
+ * When a message arrived, as a reader reads it — every stamp in the product;
+ * every hour goes through {@link clock} (`hour12: false` is not a 24-hour
+ * clock and once rendered "24:10"). Three bands: same calendar day → `09:12`;
+ * last six days → `Mon 09:12` (a weekday repeats on the seventh, where the
+ * band ends); beyond → `2 Aug`, with the year outside the current one.
+ * `weekdayClock` asks Intl only for the weekday and composes the clock itself
+ * (a combined German pattern renders `Sa., 00:07`); the clock is never
+ * Intl-formatted — `zonedFields` pins h23; deliberate, as bare `en` is 12-hour.
  */
 import { zonedDayNumber, zonedFields } from "./zone.js";
 import type { EngineMessage } from "./types.js";
 
 /**
- * THE DAY AND MONTH NAMES, FROM `Intl`, IN THE CALLER'S LOCALE AND THE READER'S ZONE.
- *
- * Three hardcoded English arrays used to stand here, and they are the most-repeated words in the
- * product: every message row outside today renders one, every Receipts day heading renders one, and
- * every screened-out sender carries one. A German reader saw "Tue", "Thursday" and "2 Aug".
- *
- * THE LOCALE IS A PARAMETER AND DEFAULTS TO ENGLISH, which is what keeps this package free of an
- * i18n dependency: it has no catalogue, no provider and no opinion about language, and its own
- * tests keep asserting the English strings they always did. The web app is the caller that passes
- * a reader's locale.
- *
- * Cached by locale-and-zone-and-shape: constructing a formatter is the expensive part and these
- * are called once per visible row.
+ * Day and month names from Intl, in the caller's locale and the reader's
+ * zone — three hardcoded English arrays once stood here, the most-repeated
+ * words in the product (a German reader saw "Tue" and "2 Aug"). The locale
+ * is a parameter defaulting to English, which keeps this package free of an
+ * i18n dependency: no catalogue, no provider; the web app passes the
+ * reader's locale. Cached by locale-zone-shape — constructing a formatter is
+ * the expensive part and these run once per visible row.
  */
 const NAMERS = new Map<string, Intl.DateTimeFormat>();
 

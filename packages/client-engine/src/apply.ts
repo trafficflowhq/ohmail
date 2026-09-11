@@ -1,19 +1,14 @@
 import type { SyncChange, SyncResponse } from "./types.js";
 
 /**
- * The idempotent apply core (contract §3.3) — a direct port of the convergence
- * semantics the Cloud service proves against its own apply harness. The five
- * rules below are the whole of that contract, restated here in full so this
- * file stands on its own:
- *
- *   1. sort the merged buckets by ascending `seq` (the order of record);
+ * The idempotent apply core (contract §3.3), a port of the Cloud service's
+ * proven convergence semantics. The whole contract:
+ *   1. sort merged buckets by ascending `seq`;
  *   2. apply keyed on (type,id) as an idempotent upsert;
- *   3. never let an older-or-equal seq overwrite (out-of-order / duplicate guard);
- *   4. delete ⇒ tombstone (entity:null); a LATER create resurrects;
- *   5. move ⇒ upsert the carried entity, or patch `folder` onto the local base.
- *
- * Applying the same page twice, pages out of order, or a shuffled stream all
- * converge to the same state.
+ *   3. never let an older-or-equal seq overwrite;
+ *   4. delete ⇒ tombstone (entity:null); a later create resurrects;
+ *   5. move ⇒ upsert the carried entity, or patch `folder` onto the base.
+ * The same page twice, pages out of order, or a shuffled stream all converge.
  */
 
 export interface MirrorRecord {

@@ -1,26 +1,12 @@
 /**
- * A DURABLE WRITE THAT DID NOT LAND SAYS SO.
- *
- * Every store the durability slice added swallowed its own write failure, so in a private window
- * or against a full quota a "durable" decision silently became the in-memory one it replaced —
- * with the undo window still on offer over a record nobody holds. The class shares one property:
- * the caller could not tell "persisted" from "not". So a write answers, the caller degrades (see
- * the webapp's `screener-state.ts#decide` and `delete-undo.ts`), and the shell says once that
- * this browser is not keeping decisions between reloads.
- *
- * The signal is a `window` event rather than a callback set because a store here is a plain
- * function called from a key handler, with no React on either side; `window` is the one bus the
- * store and the shell both already reach. The NOTICE is once per session — a latch, not a
- * counter — while the event fires on every lost write, because each caller has its own
- * degradation to run.
- *
- * ── WHY IT LIVES IN THIS PACKAGE ────────────────────────────────────────────────────────────
- *
- * It was written in `apps/webapp/app/shell`, and three published roots outside that app went on
- * writing storage directly because no package may import from an app. This is the client's
- * storage layer and every one of those roots already reaches it, so the door sits here and the
- * webapp file is a re-export: one door, one latch, one event name, for the browser client, the
- * shared UI package (through the `StorageDoor` shape it declares itself) and the desktop window.
+ * A durable write that did not land says so. Stores once swallowed their own
+ * write failures, so in a private window or over a full quota a "durable"
+ * decision silently became in-memory. Now a write answers, the caller
+ * degrades (`screener-state.ts#decide`, `delete-undo.ts`), and the shell says
+ * once per session that decisions are not being kept. The signal is a
+ * `window` event — stores are plain functions with no React on either side;
+ * the notice is a latch, the event fires per lost write. It lives here
+ * because no package may import from an app; the webapp file re-exports it.
  */
 
 /** Did the value reach the jar. */
@@ -226,18 +212,14 @@ export function localStorageDoor(store: string): StorageDoor {
 }
 
 /**
- * THE INDEXEDDB ARM: A TRANSACTION IS THE UNIT OF DURABILITY, so it is the transaction that
- * answers.
- *
- * A `put` or `delete` on an object store returns immediately and its request's error is only half
- * the story — a quota refusal, an `InvalidStateError` on a closing connection or an explicit
- * `abort()` all settle as the TRANSACTION aborting, and only a completed transaction means the
- * bytes are on disk. So the door is here rather than around each request: every write the caller
- * staged either landed together or did not land at all, which is the same all-or-nothing shape
- * the mirror's persistence contract already assumes.
- *
- * It ANSWERS and does not swallow: the caller still throws on "lost" (see `idb.ts#commit`), so
- * the recovery above it runs exactly as it did before this door existed. Nothing here retries.
+ * The IndexedDB arm: the transaction is the unit of durability, so the
+ * transaction answers. A `put` returns immediately and its request error is
+ * half the story — quota refusals, `InvalidStateError` on a closing
+ * connection and explicit `abort()` all settle as the transaction aborting,
+ * and only a completed transaction means bytes on disk. Every write the
+ * caller staged either landed together or not at all — the mirror's
+ * all-or-nothing persistence shape. It answers, never swallows: the caller
+ * still throws on "lost" (`idb.ts#commit`). Nothing here retries.
  */
 export function durableIdbCommit(tx: IDBTransaction, store: string): Promise<DurableWrite> {
   return new Promise((resolve) => {

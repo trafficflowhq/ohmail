@@ -29,25 +29,14 @@ const CURSOR_KEY = "cursor";
 const OWNER_KEY = "__owner";
 
 /**
- * THE CROSS-TAB WIPE FENCE — *no store may write against a baseline another tab has emptied.*
- *
- * A counter bumped by every write that EMPTIES this database — {@link IndexedDbMirrorStore.wipe}
- * and the foreign-owner clear in `bindOwner` — inside the same transaction that does the
- * emptying. Each store instance remembers the value it last saw, and {@link
- * IndexedDbMirrorStore.persist} re-reads it INSIDE its own write transaction and refuses to write
- * against a stale one.
- *
- * ── WHY IT HAS TO BE READ INSIDE THE WRITE TRANSACTION ──────────────────────────────────────
- *
- * The database is shared by every tab on this origin holding this account, and a `410` in one tab
- * wipes it under all the others. A check before the transaction opens is a check against a value
- * that can change before the write lands, which is the shape of the defect rather than a fix for
- * it. IndexedDB serializes readwrite transactions over the same object stores, so a read of this
- * key inside the transaction is the only observation of the baseline that the write is guaranteed
- * to be consistent with.
- *
- * Like {@link OWNER_KEY} it is this store's own bookkeeping: `load()` strips it, so it can never
- * reach `getMeta` and from there a selector.
+ * The cross-tab wipe fence: no store may write against a baseline another
+ * tab has emptied. A counter bumped, inside the emptying transaction, by
+ * every write that empties this database (wipe, the foreign-owner clear in
+ * `bindOwner`); `persist` re-reads it inside its own write transaction and
+ * refuses a stale one. Inside, not before: a 410 in one tab wipes under the
+ * others, and IndexedDB serializes readwrite transactions, so the
+ * in-transaction read is the only observation the write is guaranteed
+ * consistent with. Like {@link OWNER_KEY}, `load()` strips it.
  */
 const GEN_KEY = "__gen";
 

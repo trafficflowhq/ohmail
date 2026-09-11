@@ -3,15 +3,13 @@ import { isCarriedLocalType, isProtectedMessage } from "./types.js";
 import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js";
 
 /**
- * THE DURABLE BASELINE THIS STORE WAS WRITING AGAINST IS GONE.
- *
- * Thrown by a `persist` implementation that reads a GENERATION STAMP inside its own write
- * transaction and finds a different one — i.e. another tab wiped the shared database between this
- * store's last read of it and this write. It is not a storage failure and it is not the caller's:
- * the write was refused because its baseline was superseded, and {@link BaseMirrorStore.flush}
- * turns it into a recovery rather than an error (see the persistence contract).
- *
- * A store with no such stamp (memory, and any single-process backend) never throws it.
+ * The durable baseline this store was writing against is gone. Thrown by a
+ * `persist` that reads a generation stamp inside its own write transaction
+ * and finds a different one — another tab wiped the shared database between
+ * this store's last read and this write. Not a storage failure and not the
+ * caller's: the baseline was superseded, and {@link BaseMirrorStore.flush}
+ * turns it into a recovery rather than an error (see the persistence
+ * contract). A store with no such stamp (memory, single-process) never throws.
  */
 export class MirrorGenerationChanged extends Error {
   constructor(readonly expected: number, readonly found: number) {

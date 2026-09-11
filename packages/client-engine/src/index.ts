@@ -1,13 +1,11 @@
 /**
- * @ohmail/client-engine — the delta-first client spine (brief §4), shared by the
- * web app now and mirrored by the native SwiftData port later:
- *
- *   MirrorStore  — IndexedDB (web) / in-memory (SSR, tests) local mirror with
- *                  the idempotent, seq-guarded apply the backend tests prove;
- *   Adapters     — FixturesAdapter (?demo + UI tests) and HttpAdapter (the real
- *                  /sync + mutation protocol) behind ONE interface;
+ * @ohmail/client-engine — the delta-first client spine (brief §4):
+ *   MirrorStore  — IndexedDB (web) / in-memory (SSR, tests) local mirror
+ *                  with the idempotent, seq-guarded apply;
+ *   Adapters     — FixturesAdapter (?demo + UI tests) and HttpAdapter (the
+ *                  real /sync + mutation protocol) behind one interface;
  *   OhmailEngine — bootstrap → drain → apply, optimistic mutation queue
- *                  (user-always-wins), wake-signal hook, instant local search.
+ *                  (user-always-wins), wake-signal hook, local search.
  */
 export const ENGINE_VERSION = "0.1.0";
 

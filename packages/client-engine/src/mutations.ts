@@ -18,34 +18,25 @@ import {
 } from "./types.js";
 
 /**
- * The reply subject for a parent subject — `Re: ` exactly once. DEFINED IN
- * `@trafficflow/core/reply-subject` now, and re-exported here because this module's consumers —
- * the compose window, `engine.ts`, and two suites — have always imported it from this file.
- *
- * It moved because a SECOND surface composes replies now and cannot reach this package: the away
- * responder is reply-only (no subject of its own, derived from the message it answers) and runs in
- * `packages/services` on three hosts, none of which may import the browser engine. Two copies of
- * "`Re: ` exactly once" is how `Re: RE: Re:` ships on the one reply in the product that no human
- * reads before it leaves. The subpath is a dependency-free source leaf, so this import costs the
- * browser bundle nothing — see the module's own header for why it is not on the `mail` barrel here.
+ * The reply subject for a parent subject — `Re: ` exactly once. Defined in
+ * `@trafficflow/core/reply-subject`, re-exported here because this module's
+ * consumers have always imported it from this file. It moved because the
+ * away responder also composes replies and runs in `packages/services`,
+ * which may not import the browser engine; two copies of "`Re: ` exactly
+ * once" is how `Re: RE: Re:` ships on the one reply no human reads before
+ * it leaves. The subpath is a dependency-free source leaf.
  */
 export { replySubject };
 
 /**
- * The forward subject for an original's subject — `Fwd: ` exactly once.
- *
- * THE CLIENT OWNS THIS, and that is not an accident of layering: `SendService` builds the outgoing
- * message with `subject: d.subject` — the draft row's subject, verbatim — and adds no prefix of its
- * own. So if this were left out, a forward would go out under the original's bare subject and the
- * recipient would have no way to tell a forward from a fresh message. Everything ELSE about a
- * forward is the server's (the quoted body, the streamed attachments, the `no_forward` refusal);
- * the subject line is the one part the compose form is authoritative for, because it is the one
- * part the user may edit before sending.
- *
- * Same shape as {@link replySubject} and for the same reasons: case-insensitive, so a chain through
- * an Outlook correspondent does not accumulate `Fwd: FW: FWD: …`, and only the LEADING run of
- * prefixes is collapsed. `Fw:` and `Fwd:` are both stripped because both are in wide use, and both
- * normalise to the one form this app writes. A subject that merely contains "fw:" is untouched.
+ * The forward subject — `Fwd: ` exactly once. The client owns this:
+ * `SendService` sends the draft row's subject verbatim and adds no prefix,
+ * so without it a forward would leave under the original's bare subject.
+ * The subject is the one part of a forward the compose form is authoritative
+ * for, because it is the one part the user may edit. Same shape as
+ * {@link replySubject}: case-insensitive so an Outlook chain does not
+ * accumulate `Fwd: FW: FWD:`, only the leading run collapsed; `Fw:` and
+ * `Fwd:` both normalise to the one form this app writes.
  */
 export function forwardSubject(originalSubject: string): string {
   const bare = originalSubject.replace(/^(?:\s*fwd?\s*:\s*)+/i, "").trim();

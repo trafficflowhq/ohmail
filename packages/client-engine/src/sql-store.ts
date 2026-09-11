@@ -4,23 +4,14 @@ import { BaseMirrorStore } from "./store.js";
 import type { Cursor } from "./types.js";
 
 /**
- * The SQL-backed mirror — the React Native arm of {@link BaseMirrorStore}, beside the browser's
- * `IndexedDbMirrorStore` (idb.ts). Same layout, same discipline, different persistence engine:
- *
- *   - table `entities`: key "type:id" → the MirrorRecord as JSON (tombstones INCLUDED — they
- *     carry the seq guard that makes replays converge);
- *   - table `meta`: key → JSON value; the /sync cursor lives at "cursor", the ownership stamp
- *     at "__owner".
- *
- * The SQL engine itself is INJECTED, never imported: the app hands in expo-sqlite, tests hand in
- * `node:sqlite`. That keeps this module free of Node built-ins and browser globals — it runs on
- * Hermes, in node, and in a browser test unchanged — and it keeps the engine's published bundle
- * free of a native dependency it can never satisfy. The injection seam is {@link SqlExecutor},
- * kept to the two operations the store actually needs.
- *
- * JSON at rest is not a compromise over IndexedDB's structured clone: every record the mirror
- * holds was born as JSON off the /sync wire (or written by `putLocal` as a plain object), so the
- * round trip is exact.
+ * The SQL-backed mirror — the React Native arm of {@link BaseMirrorStore},
+ * beside the browser's `IndexedDbMirrorStore` (idb.ts). Table `entities`
+ * keys "type:id" → MirrorRecord JSON (tombstones included — they carry the
+ * seq guard); table `meta` holds the /sync cursor at "cursor" and the
+ * ownership stamp at "__owner". The SQL engine is injected, never imported
+ * (app: expo-sqlite; tests: `node:sqlite`) — the seam is
+ * {@link SqlExecutor}, two operations, no Node built-ins. JSON at rest is
+ * exact: every record was born as JSON off the /sync wire.
  */
 
 /** What a bound parameter may be. Everything this store writes is TEXT, but the seam allows
@@ -41,22 +32,14 @@ export interface SqlStatement {
 }
 
 /**
- * THE INJECTED SQL ENGINE — the whole of what `SqlMirrorStore` asks of its host.
- *
- * Two operations, and the second one carries the store's central obligation:
- *
- *   - `all` reads rows;
- *   - `batch` executes a list of statements ATOMICALLY — every statement lands or none does.
- *
- * `batch`'s atomicity is not an optimization, it IS the delta-first contract's step 3: a /sync
- * page and its cursor advance in one `batch` call, so a crash between them is not a state the
- * mirror can be in (the twin of idb.ts's single readwrite transaction). An executor that runs
- * the statements outside a transaction has broken the store, whatever else works —
- * `sql-store.test.ts` sweeps every failure point to hold this.
- *
- * Implementations are one screen each: over expo-sqlite, `withTransactionAsync` around
- * `runAsync`; over `node:sqlite`, `BEGIN IMMEDIATE` / `COMMIT` with `ROLLBACK` on throw.
- * Both may be fully synchronous under the Promise types — the store never assumes latency.
+ * The injected SQL engine — all `SqlMirrorStore` asks of its host: `all`
+ * reads rows; `batch` executes a list of statements atomically. That
+ * atomicity IS the delta-first contract's step 3: a /sync page and its
+ * cursor advance in one `batch`, so a crash between them is not a state the
+ * mirror can be in (the twin of idb.ts's single readwrite transaction). An
+ * executor that runs statements outside a transaction has broken the store
+ * — `sql-store.test.ts` sweeps every failure point. Implementations are one
+ * screen each and may be fully synchronous under the Promise types.
  */
 export interface SqlExecutor {
   all(sql: string, params?: ReadonlyArray<SqlValue>): Promise<ReadonlyArray<SqlRow>>;
@@ -68,20 +51,14 @@ export interface SqlExecutor {
 
 export interface SqlMirrorStoreOptions {
   /**
-   * THE ACCOUNT THIS MIRROR BELONGS TO — a server-verified account id, never a client guess.
-   * Required unless {@link SqlMirrorStoreOptions.dbName} is given. Exactly
-   * `IndexedDbMirrorStoreOptions.owner`, and both of its jobs carry over verbatim:
-   *
-   *  1. it NAMES the database ({@link mirrorDbName} — the same derivation the browser arm
-   *     uses), so two accounts on one device open two different databases and can never see
-   *     each other's cursor or records;
-   *  2. it is STAMPED inside the database and checked on every open, so a database whose name
-   *     says one account and whose contents were written by another is wiped rather than read.
-   *
-   * On mobile one device holds mirrors for accounts on DIFFERENT servers, and two servers'
-   * opaque account ids may collide — so the caller composes the owner string from
-   * (origin, account id), not the account id alone. The stamp then does for a server switch
-   * what it does for an account switch: a mismatch costs a re-bootstrap, never a bleed.
+   * The account this mirror belongs to — a server-verified account id,
+   * never a client guess; required unless
+   * {@link SqlMirrorStoreOptions.dbName} is given. Exactly
+   * `IndexedDbMirrorStoreOptions.owner`: it names the database
+   * ({@link mirrorDbName}) so two accounts open two databases, and it is
+   * stamped inside and checked on every open. On mobile two servers' ids
+   * may collide, so the caller composes the owner from (origin, account
+   * id); a server switch costs a re-bootstrap, never a bleed.
    */
   owner?: string;
   /**
@@ -124,18 +101,14 @@ export class SqlMirrorStore extends BaseMirrorStore {
   private db: SqlExecutor | null = null;
   private opening: Promise<SqlExecutor> | null = null;
   /**
-   * TRUE from the moment a flush FAILED until the next successful rehydration — the guard that
-   * keeps a later cursor from committing over a hole.
-   *
-   * `BaseMirrorStore.applyResponse` advances the in-memory records and cursor BEFORE the flush,
-   * so a persist that dies leaves memory one page ahead of disk. The page's own failure is
-   * surfaced and harmless — a reload replays it. What is NOT harmless is the write after it: a
-   * RETRY drains from the in-memory cursor, fetches the NEXT page, and flushes that page's rows
-   * with that page's cursor — past rows that never reached sqlite. The seq guard cannot help
-   * (the rows are absent, not stale), so the mirror settles into a permanently truncated state
-   * that looks healthy. Poisoning every subsequent write until `load()` has re-read the disk
-   * (re-syncing memory with persisted truth, so the hole is re-fetched) makes that state
-   * unreachable. Found by review, held by the "poisons the store" case in `sql-store.test.ts`.
+   * True from a failed flush until the next successful rehydration — keeps
+   * a later cursor from committing over a hole. `applyResponse` advances
+   * memory before the flush, so a dead persist leaves memory a page ahead
+   * of disk; a retry would flush the NEXT page past rows that never reached
+   * sqlite, and the seq guard cannot help (rows absent, not stale) — a
+   * truncated mirror that looks healthy. Poisoning every write until
+   * `load()` re-reads the disk makes that unreachable. Held by the "poisons
+   * the store" case in `sql-store.test.ts`.
    */
   private torn = false;
 
@@ -164,28 +137,22 @@ export class SqlMirrorStore extends BaseMirrorStore {
   private closed = false;
 
   /**
-   * Open lazily, once: create the schema, then bind ownership — BEFORE the handle is published,
-   * and therefore before `load()` can read a record out of it. An ownership check that ran
-   * after hydration would be a check on data already in memory and already renderable.
-   *
-   * A FAILED open does not latch: the promise is cleared so the next call retries against a
-   * host whose storage may have recovered. It also never falls back to anything — a store that
-   * cannot open REJECTS, and the composition above decides what a user sees. Quietly handing
-   * back an empty in-memory mirror here would be the cold-mirror trap the mobile ruling names
-   * (risk 1): an app that looks freshly installed over a mailbox that is actually on the device.
+   * Open lazily, once: create the schema, then bind ownership — before the
+   * handle is published, so before `load()` can read a record out of it.
+   * A failed open does not latch: the promise clears so the next call
+   * retries against storage that may have recovered. It never falls back:
+   * a store that cannot open rejects, and the composition above decides
+   * what a user sees — quietly handing back an empty in-memory mirror is
+   * the cold-mirror trap the mobile ruling names (risk 1).
    */
   private open(): Promise<SqlExecutor> {
-    // ── A CLOSED STORE IS CLOSED FOR GOOD ─────────────────────────────────────────────────
-    //
-    // `close()` used to null the handle and nothing more, so any later call simply opened the
-    // database again — which on this arm means CREATING it. That turned a forget into a race:
-    // the connection layer closes the store, the mirror is deleted and read back as absent, the
-    // screen says the mail is gone, and then a mutation that was still in flight settles,
-    // touches the store, and recreates the same database with its outbox and its pages in it.
-    // No debt is left to delete it, because the forget had already cleared one.
-    //
-    // So the latch is permanent for this instance. A new session builds a new store — which is
-    // what every caller here already does — and this one never speaks to sqlite again.
+    // A closed store is closed for good. `close()` once only nulled the
+    // handle, so any later call reopened — on this arm, CREATED — the
+    // database: a forget became a race where an in-flight mutation settled
+    // after the wipe and recreated the database, outbox and pages included,
+    // with no debt left to delete it. The latch is permanent for this
+    // instance; a new session builds a new store (which every caller here
+    // already does), and this one never speaks to sqlite again.
     if (this.closed) return Promise.reject(new Error(SQL_MIRROR_CLOSED));
     if (this.db) return Promise.resolve(this.db);
     if (!this.opening) {
@@ -216,15 +183,13 @@ export class SqlMirrorStore extends BaseMirrorStore {
   }
 
   /**
-   * Claim this database for {@link owner}, or empty it first — idb.ts's `bindOwner`, verbatim
-   * in behaviour. Three cases, and the middle one is the whole point:
-   *
-   *  - **unstamped** — a database this build has never opened. Claim it.
-   *  - **stamped with somebody else** — should be unreachable, because the account is part of
-   *    the name. Unreachable states are exactly the ones worth handling: WIPE, then claim, in
-   *    ONE atomic batch — a wipe that landed without its claim would leave the database empty
-   *    and claimable, which is the state this mechanism exists to make impossible.
-   *  - **stamped with us** — the ordinary path, one extra indexed read per open.
+   * Claim this database for {@link owner}, or empty it first — idb.ts's
+   * `bindOwner`, verbatim in behaviour. Three cases: unstamped — claim it;
+   * stamped with somebody else — should be unreachable since the account is
+   * part of the name, and unreachable states are the ones worth handling:
+   * wipe then claim in ONE atomic batch (a wipe landing without its claim
+   * would leave the database empty and claimable); stamped with us — the
+   * ordinary path, one extra indexed read per open.
    */
   private async bindOwner(db: SqlExecutor): Promise<void> {
     if (this.owner === null) return;

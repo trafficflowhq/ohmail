@@ -1,52 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE NOTIFICATION GATE — one decision, shared by every surface that can draw a notice
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * Desktop, browser and phone all answer the same three questions before anything is drawn: is
- * this allowed, what happened, and what may the notice say. Answering them in three places would
- * mean three chances to forget the master switch — and "fully off" has to mean NO code path
- * fires, which is a property of the whole tree rather than of any one emitter.
- *
- * So this module owns the decision and owns no platform. It opens no window, imports nothing
- * from a runtime, and composes no localized string: it returns a SPEC describing what happened,
- * and each surface renders that spec in its own catalogue and its own notification API. That
- * split is what lets `notifications-gate-census` insist there is exactly one emitter per surface
- * and that each one passes through here.
- *
- * ── WHY THE TEXT IS COMPOSED ON THE DEVICE, AND CANNOT BE ANYTHING ELSE ───────────────────
- *
- * On the hosted door a notification begins as a push wake, and that wake is a closed fifteen-byte
- * constant — no subject, no sender, no count, and no account-derived value anywhere on the wire.
- * It is held that way by a census over the sender's own source, which is watched red by threading
- * a subject through it, and that census does not move. So the EVENT TYPE cannot travel either:
- * "a Screener arrival" is metadata about somebody's mail.
- *
- * The wake therefore says only "something changed". The device syncs, compares what it now holds
- * against what it held before, and decides here. Which is why this function takes two snapshots
- * and not an event: there is no event to receive.
- *
- * The happy consequence is that the shipping privacy sentence — "Notifications carry no mail
- * content — your device fetches privately" — is literally true of this code rather than a
- * promise about it. Nothing in a notice ever came off the wire as a notice.
- *
- * ── WHAT A NOTICE MAY SAY ─────────────────────────────────────────────────────────────────
- *
- * The project's stated invariants say nothing about notifications specifically, so the rule below
- * is derived from the two that bear on it — mail on a standalone install never reaches our
- * servers, and an account's mail is reachable by that account's own people and by nobody else —
- * and pinned here:
- *
- *  · never a body or a snippet, on any door, under any setting;
- *  · sender and subject only on a device that ALREADY HOLDS the message — which, after the sync
- *    above, is the only device composing anything;
- *  · and not by default. {@link NotificationChannels.showSenderAndSubject} is off out of the box,
- *    because a notification is read by whoever is looking at the screen and that is not always
- *    the mailbox's owner. {@link decideNotices} strips both fields when it is off, so a surface
- *    CANNOT render what it was not given.
- *
- * That last point is the reason stripping happens here and not in the emitters: a rule enforced
- * at the point of use is a rule three files have to remember.
+ * The notification gate — one decision, shared by every surface that can
+ * draw a notice. It owns no platform: it returns a spec, each surface
+ * renders it in its own catalogue and API, and the notifications-gate
+ * census insists on one emitter per surface, all through here. Text is
+ * composed on the device: a push wake is a closed fifteen-byte constant, so
+ * the device syncs and compares two snapshots — there is no event. Never a
+ * body or snippet; sender and subject only on a device already holding the
+ * message and only when `showSenderAndSubject` is on (off by default).
  */
 
 /** The four things worth interrupting somebody for. */
@@ -61,23 +21,14 @@ export const NOTICE_EVENTS: readonly NoticeEvent[] = [
 ] as const;
 
 /**
- * THE EVENTS SOME SURFACE CAN ACTUALLY DELIVER TODAY.
- *
- * Not a preference and not a roadmap — a statement about which emitters exist. It is here, beside
- * the vocabulary, because the Settings pane must offer a switch for an event only if turning that
- * switch on changes something. A control whose every position means the same thing is the exact
- * defect this whole surface was built to remove, and it comes back the moment the vocabulary
- * grows faster than the emitters do.
- *
- * Only `ohbox` qualifies at present: the desktop's unread sink draws it, and the browser's
- * service worker draws the closed-window case for it. A Screener arrival, a scheduled send's
- * outcome and a pairing event are all modelled by {@link decideNotices} and all currently reach
- * no emitter — so the pane withholds their switches rather than offering three controls that
- * cannot act.
- *
- * A census over the emitters' own source keeps this list honest in both directions: an event
- * listed here that no emitter names fails, and so does an emitter that draws an event this list
- * does not admit.
+ * The events some surface can actually deliver today — a statement about
+ * which emitters exist, not a preference or a roadmap. The Settings pane
+ * offers a switch only for an event whose position changes something. Only
+ * `ohbox` qualifies at present (the desktop's unread sink, the browser
+ * service worker's closed-window case); screener, scheduled and pairing are
+ * modelled by {@link decideNotices} but reach no emitter, so their switches
+ * are withheld. A census over the emitters' own source keeps this list
+ * honest in both directions.
  */
 export const DELIVERABLE_EVENTS: readonly NoticeEvent[] = ["ohbox"] as const;
 
@@ -108,16 +59,13 @@ export interface NotificationChannels {
 }
 
 /**
- * WHAT A FRESH INSTALL BELIEVES.
- *
- * The master is ON and the two events a person is waiting for are ON, because an app that has to
- * be configured before it can tell you mail arrived is not doing the job. `scheduled` is on too:
- * a send that did NOT happen is the one outcome silence reports wrongly.
- *
- * `pairing` defaults ON because it is a security event — a new device reaching your mailbox is
- * something you want to hear about even when you did it yourself. `showSenderAndSubject` defaults
- * OFF: a notification is read by whoever is looking at the screen, and that is not always the
- * person the mail was addressed to.
+ * What a fresh install believes: the master and the two events a person is
+ * waiting for are on — an app that needs configuring before it can say mail
+ * arrived is not doing the job. `scheduled` is on: a send that did not
+ * happen is the one outcome silence reports wrongly. `pairing` is on because
+ * a new device reaching your mailbox is a security event.
+ * `showSenderAndSubject` is off: a notification is read by whoever is
+ * looking at the screen, not always the person the mail was addressed to.
  */
 export const DEFAULT_CHANNELS: NotificationChannels = {
   master: true,
@@ -169,15 +117,14 @@ export type NoticeSpec =
   | { event: "pairing"; kind: "paired" | "revoked"; device?: string };
 
 /**
- * THE GATE. Everything that draws a notice comes through here.
- *
- * `before === null` means this surface has not sampled yet, and the answer is always nothing: an
- * app opened with eleven unread messages has not just received eleven. Seeding rather than
- * notifying on the first sample is the difference between a mail client and an alarm.
- *
- * Returns `[]` — never throws, never partially applies a rule — when notifications are off,
- * unpermitted, or nothing happened. A caller that ignores the empty array draws nothing, which
- * is the correct failure direction for a feature whose defect mode is interrupting people.
+ * The gate. Everything that draws a notice comes through here. `before ===
+ * null` means this surface has not sampled yet and the answer is always
+ * nothing: an app opened with eleven unread messages has not just received
+ * eleven — seeding, not notifying, on the first sample. Returns `[]` (never
+ * throws, never partially applies a rule) when notifications are off,
+ * unpermitted, or nothing happened; ignoring an empty array draws nothing,
+ * the correct failure direction for a feature whose defect mode is
+ * interrupting people.
  */
 export function decideNotices(
   before: NoticeSnapshot | null,

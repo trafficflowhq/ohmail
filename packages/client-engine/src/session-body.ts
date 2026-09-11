@@ -1,54 +1,12 @@
 /**
- * THE CONTENT DOOR'S ON-DEMAND ARM — one session-body pattern for every body read the mirror
- * does not answer.
- *
- * ── THE TWO ARMS, STATED ONCE ───────────────────────────────────────────────────────────────
- *
- * Every body read in the system is one of exactly two shapes:
- *
- *  · MIRROR-RESIDENT — the message is in the mirror, so the body is fetched through
- *    {@link OhmailEngine.hydrateBody} (admission decided by `bodyPlan`, single-flight on the
- *    request map, urgent-jumps-queue) and PERSISTED as a `message_body` record. The reading
- *    pane and thread siblings live here.
- *  · ON-DEMAND — the row deliberately never enters the mirror (a reach-past page from beyond
- *    the local window; the junk window's live view of the provider's own \Junk), so the body
- *    is fetched on open, held for THIS SESSION in memory, and NEVER persisted: closing the app
- *    forgets it, which is exactly the lifetime the rows themselves have.
- *
- * This module is the on-demand arm's ONE implementation. The pattern was proven by the junk
- * window and restated by the reach-past door, at which point it existed twice, each copy
- * carrying independently-review-caught fixes the other had to re-learn (the StrictMode
- * double-dispatch, the superseded ask's late failure overwriting a delivered retry). A third
- * surface would have made a third copy. Surfaces now bind a TRANSPORT (which wire carries the
- * bytes) and a RENDERING (what their pane makes of the held phases); the mechanics live here:
- *
- *  · SINGLE-FLIGHT, decided against this module's OWN map, synchronously, before anything
- *    suspends — never inside a React state updater. An updater must stay pure: under
- *    `<StrictMode>` React invokes updaters twice in development, and a first draft that
- *    dispatched the fetch inside one issued TWO requests per open — the generation guard
- *    discarded the loser's ANSWER but the wire had already been billed twice (review-caught).
- *  · ONE ASK PER KEY PER SESSION: `loading` and a settled answer are both answers. A human
- *    Retry (`retry: true`) REPLACES `loading` and `failed` — the press must dispatch even
- *    while a hung first ask is still in flight (measured: the stall face's Retry did nothing
- *    until a reload) — but never a SETTLED outcome: a settled body renders no Retry, so a
- *    re-ask would be a poll with nobody behind it.
- *  · PER-KEY ASK GENERATION: each dispatch takes the key's next generation, and a completion
- *    landing after a newer ask took over is DROPPED — a hung first request's late rejection
- *    must not overwrite the retry's delivered body with `failed`.
- *  · The `attempt` on `loading` is that generation, so a preview can REMOUNT its body anatomy
- *    per try — a retry that reused the mount kept the expired stall timer's "failed" face over
- *    the live second request (review-caught).
- *
- * KEYS are the caller's: the reach-past door keys by message id; the junk window keys by
- * `mailboxId:uidValidity:uid`, epoch-scoped, because a UID names a message only within one
- * UIDVALIDITY — a key without the epoch would alias a recreated folder's reused numbers onto
- * the old rows' cached bodies (the stale body under the new subject).
- *
- * The transport-side counterpart is not here and must not be: which store answers — the
- * mirror, or a forward to the hosted account for a row the mirror never held — is the
- * sidecar's routing decision (`cloud-read.ts` and its engine's fall-through), pinned by its
- * own censuses. Above that seam there are exactly two wire routes (`GET /messages/:id/body`,
- * `GET /messages/bodies`), unchanged by this module's existence.
+ * The on-demand session-body arm: bodies for rows that never enter the
+ * mirror (reach-past pages, the junk window) are fetched on open, held for
+ * this session, never persisted; mirror-resident reads use
+ * `OhmailEngine.hydrateBody`. Single-flight is decided on this module's own
+ * map, synchronously, never in a React updater (StrictMode runs them
+ * twice). One ask per key per session; Retry replaces `loading`/`failed`,
+ * never a settled answer; per-key generations drop superseded completions
+ * and `attempt` remounts a preview per try. Keys include uidValidity.
  */
 
 import type { UnsubscribeHeaderState, WithheldMarker } from "./types.js";

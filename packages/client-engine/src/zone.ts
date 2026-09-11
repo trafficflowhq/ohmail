@@ -1,34 +1,12 @@
 /**
- * AN INSTANT, READ AS A WALL CLOCK IN A NAMED ZONE — and back again.
- *
- * Every date the engine and the app store is a UTC instant, and that does not change. What changes
- * is that a stamp on screen must be read in the READER's zone: a message that arrived at
- * 2026-08-11T14:32Z is "16:32" to someone in Zurich, and it is on the NEXT calendar day to someone
- * in Auckland. Three questions follow from that, and this file is the only place any of them is
- * answered:
- *
- *  · what wall clock does this instant show there — {@link zonedFields};
- *  · which calendar day is it there, so "today / this week / dated" can band on the reader's
- *    midnights rather than UTC's — {@link zonedDayNumber}, {@link zonedWeekday};
- *  · and the inverse, which is the one with teeth: what UTC instant is 09:00 there —
- *    {@link zonedInstant}.
- *
- * ── WHY THE INVERSE IS NOT `utc + offset` ───────────────────────────────────────────────────
- *
- * A zone's offset is not a constant. Zurich is +01:00 for half the year and +02:00 for the other
- * half, so a resurface preset that adds a fixed offset to a UTC midnight is wrong by an hour on one
- * side of every DST transition, and the transition is exactly when nobody is testing. Worse, the
- * offset is a function of the INSTANT, and minting a wall clock means we do not have the instant
- * yet — that is the circularity. {@link zonedInstant} resolves it by iterating: guess the instant
- * with the offset that applies at the naive one, then re-read the offset AT THAT GUESS and correct.
- * Two passes settle every real zone, because the correction only ever moves the instant by the size
- * of a DST shift and the offset is locally constant on either side of one.
- *
- * ── AND WHY `Intl` RATHER THAN A ZONE LIBRARY ───────────────────────────────────────────────
- *
- * The platform ships the IANA database, keeps it updated with the OS, and this package takes no
- * dependencies it does not have to — it is bundled into the desktop app. `formatToParts` with a
- * `timeZone` is the whole mechanism; everything here is arithmetic on the six numbers it returns.
+ * An instant, read as a wall clock in a named zone — and back again. Stored
+ * dates stay UTC instants; a stamp on screen is read in the reader's zone:
+ * the wall clock there ({@link zonedFields}), the calendar day there
+ * ({@link zonedDayNumber}, {@link zonedWeekday}), and the inverse — what
+ * UTC instant is 09:00 there ({@link zonedInstant}). The inverse is not
+ * `utc + offset`: the offset depends on the instant being minted, so
+ * zonedInstant guesses at the naive offset, re-reads at the guess, corrects
+ * — two passes settle every real zone. Intl: the platform ships IANA.
  */
 
 /** An instant's wall-clock fields in some zone. `month` is 1-12; `hour` is 0-23. */
@@ -140,16 +118,13 @@ export interface ZonedWallClock {
 }
 
 /**
- * The UTC instant at which `zone` reads the given wall clock.
- *
- * The inverse of {@link zonedFields}, and the function every resurface preset is built on: "09:00
- * tomorrow" is a wall clock, and what gets stored is the instant. See the file header for why the
- * second pass is not redundant.
- *
- * A wall clock that does not exist — 02:30 on a spring-forward morning — answers the instant the
- * clock jumps to (03:30), and one that happens twice answers the SECOND, standard-time occurrence.
- * Neither is reachable from this product, whose presets all mint 09:00; both are pinned in
- * `test/zone.test.ts` so they stay decisions rather than accidents.
+ * The UTC instant at which `zone` reads the given wall clock — the inverse
+ * of {@link zonedFields}, and what every resurface preset is built on
+ * ("09:00 tomorrow" is a wall clock; the instant is what gets stored). A
+ * wall clock that does not exist (02:30 on a spring-forward morning) answers
+ * the instant the clock jumps to; one that happens twice answers the second,
+ * standard-time occurrence. Neither is reachable from this product's
+ * presets; both are pinned in `test/zone.test.ts` so they stay decisions.
  */
 export function zonedInstant(wall: ZonedWallClock, zone: string): Date {
   const naive = Date.UTC(

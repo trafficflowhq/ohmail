@@ -32,29 +32,14 @@ export function retryAfterMsOf(res: Response): number | null {
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 /**
- * WRAP A READ TRANSPORT SO A `503` THAT NAMES A `Retry-After` IS ASKED AGAIN.
- *
- * ── WHAT IT RETRIES, AND WHY THE BODY IS NEVER READ ─────────────────────────────────────────
- *
- * The decision is STATUS plus HEADER: a 503 carrying a parseable `Retry-After`, which is the API's
- * `db_busy` shape (`middleware.ts#dbBusyResponse`) and nothing else — a 503 from a misconfigured
- * host names no interval and is handed straight back. Reading `code: "db_busy"` out of the body
- * would consume the stream of the very response a give-up has to return intact.
- *
- * The wait is `min(header, cap)` on the mutation queue's own clamp, because a proxy is free to
- * name a week and a client that honours it has stopped asking.
- *
- * ── A WRITE IS REFUSED, NOT PASSED THROUGH ──────────────────────────────────────────────────
- *
- * An automatic second attempt is safe here only because the request is a GET. A wrapper that
- * quietly forwarded a POST would be an invisible duplicate-delivery machine the day somebody
- * routed a mutation through it, so anything but GET throws before it reaches the transport. An
- * ABSENT method is a GET — that is `fetch`'s own default and the shape the roster polls use.
- *
- * ── GIVING UP RETURNS THE LAST ANSWER ───────────────────────────────────────────────────────
- *
- * Not a throw and not a synthetic status: the caller's existing derivation of "the server is not
- * answering" already reads that 503, so the give-up arm needs no new state anywhere.
+ * Wrap a read transport so a 503 naming a `Retry-After` is asked again. The
+ * decision is status plus header — the API's `db_busy` shape
+ * (`middleware.ts#dbBusyResponse`); a 503 naming no interval is handed back.
+ * The body is never read — that would consume the stream of the response a
+ * give-up must return intact. The wait is `min(header, cap)`. Only GET
+ * passes: an automatic second attempt is safe only for reads, so anything
+ * else throws before the transport (an absent method is a GET, fetch's own
+ * default). Giving up returns the last answer — callers already read that 503.
  */
 export function retryingRead<I>(
   inner: (url: string, init?: I) => Promise<Response>,
