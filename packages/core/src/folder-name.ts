@@ -10,7 +10,8 @@
  *
  * Because it re-exports (`./types.js`) rather than defining, this subpath carries a `node`
  * condition naming its compiled twin: Node resolves the `.ts`, strips the types, and then cannot
- * find `./types.js` beside it. Bundlers read `default` and still get this file.
+ * find `./types.js` beside it. Only Node takes the twin — `types` is ahead of it and `default`
+ * behind it, so every typecheck and every bundler still get this file.
  */
 export {
   FOLDER_PATH_MAX,
