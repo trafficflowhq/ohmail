@@ -122,20 +122,21 @@ export type MessageAction =
 export const MOVE_TARGETS: MoveTarget[] = ["ohbox", "reads", "receipts", "screened", "spam"];
 
 /**
- * The same verbs, over a selection. Declared beside {@link MessageAction} rather than in the
- * view that renders the bulk bar, because the point is ONE vocabulary: the selection used to
- * offer only ⇧U and Escape; it gets the action bar's own grouping minus the one verb that
- * cannot mean anything over a set. `later`/`aside`/`resurface` — the three horizons, unchanged.
- * `move:<view>` — this message relocated, per message, no rule. `read`/`unread` — DIRECTIONS,
- * not a toggle, the one deliberate divergence: one message has a read state to flip, a
- * selection has a MIXED one, and "toggle eleven messages" would mark six read and five unread
- * in one gesture. `delete` — the set filed to the provider's native \Trash, one
- * `message_delete` per id, through the SAME delayed-commit window a single delete opens
- * (`delete-undo.ts`): a member of this union, not a separate callback, because it IS the same
- * verb over more rows — one window, one toast, one Undo; the ask belongs to the surface, the
- * only dispatch site stays the window. Screening is NOT in this union: a decision about
- * senders with a consent ceremony of its own, so it travels as its own callback — folding it in
- * would be the design error the ruling names by name.
+ * The same verbs, over a selection. Declared beside {@link MessageAction} rather than in the view that renders the
+ * bulk bar, because the point is ONE vocabulary: the selection used to offer only ⇧U and Escape; it gets the action
+ * bar's own grouping minus the one verb that cannot mean anything over a set. `later`/`aside`/`resurface` — the three
+ * horizons, unchanged. `move:<view>` — this message relocated, per message, no rule. `read`/`unread` — DIRECTIONS,
+ * not a toggle, the one deliberate divergence: one message has a read state to flip, a selection has a MIXED one, and
+ * "toggle eleven messages" would mark six read and five unread in one gesture.
+ */
+
+/**
+ * `delete` — the set filed to the provider's native \Trash, one `message_delete` per id, through the SAME
+ * delayed-commit window a single delete opens (`delete-undo.ts`): a member of this union, not a separate callback,
+ * because it IS the same verb over more rows — one window, one toast, one Undo; the ask belongs to the surface, the
+ * only dispatch site stays the window. Screening is NOT in this union: a decision about senders with a consent
+ * ceremony of its own, so it travels as its own callback — folding it in would be the design error the ruling names
+ * by name.
  */
 export type BulkAction =
   | "later"
