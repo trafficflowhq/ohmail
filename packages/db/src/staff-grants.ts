@@ -272,38 +272,14 @@ export interface StaffCapability {
 const SCHEMA_LIST = STAFF_SCHEMAS.map((s) => `'${s}'`).join(", ");
 
 /**
- * THE CENSUS. One statement, one round trip, and it asks about **both of the connection's
- * identities** — `current_user` AND `session_user` — so the answer is the connection's own,
- * not a claim made on its behalf by a privileged observer, and not a claim made by a costume.
- *
- * ── WHY `session_user` IS IN EVERY PREDICATE ───────────────────────────────────────────────
- *
- * The census used to key every question on `current_user` alone. That attests the role the
- * connection is WEARING, not the role it IS: a login role with `ALTER ROLE … SET role =
- * ohmail_admin` connects with `current_user = ohmail_admin` (blind — every bite refuses, the
- * census matches the allowlist exactly) while `session_user` remains the wrapper, and one
- * `SET ROLE NONE` — which needs no privilege at all — recovers the wrapper's own capabilities
- * on the same attested connection. A `DATABASE_URL_ADMIN` handed out as "blind" would not be.
- *
- * So `me` now enumerates BOTH identities (one row when they agree, which is the only
- * legitimate state), every `has_*_privilege` / `pg_has_role` / ownership / attribute question
- * is asked of each — whatever `SET ROLE NONE` could recover is precisely `session_user`'s
- * effective privilege set, so guarding SET ROLE is a matter of enumerating it, not of trying
- * to intercept the statement — and a dedicated `session` row names the mismatch itself, so
- * the headline failure reads as one line rather than as a pile of the wrapper's columns.
- * Membership checks over `pg_roles` cover the predefined roles (`pg_read_all_data` and kin)
- * for both identities, because they are ordinary `pg_roles` rows. For the legitimate direct
- * `ohmail_admin` login the two identities coincide, `me` is one row, and the census is
- * byte-identical in cost and result to the single-identity version.
- *
- * `pg_catalog` is world-readable, which matters: `information_schema` filters its rows BY the
- * caller's privileges, so a role asking it about itself sees only what it already has and
- * could never discover a relation it must not reach. The enumeration therefore comes from
- * `pg_class`/`pg_attribute` and the PRIVILEGE comes from `has_*_privilege`.
- *
- * `WHERE false` is not needed and not possible here: nothing in this query reads an
- * application row. It is catalog scans and privilege lookups, all of them cached in the
- * backend's syscache after the first.
+ * THE CENSUS. One statement, asked about BOTH identities — `current_user` AND `session_user` — so
+ * the answer is the connection's own, not a claim made by a costume. Keyed on `current_user`
+ * alone it attested the role the connection is WEARING: a wrapper login connects blind while
+ * `session_user` remains the wrapper, and one unprivileged `SET ROLE NONE` recovers the wrapper's
+ * capabilities. Every question is asked of BOTH identities, with a `session` row naming any
+ * mismatch. `pg_catalog` is world-readable, which matters: `information_schema` filters rows BY
+ * the caller's privileges, so the enumeration comes from `pg_class`/`pg_attribute` and the
+ * privilege from `has_*_privilege`.
  */
 export const STAFF_CAPABILITY_SQL = `
 with me as (
