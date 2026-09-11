@@ -250,17 +250,13 @@ function advanceTimeTrigger(trigger: TimeTrigger, now: Date): WorkflowTrigger {
 }
 
 /**
- * The TIME-TRIGGER scan — the `bubbleUpPass` sibling. It finds enabled,
- * non-deleted `time` workflows whose `nextRunAt <= now` and, for each, enqueues ONE
- * `pending` workflow_run AND advances/clears `nextRunAt` — both in ONE tx under a
- * GUARDED UPDATE that RE-ASSERTS the observed `nextRunAt` (exactly like `bubbleUpPass`
- * re-asserts `state='bubbled_up'`). A concurrent scan (worker cycle + this cron backstop)
- * that already advanced the trigger matches 0 rows and enqueues nothing, so a double
- * scan can NEVER double-enqueue. The enqueued run's `trigger` snapshots the FIRING
- * trigger; the drain then executes it under the sensitivity gates. A future
- * `nextRunAt` is not due and is left untouched.
- *
- * Pure and hermetic: db/tx executor + clock, so a test drives it against PGlite.
+ * The time-trigger scan, sibling of `bubbleUpPass`. For each enabled `time`
+ * workflow with `nextRunAt <= now` it enqueues one `pending` workflow_run and
+ * advances or clears `nextRunAt`, both in one tx under a guarded update that
+ * re-asserts the observed `nextRunAt`. A concurrent scan that already advanced
+ * the trigger matches 0 rows and enqueues nothing, so a double scan cannot
+ * double-enqueue. The run's `trigger` snapshots the firing trigger; the drain
+ * executes it under the sensitivity gates. Pure: db executor + clock.
  */
 export async function workflowTimeScanPass(
   db: Tx, deps: { accountId?: string }, now: Date = new Date(),
