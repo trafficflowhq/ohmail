@@ -1,35 +1,14 @@
 "use client";
 
 /**
- * SPLITTING ONE SENDER BY SUBJECT — the detection, and the plan.
- *
- * The requirement, in the words it arrived in: `info@sichersatt.ch` sends the invoice AND the
- * nightly `[NinjaFirewall]` alert, and a sender rule can only say one thing about that address. So
- * pressing a message's TITLE offers a rule with two terms — *from this address AND with this in the
- * subject* — and the sheet has to guess the second term well enough that the answer is one press.
- *
- * ── WHY THE TOKEN IS DETECTED AND NOT TYPED ─────────────────────────────────────────────────
- *
- * A free-text box asking somebody to invent a substring is a box that gets `Alert` typed into it,
- * which then also catches `Alert: your invoice is overdue`. The repeating token is already in the
- * data: the sender puts it there, in every message of that kind, so the mirror can find it. The
- * sheet therefore offers ONE detected token and the message's own subject as the fallback, and both
- * are shown in full before anything is written.
- *
- * ── THE DETECTION IS DELIBERATELY CONSERVATIVE ──────────────────────────────────────────────
- *
- * `null` — no token offered — is a perfectly good answer and the sheet says so. A wrong token is
- * much worse than none: it writes a rule that either catches too much (mail the user did not mean
- * moves, retroactively) or too little (the rule looks written and does nothing). The three refusals
- * that follow from that are in {@link detectSubjectToken}: a candidate must appear in ANOTHER
- * message from the same sender, it must not be the whole subject, and it must clear a length floor.
- *
- * ── PURE, AND THAT IS THE POINT ─────────────────────────────────────────────────────────────
- *
- * Everything here is a function of its arguments — the reader is passed in, never captured — so the
- * detection can be driven over a corpus of real subject lines without a DOM, an engine or a router.
- * `SubjectRuleSheet` renders what this returns and `AppShell` dispatches it, exactly as
- * `sender-screening.ts` is arranged.
+ * Splitting one sender by subject — the detection and the plan. `info@sichersatt.ch` sends the
+ * invoice AND the nightly `[NinjaFirewall]` alert, and a sender rule can only say one thing about
+ * that address; pressing a message's title offers a rule with two terms — from this address AND with
+ * this in the subject — and the sheet must guess the second term well enough that the answer is one
+ * press. The token is detected, not typed: a free-text box gets `Alert` typed into it, which also
+ * catches `Alert: your invoice is overdue`; the repeating token is already in the data. Detection is
+ * conservative — `null` is a good answer and the sheet says so ({@link detectSubjectToken}). Pure:
+ * the reader is passed in, never captured — `SubjectRuleSheet` renders, `AppShell` dispatches.
  */
 import {
   FOLDER_OF_VIEW,
@@ -81,34 +60,14 @@ export const MIN_SUBJECT_TOKEN_CHARS = 3;
 export const MAX_SUBJECT_TERM_CHARS = 200;
 
 /**
- * The candidate tokens a single subject offers, best first.
- *
- * Two shapes, and no others:
- *
- *  · **A bracketed run** — `[NinjaFirewall]`, `(Ticket #4)`, `{alerts}`. This is how machines tag
- *    their own mail, and it is the shape with the highest hit rate in the measured corpus. Brackets
- *    are INCLUDED in the token: `[NinjaFirewall]` is a far more specific test than `NinjaFirewall`,
- *    which would also match a human writing about the plugin.
- *  · **A leading label** — everything before the first `:`, `-`, `–`, `|` or `»`, when there is one.
- *    `Rechnung 2026-08 / …` and `Alert: …` are this shape. Taken only from the FRONT, because a
- *    separator in the middle of a sentence is punctuation and not a label.
- *
- * ── THE ORDER IS BY CLASS FIRST, AND "LONGEST" ONLY WITHIN A CLASS ─────────────────────────
- *
- * The first draft sorted purely by length, and the guard caught it: for
- * `[NinjaFirewall] Alert: brute-force attempt blocked`, the leading label is
- * `[NinjaFirewall] Alert` — LONGER than the bracketed token, and offered ahead of it. That is the
- * wrong answer, and not by a little: the sender writes `[NinjaFirewall] Notice:` and
- * `[NinjaFirewall] Weekly:` too, so a rule keyed on the label catches one flavour of the alert and
- * silently leaves the rest in the Ohbox. The user would have written a rule, watched some of the
- * mail move, and had no way to see why the rest did not.
- *
- * A bracketed run is the sender's own DELIBERATE tag; a leading label is an inference from
- * punctuation. So brackets rank above labels always, and length decides only between two of the same
- * kind — where it is the right tie-break, because the longer bracketed run is the more specific tag.
- *
- * Everything here reads a string a STRANGER wrote, so every bound is explicit: the subject is
- * sliced to {@link MAX_SUBJECT_SCAN} before scanning and no expression backtracks over it.
+ * The candidate tokens a single subject offers, best first. Two shapes only: a bracketed run
+ * (`[NinjaFirewall]`, `(Ticket #4)` — how machines tag their own mail; brackets INCLUDED, a far more
+ * specific test than the bare word) and a leading label (everything before the first `:`, `-`, `–`,
+ * `|` or `»`, taken only from the front — a separator mid-sentence is punctuation). Class ranks
+ * first, length only within a class: pure length offered the label `[NinjaFirewall] Alert` ahead of
+ * the bracketed tag, and a rule keyed on it silently leaves `[NinjaFirewall] Notice:` in the Ohbox.
+ * A bracketed run is the sender's own deliberate tag; a label is an inference from punctuation. The
+ * subject is sliced to {@link MAX_SUBJECT_SCAN} and nothing backtracks: a stranger wrote the string.
  */
 export const MAX_SUBJECT_SCAN = 300;
 
@@ -149,28 +108,14 @@ export function subjectCandidates(subject: string): string[] {
 }
 
 /**
- * The repeating token this sender puts on this KIND of message — or `null`.
- *
- * `focus` is the subject of the message the user pressed; `others` is every OTHER subject the mirror
- * holds from the same sender. Three refusals, and each one is a rule that would otherwise write a
- * bad rule:
- *
- *  1. **A candidate must appear in at least one OTHER subject.** A token that occurs once is not a
- *     repeating token, it is this message's wording — and a rule keyed on it files exactly one
- *     message, for ever, which is a rule the user will never find again to revoke. This is also
- *     what makes the offer honest: the sheet can say "this sender uses it on N messages" and be
- *     right, because the count is the same predicate.
- *  2. **A candidate must not BE the whole subject.** Then the rule is "this exact message", with
- *     the same objection.
- *  3. **The sender's own tag wins**, from {@link subjectCandidates}' ordering: a bracketed run before
- *     a label inferred from punctuation, and longest only within a class. Between `[NinjaFirewall]`
- *     and `Alert`, the tag is the one the user meant — the loose label catches mail from the same
- *     sender that has nothing to do with the plugin, and the LONGER label `[NinjaFirewall] Alert`
- *     catches only one of the several flavours the sender sends under that tag.
- *
- * Comparison is case-folded, matching the server (`core/src/rules.ts#subjectSatisfies`). The token
- * RETURNED keeps its original case, because the server stores it verbatim and both surfaces quote it
- * back at a user who read it off their own mail.
+ * The repeating token this sender puts on this kind of message — or `null`. `focus` is the pressed
+ * message's subject; `others` is every other subject the mirror holds from the sender. Three
+ * refusals, each a bad rule avoided: (1) a candidate must appear in at least one OTHER subject — a
+ * token that occurs once is this message's wording, and a rule keyed on it files exactly one message
+ * for ever; it also makes the sheet's "this sender uses it on N messages" honest. (2) It must not
+ * BE the whole subject — that rule is "this exact message". (3) The sender's own tag wins, from
+ * {@link subjectCandidates}' ordering. Comparison is case-folded, matching the server
+ * (`core/src/rules.ts#subjectSatisfies`); the returned token keeps its case — stored verbatim.
  */
 export function detectSubjectToken(focus: string, others: readonly string[]): string | null {
   const stripped = stripReplyPrefixes(focus);
@@ -191,16 +136,13 @@ export function subjectMatchCount(messages: readonly EngineMessage[], term: stri
 }
 
 /**
- * THE TEXT THE MIRROR HOLDS for a message — the full body where it has been mirrored or hydrated,
- * the snippet otherwise, `""` for neither.
- *
- * ONE accessor, because "what does the client know about this message's text" is asked by the
- * content detection, the match count and the audit panel, and they must agree. The answer is a
- * FLOOR, never the server's haystack: the server matches `body_contains` against the full stored
- * text, so a term the client can see in a snippet is genuinely a match, while a term sitting
- * deeper in an unhydrated body is a match the client cannot see. Every consumer of this function
- * is written for that direction — counts are stated as "here", and the audit names a rule only
- * when the conjunct verifiably holds.
+ * The text the mirror holds for a message — the full body where mirrored or hydrated, the snippet
+ * otherwise, `""` for neither. One accessor because the content detection, the match count and the
+ * audit panel all ask "what does the client know about this message's text" and must agree. The
+ * answer is a floor, never the server's haystack: the server matches `body_contains` against the
+ * full stored text, so a term visible in a snippet is genuinely a match while a term deeper in an
+ * unhydrated body is a match the client cannot see — counts are stated as "here", and the audit
+ * names a rule only when the conjunct verifiably holds.
  */
 export function bodyTextOf(m: EngineMessage): string {
   return m.body ?? m.snippet ?? "";
@@ -217,21 +159,14 @@ export function bodyMatchCount(messages: readonly EngineMessage[], term: string)
 export const MAX_BODY_SCAN = 600;
 
 /**
- * The repeating token this sender puts in this KIND of message's TEXT — or `null`.
- *
- * {@link detectSubjectToken}'s contract against the body (mail 0052), for the sender whose
- * subjects are all alike ("Notification", "Alert") and whose distinguishing text is in the body.
- * `focusText`/`othersTexts` are what the mirror HOLDS ({@link bodyTextOf}), so detection sees a
- * floor of the real corpus — a token it finds is real, and a token it misses because bodies are
- * unhydrated is a `null`, which the sheet already treats as a normal outcome.
- *
- * ONE candidate class, not two: bracketed runs only. A subject's leading-label heuristic
- * ("everything before the first colon") does not survive contact with prose — a body's first
- * colon is a greeting or a sentence, not a label — and a wrong token that moves mail
- * retroactively is far worse than none. The refusals are the subject detection's: the token must
- * repeat in another message's text, must not BE the whole visible text, and clears the same
- * length floor. Scanning stops at {@link MAX_BODY_SCAN} characters — machine tags live in the
- * head, and a bound is required over text a stranger wrote.
+ * The repeating token in this kind of message's TEXT — or `null`. {@link detectSubjectToken}'s
+ * contract against the body (mail 0052), for the sender whose subjects are all alike and whose
+ * distinguishing text is in the body. `focusText`/`othersTexts` are what the mirror holds
+ * ({@link bodyTextOf}), a floor of the real corpus: a found token is real, a missed one is `null`,
+ * already a normal outcome. One candidate class — bracketed runs only: the leading-label heuristic
+ * does not survive prose (a body's first colon is a greeting, not a label), and a wrong token that
+ * moves mail retroactively is far worse than none. Same refusals as the subject detection; scanning
+ * stops at {@link MAX_BODY_SCAN} — machine tags live in the head, and a stranger wrote the text.
  */
 export function detectBodyToken(focusText: string, othersTexts: readonly string[]): string | null {
   const head = focusText.slice(0, MAX_BODY_SCAN);
@@ -378,28 +313,14 @@ export interface SubjectRulePlan {
 }
 
 /**
- * The rule, and the moves for the mail the user can see.
- *
- * ── ONE `rule_create`, AND THE MOVES ARE THE OPTIMISTIC HALF ONLY ───────────────────────────
- *
- * `applyRetro` rides the mutation, so the SERVER owns the backlog: `RulesService` stamps
- * `rules.retro_requested_at` and the worker's `ruleRetroPass` walks it in bounded, resumable pages.
- * The moves emitted here are capped at {@link RETRO_VISIBLE_MOVES} for the reason
- * `sender-screening.ts` records at length — an uncapped fan-out is one `POST /messages/:id/move` per
- * message from a browser tab, each taking the account's write lock — and they exist only so the rows
- * on screen move now instead of after a worker cycle, a reconcile and a drain.
- *
- * ── AND NOTHING IS RETARGETED ───────────────────────────────────────────────────────────────
- *
- * The sender sheet has a four-step ladder because a click there is about a whole address and a
- * second identical row would make "future mail files there too" a coin toss. Here the only
- * collision that matters is an EXACTLY identical rule — same address, same term, same destination —
- * and the answer to that is to write nothing and say so. A rule with a DIFFERENT term is a different
- * rule about a different slice of the sender's mail, and silently rewriting it would destroy a
- * decision the user made deliberately; a rule with the same term and a different destination is the
- * one case that could reasonably be a retarget, and it is left as a second row on purpose, because
- * the specificity order makes the newer one lose to nothing and the rules surface is where a person
- * resolves it with the full text of both in front of them.
+ * The rule, and the moves for the mail the user can see. One `rule_create`; the moves are the
+ * optimistic half only — `applyRetro` rides the mutation, so the server owns the backlog
+ * (`RulesService` stamps `rules.retro_requested_at`, the worker's `ruleRetroPass` walks it in bounded
+ * pages). Moves here are capped at {@link RETRO_VISIBLE_MOVES} (an uncapped fan-out is one
+ * `POST /messages/:id/move` per message, each taking the account's write lock) and exist only so rows
+ * on screen move now. Nothing is retargeted: an exactly identical rule is answered by writing nothing
+ * and saying so; a different term is a different rule; same term with a different destination is left
+ * as a second row on purpose — the rules surface is where a person resolves it with both texts shown.
  */
 export function planSubjectRule(
   ctx: SubjectRuleContext,

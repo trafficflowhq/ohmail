@@ -1,60 +1,35 @@
 "use client";
 
 /**
- * The sender's screening, as a popover you can reach from any list or any open message.
- * Anchored like the tag picker; Escape and an outside click dismiss.
- *
- * It states the consequence BEFORE the click, and the two consequences are genuinely
- * different: from the Screener the change becomes a rule, from anywhere else it moves the
- * mail and future mail is unaffected. See `sender-screening.ts` for why.
- *
- * ── THREE ADDITIONS THAT CHANGE NOTHING THAT WAS HERE ────────────────────────────────────
- *
- * The existing sheet was to stay exactly as it is — the avatar, the
- * `1 message · now in Ohbox` line, the five destinations, the honest footer — so the
- * additions sit around it rather than replacing it:
- *
- *  1. **A scope switch**, offered only when the address has a domain. `no-reply-kbdtwj…@x.com`
- *     is not a sender anyone wants to rule on individually, which is the whole case for it.
- *     It DEFAULTS TO THE ADDRESS. Defaulting to the domain would silently widen what every
- *     existing click does — and on a shared provider ("everyone at gmail.com") that is a
- *     mailbox-destroying gesture one habit-click away. The counts are stated on the switch so
- *     the wide option is chosen with its size visible, which is the mitigation that matters:
- *     consent by count, not by cap.
- *  2. **A pre-click disclosure for the two reject destinations.** Screening a waiting sender
- *     out ALSO arms auto-unsubscribe (the screener calls `onScreenOut` after the commit, and the
- *     server wires that dependency in), so one click on a domain can send
- *     one-click unsubscribe requests to every list under it. That has to be stated in the
- *     sheet before it runs, not discovered afterwards. It is therefore a CONFIRM and
- *     not a toast — the same construction `RulesView` uses for revoke, and for the same
- *     reason: a sentence shown after the act is not a disclosure.
- *
- *     Since mail 0054 it is also conditional on the ACCOUNT having left auto-unsubscribe on, and
- *     on the build having an unsubscribe service to run — see {@link autoUnsubscribe}. An empty
- *     confirm is not a harmless extra step; it is the thing that teaches people to click through
- *     the real one.
- *  3. **A way into the detail view** — every message from this address or domain and what
- *     accounts for where it sits (`sender-audit.ts`).
- *
- * ── THE FOURTH ADDITION, AND IT IS THE ONE THAT CHANGES THE DEFAULT ─────────────────────
- *
- * The requirement: creating a rule must also apply it to the mail ALREADY in the mailbox, not
- * only to what arrives next, and that has to be the default. Choosing a destination for a
- * sender PAST the gate therefore writes a rule as well as moving the mail, through
- * `rule_create` — the verb the earlier sender work named and could not build. The toggle is ON
- * by default, because that is where the requirement puts it, and OFF stays reachable as the
- * explicit non-default.
- *
- * It is only offered for a sender the Screener is NOT holding. A waiting sender's rule is
- * promoted by `POST /screener/:id` inside the decision itself, so a switch there would be a
- * control that cannot change the outcome.
- *
- * **It does NOT carry the unsubscribe disclosure, and that is checked rather than assumed.**
- * `unsubscribe.onScreenOut` has exactly one production caller — `screener-service.ts`, on
- * `decide`'s reject branch — `RulesService.create` calls nothing, the routing pass that
- * consults rules on arrival calls nothing, and `sweepScreenedOut` still has no production
- * caller. A rule written from past the gate arms NOTHING today, so warning here would train
- * people to click through the confirm above, which is real.
+ * The sender's screening, as a popover reachable from any list or open message; anchored like the tag
+ * picker, Escape and outside click dismiss. It states the consequence BEFORE the click, and the two
+ * differ: from the Screener the change becomes a rule, from anywhere else it moves the mail only (see
+ * `sender-screening.ts`). The additions sit around the existing sheet: a scope switch, offered only
+ * when the address has a domain, defaulting to the ADDRESS — defaulting to the domain would silently
+ * widen every existing click, and on a shared provider that is a mailbox-destroying gesture; the
+ * counts are stated on the switch, so the wide option is chosen with its size visible. And a way into
+ * the detail view — every message from this address or domain and why it sits there (`sender-audit.ts`).
+ */
+
+/**
+ * A pre-click disclosure for the two reject destinations: screening a waiting sender out ALSO arms
+ * auto-unsubscribe (the screener calls `onScreenOut` after the commit), so one click on a domain can
+ * send one-click unsubscribe requests to every list under it. That is a CONFIRM, not a toast — a
+ * sentence shown after the act is not a disclosure (the `RulesView` revoke construction). Since mail
+ * 0054 it is also conditional on the account having left auto-unsubscribe on and on the build having
+ * an unsubscribe service — see {@link autoUnsubscribe}: an empty confirm teaches people to click
+ * through the real one.
+ */
+
+/**
+ * The addition that changes the default: creating a rule also applies it to the mail already in the
+ * mailbox, and that is the default. Choosing a destination for a sender PAST the gate writes a rule as
+ * well as moving the mail (`rule_create`); the toggle is ON by default. Only offered for a sender the
+ * Screener is NOT holding — a waiting sender's rule is promoted by `POST /screener/:id` inside the
+ * decision itself. The rule path does NOT carry the unsubscribe disclosure, and that is checked, not
+ * assumed: `unsubscribe.onScreenOut` has exactly one production caller (`screener-service.ts`,
+ * `decide`'s reject branch) and `RulesService.create` calls nothing — a rule written past the gate
+ * arms nothing today, so warning here would train people to click through the real confirm above.
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -115,19 +90,14 @@ export function SenderMenu({
    */
   onSubjectRule?: () => void;
   /**
-   * WILL A SCREEN-OUT ACTUALLY SEND THE ONE-CLICK REQUEST? — the account switch (mail 0054) and
-   * the build, ANDed together one layer up (`AppShell#autoUnsubscribeDiscloses`).
-   *
-   * It is the SECOND half of the confirm's condition. `ScreeningPlan.unsubscribes` answers whether
-   * this PATH arms the mechanism, which is a fact about the code; this answers whether the
-   * mechanism is armed at all, which is a fact about the account and the deployment. Both have to
-   * be true or the sheet is asking somebody to consent to something that will not happen — and a
-   * confirm people learn is empty is how a real one gets clicked through.
-   *
-   * **Defaults to TRUE, and the default is the disclosure.** Every mount that has not been taught
-   * about the switch keeps asking, which is what this sheet did before the switch existed; the
-   * failure to avoid is the silent one, where a stale caller drops a warning about an irreversible
-   * request that is still being sent.
+   * Will a screen-out actually send the one-click request? — the account switch (mail 0054) and the
+   * build, ANDed one layer up (`AppShell#autoUnsubscribeDiscloses`). The second half of the
+   * confirm's condition: `ScreeningPlan.unsubscribes` answers whether this PATH arms the mechanism
+   * (a fact about the code); this answers whether the mechanism is armed at all (the account and
+   * the deployment). Both must be true or the sheet asks consent for something that will not
+   * happen. Defaults to TRUE — the default is the disclosure: an untaught mount keeps asking, and
+   * the failure to avoid is the silent one, a stale caller dropping a warning about a request that
+   * is still being sent.
    */
   autoUnsubscribe?: boolean;
   onClose: () => void;
@@ -274,17 +244,13 @@ export function SenderMenu({
         >
           <span className="lab">
             <b>{t("ruleToggle")}</b>
-            {/* ── THE RETROACTIVE HALF, SAID BEFORE THE CLICK AND WITH ITS SIZE ──
-                The rule is now applied to mail already on the server, by a worker pass, and this
-                is where the user learns that and how much it is about. It rides the SAME switch
-                rather than getting one of its own: turning the rule off is the opt-out, and
-                `planScreeningChange` reports `retro: false` for every plan that writes no rule,
-                so the control and the behaviour cannot come apart.
-
-                It says "apply the rule to", never "move" and never "every message". The pass
-                re-evaluates each message through `evaluateRules`, so a higher-priority deny rule
-                keeps its mail where it is; and it skips anything the user has already acted on.
-                A promise about the outcome would be false for both. */}
+            {/* The retroactive half, said before the click and with its size: the rule is applied to
+                mail already on the server by a worker pass. It rides the SAME switch — turning the
+                rule off is the opt-out, and `planScreeningChange` reports `retro: false` for every
+                plan that writes no rule, so control and behaviour cannot come apart. It says "apply
+                the rule to", never "move" or "every message": the pass re-evaluates through
+                `evaluateRules` (a higher-priority deny rule keeps its mail) and skips anything the
+                user already acted on — a promise about the outcome would be false for both. */}
             {makeRule && RETRO_DEFAULT_ON ? (
               <small>{t("ruleRetro", { count: subject.messages.length })}</small>
             ) : null}
@@ -367,36 +333,24 @@ export function SenderMenu({
         {t("auditOpen", { count: subject.messages.length })}
       </button>
 
-      {/* ── EVERYTHING FROM AND TO THIS ADDRESS ──────────────────────────────────────────────
-          The address view (`#/address/<addr>`): one list of what this address sent and what was
-          sent to it, newest first. On a list row and on a stream card the address pixels are this
-          sheet's own handle (`sender-hit.ts`), so THIS ROW is the one way from those surfaces into
-          that view — the search result row and the reader's chips, where the hit test answers
-          null, link to it directly.
-
-          It is a LINK and not a verb, like the row above it: it opens a different question rather
-          than answering this one, so it sits here with the ways onward and not among the
-          destinations. A real `<a href>` — the hash is what the router reads, and the sheet closes
-          on the press so the view is not opened under an open popover. Address scope only: the
-          view is about one address, and a domain has no such page. */}
+      {/* Everything from and to this address — the address view (`#/address/<addr>`). On a list row
+          and a stream card the address pixels are this sheet's own handle (`sender-hit.ts`), so this
+          row is the one way from those surfaces into that view; the search result row and the
+          reader's chips link directly. A LINK, not a verb: it opens a different question, so it sits
+          with the ways onward, not among the destinations. A real `<a href>` — the hash is what the
+          router reads — and the sheet closes on press. Address scope only: a domain has no page. */}
       {scope === "sender" ? (
         <a className="sm-detail" href={addressHref(sender.address)} onClick={onClose}>
           {t("addressOpen")}
         </a>
       ) : null}
 
-      {/* ── SPLIT THIS SENDER BY SUBJECT ──────────────────────────────────────────────────────
-          The row that admits this sheet's limit. Everything above it decides where ALL of an
-          address's mail goes, and one sender who sends two kinds of mail has no answer here: the
-          five destinations file the invoice with the nightly alerts whichever one is pressed.
-
-          It is offered ONLY at address scope. A domain scope is the opposite direction — wider, not
-          finer — and the server refuses a subject term on a domain rule, so offering it here would
-          present a choice that ends in a 400.
-
-          It is a LINK to the finer sheet and not a control that writes anything, so it sits below the
-          destinations with the detail link rather than among them: pressing it asks a different
-          question, it does not answer this one. Same `.sm-detail` styling for that reason. */}
+      {/* Split this sender by subject — the row that admits this sheet's limit: everything above
+          decides where ALL of an address's mail goes, and a sender who sends two kinds has no answer
+          here. Offered only at address scope — a domain scope is wider, not finer, and the server
+          refuses a subject term on a domain rule, so offering it would end in a 400. A LINK to the
+          finer sheet, not a control that writes: it asks a different question, so it sits below the
+          destinations with the detail link (`.sm-detail` for that reason). */}
       {onSubjectRule && scope === "sender" ? (
         <button type="button" className="sm-detail" onClick={onSubjectRule}>
           {t("subjectRuleOpen")}
@@ -404,17 +358,13 @@ export function SenderMenu({
       ) : null}
       </div>
 
-      {/* ── THE FOOTER, WHICH NOW HAS THREE TRUE SENTENCES INSTEAD OF TWO ────────────────
-          A Screener-held sender goes through the endpoint that promotes a rule. Past the gate,
-          the sentence follows the toggle — and `footNoRule` is the sentence that was predicted
-          to become false. It did, the moment `rule_create` existed, so it is no longer the
-          default sentence; it is what the OPT-OUT says, and it is still exactly true there.
-
-          `footWillRule` states the OUTCOME ("future mail files there too") rather than the
-          mechanism ("this makes a rule"), because the footer cannot know which destination is
-          about to be clicked: for a destination a rule already covers, nothing is written and
-          only the outcome sentence stays true. The toast, which does know, names the
-          difference — `screeningToast` in `sender-screening.ts`. */}
+      {/* The footer's three true sentences. A Screener-held sender goes through the endpoint that
+          promotes a rule. Past the gate the sentence follows the toggle — `footNoRule` became false
+          the moment `rule_create` existed, so it is now what the opt-out says, still exactly true
+          there. `footWillRule` states the outcome ("future mail files there too"), not the
+          mechanism, because the footer cannot know which destination is about to be clicked: for a
+          destination a rule already covers, nothing is written and only the outcome sentence stays
+          true. The toast, which does know, names the difference — `screeningToast`. */}
       <div className="sm-foot">
         {subject.waiting
           ? scope === "domain"

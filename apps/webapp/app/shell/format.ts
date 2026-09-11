@@ -302,18 +302,21 @@ export function senderName(m: EngineMessage): string {
 }
 
 /**
- * THE SENDER CIRCLE — the same letter and the same colour for one person, in every list, on every device, forever.
- * The requirement: the small circle carrying the sender's or receiver's letter belongs on the mail list too, not only
- * in the Screener. The component already existed — it is what the Screener's rows and the doorbell stack — so the
- * only new thing is the derivation, and the only requirement on the derivation is that it be a pure function of the
- * ADDRESS. Not of the display name, which the same person changes between messages, and not of a random seed, which
- * would repaint the list on every reload. The hues are eight fixed angles, not `hash % 360`: the free wheel produces
- * the candy greens and electric blues the Blanc system rules out, while these sit in the same warm-adjacent band as
- * the tag hues (rosewood 25 · terracotta 42 · ochre 78 · olive 112 · moss 150 · slate 196 · indigo 250 · mauve 318).
- */
-
-/**
- * Lightness and chroma are pinned in `avatar.css` per theme, so legibility is not a property of this table.
+ * THE SENDER CIRCLE — the same letter and the same colour for one person, in
+ * every list, on every device, forever.
+ *
+ * The requirement: the small circle carrying the sender's or receiver's letter belongs on the
+ * mail list too, not only in the Screener. The component already existed — it is what the Screener's
+ * rows and the doorbell stack — so the only new thing is the derivation, and the only
+ * requirement on the derivation is that it be a pure function of the ADDRESS. Not of the
+ * display name, which the same person changes between messages, and not of a random seed,
+ * which would repaint the list on every reload.
+ *
+ * The hues are eight fixed angles, not `hash % 360`: the free wheel produces the candy
+ * greens and electric blues the Blanc system rules out, while these sit in the same
+ * warm-adjacent band as the tag hues (rosewood 25 · terracotta 42 · ochre 78 · olive 112 ·
+ * moss 150 · slate 196 · indigo 250 · mauve 318). Lightness and chroma are pinned in
+ * `avatar.css` per theme, so legibility is not a property of this table.
  */
 const AVATAR_HUES = [25, 42, 78, 112, 150, 196, 250, 318];
 
@@ -370,19 +373,21 @@ export interface SentRowRecipient {
 }
 
 /**
- * WHO AN OWN-SENT ROW IS ABOUT. A sent message's `from` is the reader's own identity — the one fact on the row that
- * says nothing. The row says who the mail WENT TO instead ("Me → Nora Lindt"), assembled by the caller from this
- * structure. Pure and i18n-free like {@link recipientSummary}, for the same reason: the words ("Me", "+N") are the
- * app's, read from `en.json` where the row renders. `null` twice, and both mean "keep the ordinary sender display":
- * · a row that is not the account's own sent mail;
- * · an own-sent row with no To recipient to name — rows ingested before recipients reached the wire carry an empty
- *   `to`, and "Me →" with nothing after the arrow is the same punctuation-shaped lie the dangling "·" was ({@link
- *   metaLine}).
- */
-
-/**
- * Cc is deliberately not consulted: the label names who the mail was written to, not everyone who was copied — the
- * open view's recipients block is where Cc is said.
+ * WHO AN OWN-SENT ROW IS ABOUT.
+ *
+ * A sent message's `from` is the reader's own identity — the one fact on the row that says
+ * nothing. The row says who the mail WENT TO instead ("Me → Nora Lindt"), assembled by the
+ * caller from this structure. Pure and i18n-free like {@link recipientSummary}, for the same
+ * reason: the words ("Me", "+N") are the app's, read from `en.json` where the row renders.
+ *
+ * `null` twice, and both mean "keep the ordinary sender display":
+ *  · a row that is not the account's own sent mail;
+ *  · an own-sent row with no To recipient to name — rows ingested before recipients reached
+ *    the wire carry an empty `to`, and "Me →" with nothing after the arrow is the same
+ *    punctuation-shaped lie the dangling "·" was ({@link metaLine}).
+ *
+ * Cc is deliberately not consulted: the label names who the mail was written to, not everyone
+ * who was copied — the open view's recipients block is where Cc is said.
  */
 export function sentRowRecipient(m: EngineMessage): SentRowRecipient | null {
   if (!isOwnSent(m)) return null;
@@ -408,14 +413,18 @@ export function firstName(m: EngineMessage): string {
 }
 
 /**
- * ABSOLUTE date and time, for the hover title on a message's relative stamp — "Tue 5 Aug 2026, 14:32". The visible
- * stamp is {@link displayTime} (relative: "09:12", "Mon"); this is what the reader gets when they want the exact
- * instant, so it carries the year and never abbreviates to a weekday. The reader's zone, like every other formatter
- * in this file (`clockOf`, `resurfaceLabel`, `displayTime`) — this is the value a reader opens precisely to check an
- * exact time against their own clock, so it is the one place a UTC render would be most obviously wrong. Note the
- * DATE moves with it, not only the hour: 22:10 UTC on the 4th is 00:10 on the 5th in Zurich. Empty string for a
- * message with no `Date:` header — there is no instant to name, exactly as `displayTime` answers "" — so a caller
- * interpolating it prints nothing rather than "Invalid Date".
+ * ABSOLUTE date and time, for the hover title on a message's relative stamp — "Tue 5 Aug 2026,
+ * 14:32". The visible stamp is {@link displayTime} (relative: "09:12", "Mon"); this is what the
+ * reader gets when they want the exact instant, so it carries the year and never abbreviates
+ * to a weekday.
+ *
+ * The reader's zone, like every other formatter in this file (`clockOf`, `resurfaceLabel`,
+ * `displayTime`) — this is the value a reader opens precisely to check an exact time against
+ * their own clock, so it is the one place a UTC render would be most obviously wrong. Note the
+ * DATE moves with it, not only the hour: 22:10 UTC on the 4th is 00:10 on the 5th in Zurich.
+ * Empty string for a message with no `Date:` header — there is no instant to name, exactly as
+ * `displayTime` answers "" — so a caller interpolating it prints nothing rather than
+ * "Invalid Date".
  */
 /*
  * `Pick<…, "date">` and not the whole message, because `date` is all it reads. The away-answer
@@ -432,18 +441,26 @@ export function fullDateTime(m: Pick<EngineMessage, "date">): string {
 }
 
 /**
- * A list row's stamp, both forms and the flip between them — `MessageRow`'s three stamp props in one call, the way
- * {@link avatarOf} is its two circle props: a view spreads this where it used to pass `time={displayTime(m, now)}`,
- * and the rule for which form is on screen, which is on hover, and whether the date may be pressed lives here rather
- * than seven times over. Which form is shown is the caller's `absolute` — one boolean the shell owns for the whole
- * session, so every row (and the open message) flips together and none holds its own state. The title is always the
- * other form, so hovering says something new either way. A message with no `Date:` header gets no flip:
- * `fullDateTime` answers "" (no instant to name), so the row is handed no title and no `onToggleTime` — a date that
- * cannot be exact must not offer to be.
- */
-
-/**
- * This is also the production path that keeps `MessageRow`'s unwired branch honest.
+ * ═══ A LIST ROW'S STAMP, BOTH FORMS AND THE FLIP BETWEEN THEM ═══════════════════════════════
+ *
+ * `MessageRow`'s three stamp props in one call, the way {@link avatarOf} is its two circle props:
+ * a view spreads this where it used to pass `time={displayTime(m, now)}`, and the rule for which
+ * form is on screen, which is on hover, and whether the date may be pressed at all lives HERE
+ * rather than seven times over.
+ *
+ * WHICH FORM IS SHOWN is the caller's `absolute` — one boolean the shell owns for the whole
+ * session, so every row in the list (and the open message with them) flips together and none of
+ * them holds a state of its own. The TITLE is always the other one: relative on screen names the
+ * exact instant on hover, absolute on screen names the relative one, so hovering says something
+ * new either way.
+ *
+ * ── A MESSAGE WITH NO `Date:` HEADER GETS NO FLIP, AND THAT IS THE POINT ────────────────────
+ *
+ * Spam and scripts routinely omit the header, and `fullDateTime` answers "" for one because there
+ * is no instant to name (the same "" `displayTime` answers). Such a row has ONE form, so it is
+ * handed no title and no `onToggleTime` — a date that cannot be exact must not offer to be. This
+ * is also the production path that keeps `MessageRow`'s unwired branch honest rather than
+ * theoretical.
  */
 export interface RowStampProps {
   /** What the row shows — the relative form, or the absolute one once the list is flipped. */
@@ -469,12 +486,16 @@ export function rowStamp(
 }
 
 /**
- * One recipient, WRITTEN OUT — a chip under the header (viewer redesign). `me` marks the reader's own address so the
- * card can swap the ACCOUNT's identity onto the face; the flag is computed here, on the STORED form, and the name the
- * account goes by is deliberately not — that answer belongs to `GET /mailboxes` and reaches the card through the
- * chrome (`ownNameOf`), not through a pure function every mount shares. `address` is the wire form, untouched: every
- * action a chip offers (copy, write, screening) acts on it, and only the FACE decodes (`displayAddress`, at the
- * render site). Carrying a pre-decoded string here is exactly the leak `idn.ts`'s header forbids.
+ * One recipient, WRITTEN OUT — a chip under the header (viewer redesign).
+ *
+ * `me` marks the reader's own address so the card can swap the ACCOUNT's identity onto the
+ * face; the flag is computed here, on the STORED form, and the name the account goes by is
+ * deliberately not — that answer belongs to `GET /mailboxes` and reaches the card through the
+ * chrome (`ownNameOf`), not through a pure function every mount shares.
+ *
+ * `address` is the wire form, untouched: every action a chip offers (copy, write, screening)
+ * acts on it, and only the FACE decodes (`displayAddress`, at the render site). Carrying a
+ * pre-decoded string here is exactly the leak `idn.ts`'s header forbids.
  */
 export interface RecipientRowChip {
   /** True when this recipient IS the reader — fold on the stored, case-folded address. */
@@ -486,18 +507,18 @@ export interface RecipientRowChip {
 }
 
 /**
- * WHO THE MESSAGE WENT TO, in full — the summarised single line and its "+N" fold are retired with the viewer
- * redesign: every To and Cc recipient renders as its own chip, so nothing here caps, counts or folds. Pure and
- * i18n-free like the summary it replaces: the row labels ("To", "Cc") are the card's, from `messages/*.json`. The two
- * rules that survive from the old fold, because they are invariants and not layout:
- * · **Nothing to say → `empty`.** No To and no Cc renders no block at all — never a dangling label with nothing
- *   after it.
- */
-
-/**
- * · **The me-fold compares STORED addresses.** `ownAddresses` is what `GET /mailboxes` answered — A-labels — so a
- *   fold on the decoded string would stop recognising the reader on their own internationalized mailbox. An empty set
- *   recognises the reader nowhere and every address renders in full, which is the honest degradation.
+ * WHO THE MESSAGE WENT TO, in full — the summarised single line and its "+N" fold are retired
+ * with the viewer redesign: every To and Cc recipient renders as its own chip, so nothing here
+ * caps, counts or folds. Pure and i18n-free like the summary it replaces: the row labels
+ * ("To", "Cc") are the card's, from `messages/*.json`.
+ *
+ * The two rules that survive from the old fold, because they are invariants and not layout:
+ *  · **Nothing to say → `empty`.** No To and no Cc renders no block at all — never a dangling
+ *    label with nothing after it.
+ *  · **The me-fold compares STORED addresses.** `ownAddresses` is what `GET /mailboxes`
+ *    answered — A-labels — so a fold on the decoded string would stop recognising the reader
+ *    on their own internationalized mailbox. An empty set recognises the reader nowhere and
+ *    every address renders in full, which is the honest degradation.
  */
 export interface RecipientRows {
   to: RecipientRowChip[];
