@@ -126,14 +126,14 @@ export function csrfToken(): string | null {
 
 
 /**
- * Whose account is this client speaking for — the one boundary every Cloud call crosses. The mail mirror's owner gate wraps the ENGINE'S
- * ADAPTER, and most of the signed-in surface never goes near an adapter: when a browser signed into A held a shell for B, the mailbox stopped
- * and said so while Security could REGENERATE the other account's recovery codes and TOTP secret, Devices could mint pairing tokens, billing and
- * mailboxes the same. A per-pane check closes today's panes and not tomorrow's; this is the seam every one already goes through. The allow-list
- * is NOT "/auth": half of /auth is credential management for an existing identity (recovery codes, TOTP enroll — two of the exact disclosures
- * this stops). It names the ceremony paths one by one: what the server is, whether a session exists, signing in (second-factor VERIFY included),
- * signing out, the refresh. Off until something binds it: `expectedOwner` is `null` on marketing pages, /login, and unasking tests — a surface
- * that forgets to bind is as permissive as before, never mysteriously refusing.
+ * Whose account is this client speaking for — the one boundary every Cloud
+ * call crosses. The mirror's owner gate wraps the engine's ADAPTER, and most
+ * of the signed-in surface never goes near one: a browser signed into A
+ * holding a shell for B could regenerate B's recovery codes and TOTP secret,
+ * mint pairing tokens, read billing. A per-pane check closes today's panes,
+ * not tomorrow's; this is the seam every one goes through. The allow-list is
+ * NOT "/auth" (half of /auth manages credentials for an existing identity);
+ * it names the ceremony paths one by one. Off until bound: a forgetting surface stays permissive.
  */
 /**
  * EXACT MATCHES. One route each, and nothing beneath them.
@@ -170,25 +170,25 @@ const OWNER_FREE_PREFIXES = [
 ] as const;
 
 /*
- * `/auth/session` is NOT on that list any more, and the removal is the
- * point: it is two requests wearing one path. The front door asks it
- * whether this browser holds a session at all — before anybody could be
- * bound; that call passes `ceremony: true`. Six ordinary shell reads ask it
- * for the signed-in person's email, account id and factors, and a path-wide exemption handed all six the OTHER account's answer whenever
- * the browser had become somebody else — they are gated like every other
- * account read. The flag is on the REQUEST so the exemption is asked for by
- * name and greppable, not a property the route confers on everybody.
+ * `/auth/session` is NOT on that list any more; the removal is the point:
+ * it is two requests wearing one path. The front door asks it whether this
+ * browser holds a session at all — before anybody could be bound; that call
+ * passes `ceremony: true`. Six ordinary shell reads ask it for the
+ * signed-in person's details, and a path-wide exemption handed all six the
+ * other account's answer — they are gated like every other account read.
+ * The flag is on the REQUEST so the exemption is asked for by name and
+ * greppable, not a property the route confers on everybody.
  */
 
 /**
- * What this client is speaking for. A single nullable `expectedOwner` conflated states needing opposite defaults:
- *  · `public`  — marketing pages, /login, unasking tests. Nothing to be    wrong about; every request goes.
- *  · `pending` — a shell is up and the server has not answered. `null` used
- *    to say this too, so a deep-linked settings pane over a warm mirror for    A passed every check while another tab established B — with a step-up
- *    window open, putting recovery codes and TOTP enrolment inside it.  · `bound`   — the server named the account.
- *  · `blocked` — a sign-out the server did not confirm; `null` said this
- *    too, waving through the very sequence the marker exists to stop. A NAMED SHELL IS NEVER `public`: `pending` fails closed like `bound`;
- * what it cannot yet say is WHICH account. The window is one round trip.
+ * What this client is speaking for — a single nullable `expectedOwner`
+ * conflated states needing opposite defaults. `public`: marketing pages,
+ * /login, unasking tests — every request goes. `pending`: a shell is up and
+ * the server has not answered; `null` said this too, so a deep-linked pane
+ * over a warm mirror for A passed every check while another tab established
+ * B. `bound`: the server named the account. `blocked`: a sign-out the
+ * server did not confirm. A named shell is never `public` — `pending` fails
+ * closed like `bound`; the window is one round trip.
  */
 type OwnerBinding =
   | { kind: "public" }
@@ -262,14 +262,14 @@ export function apiOwnerHolds(path: string, opts: { ceremony?: boolean } = {}): 
 }
 
 /**
- * The answer names the account it was for. `AF-RESPONSE-NOT-OWNER-BOUND` was the one cross-account sequence no client-side check could see: a
- * switch beginning and ending inside a single request's flight leaves every browser observation unchanged, and a response selected under the
- * other account is applied. The server answers directly: `X-Ohmail-Account` names the account a response was produced for — always
- * server-derived (session row or resolved credential), never a query parameter, body field or inbound header, which is ignored. Absence is a
- * refusal, not silence: on an ordinary authenticated read a missing header is the same answer as a wrong one. It is absent by design where
- * there is no account subject (anonymous endpoints, 401s, pre-auth errors) — paths already owner-free. On {@link credentialRoutes} a
- * disagreement is the NEW owner: the server already 409s a live session that disagrees with the credential, so a 2xx disagreement is a
- * sign-in that succeeded; absence there means THIS ESTABLISHED NOTHING and nothing is adopted.
+ * The answer names the account it was for. `AF-RESPONSE-NOT-OWNER-BOUND`:
+ * a switch inside a single request's flight leaves every browser
+ * observation unchanged, so the server answers directly —
+ * `X-Ohmail-Account`, always server-derived, never a query parameter, body
+ * field or inbound header. Absence is a refusal on an authenticated read;
+ * absent by design where there is no account subject. On
+ * {@link credentialRoutes} a disagreement is the NEW owner (the server 409s
+ * succeeded); absence there means nothing was established.
  */
 const OWNER_HEADER = "X-Ohmail-Account";
 
@@ -431,13 +431,13 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 
   /*
    * A cookie-writing request takes the lock, and does not recover under it.
-   * The lock is here, not on the individual `auth` methods: the census sits
-   * beside the other path lists (the hand-written one wrapped two step-up
-   * routes that write no cookie and missed `DELETE /account`, which clears the whole jar), and the lock lives in the function that owns the
-   * recovery path. NO refresh-and-retry while holding it: Web Locks are not
-   * reentrant — `resumeSession()` asks for this same exclusive name, so a recoverable failure inside a ceremony queued the tab behind its own
-   * grant and hung `auth.logout` before its local cleanup ran. Refusing to recover loses nothing: every census path either forbids refresh
-   * (`NEVER_REFRESH`) or is one where a silent second attempt is wrong (a 401 on logout; a retried `DELETE /account` is irreversible).
+   * The lock is here, not on the `auth` methods: the census sits beside the
+   * other path lists, and the lock lives in the function that owns the
+   * recovery path. No refresh-and-retry while holding it: Web Locks are not
+   * reentrant — `resumeSession()` asks for this same name, so a recoverable
+   * failure inside a ceremony queued the tab behind its own grant and hung
+   * `auth.logout` before its cleanup ran. Refusing to recover loses nothing:
+   * every census path forbids refresh or a second attempt is wrong on its own terms.
    */
   /*
    * WHO THE SERVER SAYS IT ANSWERED FOR, per call. An out-parameter rather than module state,

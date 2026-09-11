@@ -437,14 +437,13 @@ async function syncWebPushNow(
        subscription and there IS a row — while they describe different addresses, which is the one
        case a bare id check reads as "nothing to do". */
     /*
-     * `unchanged` is not proof of ownership, and the boot path may not take
-     * it: the shortcut attests a STORED id matches the live endpoint, and says nothing about which ACCOUNT owns the row. On a shared browser:
-     * `sign-out.ts` awaits the revoke and sweeps the prefix strictly after,
-     * so an unload that beat the local `unsubscribe()` beat the sweep too —
-     * A's id and endpoint survive into B's session, and without `forceAnnounce` the boot reads `unchanged` as ownership and re-arms
-     * the worker for A's registration. The boot re-announces instead: cheap
-     * for the legitimate case (the POST dedupes on the endpoint), and a
-     * foreign row fails the account-scoped lookup, keeping the worker dark.
+     * `unchanged` is not proof of ownership, and the boot path may not take it: the shortcut
+     * attests a STORED id matches the live endpoint, nothing about which ACCOUNT owns the row. On a
+     * shared browser, `sign-out.ts` sweeps the prefix strictly after the awaited revoke, so an
+     * unload that beat the local `unsubscribe()` beat the sweep too — A's id and endpoint survive
+     * into B's session, and the boot would re-arm the worker for A's registration. So the boot
+     * re-announces: cheap (the POST dedupes on the endpoint), and a foreign row fails the
+     * account-scoped lookup, keeping the worker dark.
      */
     if (!opts?.forceAnnounce && knownId !== null && readEndpoint() === existing.endpoint) {
       return "unchanged";
@@ -530,14 +529,13 @@ async function syncWebPushNow(
  */
 export async function revokeWakeRegistration(): Promise<PushSyncOutcome | null> {
   /*
-   * Bounded, and the bound is load-bearing (found by review — it inverted the neighbour's "the wipe runs REGARDLESS"). Every call joins the
-   * module-global {@link serialize} queue, whose ops are `fetch`es with no
-   * timeout; the settings pane fires two on mount and the sign-out control
-   * lives inside that pane — so on a captive portal whose vapid-key GET
-   * stalls, `signOut` blocked here for ever: the server logout never issued,
-   * the local wipe never ran, the whole mailbox left in IndexedDB on a machine somebody said they were done with. So the revoke gets a budget
-   * and the sign-out proceeds; the loser is not cancelled (a late delete is
-   * a free win — every store is swept unconditionally either way). `row_remains` is the honest answer on a timeout.
+   * Bounded, and the bound is load-bearing (review — it inverted "the wipe runs REGARDLESS"). Every
+   * call joins the module-global {@link serialize} queue, whose ops are `fetch`es with no timeout;
+   * the settings pane fires two on mount and the sign-out control lives inside it — on a captive
+   * portal whose vapid-key GET stalls, `signOut` blocked for ever: no server logout, no local wipe,
+   * the mailbox left in IndexedDB on a machine somebody was done with. The revoke gets a budget;
+   * the loser is not cancelled (a late delete is a free win — every store is swept regardless).
+   * `row_remains` is the honest answer on a timeout.
    */
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<PushSyncOutcome>((resolve) => {
@@ -711,24 +709,23 @@ async function applyWakeIntentNow(
   }
 
   /*
-   * ON is written last, and only for a row this boot established. An earlier version wrote `enabled: true` first, arguing an enabled flag
-   * with no subscription is inert — false on the one machine that matters, a shared browser: A signs out, the delete fails (`row_remains` retains
-   * the row by design), and a boot that enables up front re-arms the worker
-   * for a registration that is still A's — the next push for A's mail drawn
-   * on B's screen. So: announce first, enable only on an OUTCOME that says this browser holds the row. The gate is the outcome, deliberately NOT
-   * `readId() !== null` — after A's `row_remains` the stored id is A's, so
-   * a non-null check is the defect wearing a guard. `subscribed` and `unchanged` are the two answers that mean a row exists and names THIS
-   * endpoint; every other answer leaves the state that draws nothing.
+   * ON is written last, and only for a row this boot established. Writing `enabled: true` first
+   * ("inert without a subscription") is false on a shared browser: A signs out, the delete fails
+   * (`row_remains` retains the row by design), and an up-front enable re-arms the worker for A's
+   * registration — the next push for A's mail drawn on B's screen. So: announce first, enable only
+   * on an OUTCOME saying this browser holds the row — deliberately NOT `readId() !== null`, which
+   * after A's `row_remains` is A's id: the defect wearing a guard. `subscribed` and `unchanged`
+   * mean a row names THIS endpoint; all else draws nothing.
    */
   /*
-   * What `forceAnnounce` costs, and why it is accepted: every signed-in
-   * boot now issues the POST rather than trusting a stored id, so a boot on
-   * a bad connection reaches {@link WAKE_BUDGET_MS} more often. The timeout
-   * answer is `not_registered`, which leaves the worker dark for a reader
-   * who legitimately owns the row — no closed-browser notices until the
-   * next boot lands. That is the chosen direction: enabling on a timeout
-   * would render "I could not confirm" as "this browser owns the row", on
-   * the one machine where the row may be somebody else's. A missed notice is recoverable; a stranger's mail on your lock screen is not.
+   * What `forceAnnounce` costs, and why: every signed-in boot issues the
+   * POST rather than trusting a stored id, so a boot on a bad connection
+   * reaches {@link WAKE_BUDGET_MS} more often. The timeout answer is
+   * `not_registered`, leaving the worker dark for a reader who legitimately
+   * owns the row — no closed-browser notices until the next boot lands.
+   * Chosen: enabling on a timeout would render "I could not confirm" as
+   * "this browser owns the row", on the one machine where the row may be
+   * somebody else's. A missed notice is recoverable; a stranger's mail on your lock screen is not.
    */
   let outcome: PushSyncOutcome | null;
   try {

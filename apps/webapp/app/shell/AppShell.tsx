@@ -1588,16 +1588,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     return label ? label : null;
   });
   const consentView: ConsentPartition | null = useMemo(
-    // The demo is not partitioned — a fact about the data: consent derives
-    // from rules and the fixture world has none, so the partition would empty the curated world into History. Nothing is partitioned before
-    // the account's window is known: `consent.known` is false until `GET /consent` lands or the boot applies the account's CACHED last
-    // answer (`boot-cache.ts` — without it every reload resurrected already-decided senders until the answer arrived). A tab that cannot
-    // know degrades to showing MORE, never less — partitioning on a guessed
-    // window would hide somebody's mail. The desktop (`consent.standalone`)
-    // partitions anyway: there is no stored window to guess at, so `DEFAULT_DORMANCY_DAYS` is not a stand-in but the truth — read as
-    // "not yet known" it switched the cutline off for the whole desktop tier (no History pile, senders queued for ever). The baseline rides
-    // the same `GET /consent` answer as the window, so the two halves of
-    // the cutoff cannot come from different fetches.
+    // The demo is not partitioned — consent derives from rules and the
+    // fixture world has none, so the partition would empty the curated world into History. Nothing
+    // is partitioned before the account's window is known: `consent.known` is false until `GET
+    // /consent` lands or the boot applies the account's CACHED last answer (`boot-cache.ts` —
+    // without it every reload resurrected already-decided senders). A tab that cannot know shows
+    // MORE, never less. The desktop (`consent.standalone`) partitions anyway: there is no stored
+    // window to guess at, so the default IS the truth — read as "not yet known" it killed the
+    // cutline for the whole desktop tier. The baseline rides the
+    // same `GET /consent` answer as the window: one fetch, both halves.
     () =>
       demo || !(consent.known || consent.standalone)
         ? null
@@ -2475,14 +2474,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     previewSelection.current = selectedOhbox?.id ?? null;
     if (!previewFor) return;
     /*
-     * Members of the ACTIVE conversation keep their previews under a standing selection: the seam holds lists and bytes for the whole
-     * conversation, and a focused-id-only test closed a sibling's overlay
-     * in the same breath its eye opened it. Two bounds keep the widened
-     * guard honest: ANY selection move closes the overlay (the seam's cleanup revokes the conversation's byte state on exactly that
-     * trigger, and an overlay held across it would re-fetch revoked bytes);
-     * and `version` is a dependency, so a previewed sibling a drain
-     * deletes or rethreads no longer holds its overlay open. The previous
-     * selection is a ref — transition bookkeeping, not a render input.
+     * Members of the ACTIVE conversation keep their previews under a standing selection: the seam
+     * holds lists and bytes for the whole conversation, and a focused-id-only test closed a
+     * sibling's overlay in the same breath its eye opened it. Two bounds keep the widened guard
+     * honest: ANY selection move closes the overlay (the seam's cleanup revokes the conversation's
+     * byte state on exactly that trigger), and `version` is a dependency, so a previewed sibling a
+     * drain deletes or rethreads no longer holds its overlay open. The previous selection is a ref
+     * — bookkeeping, not a render input.
      */
     const held =
       before === (selectedOhbox?.id ?? null) &&

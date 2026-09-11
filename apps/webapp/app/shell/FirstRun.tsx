@@ -250,28 +250,26 @@ export function firstRunStep(
     && !mb.organizeConsentedAt;
   const flowIsOpen = rerun || add || derived !== null;
   /* The claim question is not skippable, and the cursor used to skip it
-   * silently. Measured on 0.13.6: the flow opened on the consent statement
-   * (the pre-consent peek had not landed), Continue made `at` non-null, the
-   * peek then named a holder — and the arm below returned the cursor, so the one screen built for this situation never rendered; the person
-   * agreed, the install stood down to reader, and the summary reported the organizing it had just been refused. The cursor is a navigation aid,
-   * not evidence: it may carry a run through screens the derivation cannot
-   * name, never PAST a question nobody answered. `claimAnswered` makes this
-   * a guard rather than a loop — "Organize here instead" moves the cursor to `consent` while the derivation still answers "elsewhere" until the
-   * window press two screens later. The three exempted cursors are at or before this screen in the path; Back has to work.
+   * silently (measured on 0.13.6): the flow opened on consent before the peek landed, Continue made
+   * `at` non-null, the peek then named a holder — and the cursor won, so the one screen built for
+   * this never rendered; the person agreed, stood down to reader, and the summary reported the
+   * organizing it had been refused. The cursor is a navigation aid, not evidence: it may carry a
+   * run through screens, never PAST an unanswered question. `claimAnswered` makes this a guard
+   * rather than a loop — "Organize here instead" moves the cursor to `consent` while the derivation
+   * still answers "elsewhere". Back still works (three exempt).
    */
   if (flowIsOpen && claimPending && !claimAnswered
       && at !== "welcome" && at !== "mailbox" && at !== "elsewhere") {
     return "elsewhere";
   }
-  /* And the cursor may not keep that screen up after its subject is gone —
-   * the other direction of the same rule. `elsewhere` is written for one situation (another install organizes this mailbox) and the cursor can hold it up after the holder went away; the screen then offers a choice
-   * between two installs when there is one. The release is judged by `holderVerdict` — did a read ANSWER — not `readerHolder` (which collapses "no field" into "nobody", right for its sentence and the
-   * defect here: with the mailbox absent from the facts the cursor was released and the run resumed on consent, where Agree authorizes a
-   * takeover the choice was never shown for). A holder with neither kind nor name is still `somebody`. A stale `nobody` is not an answer either:
-   * two reads can settle in either order, so `organizerEventAt` orders them — the holder read fixes a floor ({@link readIsNotOlder}), remembered by
-   * the SCREEN ({@link heldStamp}) because it is a fact about this run. The
-   * question is UP two ways (the cursor names it, or the derivation put it there and nobody answered — {@link asked}) and comes DOWN one way: a
-   * fresh, explicit `nobody`, ordered by the floor. `!claimAnswered` keeps the second way from looping (measured on the 0.14.2 candidate).
+  /* And the cursor may not keep that screen up after its subject is gone.
+   * `elsewhere` is written for one situation and the cursor can hold it up after the holder went
+   * away. The release is judged by `holderVerdict` — did a read ANSWER — not `readerHolder`, whose
+   * "no field = nobody" collapse released the cursor with the mailbox absent from the facts,
+   * resuming on consent where Agree authorizes an unshown takeover. A holder with neither kind nor
+   * name is still `somebody`; a stale `nobody` is ordered out by `organizerEventAt` against the
+   * screen-held floor ({@link readIsNotOlder}, {@link heldStamp}). Up two ways (cursor, or
+   * derivation + {@link asked}); down one: a fresh explicit `nobody`.
    */
   const questionUp = at === "elsewhere" || (at === null && asked && !claimAnswered);
   const cursor = questionUp
@@ -305,15 +303,15 @@ export function firstRunStep(
    */
   if (add) {
     if (cursor !== null) return cursor;
-    /* The two facts this run is not about are withheld, each for its own
-     * reason: `account.onboardingCompletedAt` is about the INSTALL — it is set (that is why "Add mailbox" is visible), so row 1 would answer
-     * `null` for every add run; `ai` is about the install too, and rows 5-6
-     * would put the AI question into a walk that does not contain it —
-     * reported as `on` so the derivation flows to rows 7-9. What is left is
-     * the mailbox's own truth-conditions. This does NOT describe a resume (the old claim): coming back means pressing "Add mailbox" with no
-     * `?mailbox=`, so the screen is the connect form again, and re-typing
-     * the same mailbox meets `same_login`; the half-added mailbox is recovered from its own row (`Run setup` → the re-run). This arm is
-     * for the run in FLIGHT, once `onConnected` has put the id in the hash.
+    /* The two facts this run is not about are withheld:
+     * `account.onboardingCompletedAt` is about the INSTALL (it is set —
+     * that is why "Add mailbox" is visible — so row 1 would answer `null`
+     * for every add run); `ai` is about the install too, reported as `on`
+     * so the derivation flows to rows 7-9. What is left is the mailbox's
+     * own truth-conditions. This does NOT describe a resume: coming back
+     * means pressing "Add mailbox" with no `?mailbox=` — the connect form
+     * again; the half-added mailbox is recovered from its own row ("Run
+     * setup" → the re-run). This arm is for the run in FLIGHT, once `onConnected` has put the id in the hash.
      */
     return deriveOnboardingStep({ ...facts, account: {}, ai: "on" }) ?? "mailbox";
   }

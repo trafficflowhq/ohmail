@@ -1,12 +1,12 @@
 /**
- * What is happening to my mail — one derivation for every surface. The old single sentence ("Waiting for first sync", keyed on `lastSyncAt`
- * null) stayed up for half an hour while hundreds of messages arrived. `lastSyncAt` cannot be a progress signal: it is SHARED (one UPDATE
- * stamps every mailbox a cycle served) and lands EARLY (stamped per cycle whether or not a backlog remains) — it is read exactly once, as `===
- * null`, the one sound reading. The growing state keys on THE MIRROR GROWING — the client's own count rising across syncs. One server stamp is
- * sound and is read as a floor: `initial_import_completed_at`, per-mailbox and late, also only as `=== null`; the floor is BOUNDED ({@link
- * importFloorSpeaks}) because "not known to be finished" is not "in progress" — a mailbox went four days without a no-backlog cycle and the
- * strip claimed a permanent import. The derivation is here, pure, run once per shell: three surfaces render its answer and none of them decides
- * anything; the growth sampler is stateful, which is the other half of "run once".
+ * What is happening to my mail — one derivation for every surface (the old
+ * "Waiting for first sync" stayed up half an hour while mail arrived).
+ * `lastSyncAt` cannot be a progress signal: SHARED (one UPDATE stamps every
+ * mailbox a cycle served) and EARLY (stamped per cycle whatever the
+ * backlog) — read exactly once, as `=== null`. The growing state keys on
+ * the MIRROR GROWING; the one sound server stamp, `initial_import_completed_at`, is read as a bounded floor
+ * ({@link importFloorSpeaks}). Pure, run once per shell: three surfaces
+ * render its answer, none decides; the growth sampler is stateful.
  */
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -121,16 +121,16 @@ export function readerStandDown(m: {
      Losing an explanation costs a sentence; inventing one costs a false claim. */
   const consented = m.organizeConsentedAt !== null && m.organizeConsentedAt !== undefined;
   if (!holder && !consented) return null;
-  /* The release is its own answer, and the MARKER is what names it. A
-   * consented reader with nobody holding it used to report `organized_elsewhere_unknown` over a mailbox nobody held — a row
-   * arguing with its own claim button. The discriminator is the marker, not
-   * the absent holder: the per-cycle peek rewrites the holder columns
-   * all-null on an empty claim folder, so a genuine stand-down decays into
-   * the holder-less shape on its own; `organizer_released_at` is written by
-   * the release and nothing else, and every promotion clears it (`standDownMemory` reached the same rule server-side). A host too old
-   * to send the marker keeps the stand-down sentence — the cheaper error:
-   * a stale explanation costs a sentence, a false release costs a claim
-   * about something the person did. */
+  /* The release is its own answer, and the MARKER names it. A consented
+   * reader with nobody holding it used to report
+   * `organized_elsewhere_unknown` — a row arguing with its own claim
+   * button. The discriminator is the marker, not the absent holder: the
+   * per-cycle peek rewrites the holder columns all-null on an empty claim
+   * folder, so a genuine stand-down decays into the holder-less shape;
+   * `organizer_released_at` is written by the release alone and every
+   * promotion clears it (`standDownMemory`, server-side). A host too old to
+   * send the marker keeps the stand-down sentence — the cheaper error: a
+   * stale explanation costs a sentence, a false release costs a claim. */
   if (!holder && m.organizerReleasedAt !== null && m.organizerReleasedAt !== undefined) {
     return "released";
   }
@@ -746,14 +746,14 @@ export interface MailboxFacts {
 }
 
 /**
- * Whether the forwarding-detection notice shows on a mailbox row (mail 0078). Exported pure so the suite can bite each clause, and in the
- * shared shell because two panes render it — one rule, or two surfaces tell one owner two stories. Three claims, each a gate:
- *  · `inboundQuietSince` set — the worker's pass is the predicate's single
- *    owner; nothing is re-derived here.  · the mailbox is healthy ON SCREEN (connected, unblocked, synced, and
- *    FRESH — `now` is a parameter because a day-old cycle belongs to the
- *    outage surfaces). Health gates HIDE, never reset: health back, notice
- *    back, dismissal intact.  · not dismissed, or dismissed before this episode's evidence
- *    (`dismissedAt < since`, via `Date.parse`, never string order).
+ * Whether the forwarding-detection notice shows on a mailbox row (mail
+ * 0078). Exported pure so the suite can bite each clause; in the shared
+ * shell because two panes render it — one rule, or two surfaces tell one
+ * owner two stories. Three gates: `inboundQuietSince` set (the worker's
+ * pass is the predicate's single owner); the mailbox healthy ON SCREEN
+ * (connected, unblocked, synced, FRESH — `now` is a parameter; health gates
+ * hide, never reset); and not dismissed, or dismissed before this
+ * episode's evidence (`dismissedAt < since`, via `Date.parse`, never string order).
  */
 export const INBOUND_QUIET_SHOW_FRESH_MS = 24 * 60 * 60 * 1000;
 
@@ -1219,11 +1219,11 @@ export const AWAITING_SLOW_MS = 600_000;
 
 /**
  * Why an outstanding filing is outstanding — the four situations one
- * sentence used to cover ("the server is catching up", on screen for ten minutes, twice). The count was right; the reason was not:
- *  · WORKING — the organizer has not reached this mailbox in its rotation
- *    (a 60 s tick, one bounded turn per mailbox — a minute or two is normal).
- *  · WAITING — the server refused the move; the row is deferred until
- *    `next_attempt_at`, so nothing is catching up.  · STUCK — refused more than once, or outstanding past a rotation.
+ * sentence used to cover ("the server is catching up", on screen ten
+ * minutes, twice; the count was right, the reason was not):
+ *  · WORKING — the organizer has not reached this mailbox in its rotation.
+ *  · WAITING — the server refused the move; deferred until    `next_attempt_at`, so nothing is catching up.
+ *  · STUCK — refused more than once, or outstanding past a rotation.
  *  · SOMEBODY ELSE FILES IT — a reader install: the reconcile pass is
  *    skipped, and "the server is catching up" is false by construction.
  */
@@ -1613,15 +1613,15 @@ function climb(input: MailStateInputs): MailState {
   const live = mailboxes.filter((m) => m.status !== "disabled");
 
   /* 4a. STOOD DOWN — the organizer lease is declining to serve it. The
-   * `live` filter drops every `disabled` row, so an account whose only mailbox was stood down read "No mailbox connected" three minutes after
+   * `live` filter drops every `disabled` row, so an account whose only
+   * mailbox was stood down read "No mailbox connected" minutes after
    * connecting one. This arm scans `mailboxes`, not `live` — "disabled" has
-   * two causes and `disabledReason` is the discriminator; an ordinary disconnect must still reach `noMailbox`. It outranks `blocked`: a sync
-   * block retries and clears itself, a stand-down is terminal from this
-   * side (`loadEnabledMailboxes` filters the row off the roster) — between
+   * two causes and `disabledReason` discriminates; an ordinary disconnect
+   * still reaches `noMailbox`. It outranks `blocked`: a sync block retries
+   * and clears itself, a stand-down is terminal from this side — between
    * two true sentences, the one that will not stop being true wins. Above
    * the growth states for `blocked`'s reason. `minutes` stays null: nothing
-   * timestamps a stand-down, and `createdAt` would measure the wrong thing.
-   */
+   * timestamps a stand-down. */
   /* `typeof === "string"` AND NOT `!== null`, and the difference is a caught defect. The field
    * is typed `string | null`, but a probe compiled before the field existed — a cached Cloud
    * bundle, a fixture that predates it — simply omits it, and `undefined !== null` is TRUE. That reading
@@ -1694,14 +1694,14 @@ function climb(input: MailStateInputs): MailState {
 
   // 5a. FILING — we have filed the mail and the server has not. The API
   // never opens IMAP: decisions write `folder_state` and the worker moves
-  // mail on its next cycle, so there is a window where ohmail shows the
-  // mail filed and the user's server does not — and nothing above this arm
-  // can see it (still `connected`, not `blocked`, not stood down), so the
-  // ladder fell through to `quiet` while the backlog grew. Below `mailboxError` (a quarantined mailbox is the larger fact); above
-  // `importing` (decisions going OUT must not be buried under mail coming
-  // in). `typeof m.pendingMoves === "number"` and `> 0`: an absent field is
-  // "this build cannot tell" and must produce silence, and "Filing 0 messages" is a sentence about nothing. Summed across live mailboxes;
-  // the address is named only when there is exactly one.
+  // mail on its next cycle — a window nothing above this arm can see
+  // (still `connected`, not `blocked`, not stood down), so the ladder fell
+  // through to `quiet` while the backlog grew. Below `mailboxError` (a
+  // quarantined mailbox is the larger fact); above `importing` (decisions
+  // going OUT must not be buried under mail coming in).
+  // `typeof === "number"` and `> 0`: an absent field must produce silence,
+  // and "Filing 0 messages" is a sentence about nothing. Summed across live
+  // mailboxes; the address is named only when there is exactly one.
   const filing = live.filter((m) => typeof m.pendingMoves === "number" && m.pendingMoves > 0);
   const outstanding = filing.reduce((n, m) => n + (m.pendingMoves ?? 0), 0);
   // And WHY they are outstanding, when the server can say (mail 0097): the
@@ -1793,15 +1793,15 @@ function climb(input: MailStateInputs): MailState {
   }
 
   // 2b. THE IMPORT FLOOR — the server has not stamped this mailbox's first
-  // import done. A first import leaves the server holding a PARTIAL mailbox
-  // for minutes, and the growth arm is blind at the edges: a tab opening onto the partial state sees a settled mirror and declares a mailbox
-  // with a hole in it complete. `initial_import_completed_at` is the one stamp this module reads — per-mailbox and late — read as a floor, and
-  // `=== null`, never `== null`: an older server omits the field (`undefined`), degrading to growth-only rather than a false import.
-  // `some`, not `every`, judged per mailbox — a five-minute-old mailbox
-  // keeps its absolute floor while a four-day sibling releases. The floor is bounded ({@link importFloorSpeaks}): unbounded, it announced a
-  // permanent import over a finished mirror. `mirrored > 0` confines it to
-  // the partial-mailbox case (`awaiting` owns the empty one); `clock: true`
-  // is load-bearing here — the release is driven by elapsed time alone.
+  // import done. A first import leaves a PARTIAL mailbox for minutes, and
+  // the growth arm is blind at the edges: a tab opening onto it declares a
+  // mailbox with a hole complete. `initial_import_completed_at` is read as
+  // a floor, `=== null` never `== null` (an older server omits the field,
+  // degrading to growth-only). `some`, not `every`, judged per mailbox — a
+  // young mailbox keeps its floor while a four-day sibling releases. The
+  // floor is bounded ({@link importFloorSpeaks}); `mirrored > 0` confines
+  // it to the partial-mailbox case (`awaiting` owns the empty one);
+  // `clock: true` is load-bearing — the release is driven by time alone.
   if (mirrored > 0 && connected.some((m) => importFloorSpeaks(m, growth, sync, now))) {
     return { ...QUIET, key: "importing", clock: true, count: mirrored, total: totalIfAhead };
   }

@@ -343,15 +343,15 @@ const HYDRATE_LIMIT = 200;
 export const AUTO_BATCH_SIZE = 10;
 
 /* The spend announcement. A purchase changes a number OTHER surfaces show —
- * the remaining AI allowance, rendered one line under the control that
- * spent it. That line reads `GET /billing/subscription`, is injected,
- * fetches once on mount, and nothing remounts it when a sibling spends — so
- * it claimed the session-start balance, including credits at zero, until a
- * reload. The narrowest fix is a notification, not a shared store: this
- * file knows the moment the server reported a new balance, and listeners
- * only need "re-read" — no state crosses the seam, the shell holds no billing knowledge. Module scope rather than context (no component
- * contains both ends); `subscribe` returns its own unsubscribe. Not a poll:
- * it fires only after a request that actually moved money. */
+ * the remaining AI allowance, one line under the control that spent it.
+ * That line reads `GET /billing/subscription`, is injected, fetches once on
+ * mount, and nothing remounts it when a sibling spends — so it claimed the
+ * session-start balance until a reload. The narrowest fix is a
+ * notification, not a shared store: listeners only need "re-read", no state
+ * crosses the seam, the shell holds no billing knowledge. Module scope
+ * rather than context (no component contains both ends); `subscribe`
+ * returns its own unsubscribe. Not a poll: it fires only after a request
+ * that actually moved money. */
 const creditListeners = new Set<() => void>();
 
 /**

@@ -88,15 +88,15 @@ export interface ConsentTransport {
 /** The hosted transport — the browser talking to the API this app was written against. */
 const CLOUD_CONSENT: ConsentTransport = {
   /* The managed API mounts `foldersRoutes`, so this is true of the browser
-     tab this transport was written for — a STATIC claim about a route table
-     this client cannot interrogate. A self-host server spreads `localRoutes`
-     and inherits `withoutFoldersFlag`, so a self-host web client draws the
-     same pane that cannot store, and this constant says otherwise; a      desktop self-host door takes the hosted wire and inherits the same
-     wrong answer. The honest answer is the server's to give: `features` on
-     `/hello` is where `pairing` lives for exactly this reason, and
-     `folders` belongs beside it — one word closes all three surfaces. Until
-     then this is exact for the managed deployment and one release ahead of
-     the truth for a self-hosted one. See `apps/desktop/src/local-consent.ts`. */
+     tab this transport was written for — a static claim about a route table
+     this client cannot interrogate. A self-host server inherits
+     `withoutFoldersFlag`, so its web client draws the same pane that cannot
+     store, and this constant says otherwise; a desktop self-host door takes
+     the hosted wire and inherits the same wrong answer. The honest answer
+     is the server's to give: `features` on `/hello` — one `folders` word
+     closes all three surfaces. Until then this is exact for the managed
+     deployment and one release ahead of the truth for a self-hosted one.
+     See `apps/desktop/src/local-consent.ts`. */
   foldersStorable: true,
   state: () => consentApi.state(),
   setAutoSuggest: (enabled) => consentApi.setAutoSuggest(enabled),

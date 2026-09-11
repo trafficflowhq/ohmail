@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * The mail renderer: the html part, sanitized, in a frame that cannot phone home. Sanitize, then contain — two jobs: DOMPurify decides what the document SAYS (no script, handler, form,
- * frame, `javascript:`, `<base>`, `<meta refresh>`, or remote reference; it parses with the browser's own parser, so no parser differential); the sandboxed `<iframe srcdoc>` with its
- * own CSP decides what the browser MAY DO — each is watched failing alone in `test/message-body.test.ts`. The frame is also what lets the sender's `<style>` survive. Sandbox:
- * `allow-same-origin` (safe only because `allow-scripts` is absent — that pair lets a frame remove its own sandbox), `allow-popups`, `allow-popups-to-escape-sandbox`; never
- * allow-scripts, allow-forms, or allow-top-navigation. Remote content is not requested at all: every `src`, `srcset`, `background`, CSS `url()`, `image-set()` and `@import` is removed
- * before the document is built, and the injected `default-src 'none'` covers whatever shape the rewrite has not thought of — a forgotten rewrite is a bug; a forgotten CSP entry is
- * unreachable. Text is rewritten only BEFORE the sanitizer; after it only attributes change ({@link sanitizeMailHtml}). Images travel only through `GET /img` ({@link proxyImgSource}
- * names the proxy's own path in the policy); `cid:` images are this message's own bytes as `data:` URIs. Nothing rendered is stored.
+ * The mail renderer: the html part, sanitized, in a frame that cannot phone home. Two jobs:
+ * DOMPurify decides what the document SAYS (no script, handler, form, frame, `javascript:`,
+ * `<base>`, `<meta refresh>`, remote reference); the sandboxed `<iframe srcdoc>` with its own
+ * CSP decides what the browser MAY DO — never allow-scripts/forms/top-navigation
+ * (`allow-same-origin` is safe only without scripts). Remote content is not requested: every
+ * remote reference is removed pre-build, `default-src 'none'` covers the rest. Text rewrites
+ * only BEFORE the sanitizer; images ride `GET /img` only; `cid:` images are this message's own
+ * bytes.
  */
 
 import DOMPurify from "dompurify";
@@ -1712,15 +1712,15 @@ function oneSheetDeclares(styleText: string, declares: (block: string) => boolea
   const sheet = stripCssComments(styleText);
 
   // The block structure, read the way the browser reads it: one
-  // escape-aware forward pass keeps a stack of open blocks and, per block, its DIRECT declaration text — an inner rule's width is never attributed
-  // to the outer selector. Three measured shapes the innermost-pair read got wrong: a sheet ending inside an open block (the browser closes and
-  // applies at EOF — so does the walk); an escaped brace (`--x:\}` is data);
-  // CSS nesting (the outer rule's own declarations still count). A STYLE rule reads its text under its selector unless dead — PARSE-dead (empty
-  // selector: the browser drops the rule whole, nothing nested returns) is
-  // not EVIDENCE-skipped (an `img`-token selector is real CSS, just not canvas evidence; a rule nested in it resolves by SUBJECT — see
-  // {@link nestedEvidence}). At-rules are transparent: their direct text
-  // belongs to the nearest enclosing style rule, and at top level is dropped, as is any top-level declaration. Every brace read is structure: the classifier view has string and url contents blanked
-  // ({@link stripCssComments}) and escapes stepped over. Still linear.
+  // escape-aware pass keeps a stack of open blocks and, per block, its
+  // DIRECT declaration text — an inner rule's width is never attributed to
+  // the outer selector; the walk closes and applies open blocks at EOF as
+  // the browser does, an escaped brace (`--x:\}`) is data, and a nested
+  // rule leaves the outer rule's own declarations counted. PARSE-dead
+  // (empty selector: dropped whole) is not EVIDENCE-skipped (an `img`-token
+  // selector is real CSS; nested rules resolve by SUBJECT,
+  // {@link nestedEvidence}). At-rules are transparent. Every brace read is
+  // structure (strings and urls blanked, escapes stepped over). Linear.
   type Level = {
     /** May this level's own declaration text be evaluated (and under a live selector)? */
     evalDecls: boolean;
@@ -1820,14 +1820,13 @@ export function isDesignedLayout(root: Element, styleText: string | readonly str
 // ── the rich walker: the prose rendering's OWN allow-list ──────────────────────────────
 
 /**
- * A second, narrower allow-list. {@link ALLOWED_TAGS} answers what a mail may say inside the sandboxed frame; the prose rendering has
- * no frame — its elements live in the app's own document — so the question becomes what structure a letter has, and this walker emits
- * `BodyText`'s node model. The invariant: no sender byte leaves this walker except as the `text` of a text run, and no sender
- * attribute leaves it at all — `href` re-derived through {@link anchorFor}, `colspan` through {@link boundedSpan},
- * `style`/`class`/`width`/`id` never read; no serialized markup exists between the sanitized DOM and React. Absent on purpose: `img`
- * (the strip lists them; "Show original" brings the layout back) and `style` ({@link RICH_SKIP}); everything else is transparent.
- * `pre` is read as literal text ({@link preTextOf}); `blockquote` maps to the same QuoteNode as the text parser, clamped by {@link
- * MAX_QUOTE_DEPTH}; the walk runs under {@link MAX_RICH_NODES}, past which it answers `null`.
+ * A second, narrower allow-list: the prose rendering has no frame — its elements live in the
+ * app's own document — so this walker emits `BodyText`'s node model. The invariant: no sender
+ * byte leaves except as the `text` of a text run, and no sender attribute leaves at all (`href`
+ * via {@link anchorFor}, `colspan` via {@link boundedSpan}; `style`/`class` never read). Absent
+ * on purpose: `img` (the strip lists them) and `style` ({@link RICH_SKIP}); everything else is
+ * transparent. `pre` reads as literal text; `blockquote` maps to the text parser's QuoteNode,
+ * clamped by {@link MAX_QUOTE_DEPTH}; past {@link MAX_RICH_NODES} it answers `null`.
  */
 export const MAX_RICH_NODES = 4096;
 
@@ -2227,14 +2226,13 @@ export function sanitizerAvailable(): boolean {
 }
 
 /**
- * Sanitize one message's html. Returns markup, not a document — {@link buildMailDocument} wraps it, so tests assert CSP and sanitization
- * separately. Throws nothing: unparseable input yields empty markup and the component falls back to the text part. One rule, which replaced
- * a DOMPurify hook that shipped a mutation-XSS by editing the sanitizer's output as TEXT (`<style>` serializes raw — see {@link CUT}): text
- * is rewritten only BEFORE `purify.sanitize` (the pre-pass, over every `<style>` in the parsed document, so anything a rewrite could invent
- * is markup the sanitizer then reads and refuses), and after it only ATTRIBUTES change (the post-pass, over the document the frame will
- * have, annotating whatever is there — the hook missed injected `<a>`s). An attribute write cannot re-open the parser: the serializer
- * quotes and escapes values. `RETURN_DOM: true` makes the post-pass possible without a second parse — measured against dompurify's own
- * source, the string path is `body.innerHTML` of the node this returns.
+ * Sanitize one message's html. Returns markup, not a document ({@link buildMailDocument} wraps
+ * it); throws nothing — unparseable input yields empty markup and the text part renders. One
+ * rule, which replaced a DOMPurify hook that shipped a mutation-XSS by editing sanitizer output
+ * as TEXT (`<style>` serializes raw — {@link CUT}): text is rewritten only BEFORE
+ * `purify.sanitize`, so an invented shape is markup the sanitizer refuses; after it only
+ * ATTRIBUTES change, over the document the frame will have (the hook missed injected `<a>`s; an
+ * attribute write cannot re-open the parser). `RETURN_DOM: true` avoids a second parse.
  */
 export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): SanitizedMail {
   const blocked: BlockedAsset[] = [];
@@ -2608,16 +2606,16 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // post-pass above is the last thing that writes, and it writes attributes only, which is the
   // rule this whole function is arranged around.
   const background = effectiveBackground(parsed.body, sanitized, styleText);
-  // The divergence `prose` reserved room for, taken: `reflow` still answers
-  // `isRigidLayout` alone (a fixed canvas is the only mail that must be
-  // scaled); `prose` answers "did the sender lay something out?" — rigid OR
-  // designed keeps its frame, only the letter is set in the app's type. A designed-but-not-rigid mail is framed AND reflowed: the sender's own
-  // presentation at the column's width. Both classifiers read the SANITIZED
-  // document's own sheets — DOMPurify drops a `<style>` whose text smells of markup, and a canvas living only in a dropped sheet is one the
-  // rendered document has not got. Both scans take the sheets one element
-  // per entry (a browser tokenizes each `<style>` at its own EOF) and read
-  // them rule-wise through {@link sheetsDeclare}: a joined view manufactured declarations across sheet EOFs, and a flat regex read
-  // comment text and string data as canvas evidence.
+  // The divergence `prose` reserved room for: `reflow` still answers
+  // `isRigidLayout` alone (a fixed canvas must be scaled); `prose` answers
+  // "did the sender lay something out?" — rigid OR designed keeps its
+  // frame, only the letter is set in the app's type. Both classifiers read
+  // the SANITIZED document's own sheets — DOMPurify drops a `<style>` whose
+  // text smells of markup, and a canvas living only in a dropped sheet is
+  // one the rendered document has not got. Both scans take the sheets one
+  // element per entry, rule-wise through {@link sheetsDeclare}: a joined
+  // view manufactured declarations across sheet EOFs, and a flat regex
+  // read comment text as canvas evidence.
   const sanitizedSheets = [...sanitized.querySelectorAll("style")].map((s) => s.textContent ?? "");
   const rigid = isRigidLayout(sanitized, sanitizedSheets);
   const designed = rigid || isDesignedLayout(sanitized, sanitizedSheets);
@@ -2659,14 +2657,14 @@ const CSP_PROBE_URL = "https://csp-probe.invalid/probe.png";
 const CSP_HOST_SOURCE = /^https?:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5})?\/[A-Za-z0-9._~/-]*$/;
 
 /**
- * The one url the frame may fetch, written as a CSP source — or `null`, meaning the frame may fetch nothing. Not `'self'`: that is every url on this origin, and twice a
- * url the sanitizer left behind resolved against the embedder (srcdoc has no `<base>`) into an authenticated same-origin GET the old `img-src data: 'self'` permitted.
- * Naming the PATH ends the family by construction: `https://ohmail.app/api/img` admits the proxy and refuses every other url — the acceptance test is that both prior
- * fixes become redundant. Measured in Chromium: exact path matches (query and fragment ignored), prefixes and case variants blocked, `%`-encoded spellings matched after
- * decoding ({@link CSP_HOST_SOURCE} refuses `%` for that reason), and a trailing `/` turns the source into a prefix. The one spec hole: a path is not matched across a
- * REDIRECT — closed at the proxy, which never answers 3xx (mutation-watched in the API's privacy suite). Minted by calling the caller's own proxy function with {@link
- * CSP_PROBE_URL} and reading origin and path back — a constant here would drift silently in both directions. Fail-closed `null` on another origin, a non-http(s) scheme,
- * an unparseable answer, a throw, or a refused path; the caller must then not use the proxy either.
+ * The one url the frame may fetch, as a CSP source — or `null`: fetch nothing. Not `'self'`
+ * (every url on this origin): twice a url the sanitizer left behind resolved against the
+ * embedder into an authenticated same-origin GET the old policy permitted. Naming the PATH ends
+ * the family — both prior fixes become redundant. Measured in Chromium: exact path matches
+ * (query/fragment ignored); prefixes and case variants blocked; `%`-spellings match after
+ * decoding ({@link CSP_HOST_SOURCE} refuses `%`). The redirect hole is closed at the proxy
+ * (never 3xx, mutation-watched). Minted via the caller's proxy fn ({@link CSP_PROBE_URL});
+ * fail-closed null.
  */
 export function proxyImgSource(proxy: (url: string) => string, pageOrigin: string): string | null {
   let minted: string;
@@ -3833,14 +3831,13 @@ export function MessageBody({
   // already drew dark has no adaptation to offer, and a control that
   // visibly does nothing is worse than an absent one.
   /**
-   * The frameless path — a letter, set in the app's own type. `mail.prose` is the document's answer; the other two terms are this
-   * component's: an empty text part keeps its frame (the words exist only in the html), and "Show original" is a press and only a
-   * press — the earlier inference (`remoteLoaded && …`) was true of a press and false of the account-wide load-by-default setting,
-   * which framed every pictured message for exactly the readers the flip was for. What renders: the walker's node tree, else the
-   * text part, both through {@link BodyText} — no markup string ever enters the app's document; sender bytes exist only as text
-   * nodes (`test/message-body-prose.test.ts` plants hostile markup and asserts none reaches the DOM). The bar stays when it has
-   * something to say — a prose mail can still have named a beacon, and the bar is the only place the product says so — but never
-   * for the flip alone; the dark toggle is suppressed (no frame to filter).
+   * The frameless path — a letter, set in the app's own type. `mail.prose` is the document's
+   * answer; this component adds two terms: an empty text part keeps its frame, and "Show original"
+   * is a press and only a press (the `remoteLoaded` inference framed every pictured message under
+   * the load-by-default setting). What renders: the walker's node tree, else the text part, both
+   * through {@link BodyText} — no markup string ever enters the app's document
+   * (`test/message-body-prose.test.ts` plants hostile markup and asserts none reaches the DOM). The
+   * bar stays when it has something to say, never for the flip alone; dark toggle suppressed.
    */
   /**
    * IS THIS MAIL ELIGIBLE for the frameless rendering — the document's answer plus the text part

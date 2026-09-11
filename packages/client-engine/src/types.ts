@@ -447,10 +447,10 @@ export interface MessageBodyRecord {
    * across a reload. `hydrateBody` never re-asks a `failed` record on an
    * automatic trigger (an effect re-firing per mirror bump would poll a
    * refusing server), but the records are PERSISTED, so "never re-ask" was
-   * silently for ever: one 500 stayed failed until Retry on that exact
-   * message. Narrowed to the session that asked: a `failedAt` before this
-   * engine's boot is re-asked exactly once on the next explicit intent.
-   * Absent means stale (older builds wrote none) and heals. It terminates: the engine remembers healed ids in memory this session.
+   * silently for ever: one 500 stayed failed until Retry on that message.
+   * Narrowed to the session that asked: a `failedAt` before this engine's
+   * boot is re-asked exactly once on the next explicit intent. Absent means
+ * stale (older builds wrote none) and heals; the engine remembers healed ids in memory this session.
    */
   failedAt?: number;
 }
