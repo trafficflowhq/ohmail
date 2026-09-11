@@ -15,29 +15,13 @@ import type {
 import type { SessionScope } from "./resolve-session.js";
 
 /**
- * **A LIVE SESSION FOR ONE ACCOUNT MAY NOT PRESENT A CREDENTIAL FOR ANOTHER.**
- *
- * The sign-in and token routes are `public`: `withSession` resolves whatever credential happens
- * to be presented, and the route then resolves a SECOND, independent credential out of the body.
- * Nothing compared them. So a caller holding a live session for A could post a refresh token, an
- * authorization code or a password belonging to B and be answered normally — B's tokens, minted
- * and returned, on a request the whole stack had already labelled as A's.
- *
- * That is not an escalation: it needs B's credential to begin with. It is a CONFUSION, and it is
- * the exact one the response's account header exists to make visible — a client comparing the
- * header would see A, accept the answer, and bind B's freshly minted session to A's mirror. The
- * header cannot be made honest while the request underneath it is ambiguous, so the ambiguity is
- * refused rather than described.
- *
- * **No legitimate client produces this shape.** Signing in as somebody else begins by signing out;
- * a rotation presents the family belonging to the session that holds it. The refusal is therefore
- * a 409 about the REQUEST rather than a 401 about the credential: both credentials are valid, and
- * that is the problem.
- *
- * **A sessionless caller is unaffected**, and that is what keeps the ordinary paths whole:
- * `ctx.accountId` is `""` when no session resolved (`packages/api/src/context.ts`), which is the
- * common case for a browser refreshing an expired access token and for every native exchange.
- * This compares only when there is something to compare.
+ * A live session for one account may not present a credential for another. The sign-in and token
+ * routes are `public`: the route resolves a SECOND credential out of the body, and nothing
+ * compared it to the session's — a caller holding a session for A could post B's refresh token
+ * and get B's tokens minted on a request the stack labelled as A's. Not an escalation (it needs
+ * B's credential) but a CONFUSION the response's account header cannot describe honestly, so it
+ * is refused: a 409 about the REQUEST, not a 401 — both credentials are valid, and that is the
+ * problem. A sessionless caller is unaffected: `ctx.accountId` is `""` when no session resolved.
  */
 export function refuseCrossAccountCredential(ctx: ServiceContext, credentialAccountId: string): void {
   if (ctx.accountId && ctx.accountId !== credentialAccountId) {
@@ -50,40 +34,13 @@ export function refuseCrossAccountCredential(ctx: ServiceContext, credentialAcco
 
 /**
  * SessionLifecycle — the session MACHINERY, carved out of `AuthService` so the desktop-as-host
- * tier can run it (Phase 3). This class is what a session IS once it exists: the mint
- * (`establish`), rotation with refresh-reuse detection, family revocation, logout, the device
- * list and its revoke, step-up introspection, and the paired-device mint the QR redeem calls.
- *
- * What it deliberately is NOT is the identity CEREMONY — registration, passwords, invites,
- * factors, WebAuthn, PKCE, throttles, the audit trail (the base records nothing and its
- * {@link listAudit} read answers empty; the hosted service overrides both halves with the real
- * table). That stays on `AuthService`, which
- * `extends` this class, overrides the three hosted hooks at the bottom, and behaves byte-for-
- * byte as it did when all of this was one file: same methods, same order, same statements.
- *
- * ── WHY THE SEAM IS AN `extends` AND WHERE IT MAY BE CUT ──────────────────────────────────
- *
- * The desktop engine bundles this module (via `@trafficflow/services/auth` → the sidecar's
- * service bag) and its import closure is therefore a decision about what a public download
- * conveys — the exact discipline `src/mail.ts` states for the engine barrel. Everything this
- * file reaches is the SHARED half: `users`/`devices`/`sessions`/`refresh_tokens` (mail 0060)
- * from the schema, the crypto/config leaves, and nothing else. `auth-entry-census.test.ts`
- * pins the closure; the engine build's artifact census is the second line.
- *
- * The machinery is REUSED by both tiers rather than reimplemented — one rotation protocol, one
- * reuse detector, one family revocation — because two implementations of refresh-reuse
- * detection is how one tier's stolen token stays alive on the other. The paired-device e2e in
- * `apps/sidecar` runs THESE methods against PGlite; the hosted suites run them through
- * `AuthService` against Postgres.
- *
- * ── THE THREE HOSTED HOOKS ────────────────────────────────────────────────────────────────
- *
- * `audit`, `throttleReset` and `twofaEnrolled` name cloud-half tables (`auth_events`,
- * `auth_throttle`, the factor tables), which a mail-only store does not hold and a public
- * bundle may not name. Here they are the LOCAL tier's truth — no event log (the launch-session
- * mint writes none either), no throttle (the credential is the pipe), no factors (the machine's
- * own login is the boundary) — and `AuthService` overrides all three with the real reads and
- * writes, so the hosted behaviour is unchanged in every path that runs there.
+ * tier can run it: `establish`, rotation with reuse detection, family revocation, logout,
+ * devices, step-up introspection, the paired-device mint. NOT the identity ceremony — that stays
+ * on `AuthService`, which extends this and overrides the three hosted hooks (`audit`,
+ * `throttleReset`, `twofaEnrolled`) naming cloud-half tables. The desktop engine bundles this
+ * module, so everything reached is the SHARED half (mail 0060); `auth-entry-census.test.ts` pins
+ * the closure. One rotation protocol on both tiers: two implementations of reuse detection is how
+ * one tier's stolen token stays alive on the other.
  */
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -160,22 +117,14 @@ export class SessionLifecycle {
    * object with different static shapes.
    */
   /**
-   * ── AND IT IS WHERE `noteCredentialAccount` BECOMES COMMIT-SIDE ──────────────────────────────
-   *
-   * The reporting seam labels the response with the account a credential resolved to, and the
-   * seams that call it (`establish`, `mintRotation`) run inside transactions here. Reporting
-   * straight through meant a mutation of REQUEST state performed before the transaction that
-   * justified it had committed — and the lost-rotation recovery arm converts a commit failure to
-   * `null` and answers an error, so a rolled-back mint left the response labelled as though the
-   * session it rolled back existed.
-   *
-   * So a `txCtx` reports into a BUFFER, and the buffer is forwarded only after `transaction()`
-   * resolves. A rollback, a throw, or a swallowed commit failure discards it and the response
-   * names nobody, which is what the header's comment claims and did not do.
-   *
-   * Nesting composes: an inner transaction forwards into the outer's buffer on its own commit,
-   * and the outer forwards to the real context on its. Reporting OUTSIDE any transaction is
-   * unaffected and still goes straight through.
+   * Where `noteCredentialAccount` becomes commit-side. The reporting seam labels the response
+   * with the account a credential resolved to, and its callers run inside transactions here:
+   * reporting straight through mutated request state before the transaction justifying it
+   * committed — a rolled-back mint left the response labelled as though the rolled-back session
+   * existed. So a `txCtx` reports into a BUFFER, forwarded only after `transaction()` resolves: a
+   * rollback, a throw or a swallowed commit failure discards it. Nesting composes — an inner
+   * transaction forwards into the outer's buffer on its own commit. Reporting outside any
+   * transaction goes straight through.
    */
   protected async inTransaction<T>(
     ctx: ServiceContext, fn: (txCtx: ServiceContext) => Promise<T>,
@@ -212,30 +161,14 @@ export class SessionLifecycle {
   }
 
   /**
-   * Rotate a refresh token.
-   *
-   * `concurrentGrace` is opt-in and OFF by default, and only the COOKIE surface passes it. It is a
-   * property of the shared browser cookie jar: several tabs read one `tf_refresh` and can present
-   * it at once, and the client single-flights refresh only per tab, so a benign duplicate is
-   * structural there and revoking the family on it signs a working session out. A native/bearer
-   * client and the OAuth `refresh_token` grant hold their token privately and rotate it serially —
-   * they have no such race, so they keep the strict RFC 9700 §4.14.2 response (a re-presented
-   * consumed token revokes the family). Confining the grace to the surface that needs it is what
-   * keeps a public-client replay from silently buying a parallel credential.
-   *
-   * `surface` rides the SAME branch and chooses the LIFETIME the rotation issues (see
-   * `surfaceTtls`). It is a second, independent option rather than a reading of `concurrentGrace`
-   * because the two axes have opposite strict ends — strict lifetime is the cookie one, strict
-   * reuse is the native one — so one flag could only be strict on one of them. Omitting it means
-   * the cookie window, which is the shorter of the two: a caller that forgets is short-changed,
-   * never over-served.
-   *
-   * A NOTE ON WHAT THE SURFACE IS READ FROM, because it is a request property and not a row: the
-   * lifetime follows the branch this presentation arrived on, not the device the session was
-   * minted for. The two only disagree if a `tf_refresh` cookie is presented in a native body (or
-   * the reverse), and the cookie is HttpOnly, `SameSite=Strict` and `Path=/auth/refresh` — so
-   * moving one to the other branch means already holding it, and a holder can rotate the chain
-   * for ever on its own branch anyway. The window it would gain is not access it lacked.
+   * Rotate a refresh token. `concurrentGrace` is opt-in, OFF by default, and only the COOKIE
+   * surface passes it: several tabs read one `tf_refresh` and present it at once, so a benign
+   * duplicate is structural there — native/bearer and the OAuth grant rotate serially and keep
+   * the strict RFC 9700 §4.14.2 response. `surface` rides the same branch and chooses the
+   * LIFETIME — independent, because the two axes have opposite strict ends; omitting it means the
+   * shorter cookie window: a forgetful caller is short-changed, never over-served. The lifetime
+   * follows the BRANCH this presentation arrived on: moving a cookie to the body branch means
+   * already holding it, and a holder can rotate for ever on its own branch anyway.
    */
   async refresh(
     ctx: ServiceContext,
@@ -251,47 +184,14 @@ export class SessionLifecycle {
   }
 
   /**
-   * Mint the session a PAIRING-TOKEN redeem establishes (`pairing.ts`, `device-pair` grant) —
-   * the `claimDesktopLink` tail as a seam, so the pairing module reuses this class's
-   * session machinery (`establish`: device row, session row, refresh family, audit trail,
-   * surface TTLs) instead of hand-rolling any of it. The BURN is not here: single-use, TTL and
-   * revocation are decided by the pairing table's one atomic UPDATE before this is called, and
-   * this method must stay free of authority decisions of its own — its caller has already
-   * consumed the credential that authorizes it.
-   *
-   * Three deliberate differences from the desktop-link tail, each argued rather than inherited:
-   *
-   *  · **The device row carries the TOKEN's label, not a kind-derived default.** The minter
-   *    named the device at mint time ("kitchen iPad"), and that name is what makes
-   *    `GET /devices` legible and `DELETE /devices/:id` aimable — the revocation path being the
-   *    reason pairing is safe to offer at all.
-   *
-   *  · **`kind` is the REDEEMER's declaration, and it names the DEVICE ROW — never a lifetime.**
-   *    The desktop claim's tail could hardcode its kind because its caller IS the desktop app; a
-   *    pairing token is redeemed by whatever scanned the QR — a phone browser today (Phase 3),
-   *    the native app later (Phase 5) — and stamping "macos" on a browser was the wire wart this
-   *    slice removed: the device list lied about what was paired. The set is closed here — an
-   *    unlisted kind refuses rather than defaulting, because a clamp ships a device row nobody
-   *    chose — and the DEFAULT for a caller that says nothing is decided at the redeem
-   *    (`redeemDevicePair`: "web"), never here. What the declaration must NOT reach is the TTL
-   *    surface: it is anonymous wire input, so letting it pick `native` would hand any token
-   *    holder the choice of their credential's idle window — and letting it pick `cookie` would
-   *    only pretend to be stricter, because a bearer pair rotates through the body branch, which
-   *    re-issues the NATIVE window on the first rotation whatever the mint chose. So the mint
-   *    pins `surface: "native"` — the bearer reality, one policy at mint and at rotation — and
-   *    the kind is display truth only.
-   *
-   *  · **`twofaAt: null` — the paired session starts with NO step-up standing.** The desktop
-   *    claim stamps `ctx.now()` and its header earns it: a step-up-gated mint plus a TWO-MINUTE
-   *    code means a factor really was asserted within that window. A pairing token lives up to
-   *    fifteen minutes (`PAIRING_TTL_BOUNDS`), which stretches that argument past what it
-   *    proves — and unlike the desktop link, nothing a freshly paired device does on day one
-   *    needs step-up: mail is not step-up-gated, and what IS (revoking devices, removing a
-   *    factor, minting MORE pairing tokens) is exactly what a just-paired device should not
-   *    inherit from a credential that may have crossed a room on paper. NULL fails step-up
-   *    closed ({@link requireStepUp}), which that column's own doc calls the correct reading
-   *    and the safe one. It also breaks the chain where pairing begets pairing: this session
-   *    cannot reach `POST /pair` until its holder asserts a factor of their own.
+   * Mint the session a pairing-token redeem establishes — the `claimDesktopLink` tail as a seam,
+   * so pairing reuses this machinery. The BURN is not here: single-use, TTL and revocation were
+   * decided by the pairing table's one atomic UPDATE. Three differences from the desktop-link
+   * tail: the device row carries the TOKEN's mint-time label, which makes revocation aimable;
+   * `kind` is the REDEEMER's declaration and names the DEVICE ROW only (closed set) — never the
+   * TTL surface: the mint pins `surface: "native"`, the bearer reality; and `twofaAt: null` — a
+   * pairing token lives up to fifteen minutes, past what a step-up argument proves. NULL fails
+   * step-up closed, so pairing cannot beget pairing.
    */
   async establishPairedDevice(
     ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind },
@@ -402,27 +302,14 @@ export class SessionLifecycle {
   }
 
   /**
-   * Revoke the caller's DEVICE-LESS full sessions except the caller's own — the one bulk verb
-   * behind "sign out all other web sessions", optionally narrowed to sessions last seen more
-   * than `olderThanDays` days ago.
-   *
-   * The cutoff is what makes the verb usable for THINNING rather than only for taking
-   * everything back: without it, an account carrying hundreds of stale rows could only be
-   * cleaned by signing out the sessions in use today as well, so the act was done one
-   * `DELETE /devices/:id` at a time instead. Omitted, the scope is unchanged.
-   *
-   * The scope is structural, never a label: `device_id IS NULL` is what a plain browser
-   * sign-in is (a device row means a NAMED device — a pairing redeem's mint or the desktop's
-   * macos claim), so a paired device can never be swept by this however it is labeled. The
-   * caller survives twice over — its session id AND its family are excluded — and the scope
-   * pin (`scope = 'full'`) keeps the predicate exact rather than relying on "no enrollment
-   * session can coexist with a full one" holding forever.
-   *
-   * Step-up gated for `logout {allDevices}`'s exact reason: mass sign-out is device
-   * revocation in effect. NOT mounted on the desktop-host door (`routes/desktop-host.ts`) —
-   * there the device-less non-current session IS the host's launch session, which a remote
-   * viewer must never be able to kill; the route array that carries this verb is spread into
-   * `authRoutes` only, and `desktop-host.test.ts` censuses the absence.
+   * Revoke every DEVICE-LESS full session of the caller except its own — "sign out all other web
+   * sessions". The scope is structural, never a label: `device_id IS NULL` is what a plain
+   * browser sign-in is, so a paired device can never be swept however labeled. The caller
+   * survives twice — its session id AND its family are excluded — and the `scope = 'full'` pin
+   * keeps the predicate exact. Step-up gated: mass sign-out is device revocation in effect. NOT
+   * mounted on the desktop-host door — there the device-less non-current session IS the host's
+   * launch session, which a remote viewer must never kill; `desktop-host.test.ts` censuses the
+   * absence.
    */
   async revokeWebSessions(
     ctx: ServiceContext, opts: { olderThanDays?: number } = {},
@@ -452,20 +339,16 @@ export class SessionLifecycle {
     if (opts.olderThanDays !== undefined) {
       preds.push(lt(sessions.lastSeenAt, new Date(now.getTime() - opts.olderThanDays * DAY_MS)));
     }
-    // SET-BASED AND ATOMIC — both properties review-bought, one per pass. Set-based: the loop
-    // shape (`revokeFamily` per family — two awaited UPDATEs each, serially) was 400+ round
-    // trips on exactly the accounts this verb exists for, inside a hosted request with a
-    // 60-second ceiling: a "Sign out all" that times out having revoked only a PREFIX. One
-    // guarded claim takes the whole scope; the refresh families die in bounded IN-chunks off
-    // the claim's own RETURNING — O(1 + n/500) statements. Atomic: with the claim committing
-    // separately, a chunk that failed left every session revoked and some refresh rows live,
-    // and the RETRY claimed zero rows (`revoked_at IS NULL`) — it could never revisit those
-    // families. (The rotation orphan-guard made such leftovers unusable at presentation, but
-    // a security verb whose bookkeeping cannot converge is still the defect.) One
-    // transaction holds claim, sweeps and audit: a mid-sweep death rolls the claim back and
-    // the retry does the whole job. Families are 1:1 with sessions by construction
-    // (`establish` mints a fresh familyId per session), so sweeping tokens by the claimed
-    // familyIds is `revokeFamily`'s exact reach.
+    // Set-based AND atomic, one measured defect each. Set-based: the per-family loop (two awaited
+    // UPDATEs each, serially) was 400+ round trips on exactly the accounts this verb exists for,
+    // inside a request with a 60-second ceiling — a "Sign out all" that times out having revoked
+    // only a PREFIX. One guarded claim takes the whole scope; the refresh families die in bounded
+    // IN-chunks off the claim's own RETURNING. Atomic: with the claim committing separately, a
+    // failed chunk left every session revoked, some refresh rows live, and the RETRY claimed zero
+    // rows (`revoked_at IS NULL`) — it could never revisit those families. One transaction holds
+    // claim, sweeps and audit: a mid-sweep death rolls the claim back and the retry does the
+    // whole job. Families are 1:1 with sessions by construction, so sweeping tokens by the
+    // claimed familyIds is `revokeFamily`'s exact reach.
     return this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
       const claimed = await tx.update(sessions)
@@ -508,35 +391,14 @@ export class SessionLifecycle {
   // ── Internal: session issuance & refresh rotation ───────────────────────────
 
   /**
-   * ── `twofaAt` IS REQUIRED, AND THAT IS THE POINT ──────────────────────────────────────────
-   *
-   * This used to write `lastTwofaAt: now` unconditionally, and the comment on the line asserted
-   * that a full session is only ever reached through a completed 2FA "(or the PKCE code that one
-   * produced)". The parenthesis is where it broke: the PKCE exchange asserts no factor, so `now`
-   * was a timestamp for something that had not happened in that ceremony — an authorization
-   * laundered into a fresh factor.
-   *
-   * There is no safe default here, so there is no default. Every call site must say
-   * which kind of ceremony it is, exactly as `Route.cost` is required so that adding a route is a
-   * compile error rather than a silent hole:
-   *
-   *  · A factor really was asserted HERE (TOTP, WebAuthn, a recovery code, or the first-factor
-   *    enrollment exchange) → `ctx.now()`, and it is honest.
-   *  · The ceremony INHERITED an authorization (the native PKCE exchange) → the authorizing
-   *    session's real `last_twofa_at`, carried on the code row.
-   *  · `claimDesktopLink` passes `ctx.now()` and keeps it: its mint is step-up gated and the
-   *    code lives two minutes, so a factor really was asserted, by this person, within that
-   *    window — the argument its own header makes. The difference from the PKCE door is not the
-   *    shape of the ceremony but whether that precondition held, and until this slice it did not
-   *    hold there.
-   *
-   * NULL is admissible and means "no factor time to inherit". It fails step-up closed in both
-   * `withStepUp` and {@link requireStepUp}, which is the correct reading and also the safe one.
-   *
-   * Nothing rotates this stamp forward afterwards — `rotateRefresh` does not touch
-   * `last_twofa_at` — so a session ages out of step-up on the schedule of the factor it actually
-   * descends from. Inheriting rather than re-stamping is what makes that true across the hop as
-   * well as within a family.
+   * `twofaAt` is REQUIRED, and that is the point. This wrote `lastTwofaAt: now` unconditionally,
+   * arguing a full session only comes from completed 2FA "(or the PKCE code that one produced)" —
+   * and the parenthesis broke it: the PKCE exchange asserts no factor. No safe default, so no
+   * default; every call site says which ceremony it is: a factor asserted HERE — `ctx.now()`; an
+   * INHERITED authorization (PKCE) — the authorizing session's real `last_twofa_at`, carried on
+   * the code row; `claimDesktopLink` passes `ctx.now()` because its mint is step-up gated and the
+   * code lives two minutes. NULL fails step-up closed. Nothing rotates the stamp forward — a
+   * session ages out of step-up on its factor's schedule.
    */
   protected async establish(
     ctx: ServiceContext, user: typeof users.$inferSelect,
@@ -571,35 +433,26 @@ export class SessionLifecycle {
     // user, which is why an enrollment session needs no `GET /devices` entry to be
     // revocable.
     await this.revokeEnrollmentSessions(db, user.id, now);
-    // THE MINT PICKS THE SAME SURFACE THE DEVICE ROW RECORDS, from the one signal that already
-    // exists: `kind`. A browser ceremony (login, 2FA verify, recovery code) is `web` and takes the
-    // cookie window; the two native doors — the PKCE token exchange and the desktop-link claim —
-    // are `macos` and take the native one. Deriving it rather than adding a second parameter is
-    // what stops a session whose device says "Web" from holding a 400-day credential: there is one
-    // value, and both the row and the lifetime read it. Anything that is not `macos` is a browser
-    // as far as this decision goes — the strict side, per `surfaceTtls`. The platform-qualified
-    // desktop kinds deliberately take the STRICT side of this derivation too: on the one seam
-    // where they are wire input (a 2FA verify's declaration), the declaration must not be able to
-    // buy the native window, so any caller whose transport really is native pins `o.surface`
-    // itself — the desktop-link claim does, exactly as the paired mint always has.
-    //
-    // `o.surface` is the ONE exception, for the caller whose `kind` is not its own to derive
-    // from: a pairing redeem's kind arrives from the anonymous redeemer, so the paired mint pins
-    // the surface its TRANSPORT dictates instead — see the option's doc above.
+    // The mint picks the SAME surface the device row records, from the one signal that already
+    // exists: `kind`. A browser ceremony is `web` and takes the cookie window; the two native
+    // doors are `macos` and take the native one. Deriving it rather than adding a second
+    // parameter stops a session whose device says "Web" from holding a 400-day credential — one
+    // value, both the row and the lifetime read it. Anything that is not `macos` is a browser as
+    // far as this decision goes, the strict side per `surfaceTtls`; the platform-qualified
+    // desktop kinds deliberately take the strict side too, because on the one seam where they are
+    // wire input the declaration must not buy the native window — a caller whose transport really
+    // is native pins `o.surface` itself (the desktop-link claim does, as the paired mint always
+    // has).
     const ttls = surfaceTtls(this.cfg, o.surface ?? (o.kind === "macos" ? "native" : "cookie"));
     // A device row means a NAMED device, so only a DESKTOP kind auto-mints one — the desktop app
-    // really is a device a user manages by name. The label map below is the closed set of kinds
-    // that may auto-mint: the legacy "macos" spelling (the shipped desktop's claim) and the
-    // platform-qualified desktop kinds a current install declares. A plain web ceremony
-    // mints NO row: it used to mint one labeled "Web" per sign-in, which turned the list that
-    // exists to make PAIRED devices visible into a flood of indistinguishable rows (hundreds
-    // on a well-used account) and left `devices` growing without bound. The mobile kinds are
-    // deliberately NOT in the map: a phone arrives only through the pairing redeem, which
-    // pre-creates the row with the mint-time label and passes `deviceId`. Device-less is also
-    // what the sidecar's launch session has always been (`identity.ts` narrows on
-    // `isNull(sessions.deviceId)`), so `device_id IS NULL` now means the same thing on every
-    // tier: a session that is not a named device. Migration 0061 backfills the historical
-    // "Web" rows to match.
+    // really is a device managed by name. The label map is the closed set that may auto-mint:
+    // legacy "macos" plus the platform-qualified desktop kinds. A plain web ceremony mints NO
+    // row: it used to mint one labeled "Web" per sign-in, flooding the list that exists to make
+    // PAIRED devices visible (hundreds of rows on a well-used account) and growing `devices`
+    // without bound. The mobile kinds are NOT in the map: a phone arrives only through the
+    // pairing redeem, which pre-creates the row and passes `deviceId`. Device-less is also the
+    // sidecar's launch session, so `device_id IS NULL` means the same thing on every tier;
+    // migration 0061 backfills the historical "Web" rows.
     let deviceId = o.deviceId ?? null;
     const autoLabel = AUTO_MINT_DEVICE_LABELS[o.kind];
     if (!deviceId && autoLabel !== undefined) {
@@ -694,24 +547,13 @@ export class SessionLifecycle {
   }
 
   /**
-   * Rotate a refresh token — CLAIM FIRST, then decide.
-   *
-   * This was SELECT → check `consumed_at` → UPDATE, and that shape defeats the very reuse
-   * detection it was written to implement. Two concurrent presentations of one token both
-   * read `consumed_at === null`, both skip the `revokeFamily` branch, and both mint valid
-   * descendants — so an attacker holding a stolen refresh token who simply races the
-   * legitimate client gets a working session AND leaves the family alive. The detection
-   * fires only when the two presentations are far enough apart to be the case nobody worries
-   * about.
-   *
-   * It is the identical defect class `consumeInvite` (`invites.ts`) is deliberately written
-   * as a single conditional UPDATE to avoid, and the fix is the same: the claim IS the
-   * check. `UPDATE … WHERE consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now
-   * RETURNING` — the row lock picks exactly one winner, and everybody else falls through to
-   * the classification below, which now runs only on a row that this call did not claim.
-   *
-   * The classification read is deliberately AFTER the failed claim rather than before the
-   * successful one: on the hot path (a valid rotation) it never runs at all.
+   * Rotate a refresh token — CLAIM FIRST, then decide. SELECT → check → UPDATE defeats the reuse
+   * detection it implements: two concurrent presentations both read `consumed_at === null`, both
+   * skip the revoke branch, both mint valid descendants — an attacker who races the legitimate
+   * client gets a working session AND leaves the family alive. Same defect class `consumeInvite`
+   * avoids, same fix: the claim IS the check — `UPDATE … WHERE consumed_at IS NULL AND revoked_at
+   * IS NULL AND expires_at > now RETURNING`. The classification read is deliberately AFTER the
+   * failed claim: on the hot path it never runs.
    */
   protected async rotateRefresh(
     ctx: ServiceContext, presented: string, grace: boolean, surface?: SessionSurface,
@@ -733,20 +575,13 @@ export class SessionLifecycle {
     // empty and this branch never runs — the sessionless cookie path is untouched, which is the
     // condition this whole change was ruled under.
     if (ctx.accountId) {
-      // THE SAME PREDICATES AS THE CONSUMING UPDATE, and that coupling is the point: this refuses
-      // only what would otherwise have been ROTATED. Selecting on the hash alone was a hole in the
-      // opposite direction from the one this check closes.
-      //
-      // A CONSUMED TOKEN IS NOT A CONFLICT, IT IS EVIDENCE. Presenting a spent refresh token is
-      // how theft announces itself, and the classification below answers it by revoking the whole
-      // family. A hash-only lookup answered 409 first and returned — so anyone holding a stolen,
-      // already-spent token of B's could SUPPRESS B's theft detection indefinitely by also holding
-      // a session for any account of their own. The narrower reading protected nobody and cost B
-      // the one mechanism that protects them.
-      //
-      // Falling through costs nothing that was not already available: presenting B's spent token
-      // with NO session reaches the same sweep, so this grants a cross-account caller no power a
-      // sessionless one lacks.
+      // The SAME predicates as the consuming update — this refuses only what would otherwise have
+      // been ROTATED. A CONSUMED token is not a conflict, it is EVIDENCE: presenting a spent
+      // refresh token is how theft announces itself, and the classification answers by revoking
+      // the family. A hash-only lookup answered 409 first and returned — so anyone holding a
+      // stolen, already-spent token of B's could SUPPRESS B's theft detection indefinitely by
+      // also holding any session of their own. Falling through grants nothing new: presenting B's
+      // spent token with NO session reaches the same sweep.
       const [presentedRow] = await db.select({ accountId: refreshTokens.accountId })
         .from(refreshTokens)
         .where(and(
@@ -778,31 +613,16 @@ export class SessionLifecycle {
       if (!existing || existing.revokedAt) {
         throw new ServiceError("unauthorized", 401, "invalid refresh token");
       }
-      // Refresh-token reuse detection: a token that was already consumed being
-      // presented again means it leaked → revoke the WHOLE family.
-      //
-      // ── EXCEPT THE CONCURRENT ROTATION, WHICH IS NOT THEFT ────────────────────────────────
-      //
-      // This used to revoke unconditionally, on the argument that "one token, two presentations"
-      // is indistinguishable from theft and the safe reading is theft. That is true at a single
-      // INSTANT and false over TIME, and the unconditional form was signing working sessions out:
-      // a browser shares one cookie jar across all its tabs, the client single-flights refresh
-      // only per tab (`apps/webapp/app/session-refresh.ts`), so a second tab/window — or the sync
-      // client and the REST client — crossing the access-token expiry together both read the same
-      // `tf_refresh` and present it at once. One wins; the loser presented a token consumed
-      // milliseconds ago and got the whole family revoked. That is the "session is no longer
-      // authorized" a signed-in user hit merely by opening a new tab.
-      //
-      // So the distinction is keyed on TIME-SINCE-CONSUMED, not on an unknowable intent, and only
-      // on the surface that has the race (`grace`, the cookie jar — see `refresh`). Within
-      // `refreshReuseGraceMs` of consumption, on a family that is still ALIVE and within its
-      // absolute cap, a re-presentation is a benign concurrent rotation: mint a fresh rotation off
-      // the same family and return it, without revoking. The winner and the grace-loser converge
-      // on whichever cookie the shared jar wrote last, and no session dies. A presentation OLDER
-      // than the window — or ANY re-presentation on a strict (native/OAuth) surface — is a token
-      // that was kept and replayed after the real client rotated past it, the theft case, and it
-      // still revokes. See `config.ts` for the full security argument, including the bounded
-      // residual the cookie window accepts.
+      // Reuse detection: a consumed token presented again means it leaked — revoke the WHOLE
+      // family. EXCEPT the concurrent rotation, which is not theft: indistinguishable at an
+      // INSTANT, distinguishable over TIME. A browser shares one jar across tabs and
+      // single-flights refresh only per tab, so two tabs crossing the access expiry present the
+      // same `tf_refresh` at once; the loser used to get the family revoked — the "no longer
+      // authorized" a user hit by opening a new tab. The distinction keys on TIME-SINCE-CONSUMED,
+      // only on the surface with the race (`grace`): within `refreshReuseGraceMs`, on a live
+      // family within its cap, a re-presentation is re-rotated off the same family. Older — or
+      // ANY re-presentation on a strict surface — is a kept, replayed token: theft, and it
+      // revokes. `config.ts` states the bounded residual.
       if (existing.consumedAt) {
         const consumedMsAgo = now.getTime() - existing.consumedAt.getTime();
         if (grace && consumedMsAgo <= this.cfg.refreshReuseGraceMs) {
@@ -813,26 +633,16 @@ export class SessionLifecycle {
               || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
           if (renewable) return this.mintRotation(ctx, db, existing, now, ttls);
         }
-        // ── THE LOST-RESPONSE RECOVERY, past the grace window, cookie surface only ────────────
-        //
-        // A rotation is two halves: the server consumes the presented token and mints the next
-        // one, and the response carries the next one back into the browser's jar. When the
-        // second half is LOST — the lid closes mid-refresh, the network drops between commit
-        // and delivery — the jar keeps the OLD token, and the browser's next presentation of
-        // it, minutes or hours later, looked exactly like replayed theft and burned the family.
-        // Measured twice in production, one morning apart (2026-08-27: re-presented 29.5
-        // minutes after consumption, successor never used; 2026-08-28: 10.1 seconds, 114 ms
-        // past the old grace window). No grace width fixes the first shape; this does.
-        //
-        // The discriminator is USE plus IDLE TIME: consumption only ever happens on
-        // presentation, so a stale jar always holds the family's newest-consumed token — and
-        // a tail still unconsumed after a FULL ACCESS WINDOW means no awake client is driving
-        // the session (an awake one is forced to rotate at access expiry). Both conditions,
-        // and the serialization that makes them honest under concurrency, live in
-        // `recoverLostRotation`; when they hold it consumes the dormant tail and mints afresh
-        // in one locked sequence. Otherwise it returns null and the presentation falls
-        // through to the sweep below: the theft reading stands wherever a second party
-        // actually spent the credential, and wherever an awake client still might.
+        // The lost-response recovery, past the grace window, cookie surface only. A rotation is
+        // two halves: consume + mint, and the response carrying the new token into the jar. When
+        // the second half is LOST (lid closed mid-refresh) the jar keeps the OLD token, and its
+        // next presentation looked exactly like replayed theft and burned the family. Measured
+        // twice, a morning apart: 29.5 minutes after consumption with the successor never used;
+        // and 10.1 seconds, 114 ms past the old grace window. No grace width fixes the first
+        // shape. The discriminator is USE plus IDLE TIME: a stale jar always holds the family's
+        // newest-consumed token, and a tail still unconsumed after a FULL access window means no
+        // awake client drives the session. Both conditions live in `recoverLostRotation`;
+        // otherwise the presentation falls to the sweep.
         if (grace) {
           const recovered = await this.recoverLostRotation(ctx, existing, now, ttls);
           if (recovered) return recovered;
@@ -849,36 +659,16 @@ export class SessionLifecycle {
         if (existing.expiresAt.getTime() <= existing.consumedAt.getTime()) {
           throw new ServiceError("unauthorized", 401, "refresh token expired");
         }
-        // THE SWEEP LEAVES A ROW, and sweep + row are ONE TRANSACTION — with the sweep
-        // REDONE ALONE if that transaction cannot commit. It used to leave nothing: the
-        // client just started getting 401s, and the only record of WHY was raw session rows
-        // an operator had to correlate by revoked_at after the fact — the Aug-21 incident,
-        // reconstructed exactly that way. Who (the user row), when (the event's own stamp),
-        // which family and session (the detail), what triggered it (the event name).
-        //
-        // BOTH failure directions were reviewed, and each ruled out the naive form:
-        //
-        //  · Sequential autocommit (sweep, then insert) can die between the two — a family
-        //    revoked with NO record, permanently: the next presentation hits `revokedAt` and
-        //    takes the plain-401 arm, so nothing ever writes the missing row.
-        //  · One transaction ALONE fails the other way, and worse: on the cookie surface the
-        //    HTTP handler answers any error here by CLEARING the session cookies, so the
-        //    consumed token is never re-presented — "the retry re-runs this branch" is false
-        //    exactly where most refreshes happen — while a separately held descendant (the
-        //    thief's, in the theft reading) keeps the compromised family ALIVE. A bookkeeping
-        //    fault must never veto a security sweep.
-        //
-        // So: the transaction is the ordinary path — revocation and record commit together,
-        // and no committed sweep lacks its row while the bookkeeping works. If it cannot
-        // commit, the catch REDOES THE SWEEP ALONE on the autocommitting handle: the family
-        // dies (fail-closed), and the record is lost only in the asymmetric case where the
-        // database accepted two UPDATEs and refused an INSERT — a real fault the alert pass
-        // itself will be screaming about on its own channel.
-        //
-        // The hosted tier writes `auth_events`; the lifecycle base records nothing, which is
-        // that tier's truth for every audit hook. The user read is DEFENSIVE, never
-        // `loadUser`: a vanished user must not turn this 401 into another error, and `audit`
-        // accepts null (the row keeps the family id either way).
+        // The sweep leaves a ROW, and sweep + row are ONE TRANSACTION — with the sweep REDONE
+        // ALONE if it cannot commit. It used to leave nothing: the client got 401s and the only
+        // record was raw session rows correlated by `revoked_at` after the fact. Both naive forms
+        // fail: sequential autocommit can die between the two — a family revoked with NO record,
+        // permanently; one transaction ALONE fails the other way — the cookie handler answers any
+        // error by CLEARING the session cookies, so the consumed token is never re-presented,
+        // while the thief's descendant keeps the compromised family ALIVE. A bookkeeping fault
+        // must never veto a security sweep: on commit failure the catch redoes the sweep alone on
+        // the autocommitting handle — fail-closed. The base records nothing; the hosted tier
+        // writes `auth_events`. The user read is DEFENSIVE.
         try {
           await this.inTransaction(ctx, async (txCtx) => {
             const tx = asTx(txCtx);
@@ -896,17 +686,12 @@ export class SessionLifecycle {
       throw new ServiceError("unauthorized", 401, "refresh token expired");
     }
 
-    // ── THE ABSOLUTE CAP, WHEN A SURFACE HAS ONE ──────────────────────────────────────────
-    //
-    // Rotation rolls the refresh window forward every time, so a session that keeps being used
-    // renews indefinitely. That is the decision `config.ts` takes for both shipped surfaces —
-    // nobody should be signed out of their mail for using it — and both therefore set
-    // `absoluteTtlMs: null` and never reach the check below.
-    //
-    // The check stays, live and enforced, for any surface or deployment that DOES set a
-    // ceiling: `null` means "no ceiling", not "unset", and a number means the number. Measured
-    // from the SESSION's creation, not the token's — rotation mints a new token each time, so a
-    // per-token measure would be exactly the rolling window this is meant to bound. Checked
+    // The absolute cap, when a surface has one. Rotation rolls the refresh window forward every
+    // time, so a used session renews indefinitely — the decision `config.ts` takes for both
+    // shipped surfaces, which set `absoluteTtlMs: null` and never reach this check. The check
+    // stays, live and enforced, for any surface or deployment that DOES set a ceiling: `null`
+    // means "no ceiling", a number means the number. Measured from the SESSION's creation, not
+    // the token's — a per-token measure would be exactly the rolling window this bounds. Checked
     // before anything is written, so a capped session is refused rather than half-rotated.
     const [session] = await db.select().from(sessions).where(eq(sessions.id, row.sessionId)).limit(1);
     // A rotation on a REVOKED or vanished session must fail closed. On the hot path a claimed
@@ -931,22 +716,14 @@ export class SessionLifecycle {
   }
 
   /**
-   * Insert the next refresh token of a family and slide its session's access + refresh windows
-   * forward, returning the new pair. The ONE writer of a rotation, shared by the hot path (a
-   * freshly-claimed token) and the grace path (a benign concurrent re-presentation) so the two
-   * can never drift in what a rotation actually writes.
-   *
-   * `base` is whichever refresh-token row named the family — the just-claimed row on the hot path,
-   * the already-consumed row on the grace path. Either way the new token inherits the SAME
-   * account, user, session and family; a rotation never starts a new family, which is what would
-   * keep an absolute ceiling (measured from `sessions.created_at`) real for a surface that sets
-   * one.
-   *
-   * `ttls` is RESOLVED BY THE CALLER and passed in rather than read from `this.cfg` here. That is
-   * the whole of what makes the window ROLLING per surface: this is the one writer, it re-issues
-   * `expires_at` from `now` on every rotation, and it takes the window from the same resolution
-   * `rotateRefresh` checked its cap against — so the cookie surface cannot be handed the native
-   * window by a path that resolved the surface once and read the config again later.
+   * Insert the next refresh token of a family and slide its session's windows forward. The ONE
+   * writer of a rotation, shared by the hot path and the grace path so the two can never drift.
+   * `base` is whichever row named the family; the new token inherits the SAME account, user,
+   * session and family — a rotation never starts a new family, which keeps an absolute ceiling
+   * (measured from `sessions.created_at`) real. `ttls` is RESOLVED BY THE CALLER: this one writer
+   * re-issues `expires_at` from `now` on every rotation, from the same resolution `rotateRefresh`
+   * checked its cap against — so the cookie surface cannot be handed the native window by a path
+   * that resolved once and re-read the config later.
    */
   private async mintRotation(
     ctx: ServiceContext,
@@ -994,48 +771,14 @@ export class SessionLifecycle {
   }
 
   /**
-   * Re-admit a stale cookie presentation whose family's tail was NEVER USED and whose client
-   * has been GONE for at least a full access window — the lost-response client — or answer
-   * `null`, which sends the caller to the reuse sweep.
-   *
-   * ── WHY "UNCONSUMED SUCCESSOR" ALONE IS NOT PROOF, AND WHAT THE IDLE BOUND ADDS ──────────
-   *
-   * An unconsumed successor is the NORMAL state between two rotations: an awake client holds
-   * its fresh token idle until the access token expires (`accessTtlMs`), so for that whole
-   * window a thief replaying the just-rotated-past token would find a "dormant" tail on a
-   * perfectly healthy session — recovery without a bound would hand that thief a fresh pair
-   * while the legitimate client is still awake beside it. The idle bound closes that:
-   * recovery requires the presented token to have been consumed MORE than one full access
-   * window ago. An awake client's own sync traffic forces a rotation at access expiry, so a
-   * successor still unconsumed after that is a client that genuinely went away — the lid
-   * close, measured in production at 29.5 minutes and overnight. Inside the window the
-   * presentation takes the sweep, exactly the pre-recovery answer, which is loud.
-   *
-   * The residual, stated: a thief holding the second-newest token of a family whose client
-   * slept immediately after rotating — before ever spending the successor — is re-admitted if
-   * they replay during that sleep. That window is the lost-response ambiguity itself: no
-   * server-side rule can tell those two apart, the act is AUDITED (`refresh_recovered`), it
-   * consumes the dormant tail (single live line, no quiet parallel chain), and the client's
-   * wake then presents a consumed token and re-arms detection.
-   *
-   * Bounded six ways:
-   *  · FAMILY-BOUND — the mint reuses the presented row's account/user/session/family;
-   *    no scope change, no step-up stamp, no new session.
-   *  · TIME-BOUND — the presented token must be inside its own issued `expires_at`, the
-   *    session alive, and the surface's absolute cap (when one is set) respected.
-   *  · IDLE-BOUND — consumed more than `accessTtlMs` ago, the paragraph above.
-   *  · USE-BOUND — any consumption after the presented token's disqualifies (fresh ones
-   *    converge under grace; older ones sweep), re-checked INSIDE the session lock.
-   *  · SINGLE-WINNER — the session row is locked `FOR UPDATE` for the whole
-   *    classify-claim-mint sequence, so concurrent recoveries and the grace/recovery
-   *    interleavings serialize; a loser converges through the fresh-consumption grace
-   *    instead of 401-ing (a 401 here would clear the jar the winner just refilled).
-   *  · COOKIE-ONLY — the `grace` flag gates it; the native/OAuth surfaces rotate serially,
-   *    have no lost-response shape a relaunch does not fix, and keep strict reuse.
-   *
-   * A fault inside the transaction answers `null`: fail CLOSED, into the sweep — a
-   * bookkeeping error must never widen admission, and the cost (an honest user signs in
-   * again) is exactly the pre-recovery behaviour.
+   * Re-admit a stale cookie presentation whose family's tail was NEVER USED and whose client has
+   * been GONE for a full access window — the lost-response client — or answer `null`, into the
+   * reuse sweep. An unconsumed successor alone is not proof (the NORMAL state between rotations),
+   * so recovery also requires consumption MORE than one access window ago: an awake client's
+   * traffic forces rotation at expiry. The residual is the ambiguity itself: a thief replaying
+   * during that exact sleep is re-admitted — audited (`refresh_recovered`), consuming the dormant
+   * tail. Bounded six ways: family-, time-, idle-, use-bound (in the session lock), single-winner
+   * (`FOR UPDATE`), cookie-only. A fault answers `null`: fail closed.
    */
   private async recoverLostRotation(
     ctx: ServiceContext,
@@ -1062,34 +805,16 @@ export class SessionLifecycle {
           && (ttls.absoluteTtlMs == null
             || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
         if (!renewable) return null;
-        // USE-BOUND, in-lock: what happened after the presented token was consumed?
-        // `>=` AND not-self, not `>`: two rotations can land in one millisecond (the wake
-        // herd is a burst), and a strict comparison would read the second rotation's
-        // consumption as "not after" the first's.
-        //
-        // The classification reads THREE facts, each closing a measured hole:
-        //
-        //  · SPENDS — real presentations only: `expires_at > consumed_at`, because the claim
-        //    below stamps the rows it kills with `expires_at = consumed_at`, and a kill is
-        //    not a presentation. Without the distinction, one recovery's kill-stamps read as
-        //    "the chain continued in real use" to every LATER classification on the family,
-        //    and the round-3 pg net watched a healthy family get swept by exactly that.
-        //  · The verdict keys on the OLDEST spend: a live client
-        //    rotates every access window, so "within the grace of SOME rotation" recurs for
-        //    ever — an ancient token could simply wait for one. One stale spend proves the
-        //    chain continued, and no freshness of the latest rotation overrides it.
-        //  · LATE MINTS — rows created more than a grace window after the presented token's
-        //    own rotation cohort can only be recovery/convergence mints, so their existence
-        //    means this family was already recovered past this token: fresh ones converge
-        //    (the herd straggler arriving just after the winner), older ones refuse — which
-        //    is what makes recovery SINGLE-USE per presented token even though the kills no
-        //    longer masquerade as spends.
-        // BOTH evidence sets are always read, and ANY old evidence dominates: a fresh
-        // spend alone must not short-circuit to "racer", because a family that
-        // already recovered past this token carries its old recovery mint as late-mint
-        // evidence — and letting the fresh spend win would re-admit the once-recovered token
-        // whenever its replay is timed near a healthy rotation, the round-2 hole re-opened
-        // through the other evidence set.
+        // Use-bound, in-lock: what happened after the presented token was consumed? `>=` and
+        // not-self: two rotations can land in one millisecond. Three facts, each closing a
+        // measured hole: SPENDS are real presentations only (`expires_at > consumed_at` — the
+        // claim stamps killed rows with `expires_at = consumed_at`, and without that kill-stamps
+        // read as live use; a pg test watched a healthy family get swept); the verdict keys on
+        // the OLDEST spend (one stale spend proves the chain continued, whatever the latest
+        // rotation's freshness); LATE MINTS — rows created more than a grace window after the
+        // presented token's cohort — can only be recovery mints, making recovery SINGLE-USE per
+        // token. Both evidence sets are always read and ANY old evidence dominates: a fresh spend
+        // winning would re-admit a once-recovered token timed near a healthy rotation.
         const classify = async (): Promise<"quiet" | "racer" | "used"> => {
           const [oldestSpend] = await tx.select().from(refreshTokens)
             .where(and(
@@ -1218,16 +943,14 @@ export class SessionLifecycle {
   }
 
   /**
-   * The auth event trail. `auth_events` is cloud-half — an operator's investigation surface —
-   * and a mail-only store has no such table, so the base records nothing: the same posture the
-   * launch-session mint has always had (no audit row per launch). `AuthService` overrides this
-   * with the real INSERT, so every hosted path writes exactly the rows it always wrote.
-   *
-   * `detail` is the optional MACHINE half of a row — a short `key=value` string the writer
-   * composes from ids it already holds (the reuse row's `family=… session=…`). The hosted
-   * override stores it in the row's `device` column IN PLACE of the user agent, for the events
-   * that have something more useful to say there than what client string presented. Callers
-   * that pass nothing keep the user-agent behaviour byte-for-byte.
+   * The auth event trail. `auth_events` is cloud-half — an operator's investigation surface — and
+   * a mail-only store has no such table, so the base records nothing: the same posture as the
+   * launch-session mint. `AuthService` overrides this with the real INSERT, so every hosted path
+   * writes exactly the rows it always wrote. `detail` is the optional MACHINE half of a row — a
+   * short `key=value` string composed from ids the writer already holds; the hosted override
+   * stores it in the row's `device` column IN PLACE of the user agent, for events with something
+   * more useful to say there. Callers that pass nothing keep the user-agent behaviour byte for
+   * byte.
    */
   protected async audit(
     _db: Tx, _user: typeof users.$inferSelect | null,

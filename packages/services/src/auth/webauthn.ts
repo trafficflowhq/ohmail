@@ -47,15 +47,12 @@ export interface VerifiedRegistration {
 }
 
 /**
- * Verify a registration response against the stored challenge + our RP-ID and the
- * origin the ceremony was OPENED on.
- *
- * `expectedOrigin` is a REQUIRED single value read from
- * `webauthn_challenges.origin` — never `cfg.origin` (which may now be an allow-list)
- * and never the verify request's own header. Passing the allow-list here would
- * accept a ceremony opened on one allow-listed origin and finished on another;
- * `@simplewebauthn` compares `clientDataJSON.origin` against exactly this string, so
- * the pin is enforced by the signed client data itself.
+ * Verify a registration response against the stored challenge + our RP-ID and the origin the
+ * ceremony was OPENED on. `expectedOrigin` is a REQUIRED single value read from
+ * `webauthn_challenges.origin` — never `cfg.origin` (which may be an allow-list) and never the
+ * verify request's own header. Passing the allow-list here would accept a ceremony opened on one
+ * allow-listed origin and finished on another; `@simplewebauthn` compares `clientDataJSON.origin`
+ * against exactly this string, so the pin is enforced by the signed client data itself.
  */
 export async function verifyRegistration(
   cfg: AuthConfig,

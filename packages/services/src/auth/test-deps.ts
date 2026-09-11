@@ -3,15 +3,13 @@ import { makeAuthConfig } from "./config.js";
 import type { AuthConfig, AuthDeps } from "./types.js";
 
 /**
- * TEST FIXTURES FOR THE IDENTITY CEREMONY — deliberately not beside the configuration builder.
- *
- * This factory lived in `config.ts`, which every deployment loads, and it was the only thing in
- * that file that needed `AuthDeps`. `AuthDeps` carries the transactional mailer, so a module
- * shared by every deployment named the hosted mail service in a type position purely to describe
- * a helper no product code ever calls. Moving the helper moved the dependency with it: `config.ts`
- * now names the configuration shape and nothing else.
- *
- * `auth/index.ts` re-exports this, so no test's import changes.
+ * Test fixtures for the identity ceremony — deliberately not beside the configuration builder.
+ * This factory lived in `config.ts`, which every deployment loads, and it was the only thing
+ * there needing `AuthDeps` — which carries the transactional mailer, so a module shared by every
+ * deployment named the hosted mail service in a type position purely to describe a helper no
+ * product code calls. Moving the helper moved the dependency: `config.ts` now names the
+ * configuration shape and nothing else. `auth/index.ts` re-exports this, so no test's import
+ * changes.
  */
 /**
  * Hermetic auth dependencies for the test suite: a static 32-byte KEK and

@@ -32,21 +32,14 @@ export interface LoginChallenge {
 }
 
 /**
- * The first-session DTO of onboarding. `register` — and
- * a re-entry `login` by a user with ZERO enrolled 2FA methods — returns this: an
- * ENROLLMENT-SCOPED session (`sessions.scope='enrollment'`) that reaches only the
- * `enrollmentOk` routes, carries no `lastTwofaAt` (so step-up stays out of reach),
- * has NO refresh token (it cannot be extended) and expires in `loginTokenTtlMs`.
- *
- * Unlike {@link SessionEstablished}, the token is NOT stripped from the body on the
- * web route: pre-session there is no cookie and no bearer header, so the wire
- * carries no signal of client type and the API cannot know whether it is talking to
- * a browser or to a native client that will never read a `Set-Cookie`. The token is
- * therefore returned in the body AND mirrored into `tf_session`/`tf_csrf`. It is
- * named `enrollmentToken`, never `accessToken`, because it is not one: its entire
- * blast radius is the caller's own 2FA enrollment, for ~5 minutes, and it is revoked
- * the instant a first factor lands. The FULL session that replaces it obeys the
- * original rule exactly — cookie clients never see its token in a body.
+ * The first-session DTO of onboarding. `register` — and a re-entry `login` by a user with ZERO
+ * 2FA methods — returns this: an ENROLLMENT-SCOPED session reaching only the `enrollmentOk`
+ * routes, no `lastTwofaAt`, NO refresh token, expiring in `loginTokenTtlMs`. Unlike {@link
+ * SessionEstablished}, the token is NOT stripped from the web route's body: pre-session there is
+ * no cookie and no bearer header, so the wire carries no signal of client type. It is returned in
+ * the body AND mirrored into `tf_session`/`tf_csrf`, named `enrollmentToken`, never `accessToken`
+ * — its blast radius is the caller's own 2FA enrollment, for ~5 minutes, revoked the instant a
+ * first factor lands.
  */
 export interface EnrollmentSessionEstablished {
   status: "enrollment";
@@ -60,19 +53,14 @@ export interface EnrollmentSessionEstablished {
 }
 
 /**
- * The PUBLIC register path's outcome, which deliberately carries no session and no
- * information about the address.
- *
- * `POST /auth/register` answers this — and ONLY this — whenever the open gate was used
- * (`publicSignup` on, no invite code offered). It is returned identically whether the address
- * was fresh (an account was created and a verification mail sent) or already registered
- * (nothing was created and an `account_exists` mail was sent). `mailed` exists for the
- * operator smoke path and the suite, which read it from INSIDE the trust boundary; the route
- * MUST NOT put it on the wire — the same rule, and the same past mistake, as
- * `WaitlistService.join`'s `mailed` field (see `routes/waitlist.ts`).
- *
- * There is intentionally no field distinguishing the two branches, not even a private one the
- * route could accidentally serialise. The branch is not represented in this type at all.
+ * The PUBLIC register path's outcome — deliberately no session and no information about the
+ * address. `POST /auth/register` answers this, and only this, whenever the open gate was used:
+ * identically whether the address was fresh (account created, verification mail sent) or already
+ * registered (nothing created, `account_exists` mail sent). `mailed` exists for the operator
+ * smoke path and the suite, read INSIDE the trust boundary; the route must never put it on the
+ * wire — the same rule, and past mistake, as `WaitlistService.join`'s `mailed`. There is
+ * intentionally no field distinguishing the branches, not even a private one the route could
+ * accidentally serialise.
  */
 export interface RegistrationPending {
   status: "verification_pending";
@@ -134,22 +122,14 @@ export interface RecoveryCodesResp {
 }
 
 /**
- * `devices.kind`'s CLOSED vocabulary — what a device row says it is, so the staleness alarm
- * and the admin/device views can name WHICH install went dark rather than "a macos".
- *
- * `"macos"` is the LEGACY spelling and stays admissible for ever: every pre-vocabulary device
- * row carries it, the shipped desktop's link-claim still declares it, and a closed set that
- * refuses its own history would 400 the installed base. It reads as "a native desktop of
- * unrecorded platform". New clients declare the platform-qualified kinds; the server accepts
- * both and never rewrites a row. `"web"` keeps its structural meaning everywhere (the one kind
- * the device staleness alarm excludes — a closed browser is not an incident).
- *
- * Clients DECLARE the platform-qualified kinds on three seams: the desktop-link claim and the
- * TOTP verify carry an optional `kind` (the desktop's two cloud doors — whitelist-gated per
- * seam in `AuthService`, never able to choose a lifetime surface), and the pairing redeem's
- * `kind` is the redeemer's own word (the mobile app sends its platform). Absent stays what it
- * always was: `"macos"` on the claim, deviceless `"web"` on the verify, `"web"` on the redeem —
- * an old client keeps minting exactly the rows it always has.
+ * `devices.kind`'s CLOSED vocabulary — what a device row says it is, so the staleness alarm and
+ * the device views can name WHICH install went dark. `"macos"` is the LEGACY spelling and stays
+ * admissible for ever: every pre-vocabulary row carries it, the shipped desktop still declares
+ * it, and a closed set refusing its own history would 400 the installed base — it reads as "a
+ * native desktop of unrecorded platform". `"web"` keeps its structural meaning (the one kind the
+ * staleness alarm excludes). Clients declare the platform-qualified kinds on three seams — the
+ * desktop-link claim, the TOTP verify, the pairing redeem — whitelist-gated per seam and never
+ * able to choose a lifetime surface. Absent stays what it always was.
  */
 export type DeviceKind =
   | "web"
@@ -236,17 +216,14 @@ export interface AuthDeps {
   keyProvider: KeyProvider;
   passwordHasher: PasswordHasher;
   /**
-   * The customer mailer, or absent/null on a deployment with none.
-   *
-   * OPTIONAL, and its absence is a first-class state rather than a misconfiguration — the same
-   * shape `WaitlistService` uses, and for the same reason: recording a signup must not depend on
-   * Resend being reachable. It is typed as the POLICY object (`MailService`) and never as a bare
-   * `MailerPort`, because a service holding the port holds an unthrottled mail-bomb primitive
-   * (see `mail/port.ts`).
-   *
-   * One consequence is enforced rather than documented: with `publicSignup` on and this absent,
-   * `register` refuses `503 signup_unavailable` instead of creating accounts whose only
-   * continuation is a mail that cannot be sent. See that method.
+   * The customer mailer, or absent/null on a deployment with none. OPTIONAL, and absence is a
+   * first-class state rather than a misconfiguration — the same shape `WaitlistService` uses, for
+   * the same reason: recording a signup must not depend on the mail provider being reachable.
+   * Typed as the POLICY object (`MailService`), never a bare `MailerPort`: a service holding the
+   * port holds an unthrottled mail-bomb primitive (see `mail/port.ts`). One consequence is
+   * enforced rather than documented: with `publicSignup` on and this absent, `register` refuses
+   * `503 signup_unavailable` instead of creating accounts whose only continuation is a mail that
+   * cannot be sent.
    */
   mail?: import("../mail/mail-service.js").MailService | null;
 }

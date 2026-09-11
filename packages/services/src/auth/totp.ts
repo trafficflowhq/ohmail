@@ -48,24 +48,11 @@ export function verifyTotp(args: {
 }
 
 /*
- * THERE IS DELIBERATELY NO `totpQrSvg` HERE ANY MORE.
- *
- * There used to be, and what it returned was not a QR code: a 180×180 white rectangle with
- * the raw `otpauth://` URI drawn across it as one line of 6px text, under the comment "real
- * QR rendering is a client concern; the service returns a self-contained placeholder". The
- * client half was never built. So `/join` injected that placeholder with
- * `dangerouslySetInnerHTML`, labelled it `aria-label="TOTP QR"` for screen readers, and the
- * copy above it said "Scan this with your authenticator app" — three statements, none of
- * them true, on the fallback path taken by exactly the people whose device cannot make a
- * passkey.
- *
- * A drawn-on-the-server QR is also the wrong shape even when it works: the provisioning URI
- * contains the shared secret, so rendering it into an image server-side puts the secret into
- * a second representation for no benefit the client cannot provide itself.
- *
- * `totpEnroll` returns `secret` and `otpauthUrl`. The web client offers the key for manual
- * entry (every authenticator app supports it) and the `otpauth://` URI as a link, which on a
- * phone hands the enrollment straight to the app — the one platform where scanning was never
- * possible anyway, because the code would be on the same screen as the camera. If a real QR
- * is wanted later it is a client-side encoder over `otpauthUrl`, and nothing here changes.
+ * There is deliberately no `totpQrSvg` any more. What it returned was not a QR code: a white
+ * rectangle with the raw `otpauth://` URI drawn as 6px text, promising a client half never built
+ * — injected with `dangerouslySetInnerHTML`, captioned "Scan this": three statements, none true,
+ * on the path taken by exactly the people whose device cannot make a passkey. A server-drawn QR
+ * is also wrong when it works: the provisioning URI contains the shared secret. `totpEnroll`
+ * returns `secret` and `otpauthUrl`: manual entry plus the URI as a link, which on a phone hands
+ * enrollment straight to the app. A real QR later is a client-side encoder over `otpauthUrl`.
  */

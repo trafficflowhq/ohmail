@@ -2,51 +2,14 @@ import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import { refreshTokens, sessions, type Tx } from "@trafficflow/db";
 
 /**
- * ═══ THE WEB-SESSION REAPER — maintenance revocation of long-idle plain browser sessions ═══
- *
- * A browser sign-in mints a session and nothing ever retires it: the cookie window is 90 days
- * ROLLING, so a session that stops being presented simply stops rolling and sits in `sessions`
- * live-but-idle for ever. On a well-used account that is hundreds of rows (the flood the
- * Devices pane showed its owner), every one of them nominally a live credential.
- *
- * This pass revokes the stale ones on a policy cutoff: a plain web session UNSEEN for over
- * sixty days is signed out. Sixty days of silence is well past any tab that is coming back —
- * an ACTIVE browser re-stamps `last_seen_at` on every refresh rotation (`mintRotation`), so
- * only a browser that has not presented its credential at all in two months is touched, and
- * what such a browser experiences on return is a sign-in prompt, which is the correct answer
- * to "where has this cookie been since June".
- *
- * ── WHAT IT MAY TOUCH, STRUCTURALLY ────────────────────────────────────────────────────────
- *
- *  · `device_id IS NULL` — plain browser sessions ONLY. A device row means a NAMED device (a
- *    pairing redeem's mint, the desktop's macos claim), and a paired device is NEVER
- *    auto-reaped: an idle phone in a drawer keeps its pairing, because re-pairing has a
- *    ceremony cost that idle-web-sign-in re-login does not. The discriminator is the column,
- *    never a label or a kind, so nothing a user typed can move a device across the line.
- *  · `scope = 'full'` — enrollment sessions have their own five-minute death
- *    (`refreshExpiresAt = accessExpiresAt`) and their own supersession rules; a maintenance
- *    pass has no business re-deciding them.
- *  · the whole refresh FAMILY dies with the session — the same `revoked_at` sweep
- *    `revokeFamily` performs, so a held `tf_refresh` cannot resurrect a reaped session.
- *
- * ── WHO RUNS IT ────────────────────────────────────────────────────────────────────────────
- *
- * The hosted API's platform cron (`GET /internal/sessions/reap`, shared-secret gated, daily) —
- * see `routes/internal.ts`. It runs on the RUNTIME connection deliberately: revoking sessions
- * is session machinery, a grant the content-blind staff role does not hold and must not gain.
- * Nothing on the desktop tier calls it (there, the device-less session is the launch session).
- *
- * Exported from the HOSTED barrel only — never the `/auth` engine entry: a hosted maintenance
- * pass has no business in the public engine artifact's graph, and `auth-entry-census.test.ts`
- * would rightly refuse the growth.
- *
- * ── BOUNDED, AND CONVERGENT ACROSS RUNS ────────────────────────────────────────────────────
- *
- * One invocation claims at most `limit` sessions (default 5 000), in chunks of 500, each chunk
- * a GUARDED update (`revoked_at IS NULL` re-checked in the write) so a concurrent revocation —
- * a user's own bulk sign-out racing the cron — is counted once, never twice. A backlog larger
- * than the budget converges over successive daily runs instead of one invocation timing out
- * mid-family on a serverless host.
+ * The web-session reaper — maintenance revocation of long-idle plain browser sessions, which
+ * otherwise sit live-but-idle for ever. It revokes plain web sessions UNSEEN for over sixty days:
+ * an active browser re-stamps `last_seen_at` on every rotation, so only a browser silent for two
+ * months meets a sign-in prompt on return. Structural scope: `device_id IS NULL` (a paired device
+ * is NEVER auto-reaped — re-pairing has a ceremony cost re-login does not), `scope = 'full'`, and
+ * the whole refresh FAMILY dies with the session. Run by the hosted API's cron on the RUNTIME
+ * connection; hosted barrel only. Bounded and convergent: at most `limit` per run, chunks of 500,
+ * each a GUARDED update so a concurrent revocation counts once.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
