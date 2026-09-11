@@ -1,17 +1,11 @@
 /**
- * Where the marketing waitlist handler is allowed to forward a signup — kept OUT of
- * `route.ts` on purpose.
- *
- * Next's App Router validates the export surface of a `route.ts` at build time: the only
- * things a route module may export are the HTTP verbs and the known segment-config fields
- * (`runtime`, `dynamic`, `revalidate`, …). Exporting a helper from it — `apiOrigin`, which
- * this module used to declare inline so a test could reach it — fails `next build` with
- * `"apiOrigin" is not a valid Route export field`, and fails it on Vercel exactly as it
- * fails locally. `tsc --noEmit` never sees that rule, which is how a green `pnpm typecheck`
- * certified a tree that could not deploy.
- *
- * So the allow-list lives here: `route.ts` imports it, the origin suite imports it, and the
- * route module keeps an export surface Next accepts.
+ * Where the marketing waitlist handler is allowed to forward a signup — kept OUT of `route.ts` on
+ * purpose. Next validates a `route.ts` export surface at build time: only the HTTP verbs and the
+ * known segment-config fields may be exported, so exporting a helper from it (as `apiOrigin` once
+ * was, so a test could reach it) fails `next build` — while `tsc --noEmit` never sees that rule,
+ * which is how a green typecheck certified a tree that could not deploy. The allow-list lives here:
+ * `route.ts` imports it, the origin suite imports it, and the route module keeps an export surface
+ * Next accepts.
  */
 
 /**

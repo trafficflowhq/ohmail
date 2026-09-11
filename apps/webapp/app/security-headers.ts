@@ -1,67 +1,34 @@
 /**
- * THE BROWSER-ENFORCED CONTAINMENT THE SINGLE ORIGIN LEFT UNBUILT.
- *
- * `packages/services/src/auth/origins.ts` says it plainly: the old rule — "the landing is
- * never an auth origin" — is gone, and **nothing at the origin layer can restate it**. The
- * marketing surface, the demo prototype, the passkey ceremonies, the session cookie, the
- * JS-readable `tf_csrf` and the IndexedDB mail mirror are now one origin. The only
- * containment left is the one the BROWSER enforces on that origin's documents, and until
- * this file existed `ohmail.app` shipped none of it: no CSP, no `X-Frame-Options`, no
- * `Referrer-Policy`, no `nosniff` — while `apps/admin` (a staff console holding strictly
- * less) shipped four headers on every path.
- *
- * ── WHAT IS ENFORCED, AND WHY EACH ONE ──────────────────────────────────────────────────
- *
- * `connect-src 'self'` is the load-bearing one, and it is the direct answer to the loss
- * origins.ts describes. Script injected anywhere on this origin can read `tf_csrf` and
- * issue same-origin authenticated requests — that much is unavoidable under one origin —
- * but it cannot SEND what it reads anywhere: no `fetch`, no `XMLHttpRequest`, no
- * `WebSocket`, no `EventSource`, no `sendBeacon` to any host but this one. `form-action`
- * and `base-uri` close the two classic non-`connect` exfiltration channels, `img-src`
- * refuses the pixel, and `default-src 'self'` means a script tag pointing off-origin does
- * not load at all — the same rule the no-third-party guard asserts over the source,
- * now enforced at runtime over whatever actually shipped.
- *
- * `frame-ancestors 'none'` replaces an accident with a control. Framing `ohmail.app` was
- * blocked only as a SIDE EFFECT of `SameSite=Strict`: a framed request carries no cookie,
- * so the gate renders marketing and there is nothing to clickjack. That is a true fact
- * about today's cookie flags, not a decision — relax the cookie to `Lax` for any reason
- * and the live mail client becomes framable with no separate control noticing.
- *
- * ── THE ONE DIRECTIVE THAT IS NOT STRICT, AND EXACTLY WHY ───────────────────────────────
- *
- * `script-src` keeps `'unsafe-inline'` in the BASELINE policy, and that is a real
- * limitation rather than an oversight:
- *
- *  - The App Router inlines its RSC payload as `<script>self.__next_f.push(…)</script>`.
- *    The content differs per page and per build, so it cannot be hashed from a config file.
- *  - Which leaves a nonce — and a nonce is per-request, so a document carrying one cannot
- *    be a static prerender. Anonymous `/` IS a static prerender, deliberately: `middleware.ts`
- *    documents that keeping it CDN-cacheable is most of why the gate refuses to fetch
- *    anything without a cookie. Putting a nonce on it would trade a documented architectural
- *    property for a directive, and — worse — a CDN would then cache ONE nonce and serve it
- *    to everyone, which is a nonce that authorises nothing.
- *
- * So the split is by surface, not by wishful thinking. The pages that render mail are
- * dynamic already, and they get {@link nonceCsp}: `script-src 'self' 'nonce-…'`, under
- * which `'unsafe-inline'` is ignored by every browser that understands nonces. The static
- * marketing pages keep {@link BASELINE_CSP} and therefore keep their cache. Both get every
- * other directive.
- *
- * In `apps/webapp` no untrusted markup string reaches a DOM sink: there is no
- * `dangerouslySetInnerHTML` in the shell except the two theme-boot blocks, and the mail
- * viewer's native rendering is built element by element from walked data
- * (`BodyText`/`buildRichNodes`), so sender bytes enter the app's document only as text
- * nodes and as attributes that code constructed — a sender's own markup renders solely
- * inside the sandboxed `srcdoc` frame. That is why this ordering is defensible rather
- * than negligent.
- *
- * ── THE COPY IN `next.config.mjs` ───────────────────────────────────────────────────────
- *
- * `next.config.mjs` cannot import TypeScript, so the baseline policy is spelled there too,
- * for the paths middleware does not match (static assets, `/demo/*`, the icons).
- * A drift guard reads that file's source and fails if the two disagree —
- * the same discipline the rewrite guard uses for `REFRESH_PATH`.
+ * The browser-enforced containment the single origin left unbuilt. `origins.ts` says it plainly: "the landing is
+ * never an auth origin" is gone, and nothing at the origin layer can restate it — the marketing surface, the demo,
+ * the passkey ceremonies, the session cookie, the JS-readable `tf_csrf` and the IndexedDB mirror are one origin, and
+ * the only containment left is what the BROWSER enforces.
+ */
+
+/**
+ * `connect-src 'self'` is the load-bearing directive: injected script can read `tf_csrf` and issue same-origin
+ * requests — unavoidable under one origin — but it cannot SEND what it reads anywhere (no fetch, XHR, WebSocket,
+ * EventSource or sendBeacon off-origin); `form-action` and `base-uri` close the classic non-connect exfiltration
+ * channels, `img-src` refuses the pixel, `default-src 'self'` keeps an off-origin script tag from loading at all.
+ * `frame-ancestors 'none'` replaces an accident with a control: framing was blocked only as a side effect of
+ * `SameSite=Strict`, and relaxing the cookie would otherwise make the mail client framable with no separate control
+ * noticing.
+ */
+
+/**
+ * The one directive that is not strict: `script-src` keeps `'unsafe-inline'` in the BASELINE policy. The App Router
+ * inlines its RSC payload per page and per build, so it cannot be hashed from a config; a nonce is per-request, and
+ * anonymous `/` is deliberately a static prerender — a CDN would cache ONE nonce and serve it to everyone, a nonce
+ * that authorises nothing. So the split is by surface: the pages that render mail are dynamic already and get {@link
+ * nonceCsp} (`'unsafe-inline'` is ignored by every browser that understands nonces); the static marketing pages keep
+ * {@link BASELINE_CSP} and their cache.
+ */
+
+/**
+ * Defensible because no untrusted markup string reaches a DOM sink in this app: no `dangerouslySetInnerHTML` but the
+ * two theme-boot blocks, and the mail viewer builds elements from walked data — a sender's own markup renders solely
+ * inside the sandboxed `srcdoc` frame. `next.config.mjs` carries a copy for the paths middleware does not match (it
+ * cannot import TypeScript); a drift guard fails if the two disagree.
  */
 
 /**

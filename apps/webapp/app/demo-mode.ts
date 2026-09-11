@@ -1,28 +1,15 @@
 /**
- * THE DEMO DECISION — one function, fail-SAFE toward the demo, because the demo is fiction and
- * must make no external request at all.
- *
- * `?demo=1` is a PROMISE: fixtures only, zero network, nothing leaves the tab. The failure
- * that matters is therefore not "the demo did not open" but "a URL presented as the demo
- * booted the HttpAdapter against a signed-in user's real mailbox". Two ways that happened
- * before this file existed:
- *
- *  1. **repeated parameters.** `searchParams.demo` was typed `string` and compared with
- *     `=== "1"`. Next hands a repeated key an ARRAY, so `/?demo=1&demo=0` produced
- *     `["1","0"] === "1"` → false → live. A link anyone can write turned the demo into the
- *     real client. Here EVERY value is inspected and ANY of them asking for the demo wins;
- *     the attacker's extra value can only ever be ignored.
- *  2. **a build-time gate.** A server component only sees the query string when the page is
- *     RENDERED PER REQUEST. Under `output: "export"` (or any future prerender of `/`) the
- *     one emitted `index.html` is built with `searchParams = {}`, so the runtime `?demo=1`
- *     never reaches the server at all. That is why {@link isDemoRequested} also accepts a
- *     raw query STRING: the client re-derives the answer from `window.location.search`
- *     before the engine is constructed, and the client is the only place the real URL is
- *     guaranteed to exist. See `app/shell/engine.tsx`.
- *
- * The rule is deliberately one-directional: the client may turn the demo ON, never OFF. A
- * server that already decided "demo" (NEXT_PUBLIC_DEMO, or a per-request render that saw
- * the query) cannot be downgraded to the network engine by anything in the URL.
+ * The demo decision — one function, fail-SAFE toward the demo, because the demo is fiction and must make no external
+ * request. `?demo=1` is a promise: fixtures only, zero network. The failure that matters is a URL presented as the
+ * demo booting the HttpAdapter against a real mailbox, and it happened two ways: repeated parameters — Next hands a
+ * repeated key an ARRAY, so `/?demo=1&demo=0` produced `["1","0"] === "1"` → false → live; here EVERY value is
+ * inspected and ANY of them asking for the demo wins.
+ */
+
+/**
+ * And a build-time gate — a prerender bakes `searchParams = {}` into the one emitted HTML, so {@link isDemoRequested}
+ * also accepts a raw query STRING and the client re-derives from `window.location.search` before the engine is
+ * constructed. One-directional, deliberately: the client may turn the demo ON, never OFF.
  */
 
 /** The query parameter that opens the demo. */

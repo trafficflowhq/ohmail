@@ -1,33 +1,15 @@
 /**
- * Does THIS deployment let a stranger open an account?
- *
- * One variable, `TF_PUBLIC_SIGNUP`, read on the server in exactly one place. The API is the
- * authority (`AuthConfig.publicSignup`); this is the webapp's copy of the same decision, and
- * the two are armed together on the same deploy.
- *
- * ── WHY AN ENVIRONMENT VARIABLE AND NOT AN API CALL ────────────────────────────────────
- *
- * The obvious "ask the server" design does not survive contact with the page that needs the
- * answer. The landing (`/`) is PRERENDERED and CDN-cached — measured as a static
- * route, and the anonymous path costs zero upstream requests — which is why a stranger
- * gets a cached page and no session lookup. A per-request call to the API to decide what the
- * primary CTA says would turn `/` into a dynamic route for every visitor and every crawler,
- * to answer a question whose value changes about once in the product's life.
- *
- * So it is read at BUILD time for the marketing surface and at REQUEST time for `/join`
- * (which is already dynamic), from the same variable, in this one function — which is what
- * makes "the CTA and the wizard cannot disagree with each other" a fact rather than a hope.
- *
- * ── AND THE CLIENT STILL DOES NOT TRUST IT ─────────────────────────────────────────────
- *
- * The remaining disagreement is webapp-vs-API: this deployment could say "open" while the
- * API still demands a code. That is a deploy mistake, not a state to design for, but it must
- * not be a dead end — so `JoinScreen` treats a `validation_failed` on registration as "the
- * server wants a code after all" and shows the invite step. The server decides; this only
- * decides where the wizard STARTS.
- *
- * Never `NEXT_PUBLIC_`: inlining it into the client bundle would publish the deployment's
- * signup posture to every reader and buy nothing — the server components below already know.
+ * Does THIS deployment let a stranger open an account? One variable, `TF_PUBLIC_SIGNUP`, read on the server in
+ * exactly one place; the API is the authority and the two are armed together. An environment variable and not an API
+ * call because the landing is prerendered and CDN-cached — a per-request call to decide what the CTA says would make
+ * `/` dynamic for every visitor, to answer a question that changes about once in the product's life.
+ */
+
+/**
+ * Read at BUILD time for the marketing surface and at REQUEST time for `/join` (already dynamic), from the same
+ * variable in this one function — what makes "the CTA and the wizard cannot disagree" a fact. The client still does
+ * not trust it: `JoinScreen` treats a `validation_failed` on registration as "the server wants a code after all".
+ * Never `NEXT_PUBLIC_`: inlining would publish the deployment's signup posture to every reader and buy nothing.
  */
 export const PUBLIC_SIGNUP_VAR = "TF_PUBLIC_SIGNUP";
 
