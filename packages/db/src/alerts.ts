@@ -9,76 +9,14 @@ import { apiFaultWindow, poolerRefusalsInWindow } from "./api-faults.js";
 import type { Tx } from "./change-log.js";
 
 /**
- * THE ALERTS. One evaluator, one delivery pass, and two CLASSES of finding.
- *
- * (This header said "Seven rules" for as long as there were nine, then twelve. The count is
- * deliberately not restated: it is a number that goes stale on every slice and cannot be checked
- * by anything, and {@link AlertKind} is the list that is actually authoritative. A census test
- * asserts every kind in that union is reachable from {@link evaluateAlerts}.)
- *
- * ## Incidents and signals, which is the newest thing here
- *
- * Severity said how bad, and nothing said whether to WAKE somebody. `storage_at_cap` and
- * `sync_lag` were both warnings and only one of them was a customer being wronged, so the pager
- * carried both and an operator learned to skim it — which is the failure mode every rule in this
- * file is written against, arriving through the one door nothing guarded.
- *
- * {@link AlertClass} is that door. An INCIDENT is a real application problem: it is recorded, it
- * renders, and it goes to the sinks. A SIGNAL is informational: recorded and rendered, never
- * delivered. Two rules compute their class from POPULATION rather than fixing it — a handful of
- * lagging mailboxes is an observation and the same lag across a fifth of the deployment is an
- * outage — so the class is part of their signature and a promotion re-pages at once.
- *
- * ## The failure this file exists to prevent
- *
- * An `outbound_sends` row stays `pending` for three days. The user believes they sent it.
- * Every test is green. Nobody finds out — the evidence was always in the table and nothing
- * ever looked at it.
- *
- * The same shape covers the rest: a mailbox whose `last_sync_at` is an hour old is a customer
- * whose mail silently stopped arriving, and no leader heartbeat means the machine that would
- * fix both is not running.
- *
- * ## Why it lives in `packages/db`
- *
- * The WORKER is one of the two
- * drivers, and the worker may import `@trafficflow/core` and `@trafficflow/db` and nothing
- * else — the worker's dependency test pins it, and a `packages/services` home would
- * typecheck, pass vitest through the alias, and then throw `MODULE_NOT_FOUND` in the Docker
- * image. Everything here is drizzle over the schema plus one `fetch`; nothing reaches for
- * `node:fs` or the migrator, so it belongs on the package ROOT rather than behind `/admin`.
- *
- * ## Evaluation is separate from delivery, deliberately
- *
- * {@link evaluateAlerts} is a pure read: it takes a clock and answers what is wrong right
- * now. That is what makes the admin console able to render exactly what the alerter would
- * page about, without the console being able to send anything — and what makes the whole
- * thing testable by seeding failure rows rather than by waiting three days for Stripe.
- *
- * {@link runAlertPass} adds the two things a pure evaluation cannot have: memory (so a
- * five-minute poll does not mail a human every five minutes for as long as the fault lasts)
+ * One evaluator, one delivery pass, two classes of finding. {@link AlertKind} is authoritative; a
+ * census asserts every kind is reachable from {@link evaluateAlerts}. An incident is a real
+ * application problem — recorded, rendered, delivered; a signal is informational — never
+ * delivered; two rules compute their class from population, so a promotion re-pages at once. The
+ * failure this file prevents is evidence sitting in a table nothing looks at. It lives in
+ * `packages/db` because the worker may import core + db only. {@link evaluateAlerts} is a pure
+ * read — the console renders exactly what the pager would say; {@link runAlertPass} adds memory
  * and sinks.
- *
- * ## The alarm for "the alarm is broken" covers TWO states, not one
- *
- * `alerts_undeliverable` is the ERROR this file calls the single most dangerous thing it can
- * report. It originally fired on `sinks.length === 0` — nothing configured — and was therefore
- * silent in the strictly worse case: a sink that IS configured and refuses everything. That
- * state ran in production for months. Every pass logged `delivered=[] failedSinks=["webhook"]`
- * at WARN, which is indistinguishable from routine noise, and no page ever reached a human.
- *
- * So delivery failure is now counted ({@link DeliveryStreak}) and escalated to the same ERROR
- * after {@link DEFAULT_SINK_FAILURE_ESCALATION} consecutive failures, once per streak, cleared
- * by any success. And a refusal now has to SAY WHY — {@link AlertDeliveryResult} — because the
- * reason a sink refuses was, for the whole of that outage, information nobody had.
- *
- * ## Two drivers, because one of the rules is about the driver
- *
- * The worker runs the pass every minute. It cannot report its own death, so the API host
- * runs the SAME pass from `GET /internal/alerts`, driven by a scheduler that lives on
- * neither platform (a scheduled CI job). The worker being down, the worker's host being
- * down and the API's host being down are three different faults, and the pair covers all of them
- * except "everything is down", which the scheduler's own failure notification covers.
  */
 
 /* ════════════════════════════════════════════════════════════════════════════════════════
@@ -106,31 +44,24 @@ export type AlertKind =
    */
   | "storage_at_cap"
   /**
-   * A paired NATIVE device (kind ≠ 'web') that used to reach the sync horizon has gone quiet
-   * past the threshold while its account kept changing. Read from `devices.last_synced_at`
-   * (mail 0064) — stamped only by a `GET /sync` answer with `hasMore: false`, so a mirror
-   * stuck re-paging a backlog forever counts as quiet, exactly like one whose session died.
-   * This is the alert a week of dead desktop sync did not have: the client retries on its own
-   * backoff, its refresh family keeps rotating, and no other server-side signal moves.
-   *
-   * Two arms share this kind and its per-device key. A device that STAMPED once and went quiet
-   * is the original arm. A device that NEVER stamped (`last_synced_at IS NULL`) older than the
-   * threshold, with a LIVE session and an account that moved on, is the second — added after
-   * the first real incident showed the NULL exclusion was the exact blind spot: every wedged
-   * mirror is NULL right up until the first time it converges, so "never-synced asserts
-   * nothing" described precisely the population the alert existed for.
+   * A paired native device (kind ≠ 'web') that used to reach the sync horizon has gone quiet past
+   * the threshold while its account kept changing. Read from `devices.last_synced_at` (mail 0064)
+   * — stamped only by a `GET /sync` answer with `hasMore: false`, so a mirror stuck re-paging a
+   * backlog counts as quiet, exactly like one whose session died. Two arms share this kind and
+   * its per-device key: a device that stamped once and went quiet, and one that never stamped
+   * (`IS NULL`) older than the threshold, with a live session and an account that moved on —
+   * added after the first real incident showed the NULL exclusion was the exact blind spot: every
+   * wedged mirror is NULL until it first converges.
    */
   | "device_sync_stale"
   /**
-   * A SESSION that used to reach the sync horizon is still making requests but has not
-   * converged past the threshold while its account kept changing. Read from
-   * `sessions.last_synced_at` (mail 0070) beside `sessions.last_seen_at`. This is the arm that
-   * covers DEVICELESS installs — the browser-door desktop, a long-lived web tab — which hold
-   * `device_id IS NULL` sessions (mail 0061) and are invisible to `device_sync_stale` by
-   * construction. "Still making requests" is the discriminator that keeps a closed tab silent:
-   * a wedged install rotates its refresh family and polls on its own backoff (the measured
-   * incident: four rotations an hour for five days), while a tab someone closed stops
-   * presenting anything and simply ages out.
+   * A session that used to reach the sync horizon is still making requests but has not converged
+   * past the threshold while its account kept changing. Read from `sessions.last_synced_at` (mail
+   * 0070) beside `sessions.last_seen_at`. The arm that covers deviceless installs — the
+   * browser-door desktop, a long-lived web tab (`device_id IS NULL`, mail 0061) — invisible to
+   * `device_sync_stale` by construction. "Still making requests" is the discriminator that keeps
+   * a closed tab silent: a wedged install rotates its refresh family and polls on its own
+   * backoff, while a closed tab stops presenting anything and ages out.
    */
   | "session_sync_stale"
   /**
@@ -225,25 +156,14 @@ export interface AtCapAccount {
 export type AlertSeverity = "critical" | "warning";
 
 /**
- * INCIDENT or SIGNAL — the class that decides DELIVERY, not merely presentation.
- *
- * ## Why severity could not express this
- *
- * `storage_at_cap` and `sync_lag` are both `warning`, and only one of them is a customer being
- * wronged. `session_reuse_revoked` is a warning that describes a defence that ALREADY FIRED. Read
- * off severity alone, an operator woken at 3am cannot tell which of those needs them now, and the
- * difference is not one of degree: the two want different behaviour from the pager.
- *
- * · An **incident** is a real application problem. It goes to the sinks and it wakes somebody.
- * · A **signal** is informational. It is recorded in `alert_state`, it renders on the board, and
- *   it never reaches a sink.
- *
- * ## The direction the default has to fall
- *
- * {@link Alert.cls} is optional and absent means INCIDENT — see {@link alertClass}. A rule whose
- * author forgot the field pages. The other default silently converts a new incident into a row
- * that fires, renders, and reaches no human, which is the exact silence this file exists to
- * refuse; the cost of the safe direction is a noisy page, which is loud and gets fixed.
+ * Incident or signal — the class that decides delivery, not merely presentation. Severity could
+ * not express it: `storage_at_cap` and `sync_lag` are both warnings and only one is a customer
+ * being wronged; read off severity alone, an operator woken at 3am cannot tell which needs them
+ * now. An incident goes to the sinks and wakes somebody; a signal is recorded and rendered and
+ * never reaches a sink. {@link Alert.cls} is optional and absent means incident (see {@link
+ * alertClass}): a rule whose author forgot the field pages — the other default silently converts
+ * a new incident into a row that reaches no human, the exact silence this file refuses; the cost
+ * of the safe direction is a noisy page, which is loud and gets fixed.
  */
 export type AlertClass = "incident" | "signal";
 
@@ -258,34 +178,27 @@ export interface AlertThresholds {
   /** No leader heartbeat for longer than this ⇒ the worker is down. Arch doc: 2 minutes. */
   leaderStaleMs: number;
   /**
-   * `outbound_sends.status='pending'` older than this is stuck — AND THE SENTENCE THIS ALERT
-   * MEANS HAS CHANGED, which is why the number did.
-   *
-   * It used to mean "a sender died and nothing will ever resolve this row", and ten minutes —
-   * `SEND_STALE_AFTER_MS`, the age past which no invocation can still be running — was exactly
-   * right for that: the moment a row became unresolvable, a human was the only remedy.
-   *
-   * A reconciling pass now examines such a row every minute, so the same reading would page on
-   * the ordinary case: a row goes stale at ten minutes and is resolved on the next cycle. What
-   * is worth waking somebody for is the reconciler NOT DRAINING — and fifteen minutes is that
-   * statement with the arithmetic behind it: ten to become eligible, plus five for the
-   * once-a-minute clock (its cadence plus jitter, several cycles over) to have had every
-   * chance. A row still `pending` then is one the reconciler is deferring or never sees, which
-   * is a real fault and the one this rule now names.
+   * `outbound_sends.status='pending'` older than this is stuck — and the sentence this alert
+   * means has changed, which is why the number did. It used to mean "a sender died and nothing
+   * will ever resolve this row", and ten minutes was right for that. A reconciling pass now
+   * examines such a row every minute, so the same reading would page on the ordinary case. What
+   * is worth waking somebody for is the reconciler not draining — fifteen minutes is that
+   * statement with the arithmetic: ten to become eligible, plus five for the once-a-minute clock
+   * to have had every chance. A row still `pending` then is one the reconciler is deferring or
+   * never sees.
    */
   stuckSendMs: number;
   /** An on-duty mailbox not synced within this is lagging. Arch doc: 15 minutes. */
   syncLagMs: number;
   /**
-   * The SUSTAIN margin on top of {@link syncLagMs} before a lagging mailbox pages — the
-   * debounce a boundary measurement forced. Measured live (2026-08-24): every on-duty
-   * mailbox was one to four minutes fresh, yet the alert address kept receiving "1 mailbox
-   * behind by more than 15m", because the worker's serialized scan visits mailboxes in lanes
-   * and a healthy scan's TAIL routinely kisses the 15-minute threshold itself — the rule was
-   * paging on the scheduler's own period. One further full period is the discriminator: a
-   * mailbox the next scan picks up drops back to minutes and never pages; a mailbox no scan is
-   * advancing keeps aging straight through the margin. Fifteen minutes, i.e. the threshold
-   * again, because the tail IS the period.
+   * The sustain margin on top of {@link syncLagMs} before a lagging mailbox pages — the debounce
+   * a boundary measurement forced. Measured live: every on-duty mailbox was minutes fresh, yet
+   * the alert address kept receiving "1 mailbox behind by more than 15m" — the worker's
+   * serialized scan visits mailboxes in lanes, and a healthy scan's tail routinely kisses the
+   * threshold itself, so the rule was paging on the scheduler's own period. One further full
+   * period is the discriminator: a mailbox the next scan picks up drops back to minutes and never
+   * pages; a wedged one ages straight through. Fifteen minutes — the threshold again, because the
+   * tail IS the period.
    */
   syncLagSustainMs: number;
   /**
@@ -296,16 +209,13 @@ export interface AlertThresholds {
    */
   syncLagCriticalMs: number;
   /**
-   * A native device whose last horizon-reaching `/sync` is older than this, while its account
-   * has newer changes, is a dead mirror. Three days: a laptop closed over a weekend is not a
-   * page, a desktop that died on a Monday pages before the week is out — measured against the
-   * incident this exists for, which ran silent for seven.
-   *
-   * `session_sync_stale` reads the SAME threshold on purpose — the condition is the same
-   * quantity one level down ("a sync client that stopped converging"), and two knobs for one
-   * judgment is how a console ends up disagreeing with the pager. It doubles as the
-   * still-requesting bound: a session unseen for longer than this is a closed tab, not a
-   * wedged install.
+   * A native device whose last horizon-reaching `/sync` is older than this, while its account has
+   * newer changes, is a dead mirror. Three days: a laptop closed over a weekend is not a page; a
+   * desktop that died on Monday pages before the week is out — measured against the incident this
+   * exists for, which ran silent for seven. `session_sync_stale` reads the same threshold on
+   * purpose — the condition is the same quantity one level down, and two knobs for one judgment
+   * is how a console ends up disagreeing with the pager. It doubles as the still-requesting
+   * bound: a session unseen for longer is a closed tab, not a wedged install.
    */
   deviceSyncStaleMs: number;
   /**
@@ -445,30 +355,24 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
 };
 
 /**
- * How long a firing CRITICAL alert waits before it pages again.
- *
- * Not zero (that is the alert address people learn to filter) and not infinite (a fault
- * nobody fixed must resurface). One hour: long enough that a night of a broken worker is six
- * mails and not three hundred, short enough that an alert seen and forgotten comes back
- * before the customer notices.
- *
- * CRITICAL only, since the renotify policy below split the tiers: a standing critical is a
- * production outage and the hourly nag is deliberate; everything else holds for
- * {@link DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS} while UNCHANGED and re-pages at once on a state
- * change (see {@link Alert.signature}).
+ * How long a firing critical alert waits before it pages again. Not zero (the alert address
+ * people learn to filter) and not infinite (a fault nobody fixed must resurface). One hour: a
+ * night of a broken worker is six mails, not three hundred; an alert seen and forgotten comes
+ * back before the customer notices. Critical only, since the renotify policy split the tiers: a
+ * standing critical is a production outage and the hourly nag is deliberate; everything else
+ * holds for {@link DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS} while unchanged and re-pages at once on a
+ * state change ({@link Alert.signature}).
  */
 export const DEFAULT_ALERT_REPEAT_MS = 60 * 60 * 1000;
 
 /**
- * How long an UNCHANGED standing non-critical alert waits before it pages again.
- *
- * The measured failure this exists for: a true `device_sync_stale` warning for one dead
- * pairing was emailed on every repeat interval for fifteen days, and the only thing that
- * changed between the mails was the age in the sentence. A warning is by its own definition
- * ("mail is safe, one install broke") not a page that earns hourly repetition — once, then a
- * daily reminder while it stands, is the whole of what it owes. Any REAL movement in the
- * condition (count, severity — the {@link Alert.signature}) re-pages immediately, so holding
- * the unchanged case costs no latency on the case that matters.
+ * How long an unchanged standing non-critical alert waits before it pages again. The measured
+ * failure: a true `device_sync_stale` warning for one dead pairing was emailed on every repeat
+ * interval for fifteen days, and the only thing that changed between the mails was the age in the
+ * sentence. A warning is by its own definition not a page that earns hourly repetition — once,
+ * then a daily reminder while it stands. Any real movement in the condition (count, severity —
+ * the {@link Alert.signature}) re-pages immediately, so holding the unchanged case costs no
+ * latency on the case that matters.
  */
 export const DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS = 24 * 60 * 60 * 1000;
 
@@ -567,19 +471,14 @@ export interface EvaluateOptions {
    */
   shards?: readonly number[];
   /**
-   * WHICH DRIVER IS ASKING. The worker's in-process timer is `"worker"`; the API host's cron
-   * route is `"api"`.
-   *
-   * Two rules need it and neither can be written without it. `alert_driver_dark` looks at the
-   * OTHER driver's row, because a process cannot testify to its own death — the same sentence
-   * `worker_down` is built on, one level up. `schema_behind` names the host in its key, because
-   * "the worker is ahead of the database" and "the API is ahead of the database" are two
-   * different deploys gone wrong.
-   *
-   * OPTIONAL, and both rules are simply not evaluated when it is absent. A one-shot caller — a
-   * test, a runbook `curl`, the console rendering what the pager would say — is not a driver, and
-   * a pass that claimed to be one would either resolve a live driver's row or page about a
-   * scheduler that is running perfectly.
+   * Which driver is asking: the worker's in-process timer is `"worker"`, the API host's cron
+   * route is `"api"`. Two rules need it and neither can be written without it:
+   * `alert_driver_dark` looks at the other driver's row, because a process cannot testify to its
+   * own death; `schema_behind` names the host in its key, because "the worker is ahead of the
+   * database" and "the API is ahead" are two different deploys gone wrong. Optional, and both
+   * rules are simply not evaluated when absent: a one-shot caller — a test, a runbook `curl`, the
+   * console — is not a driver, and a pass claiming to be one would either resolve a live driver's
+   * row or page about a healthy scheduler.
    */
   driver?: AlertDriver;
   /**
@@ -611,20 +510,14 @@ export interface EvaluateOptions {
 export type AlertDriver = "worker" | "api";
 
 /**
- * The kinds only ONE ARM of the alerting evaluates, and therefore the only kinds a pass may not
- * resolve merely because they are absent from its own firing set.
- *
- * Two shapes, one property. `worker_down`, `worker_degraded` and `ai_provider_down` are keyed by
- * SHARD and evaluated only for the shards a pass was given — the worker passes none, because all
- * three are statements about the worker. `schema_behind` and `alert_driver_dark` are keyed by
- * DRIVER: each arm evaluates its own journal and the other arm's pulse, so for either key exactly
- * one arm has an opinion.
- *
- * Every other kind is a fact about the deployment that both arms read out of the same database,
- * so absence from a firing set genuinely means the condition cleared and the row should go.
- *
- * A new rule that either arm can decline MUST be added here. The cross-driver test in
- * `alerts-reliability.test.ts` is what makes that a failure rather than a silent flap.
+ * The kinds only one arm of the alerting evaluates — the only kinds a pass may not resolve merely
+ * because they are absent from its own firing set. Two shapes, one property: `worker_down`,
+ * `worker_degraded` and `ai_provider_down` are keyed by shard and evaluated only for the shards a
+ * pass was given (the worker passes none — all three are statements about the worker);
+ * `schema_behind` and `alert_driver_dark` are keyed by driver — each arm evaluates its own
+ * journal and the other arm's pulse. Every other kind is a fact both arms read from the same
+ * database, so absence genuinely means the condition cleared. A new rule either arm can decline
+ * MUST be added here; the cross-driver test makes that a failure rather than a silent flap.
  */
 export const SCOPED_ALERT_KINDS: ReadonlySet<string> = new Set<AlertKind>([
   "worker_down", "worker_degraded", "ai_provider_down", "schema_behind", "alert_driver_dark",
@@ -663,62 +556,25 @@ export function humanAge(seconds: number | null): string {
  * and a console that could write would be a console that could silence a pager.
  */
 /**
- * The column whose ABSENCE means this database is older than the bundle this host ships.
- *
- * THE **LAST** STATEMENT'S COLUMN, and the distinction is the whole correctness of this check.
- *
- * The first cut used `alert_state.cls` — the migration's FIRST additive statement — on the
- * argument that the pass writes it on every observation. That argument is true and insufficient:
- * statements inside a migration apply in order, so `cls` being present says nothing about the two
- * TABLES and the heartbeat columns that come after it. A database interrupted part-way, or one
- * whose operator ran statements by hand, satisfied the preflight and then threw 42703 or 42P01 on
- * the very next read — the pass dying before it could deliver the finding that explains why,
- * which is the exact failure the preflight was introduced to remove.
- *
- * `alert_pass_runs.sinks_configured` is the migration's LAST statement, so its presence implies
- * every object above it. `health-cloud.ts` reaches the same conclusion for the same reason where
- * it picks its final marker; this is that sentence applied one file over, where it was missed.
- *
- * ── AND THE MARKER MOVES WHEN THE MIGRATION GROWS, WHICH IS THE EASY HALF TO FORGET ──────
- *
- * This pointed at `worker_heartbeats.degraded_since` until a later statement was APPENDED after
- * it. That silently broke the only property the choice rests on: the blind role could see
- * `degraded_since` and not the newly-appended column, so this preflight reported ready and the
- * overview then failed selecting a column it had just declared readable — and a migration
- * interrupted between the two passed both this check and the matching `/health` marker. Adding a
- * statement to 0030 means moving this constant and that marker together, every time.
- *
- * It names cloud 0033's last column now: two of this pass's rules read `api_faults`, so a
- * database at 0031 would satisfy a marker on 0030 and then throw 42P01 inside the evaluation —
- * the pass dying before it could deliver the finding that explains it.
+ * The column whose absence means this database is older than this bundle — the LAST statement's
+ * column in cloud 0030, and that is the correctness: statements apply in order, so an early
+ * column (`alert_state.cls` was the first cut) says nothing about the tables after it; a database
+ * interrupted part-way satisfied that preflight and threw 42703 on the next read.
+ * `alert_pass_runs.sinks_configured` is the last statement, so its presence implies everything
+ * above it. The marker moves when the migration grows: adding a statement to 0030 means moving
+ * this constant and the matching `/health` marker together.
  */
 const SCHEMA_BEHIND_MARKER = { table: "api_faults", column: "arm" } as const;
 
 /**
- * IS THIS DATABASE OLDER THAN THE BUNDLE WE ARE RUNNING? — the alert pass's preflight.
- *
- * ── WHY `information_schema` AND NOT THE MIGRATOR'S TABLE ─────────────────────────────────
- *
- * The first cut compared `max(created_at)` in `drizzle_cloud.__drizzle_migrations` against the
- * journal head this bundle ships. It could never fire in production, and the reason is a grant:
- * `harden-staff-role.sql` revokes everything and grants back `public` and `admin` ONLY, and the
- * runtime role has `public` alone — so NEITHER driver holds USAGE on the migrator's schema. Both
- * raised 42501, the rule's own catch swallowed it as "a handle without USAGE costs exactly this
- * rule", and the rule was decoration on every hardened deployment. Widening a deliberately narrow
- * role to fix an observability read would have been the wrong trade.
- *
- * `information_schema.columns` needs no grant: it is readable by everyone and shows each role the
- * objects it already has privileges on. Both drivers hold grants on `alert_state`, so both can
- * see whether its marker column exists — which is the same mechanism `health-cloud.ts` already
- * uses to answer `503 schema_incomplete`, now reused rather than reinvented.
- *
- * ── AND WHY IT IS A PREFLIGHT ─────────────────────────────────────────────────────────────
- *
- * Every other rule reads columns this bundle's migration adds. Against an older database those
- * SELECTs raise 42703 and take the whole pass down before any rule can say why — so the one
- * finding that explains the outage was structurally the one finding that could not be produced.
- * This runs first, on `information_schema` alone, and when it fires the caller stops: there is
- * nothing else this bundle can honestly read from a database it does not match.
+ * Is this database older than the bundle we are running — the alert pass's preflight.
+ * `information_schema`, not the migrator's table: the first cut read
+ * `drizzle_cloud.__drizzle_migrations`, but the harden script grants back `public` and `admin`
+ * only, so neither driver held USAGE there; both raised 42501, the catch swallowed it, and the
+ * rule was decoration on every hardened deployment. `information_schema.columns` needs no grant,
+ * and both drivers hold rights on `alert_state`. It is a preflight: every other rule reads
+ * columns 0030 adds, and against an older database those SELECTs kill the whole pass. Runs first;
+ * when it fires, the caller stops.
  */
 export async function alertSchemaReadable(db: Tx): Promise<boolean> {
   const raw = await db.execute(
@@ -850,42 +706,14 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     });
   }
 
-  // ── 1b. the leader is ALIVE and reporting itself DEGRADED ─────────────────────────────
-  //
-  // The fault a liveness check is structurally blind to. `worker_heartbeats.degraded` is derived
-  // from NAMED causes in the worker (`DegradedCauses`), so it can never be true without a reason
-  // the `/health` surface also names — and a leader that holds the lock, writes fresh beats and
-  // cannot do its work looks perfectly healthy to rule 1, which reads `leader` and `beat_at` and
-  // nothing else.
-  //
-  // SUSTAINED, not instantaneous: `degraded` is true for a normal boot (mailboxes attached,
-  // nothing cycled yet) and briefly whenever the roster churns, so the honest threshold is one
-  // that a booting worker clears and a stuck one does not. Ten minutes is several roster passes.
-  //
-  // ── MEASURED FROM `degraded_since`, WHICH IS A DURATION AND NOT AN UPTIME ─────────────
-  //
-  // This rule used to read `started_at` and ask "has the process been up longer than the
-  // threshold AND is it degraded right now". That suppresses a BOOT, which is what it was
-  // written for, and suppresses nothing afterwards: a leader up for a day that flipped
-  // `degraded` for a single beat — one roster churn, one mailbox re-attaching — satisfied both
-  // halves and paged as a CRITICAL. A pager that fires on routine churn is one an operator
-  // learns to skim, which is the failure this file's incident/signal split exists to prevent,
-  // arriving through the one rule whose threshold read as if it already prevented it.
-  //
-  // `degraded_since` (cloud 0030) is the durable clock that makes the real question answerable:
-  // when this worker FIRST reported itself degraded in the current unbroken run, cleared to NULL
-  // by the first healthy beat. THE BOOT SUPPRESSION FALLS OUT OF IT rather than being a second
-  // condition — a worker that has just started and is briefly degraded has a stamp seconds old,
-  // and one that has churned and recovered has no stamp at all.
-  //
-  // It lives on the ROW, not in the worker's memory, and that is the load-bearing choice: the
-  // incoming leader after a deploy finds the previous one's stamp and keeps it, so a fault that
-  // outlives the process which first saw it keeps its true age. An in-process clock would
-  // restart on every handover, and a ten-minute rule would then never fire on a deployment that
-  // restarts more often than that.
-  //
-  // NULL is both "healthy" and "wrote no beat under a build that stamps this", and neither may
-  // page — the same reading `ai_circuit_open_since` takes one rule down.
+  // 1b. The leader is alive and reporting itself degraded — the fault a liveness check is blind
+  // to: `degraded` derives from named causes, so a leader holding the lock and beating while
+  // unable to work looks healthy to rule 1. Sustained, not instantaneous: `degraded` is true for
+  // a normal boot and briefly on roster churn; the threshold is one a booting worker clears and a
+  // stuck one does not. Measured from `degraded_since` (cloud 0030) — a duration, not an uptime:
+  // the old `started_at` form suppressed a boot and nothing afterwards, so a one-beat flip on a
+  // day-old leader paged as critical. The stamp lives on the row, so a handover keeps a fault's
+  // true age. NULL is both "healthy" and "no beat under a stamping build"; neither may page.
   for (const shard of shards) {
     const beat = bySh.get(shard);
     if (!beat || !beat.leader || !beat.degraded) continue;
@@ -928,17 +756,13 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     });
   }
 
-  // ── 3. outbound_sends pending > threshold ─────────────────────────────────────────────
-  //
-  // `pending` is a RESERVATION, not a delivery: the row is written before SMTP is touched, so
-  // one older than the threshold means the process that reserved it died mid-flight. Never
-  // auto-resent (the resolver checks Sent first) — which is precisely why a human has to be
-  // told the queue is not draining.
-  //
-  // WHAT THIS RULE NOW MEANS is "the RECONCILER is not draining", not "a sender died": a
-  // reconciling pass examines every stale reservation once a minute, so a row that reaches this
-  // threshold has survived several of its cycles. See {@link AlertThresholds.stuckSendMs} for
-  // the arithmetic behind the number.
+  // 3. `outbound_sends` pending > threshold. `pending` is a reservation, not a delivery: the row
+  // is written before SMTP is touched, so one older than the threshold means the process that
+  // reserved it died mid-flight. Never auto-resent (the resolver checks Sent first) — precisely
+  // why a human has to be told the queue is not draining. What this rule now means is "the
+  // reconciler is not draining", not "a sender died": a reconciling pass examines every stale
+  // reservation once a minute, so a row that reaches this threshold has survived several of its
+  // cycles. See {@link AlertThresholds.stuckSendMs} for the arithmetic.
   const stuckBefore = new Date(now.getTime() - t.stuckSendMs);
   const stuck = await db
     .select({
@@ -974,41 +798,15 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     });
   }
 
-  // ── 4. sync lag > threshold on any mailbox THE WORKER IS ACTUALLY ON DUTY FOR ─────────
-  //
-  // ── THE POPULATION MISMATCH THIS FIXES (independent review of the 0021 slice, #10) ──
-  //
-  // This rule used to call every `status <> 'disabled'` row enabled, on the stated grounds
-  // that it was "the SAME predicate the worker's roster uses". It was half of it.
-  // `loadEnabledMailboxes` applies that predicate AND THEN drops every account the host's
-  // reader says is PARKED. A parked account leaves `connected` rows the roster deliberately
-  // does not sync: their stamps age past fifteen minutes within the hour, and this rule then
-  // paged a human forever about a state working exactly as intended — which is the noisy-alert
-  // failure the whole file exists to avoid, in the one rule an operator most needs to trust.
-  //
-  // The duty set is read from ONE reader, `EvaluateOptions.parkedAccounts`, so
-  // "which mailboxes are supposed to be syncing" has a single definition that the roster and
-  // the pager cannot answer differently. (The worker still holds its own copy of that query;
-  // see the function's header.)
-  //
-  // Everything else about the rule is unchanged and still deliberate. A DISABLED mailbox is
-  // out of scope. A QUARANTINED one (`status='error'`) is in the
-  // roster and is therefore in scope: its owner is not receiving mail, which is the point.
-  // `last_sync_at IS NULL` is not an alert on its own — a mailbox enrolled thirty seconds ago
-  // has never synced and is not a fault — so it falls back to `created_at` and a never-synced
-  // mailbox counts only once it is older than the threshold.
-  //
-  // GROUPED BY ACCOUNT rather than counted flat, because the entitlement decision is
-  // per-account: the group-by is what lets the parked accounts be subtracted before the count
-  // is formed. The result set is one row per account with a lagging mailbox — bounded by the
-  // account count even when a dead worker makes every mailbox lag.
-  //
-  // THE CUT IS THRESHOLD + SUSTAIN, not the threshold alone — the debounce. The evaluator is a
-  // pure read with no memory, so "lagging on two consecutive passes" is expressed as age: a
-  // healthy serialized scan's tail reaches `syncLagMs` itself (measured — see the threshold's
-  // doc), so a mailbox only counts once it has aged through one FULL further period without any
-  // scan advancing it. A mailbox at 15m30s that the next scan returns to minutes never appears
-  // here; a wedged one crosses this cut one period later and stays.
+  // 4. Sync lag > threshold on any mailbox the worker is on duty for. The old population was
+  // every `status <> 'disabled'` row — half the roster predicate: `loadEnabledMailboxes` also
+  // drops accounts the host's reader says are parked, and a parked account leaves `connected`
+  // rows the roster deliberately does not sync, so this rule paged forever about a state working
+  // as intended. The duty set comes from one reader, `EvaluateOptions.parkedAccounts`, so the
+  // roster and the pager cannot answer differently. A quarantined mailbox is in scope;
+  // `last_sync_at IS NULL` falls back to `created_at`. Grouped by account. The cut is threshold +
+  // sustain: a healthy serialized scan's tail reaches `syncLagMs` itself, so a mailbox counts
+  // only once it has aged through one further full period with no scan advancing it.
   const lagBefore = new Date(now.getTime() - (t.syncLagMs + t.syncLagSustainMs));
   const criticalBefore = new Date(now.getTime() - t.syncLagCriticalMs);
   const laggingByAccount = await db
@@ -1046,23 +844,16 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     .filter((r) => parked.has(r.accountId))
     .reduce((n, r) => n + Number(r.count), 0);
 
-  // THE TIER IS THE IDENTITY, because the sentence is a claim (claims are contracts) and the
-  // page schedule follows the key. "Their owners are not receiving mail" was the copy at EVERY
-  // lag; at thirty minutes it is an overclaim — delivery is delayed, not dead. Two ROWS now,
-  // each counting its own mailboxes (a review caught the grouped version re-smuggling the
-  // overclaim: one 3-hour mailbox beside a 35-minute one made the sentence cover both):
-  //
-  //  · `sync_lag` — the SUSTAINED-warning tier. A throttling provider or a slow scan tail
-  //    produces this and resolves itself; it becomes urgent by co-occurring with `worker_down`,
-  //    which is the alert a human should read first.
-  //  · `sync_lag:critical` — mailboxes past `syncLagCriticalMs`, where the strong sentence is
-  //    the plain truth. A SEPARATE KEY deliberately, not a severity flip on one key: crossing
-  //    the tier creates a NEW `alert_state` row, whose NULL `notified_at` the claim machinery
-  //    pages immediately, retries after a failed delivery, and survives a crash between passes
-  //    — the properties a same-key escalation was twice shown to lose (first to the
-  //    repeat schedule, then to the failed-delivery restore path putting the warning's stamp
-  //    under a row already marked critical). Key splits ship to BOTH alert drivers in one
-  //    deploy window — the version-skew rule written out at the reconciliation rule's key.
+  // The tier is the identity, because the sentence is a claim and the page schedule follows the
+  // key. "Their owners are not receiving mail" was the copy at every lag; at thirty minutes it is
+  // an overclaim. Two rows now, each counting its own mailboxes (a review caught the grouped
+  // version re-smuggling the overclaim): `sync_lag` — the sustained-warning tier; a throttling
+  // provider produces this and resolves itself. `sync_lag:critical` — mailboxes past
+  // `syncLagCriticalMs`, where the strong sentence is the plain truth. A separate key
+  // deliberately, not a severity flip on one key: crossing the tier creates a new `alert_state`
+  // row whose NULL `notified_at` the claim machinery pages immediately, retries after a failed
+  // delivery, and survives a crash — the properties a same-key escalation was twice shown to
+  // lose. Key splits ship to both alert drivers in one deploy window.
   const effectiveMs = t.syncLagMs + t.syncLagSustainMs;
   const criticalCount = onDuty.reduce((n, r) => n + Number(r.criticalCount), 0);
   const warningCount = lagCount - criticalCount;
@@ -1075,37 +866,15 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   const minDate = (ds: Array<Date | null>): Date | null =>
     ds.reduce<Date | null>((min, d) => (d && (!min || d < min) ? d : min), null);
 
-  // ── THE PROMOTION: how many ACCOUNTS, as a share of how many there are ─────────────────
-  //
-  // The warning tier is a SIGNAL by default, and that is a real change of posture: a handful of
-  // mailboxes past the sustain cut is a throttling provider or a slow scan tail, it resolves
-  // itself, and it was paging a human every time. What makes it an incident is POPULATION — the
-  // same lag reaching enough customers that the cause is ours rather than a provider's.
-  //
-  // TWO ARMS because one number cannot serve both sizes of deployment. Three accounts is most of
-  // a small one and noise on a large one; a fifth of everybody is an outage on a large one and
-  // is reached by a single account on a deployment with four. Either arm promotes.
-  //
-  // THE DENOMINATOR IS THE ON-DUTY ACCOUNT COUNT, read as a count and never as a roster — the
-  // whole rule is built to stay bounded while every mailbox in the deployment is lagging, and a
-  // scan of the accounts table at that moment is exactly the wrong thing to add. Accounts the
-  // entitlement has PARKED are excluded from both sides: they are not supposed to be syncing, so
-  // counting them in the denominator would make a real outage look like a smaller share of a
-  // larger population.
-  // COUNTED OVER THE WARNING TIER'S OWN ACCOUNTS, which is not `onDuty.length`.
-  //
-  // `onDuty` is every account with ANY lagging mailbox, critical ones included, and using it
-  // here promoted the WARNING row on a population it does not describe. The case is ordinary:
-  // three accounts two hours behind and one account forty minutes behind gives `criticalCount`
-  // 3, `warningCount` 1 and `onDuty.length` 4 — so the warning row crossed the three-account arm
-  // and PAGED, claiming "4 of N on-duty account(s) are affected", for a condition that is one
-  // mailbox on one account. The three genuinely broken accounts were already paging under
-  // `sync_lag:critical`, so the promotion added nothing except a second page with a wrong number
-  // in it, and the number is the one an operator sizes the incident from.
-  //
-  // The critical row has always filtered its own population (`criticalCount > 0`, below); this
-  // is the mirror of that, and the two together mean each tier's population describes the
-  // mailboxes that tier is actually about.
+  // The promotion: how many accounts, as a share of how many there are. The warning tier is a
+  // signal by default — a handful of mailboxes past the sustain cut is a throttling provider,
+  // resolves itself, and was paging a human every time; what makes it an incident is population.
+  // Two arms because one number cannot serve both sizes of deployment: three accounts is most of
+  // a small one and noise on a large one; a fifth of everybody is an outage. The denominator is
+  // the on-duty account count, read as a count, parked accounts excluded from both sides. Counted
+  // over the warning tier's own accounts, not `onDuty.length`: that includes critical accounts,
+  // and using it promoted the warning row on a population it does not describe — a second page
+  // with a wrong number in it, the number an operator sizes the incident from.
   const laggingAccounts = onDuty
     .filter((r) => Number(r.count) - Number(r.criticalCount) > 0).length;
   const [dutyRow] = await db
@@ -1183,18 +952,13 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     });
   }
 
-  // ── 5. accounts at their storage cap ───────────────────────────────────────────────────
-  //
-  // The population is the host's `accountsAtCap` reader — counted stored-body bytes at or over
-  // the account's cap. Accounts the roster has PARKED are subtracted on rule 4's own argument:
-  // a parked account ingests nothing, so nothing is being withheld from it, and paging about
-  // it would be the noisy-alert failure again. One grouped alert, not one per account —
-  // bounded, content-free (a count and two byte figures), and the operator's remedy is the
-  // same whoever is in it.
-  //
-  // WARNING, not critical: the product is behaving as specified — mail still arrives, still
-  // organizes on IMAP, the user has been told in Settings and on the message — but a human
-  // should know who is bumping the ceiling before the support mail arrives.
+  // 5. Accounts at their storage cap. The population is the host's `accountsAtCap` reader —
+  // counted stored-body bytes at or over the account's cap. Parked accounts are subtracted on
+  // rule 4's argument: a parked account ingests nothing, so nothing is withheld from it. One
+  // grouped alert, not one per account — bounded, content-free (a count and two byte figures),
+  // and the operator's remedy is the same whoever is in it. Warning, not critical: the product is
+  // behaving as specified — mail still arrives and organizes, the user has been told — but a
+  // human should know who is bumping the ceiling before the support mail arrives.
   const atCap = opts.accountsAtCap ? await opts.accountsAtCap() : [];
   const capParked = await parkedOf(atCap.map((r) => r.accountId));
   const atCapOnDuty = atCap.filter((r) => !capParked.has(r.accountId));
@@ -1241,36 +1005,15 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     });
   }
 
-  // ── 8. a paired native device that stopped syncing ──────────────────────────────────────
-  //
-  // The population is `devices.last_synced_at` (mail 0064): stamped only by a `GET /sync` poll
-  // whose PRESENTED cursor already sits at the horizon — the client's own proof of a committed
-  // drain — so "quiet" covers both ways the incident this guards actually happened: a mirror
-  // stuck re-paging its backlog forever (requests happening, no convergence) and a session
-  // killed by refresh-reuse detection (no requests at all). The client cannot report either:
-  // it retries on its own backoff and shows what it holds.
-  //
-  // EVERY READ HERE IS A NAMED COLUMN ON THE STAFF ALLOWLIST — ids, kinds and timestamps
-  // (`staff-grants.ts`: devices id/account_id/kind/last_synced_at, sessions device_id/
-  // revoked_at), never a whole row and never a token column. This rule's first form was a
-  // SECURITY DEFINER carrier, and the staff attestation refused it by construction (a secdef
-  // the blind role can execute is a hole through every column grant): the pager went dark
-  // BECAUSE an alarm was added to it. Mail 0068 retired that function; the widened column
-  // allowlist is the designed mechanism.
-  //
-  // THE "MOVED ON" GATE reads `mailboxes.last_sync_at` — the account has a mailbox the worker
-  // synced after the device's horizon, so there demonstrably was server-side motion the device
-  // never pulled. (`change_log` would be the sharper gate and is deliberately not readable by
-  // this role — row existence there is itself information. A mailbox that syncs and truly
-  // receives nothing for days keeps this rule armed; that is the acceptable direction.)
-  //
-  // THE ISOLATION IS PART OF THE RULE: a deployment whose provisioner has not yet granted the
-  // two new tables must cost exactly this rule, never the pass — the pass dying wholesale is
-  // the failure mode this paragraph exists to record. Only insufficient_privilege is
-  // swallowed; anything else is a real fault and still fails the pass loudly.
-  //
-  // Per-device keys, like `worker_down:<shard>`: paired native devices are tens fleet-wide,
-  // the remedy is per-device, and a grouped count would hide WHICH mirror is dead.
+  // 8. A paired native device that stopped syncing. The population is `devices.last_synced_at`
+  // (mail 0064): stamped only by a poll whose cursor sits at the horizon, so "quiet" covers a
+  // mirror stuck re-paging its backlog and a session killed by reuse detection. Every read is a
+  // named column on the staff allowlist — ids, kinds and timestamps, never a whole row or token
+  // column: this rule's first form was a SECURITY DEFINER carrier and the staff attestation
+  // refused it; mail 0068 retired that function. The moved-on gate reads
+  // `mailboxes.last_sync_at`. The isolation is part of the rule: only insufficient_privilege is
+  // swallowed; anything else fails the pass loudly. Per-device keys — paired devices are tens
+  // fleet-wide, and a grouped count would hide which mirror is dead.
   const deviceStaleCut = new Date(now.getTime() - t.deviceSyncStaleMs);
   const deviceArmCut = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
   try {
@@ -1329,30 +1072,16 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       });
     }
 
-    // ── the NEVER-SYNCED arm — the exclusion the first real incident proved wrong ─────────
-    //
-    // The rule above requires `last_synced_at IS NOT NULL`, on the argument that never-synced
-    // asserts nothing. Then the first incident this alert existed for arrived exactly there:
-    // every wedged mirror is NULL right up until the first time it converges, so a desktop
-    // whose pulls never converged — or that died before 0064 ever stamped it — sat outside
-    // the population for ever. Both production device rows in the incident were NULL.
-    //
-    // So a NULL stamp older than the threshold IS an assertion, measured from the row's own
-    // `created_at`: paired that long ago, never once current, account moved on since pairing.
-    // The armed gate is deliberately NARROWER than the stamped arm's — a LIVE session that is
-    // STILL MAKING REQUESTS (`last_seen_at` inside the same threshold the staleness itself
-    // uses; one judgment, not two). Both halves are load-bearing:
-    //  · a never-synced device whose session was revoked is a pairing that never worked and
-    //    was already taken back (test fixtures are exactly this shape); nobody is reading
-    //    stale mail from it, because it never showed mail at all;
-    //  · a never-synced device whose session is unrevoked but FROZEN — `last_seen_at` at its
-    //    own creation instant, weeks old — is a dead pairing handshake, not a person at a
-    //    wedged mailbox. The measured incident: a pairing whose one session was last seen the
-    //    millisecond it was minted paged on every interval for fifteen days, and the only true
-    //    sentence in the page was the age. `session_sync_stale` next door already carries this
-    //    gate for the same reason; the arm inherits it rather than re-arguing it.
-    // The stamped arm keeps its wider revoked-within-14-days window because there a WORKING
-    // mirror went dark and its person does not know.
+    // The never-synced arm — the exclusion the first incident proved wrong. The stamped arm
+    // requires `last_synced_at IS NOT NULL` on the argument that never-synced asserts nothing;
+    // then the incident arrived exactly there — every wedged mirror is NULL until it first
+    // converges. So a NULL stamp older than the threshold IS an assertion, measured from the
+    // row's own `created_at`: paired that long ago, never once current, account moved on. The
+    // armed gate is narrower: a live session still making requests (`last_seen_at` inside the
+    // same threshold). Both halves load-bearing: a never-synced device with a revoked session is
+    // a pairing taken back; one with an unrevoked but frozen session is a dead pairing handshake.
+    // The stamped arm keeps its wider revoked-within-14-days window: there a working mirror went
+    // dark and its person does not know.
     const neverSynced = await db
       .select({
         id: devices.id,
@@ -1411,31 +1140,16 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     if (code !== "42501") throw err;
   }
 
-  // ── 8b. a DEVICELESS session that stopped converging — the browser-door install ─────────
-  //
-  // The population `device_sync_stale` cannot see: sessions with `device_id IS NULL` (mail
-  // 0061's deliberate shape — the browser-door desktop, a plain web tab) plus sessions whose
-  // device row is kind 'web' (a paired phone browser; the device rule excludes that kind on
-  // purpose). Read from `sessions.last_synced_at` (mail 0070).
-  //
-  // THREE GATES, each carrying half the false-positive load:
-  //   · a NON-NULL stamp — the session PROVED it is a sync client once. A REST-only caller
-  //     (a script, an admin tool) never stamps and can never fire; the cost is that an install
-  //     wedged from its very first pull is invisible at this level (documented blind spot —
-  //     the device rule's never-synced arm covers NAMED devices there).
-  //   · `last_seen_at` inside the threshold — the install is STILL MAKING REQUESTS (rotation,
-  //     polls). A closed tab freezes both stamps together and ages out silently; the wedged
-  //     incident rotated four times an hour for five days and stays inside for ever.
-  //   · the account MOVED ON — same `mailboxes.last_sync_at` evidence as rule 8, same reason
-  //     `change_log` is not read (row existence there is information the blind role is
-  //     refused).
-  //
-  // Sessions revoked by reuse detection stop requesting and leave this rule's population at
-  // the revocation; rule 9 below is the signal for those, at the moment it happens.
-  //
-  // Same isolation posture as rule 8: the sessions columns this reads are staff-allowlist
-  // entries (`staff-grants.ts`), and a handle the provisioner has not reached yet must cost
-  // exactly this rule — only 42501 is swallowed.
+  // 8b. A deviceless session that stopped converging — the browser-door install. The population
+  // `device_sync_stale` cannot see: sessions with `device_id IS NULL` (mail 0061) plus sessions
+  // whose device row is kind 'web'. Read from `sessions.last_synced_at` (mail 0070). Three gates,
+  // each carrying half the false-positive load: a non-NULL stamp — the session proved it is a
+  // sync client once (a REST-only caller can never fire; the cost is that an install wedged from
+  // its very first pull is invisible here — the device rule's never-synced arm covers named
+  // devices); `last_seen_at` inside the threshold — still making requests (a closed tab freezes
+  // both stamps and ages out; the wedged incident rotated four times an hour for five days); and
+  // the account moved on — the same `mailboxes.last_sync_at` evidence as rule 8. Same isolation
+  // posture: only 42501 is swallowed.
   try {
     const staleSessions = await db
       .select({
@@ -1487,21 +1201,15 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     if (code !== "42501") throw err;
   }
 
-  // ── 9. refresh-token reuse revoked a family — an attack or a broken client, never routine ─
-  //
-  // `auth_events.event = 'refresh_reuse_revoked'`, written by `rotateRefresh`'s reuse branch
-  // in the same transaction as the family sweep. Before that row existed the only record was
-  // raw session rows (the Aug-21 incident was reconstructed from exactly those), and the
-  // person whose session died was told nothing by anybody.
-  //
-  // Keyed PER ACCOUNT, not per event: one broken client replaying one stale token can write a
-  // burst of rows, and the remedy (look at this account's sessions) is account-shaped. The
-  // window makes the rule self-resolving — `alert_state` keeps the incident's history after
-  // the key stops firing.
-  //
-  // Isolation posture: `auth_events` columns are on the staff allowlist (never `device`, which
-  // carries a client-chosen user-agent string, and never `ip`); a handle without the grant
-  // costs exactly this rule — only 42501 is swallowed.
+  // 9. Refresh-token reuse revoked a family — an attack or a broken client, never routine.
+  // `auth_events.event = 'refresh_reuse_revoked'`, written by `rotateRefresh`'s reuse branch in
+  // the same transaction as the family sweep; before that row existed the only record was raw
+  // session rows, and the person whose session died was told nothing. Keyed per account, not per
+  // event: one broken client replaying one stale token writes a burst of rows, and the remedy is
+  // account-shaped. The window makes the rule self-resolving — `alert_state` keeps the history
+  // after the key stops firing. Isolation: `auth_events` columns are on the staff allowlist
+  // (never `device`, which carries a client-chosen user-agent, and never `ip`); only 42501 is
+  // swallowed.
   try {
     const reuseCut = new Date(now.getTime() - t.reuseRevokedWindowMs);
     const reuseRows = await db
@@ -1550,20 +1258,15 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       });
     }
 
-    // ── 9b. the same detection across a POPULATION — an attack, or a broken release ────────
-    //
-    // One account replaying tokens is a client bug or one stolen credential, and the per-account
-    // signals above say so without waking anybody. Three separate accounts inside the window is
-    // a different claim: either somebody is working through stolen tokens, or a release broke
-    // rotation for every client that took it. Both need a person now, and neither is visible
-    // from any one of the per-account rows.
-    //
-    // The per-account signals KEEP FIRING underneath. This is an additional row, not a
-    // replacement: the board should show both the pattern and its members, and resolving the
-    // members individually is how the pattern shrinks back below the cut.
-    //
-    // DISTINCT ACCOUNTS, never the event count — one client retrying a stale token in a loop
-    // writes a burst of rows on ONE account, and counting rows would call that an attack.
+    // 9b. The same detection across a population — an attack, or a broken release. One account
+    // replaying tokens is a client bug or one stolen credential, and the per-account signals say
+    // so without waking anybody. Three separate accounts inside the window is a different claim:
+    // somebody working through stolen tokens, or a release that broke rotation for every client
+    // that took it — both need a person now, and neither is visible from any one per-account row.
+    // The per-account signals keep firing underneath; this is an additional row, and resolving
+    // the members individually is how the pattern shrinks back below the cut. Distinct accounts,
+    // never the event count — one client retrying in a loop writes a burst on one account, and
+    // counting rows would call that an attack.
     if (byAccount.size >= t.reuseWideAccounts) {
       const total = [...byAccount.values()].reduce((n, a) => n + a.count, 0);
       const oldest = [...byAccount.values()]
@@ -1592,23 +1295,15 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     if (code !== "42501") throw err;
   }
 
-  // ── 10. the model provider has been unreachable long enough that mail is degraded ───────
-  //
-  // Read from `worker_heartbeats.ai_circuit_open_since` — the ONLY place the in-process
-  // classifier breaker's age is visible from here. The breaker itself is per worker PROCESS
-  // (`apps/worker/src/ai-circuit.ts`), and its whole design is that mail keeps flowing with the
-  // model withheld, so nothing about this state fails, times out, or writes an error row: the
-  // customer's mail arrives, files by rules alone, and looks exactly like mail nobody wrote an
-  // AI rule for. That is precisely the shape of fault this file exists to name.
-  //
-  // FROM THE FIRST OPEN of the current run, not the last: the cooldown doubles per trip and the
-  // breaker half-opens between them, so the newest open is always minutes old however long the
-  // provider has been down. The column carries the first one and the worker clears it on the
-  // first success.
-  //
-  // Only a LIVE leader's row counts. A stale row's `ai_circuit_open_since` is a fact about a
-  // process that is no longer running, and `worker_down` is already the alert for that; reading
-  // it here would keep a resolved circuit "open" for as long as the dead row sat in the table.
+  // 10. The model provider has been unreachable long enough that mail is degraded. Read from
+  // `worker_heartbeats.ai_circuit_open_since` — the only place the in-process breaker's age is
+  // visible from here. The breaker's whole design is that mail keeps flowing with the model
+  // withheld: nothing fails or writes an error row, and the customer's mail files by rules alone,
+  // looking exactly like mail nobody wrote an AI rule for — precisely the shape of fault this
+  // file exists to name. From the FIRST open of the current run, not the last: the cooldown
+  // doubles per trip and the breaker half-opens between, so the newest open is always minutes old
+  // however long the provider has been down. Only a live leader's row counts: a stale row's stamp
+  // is a fact about a process that is not running, and `worker_down` is the alert for that.
   for (const shard of shards) {
     const beat = bySh.get(shard);
     if (!beat || !beat.leader || !beat.aiCircuitOpenSince) continue;
@@ -1637,66 +1332,16 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     });
   }
 
-  // ── 11. the API host is serving 5xx above BOTH floors ──────────────────────────────────
-  //
-  // Read from `platform_signals`, which a five-minute cron fills from the hosting platform's own
-  // request log. It cannot be evaluated from inside the API host: a serverless invocation that
-  // returns a 502 and dies writes nothing to this database, and the one surface that knows is the
-  // platform's.
-  //
-  // BOTH FLOORS, never either. A rate alone pages on nothing — three requests in a quiet minute,
-  // one of them a 500, is 33% — and a count alone pages on a busy deployment having a normal day.
-  // The pair is what makes the rule mean "a meaningful share of real traffic is failing".
-  //
-  // ── UNCONFIGURED IS NOT ZERO, AND THIS IS THE HALF THAT IS EASY TO GET WRONG ────────────
-  //
-  // A deployment with no platform token writes NO ROWS. Summing an empty set gives 0 requests and
-  // 0 errors, which satisfies neither floor, so the rule does not fire — correct by arithmetic,
-  // and correct for the wrong reason. What must never happen is the OTHER direction: a board that
-  // renders "0 5xx" for a deployment that has never measured any. The rule refuses to speak at all
-  // without rows, the panel reads "5xx: not measured", and `platformSignalWindow` below is the one
-  // function both of them go through so the two cannot disagree.
-  //
-  // ── THE RULE GATES ITSELF ON HAVING BEEN MEASURED, AND THE GATE IS THE DATA ──────────
-  //
-  // It judges only projects with at least one COMPLETE bucket in the window. Nothing else turns
-  // it on: no registration flag, no environment check, nothing a person has to remember to flip
-  // once the platform token exists. The first real poll that lands a complete bucket makes the
-  // rule live; until then it is silent and the board says "5xx: not measured", which is the
-  // truthful state of a deployment with no token AND of one whose poller has never successfully
-  // run. Neither of those is a rate of zero and neither may page.
-  //
-  // SAMPLED BUCKETS ARE EXCLUDED FROM THE SUMS, replacing the argument that used to sit here —
-  // that a truncated row is safe because both counts are lower bounds. Both counts are; their
-  // RATIO is not, and the rate threshold is a ratio. Twenty errors in a sampled thousand crosses
-  // both floors while ninety-nine thousand unseen successes put the true rate two orders of
-  // magnitude below it. A lower bound is safe in a numerator and unsafe in a quotient.
-  //
-  // ── WHICH HALF ACTUALLY ENFORCES THIS, STATED BECAUSE THE TWO LOOK INTERCHANGEABLE ────
-  //
-  // The enforcing half is the `filter (where not truncated)` inside `platformSignalWindow`:
-  // remove it and the sampled bucket's thousand requests re-enter the denominator and the rule
-  // pages, which the suite catches. The bucket test below USED TO BE deliberately redundant with
-  // the `requests <= 0` line beneath it — filtered sums mean a project with no complete bucket
-  // already sums to zero — and was kept only as a statement of intent, marked in this comment as
-  // a line nobody could watch fail. It is a real guard now, for a reason that is the same
-  // argument one level up:
-  //
-  // ── A QUOTIENT OVER PART OF THE WINDOW IS NOT THE WINDOW'S RATE ───────────────────────
-  //
-  // A sampled bucket is excluded because its counts are lower bounds and their RATIO is not one.
-  // A MISSING bucket is the same defect with the evidence removed instead of marked: if one poll
-  // fails, two complete buckets remain, and their quotient was published as the fifteen-minute
-  // rate this alert's threshold is calibrated for. Errors clustering in the five minutes that
-  // were measured, while the unmeasured ten carried the successes, then crosses 2% on a
-  // deployment whose true rate is well under it — a critical page manufactured out of the part
-  // of the window that happened to survive.
-  //
-  // So the rule needs the population it advertises: every bucket of the window, complete. Short
-  // of that the project reads as NOT MEASURED, which is the same answer it gives before the
-  // first poll lands, and the panel says so rather than showing a number nobody can stand
-  // behind. The cost is that a failed poll takes this rule dark for one window; the alternative
-  // is a rate computed over whatever fraction of it survived.
+  // 11. The API host is serving 5xx above BOTH floors. Read from `platform_signals`, filled by a
+  // five-minute cron from the platform's own request log — it cannot be evaluated from inside the
+  // host: an invocation that 502s and dies writes nothing here. Both floors, never either: a rate
+  // alone pages on a quiet minute; a count alone pages on a busy normal day. Unconfigured is not
+  // zero: no token, no rows, and the rule refuses to speak — rendered as "5xx: not measured";
+  // `platformSignalWindow` is the one function the rule and the panel share. Only projects with
+  // every bucket of the window complete are judged, and sampled buckets are excluded from the
+  // sums: a quotient over part of the window is not the window's rate. The cost is one dark
+  // window after a failed poll; the alternative is a critical page manufactured from the
+  // surviving part.
   const signalWindow = await platformSignalWindow(db, now, t.api5xxWindowMs);
   const expectedBuckets = Math.round(t.api5xxWindowMs / SIGNAL_BUCKET_MS);
   for (const w of signalWindow) {
@@ -1713,19 +1358,13 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
         `${w.errors5xx} of ${w.requests} request(s) to ${w.project} returned 5xx in the last ` +
         `${humanAge(Math.round(t.api5xxWindowMs / 1000))} — past both floors ` +
         `(${t.api5xxMinErrors} errors AND ${(t.api5xxMinRate * 100).toFixed(0)}%). ` +
-        // ── THE SAMPLED-BUCKET CLAUSE WAS DELETED, NOT FIXED, AND HERE IS WHY ────────────
-        //
-        // It read "N further bucket(s) in this window were SAMPLED and are excluded", and it
-        // could never render. The table's primary key is (provider, project, window_start), so a
-        // fifteen-minute window holds at most three rows for one project; this rule now requires
-        // all three to be COMPLETE before it fires at all. Three complete plus one sampled is
-        // four rows in three slots. The branch was unreachable the moment the population gate
-        // landed, and a sentence nobody can reach is a sentence nobody can check — it would have
-        // gone on describing an exclusion the rule no longer performs.
-        //
-        // The information it carried is not lost: the console renders coverage per project and
-        // names the cause of every sample. That surface can show it because it does not require
-        // a complete window to render.
+        // The sampled-bucket clause was deleted, not fixed: it read "N further bucket(s) were
+        // SAMPLED and are excluded", and it could never render — the primary key is (provider,
+        // project, window_start), so a fifteen-minute window holds at most three rows, and this
+        // rule now requires all three complete before it fires; three complete plus one sampled
+        // is four rows in three slots. A sentence nobody can reach is a sentence nobody can
+        // check. The information is not lost: the console renders coverage per project and names
+        // the cause of every sample.
         
         `Newest platform read ${humanAge(secondsBetween(now, w.fetchedAt))} ago.`,
       count: w.errors5xx,
@@ -1815,17 +1454,14 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // A rule that reports "the database is behind" cannot be written to require the newer schema.
   // It now runs before any other read; see the top of this function.
 
-  // ── 13. IMAP admission is refusing connections in bulk ─────────────────────────────────
-  //
-  // A refusal means a mailbox was at its connection cap. One or two inside a quarter of an hour
-  // is the cap doing its job — two concurrent attachment fetches on one mailbox is the designed
-  // case — and five is a mailbox nothing can get a connection to, with an attachment fetch, an
-  // add-time probe and a send reconcile all queueing behind it.
-  //
-  // Counted deployment-wide in `auth_throttle` under its own key namespace: the refusals happen
-  // on the API host, which is serverless and keeps no in-process state, so there is no heartbeat
-  // to hang this on. `imapRefusalsInWindow` reads one indexed row and treats an already-rolled
-  // window as 0, so a burst that ended an hour ago does not keep the incident standing.
+  // 13. IMAP admission is refusing connections in bulk. A refusal means a mailbox was at its
+  // connection cap: one or two inside a quarter hour is the cap doing its job — two concurrent
+  // attachment fetches on one mailbox is the designed case — and five is a mailbox nothing can
+  // get a connection to, with an attachment fetch, an add-time probe and a send reconcile all
+  // queueing behind it. Counted deployment-wide in `auth_throttle` under its own key namespace:
+  // the refusals happen on the serverless API host, which keeps no in-process state.
+  // `imapRefusalsInWindow` reads one indexed row and treats an already-rolled window as 0, so a
+  // burst that ended an hour ago does not keep the incident standing.
   try {
     const refusals = await imapRefusalsInWindow(db, now, t.imapRefusalWindowMs);
     if (refusals >= t.imapRefusalThreshold) {
@@ -1857,27 +1493,16 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     if (code !== "42501") throw err;
   }
 
-  // ── 15. THE OTHER alert driver has stopped running ─────────────────────────────────────
-  //
-  // ── EVALUATED BY THE OTHER DRIVER, AND THAT IS THE WHOLE RULE ──────────────────────────
-  //
-  // A driver cannot report its own death — that sentence is why there are two of them, and it is
-  // exactly as true one level up as it is for `worker_down`. A pass that checked its OWN
-  // `alert_pass_runs` row would be asking a running process whether it is running: the answer is
-  // always yes, the rule could never fire, and the deployment would carry a guard that reads as
-  // coverage and is decoration. So the driver names itself in `opts.driver` and this rule looks
-  // at the OTHER row, always.
-  //
-  // The pairing is a two-element table rather than a boolean because the set of drivers is closed
-  // (`alert_pass_runs`'s CHECK), and a third arm would have to be a deliberate change in both
-  // places: a driver nobody watches is a driver whose death is invisible.
-  //
-  // A driver that has NEVER recorded a pass is silent here, on `billing_reconciliation_stale`'s
-  // contract: a deployment that runs only one arm — a self-hosted install with no external
-  // scheduler — must not be paged forever about an arm it deliberately does not have. The cost is
-  // stated: the very first pass of a newly-armed second driver is what starts the watch, so an
-  // arm that was configured and never once ran is invisible. That is visible on the board instead
-  // (the panel shows both drivers, and "never" is rendered as "never").
+  // 15. The OTHER alert driver has stopped running — evaluated by the other driver, and that is
+  // the whole rule: a driver cannot report its own death (the sentence `worker_down` is built on,
+  // one level up); a pass checking its own row would ask a running process whether it is running.
+  // The driver names itself in `opts.driver` and this rule looks at the other row, always. A
+  // two-element table rather than a boolean because the set of drivers is closed
+  // (`alert_pass_runs`'s CHECK). A driver that has never recorded a pass is silent here: a
+  // deployment running only one arm must not be paged forever about an arm it deliberately does
+  // not have — the cost, stated: the first pass of a newly-armed second driver starts the watch,
+  // so an arm configured and never once run is invisible here and visible on the board instead
+  // ("never" renders as "never").
   if (opts.driver) {
     const other: AlertDriver = opts.driver === "worker" ? "api" : "worker";
     const [row] = await db
@@ -1937,17 +1562,13 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
 }
 
 /**
- * The newest cloud migration this BUNDLE ships with — the `when` of the journal's last entry.
- *
- * A pinned constant rather than a read of the journal file, deliberately, and for two reasons.
- * This module's header rules out `node:fs` (the worker imports it and the desktop engine is
- * bundled from these packages), and — the load-bearing half — a constant compiled into the
- * artifact is what makes {@link AlertKind} `schema_behind` HOST-LOCAL: a deployment carrying an
- * older bundle carries an older constant and correctly says nothing, which is precisely the
- * question the rule asks.
- *
- * `journal-split.test.ts` asserts this equals the journal's true maximum, so a migration added
- * without moving this line is a red test rather than a rule that quietly stops noticing.
+ * The newest cloud migration this bundle ships with — the `when` of the journal's last entry. A
+ * pinned constant rather than a read of the journal file, for two reasons: this module rules out
+ * `node:fs` (the worker imports it and the desktop engine is bundled from these packages), and —
+ * the load-bearing half — a constant compiled into the artifact is what makes `schema_behind`
+ * host-local: a deployment carrying an older bundle carries an older constant and correctly says
+ * nothing. `journal-split.test.ts` asserts this equals the journal's true maximum, so a migration
+ * added without moving this line is a red test.
  */
 export const CLOUD_JOURNAL_HEAD_WHEN = 1791328104216;
 
@@ -1986,16 +1607,13 @@ export interface PlatformSignalWindow {
 }
 
 /**
- * Sum `platform_signals` over the window, per project.
- *
- * ONE FUNCTION FOR THE RULE AND THE BOARD, which is the point: the panel says "12 of 900 requests"
- * and the rule pages on the same two numbers, so the surface an operator reads and the condition
- * that wakes them cannot drift apart — the same argument {@link evaluateAlerts} itself is built on.
- *
- * AN EMPTY RESULT IS THE UNCONFIGURED STATE, and callers must render it as "not measured" rather
- * than as zero. A deployment with no platform token writes no rows at all, so there is no row here
- * saying 0 — and the difference between "nobody asked" and "we asked and nothing failed" is the
- * whole reason this returns an array of what EXISTS instead of a figure per known project.
+ * Sum `platform_signals` over the window, per project. One function for the rule and the board,
+ * which is the point: the panel says "12 of 900 requests" and the rule pages on the same two
+ * numbers, so the surface an operator reads and the condition that wakes them cannot drift. An
+ * empty result is the unconfigured state, and callers must render it as "not measured", never
+ * zero: a deployment with no platform token writes no rows, and the difference between "nobody
+ * asked" and "we asked and nothing failed" is the whole reason this returns what exists instead
+ * of a figure per known project.
  */
 
 /**
@@ -2012,31 +1630,16 @@ export const SIGNAL_BUCKET_MS = 5 * 60 * 1000;
 export async function platformSignalWindow(
   db: Tx, now: Date, windowMs: number,
 ): Promise<PlatformSignalWindow[]> {
-  // ── THE CUT IS ALIGNED TO A BUCKET BOUNDARY, NOT TO `now` ────────────────────────────
-  //
-  // The poller writes one row per CLOSED five-minute bucket, so a raw `now - 15min` cut lands
-  // mid-bucket and drops the oldest one. At 12:07 the held buckets are 11:50, 11:55 and 12:00;
-  // `cut = 11:52` excludes 11:50, leaving TEN minutes of traffic under a rule that advertises
-  // fifteen — a numerator formed over two buckets divided by a window described as three. The
-  // absolute floor then needs ten errors in two buckets instead of three, and the rate is
-  // computed over a denominator that is short by the same third.
-  //
-  // Flooring `now` to the bucket first makes the cut land exactly on a boundary: at 12:07 that
-  // is 12:05, and 12:05 − 15min = 11:50, which is the oldest of the three complete buckets.
-  //
-  // ── AND THE WINDOW IS CLOSED AT BOTH ENDS, BECAUSE TWO CLOCKS WRITE AND READ IT ───────
-  //
-  // The poller and this evaluator run in different processes, on hosts whose clocks agree only
-  // approximately. A lower bound alone therefore admits a bucket the reader has not reached yet:
-  // if the poller's clock is a minute ahead, it closes and persists the 12:05 bucket while this
-  // pass still floors `now` to 12:05, and `window_start >= 11:50` then sums FOUR buckets into a
-  // rate the rule describes — and thresholds — as three. The extra bucket is partial by
-  // construction, so it lifts the error ratio without lifting the request count that would
-  // justify it, and the direction of the mistake is a false page.
-  //
-  // The floored boundary is the exclusive upper bound as well as the anchor of the lower one, so
-  // the window is always exactly `windowMs` wide and always made of buckets that closed before
-  // this pass began.
+  // The cut is aligned to a bucket boundary, not to `now`: the poller writes one row per closed
+  // five-minute bucket, so a raw `now - 15min` cut lands mid-bucket and drops the oldest — ten
+  // minutes of traffic under a rule that advertises fifteen, the absolute floor needing its
+  // errors in two buckets and the rate computed over a short denominator. Flooring `now` to the
+  // bucket makes the cut land exactly on a boundary. And the window is closed at both ends,
+  // because two clocks write and read it: a lower bound alone admits a bucket the reader has not
+  // reached — a poller a minute ahead persists the next bucket, and the sum then covers four
+  // buckets described and thresholded as three; the extra bucket is partial by construction,
+  // lifting the error ratio without the request count, and the direction of the mistake is a
+  // false page.
   const bucketEnd = new Date(
     Math.floor(now.getTime() / SIGNAL_BUCKET_MS) * SIGNAL_BUCKET_MS,
   );
@@ -2093,50 +1696,38 @@ export async function platformSignalWindow(
    ════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * What one sink has to say about one delivery attempt.
- *
- * `ok` alone was the whole contract until a configured webhook refused **every** delivery for
- * months and the logs could only ever say `failedSinks:["webhook"]` — true, useless, and
- * indistinguishable between a dead URL, a 429, a DNS failure and a value with quotes baked
- * into it. `error` is the missing half: a short diagnostic the sink is responsible for making
- * safe to log.
- *
- * **Whatever a sink puts in `error` is written to the log**, so a sink whose endpoint is a
- * bearer credential (an ntfy topic, a Slack or Discord hook path) must redact it first —
- * {@link webhookAlertSink} does, and its helper is the reference.
+ * What one sink has to say about one delivery attempt. `ok` alone was the whole contract until a
+ * configured webhook refused every delivery for months and the logs could only say
+ * `failedSinks:["webhook"]` — true, useless, and indistinguishable between a dead URL, a 429, a
+ * DNS failure and a value with quotes baked in. `error` is the missing half: a short diagnostic
+ * the sink is responsible for making safe to log. Whatever a sink puts in `error` is written to
+ * the log, so a sink whose endpoint is a bearer credential must redact it first — {@link
+ * webhookAlertSink} does, and its helper is the reference.
  */
 export interface AlertDeliveryResult {
   ok: boolean;
   /** Why it failed, already redacted and bounded. Ignored when `ok`. */
   error?: string | null;
   /**
-   * The CLOSED code for what happened, beside the free-text {@link error}.
-   *
-   * The prose stays — it was added because "the webhook refused" with no reason attached was
-   * the state this file spent months in, and that ruling is not being undone. But prose is the
-   * wrong thing for a machine: it is vendor-authored, unbounded, and it lands on `/health`,
-   * which is a surface anybody can read. So every failure now carries BOTH — a token a guard
-   * can assert on and a health endpoint can publish, and a sentence a human can diagnose from.
-   *
-   * Optional, and derived when a sink omits it (`ok ? "ok" : "refused"`), so every existing
-   * sink and every test fake stays valid.
+   * The closed code for what happened, beside the free-text {@link error}. The prose stays — "the
+   * webhook refused" with no reason was the state this file spent months in — but prose is the
+   * wrong thing for a machine: vendor-authored, unbounded, and it lands on `/health`, a surface
+   * anybody can read. So every failure carries both: a token a guard can assert on and an
+   * endpoint can publish, and a sentence a human can diagnose from. Optional, derived when a sink
+   * omits it (`ok ? "ok" : "refused"`), so every existing sink and test fake stays valid.
    */
   outcome?: AlertSinkOutcome;
 }
 
 /**
- * What happened to ONE delivery through ONE sink. A closed set, because it is published on
- * `/health` and asserted on by guards.
- *
- *  · `ok` — the vendor accepted it.
- *  · `misconfigured` — the sink was built from values it cannot use, and refuses every
- *    delivery saying which value. Set-but-unusable, which is NOT the same state as unset.
- *  · `refused` — the vendor answered, with a non-2xx. Its network path is fine; it said no.
- *  · `unreachable` — the request never got an answer: DNS, TCP, TLS. **This is the shape of
- *    the ntfy.sh outage** — a sink whose host blackholes this deployment's egress — and it is
- *    worth its own token precisely because it looks identical to `refused` in prose.
- *  · `timeout` — the request was still open when the sink's own deadline expired.
- *  · `threw` — the sink violated its never-throws contract and `deliver` caught it.
+ * What happened to one delivery through one sink — a closed set, because it is published on
+ * `/health` and asserted on by guards. `ok` — the vendor accepted. `misconfigured` — built from
+ * values it cannot use; refuses every delivery saying which (set-but-unusable, not the same state
+ * as unset). `refused` — the vendor answered non-2xx: its network path is fine; it said no.
+ * `unreachable` — no answer at all: DNS, TCP, TLS — the shape of the measured blackhole outage,
+ * worth its own token precisely because it looks identical to `refused` in prose. `timeout` —
+ * still open at the sink's own deadline. `threw` — the sink violated its never-throws contract
+ * and `deliver` caught it.
  */
 export type AlertSinkOutcome =
   | "ok"
@@ -2165,16 +1756,13 @@ export function classifyTransportError(err: unknown): AlertSinkOutcome {
 }
 
 /**
- * Where an alert goes. ONE method, and it never throws.
- *
- * Same contract as `MailerPort.send` and for the same reason: a sink that throws would abort
- * the pass, and the second sink — the one that might actually have reached a human — would
- * never run. A sink reports its own failure by resolving `false`, or by resolving an
- * {@link AlertDeliveryResult} that also says why.
- *
- * The bare `boolean` is still valid and is not deprecated: `mailAlertSink` has nothing to add
- * beyond "the mailer refused", and a sink that would only be able to stringify an exception it
- * has not vetted for secrets is better off saying nothing.
+ * Where an alert goes. One method, and it never throws — the same contract as `MailerPort.send`,
+ * for the same reason: a sink that throws would abort the pass, and the second sink — the one
+ * that might actually have reached a human — would never run. A sink reports its own failure by
+ * resolving `false`, or an {@link AlertDeliveryResult} that also says why. The bare boolean is
+ * still valid and not deprecated: `mailAlertSink` has nothing to add beyond "the mailer refused",
+ * and a sink that would only stringify an exception it has not vetted for secrets is better off
+ * saying nothing.
  */
 export interface AlertSink {
   readonly name: string;
@@ -2242,16 +1830,12 @@ export const nodePostJson: PostJson = async (url, body, headers) => {
 };
 
 /**
- * Make a failure sentence safe to log.
- *
- * THE ENDPOINT IS A CREDENTIAL for most of what this sink targets: an ntfy topic, a Slack
- * incoming-hook path and a Discord webhook token are all bearer secrets carried in the URL
- * PATH. `fetch` failures and error bodies quote the request, so the raw text cannot go to a
- * log drain. The HOST is kept — `ENOTFOUND ntfy.sh` and `ECONNREFUSED` are the diagnosis and
- * the host is not the secret — and the path is not.
- *
- * Bounded to 200 characters because this lands in every `alert_notified` line, and an
- * observability field that can be arbitrarily long is a log bill, not a diagnostic.
+ * Make a failure sentence safe to log. The endpoint is a credential for most of what this sink
+ * targets: an ntfy topic, a Slack hook path and a Discord webhook token are bearer secrets
+ * carried in the URL path, and `fetch` failures and error bodies quote the request. The host is
+ * kept — `ENOTFOUND` and `ECONNREFUSED` are the diagnosis and the host is not the secret — the
+ * path is not. Bounded to 200 characters because this lands in every `alert_notified` line, and
+ * an observability field that can be arbitrarily long is a log bill, not a diagnostic.
  */
 export function redactEndpoint(raw: string, endpoint: string): string {
   let out = raw.replace(/\s+/g, " ").trim();
@@ -2267,29 +1851,14 @@ export function redactEndpoint(raw: string, endpoint: string): string {
 }
 
 /**
- * The GENERIC webhook sink — one JSON POST, no vendor SDK, no new paid service.
- *
- * This is the sink the WORKER uses, and it is why the worker can page a human at all: it
- * needs no `packages/services` import and no dependency beyond `fetch`. The payload
- * carries both a `text` field and a structured `alerts` array, which is enough for ntfy.sh
- * (free, delivers a phone push), a Slack or Discord incoming webhook, or a PagerDuty Events
- * v2 endpoint — the operator picks one and sets `TF_ALERT_WEBHOOK_URL`.
- *
- * Unset ⇒ {@link webhookAlertSink} returns null and the pass simply has one fewer sink.
- * A deployment with NO sink at all is reported by {@link runAlertPass} in its result, so
- * "we configured nothing" is visible rather than silent.
- *
- * ── SET-BUT-UNUSABLE IS NOT THE SAME STATE AS UNSET, AND IT USED TO LOOK LIKE IT ─────────
- *
- * A value that is present but not an http(s) URL — the classic being an env file whose value
- * kept its surrounding quotes, so the variable holds `"https://…"` including the quote
- * characters — made `fetch` throw, and the `catch` below turned that into a bare `false`
- * forever. Returning `null` for it would be worse still: the pass would then report
- * `undeliverable` and the operator would be told to set a variable that IS set.
- *
- * So it is parsed ONCE, here, and a bad value produces a sink that refuses every delivery with
- * that as its stated reason. The fault is then named by the escalation instead of being a
- * silent hole with a plausible-looking configuration behind it.
+ * The generic webhook sink — one JSON POST, no vendor SDK. The sink the worker uses: no
+ * `packages/services` import, nothing beyond `fetch`. The payload carries a `text` field and a
+ * structured `alerts` array — enough for ntfy, a Slack or Discord incoming webhook, or PagerDuty
+ * Events; the operator sets `TF_ALERT_WEBHOOK_URL`. Unset means null and the pass has one fewer
+ * sink. Set-but-unusable is not unset, and it used to look like it: a value that is not an
+ * http(s) URL — classically quotes baked into an env value — made `fetch` throw into a bare
+ * `false` forever. The URL is parsed once, here; a bad value produces a sink that refuses every
+ * delivery with that stated reason.
  */
 export function webhookAlertSink(url: string | undefined, post: PostJson = nodePostJson): AlertSink | null {
   if (!url || url.trim().length === 0) return null;
@@ -2357,18 +1926,14 @@ export function renderAlertText(alerts: readonly Alert[], ctx: AlertNotifyContex
 }
 
 /**
- * Every sink is tried; the pass reports which of them accepted, and why the rest did not.
- *
- * `errors` holds one `"<sink>: <reason>"` entry per sink that refused AND said something.
- *
- * **A FLAT ARRAY, NOT A RECORD KEYED BY SINK NAME**, and the reason is not taste: the logger's
- * field census (`ALLOWED_FIELDS` in `packages/core/src/log.ts`) gates keys at every depth, so
- * `{ webhook: "HTTP 429" }` would have had `webhook` dropped as an unknown field and the line
- * would have carried an empty object. Array elements inherit their parent key's verdict, so
- * this shape survives the gate and still names the sink.
- *
- * A sink that throws in spite of its contract is caught here and gets the exception's own text
- * — the one place the reason is NOT vetted by a sink, so it is labelled `threw:` for a reader.
+ * Every sink is tried; the pass reports which accepted and why the rest did not. `errors` holds
+ * one `"<sink>: <reason>"` entry per sink that refused and said something. A flat array, not a
+ * record keyed by sink name — and the reason is not taste: the logger's field census
+ * (`ALLOWED_FIELDS` in `packages/core/src/log.ts`) gates keys at every depth, so `{ webhook:
+ * "HTTP 429" }` would have had `webhook` dropped as an unknown field and the line would carry an
+ * empty object; array elements inherit their parent key's verdict. A sink that throws in spite of
+ * its contract is caught here and gets the exception's own text — the one reason not vetted by a
+ * sink, so it is labelled `threw:` for a reader.
  */
 export async function deliver(
   sinks: readonly AlertSink[], alerts: readonly Alert[], ctx: AlertNotifyContext,
@@ -2435,47 +2000,26 @@ export interface DeliveryReport {
 export const DEFAULT_CLAIM_TTL_MS = 2 * 60 * 1000;
 
 /**
- * How many CONSECUTIVE full-delivery failures make a configured sink an emergency.
- *
- * ── WHY THIS NUMBER, GIVEN THE CADENCE ───────────────────────────────────────────────────
- *
- * The worker runs a pass every 60 s, and a pass that delivers nothing RELEASES its claim (see
- * {@link runAlertPass}), so a firing alert against a broken sink is retried every 60 s — not
- * once per {@link DEFAULT_ALERT_REPEAT_MS}. Three consecutive failures is therefore about
- * three minutes of continuous refusal, across three independent attempts each with its own 8 s
- * timeout.
- *
- * Lower (1 or 2) and a single transient — one 502 from the receiving service, one DNS blip, a
- * redeploy of the chat app on the other end — emits the loudest ERROR this file has, which is
- * how an emergency signal gets filtered. Higher and the escalation drifts past the one-hour
- * repeat interval, which would mean the FIRST page of an incident is already lost before
- * anyone is told the pager is broken; three keeps the escalation inside the same alert that
- * would otherwise have paged, rather than an hour behind it.
- *
- * It is a count of ATTEMPTS, not of minutes, so it holds for the external observer too — that
- * driver runs on a slower schedule and simply needs three of its own runs.
+ * How many consecutive full-delivery failures make a configured sink an emergency. The worker
+ * passes every 60 s and a pass that delivers nothing releases its claim, so a firing alert
+ * against a broken sink retries every 60 s — three consecutive failures is about three minutes of
+ * continuous refusal across three independent attempts. Lower, and a single transient — one 502,
+ * one DNS blip — emits the loudest ERROR this file has, which is how an emergency signal gets
+ * filtered. Higher, and the escalation drifts past the one-hour repeat — the first page of an
+ * incident already lost before anyone is told the pager is broken. A count of attempts, not
+ * minutes, so it holds for the external observer too.
  */
 export const DEFAULT_SINK_FAILURE_ESCALATION = 3;
 
 /**
- * The caller-owned memory behind "N consecutive failures".
- *
- * ── WHY THIS IS THE CALLER'S OBJECT AND NOT A TABLE ──────────────────────────────────────
- *
- * A streak is a property of one long-lived driver's experience of one sink, and the WORKER is
- * the always-on driver — it holds this for the whole life of its leadership, which is exactly
- * the scope over which "three in a row" means anything. Putting it in Postgres would buy
- * durability across a restart and cost a migration, a row every pass has to write, and another
- * table on the `ohmail_admin` grant — for a counter whose worst-case loss is that a restart
- * costs three minutes of escalation latency and then the streak rebuilds.
- *
- * Stated rather than discovered: on a SERVERLESS driver this only accumulates while one
- * instance stays warm, so the external observer escalates less reliably than the worker does.
- * That is the right way round — the worker is the driver that owns the sink and runs every
- * minute, and the observer's own job (`worker_down`) is unaffected.
- *
- * {@link runAlertPass} MUTATES this. It is passed rather than returned so a caller cannot
- * forget to store it back and silently never escalate.
+ * The caller-owned memory behind "N consecutive failures". The caller's object, not a table: a
+ * streak is a property of one long-lived driver's experience of one sink, and the worker holds it
+ * for the life of its leadership — the scope over which "three in a row" means anything. Postgres
+ * would buy durability across a restart and cost a migration plus another table on the admin
+ * grant, for a counter whose worst-case loss is three minutes of escalation latency. A serverless
+ * driver accumulates only while warm, so the observer escalates less reliably than the worker —
+ * the right way round. {@link runAlertPass} MUTATES this; passed rather than returned so a caller
+ * cannot forget to store it back.
  */
 export interface DeliveryStreak {
   /** Consecutive delivery ATTEMPTS in which not one sink accepted. */
@@ -2483,20 +2027,14 @@ export interface DeliveryStreak {
   /** Whether the current streak has already been escalated. One ERROR per streak. */
   escalated: boolean;
   /**
-   * The SAME memory, per sink — and the reason it had to exist the moment a second vendor did.
-   *
-   * ── THE HOLE A SECOND ARM OPENS, WHICH THE FIRST ONE COULD NOT HAVE ─────────────────────
-   *
-   * The counter above is global, and it is cleared by ANY success. That was right while the
-   * question was only "did an alert reach a human" — with one arm, one arm's failure IS total
-   * failure. Add a second vendor and the same rule silently inverts: an arm that has refused
-   * every delivery for a month keeps its streak cleared by the OTHER arm's successes, so the
-   * deployment reports a healthy pager, is told nothing, and has exactly one working arm — the
-   * single-vendor state it just paid to leave, now invisible instead of merely bad.
-   *
-   * Redundancy you cannot observe is not redundancy; it is one arm and a false belief. So each
-   * sink keeps its own streak, and losing one arm while the other still delivers is its own
-   * named alarm ({@link SinkDegradation}) rather than a silence.
+   * The same memory, per sink — needed the moment a second vendor existed. The global counter is
+   * cleared by ANY success: right while one arm's failure was total failure, silently inverted
+   * with two — an arm that has refused every delivery for a month keeps its streak cleared by the
+   * other arm's successes, so the deployment reports a healthy pager and has exactly one working
+   * arm: the single-vendor state it just paid to leave, now invisible. Redundancy you cannot
+   * observe is one arm and a false belief. So each sink keeps its own streak, and losing one arm
+   * while the other delivers is its own named alarm ({@link SinkDegradation}) rather than a
+   * silence.
    */
   sinks: Record<string, SinkStreak>;
 }
@@ -2533,20 +2071,14 @@ export interface SinkEscalation {
 }
 
 /**
- * ONE ARM OF THE PAGER IS DEAD AND THE PAGES ARE STILL LANDING.
- *
- * Emitted on the one pass where an INDIVIDUAL sink's own streak crosses the threshold while
- * something else delivered. {@link SinkEscalation} is the other half — every arm down, nothing
- * reaching anybody — and the two are deliberately disjoint alarms for two different faults,
- * exactly as `undeliverable` and `escalate` already are.
- *
- * This one is the quieter fault and the more dangerous posture: nothing is failing that a
- * human can feel, and the next vendor outage is now total. It is reported at ERROR anyway,
- * because the cost of learning it during the outage is the whole reason a second arm exists.
- *
- * Not emitted on a pass where NOTHING delivered: that pass belongs to {@link SinkEscalation},
- * and two alarms for one silence is how a real one gets filtered. The per-sink streak still
- * advances underneath, so the dead arm is named the moment the other one comes back.
+ * One arm of the pager is dead and the pages are still landing. Emitted on the one pass where an
+ * individual sink's own streak crosses the threshold while something else delivered; {@link
+ * SinkEscalation} is the other half — every arm down — and the two are deliberately disjoint
+ * alarms for two different faults. This one is the quieter fault and the more dangerous posture:
+ * nothing is failing that a human can feel, and the next vendor outage is now total — reported at
+ * ERROR anyway, because the cost of learning it during the outage is the whole reason a second
+ * arm exists. Not emitted on a pass where nothing delivered: that pass belongs to {@link
+ * SinkEscalation}, and two alarms for one silence is how a real one gets filtered.
  */
 export interface SinkDegradation {
   sink: string;
@@ -2645,17 +2177,13 @@ export interface AlertSinkHealth {
 }
 
 /**
- * The standing health of every CONFIGURED sink — the shape `/health` publishes.
- *
- * Driven off the sink LIST rather than off the streak record, so an arm that has never been
- * attempted is present and says `attempts: 0` instead of being absent. That difference is the
- * whole point: "not in the list" and "in the list, never exercised" read identically to a
- * reader and mean opposite things, and the second is the state a freshly-configured second
- * vendor is in for its first quiet hour.
- *
- * NO PROSE. Every field here is a name, a closed code, a count or a timestamp — the sink's own
- * `error` sentence is vendor-authored and unbounded and stays in the log line, where a drain
- * gates it, rather than on an endpoint anybody can read.
+ * The standing health of every configured sink — the shape `/health` publishes. Driven off the
+ * sink list rather than the streak record, so an arm never attempted is present with `attempts:
+ * 0` instead of absent: "not in the list" and "in the list, never exercised" read identically and
+ * mean opposite things, and the second is the state a freshly-configured second vendor is in for
+ * its first quiet hour. No prose: every field is a name, a closed code, a count or a timestamp —
+ * the sink's own `error` sentence is vendor-authored and unbounded and stays in the log line,
+ * where a drain gates it.
  */
 export function sinkHealthOf(
   sinks: readonly AlertSink[], streak: DeliveryStreak | undefined,
@@ -2674,90 +2202,24 @@ export function sinkHealthOf(
 
 /**
  * Run one full pass: evaluate, reconcile against `alert_state`, notify what is new or overdue,
- * clear what has resolved.
- *
- * ## Two drivers write this table, so "have we paged yet?" is a RACE, not a read
- *
- * The worker runs this every 60 s and the external observer runs it on its own schedule
- * (`packages/api/src/routes/internal.ts`), and the whole point of the second one is that it
- * keeps running when the first is dead — which means both run at once whenever the first is
- * merely fine. The obvious implementation, "read `notified_at`, decide, deliver, stamp", pages
- * twice: both drivers read `notified_at IS NULL`, both deliver, both stamp. `alert_state`'s
- * notify-once semantics were never enforced by the database, only by the assumption of a
- * single writer, and that assumption is exactly what the external observer removes.
- *
- * So the decision to notify is a CLAIM — one row lock, the due decision, one UPDATE, all
- * inside a transaction that spans microseconds and zero I/O:
- *
- * ```
- *   BEGIN;
- *   SELECT notified_at, notified_signature, claimed_until
- *     FROM alert_state WHERE alert_key = $k FOR UPDATE;
- *   -- leased? refuse. due? (never notified / past the tier's interval / changed past the floor)
- *   UPDATE alert_state SET claimed_until = <now + ttl> WHERE alert_key = $k;
- *   COMMIT;
- * ```
- *
- * The winner claims and notifies; the loser blocks on the row lock, reads the committed lease,
- * and stays quiet. The claim writes THE LEASE AND NOTHING ELSE — `notified_at` and
- * `notified_signature` move only on the guarded confirm, so a failed delivery, a crashed pass
- * and a never-was are all one state: the row exactly as it stood before the claim, minus a
- * lease that has expired or been cleared. No advisory lock, and no transaction ACROSS
- * DELIVERY, deliberately: {@link deliver} does network I/O, and holding a Postgres transaction
- * open across an HTTP call is the `idle in transaction` pathology that caused the outage this
- * observer exists to catch — the claim's own two-statement transaction holds no such thing.
- *
- * ## The claim is a LEASE (`claimed_until`), so a pass that dies mid-delivery does not swallow
- * ## the page — and `notified_at` means exactly one thing
- *
- * The lease used to be ENCODED in `notified_at` (a value just past the due cutoff). That was
- * sound with one reader; the renotify policy's changed-condition arm compares the last
- * confirm's AGE against a much shorter floor, and to that reader a live lease — deliberately
- * placed near the far cutoff — read as an old confirmation, so a second driver with a
- * different signature could reclaim a mid-delivery row, page a duplicate and orphan the first
- * claim's settlement (review-caught before it shipped a page). `claimed_until` states the
- * lease as itself: every due arm refuses a future lease outright, `notified_at` is always the
- * last CONFIRMED notification, and then:
- *
- *  · at least one sink accepted ⇒ **confirm**: `notified_at = now`, `notified_signature =
- *    <sig>`, `notify_count + 1`, `claimed_until = NULL` — the confirm is the ONLY writer of
- *    the stamp and the signature, so the row always says "this condition, told at this time";
- *  · nothing accepted ⇒ **release**: `claimed_until = NULL` and nothing else — the claim
- *    wrote nothing else, so the retry re-fires by construction;
- *  · the pass dies in between ⇒ nobody writes anything, and the lease expires on its own —
- *    `claimTtlMs` later the row is claimable again with its true confirm history intact,
- *    which is the release's exact state: crash and failed delivery are one case.
- *
- * Both settles are guarded by `claimed_until = <the lease value we wrote>`, so a pass can only
- * ever settle its OWN claim — if the condition resolved and the row was deleted underneath, or
- * another driver claimed after the lease expired, the guard matches nothing and that is the
- * correct outcome.
- *
- * The direction of every failure is preserved and is the one a pager needs: an undelivered
- * alert is retried (a misconfigured webhook stays self-correcting rather than becoming a
- * silent hole), and a crashed pass costs at most `claimTtlMs` of delay instead of the full
- * repeat interval. A duplicate page is an annoyance; a swallowed one is the whole problem this
- * file exists to solve.
- *
- * Never throws for a delivery failure; a DB failure does propagate, because a pass that
- * cannot read the database has not evaluated anything and must not report "all clear".
+ * clear what resolved. Two drivers write this table, so "have we paged yet?" is a race: the
+ * decision to notify is a CLAIM — row lock, due decision, one UPDATE, zero I/O; the loser reads
+ * the committed lease and stays quiet. A claim writes only the lease;
+ * `notified_at`/`notified_signature` move only on the guarded confirm, so a failed delivery and a
+ * crashed pass are one state: the row minus an expired lease. No transaction is held across
+ * delivery; settles are guarded by the pass's own lease; a crash costs at most `claimTtlMs`.
+ * Delivery failures never throw; a DB failure propagates.
  */
 
 /**
- * Advance the IN-MEMORY sink streak for one delivery attempt, and say what it escalated.
- *
- * ── WHY THIS IS A FUNCTION AND NOT INLINE, WHICH IT WAS ───────────────────────────────────
- *
- * Two paths deliver: the ordinary pass, and the schema-behind path that delivers WITHOUT
- * persisting because the table it would persist into is the one missing a column. The second
- * originally reported a zero streak and an undefined health, which made a sink that refuses
- * those pages invisible — its attempts never advanced, no escalation ever fired, and `/health`
- * kept publishing stale sink health while every page about a half-finished deploy was refused.
- * A pager that cannot deliver the schema alert is exactly the pager somebody must be told about.
- *
- * Only the DATABASE write differs between the two paths; the delivery and its outcome are real
- * in both, so the accounting is shared rather than copied. A second copy of this arithmetic is
- * how the two paths would drift.
+ * Advance the in-memory sink streak for one delivery attempt, and say what it escalated. A
+ * function and not inline, which it was: two paths deliver — the ordinary pass, and the
+ * schema-behind path that delivers without persisting because the table it would persist into is
+ * the one missing a column. The second originally reported a zero streak and undefined health,
+ * making a sink that refuses those pages invisible: attempts never advanced, no escalation fired,
+ * and `/health` published stale sink health while every page about a half-finished deploy was
+ * refused. Only the database write differs between the paths; the delivery and its outcome are
+ * real in both, so the accounting is shared rather than copied.
  */
 function accountDelivery(
   streak: DeliveryStreak | undefined,
@@ -2832,38 +2294,23 @@ function accountDelivery(
    ════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * **No pass may write, delete or claim over a row that a NEWER pass has stamped.**
- *
- * ── WHY THIS IS A FUNCTION AND NOT A LINE IN THREE PLACES ────────────────────────────────
- *
- * The fence was first written as a `setWhere` on the observation upsert alone, and that was the
- * whole defect: the invariant is about the ROW, and the upsert is only one of the ways a pass
- * touches it. Two arms overlap by design and nothing serialises them, so an older pass can and
- * does arrive after a newer one at every writer:
- *
- *   · the RESOLUTION DELETE was unconditional, so an older pass that evaluated the key as
- *     healthy erased a newer pass's observation AND the notification record beside it — and the
- *     next pass re-opened the same condition and paged it a second time;
- *   · the CLAIM read the newer `last_seen_at` under its own lock and did not use it, so an older
- *     pass could take the lease and send its stale alert while the newer pass, seeing the lease,
- *     stayed quiet — the wrong text delivered, once, with the right one suppressed;
- *   · the SETTLE was fenced on the lease and not on the stamp, which is a different question.
- *
- * Fixing the path in front of you and not the invariant behind it is how one fence became three
- * defects. `alert-state-writers.test.ts` asserts by census that this file contains no other
- * mutation of the table, so a fourth writer cannot quietly appear without one.
+ * No pass may write, delete or claim over a row a NEWER pass has stamped. A function, not a line
+ * in three places: the fence was first a `setWhere` on the observation upsert alone — but the
+ * invariant is about the ROW, and the upsert is only one way a pass touches it. The resolution
+ * delete was unconditional, so an older pass erased a newer pass's observation and notification
+ * record; the claim read the newer `last_seen_at` under its own lock and did not use it, so an
+ * older pass could send its stale alert. The settle is fenced on the lease, a different question.
+ * `alert-state-writers.test.ts` asserts by census that no other mutation of the table exists in
+ * this file.
  */
 /**
- * **THE ONLY WAY TO READ OPEN ALERTS.** Every reader of `alert_state` that means "what is wrong
- * right now" goes through this, and `alert-state-writers.test.ts` asserts by census that no other
- * select of the table exists.
- *
- * Resolution MARKS rather than deletes (cloud 0030), which is what gives the insert branch of the
- * observation write something to fence against. The cost of that choice is that every reader now
+ * THE ONLY WAY TO READ OPEN ALERTS. Every reader of `alert_state` that means "what is wrong right
+ * now" goes through this, and `alert-state-writers.test.ts` asserts by census that no other
+ * select of the table exists. Resolution MARKS rather than deletes (cloud 0030), which gives the
+ * observation write's insert branch something to fence against. The cost is that every reader now
  * shares a way to be wrong: a select that forgets `resolved_at IS NULL` renders resolved history
- * as live incidents — the board filling with things that are already fixed, which is worse than
- * the resurrection the tombstone was added to prevent. One accessor, one predicate, one place to
- * get it right.
+ * as live incidents — the board filling with things already fixed. One accessor, one predicate,
+ * one place to get it right.
  */
 export function selectOpenAlerts<T extends Record<string, AnyPgColumn>>(
   db: Tx, columns: T, extra?: SQL,
@@ -2882,32 +2329,14 @@ export function selectOpenAlerts<T extends Record<string, AnyPgColumn>>(
  */
 
 /**
- * ── THERE IS NO PRUNE, AND THAT IS THE FIX ───────────────────────────────────────────────
- *
- * A tombstone is what the observation write's INSERT branch fences against: without the row, an
- * older pass finds an empty table, inserts, and re-opens an incident that was already resolved.
- * Two attempts to bound the number of tombstones both put that back:
- *
- *  · **A COUNT.** Past the cap the oldest resolved row was deleted, and the oldest is exactly the
- *    one a long-stalled pass needs.
- *  · **A COUNT PLUS AN AGE HORIZON**, justified here as "a pass is bounded by its own claim
- *    lease". That sentence was wrong, and it was mine: the lease is acquired AFTER the
- *    observation write, so it bounds the delivery, not the evaluation — and the worker invokes
- *    passes with no enforced deadline at all. Nothing bounded the interval the horizon assumed.
- *
- * So the row is kept. What made a tombstone expensive was never the row, it was the payload, and
- * resolution already blanks that: what remains is a key, two stamps, a class and the notification
- * record — the smallest thing that can answer "has this been resolved since you looked?".
- *
- * GROWTH IS BOUNDED BY DISTINCT KEYS, not by traffic. `alert_key` is the primary key, so a
- * condition that fires and clears a thousand times reuses one row; the number of rows is the
- * number of alert keys a deployment has ever raised, which is its rule set times its shards and
- * projects. That is the same bound the table already carries for OPEN alerts, and it is why a
- * flapping key cannot grow it.
- *
- * The consequence for privileges is stated where it belongs (`staff-grants.ts`): with no prune,
- * the blind role's DELETE on this table has no remaining user. Removing a granted verb is a
- * privilege change and is left to be decided rather than slipped in here.
+ * There is no prune, and that is the fix. The tombstone is what the observation write's INSERT
+ * branch fences against: without the row, an older pass finds an empty table, inserts, and
+ * re-opens a resolved incident. Two attempts to bound the tombstones both put that back — a
+ * count, and a count plus an age horizon; both were wrong because a pass has no enforced deadline
+ * and the lease is acquired after the observation write. Resolution already blanks the payload,
+ * leaving a key, two stamps, a class and the notification record. Growth is bounded by distinct
+ * keys, not traffic: `alert_key` is the primary key, so a flapping condition reuses one row. With
+ * no prune, the blind role's DELETE has no remaining user (see `staff-grants.ts`).
  */
 
 
@@ -2949,18 +2378,14 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   const sinks = opts.sinks ?? [];
   const firing = await evaluateAlerts(db, opts);
 
-  // ── THE DATABASE IS OLDER THAN THIS BUNDLE: DELIVER, DO NOT PERSIST ──────────────────
-  //
-  // `alert_state` is one of the tables the older schema lacks columns for — the preflight's
-  // marker IS a column this function writes on every observation — so the ordinary path would
-  // raise 42703 while trying to record the finding that explains the outage. The whole rule
-  // would be unreachable a second way, having just been made reachable a first.
-  //
-  // So this path hands the alert straight to the sinks and touches no table. The costs are
-  // stated rather than hidden: there is no dedup and no cooldown here, so a host left in this
-  // state pages once per pass. That is deliberate — the condition is a half-finished deploy,
-  // it is resolved by running the migrations, and it self-clears on the next pass once they
-  // are run. A quiet version of this alert would be worth nothing.
+  // The database is older than this bundle: deliver, do not persist. `alert_state` is one of the
+  // tables the older schema lacks columns for — the preflight's marker IS a column this function
+  // writes on every observation — so the ordinary path would raise 42703 while recording the
+  // finding that explains the outage. This path hands the alert straight to the sinks and touches
+  // no table. The costs are stated: no dedup and no cooldown, so a host left in this state pages
+  // once per pass — deliberate: the condition is a half-finished deploy, resolved by running the
+  // migrations, self-clearing on the next pass. A quiet version of this alert would be worth
+  // nothing.
   if (isSchemaBehind(firing)) {
     const ctx: AlertNotifyContext = {
       source: opts.source ?? "api",
@@ -2973,19 +2398,14 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     const behindAcct = accountDelivery(
       behindStreak, sinks, outcomes, delivered, failed, errors, now, opts,
     );
-    // ── THIS PASS CANNOT RECORD THAT IT RAN, AND PRETENDING OTHERWISE WAS THE DEFECT ──
-    //
-    // A `recordAlertPass` call stood here, added to stop the other arm reporting this one dark.
-    // It could not work, and the reason is the same one that put this branch here: in BOTH
-    // states this path exists for, the write is impossible. If cloud 0030 has not been applied,
-    // `alert_pass_runs` does not exist. If it has been applied but the hardening script was not
-    // re-run, the blind role lacks the grant on that same table. `recordAlertPass` swallows the
-    // error by contract — a pass must outlive its own bookkeeping — so the call looked like a
-    // fix, changed nothing, and left the false page it was written to prevent.
-    //
-    // There is no capability available here that the other arm reads. So the honest response is
-    // not to record a liveness this arm cannot prove: it is to make the resulting page tell the
-    // operator what it might mean, which `alert_driver_dark`'s detail now does.
+    // This pass cannot record that it ran, and pretending otherwise was the defect. A
+    // `recordAlertPass` call stood here, added to stop the other arm reporting this one dark. It
+    // could not work: in both states this path exists for, the write is impossible — if cloud
+    // 0030 is not applied, `alert_pass_runs` does not exist; if it is applied but the hardening
+    // script was not re-run, the blind role lacks the grant. `recordAlertPass` swallows the error
+    // by contract, so the call looked like a fix, changed nothing, and left the false page it was
+    // written to prevent. The honest response is not to record a liveness this arm cannot prove:
+    // `alert_driver_dark`'s detail now tells the operator what the page might mean.
     return {
       now: now.toISOString(),
       firing,
@@ -3027,17 +2447,16 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   });
   const byKey = new Map(existing.map((r) => [r.alertKey, r]));
 
-  // NO same-key ESCALATION ARM by severity flip alone — that existed for one pass's lifetime
-  // and it was twice discarded, because without carried state it lacked the claim's three
-  // properties (page-at-once, retry-after-failure, crash-survival). A tier that must page
-  // immediately is a tier with its OWN KEY (`sync_lag:critical`): a new key's first
-  // observation has `notified_at` NULL, which the ordinary claim below pages at once. What DOES
-  // exist now is the SIGNATURE arm, which is that old idea rebuilt WITH the state it lacked:
-  // `notified_signature` is the last CONFIRMED condition (written only by the guarded confirm
-  // — a claim writes nothing but its `claimed_until` lease, and the lease is what stops two
-  // drivers from both seeing "changed"), so a failed delivery retries and a crashed pass
-  // costs `claimTtlMs`, not the interval. A severity flip changes the default signature and
-  // therefore pages once the change-arm floor passes — through the claim, not around it.
+  // No same-key escalation arm by severity flip alone — that existed for one pass's lifetime and
+  // was twice discarded: without carried state it lacked the claim's three properties
+  // (page-at-once, retry-after-failure, crash-survival). A tier that must page immediately is a
+  // tier with its own key (`sync_lag:critical`): a new key's first observation has `notified_at`
+  // NULL, which the ordinary claim pages at once. What does exist is the SIGNATURE arm — the old
+  // idea rebuilt with the state it lacked: `notified_signature` is the last CONFIRMED condition
+  // (written only by the guarded confirm; a claim writes nothing but its lease), so a failed
+  // delivery retries and a crashed pass costs `claimTtlMs`, not the interval. A severity flip
+  // changes the default signature and pages once the change-arm floor passes — through the claim,
+  // not around it.
 
   // ── record the observation (opened_at survives an UPSERT; last_seen_at advances) ──────
   //
@@ -3093,38 +2512,16 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           fixHref: alert.fixHref ?? null,
           title: alert.title,
           count: alert.count,
-          // ── A DEMOTION CLEARS THE DELIVERY HISTORY, AND THE SENTENCE ABOVE NEEDED IT ──
-          //
-          // The comment one block up says the class is in the promoting rules' signatures "so
-          // the promotion re-pages rather than inheriting the signal's confirmation". That was
-          // half true and the missing half suppressed a real outage.
-          //
-          // `notified_signature` is written ONLY by a confirmed delivery, and a signal never
-          // delivers. So a key that pages as an incident, drops to a signal, and comes back is
-          // compared against the signature of the LAST INCIDENT — which is identical, because it
-          // is the same condition. `storage_at_cap` going 5 → 4 → 5 is the ordinary shape of it:
-          // the return to five reads as UNCHANGED and is held for the renotify interval, so the
-          // second outage pages nobody for up to a day.
-          //
-          // Demoting to a signal therefore ENDS the occurrence: the stamp, the signature and the
-          // count all go, so a later promotion is a first observation again and the claim pages
-          // it at once. Promotions leave the history alone — that direction was never broken,
-          // and clearing it there would re-page every pass a population wobbled upward.
-          // ── AND A RE-OPEN ENDS THE OCCURRENCE TOO, FOR THE SAME REASON ─────────────
-          //
-          // The demotion case below was written when a resolved row was DELETED, so re-opening
-          // was an INSERT and every field started fresh by construction. Once resolution began
-          // marking, this update became the re-open path — and it cleared only `resolved_at`,
-          // carrying the previous occurrence's `opened_at`, `notified_at` and signature into a
-          // NEW outage. The claim then read a row that says "already paged with this exact
-          // signature" and suppressed the page for up to the renotify interval: an hour for a
-          // critical, a day for a warning. The board meanwhile aged the new incident from the
-          // old opening time, so the one number an operator uses to judge severity was the
-          // duration of a condition that had already ended.
-          //
-          // A condition that was resolved and is firing again is a new occurrence. It gets a new
-          // `opened_at` and no delivery history, which is exactly what the DELETE-and-INSERT it
-          // replaced used to give it.
+          // A demotion clears the delivery history — the missing half that suppressed a real
+          // outage. `notified_signature` is written only by a confirmed delivery and a signal
+          // never delivers, so a key that pages, drops to a signal, and comes back is compared
+          // against the last incident's signature — identical, and the second outage pages nobody
+          // for up to a day. Demoting therefore ENDS the occurrence: stamp, signature and count
+          // all go, so a later promotion is a first observation the claim pages at once
+          // (promotions leave the history alone — clearing there would re-page every upward
+          // wobble). A re-open ends the occurrence too: clearing only `resolved_at` carried the
+          // old stamps into a new outage, so the claim suppressed its page. A condition that
+          // resolved and fires again is a new occurrence: new `opened_at`, no delivery history.
           openedAt: sql`case when ${alertState.resolvedAt} is not null
             then ${now.toISOString()}::timestamptz else ${alertState.openedAt} end`,
           notifiedAt: sql`case when ${alertState.resolvedAt} is not null
@@ -3150,80 +2547,29 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
               or (${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal')
             then null else ${alertState.claimedUntil} end`,
         },
-        // ── THE OBSERVATION FENCE: A STALE PASS MAY NOT OVERWRITE A NEWER ONE ────────────
-        //
-        // Two drivers overlap by design, and their evaluations can land out of order — a pass
-        // that read the world at 12:00 can reach this statement after one that read it at 12:01.
-        // Unconditionally, that reorders the world in BOTH directions and each is a real page:
-        //
-        //  · a stale SIGNAL landing after a promotion demotes the row and, by the clauses above,
-        //    clears the notification state and the lease of a live incident — so the promotion
-        //    that had just paged is un-paged and the next pass treats it as first-seen;
-        //  · a stale INCIDENT landing after a demotion resurrects a condition that has cleared
-        //    and pages a human about it.
-        //
-        // `last_seen_at` is this pass's own `now`, so it is exactly the observation's age. The
-        // fence keeps the NEWEST observation and makes an older one a no-op — which is also why
-        // the claim above re-reads `cls` under its lock rather than trusting what it evaluated:
-        // this statement may have declined to apply what that pass saw.
+        // The observation fence: a stale pass may not overwrite a newer one. Two drivers overlap,
+        // and their evaluations can land out of order. Unconditionally, that reorders the world
+        // in both directions, each a real page: a stale signal landing after a promotion demotes
+        // the row and clears the notification state and lease of a live incident — the promotion
+        // just paged is un-paged and treated as first-seen; a stale incident landing after a
+        // demotion resurrects a cleared condition and pages a human. `last_seen_at` is this
+        // pass's own `now`, exactly the observation's age. The fence keeps the newest observation
+        // and makes an older one a no-op — also why the claim re-reads `cls` under its lock
+        // rather than trusting what it evaluated.
         setWhere: notWrittenByANewerPass(now),
       });
   }
 
-  // ── CLAIM the notifications this pass is allowed to send ──────────────────────────────
-  //
-  // One SHORT transaction per firing alert — `SELECT … FOR UPDATE`, the due decision, one
-  // UPDATE — and the row it does or does not claim IS the decision. The lock is held across
-  // two statements and zero I/O: the header's rule against a surrounding transaction is about
-  // holding one open across DELIVERY (the `idle in transaction` pathology), and this is
-  // microseconds on one row. What the lock buys over the single-UPDATE form is that the due
-  // decision and the lease write are one atomic act over the row's committed values — a
-  // concurrent driver blocks on the lock and then reads the lease this claim just wrote.
-  //
-  // AN ACTIVE LEASE REFUSES EVERY ARM. `claimed_until` in the future means another driver's
-  // page for this key is in flight; whatever this pass's alert says — even a changed
-  // signature — the row is not claimable until that settles or expires. This is the guard the
-  // encoded-lease scheme could not express (see the header): a changed condition observed
-  // mid-delivery is simply picked up by a following pass, one cadence later.
-  //
-  // THREE ARMS then make an alert due, judged from the TRUE last confirm (`notified_at`):
-  //   · never notified (`notified_at IS NULL`) — a first observation pages at once;
-  //   · the tier's interval has passed — hourly for critical (`repeatMs`), the long
-  //     unchanged-hold for everything else (`renotifyUnchangedMs`): a standing warning owes
-  //     one page and a daily reminder, not an hourly restatement of its own age;
-  //   · the CONDITION CHANGED — the firing alert's signature differs from the recorded one
-  //     and the last confirm is at least `claimTtlMs` old. That floor is the stale-evaluation
-  //     guard: two drivers overlap, the slower one's alert was computed from an older firing
-  //     snapshot, and without the floor its unequal signature would reclaim a condition a
-  //     newer pass had just confirmed — paging stale numbers, then paging again when the
-  //     fresh ones differ. A pass's evaluate-to-claim span is seconds, so a real change still
-  //     pages within one pass cadence plus the floor.
-  //     `notified_signature IS NULL` (pre-column rows) deliberately reads as UNCHANGED — a
-  //     deploy must not page every standing alert once because the column arrived.
-  //
-  // THE SIGNATURE PERSISTS ONLY ON A CONFIRM. A claim writes the lease and nothing else:
-  // concurrent duplicates are the lease's job now, and a signature written at claim time was
-  // the crash hole — a pass dying mid-delivery would leave the NEW signature standing under an
-  // expired lease, and the next pass would read the changed condition as already notified,
-  // suppressing it for the whole tier interval instead of retrying after the TTL. With the
-  // signature moving only on the guarded confirm, a crash and a failed delivery leave the row
-  // byte-identical to before the claim (minus the expired lease), so the retry re-fires by
-  // construction.
-  //
-  // The due decision is taken in JS over the LOCKED row's own values — Date compares on
-  // `getTime()`, no SQL fragment with a `Date` in it, which retires this block's old binding
-  // hazard along with the race.
-  //
-  // ── AND ONLY INCIDENTS ARE EVER CLAIMED ───────────────────────────────────────────────
-  //
-  // The class gate is HERE, at the claim, and not later at the delivery call. Both would keep a
-  // signal out of a sink, but only this one keeps the whole notification machinery off it: a
-  // signal never takes a lease, never stamps `notified_at`, never advances `notify_count` and
-  // never appears in `notified`. That matters because those fields are the record of "a human
-  // was told", and a signal writing them would make the row claim something untrue — and would
-  // make a later PROMOTION of that key (`sync_lag` spreading across accounts) read as an alert
-  // that had already been delivered, suppressing the page for the whole tier interval. Gating at
-  // the sink call would have left exactly that hole.
+  // Claim the notifications this pass may send: one short transaction per firing alert — `SELECT
+  // … FOR UPDATE`, the due decision, one UPDATE, zero I/O. An active lease refuses every arm —
+  // another driver's page is in flight. Three arms make an alert due, judged from the last
+  // CONFIRM: never notified; the tier's interval passed; or the signature differs and the confirm
+  // is at least `claimTtlMs` old (the stale-evaluation floor; `notified_signature IS NULL` reads
+  // as unchanged so a deploy does not page every standing alert). The signature persists only on
+  // a confirm — written at claim time it was the crash hole: a pass dying mid-delivery suppressed
+  // the retry for the tier interval. Only incidents are claimed: a signal never takes a lease,
+  // never stamps `notify_count` — those fields record "a human was told", and writing them would
+  // make a later promotion read as already delivered.
   const leaseUntil = new Date(now.getTime() + claimTtlMs);
   const claimed: Alert[] = [];
   for (const alert of firing) {
@@ -3293,49 +2639,16 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   }
   const toNotify = claimed;
 
-  // ── resolve what is no longer firing ──────────────────────────────────────────────────
-  //
-  // MARK, not delete — and this comment said DELETE sixty lines above the statement that marks,
-  // which is one function stating one invariant two ways. The argument for deleting was good and
-  // it lost to a defect it could not see: an INSERT cannot be fenced against a row that is not
-  // there, so an older pass paused before its observation write recreated and paged an incident
-  // a newer pass had just resolved.
-  //
-  // What the deleted-row argument wanted is preserved by the accessor rather than by the
-  // storage: `selectOpenAlerts` applies `resolved_at IS NULL`, so every reader still sees a live
-  // list of what is wrong, and "did this page already?" is still one row lookup.
-  //
-  // ── BUT A PASS MAY ONLY RESOLVE WHAT IT ACTUALLY EVALUATED ────────────────────────────
-  //
-  // Some rules are evaluated by only ONE of the two arms, and for those "not in my firing set"
-  // is not the same statement as "no longer true". A pass that resolved them anyway would
-  // DELETE the row the other arm had just opened. The consequence is not a missed page but a
-  // flapping one — open, page, deleted, re-opened with `notified_at` back to NULL, paged again
-  // on the other arm's next pass, for ever, with `opened_at` reset each time so "how long has
-  // this been broken" reads as seconds.
-  //
-  // ── THIS USED TO NAME ONE KIND, AND FOUR MORE HAD JOINED IT ───────────────────────────
-  //
-  // The exemption was written for `worker_down` when that was the only rule an arm declined,
-  // and it tested `r.kind !== "worker_down"`. Cloud 0030 added four rules with exactly the same
-  // property and none of them was covered, so all four flapped every cadence:
-  //
-  //  · `worker_degraded:S` and `ai_provider_down:S` sit inside the same `for (const shard of
-  //    shards)` loop as `worker_down`, and the WORKER passes `shards: []` — so it evaluates
-  //    none of the three, and deleted the two it was not exempted from one minute after the
-  //    API arm opened them.
-  //  · `schema_behind:D` and `alert_driver_dark:D` are keyed by DRIVER, and each arm evaluates
-  //    exactly one key: its own for `schema_behind`, the other's for `alert_driver_dark`. So
-  //    each arm deleted the other's row on every pass — and this pair flaps while BOTH hosts
-  //    are perfectly healthy, which is the worst version of it.
-  //
-  // The set is therefore keyed by WHAT THIS PASS ACTUALLY EVALUATED rather than by a kind
-  // name, so a sixth scoped rule cannot be added without either appearing here or failing the
-  // cross-driver test that now covers this.
-  //
-  // Residue, stated rather than discovered: a scoped row nothing evaluates any more (a shard
-  // removed from the configuration, a driver name retired) is never resolved here and has to
-  // be deleted by hand. That is the safe direction — the alternative is the flap above.
+  // Resolve what is no longer firing — MARK, not delete: an INSERT cannot be fenced against a row
+  // that is not there, so an older pass paused before its observation write recreated and paged
+  // an incident a newer pass had just resolved. `selectOpenAlerts` applies `resolved_at IS NULL`.
+  // A pass may only resolve what it actually evaluated: some rules are evaluated by only one arm,
+  // and for those "not in my firing set" is not "no longer true" — resolving anyway deletes the
+  // row the other arm just opened — a permanent flap, re-paged with `notified_at` NULL each
+  // round. The exemption first tested one kind name; four more scoped rules joined and all four
+  // flapped. The set is keyed by what this pass actually evaluated, so a new scoped rule either
+  // appears here or fails the cross-driver test. Residue: a scoped row nothing evaluates any more
+  // is deleted by hand — the safe direction.
   const evaluatedScopedKeys = new Set<string>();
   for (const s of shards) {
     evaluatedScopedKeys.add(`worker_down:${s}`);
@@ -3382,18 +2695,14 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       .set({
         resolvedAt: now,
         claimedUntil: null,
-        // ── A TOMBSTONE KEEPS THE KEY AND THE STAMPS, AND NOTHING ELSE ───────────────
-        //
-        // The erasure ruling for this table (see `erasure-fixture.ts`) rested on the rows being
-        // deleted the moment their condition stopped firing, which is what made a per-account
-        // rule's `fix_href = "/accounts/<uuid>"` self-clearing. Marking instead of deleting made
-        // that premise false: the uuid would sit on a tombstone until 64 later resolutions
-        // pushed it out, and on a quiet deployment that is indefinitely.
-        //
-        // So the mark blanks every column that can carry one. The fence needs the key,
-        // `last_seen_at` and `resolved_at`; the notification record stays so a condition that
-        // re-fires inside its renotify interval does not page twice. Nothing else on a resolved
-        // row is read by anything, and a re-open overwrites all of it from the new observation.
+        // A tombstone keeps the key and the stamps, and nothing else. The erasure ruling for this
+        // table rested on rows being deleted the moment their condition stopped firing — what
+        // made a per-account rule's `fix_href = "/accounts/<uuid>"` self-clearing. Marking
+        // instead of deleting made that premise false: the uuid would sit on a tombstone
+        // indefinitely on a quiet deployment. So the mark blanks every column that can carry one:
+        // the fence needs the key, `last_seen_at` and `resolved_at`; the notification record
+        // stays so a condition re-firing inside its renotify interval does not page twice.
+        // Nothing else on a resolved row is read by anything, and a re-open overwrites all of it.
         fixHref: null,
         detail: null,
         title: null,
@@ -3452,21 +2761,16 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     streak, sinks, outcomes, delivered, failed, errors, now, opts,
   );
 
-  // ── settle every claim: CONFIRM if something accepted, otherwise RELEASE ───────────────
-  //
-  // Guarded by `claimed_until = <this pass's lease>` so a pass can only settle its own claim.
-  // A row that was RESOLVED under this pass — the mark clears `claimed_until` — or claimed by
-  // another driver after this lease expired matches nothing, and in both cases doing nothing is
-  // right.
-  //
-  // Releasing is what keeps a misconfigured webhook self-correcting rather than a silent
-  // hole, and `notify_count` moves ONLY on a confirm, so it counts pages that were actually
-  // accepted by a sink and never claims that failed. A CONFIRM is where `notified_at` and
-  // `notified_signature` land, together — the row then says "this condition, told at this
-  // time". A RELEASE clears the lease and nothing else: the claim wrote nothing else, so the
-  // row is byte-identical to before the claim and the retry re-fires by construction — the
-  // exact state an EXPIRED lease (a crashed pass) leaves too, which is what makes the crash
-  // path and the failed-delivery path one case instead of two.
+  // Settle every claim: CONFIRM if something accepted, otherwise RELEASE. Guarded by
+  // `claimed_until = <this pass's lease>` so a pass settles only its own claim — a row resolved
+  // under this pass (the mark clears `claimed_until`) or claimed by another driver after expiry
+  // matches nothing, and doing nothing is right. Releasing keeps a misconfigured webhook
+  // self-correcting rather than a silent hole; `notify_count` moves only on a confirm, so it
+  // counts pages a sink actually accepted. A CONFIRM lands `notified_at` and `notified_signature`
+  // together — the row then says "this condition, told at this time". A RELEASE clears the lease
+  // and nothing else: the claim wrote nothing else, so the row is byte-identical to before and
+  // the retry re-fires by construction — the exact state an expired lease (a crashed pass)
+  // leaves, which makes the crash path and the failed-delivery path one case.
   for (const alert of claimed) {
     const settle = delivered.length > 0
       ? {
@@ -3479,22 +2783,16 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     await db
       .update(alertState)
       .set(settle)
-      // ── THE ONE WRITER THAT IS *NOT* FENCED ON THE STAMP, AND WHY ────────────────────
-      //
-      // The stamp fence protects OBSERVATIONS — what the world looks like — from being written
-      // backwards. This write records what THIS PASS DID: it delivered, at a signature, and the
-      // row must remember that so the condition is not paged again. Its correct fence is the
-      // LEASE, which answers exactly that question — "am I still the pass that owns this
-      // delivery" — and is strictly narrower than the stamp for it.
-      //
-      // Fencing it on the stamp as well was tried and reverted, because it is wrong in the
-      // ordinary case rather than the racy one: delivery takes seconds, the other arm observes
-      // the same live condition in that window and advances `last_seen_at` — correctly — and the
-      // settle would then be refused, `notified_at` would stay null, and the next pass would page
-      // a human about a condition that had just been paged. A fence that turns routine overlap
-      // into duplicate paging is not a stricter version of this invariant; it is a different and
-      // false one. `alert-state-writers.test.ts` names this site and this reason, so the census
-      // stays honest about there being four writers and three stamp fences.
+      // The one writer NOT fenced on the stamp, and why. The stamp fence protects observations —
+      // what the world looks like — from being written backwards. This write records what THIS
+      // PASS DID: it delivered, at a signature, and the row must remember that. Its correct fence
+      // is the LEASE — "am I still the pass that owns this delivery" — strictly narrower. Fencing
+      // on the stamp as well was tried and reverted, because it is wrong in the ordinary case:
+      // delivery takes seconds, the other arm observes the same live condition and advances
+      // `last_seen_at` — correctly — and the settle would be refused, `notified_at` staying null,
+      // the next pass paging a human about a condition just paged. `alert-state-writers.test.ts`
+      // names this site and this reason, so the census stays honest about four writers and three
+      // stamp fences.
       .where(and(eq(alertState.alertKey, alert.key), eq(alertState.claimedUntil, leaseUntil)));
   }
 
@@ -3539,22 +2837,12 @@ interface AlertPassRecord {
 
 /**
  * Stamp this driver's pass on `alert_pass_runs` — the write `alert_driver_dark` reads.
- *
- * ── BEST-EFFORT, AND THE DIRECTION IS DELIBERATE ──────────────────────────────────────────
- *
- * This never throws. It is bookkeeping ABOUT the alert pass, and an alert pass that died because
- * its own bookkeeping failed would be the observability code causing the outage it exists to
- * report — `writeHeartbeat` carries the same contract for the same reason, one file down.
- *
- * The residual is worth naming rather than leaving to be discovered: a driver whose row-write
- * keeps failing while its passes keep succeeding will eventually be reported dark by the other
- * arm. That is a FALSE page, and it is the acceptable direction — the alternative is a driver
- * whose write fails silently and is therefore never reported dark at all, which is the exact
- * silence this table was added to remove. A false page is loud and gets fixed.
- *
- * A caller with no `driver` writes nothing: it is not one of the two arms (see
- * {@link EvaluateOptions.driver}), and a runbook `curl` recording itself as the API driver would
- * hold that driver's watch open while nothing was scheduled.
+ * Best-effort, and the direction is deliberate: this never throws — a pass that died because its
+ * own bookkeeping failed would be the observability code causing the outage it exists to report.
+ * The residual, named: a driver whose row-write keeps failing while its passes succeed is
+ * eventually reported dark by the other arm — a false page, the acceptable direction. A caller
+ * with no `driver` writes nothing: a runbook `curl` recording itself as the API driver would hold
+ * that driver's watch open while nothing was scheduled.
  */
 async function recordAlertPass(db: Tx, rec: AlertPassRecord): Promise<void> {
   if (!rec.driver) return;
@@ -3580,25 +2868,16 @@ async function recordAlertPass(db: Tx, rec: AlertPassRecord): Promise<void> {
           sinkFailureStreak: rec.sinkFailureStreak,
           sinksConfigured: rec.sinksConfigured,
         },
-        // ── AN OLDER PASS MAY NOT OVERWRITE A NEWER ONE ─────────────────────────────────
-        //
-        // Nothing serialises two passes of the same driver. The API arm is poked by a scheduler
-        // whose retry can arrive while the first call is still running, and the worker arm runs
-        // on a plain interval that starts the next pass whether or not the last one finished. A
-        // slow pass therefore finishes AFTER a fast one that started later, and an unfenced
-        // upsert then writes its older snapshot over the newer row.
-        //
-        // Every column here is part of that snapshot, so the damage is not only a `ran_at` that
-        // walks backwards: the firing count, the delivery count and the sink-failure streak all
-        // revert to what the deployment looked like earlier, and the Reliability panel reports a
-        // driver as stale — or reports a sink as healthy — on evidence that has been superseded.
-        // A streak in particular is a running total, and rewinding it re-arms an alert the newer
-        // pass had already escalated past.
-        //
-        // The fence is the row's own stamp, the same shape the observation upsert uses further
-        // up: the update applies only when the row it is replacing is not already newer. The
-        // loser writes nothing and says nothing — its pass still happened, and the row simply
-        // continues to describe the most recent one.
+        // An older pass may not overwrite a newer one. Nothing serialises two passes of the same
+        // driver: the API arm's scheduler retry can arrive while the first call runs, and the
+        // worker's interval starts the next pass whether or not the last finished — a slow pass
+        // finishes after a fast one that started later, and an unfenced upsert writes its older
+        // snapshot over the newer row. Every column is part of that snapshot, so the damage is
+        // not only a `ran_at` walking backwards: the firing count, delivery count and
+        // sink-failure streak all revert, and a streak in particular is a running total —
+        // rewinding it re-arms an alert the newer pass had already escalated past. The fence is
+        // the row's own stamp; the loser writes nothing and says nothing — its pass still
+        // happened, and the row continues to describe the most recent one.
         setWhere: sql`${alertPassRuns.ranAt} <= ${rec.now.toISOString()}::timestamptz`,
       });
   } catch { /* see the header: the pass must outlive its own bookkeeping */ }
@@ -3689,19 +2968,13 @@ export interface HeartbeatInput {
    */
   aiCircuitOpenSince: Date | null;
   /**
-   * When the beating process last saw the AI provider ANSWER, or null/absent if it never has.
-   *
-   * THE FIELD THAT MAKES `aiCircuitOpenSince: null` READABLE. That null is two states in one
-   * value — the provider is fine, or this process has not asked it yet — and a worker that has
-   * just replaced another during an outage is always in the second. Without this, the writer had
-   * to guess, and the guess it made (trusting a null from the instance the row already named)
-   * merely postponed the damage by one beat: the takeover write installs the new instance id, so
-   * the very next beat looked like the same process reporting recovery and cleared an outage
-   * nobody had observed to end.
-   *
-   * OPTIONAL, AND ABSENT MEANS NO EVIDENCE — the safe direction. A caller that knows nothing
-   * about the provider (the reconcile beat) leaves an inherited outage standing rather than
-   * resolving it on silence.
+   * When the beating process last saw the AI provider ANSWER — null/absent if it never has. The
+   * field that makes `aiCircuitOpenSince: null` readable: that null is two states in one value —
+   * the provider is fine, or this process has not asked yet — and a worker that just replaced
+   * another mid-outage is always in the second. Without it the writer had to guess, and the guess
+   * (trusting a null from the instance the row already named) cleared an outage nobody observed
+   * to end. Optional; absent means no evidence — the safe direction: a caller that knows nothing
+   * leaves an inherited outage standing.
    */
   aiProviderOkAt?: Date | null;
   lastCycleAt: Date | null;
@@ -3709,28 +2982,14 @@ export interface HeartbeatInput {
 }
 
 /**
- * Stamp this leader's pulse — the CLAIMING write. Called by the worker on every cycle and
- * roster pass.
- *
- * ONLY the process holding shard N's advisory lock may call this — the row IS "the leader of
- * shard N", and a standby writing it would make a shard with no leader look alive. The
- * worker enforces that by calling it from inside the lock-held body only.
- *
- * ── TWO WRITE MODES, AND THE DIFFERENCE IS LOAD-BEARING ─────────────────────────────────
- *
- * This one UPSERTS and asserts `leader = true`, so it both claims the shard and refreshes it.
- * That is correct for a call made ON the worker's serial queue, which is ordered against the
- * queued {@link clearHeartbeat} of a shutdown or a lost lock.
- *
- * {@link refreshHeartbeat} is the other mode: a guarded UPDATE for callers that are NOT on
- * that queue (the lock-verify timer), which can therefore race a surrender. It exists because
- * this function cannot be made safe for them — an upsert landing after `clearHeartbeat` would
- * rewrite `leader: true` for a process that has already quiesced, and the shard would look led
- * for the whole `leaderStaleMs` window while nothing synced. Pick by call site, not by taste.
- *
- * Best-effort by contract: the caller must not let a failed heartbeat abort a sync cycle.
- * A missed beat is at worst a false alarm; a cycle aborted because bookkeeping failed is a
- * real outage caused by the observability code.
+ * Stamp this leader's pulse — the CLAIMING write, called by the worker on every cycle and roster
+ * pass. Only the process holding shard N's advisory lock may call this: the row IS "the leader of
+ * shard N", and a standby writing it would make a leaderless shard look alive; the worker calls
+ * it from the lock-held body only. Two write modes, and the difference matters: this one UPSERTS
+ * and asserts `leader = true` — correct on the worker's serial queue, ordered against a queued
+ * {@link clearHeartbeat}. {@link refreshHeartbeat} is the guarded UPDATE for callers NOT on that
+ * queue, which can race a surrender. Pick by call site. Best-effort: a missed beat is at worst a
+ * false alarm; a cycle aborted over bookkeeping is a real outage caused by observability code.
  */
 export async function writeHeartbeat(db: Tx, input: HeartbeatInput, now: Date = new Date()): Promise<void> {
   await db
@@ -3778,39 +3037,16 @@ export async function writeHeartbeat(db: Tx, input: HeartbeatInput, now: Date = 
           when ${input.degraded} is not true then null
           when ${workerHeartbeats.degradedSince} is null then ${now.toISOString()}::timestamptz
           else ${workerHeartbeats.degradedSince} end`,
-        // ── THE CIRCUIT'S AGE IS A PROPERTY OF THE OUTAGE, NOT OF THE PROCESS ────────────
-        //
-        // The rule above says it measures "from the FIRST trip of the current run", and this
-        // write did not implement that: it overwrote the stamp with whatever the beating worker
-        // held in memory. A replacement worker holds NOTHING — its circuit starts closed and
-        // reports null before it has made a single provider call — so a deploy in the middle of
-        // a provider outage cleared the stamp, and the ten-minute clock restarted from the next
-        // trip. A deployment that restarts more often than the threshold could never page for a
-        // continuous outage, which is the failure `degraded_since` was added to fix, arriving
-        // through the column beside it.
-        //
-        // Both stamps present: keep the EARLIER, so a handover mid-outage keeps the outage's
-        // true age. Only the incoming one: take it. Incoming NULL: clear ONLY on evidence that
-        // this process has had an answer from the provider — `aiProviderOkAt`, stamped by the
-        // breaker's own close, which is the single event meaning the provider responded.
-        //
-        // THE FIRST VERSION OF THIS CLEARED ON A NULL FROM THE INSTANCE THE ROW ALREADY NAMED,
-        // and that was wrong in a way worth keeping on the record, because it looked exactly
-        // right: the takeover beat preserved the stamp, and then INSTALLED the new instance id,
-        // so the next beat from that same new process satisfied the condition and cleared an
-        // outage nobody had observed to end. It postponed the defect by one beat. A guess about
-        // WHO is beating cannot answer a question about WHAT the provider did.
-        // ── AN INTERVENING SUCCESS ENDS THE OUTAGE THE ROW IS HOLDING ───────────────────
-        //
-        // The success arm has to be tested BEFORE the `least()` arm, and it was not. One beat can
-        // carry both a new trip and the success that preceded it: opened at t0, the provider
-        // answers at t20, the circuit trips again at t21, and the next heartbeat reports the t21
-        // stamp together with an `aiProviderOkAt` of t20. Taking `least(t0, t21)` there ages a
-        // SECOND, distinct outage from the first one's start — so a rule that waits ten minutes
-        // fires immediately, on a condition seconds old.
-        //
-        // `least()` is right only while the outage is CONTINUOUS. A recorded success is the proof
-        // that it was not, so it is asked first.
+        // The circuit's age is a property of the outage, not the process. The rule measures from
+        // the first trip of the current run, and this write used to overwrite the stamp with
+        // whatever the beating worker held in memory — a replacement worker holds nothing, so a
+        // deploy mid-outage restarted the ten-minute clock. Both stamps present: keep the
+        // earlier, so a handover keeps the outage's true age. Only the incoming one: take it.
+        // Incoming NULL: clear only on evidence this process has had an answer —
+        // `aiProviderOkAt`, stamped by the breaker's own close; the first version cleared on a
+        // null from the instance the row already named. An intervening success ends the held
+        // outage, tested BEFORE the `least()` arm: one beat can carry a new trip and the success
+        // that preceded it — `least()` is right only while the outage is continuous.
         aiCircuitOpenSince: sql`case
           when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is null and ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz is not null
             then null
@@ -3833,41 +3069,14 @@ export async function writeHeartbeat(db: Tx, input: HeartbeatInput, now: Date = 
 export type HeartbeatRefresh = Omit<HeartbeatInput, "shards" | "startedAt">;
 
 /**
- * Refresh a pulse this instance ALREADY OWNS — the write for callers not on the worker's
- * serial queue.
- *
- * ── THE RACE THIS EXISTS TO CLOSE ────────────────────────────────────────────────────────
- *
- * The worker's beats used to happen only at the end of a cycle or an attach, which meant a
- * leader spending three minutes draining one mailbox's first sync wrote nothing at all for
- * three minutes. From the outside that is indistinguishable from a dead process: the
- * `worker_down` rule above reads `leader` + `beat_at` staleness and nothing else, so a
- * perfectly healthy backfill pages a human at two minutes and the hosting platform is entitled to replace
- * the instance mid-drain. The fix is to beat on a timer instead of at the end of the work.
- *
- * But a timer is exactly the caller that can race a surrender. `clearHeartbeat` runs ON the
- * queue; a timer callback does not, so its write can be in flight when the lock is lost and
- * land AFTER the surrender — and an upsert would then resurrect `leader: true` for a process
- * that has already detached every mailbox. Guarding it in the worker with a `stopped` flag
- * only narrows the window: the check and the write are not atomic.
- *
- * So the guard is in the STATEMENT, where it is atomic:
- *
- *   · `WHERE shard_index = ?` — this shard;
- *   · `AND instance_id = ?` — and still THIS process. A takeover has already overwritten the
- *     row with its own id, so the outgoing instance's late refresh matches nothing;
- *   · `AND leader = true` — and not yet surrendered. After `clearHeartbeat` this is false and
- *     stays false until a real claiming write.
- *
- * Zero rows matched is the correct, silent outcome — the caller has nothing to report and
- * nothing to retry. There is NO INSERT: a refresh can never create the row, so it can never
- * announce a leader that never claimed the shard.
- *
- * `beat_at` moves, and so do the counters, because a beat that carried stale counts would be
- * a liveness signal wearing a lie. `last_cycle_at` is refreshed from the caller's value and
- * therefore keeps its own meaning: it advances only on a cycle that actually synced, so
- * "alive but syncing nothing" stays a DIFFERENT fault from "dead" — which is the whole reason
- * that column is separate from `beat_at`.
+ * Refresh a pulse this instance already owns — the write for callers not on the worker's serial
+ * queue. Beats used to happen only at the end of a cycle, so a leader draining one long first
+ * sync looked dead and paged a human. The fix is beating on a timer — exactly the caller that can
+ * race a surrender, so the guard is in the statement: `WHERE shard_index = ? AND instance_id = ?
+ * AND leader = true`. After a takeover or `clearHeartbeat`, a late refresh matches nothing, and
+ * there is no INSERT, so a refresh can never announce a leader that never claimed. `beat_at` and
+ * the counters move; `last_cycle_at` advances only on a cycle that actually synced, keeping
+ * "alive but syncing nothing" distinct from "dead".
  */
 export async function refreshHeartbeat(
   db: Tx, input: HeartbeatRefresh, now: Date = new Date(),
@@ -3919,28 +3128,14 @@ export async function refreshHeartbeat(
 export type HeartbeatSurrender = Pick<HeartbeatInput, "shardIndex" | "instanceId">;
 
 /**
- * Mark this shard as having NO leader — called on a clean shutdown and on a lost lock.
- *
- * Without it, a graceful stop leaves the last beat behind and the shard looks alive for the
- * full `leaderStaleMs` window. Setting `leader = false` makes the handover visible
- * immediately: a standby that takes over overwrites it within its first cycle, and one that
- * never arrives is reported at the next pass instead of two minutes later.
- *
- * ── AND IT IS FENCED BY INSTANCE ID, FOR THE SAME REASON `refreshHeartbeat` IS ─────────────
- *
- * This used to update `WHERE shard_index = ?` alone, which made a SURRENDER able to clobber
- * somebody else's CLAIM. The sequence is a routine deploy: worker A loses its lock and queues
- * `clearHeartbeat` behind whatever cycle is in flight; worker B acquires the lock, attaches the
- * shard's mailboxes and claims the row with its own `instance_id`; A's queued surrender then
- * lands and sets `leader = false` on B's row. B's next pulse is a GUARDED update — it requires
- * `leader = true` — so it matches nothing and quietly does not beat, and the shard reads as
- * leaderless (and pages) until B's next serial-queue `writeHeartbeat` upserts it back. The
- * live worker is reported down while it is serving mail.
- *
- * `AND instance_id = ?` closes it: after a takeover the outgoing instance's surrender matches no
- * row, which is the correct, silent outcome — B's claim IS the announcement that A is gone, and
- * there is nothing left for A to hand back. `AND leader = true` is the second half of the same
- * thought: a shard already surrendered does not need surrendering twice.
+ * Mark this shard as having no leader — called on a clean shutdown and a lost lock. Without it a
+ * graceful stop leaves the last beat behind and the shard looks alive for the full
+ * `leaderStaleMs` window. Fenced by instance id, for `refreshHeartbeat`'s reason: updating by
+ * shard alone let a SURRENDER clobber somebody else's CLAIM — worker A loses its lock and queues
+ * the clear behind an in-flight cycle; worker B claims the row; A's late surrender flips B's row,
+ * whose guarded pulse then matches nothing — a live worker reported down. `AND instance_id = ?`
+ * closes it: after a takeover the outgoing surrender matches no row. `AND leader = true`: a shard
+ * already surrendered is not surrendered twice.
  */
 export async function clearHeartbeat(
   db: Tx, who: HeartbeatSurrender, now: Date = new Date(),
@@ -3960,25 +3155,14 @@ export async function clearHeartbeat(
    ════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * An `outbound_sends` row stuck in `pending`.
- *
- * Identified by its ID and its age. Deliberately no draft content, no recipient, no minted
- * message id — the same projection the operator console's `StaleSend` type already declares,
- * so the console renders this without widening its seam.
- *
- * ── `idempotencyKey` IS GONE FROM THE PROJECTION, and that is the point ────────────────────
- *
- * It was selected here and then dropped by `admin-service.ts` (the staff-surface hardening
- * removed it from the DTO
- * because it is the CLIENT's `Idempotency-Key` header, verbatim and unvalidated — caller-chosen
- * free text of unbounded length, and a client that used a draft's SUBJECT as its "one intent"
- * token would have put subjects on a staff screen). Selecting a column and discarding it is not
- * a projection: Postgres requires the SELECT privilege on every column a statement REFERENCES,
- * so keeping it here would have forced `outbound_sends.idempotency_key` into the `ohmail_admin`
- * grant and reopened, at the role level, exactly what that hardening closed at the render level.
- *
- * The only consumer of this function is `admin-service.ts`, and `id` — which it already
- * returns, and which `admin.send.retry` will take — is 1:1 with the key.
+ * An `outbound_sends` row stuck in `pending`, identified by its id and age. Deliberately no draft
+ * content, no recipient, no minted message id — the same projection the operator console's
+ * `StaleSend` type declares. `idempotencyKey` is gone, and that is the point: it is the CLIENT's
+ * `Idempotency-Key` header, verbatim — caller-chosen free text; a client that used a draft's
+ * subject as its token would put subjects on a staff screen. Postgres requires SELECT privilege
+ * on every column a statement references, so keeping it would force the column into the
+ * `ohmail_admin` grant and reopen at the role level what the hardening closed at the render
+ * level. `id` is 1:1 with the key.
  */
 export interface StuckSendRow {
   id: string;
@@ -4005,16 +3189,13 @@ export async function listStuckSends(
 }
 
 /**
- * Every live `alert_state` row — the console's "what is paging right now" list.
- *
- * **Projected explicitly, never `.select()`**. The re-projection below already fixed
- * the RETURNED shape, so a whole-row read leaked nothing and this was not a live defect. It was
- * the drift shape: the SELECT decided what left the database, the mapper decided what left the
- * function, and only the second one was reviewed. Add a column to `alert_state` that happens to
- * carry a subject line or a sender, and it crosses the boundary the moment it exists — no code
- * change, no review, nothing to notice. The staff-blindness rule is structural or it is nothing.
- *
- * `listStuckSends`, twenty lines up, already did it this way. The pair is the argument.
+ * Every live `alert_state` row — the console's "what is paging right now" list. Projected
+ * explicitly, never `.select()`. The re-projection below already fixed the returned shape, so a
+ * whole-row read leaked nothing — it was the drift shape: the SELECT decided what left the
+ * database, the mapper decided what left the function, and only the second was reviewed. Add a
+ * column that happens to carry a subject line, and it crosses the boundary the moment it exists —
+ * no code change, nothing to notice. The staff-blindness rule is structural or it is nothing.
+ * `listStuckSends` already did it this way; the pair is the argument.
  */
 export async function listOpenAlerts(db: Tx): Promise<Array<{
   alertKey: string; kind: string; severity: string; openedAt: Date;
