@@ -1,84 +1,12 @@
 /**
- * `attachment_staging` — the hosted send's direct-upload transport: the ROW, the OBJECT, and the
- * retention sweep that has to delete them in one particular order.
- *
- * The table's own reasoning is on {@link attachmentStaging} in `schema-cloud.ts`. This module holds
- * the four statements anything ever runs against it (mint a ticket, read a caller's own tickets,
- * delete a set, select what has aged out), the Supabase Storage client the bytes actually live
- * behind, and {@link sweepExpiredStaging}, which is the two together.
- *
- * ## Why the reads are account-scoped HERE and not at the caller
- *
- * A staging id is a bearer of BYTES — somebody's outgoing attachment. `readStagingTickets` takes
- * the account id and puts it in the `WHERE`, so there is no shape of caller that can ask this
- * module for another account's rows and no reviewer who has to check that every call site
- * remembered. The one function that is NOT account-scoped is {@link expiredStagingTickets}, which
- * is the sweep's, and its predicate is the clock rather than an identity.
- *
- * ## Why the OBJECT half is in `packages/db` and not in `packages/services`
- *
- * It began in `packages/services`, beside the send path that reads a ticket, and the sweep went
- * with it. That put the sweep ABOVE the worker's dependency boundary (the worker's runtime
- * closure is `core` + `db` + drizzle + imapflow + postgres, and nothing else), and the worker's
- * hourly maintenance slot is the only thing that runs it — so `apps/worker/src/index.ts` reached
- * up for it and the boundary had to be widened to keep the image bootable.
- *
- * That widening was measured and it does not hold. With the services barrel in the worker's boot
- * graph, `node` loads an HTML sanitiser and its parser on the way to a retention sweep, and on
- * Node 23 the pair is a hard `ERR_REQUIRE_CYCLE_MODULE` at import time — a CJS `sanitize-html`
- * re-entering an ESM `htmlparser2` mid-evaluation. It boots on the image's pinned Node 22 and dies
- * on Node 23, which means the deployed worker was one base-image bump away from an unloggable
- * crash-on-start for a dependency it has no use for.
- *
- * So the seam moved rather than the boundary. What is HERE is everything the sweep needs and
- * nothing else: the table, the bucket, and the order. What stays in `packages/services` is the
- * SEND-facing half — turning a ticket into a `SendAttachment` and mapping a failed read onto an
- * HTTP status — which is service-shaped by definition and which the worker never calls.
- *
- * A storage client on this entry point is not a layering exception: `@trafficflow/db/cloud` is the
- * hosted half's plumbing rather than SQL alone, and `alerts.ts`'s `webhookAlertSink` — a runtime
- * `fetch` sink the worker itself composes — already sits one file away for the same reason.
- *
- * ## The sweep deletes the OBJECT first
- *
- * Delete the bytes, then the row. Doing it the other way round loses the only record of which
- * object to remove, which is how a staging bucket grows forever behind a table that looks
- * perfectly clean. The two halves are in ONE module so that order has exactly one implementation
- * and no import boundary a future caller could compose across in the wrong direction.
- *
- * ## THE TWO BOUNDS, AND WHY NEITHER ONE SUFFICES ALONE
- *
- * Everything above describes a transport with no ceiling on it. Until the quota fix the mint
- * refused exactly one thing — a single file larger than the sending mailbox's announced `SIZE` —
- * and the sweep took one 200-row page an hour. Both halves of that are unbounded in the direction
- * that costs money:
- *
- *  · an email-verified account could hold any number of staged objects at once, so the bucket's
- *    size was a function of how many times somebody chose to call the route;
- *  · above 200 mints an hour the expired backlog grew for ever, and because the sweep's predicate
- *    is the CLOCK and not an identity, one account minting fast starved cleanup for every other
- *    account on the deployment.
- *
- * The fix is two independent bounds, and they are independent on purpose:
- *
- *  · {@link createStagingTicketWithinQuota} caps what ONE ACCOUNT may hold outstanding, in tickets
- *    and in declared bytes. That makes the per-account footprint finite at any instant, and —
- *    because a ticket's only exit is expiry — it also makes the per-account MINT RATE finite:
- *    {@link STAGING_MAX_OUTSTANDING_TICKETS} per {@link ATTACHMENT_STAGING_TTL_MS}, and no more.
- *  · {@link drainExpiredStaging} deletes until the expired set is empty rather than taking one
- *    page and stopping, under a per-invocation ceiling chosen to beat that mint rate across far
- *    more accounts than this deployment has.
- *
- * The quota alone would still let a large enough population outrun a single-page sweep. The drain
- * alone would still let one account fill a bucket with a burst. Together the arithmetic closes:
- * see {@link STAGING_SWEEP_MAX_ROWS} for the sum.
- *
- * **The quota counts only UNEXPIRED tickets, and that decoupling is load-bearing.** Counting
- * expired-but-unswept rows would feed sweep health back into the mint: a deployment whose bucket
- * was briefly unreachable would start refusing honest uploads because its own cleanup was behind,
- * which converts a storage incident into a product outage. Expiry is a promise about the BYTES;
- * quota is a statement about what an account may hold. They are allowed to be temporarily out of
- * step, and the sweep is what closes the gap.
+ * `attachment_staging` — the hosted send's direct-upload transport: the row, the object, and the
+ * sweep that deletes them in one order. Reads are account-scoped HERE — `readStagingTickets` puts
+ * the account id in the `WHERE` — so no caller can reach another account's rows; the one unscoped
+ * read is the sweep's. The object half lives here because the worker runs the sweep and imports
+ * core + db only. The sweep deletes the OBJECT first, then the row: the other order loses the
+ * record of which object to remove. Two independent bounds: {@link
+ * createStagingTicketWithinQuota} caps what one account may hold, {@link drainExpiredStaging}
+ * deletes until empty; the quota counts only UNEXPIRED tickets.
  */
 import { createHash } from "node:crypto";
 import { AwsClient } from "aws4fetch";
@@ -87,15 +15,12 @@ import { attachmentStaging } from "./schema-cloud.js";
 import { assertLedgerTx, type LedgerTx, type Tx } from "./change-log.js";
 
 /**
- * HOW LONG STAGED BYTES LIVE. 24 hours, and it is a PROMISE rather than a tuning knob: the
- * privacy copy states this number, so moving it is a change to what the product tells people
- * about their mail.
- *
- * It is long enough that a send retried after a network outage still finds its bytes (the send
- * route re-reads the ticket on every attempt under the same idempotency key) and short enough
- * that "transiently" is an honest word for it. The same 24 hours `idempotency_keys` already
- * promises, for the same reason: one is the window a retry may happen in, and these are the bytes
- * that retry needs.
+ * How long staged bytes live: 24 hours, and it is a PROMISE rather than a tuning knob — the
+ * privacy copy states this number, so moving it changes what the product tells people about their
+ * mail. Long enough that a send retried after a network outage still finds its bytes (the send
+ * route re-reads the ticket on every attempt under the same idempotency key), short enough that
+ * "transiently" is honest. The same 24 hours `idempotency_keys` promises, for the same reason:
+ * one is the window a retry may happen in, and these are the bytes that retry needs.
  */
 export const ATTACHMENT_STAGING_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -105,38 +30,14 @@ export function attachmentStagingExpiry(now: Date): Date {
 }
 
 /**
- * THE TICKET ID DERIVED FROM THE CALLER'S IDEMPOTENCY KEY — *the durable key IS the identity.*
- *
- * ── WHAT THIS CLOSES ────────────────────────────────────────────────────────────────────────
- *
- * `POST /attachments/staging` mints a DURABLE ROW and, through it, a signed grant to put bytes in
- * a bucket somebody pays for. Minted under a random id, a retry after a lost response is a second
- * row, a second object and a second helping of the per-account quota — and the client cannot tell
- * the two apart, because the only thing that named the first ticket was the response it never
- * received. That is the same defect as a send whose lock lives only in the component that issued
- * it: the record is durable and its KEY is not.
- *
- * ── WHY THE ID AND NOT A COLUMN ─────────────────────────────────────────────────────────────
- *
- * A separate `idempotency_key` column with a unique index would work and would need a migration,
- * a schema-census marker and a journal tag. It would also leave the OBJECT PATH derived from a
- * random id, so a replay would have to read the row back to learn where the bytes go. Deriving
- * the id instead makes every one of those free: the primary key IS the idempotency key, the
- * unique index that enforces it already exists (it is the primary key), and
- * {@link stagingObjectPath} — which is `id`-derived — puts a retry's bytes at exactly the path the
- * first attempt was given. One ticket, one object, however many times the request is made.
- *
- * ── THE SHAPE ───────────────────────────────────────────────────────────────────────────────
- *
- * The column is `uuid`, so the digest is formatted as one: 16 bytes of SHA-256 over
- * `accountId \n key`, with the version and variant nibbles set (the RFC 4122 name-based
- * construction, with SHA-256 in place of SHA-1). The ACCOUNT is inside the digest so one
- * account's key can never name another's row — reads are account-scoped as well, and both are
- * wanted: the scoping is what refuses, and this is what makes a collision unconstructible.
- *
- * The id is handed back to the client, exactly as the random one was, and it is no more of a
- * secret than that one: every read of it is filtered by `account_id`, so knowing an id buys
- * nothing that knowing the account's credentials does not already buy.
+ * The ticket id is derived from the caller's idempotency key — the durable key IS the identity.
+ * The mint creates a durable row and a signed grant to put bytes in a bucket; under a random id,
+ * a retry after a lost response is a second row, a second object and a second helping of quota.
+ * Deriving the id (rather than adding a keyed column) also fixes the object path: {@link
+ * stagingObjectPath} is id-derived, so a retry's bytes land where the first attempt pointed. The
+ * shape: 16 bytes of SHA-256 over `accountId \n key`, formatted as a uuid. The ACCOUNT is inside
+ * the digest so one account's key can never name another's row; reads are account-scoped as well
+ * — the scoping refuses, the digest makes a collision unconstructible.
  */
 export function stagingTicketId(accountId: string, idempotencyKey: string): string {
   const h = createHash("sha256").update(`${accountId}\n${idempotencyKey}`).digest();
@@ -211,75 +112,37 @@ export async function createStagingTicket(tx: Tx, i: StagingTicketInput): Promis
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * HOW MANY STAGED TICKETS ONE ACCOUNT MAY HOLD AT ONCE — 500, which is five maximal composes.
- *
- * The legitimate ceiling on one message is `SEND_MAX_ATTACHMENT_PARTS` = 100 parts
- * (`packages/services/src/send-service.ts`), so a single compose can never need more than 100
- * tickets. The obvious quota is therefore "two composes in flight" — one being assembled, one
- * being retried — and it would be WRONG here, for a reason that is a property of this table
- * rather than of the compose surface:
- *
- * **A SEND DOES NOT CONSUME A TICKET.** There is no `consumed_at` and that is deliberate (see
- * `attachmentStaging` in `schema-cloud.ts`): a send retried under the same idempotency key has to
- * find the same bytes. So a ticket's only exit is expiry, and the quota is not "how much may be
- * in flight" but "how much may be staged in a 24-hour window". Two composes' worth would refuse
- * an account on its third large message of the day.
- *
- * 500 is five maximal composes, or — closer to how anyone actually sends — twenty-five heavy
- * messages of twenty files each, per day. Nothing about ordinary use approaches it: the staged
- * transport does not engage below 3 MB of attachments at all (`SEND_INLINE_MAX_TOTAL_BYTES`), so
- * small mail never mints a ticket.
- *
- * What it buys is that the per-account mint rate is now a NUMBER: 500 per
- * {@link ATTACHMENT_STAGING_TTL_MS}, ≈ 20.8 rows an hour, whatever the caller does. That number
- * is the input to the sweep's arithmetic in {@link STAGING_SWEEP_MAX_ROWS}.
+ * How many staged tickets one account may hold at once — 500, five maximal composes
+ * (`SEND_MAX_ATTACHMENT_PARTS` = 100 per message). "Two composes in flight" would be wrong here:
+ * a send does NOT consume a ticket — no `consumed_at`, deliberately, because a retried send must
+ * find the same bytes. A ticket's only exit is expiry, so the quota means "how much may be staged
+ * in a 24-hour window". Ordinary use never approaches it: the staged transport does not engage
+ * below 3 MB of attachments. What it buys: the per-account mint rate is now a number — 500 per
+ * {@link ATTACHMENT_STAGING_TTL_MS}, ≈ 20.8 rows an hour — the input to {@link
+ * STAGING_SWEEP_MAX_ROWS}.
  */
 export const STAGING_MAX_OUTSTANDING_TICKETS = 500;
 
 /**
- * HOW MANY DECLARED BYTES ONE ACCOUNT MAY HOLD AT ONCE — 1 GiB.
- *
- * The count bound above says nothing about size, and size is what the storage bill is. 1 GiB is
- * roughly forty maximal 25 MB sends inside one retention window, which is far beyond any honest
- * use of a compose form and still a finite, small amount of griefable storage: an account holding
- * its full quota continuously costs on the order of two cents a month at commodity object-storage
- * rates.
- *
- * ── IT ALSO CLOSES THE ONE AMPLIFIER THE PER-FILE CAP CANNOT ────────────────────────────────
- *
- * The mint's per-file ceiling is `effectiveAttachmentCap(null, mailbox.smtpMaxSizeBytes)` — the
- * RFC 1870 `SIZE` the sending mailbox's own submission server announced. That number is not ours:
- * a caller may add a mailbox pointed at a server it controls, have it announce `SIZE 10000000000`,
- * and the connect probe records it faithfully (mail 0055 stores `bigint` precisely because the
- * announcement is somebody else's number). The per-file check would then admit a 10 GB
- * declaration. This bound refuses it regardless of what any server said, because it is a fact
- * about what WE are willing to host rather than about what the recipient's server will accept.
- *
- * ── WHAT IT DOES NOT BOUND, STATED HONESTLY ─────────────────────────────────────────────────
- *
- * It counts DECLARED bytes. The signed upload grant binds content type and `x-upsert: false` and
- * no length (`makeSupabaseStagingStorage.signUpload` posts a literal `"{}"`), so a client may
- * declare one byte and PUT more. The send path catches that — `resolveStagedAttachments`
- * re-measures every object against its ticket and refuses the send — but the BYTES are in the
- * bucket by then, held until expiry. The control for that half is the bucket's own
- * `file_size_limit`, which is storage configuration and not code — the operator half of this
- * fix, recorded in the operations checklist. What the
- * declared-byte quota bounds on its own is the number of objects and the authorization to create
- * them, which is what {@link STAGING_MAX_OUTSTANDING_TICKETS} then makes finite.
+ * How many declared bytes one account may hold at once — 1 GiB: roughly forty maximal 25 MB sends
+ * in one retention window, far beyond honest use and still finite. It closes the one amplifier
+ * the per-file cap cannot: that cap is the sending mailbox's own announced RFC 1870 `SIZE`,
+ * somebody else's number (mail 0055 stores `bigint` for that reason) — a caller's own server may
+ * announce 10 GB. Stated honestly: it counts DECLARED bytes — the signed grant binds content
+ * type, not length, so a client may declare one byte and PUT more. The send path re-measures and
+ * refuses; the bucket's own `file_size_limit` (storage configuration) bounds the bytes
+ * themselves.
  */
 export const STAGING_MAX_OUTSTANDING_BYTES = 1024 * 1024 * 1024;
 
 /**
- * The `classid` half of the mint's `pg_advisory_xact_lock(int4, int4)` key. The second half is
+ * The `classid` half of the mint's `pg_advisory_xact_lock(int4, int4)` key; the second half is
  * `hashtext(account_id)`, so the lock is per account and mints for different accounts never queue
- * behind each other.
- *
- * It shares the `4207270…` prefix `LEADER_LOCK_KEY` (`apps/worker/src/leader-lock.ts`) uses, so
- * the project's advisory keys read as one family, and it fits `int4`. It cannot collide with
- * either existing single-argument key (the migration lock, the leader lock): Postgres keeps the
- * one-argument `bigint` form and the two-argument `(int4, int4)` form in separate keyspaces —
- * they are distinguished by `objsubid` in `pg_locks` — so the two forms cannot alias even on
- * numerically equal keys.
+ * behind each other. It shares the `4207270…` prefix the worker's `LEADER_LOCK_KEY` uses, so the
+ * project's advisory keys read as one family, and it fits `int4`. It cannot collide with either
+ * single-argument key (the migration lock, the leader lock): Postgres keeps the one-argument
+ * `bigint` form and the two-argument `(int4, int4)` form in separate keyspaces — distinguished by
+ * `objsubid` in `pg_locks` — so equal numbers cannot alias.
  */
 export const STAGING_QUOTA_LOCK_CLASS = 420_727_015;
 
@@ -345,61 +208,14 @@ export async function outstandingStagingUsage(
 }
 
 /**
- * MINT A TICKET IF THE ACCOUNT IS UNDER QUOTA — the check and the insert in ONE transaction,
- * behind a per-account lock (the quota fix).
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE LOCK STORY
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * A quota is an AGGREGATE over rows the same statement is about to add to, which is the classic
- * shape that a plain read-then-write gets wrong. Under READ COMMITTED each concurrent mint takes
- * its snapshot at the start of its own `SELECT`, so N simultaneous requests all read the same
- * pre-state, all find themselves under quota, and all insert. The overshoot is bounded by
- * concurrency rather than by the cap — exactly the suspension-race lesson, where a gate read a fact
- * and then acted on it after other transactions had changed it.
- *
- * There is no row to lock: the thing being bounded is a COUNT, and the empty case (an account
- * with no tickets at all) has no tuple for two callers to contend on. So the mutex is a
- * transaction-scoped ADVISORY lock keyed on the account —
- * `pg_advisory_xact_lock(STAGING_QUOTA_LOCK_CLASS, hashtext(account_id))` — taken FIRST, before
- * the aggregate is read. Every mint for one account is then serialized, the count each one reads
- * is the count its own insert extends, and the cap is exact rather than probabilistic.
- *
- * ### Why an advisory lock is right HERE and was refused in `ai-claim.ts`
- *
- * `claimAiAttempt` rejected `pg_advisory_xact_lock` for a reason that does not apply to this
- * path: it needed exclusivity to OUTLIVE the commit, because the thing it guards is a model call
- * made after the transaction ends. This mint needs exclusivity only for the length of a count and
- * an insert, both indexed and both local — the signed-URL round trip happens strictly AFTER the
- * transaction commits, and must, because holding a lock across a network call is how a slow
- * storage endpoint becomes a per-account stall. `pg_advisory_xact_lock` releasing at COMMIT is
- * therefore the property this caller wants rather than the one that disqualified it there. It is
- * also pooler-safe for the same reason: nothing is held across statements outside a transaction,
- * so a transaction-pooling connection pooler cannot lose it.
- *
- * ### Deadlock-freedom, by the stronger argument
- *
- * `spend-lock.ts` states the project's rule — a consistent order — and notes that a shared-single-
- * lock argument is stronger where it is available. It is available here: the mint transaction
- * takes exactly TWO things, in this order, and nothing else takes them in the other order.
- *
- *  1. the advisory key for its own account. No other statement in the product takes this key —
- *     it is used by this function alone, and only ever for one account per transaction;
- *  2. the `INSERT`'s ordinary locks: `RowExclusive` on `attachment_staging`, and `FOR KEY SHARE`
- *     on the `accounts` row the foreign key references.
- *
- * Nothing that locks an `accounts` row goes on to mint, so no transaction wants (2) before (1);
- * and two mints for DIFFERENT accounts share neither, because the advisory key is per account and
- * the `FOR KEY SHARE` is per row. Two mints for the SAME account share only (1), and a single
- * shared lock cannot form a cycle.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Returns the refusal rather than throwing it. The two limits are distinguishable in the result
- * because the copy a user reads has to be different — "too many uploads" and "too many bytes" are
- * different situations with different remedies, and a single opaque 429 is the shape of refusal
- * nobody can act on. Mapping to a status is the service layer's job, not this module's.
+ * Mint a ticket if the account is under quota — check and insert in ONE transaction behind a
+ * per-account advisory lock. A quota is an aggregate over rows the same statement adds to: under
+ * READ COMMITTED, N simultaneous mints all read the same pre-state and all insert. There is no
+ * row to lock, so the mutex is `pg_advisory_xact_lock(STAGING_QUOTA_LOCK_CLASS,
+ * hashtext(account_id))`, taken before the aggregate is read; releasing at commit is wanted — the
+ * signed-URL round trip happens strictly after it, and a lock across a network call is a
+ * per-account stall. Deadlock-free by a single shared lock. Returns the refusal rather than
+ * throwing — "too many uploads" and "too many bytes" need different copy.
  */
 export async function createStagingTicketWithinQuota(
   tx: LedgerTx,
@@ -418,17 +234,13 @@ export async function createStagingTicketWithinQuota(
     )
   `);
 
-  // ── THE REPLAY BRANCH, INSIDE THE LOCK AND BEFORE THE QUOTA IS EVEN READ ──────────────────
-  //
-  // `i.id` is {@link stagingTicketId}'s digest of the caller's key, so a row under it is THIS
-  // request, already served. Answering with it costs no quota (it is the same row, already
-  // counted), and the caller re-signs a grant for its `object_path` — which is derived from the
-  // id, so the retry's bytes land on the object the first attempt was pointed at. One ticket,
-  // one object, however many times the request is made.
-  //
-  // The lock makes two SIMULTANEOUS mints of one key serialize here rather than race, and the
-  // primary key would refuse the loser's insert even if it did not. Both are wanted: the lock is
-  // what makes the second caller get an ANSWER rather than a constraint violation.
+  // The replay branch, inside the lock and before the quota is read. `i.id` is {@link
+  // stagingTicketId}'s digest of the caller's key, so a row under it is THIS request, already
+  // served. Answering with it costs no quota (the same row, already counted), and the caller
+  // re-signs a grant for its `object_path` — id-derived, so the retry's bytes land on the object
+  // the first attempt was pointed at. The lock makes two simultaneous mints of one key serialize
+  // here rather than race; the primary key would refuse the loser anyway, but the lock is what
+  // gets the second caller an ANSWER rather than a constraint violation.
   const [existing] = await tx.select({
     id: attachmentStaging.id,
     objectPath: attachmentStaging.objectPath,
@@ -507,27 +319,14 @@ export interface ExpiredStagingTicket {
 }
 
 /**
- * Everything that has aged out, OLDEST FIRST, bounded, optionally starting after a cursor.
- *
- * The per-call BOUND is not politeness: the sweep issues one storage delete per batch and runs
- * inside the worker's serial maintenance slot, so an unbounded single statement on a busy
- * deployment would hold that slot against a mailbox that wants to sync. It is a PAGE size, though,
- * not a retention budget — {@link drainExpiredStaging} is what keeps calling until there is
- * nothing left, and before the quota fix nothing did.
- *
- * ── THE ORDER IS TOTAL, AND `after` IS WHY ───────────────────────────────────────────────────
- *
- * `ORDER BY expires_at` alone is not a stable order: ties are common (a compose window mints a
- * dozen tickets inside the same millisecond) and Postgres may return them in any order, so a
- * cursor built on `expires_at` alone could skip rows or loop on them. `id` breaks the tie and the
- * cursor is the pair.
- *
- * The cursor exists for exactly one case, and it is the case that would otherwise wedge the whole
- * transport: a page whose OBJECT delete fails permanently keeps its rows, and those rows are the
- * oldest ones, so a drain that always restarted from the beginning would re-attempt the same
- * poisoned page for ever and never reach anything behind it. {@link drainExpiredStaging} advances
- * past every page it has attempted, which turns one unremovable object from a permanent global
- * stall into a bounded per-hour retry.
+ * Everything aged out, oldest first, bounded. The bound is a PAGE size, not a retention budget —
+ * {@link drainExpiredStaging} keeps calling until nothing is left; the sweep runs in the worker's
+ * serial maintenance slot, so an unbounded statement would hold that slot against a mailbox that
+ * wants to sync. The order is total: `expires_at` ties are common (a compose window mints a dozen
+ * tickets in one millisecond), so `id` breaks the tie and the cursor is the pair. The cursor
+ * exists for one case: a page whose object delete fails permanently keeps its rows — the OLDEST
+ * rows — and a drain restarting from the beginning would re-attempt the poisoned page forever.
+ * Advancing past every attempted page turns one unremovable object into a bounded per-hour retry.
  */
 export async function expiredStagingTickets(
   tx: Tx, now: Date, limit: number,
@@ -644,21 +443,14 @@ export interface AttachmentStagingStorage {
     uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string>;
   }>;
   /**
-   * Read an object's bytes with the service credential.
-   *
-   * `opts.maxBytes` is a CEILING ON THE READ, not on its result: the declared `Content-Length` is
-   * refused before a byte is pulled, and a response that declares nothing (or lies) is counted as
-   * it streams and abandoned the moment it crosses. Over it, this rejects with
-   * {@link StagedObjectTooLargeError}.
-   *
-   * It exists because the caller's ceiling used to be applied AFTERWARDS. `resolveStagedAttachments`
-   * compared `bytes.byteLength` against the ticket's declared size — a correct comparison on bytes
-   * that were already in the heap. The presigned PUT signs only the content TYPE, so a caller
-   * could mint a one-byte ticket, upload an object of any size to the path it named, and send the
-   * ticket: this process then buffered the whole object and noticed the mismatch afterwards.
-   *
-   * Optional so every existing fake storage in a test keeps compiling; every production caller
-   * passes it.
+   * Read an object's bytes with the service credential. `opts.maxBytes` is a ceiling on the READ,
+   * not its result: the declared `Content-Length` is refused before a byte is pulled, and a
+   * response that declares nothing (or lies) is counted as it streams and abandoned the moment it
+   * crosses — over it, this rejects with {@link StagedObjectTooLargeError}. It exists because the
+   * ceiling used to be applied AFTERWARDS: `resolveStagedAttachments` compared `bytes.byteLength`
+   * on bytes already in the heap, and the presigned PUT signs only the content TYPE, so a
+   * one-byte ticket could stage an object of any size and this process buffered it whole.
+   * Optional so every fake storage in a test keeps compiling; every production caller passes it.
    */
   download(objectPath: string, opts?: { maxBytes?: number }): Promise<Uint8Array>;
   /** Remove objects. Best-effort by contract: a path that is already gone is not an error. */
@@ -668,25 +460,14 @@ export interface AttachmentStagingStorage {
 const STORAGE_PREFIX = "/storage/v1";
 
 /**
- * The Supabase Storage implementation.
- *
- * `signUpload` returns the token-bearing URL and the exact headers the browser must present. The
- * signed-upload endpoint authenticates by the `token` query parameter, so no credential of ours
- * travels to the browser and none is needed on the PUT — `x-upsert: false` is there so a second
- * upload to the same path is refused rather than silently replacing bytes a send may already have
- * read.
- *
- * ## Why the wire is plain `fetch`
- *
- * Supabase Storage is an HTTP API and this needs four calls of it. A client library would be a new
- * dependency in two hosted processes for `POST`, `PUT`, `GET`, `DELETE` — and `supabase-lockdown.ts`
- * in this same package already reaches the same project over plain `fetch` for the same reason.
- *
- * VERIFY THIS ROUND TRIP ON THE FIRST DEPLOY. It is four HTTP shapes against a service we cannot
- * reach from the test environment, and the failure mode of getting one wrong is a mint that
- * answers 200 with a URL that refuses the upload. {@link sweepExpiredStaging} and the send path
- * both degrade safely (a failed download refuses the send; a failed delete retries next hour), but
- * the mint does not fail closed on the CLIENT's behalf — it fails at upload time, one step later.
+ * The Supabase Storage implementation. `signUpload` returns the token-bearing URL and the exact
+ * headers the browser must present: the endpoint authenticates by the `token` query parameter, so
+ * no credential of ours travels to the browser — and `x-upsert: false` makes a second upload to
+ * the same path a refusal rather than a silent replacement of bytes a send may already have read.
+ * The wire is plain `fetch`: four HTTP calls do not justify a client library, and
+ * `supabase-lockdown.ts` already reaches the same project the same way. VERIFY THIS ROUND TRIP ON
+ * THE FIRST DEPLOY: one wrong shape is a mint that answers 200 with a URL that refuses the
+ * upload; the sweep and the send degrade safely, the mint fails one step later, at upload time.
  */
 export function makeSupabaseStagingStorage(
   cfg: AttachmentStagingStorageConfig,
@@ -761,23 +542,14 @@ export interface S3StagingStorageConfig {
   /** The dedicated staging bucket. Never a bucket anything else writes to. */
   bucket: string;
   /**
-   * The endpoint a BROWSER can reach, used ONLY to build `signUpload`'s URL — `S3_PUBLIC_ENDPOINT`
-   * on the self-host server, defaulted there to `OHMAIL_ORIGIN`. Absent ⇒ {@link endpoint}.
-   *
-   * It exists because the two audiences of this port live on different networks: `download` and
-   * `remove` run in the server processes, which reach the store by its in-network name
-   * (`http://minio:9000`), while the presigned PUT is performed by a browser, which cannot
-   * resolve that name and whose CSP (`connect-src 'self'`) refuses any off-origin request
-   * anyway. So the upload grant is addressed — and therefore SIGNED, since SigV4 covers the
-   * `Host` header — against the browser-facing origin, and the reverse proxy carries the PUT to
-   * the store with the Host PRESERVED, which is what keeps the signature valid end to end.
-   * The store's own view of the request is path-style (`/<bucket>/<key>` under a host that is
-   * not the store's), which every S3-compatible accepts and MinIO validates against the exact
-   * Host the proxy handed it.
-   *
-   * SECURITY INVARIANT, stated where the surface is minted: routing `/<bucket>/*` through the
-   * public origin is safe ONLY while the bucket stays PRIVATE — an unsigned request must 403.
-   * No anonymous bucket policy, ever; the boot smoke probes exactly that.
+   * The endpoint a BROWSER can reach — `S3_PUBLIC_ENDPOINT` on the self-host server, defaulted to
+   * `OHMAIL_ORIGIN`; absent ⇒ {@link endpoint}. `download` and `remove` reach the store by its
+   * in-network name (`http://minio:9000`); the presigned PUT runs in a browser that cannot
+   * resolve that name and whose CSP refuses off-origin requests. SigV4 covers the `Host` header,
+   * so the grant is signed against the browser-facing origin and the reverse proxy must carry the
+   * PUT with the Host PRESERVED. SECURITY INVARIANT: routing `/<bucket>/*` through the public
+   * origin is safe ONLY while the bucket stays private — an unsigned request must 403; no
+   * anonymous bucket policy, ever.
    */
   publicEndpoint?: string;
 }
@@ -794,25 +566,14 @@ export interface S3StagingStorageConfig {
 export const S3_UPLOAD_GRANT_TTL_SECONDS = 3600;
 
 /**
- * The object URL for one staged file — and the ADDRESSING DECISION, which is the part that can
- * silently break: SigV4 signs the `Host` header, so path-style vs virtual-host is baked into
- * every signature this module mints, and the wrong choice is a 403 on every request rather than
- * anything self-describing.
- *
- * The rule is ENDPOINT-DRIVEN, because the frozen `S3_*` variable set has no style flag and must
- * not grow one for a property the endpoint already determines:
- *
- *  · a real AWS endpoint (`…amazonaws.com`) takes VIRTUAL-HOST style — the bucket as a host
- *    label — which is the only style AWS still promises for new buckets;
- *  · everything else (MinIO on an IP, an operator hostname, a reverse-proxied base path) takes
- *    PATH-STYLE, which every S3-compatible speaks and which is the only style that works at all
- *    for an endpoint whose TLS certificate does not cover `<bucket>.<host>`;
- *  · a DOTTED bucket name falls back to path-style even on AWS: `staging.ohmail.s3.….com` is not
- *    covered by AWS's `*.s3.<region>.amazonaws.com` wildcard, so virtual-host would fail TLS
- *    before S3 ever saw the request.
- *
- * Key segments are individually percent-encoded, exactly like the Supabase impl's `enc` — keys
- * here are ids by construction ({@link stagingObjectPath}), but a URL builder must not trust that.
+ * The object URL for one staged file — and the addressing decision that can silently break: SigV4
+ * signs the `Host` header, so path-style vs virtual-host is baked into every signature, and the
+ * wrong choice is a blanket 403. The rule is ENDPOINT-DRIVEN (the frozen `S3_*` set has no style
+ * flag): a real AWS endpoint takes virtual-host style — the only style AWS still promises for new
+ * buckets; everything else takes path-style, the only style that works when TLS does not cover
+ * `<bucket>.<host>`; a DOTTED bucket falls back to path-style even on AWS, whose wildcard does
+ * not cover it. Key segments are percent-encoded — keys here are ids by construction, but a URL
+ * builder must not trust that.
  */
 export function s3StagingObjectUrl(
   cfg: Pick<S3StagingStorageConfig, "endpoint" | "bucket">, objectPath: string,
@@ -829,41 +590,14 @@ export function s3StagingObjectUrl(
 }
 
 /**
- * The S3-compatible implementation of the SAME three-method port — MinIO on the self-host
- * compose, or any endpoint speaking the S3 API. SigV4 via `aws4fetch` (MIT, zero dependencies),
- * chosen over an AWS SDK for the Supabase impl's exact reason: this needs three HTTP shapes, and
- * a client library would be a dependency tree in two server processes for `PUT`, `GET`, `DELETE`.
- *
- * ## The grant is minted LOCALLY, and the error asymmetry that buys
- *
- * Unlike the Supabase impl — whose `signUpload` asks the storage service for a token and can
- * therefore fail at mint time — a presigned S3 PUT is pure key derivation: `signUpload` cannot
- * detect a wrong credential, a missing bucket or an unreachable endpoint. Every misconfiguration
- * surfaces at UPLOAD time as the client's 403, one step later than the Supabase deployment sees
- * it. The mint's ordering already makes that the harmless direction (a row whose object never
- * arrives is swept as a 404), but it moves the "VERIFY THE ROUND TRIP ON FIRST DEPLOY" note from
- * advisable to mandatory — which is exactly what the live MinIO suite and the compose boot-smoke
- * do on every push.
- *
- * The grant BINDS the content type: it is signed into `X-Amz-SignedHeaders`, so the PUT must
- * present it verbatim or the signature fails — parity with the Supabase grant. What it does NOT
- * have is an `x-upsert: false` equivalent: a plain S3 PUT overwrites. Stated honestly rather
- * than papered over with `If-None-Match: *` (real AWS and current MinIO accept that conditional
- * write; enough S3-compatibles still in service do not, and a grant that 501s on the operator's
- * store is a broken product, not a hardening): the exposure is one account re-PUTting its OWN
- * ticket's path inside the grant hour — the path is `<accountId>/<ticketId>` with a fresh ticket
- * per grant, no other account is ever granted it, and the send re-measures whatever bytes are
- * there against the ticket's declared size.
- *
- * ## Deletes are per-object, not the multi-object POST
- *
- * S3's batch delete (`POST /?delete`) wants an XML body and a `Content-MD5` header — two wire
- * formats this module otherwise never speaks — and MinIO and AWS both answer per-object DELETEs
- * cheaply. The sweep hands pages of up to 200 paths; they go out in bounded parallel batches. A
- * DELETE of a key that is already gone answers 204 on S3 proper, and 404 from some compatibles —
- * BOTH are success here, for the Supabase impl's reason (the abandoned upload must clear) and
- * because deletes must stay idempotent: a page that half-failed keeps its rows, and next hour's
- * drain re-deletes objects that already went.
+ * The S3-compatible implementation of the same three-method port — MinIO, or any S3 endpoint.
+ * SigV4 via `aws4fetch`; three HTTP shapes do not justify an SDK. The grant is minted LOCALLY: a
+ * presigned PUT is pure key derivation, so misconfiguration surfaces at UPLOAD time as the
+ * client's 403 (harmless: a row whose object never arrives is swept as a 404); the live MinIO
+ * suite and the compose boot-smoke verify the round trip. The grant binds the content type; there
+ * is no `x-upsert` equivalent — a plain S3 PUT overwrites, and the exposure is one account
+ * re-PUTting its OWN ticket's path, which the send re-measures. Deletes are per-object, and 404
+ * counts as success: a half-failed page keeps its rows and next hour re-deletes.
  */
 export function makeS3StagingStorage(
   cfg: S3StagingStorageConfig,
@@ -949,53 +683,24 @@ export function stagingObjectPath(accountId: string, ticketId: string): string {
 export const STAGING_SWEEP_BATCH = 200;
 
 /**
- * HOW MANY EXPIRED ROWS ONE DRAIN MAY TOUCH — 50 000, or 250 pages of {@link STAGING_SWEEP_BATCH}.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE ARITHMETIC, WHICH IS THE WHOLE POINT OF THE NUMBER
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * A ticket's only exit is expiry, so a SATURATED account — one that mints its full quota, sends
- * nothing, and re-mints the moment a ticket ages out — produces expired rows at exactly
- * {@link STAGING_MAX_OUTSTANDING_TICKETS} per {@link ATTACHMENT_STAGING_TTL_MS}:
- *
- *     500 rows / 24 h  ≈  20.8 rows per hour, per account, and there is no way to exceed it.
- *
- * The drain runs once per `MAINTENANCE_EVERY_MS` (one hour, `apps/worker/src/index.ts`), so it
- * keeps up as long as
- *
- *     STAGING_SWEEP_MAX_ROWS  ≥  20.8 × (accounts minting at their ceiling)
- *
- * At 50 000 that is **≈ 2 400 continuously saturated accounts** — every one of them minting five
- * hundred attachments a day and sending none of them, for ever. A deployment that reaches that
- * number has a different problem than a sweep. The number a real population produces is smaller by
- * orders of magnitude: the staged transport does not engage below 3 MB of attachments at all.
- *
- * Contrast the shape this replaces. One 200-row page an hour was outrun by a SINGLE account
- * minting 201 times in an hour, permanently — the backlog then grew without bound, and since the
- * sweep's predicate is the clock rather than an identity, it grew in front of every other
- * account's rows as well. That is the griefing lever the quota review named, and it is the reason the
- * quota and the drain had to land together: the quota makes the mint rate finite, and this makes
- * the sweep faster than that finite rate with three orders of magnitude of headroom.
- *
- * IT IS A CEILING, NOT A TARGET. The drain stops early the moment the expired set is empty, which
- * is what every ordinary hour looks like. When it does bind, it says so — `stoppedBy` comes back
- * `"rows"` and the worker logs it, because the failure this whole finding is about is a backlog
- * that grows in silence.
+ * How many expired rows one drain may touch — 50 000, 250 pages of {@link STAGING_SWEEP_BATCH}. A
+ * ticket's only exit is expiry, so a saturated account produces expired rows at exactly {@link
+ * STAGING_MAX_OUTSTANDING_TICKETS} per {@link ATTACHMENT_STAGING_TTL_MS} ≈ 20.8 rows/hour, no
+ * more. The drain runs hourly, so 50 000 keeps up with ≈ 2 400 continuously saturated accounts.
+ * The old single 200-row page an hour was outrun by one account minting 201 times an hour —
+ * permanently, and in front of every other account's rows, since the predicate is the clock. A
+ * ceiling, not a target: the drain stops when the expired set is empty; when it binds,
+ * `stoppedBy: "rows"` is logged — the failure here is a backlog growing in silence.
  */
 export const STAGING_SWEEP_MAX_ROWS = 50_000;
 
 /**
- * THE WALL-CLOCK BUDGET for one drain — 60 s.
- *
- * The row ceiling above bounds WORK; this bounds TIME, and they are not the same resource. The
- * drain runs in the worker's serial maintenance slot, so the thing that must never happen is a
- * cycle held open behind object storage having a bad afternoon: 250 pages against an endpoint
- * answering in two seconds each is eight minutes of a slot a mailbox is waiting for.
- *
- * A drain cut short here is not a lost pass. The rows it did not reach are still expired, the next
- * hour starts from the oldest of them, and `stoppedBy: "deadline"` is logged so a deployment that
- * keeps hitting it is visible rather than merely slow.
+ * The wall-clock budget for one drain — 60 s. The row ceiling bounds WORK; this bounds TIME. The
+ * drain runs in the worker's serial maintenance slot, and the thing that must never happen is a
+ * cycle held open behind object storage having a bad afternoon: 250 pages at two seconds each is
+ * eight minutes of a slot a mailbox is waiting for. A drain cut short is not a lost pass: the
+ * rows it did not reach are still expired, the next hour starts from the oldest, and `stoppedBy:
+ * "deadline"` is logged so a deployment that keeps hitting it is visible rather than merely slow.
  */
 export const STAGING_SWEEP_DEADLINE_MS = 60_000;
 
@@ -1017,23 +722,14 @@ export interface StagingDrainResult {
 }
 
 /**
- * ONE MAINTENANCE PASS over expired staging tickets: object first, then row.
- *
- * Injected rather than reaching for a database handle, because this is the piece the trap lives
- * in — an abandoned upload (a ticket minted, an upload that never happened, a compose window
- * closed) leaves a row and no object, and a sweep written against the happy path would treat the
- * storage 404 as a failure and keep the row forever. `remove` therefore treats 404 as success, and
- * the row goes. That case is the one the pg test exists for.
- *
- * Returns how many rows went. A storage failure on one batch throws — the caller logs it and the
- * next pass retries — because a sweep that swallowed storage errors would report a clean number
- * while the bucket grew.
- *
- * THIS IS ONE PAGE AND NOTHING CALLS IT ALONE ANY MORE. It used to be the entire retention story,
- * called once an hour, which is the shape the quota review named: a client minting faster than one
- * page an hour outran cleanup permanently and globally. {@link drainExpiredStaging} is the loop
- * over this, and the worker calls that. The page stays a separate function because the ORDER it
- * implements is the invariant, and it is worth being able to state and test on its own.
+ * One maintenance pass over expired staging tickets: object first, then row. Dependencies are
+ * injected because the trap lives here — an abandoned upload leaves a row and no object, and a
+ * sweep written against the happy path would treat the storage 404 as a failure and keep the row
+ * forever; `remove` treats 404 as success, and the row goes (the case the pg test exists for). A
+ * storage failure throws — the next pass retries; swallowing it would report a clean number while
+ * the bucket grew. THIS IS ONE PAGE and nothing calls it alone any more: {@link
+ * drainExpiredStaging} is the loop, and the worker calls that. The page stays a separate function
+ * because the ORDER it implements is the invariant, worth stating and testing on its own.
  */
 export async function sweepExpiredStaging(deps: {
   storage: AttachmentStagingStorage;
@@ -1049,39 +745,14 @@ export async function sweepExpiredStaging(deps: {
 }
 
 /**
- * DRAIN THE EXPIRED SET — pages of {@link sweepExpiredStaging} until it is empty, or until a
- * bound says stop (the quota fix).
- *
- * The single page above was the whole sweep, called once an hour, and that is the defect: any
- * sustained mint rate above one page an hour grew the backlog for ever, globally, because the
- * predicate is the clock and not an identity. This is the loop that was missing. Its ceilings are
- * {@link STAGING_SWEEP_MAX_ROWS} (work) and {@link STAGING_SWEEP_DEADLINE_MS} (time), and the
- * arithmetic showing the first one beats any mint rate the quota permits is on that constant.
- *
- * ── A FAILED PAGE IS SKIPPED, NOT RE-ATTEMPTED IN PLACE ─────────────────────────────────────
- *
- * `sweepExpiredStaging` throws when the object delete fails, and keeps its rows — the recoverable
- * direction, because a row deleted before its object is an object nobody can name again. Inside a
- * LOOP that same behaviour is a trap: the failed rows are the OLDEST rows, so a drain that
- * restarted from the beginning would hand the same poisoned page to storage on every iteration and
- * never reach anything behind it. One permanently unremovable object would stall cleanup for the
- * entire deployment — the very failure mode this function exists to remove, reintroduced by the
- * fix for it.
- *
- * So the cursor advances past EVERY page attempted, successful or not. A failing page keeps its
- * rows, is counted in `failedPages`, and is retried from the top of the next hour's drain; the
- * rows behind it are reached in this one. Transient failures therefore cost one page of delay, and
- * permanent ones cost one page of wasted work per hour, visibly.
- *
- * Advancing over SUCCESSFUL pages is free rather than merely harmless: their rows are gone, so
- * there is nothing behind the cursor to skip. And no row can appear behind it later — `now` is
- * fixed for the whole drain and `expires_at` only ever moves forward with `created_at`.
- *
- * ── WHY IT COMPOSES THE PAGE FUNCTION INSTEAD OF INLINING THE TWO DELETES ───────────────────
- *
- * The order — object, then row — has exactly one implementation in this codebase, and the module
- * header says why. A drain that issued its own `remove` and `delete` would be a second one, in the
- * function most likely to be edited under time pressure.
+ * Drain the expired set — pages of {@link sweepExpiredStaging} until empty or a bound stops it
+ * ({@link STAGING_SWEEP_MAX_ROWS} work, {@link STAGING_SWEEP_DEADLINE_MS} time); the old single
+ * page an hour grew the backlog forever. A failed page is SKIPPED, not re-attempted in place:
+ * failed rows are the oldest, so restarting from the top would hand the same poisoned page to
+ * storage forever. The cursor advances past every attempted page; a failing page keeps its rows,
+ * counts in `failedPages`, and is retried next hour. No row appears behind the cursor: `now` is
+ * fixed and `expires_at` only moves forward. The page stays composed, not inlined: the order —
+ * object, then row — has exactly one implementation.
  */
 export async function drainExpiredStaging(deps: {
   storage: AttachmentStagingStorage;
@@ -1145,16 +816,13 @@ export async function drainExpiredStaging(deps: {
 }
 
 /**
- * THE DRAIN bound to a database handle — what the worker's hourly maintenance slot calls.
- *
- * A thin composition over {@link drainExpiredStaging} and the statements above, here rather than
- * in the worker so the ORDER (object, then row) and the paging cursor have exactly one
- * implementation. This is the single symbol `apps/worker/src/index.ts` needs out of the whole
- * transport, and having it on `@trafficflow/db/cloud` is what keeps the worker's runtime closure
- * to the five packages its dependency test names.
- *
- * `now` is captured once by the caller and used for every page, so the drain's own runtime cannot
- * pull rows into its horizon mid-loop and stretch it.
+ * The drain bound to a database handle — what the worker's hourly maintenance slot calls. A thin
+ * composition over {@link drainExpiredStaging} and the statements above, here rather than in the
+ * worker so the order (object, then row) and the paging cursor have exactly one implementation.
+ * This is the single symbol the worker needs out of the whole transport, and having it on
+ * `@trafficflow/db/cloud` keeps the worker's runtime closure to the five packages its dependency
+ * test names. `now` is captured once and used for every page, so the drain's own runtime cannot
+ * pull rows into its horizon mid-loop.
  */
 export async function sweepExpiredStagingFor(
   db: Tx, storage: AttachmentStagingStorage, now: Date,

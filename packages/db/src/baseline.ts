@@ -3,52 +3,14 @@ import { join } from "node:path";
 import { sql, type SQL } from "drizzle-orm";
 
 /**
- * BASELINE ADOPTION — teaching an already-migrated database that it is already migrated.
- *
- * The schema split cut one migration journal into two: a publishable
- * mail-domain half and a private Cloud half. Production, the docker test database and every
- * developer's database all took the SINGLE journal and already carry all 55 tables. Point the
- * two-journal migrator at one of them and it finds an empty `drizzle_mail.__drizzle_migrations`,
- * concludes nothing has ever been applied, and replays the whole mail journal over a live
- * database.
- *
- * That replay does not fail cleanly, which is the dangerous part. Nearly every statement in the
- * history is `IF NOT EXISTS`, and the foreign keys are
- * `DO $$ … EXCEPTION WHEN duplicate_object`, so most of it SUCCEEDS silently. It happens to die
- * at `0002_wealthy…`'s bare `ALTER TABLE "messages" ADD COLUMN "thread_id"` — the one statement
- * in the journal without `IF NOT EXISTS` — and because drizzle runs all pending migrations in a
- * single transaction, that rolls the pass back. Loud and recoverable, but only by the accident
- * of one statement's spelling, and the Cloud pass would need its own separate luck.
- *
- * So adoption runs FIRST and writes the bookkeeping rows the two new journals would have
- * written, without executing their DDL.
- *
- * ── WHY THE LEGACY TABLE IS SUFFICIENT EVIDENCE ──
- *
- * `drizzle.__drizzle_migrations` with all {@link LEGACY_JOURNAL_WHENS} present does not merely
- * suggest the pre-split journal ran — it PROVES it, because `PgDialect.migrate` applies every
- * pending migration inside ONE transaction. There is no state in which 24 rows exist and the
- * 24th file's statements did not run. Short of somebody hand-inserting rows, which is not a
- * failure mode a program can defend against, that is a complete proof.
- *
- * The object probe below is therefore a second, independent check rather than the primary one —
- * it catches a schema that has been altered by hand since (a table dropped as "cleanup"), and
- * it is DERIVED FROM THE JOURNAL SQL rather than hand-maintained, so it can never drift from
- * what the baseline actually creates.
- *
- * ── THE FAILURE THIS FILE MUST NEVER HAVE ──
- *
- * Marking a migration applied whose effects are absent. That is permanent: the entry is skipped
- * forever, and because production ran the original journal it keeps the object while every
- * database created afterwards lacks it. Two rules close it:
- *
- *  1. **The baseline is frozen by a CUTOFF, not by "this journal's entries."** If the insert set
- *     were "every entry in the journal", the moment somebody appends migration 22 to the mail
- *     journal the next production run would mark it applied without running it. It is
- *     `when <= LEGACY_CUTOFF_WHEN` and nothing else.
- *  2. **The insert set and the verification set are the SAME computed set.** Both come from
- *     {@link baselineEntries}. A hand-maintained marker list beside a journal-derived insert
- *     list is exactly how the two drift.
+ * Baseline adoption — teaching an already-migrated database that it is already migrated. The
+ * schema split cut one journal into two; a database that took the single journal carries all 55
+ * tables, and the two-journal migrator, finding its journal table empty, would replay the whole
+ * mail journal over it. So adoption runs FIRST and writes the bookkeeping rows without executing
+ * DDL. All {@link LEGACY_JOURNAL_WHENS} present PROVES the pre-split journal ran
+ * (`PgDialect.migrate` is one transaction); the object probe is a second check for a schema
+ * altered by hand. Two rules keep a row from ever being marked without its effects: a CUTOFF
+ * (`when <= LEGACY_CUTOFF_WHEN`), and one computed set for insert and verification.
  */
 
 /**
@@ -62,18 +24,13 @@ import { sql, type SQL } from "drizzle-orm";
 export const LEGACY_CUTOFF_WHEN = 1786006486206;
 
 /**
- * Every `when` in the pre-split journal, in order. Committed as data because it is EVIDENCE:
- * this is the fingerprint of a database that took the single-journal path, and the pre-split
- * journal's own metadata file is retained alongside it for the same reason.
- *
- * TWENTY-FOUR ENTRIES, AND THE LEGACY FOLDER NOW HOLDS TWENTY-THREE FILES. The difference is
- * `1785574486206` — the metering tables' own migration, whose FILE left with them. A database
- * that took the single-journal path applied it, so its row is in `drizzle.__drizzle_migrations`
- * and this list must keep naming it: adoption's question is "did this database live through
- * that era", and history does not change when a file is deleted. What DID change is that
- * nothing can replay the era from the folder any more — the pg fixture seeds the missing row
- * explicitly and says so, which is the only honest way to simulate a database this tree can no
- * longer build.
+ * Every `when` in the pre-split journal, in order. Committed as data because it is EVIDENCE: the
+ * fingerprint of a database that took the single-journal path. Twenty-four entries, and the
+ * legacy folder now holds twenty-three files — the difference is `1785574486206`, the metering
+ * tables' migration, whose file left with them. A database from that era applied it, so its row
+ * exists and this list must keep naming it: adoption asks "did this database live through that
+ * era", and history does not change when a file is deleted. Nothing can replay the era from the
+ * folder any more; the pg fixture seeds the missing row explicitly and says so.
  */
 export const LEGACY_JOURNAL_WHENS: readonly number[] = [
   1785184187039, 1785185425588, 1785189005449, 1785190651291, 1785192935050, 1785194204180,
@@ -121,17 +78,14 @@ export interface BaselineObjects {
 }
 
 /**
- * Objects the CLOUD baseline created that the MAIL journal now ALSO creates — `refresh_tokens`
- * and its two indexes, adopted by mail 0060 (Phase 3: a paired device's refresh family
- * rotates against the store that serves it; `journal-split.test.ts` pins the arbitration).
- *
- * They are EXCLUDED from the cloud baseline's object probe because their presence stopped
- * discriminating provenance, and the adoption verdict is a provenance question: a database
- * built by the two-journal path holds them the moment the mail journal has run, so counting
- * them puts every ordinary fresh setup into the "some objects, no evidence" cell — the exact
- * refusal the verdict's step 0 note says must not fire on the ordinary path. The cost is one
- * table's worth of the altered-by-hand check on a genuine adoption, and mail 0060's guarded
- * CREATE restores the object on the next migrate anyway.
+ * Objects the CLOUD baseline created that the MAIL journal now also creates — `refresh_tokens`
+ * and its two indexes, adopted by mail 0060 (`journal-split.test.ts` pins the arbitration).
+ * Excluded from the cloud baseline's object probe because their presence stopped discriminating
+ * provenance: a database built by the two-journal path holds them once the mail journal has run,
+ * so counting them puts every ordinary fresh setup into the "some objects, no evidence" cell —
+ * the refusal that must not fire on the ordinary path. The cost is one table's worth of the
+ * altered-by-hand check on a genuine adoption; mail 0060's guarded CREATE restores the object on
+ * the next migrate anyway.
  */
 const CLOUD_OBJECTS_ADOPTED_BY_MAIL = {
   tables: new Set(["refresh_tokens"]),
@@ -207,16 +161,13 @@ async function rows<T>(db: Executor, query: SQL): Promise<T[]> {
 }
 
 /**
- * Locate the LEGACY migrations table by NAME, across schemas.
- *
- * Deliberately name-based, and the only place in the split that still is: `setup-prod.ts`
- * records that `__drizzle_migrations` "has lived in `public` in older versions", and finding it
- * somewhere unexpected is the entire point here. If it were addressed as `drizzle.…` and an old
- * environment kept it in `public`, adoption would read "absent ⇒ fresh database", and the
- * migrator would replay the journal over a populated one.
- *
- * The two NEW tables are the opposite case and are always addressed by their pinned schema —
- * name-based discovery there is what made `setup-prod`'s verification vacuously true.
+ * Locate the LEGACY migrations table by NAME, across schemas — deliberately, and the only place
+ * in the split that still is: `__drizzle_migrations` has lived in `public` in older environments,
+ * and finding it somewhere unexpected is the point. Addressed as `drizzle.…`, an old environment
+ * keeping it in `public` would read "absent ⇒ fresh database" and the migrator would replay the
+ * journal over a populated one. The two NEW tables are the opposite case, always addressed by
+ * their pinned schema — name-based discovery there is what made `setup-prod`'s verification
+ * vacuously true.
  */
 export async function findLegacyMigrationsTable(db: Executor): Promise<string | null> {
   const found = await rows<{ table_schema: string }>(db, sql`
@@ -290,20 +241,14 @@ export async function missingObjects(db: Executor, spec: JournalSpec): Promise<s
 }
 
 /**
- * Decide what to do about `spec` on this database, WITHOUT writing anything.
- *
- * The order of the questions is the design. Step 0 comes first because a database built by the
- * two-journal path has no legacy table and DOES have the objects — which is the "unknown
- * provenance" cell below, and it would otherwise refuse every ordinary re-run.
- *
- * | this half tracked | legacy evidence | this half's objects | verdict |
- * |---|---|---|---|
- * | yes               | any             | any                 | `already_tracked` |
- * | no                | all 24 whens    | complete            | `adopt` |
- * | no                | absent          | none                | `fresh` |
- * | no                | absent          | some                | **THROW** — unknown provenance |
- * | no                | incomplete      | any                 | **THROW** — mid-migration |
- * | no                | all 24 whens    | incomplete          | **THROW** — schema altered by hand |
+ * Decide what to do about `spec` on this database, WITHOUT writing anything. The order of the
+ * questions is the design: step 0 comes first because a database built by the two-journal path
+ * has no legacy table and DOES have the objects — otherwise every ordinary re-run would be
+ * refused as "unknown provenance". Verdicts: this half already tracked ⇒ `already_tracked`;
+ * untracked, all 24 legacy whens, complete objects ⇒ `adopt`; untracked, no legacy evidence, no
+ * objects ⇒ `fresh`. Everything else THROWS: some objects with no evidence (unknown provenance),
+ * incomplete legacy evidence (mid-migration), complete evidence with incomplete objects (schema
+ * altered by hand).
  */
 export async function adoptionVerdict(db: Executor, spec: JournalSpec): Promise<AdoptionVerdict> {
   const tracked = await rows<{ n: number | string }>(db, sql`
@@ -377,25 +322,14 @@ async function hashOf(spec: JournalSpec, tag: string): Promise<string> {
 }
 
 /**
- * ENTRIES THAT EXIST TWICE IN ONE JOURNAL — a reissue re-running an original's statement from a
- * fresh position — and the bookkeeping row the original is owed wherever only the reissue ran.
- *
- * The one case so far: mail `0066_folders_enabled` was first minted BETWEEN two entries another
- * lane had already landed and applied, and drizzle's single-watermark migrator skips an entry at
- * or below `max(created_at)` forever, silently. `0069_folders_enabled_reissue` re-runs the same
- * idempotent statement from above the maximum (the file is a BYTE COPY of 0066's, deliberately:
- * drizzle records the sha256 of the file it applied, and a database that ran the intermediate
- * retimed repair holds a row at the reissue's `when` whose hash is 0066's file — identical bytes
- * make that row describe the current journal entry exactly).
- *
- * What the reissue cannot do is give the SKIPPED population 0066's own bookkeeping row: such a
- * database records the reissue's `when` and still has a hole at the original's, so
- * `journalStatuses()` — which requires every journal `when` — would report the journal
- * incomplete and abort the canonical setup path over a column the reissue just created. This
- * adoption closes exactly that hole: once the REISSUE's row exists, the ORIGINAL's row is
- * recorded too (same hash — the files are byte-identical), idempotently, under the same unique
- * index on `created_at` that turns a race into a loud failure. It never runs ahead of the
- * reissue, so a database that has genuinely applied neither stays honestly incomplete.
+ * Entries that exist twice in one journal — a reissue re-running an original's statement from a
+ * fresh position. The case so far: mail `0066_folders_enabled` was minted below entries already
+ * applied, and drizzle's single-watermark migrator skips an entry at or below `max(created_at)`
+ * forever. `0069_folders_enabled_reissue` re-runs the same idempotent statement from above the
+ * maximum — a byte copy of 0066's file, so the recorded sha256 describes the journal entry
+ * exactly. Without 0066's row, `journalStatuses()` would report the journal incomplete and abort
+ * setup; this adoption records it once the reissue's row exists (same hash), idempotently, and
+ * never ahead of the reissue — a database that applied neither stays honestly incomplete.
  */
 const REISSUED_ORIGINALS: ReadonlyArray<{
   journal: string;
