@@ -139,32 +139,14 @@ export class ApprovalService {
          different store from the connection that opened it. */
       const tx = carryDialect(ctx.db, txRaw as object) as typeof txRaw;
       /**
-       * THE STATUS FLIP IS A CLAIM, NOT A WRITE — and the read above is only a fast refusal.
-       *
-       * The `pending` check at the top of this method runs OUTSIDE this transaction, and the
-       * write used to assert nothing about the state that check observed:
-       *
-       *     .where(eq(approvals.id, id))     // the primary key, and nothing else
-       *
-       * That is check-then-act. It is not rescued by row locking either: the qual is a primary
-       * key, so a concurrent writer cannot falsify it, and Postgres' EvalPlanQual re-check under
-       * a lock wait re-evaluates a predicate that was never in doubt. BOTH decisions land.
-       *
-       * Measured on two devices answering one card: two `approval/update` rows in the delta
-       * stream — every client told the card resolved twice — and, with the presses swapped, an
-       * approval reading `rejected` over a message the approve had already re-routed to the
-       * Ohbox and queued for a real IMAP move. The reject branch writes no `folder_state`, so
-       * there is nothing for it to undo; the row and the mail disagree about what the user
-       * chose, and the reconciler goes on to perform the move the row denies.
-       *
-       * So the state predicate is repeated IN the UPDATE and the returned row count IS the
-       * decision — the `consumeLoginToken` shape, which is what `claimMessageFailures`,
-       * `bubbleUpPass` and the credits debit all use. Exactly one decider can observe a row
-       * here; the loser throws, which rolls this transaction back with every effect in it
-       * (the re-route, the change rows, the learning signal) and answers the same 422 an
-       * already-decided approval has always answered.
-       *
-       * `accountId` rides along for the reason it is on the read: an id is not an authorisation.
+       * The status flip is a CLAIM, not a write — the `pending` check above is only a fast
+       * refusal outside this transaction. A primary-key-only qual is check-then-act, and row
+       * locking does not rescue it (EvalPlanQual re-checks a predicate never in doubt): BOTH
+       * decisions land. Measured on two devices answering one card: two `approval/update` deltas,
+       * and with the presses swapped, `rejected` recorded over mail the approve had already
+       * re-routed. So the state predicate is repeated IN the UPDATE and the returned row count IS
+       * the decision; the loser throws, rolling back every effect and answering the standard 422.
+       * `accountId` rides along: an id is not an authorisation.
        */
       const claimed = await tx.update(approvals)
         .set({ status: approve ? "approved" : "rejected", updatedAt: ctx.now() })
@@ -188,18 +170,14 @@ export class ApprovalService {
       let lastSeq = await recordChange(tx, { accountId: ctx.accountId, entityType: "approval", entityId: id, op: "update", meta: null });
 
       if (approve && msg && target) {
-        /* ── AN APPROVED MOVE IS A MOVE, SO IT ASKS WHO ORGANIZES THE MAILBOX (mail 0094) ─────
-         *
-         * This arm writes `folder_state.desired_folder` with `last_set_by: 'us'` and the
-         * reconciler turns that into a physical IMAP move — the same row, the same way, as
-         * `MessageService.move`. It had no organizer check of any kind, so on a mailbox this
-         * install only reads, approving a card filed somebody's mail on a machine that was not
-         * arranging it, and the card reported the move as done.
-         *
-         * THE APPROVAL ITSELF STILL RESOLVES HERE. The person decided, the row records their
-         * decision, and the learning signal below is about their judgement rather than about
-         * mail moving — only the MOVE travels. Splitting it that way is what keeps a reader's
-         * Approvals list usable instead of refusing every card on it.
+        /**
+         * An approved move is a MOVE, so it asks who organizes the mailbox (mail 0094). This arm
+         * writes `folder_state.desired_folder` with `last_set_by: 'us'` and the reconciler turns
+         * that into a physical IMAP move — the same row as `MessageService.move`. It once had no
+         * organizer check, so on a mailbox this install only reads, approving a card filed
+         * somebody's mail from a machine not arranging it. The approval itself still resolves
+         * here: the person decided, and the learning signal is about their judgement — only the
+         * MOVE travels, which keeps a reader's Approvals list usable.
          */
         const route = await routeMailboxWrite(
           tx as unknown as Tx, ctx.accountId, msg.mailboxId, "message.move",
@@ -282,17 +260,15 @@ export class ApprovalService {
     // deferred move is EXACTLY the adapter-less shape this path already ships and converges on.
     // Throwing turned it into a 500 over an approval that had committed — and the idempotency
     // claim stored the 200, so the retry replayed success for a request the user saw fail.
-    /* ── AND `movePending` GATES THE PHYSICAL MOVE, WHICH IS THE SHARPEST LINE IN THIS FILE ──
-     *
-     * Everything above writes rows; THIS reaches the person's mail server. On a mailbox another
-     * install organizes, running it would be this install performing an IMAP move on a mailbox it
-     * does not hold — two organizers moving one person's mail, which is precisely what the lease
-     * exists to prevent, and no amount of care in the transaction above would undo it.
-     *
-     * The transaction's refusal is not enough on its own here: this block reads `msg` and `target`
-     * from BEFORE the transaction, so without the flag it would fire on exactly the path that
-     * decided not to move anything. It is also the reason the request path returns a value rather
-     * than a boolean — the holder is worth having, and a bare `true` would have read as "handled". */
+    /**
+     * `movePending` gates the PHYSICAL move — the sharpest line in this file. Everything above
+     * writes rows; this reaches the person's mail server, and on a mailbox another install
+     * organizes it would be two organizers moving one person's mail, which the lease exists to
+     * prevent. The transaction's refusal is not enough: this block reads `msg` and `target` from
+     * BEFORE the transaction, so without the flag it would fire on exactly the path that decided
+     * not to move anything. The request path returns a value rather than a boolean — a bare
+     * `true` would read as "handled".
+     */
     if (approve && msg && target && this.deps.adapter && movePending === null) {
       const repo = makeDrizzleRepo(ctx.db as unknown as Tx);
       await applyReconcileAction(

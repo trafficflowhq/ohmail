@@ -1,58 +1,12 @@
 /**
- * THE OPERATOR BACKFILL FOR `has_attachments` / `attachment_count`.
- *
- * The ingest half (`mime.ts#isRealFile`, `pipeline.ts`) is forward-looking only. This corrects
- * mail already on disk:
- *
- *   pnpm -F @trafficflow/services exec tsx src/attachment-flag-backfill-cli.ts plan
- *   pnpm -F @trafficflow/services exec tsx src/attachment-flag-backfill-cli.ts apply [--mailbox <uuid>]
- *
- * ── RUN `plan` FIRST, AND READ IT ──────────────────────────────────────────────────────────
- *
- * `plan` is READ-ONLY. It prints, per mailbox, how many flagged messages hold no downloadable
- * part at all (the paperclips that open an empty strip), how many hold files but carry a count
- * that includes their embedded images, and how many are already correct and will not be touched.
- * A plan whose `already correct` column is zero is a plan worth questioning before applying —
- * this pass is a correction, not a rewrite, and most flagged mail is flagged correctly.
- *
- * ── WHY A COMMAND AND NOT A SCHEDULED PASS ────────────────────────────────────────────────
- *
- * The same wall `sensitive-rescreen-cli.ts` documents: the worker's dependency test
- * (`FORBIDDEN_IN_SRC`) forbids anything under `apps/worker/src` from importing
- * `@trafficflow/services`, because services is an API-host concern and is not installed in the
- * worker's image — an accidental import resolves through the vitest alias, passes the whole
- * suite, and fails only in production. So there is no attach seam this can be called from, and
- * moving it into `packages/core` would put a one-time historical correction into the library
- * both engines share for ever.
- *
- * ── DEPLOY ORDER MATTERS, AND IT IS NOT THE USUAL ONE ─────────────────────────────────────
- *
- * **Deploy the worker BEFORE running this.** The pipeline lives in shared core and runs on the
- * worker; until the worker carries the ingest fix it keeps minting rows under the old semantic,
- * so a backfill run first leaves fresh drift behind it. Nothing breaks — the pass is idempotent
- * and a second run mops up — but the intended sequence is: deploy worker, run `plan`, run
- * `apply`, re-run `plan` and see zeroes.
- *
- * ── IT MOVES NO MAIL AND OPENS NO IMAP ────────────────────────────────────────────────────
- *
- * It writes two integer/boolean columns on `messages`, one `change_log` row per corrected
- * message, and audit rows. No folder, no routing, no `folder_state`, no socket. The mailbox is
- * the master and nothing here has an opinion about it.
- *
- * ── ENVIRONMENT ───────────────────────────────────────────────────────────────────────────
- *
- *   OHMAIL_BACKFILL_DB_URL   required. A SESSION-mode connection string.
- *
- * Deliberately its OWN variable, never an ambient `DATABASE_URL`. A retired database that
- * answers happily and holds a different, plausible dataset is worse than one that errors —
- * nothing fails, and every number the pass reports is a coherent answer to the wrong question.
- * A pass that rewrites thousands of rows of somebody's live mail must not inherit a variable
- * that can silently name the wrong database, so the operator names it explicitly:
- *
- *   OHMAIL_BACKFILL_DB_URL="$YOUR_SESSION_URL" pnpm … plan
- *
- * SESSION mode and not the pooled URL: this walks the table in a paged transaction loop holding
- * `FOR UPDATE` locks, which is exactly the shape a transaction pooler mishandles.
+ * The operator backfill for `has_attachments`/`attachment_count`; the ingest half
+ * (`mime.ts#isRealFile`, `pipeline.ts`) is forward-looking only. Run `plan` first — read-only,
+ * per-mailbox counts. A command, not a scheduled pass: the worker's dependency test
+ * (`FORBIDDEN_IN_SRC`) forbids importing `@trafficflow/services` from worker src. Deploy the
+ * worker FIRST — until it carries the ingest fix it keeps minting rows under the old semantic. It
+ * moves no mail and opens no IMAP. `OHMAIL_BACKFILL_DB_URL` is required and deliberately its OWN
+ * variable, session-mode: an ambient URL can silently name a retired database that answers
+ * happily, and the loop holds `FOR UPDATE` locks a transaction pooler mishandles.
  */
 import { pathToFileURL } from "node:url";
 import { makeOwnedDb } from "@trafficflow/db/cloud";

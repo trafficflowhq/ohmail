@@ -1,55 +1,12 @@
 /**
- * ATTACHMENT STAGING — the hosted send's direct-upload transport, SEND-FACING half.
- *
- * ## What this replaces, and what it does not
- *
- * Attachment bytes used to ride the send request body base64-encoded. That put every hosted send
- * under the serverless platform's ~4.5 MB request limit and forced the compose surface to promise
- * 3 MB whatever the sender's own submission server announced — so a mailbox that accepts 25 MB was
- * told 3, in the one place a user reads a promise. The bytes now go straight from the browser to
- * object storage on a signed URL, and the send carries a REFERENCE to a
- * `attachment_staging` row.
- *
- * **The inline path is not removed.** It is the transport a 0.9.3-vintage desktop uses — its Cloud
- * door forwards `POST /drafts/:id/send` verbatim to this API — so the send route accepts both
- * shapes and this module exists beside the old path rather than in place of it.
- *
- * ## Where the other half is, and why
- *
- * The TABLE, the BUCKET and the retention SWEEP are in `@trafficflow/db/cloud`
- * (`packages/db/src/attachment-staging.ts`), not here. The sweep's only caller is the worker's
- * hourly maintenance slot, and the worker's runtime closure is `core` + `db` and nothing else
- * (enforced by the worker's dependency test) — a sweep above that line is a sweep the
- * process that runs it has to reach up for. It did, briefly, and the cost was measured: with this
- * package's barrel in the worker's boot graph, `node` loads an HTML sanitiser and its parser on
- * the way to a retention sweep, and on Node 23 that pair is a hard `ERR_REQUIRE_CYCLE_MODULE` at
- * import time. The pinned Node 22 image was the only thing standing between a deployed worker and
- * an unloggable crash-on-start.
- *
- * What is left here is what is genuinely service-shaped: turning a ticket into a `SendAttachment`,
- * and mapping every way that can fail onto the status the caller gets back. Both name types the
- * worker has no use for.
- *
- * ## The order of operations, and why it is that order
- *
- * MINT checks the account's outstanding quota and writes the row in ONE transaction, and THEN asks
- * storage for a signed URL. The other order leaks: an object whose row was never written is an
- * object nothing knows the path of, so the sweep cannot find it and it lives in the bucket for the
- * life of the deployment. A row whose signed URL then failed to mint is the harmless direction —
- * it names an object that does not exist, the caller got an error, and the sweep deletes a row and
- * a 404 in 24 hours.
- *
- * The quota itself — the numbers, and the per-account lock that makes the check exact rather than
- * racy — is `createStagingTicketWithinQuota` in `@trafficflow/db/cloud`, beside the table. What is
- * here is the half that is genuinely service-shaped: turning its refusal into the status and the
- * sentence a person reads (see {@link stagingQuotaError}).
- *
- * SEND reads the ticket, checks the declared total, downloads, and re-measures. The declared size
- * is a CLIENT ASSERTION and is treated as one: it bounds what we are willing to fetch, and the
- * bytes that arrive are what the cap is finally enforced against.
- *
- * SWEEP deletes the object and then the row, which is the only order that cannot orphan bytes —
- * see `sweepExpiredStaging` in `@trafficflow/db/cloud` for the whole of that argument.
+ * Attachment staging — the hosted send's direct-upload transport, send-facing half. Bytes once
+ * rode the send body base64-encoded under the platform's ~4.5 MB request cap; now they go browser
+ * → object storage on a signed URL and the send carries a REFERENCE to an `attachment_staging`
+ * row (the inline path stays for older desktops). The TABLE, BUCKET and SWEEP live in
+ * `@trafficflow/db/cloud` — the sweep's only caller is the worker. MINT writes the row and THEN
+ * mints the signed URL: the other order leaks an object nothing knows the path of. SEND checks
+ * the declared total, downloads and RE-MEASURES — the declared size is a client assertion. SWEEP
+ * deletes object then row, the only order that cannot orphan bytes.
  */
 import { randomUUID } from "node:crypto";
 import {
@@ -106,26 +63,14 @@ export type StagedResolutionFailure =
   };
 
 /**
- * Turn staged references into bytes, or say exactly why not.
- *
- * The DECLARED total is checked by the caller before this runs — this function is the download,
- * and it re-measures every object against the size its ticket declared. A client that declares
- * 1 MB and uploads 50 is refused HERE, before the bytes reach the send's own cap check, because
- * the alternative is that the cap is enforced against a number the attacker chose.
- *
- * ── ONE TICKET, ONE DOWNLOAD — AND THE INVARIANT LIVES HERE, NOT ONLY AT THE BOUNDARY ───────
- *
- * `requestedIds` is a CLIENT-SUPPLIED array and may name the same ticket any number of times.
- * This loop walks the DISTINCT ids, so `storage.download` runs once per object however often it
- * was named, and the result carries each file once.
- *
- * The route deduplicates too, and this is deliberately not redundant with it: the amplification is
- * a property of `await download()` sitting inside a loop over a request array, so the fix belongs
- * where that loop is. This function is an exported service-level entry point with callers that do
- * not pass through that route, and "every future caller remembers to dedupe first" is exactly the
- * kind of rule this file's own header refuses to rely on elsewhere.
- *
- * Order is first appearance, which is the order the composer listed the files in.
+ * Turn staged references into bytes. The declared total is checked by the caller; this is the
+ * download, and it re-measures every object against the size its ticket declared — a client that
+ * declares 1 MB and uploads 50 is refused HERE, before the send's cap check, because the
+ * alternative enforces the cap against a number the attacker chose. `requestedIds` is
+ * client-supplied and may repeat a ticket: this loop walks DISTINCT ids, so `storage.download`
+ * runs once per object. The route deduplicates too — not redundant: the amplification is a
+ * property of this loop, and callers exist that skip the route. Order is first appearance — the
+ * composer's file order.
  */
 export async function resolveStagedAttachments(
   storage: AttachmentStagingStorage,
@@ -150,22 +95,14 @@ export async function resolveStagedAttachments(
     let bytes: Uint8Array;
     try {
       /**
-       * ── THE TICKET'S DECLARED SIZE IS A CEILING ON THE READ, not a check afterwards ───────
-       *
-       * This was `storage.download(t.objectPath)` followed by the byteLength comparison below,
-       * which is a correct comparison made on bytes that are already the cost. And the gap it
-       * left is reachable: the presigned PUT signs only the content TYPE, so an authenticated
-       * caller can mint a ONE-BYTE ticket, upload an object of any size to the path it names,
-       * and then send that ticket — this process buffered the whole object and noticed the
-       * mismatch after paying for it. Authenticated remote memory exhaustion, repeatable.
-       *
-       * The ceiling is the ticket's own `sizeBytes`, which is the number the comparison below
-       * already uses; the port refuses the declared `Content-Length` before reading and abandons
-       * the stream at the ceiling when the response declares nothing or lies.
-       *
-       * The comparison below is KEPT rather than replaced. It is now unreachable through this
-       * port — but `AttachmentStagingStorage` is injectable, and a storage that ignores
-       * `maxBytes` (a fake, an older implementation) must still be refused rather than trusted.
+       * The ticket's declared size is a CEILING ON THE READ, not a check afterwards. The
+       * presigned PUT signs only the content TYPE, so an authenticated caller could mint a
+       * one-byte ticket, upload an object of any size, and send it — this process buffered the
+       * whole object before noticing: authenticated remote memory exhaustion, repeatable. The
+       * ceiling is the ticket's own `sizeBytes`: the port refuses the declared `Content-Length`
+       * before reading and abandons the stream at the ceiling. The comparison below is KEPT —
+       * unreachable through this port, but `AttachmentStagingStorage` is injectable and a storage
+       * that ignores `maxBytes` must still be refused.
        */
       bytes = await storage.download(t.objectPath, { maxBytes: t.sizeBytes });
     } catch (err) {
@@ -203,28 +140,14 @@ export async function resolveStagedAttachments(
 }
 
 /**
- * THE MINT'S QUOTA REFUSAL, as the caller sees it.
- *
- * ── 429, AND `retryable: false` ──────────────────────────────────────────────────────────────
- *
- * 429 is the family: the caller is asking for more of a finite resource than its share, and the
- * request would succeed later. It is deliberately not 507, which describes the SERVER being out of
- * room — this deployment is not, and telling an operator otherwise would point an incident at the
- * wrong place.
- *
- * The `retryable: false` is the load-bearing half, and it inverts the client's default. The engine
- * reads `wire.error.retryable ?? (status >= 500 || status === 429)`
- * (`packages/client-engine/src/adapters/http-adapter.ts`), so a bare 429 tells its mutation queue
- * to try again — and this is the one 429 in the product where trying again is exactly wrong.
- * Nothing frees quota except time: a staged ticket has no `consumed_at`, so it is held until it
- * expires, and a retry loop against a full quota is a client spinning against a wall for up to
- * twenty-four hours. The refusal is stated once, to a person, with the number in it.
- *
- * ── THE COPY NAMES THE REMEDY THAT ACTUALLY WORKS ────────────────────────────────────────────
- *
- * Which is waiting, not sending. It would read better to say "send the messages you have
- * composed", and it would be false: sending does not release a ticket, deliberately, so that a
- * send retried under the same idempotency key still finds its bytes. Truthful over flattering.
+ * The mint's quota refusal, as the caller sees it. 429 is the family (a finite resource; the
+ * request would succeed later), deliberately not 507: the server is not out of room. `retryable:
+ * false` is the load-bearing half: the engine reads `wire.error.retryable ?? (status >= 500 ||
+ * status === 429)`, so a bare 429 tells the mutation queue to retry — and this is the one 429
+ * where retrying is exactly wrong: nothing frees quota except time (a staged ticket has no
+ * `consumed_at`; it is held until it expires). The copy names the remedy that works — waiting,
+ * not sending: a send does not release a ticket, deliberately, so a send retried under the same
+ * idempotency key still finds its bytes.
  */
 function stagingQuotaError(refusal: StagingQuotaRefusal): ServiceError {
   const hours = "24 hours";
@@ -244,20 +167,13 @@ function stagingQuotaError(refusal: StagingQuotaRefusal): ServiceError {
 }
 
 /**
- * THE HOSTED STAGING PORT, over one database handle and one bucket.
- *
- * Two halves that share nothing but the table: `mint` (the row plus the signed grant) and `source`
- * (the two-phase read `SendService` reads through). They are one object because they are one
- * capability — a host either has object storage behind it or it does not, and the shape of
- * `undefined` is what tells a SHARED send handler which host it is running on.
- *
- * ── THE ROW IS WRITTEN BEFORE THE GRANT IS MINTED ─────────────────────────────────────────
- *
- * The other order leaks. An object whose row was never written is an object nothing knows the path
- * of, so the sweep cannot find it and it sits in the bucket for the life of the deployment. A row
- * whose signed URL then failed to mint is the harmless direction: it names an object that does not
- * exist, the caller got an error, and the sweep deletes a row and a storage 404 — which `remove`
- * treats as success precisely so that this case, and every abandoned upload, actually clears.
+ * The hosted staging port, over one database handle and one bucket. Two halves sharing only the
+ * table: `mint` (the row plus the signed grant) and `source` (the two-phase read `SendService`
+ * reads through) — one object because a host either has object storage behind it or it does not,
+ * and the shape of `undefined` tells a SHARED send handler which host it runs on. The row is
+ * written BEFORE the grant is minted: the other order leaks an object nothing knows the path of;
+ * a row whose URL failed to mint names an object that does not exist, and the sweep deletes a row
+ * and a storage 404 — which `remove` treats as success so abandoned uploads actually clear.
  */
 export function makeAttachmentStagingPort(deps: {
   db: Tx;

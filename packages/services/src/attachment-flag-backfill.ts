@@ -4,88 +4,26 @@ import type { SQL } from "drizzle-orm";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import type { Db } from "./context.js";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE PAPERCLIP THAT OPENS AN EMPTY STRIP — no migration
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   ── WHAT WAS WRONG, MEASURED ────────────────────────────────────────────────────────────────
-
-   `mime.ts:411` used to read `hasAttachments: attachments.length > 0` — every MIME part
-   mailparser surfaced, `inline` cid: parts included. `attachments-service.ts:322/359/370`
-   meanwhile select the Files list and download-all with `eq(attachments.inline, false)`. Two
-   definitions of "a file", and the gap between them is what the user sees: on the mailbox this
-   was measured against, over forty percent of the paperclipped mail held nothing to download at
-   all — newsletter logos, signature images, tracking pixels — while NOT ONE unflagged message
-   held a real file.
-
-   That last fact is the important one. **The flag only ever over-reports**, so this pass is
-   strictly one-directional and can never invent a paperclip.
-
-   The ingest fix is forward-looking only. Rows already on disk keep their old value for
-   ever, because nothing in this codebase has ever UPDATED `has_attachments` — until this.
-
-   ── WHY IT WRITES `change_log` AND WHY THAT IS THE WHOLE POINT ──────────────────────────────
-
-   Clients hold a local mirror (`client-engine/src/store.ts`) fed by `/sync`. A row corrected in
-   Postgres with no delta is a row the user's browser keeps at the old value indefinitely — the
-   fix would be invisible to precisely the person who reported it. `sync-service.ts:91,106`
-   re-materializes the full `MessageDTO` for any non-delete `message` change, and
-   `client-engine/src/apply.ts:55` upserts it on `create|update`, so ONE `op: "update"` per
-   corrected row carries the new `hasAttachments` **and** `attachmentCount` to every mirror.
-
-   ── WHY THERE IS NO MIGRATION AND NO MARKER COLUMN ─────────────────────────────────────────
-
-   `sensitive-rescreen.ts` stamps `mailboxes.sensitive_rescreen_at` because its candidate set is
-   NOT self-limiting: a candidate the re-evaluation decides to KEEP stays a candidate for ever, so
-   termination had to be a stamp. This pass has the opposite property — {@link selectCandidates}
-   selects exactly the rows whose stored pair disagrees with the attachment rows, and every row it
-   selects it corrects. The set drains. A second run reads zero rows and writes nothing, with no
-   marker to consult and nothing to `--force`.
-
-   So: no `0033`, no `health.ts` marker, no 503 window against a production migrated through 0032.
-   The operator visibility a marker would have given is a terminal `audit_log` row instead —
-   queryable, and it costs no schema.
-
-   ── AND WHY IT DOES *NOT* SKIP MAIL THE USER HAS ACTED ON ──────────────────────────────────
-
-   A deliberate departure from the precedent, because the precedent's reason does not transfer.
-   `sensitive-rescreen.ts` excludes triaged, replied-to and ruled-on messages because it MOVES
-   mail: yanking a message out of a pile the user built destroys their arrangement. This pass
-   moves nothing, routes nothing, deletes nothing and changes no folder. It corrects a derived
-   display flag so it agrees with the attachment rows that were already there.
-
-   The sharper form of the argument: **no user action anywhere in this system writes
-   `has_attachments` or `attachment_count`.** There is no intent in these columns to preserve —
-   they are ingest's arithmetic about MIME structure. Excluding acted-on mail would pin a false
-   paperclip permanently onto exactly the messages the user reads and replies to most.
-
-   What replaces the exclusion, so this is not merely "we skipped the safety rail":
-
-     · The pass never touches a row whose stored pair already matches its attachment rows. That
-       is the candidate query, not a check bolted on afterwards.
-     · Every corrected row gets an `audit_log` entry whose `inverse` carries the PRIOR pair, so
-       "put it back" is expressible per row rather than as a regenerated guess.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * The paperclip that opens an empty strip — no migration. `mime.ts` once counted every MIME part
+ * while `attachments-service.ts` selects files with `inline = false`: two definitions of "a
+ * file", and over forty percent of measured paperclipped mail held nothing to download while not
+ * one unflagged message held a real file — the flag only over-reports, so this pass cannot invent
+ * a paperclip. One `change_log` update per corrected row reaches every client mirror. No marker
+ * column: {@link selectCandidates} selects exactly the rows whose stored pair disagrees — the set
+ * drains, a second run writes nothing. It does NOT skip acted-on mail: no user action writes
+ * these columns; each corrected row's `audit_log` `inverse` carries the prior pair.
+ */
 
 /**
- * ── HOW MANY DOWNLOADABLE PARTS THIS MESSAGE HAS — AND WHY THE QUALIFICATION IS LOAD-BEARING ─
- *
- * `inline = false`, the same predicate `attachments-service.ts:322/359/370` selects the Files
- * list and download-all with, so "a file" means one thing on both sides of the badge.
- *
- * **`${messages}.${sql.identifier(...)}` and NOT `${messages.id}`.** Drizzle emits a bare column
- * interpolation UNQUALIFIED — `${messages.id}` becomes `"id"` — and `attachments` has an `id`
- * column of its own, so inside this subquery the unqualified name binds to the ATTACHMENT's id.
- * The correlation silently becomes `att.message_id = att.id`, which is never true, and the count
- * is 0 for every message alive.
- *
- * That is not a hypothetical. It is what this function returned on its first run, and it is the
- * worst possible failure for this pass: `real = 0` would have been true for every flagged
- * row, so the backfill would have stripped the paperclip off every message that legitimately
- * carries files — turning a cosmetic over-report into real data loss on somebody's live mail.
- * `attachment-flag-backfill.pg.test.ts`'s mixed-message cases are what caught it; a suite seeded
- * only with inline-only messages passes happily with the broken correlation, because the answer
- * it wants is 0 either way. Do not "simplify" this back.
+ * How many downloadable parts this message has — `inline = false`, the same predicate
+ * `attachments-service.ts` selects the Files list with. `${messages}.${sql.identifier(...)}` and
+ * NOT `${messages.id}`: drizzle emits a bare column interpolation UNQUALIFIED, and `attachments`
+ * has its own `id`, so the correlation silently becomes `att.message_id = att.id` — never true,
+ * count 0 for every message. That is what this returned on its first run — the worst failure for
+ * this pass: `real = 0` would strip the paperclip off every message that legitimately carries
+ * files. `attachment-flag-backfill.pg.test.ts`'s mixed-message cases caught it. Do not "simplify"
+ * this back.
  */
 function realFileCount(): SQL<number> {
   return sql<number>`(
@@ -152,22 +90,12 @@ interface CandidateRow {
 }
 
 /**
- * Correct `messages.has_attachments` / `attachment_count` wherever they disagree with the
- * attachment rows, emitting one `message`/`update` change per corrected row.
- *
- * ── IDEMPOTENCY IS THE CANDIDATE QUERY, NOT A FLAG ─────────────────────────────────────────
- *
- * A row this pass corrects satisfies `has_attachments = (real > 0) AND attachment_count = real`,
- * which is the negation of {@link selectCandidates}' predicate. It cannot be selected again. A
- * second run therefore reads zero rows, writes zero `change_log` entries and zero audit rows —
- * and that is asserted rather than claimed, in `attachment-flag-backfill.test.ts`.
- *
- * ── TERMINATION IS THE EMPTY PAGE, AND THE CURSOR IS BELT AND BRACES ───────────────────────
- *
- * Every selected row is corrected, so the set shrinks monotonically and an empty page means done.
- * `afterId` is still carried, monotone in `messages.id`: without it a row that somehow failed to
- * leave the set would be re-read for ever at the head of page 0. Same construction as the
- * kickstart and the rescreen, for a weaker reason, on purpose.
+ * Correct `messages.has_attachments`/`attachment_count` wherever they disagree with the
+ * attachment rows, one `message`/`update` change per corrected row. Idempotency IS the candidate
+ * query: a corrected row is the negation of {@link selectCandidates}' predicate and cannot be
+ * selected again — a second run reads zero rows, asserted in `attachment-flag-backfill.test.ts`.
+ * Termination is the empty page; `afterId` is belt and braces, monotone in `messages.id`, so a
+ * row that somehow failed to leave the set is not re-read for ever at the head of page 0.
  */
 export async function runAttachmentFlagBackfill(
   deps: AttachmentFlagBackfillDeps,
@@ -194,27 +122,15 @@ export async function runAttachmentFlagBackfill(
         const nextHas = row.realFiles > 0;
         const nextCount = row.realFiles;
 
-        // ── WHY THERE IS NO SECOND "IS IT STILL WRONG?" CHECK ON THIS LINE ────────────────
-        //
-        // There WAS one, and it was removed because no mutation could turn it red — deleting it
-        // left all ten tests green, including the twelve-message concurrency case. A guard
-        // nobody has watched fail is not evidence, so it does not get to sit here looking like
-        // protection.
-        //
-        // What actually protects the row is `FOR UPDATE OF messages` plus the shape of the
-        // candidate predicate, and the two are the same fact: the predicate selects exactly the
-        // rows whose stored pair DISAGREES with their attachment rows, so "already corrected"
-        // and "no longer a candidate" are one condition. Two runs block on the same row; when
-        // the loser is granted the lock Postgres re-fetches the committed tuple and re-evaluates
-        // the outer quals against it (EvalPlanQual, standard READ COMMITTED behaviour for a
-        // locking select). `has_attachments` is now false, or the count now equals `real`, so
-        // the row is dropped before this loop ever sees it.
-        //
-        // That the LOCK is what does it, and not luck: a mutation check removed `.for("update")` and
-        // the concurrency case went red with `expected 24 to be 12` — every message corrected
-        // twice and every client told so twice, a convergence break. PGlite cannot see
-        // this at all; it is single-connection and `FOR UPDATE` there always succeeds, which is
-        // why that assertion lives in a `.pg.test.ts` on :5433.
+        // Why there is no second "is it still wrong?" check here: there was one, and no mutation
+        // could turn it red — deleting it left all ten tests green, and a guard nobody has
+        // watched fail is not evidence. What protects the row is `FOR UPDATE OF messages` plus
+        // the candidate predicate — "already corrected" and "no longer a candidate" are one
+        // condition: the loser of a lock wait re-evaluates the quals against the committed tuple
+        // (EvalPlanQual) and the row is dropped before this loop sees it. That the LOCK does it
+        // is measured: removing `.for("update")` turned the concurrency case red with `expected
+        // 24 to be 12` — every message corrected twice. PGlite cannot see this
+        // (single-connection), which is why that assertion lives in a `.pg.test.ts` on :5433.
         await t.update(messages)
           .set({ hasAttachments: nextHas, attachmentCount: nextCount })
           .where(eq(messages.id, row.messageId));
@@ -295,32 +211,14 @@ export async function runAttachmentFlagBackfill(
 }
 
 /**
- * ONE page of messages whose stored pair disagrees with their attachment rows — LOCKED FOR
- * UPDATE, oldest id first.
- *
- * ── THE CANDIDATE SET, AND WHY IT HAS TWO ARMS ─────────────────────────────────────────────
- *
- * `real` is `count(*) where inline = false` — the same predicate `attachments-service.ts` uses
- * for the Files list and download-all, so "a file" means one thing on both sides of the badge.
- *
- *  1. `real = 0` on a flagged row — the 804. The paperclip that opens an empty strip.
- *  2. `attachment_count <> real` — the mixed messages. This arm is NOT optional dressing: once
- *     `pipeline.ts` writes `countRealFiles(...)`, a column left half-corrected would carry
- *     "all parts" for old rows and "downloadable parts" for new ones, with nothing on the row
- *     saying which. A count whose meaning depends on the row's age is worse than the wrong
- *     count it replaces, because no later reader can tell the two apart.
- *
- * `has_attachments = true` gates BOTH arms, and that is a deliberate bound rather than an
- * oversight. Measured: zero unflagged rows have a real file, so an "unflagged but
- * should be flagged" arm would select nothing while widening the pass's blast radius from
- * "rows that claim a file" to every message in the database. If that measurement ever stops
- * holding, the missing arm is a NEW defect and deserves its own slice and its own evidence.
- *
- * ── AND THE LOCK ───────────────────────────────────────────────────────────────────────────
- *
- * `FOR UPDATE OF messages` — `of` the one table, because the lateral count subquery is not
- * lockable and locking it would be meaningless anyway: `attachments` rows are written once at
- * ingest, in the same transaction as the message, and never updated.
+ * One page of messages whose stored pair disagrees with their attachment rows — locked FOR
+ * UPDATE, oldest id first. `real` is `count(*) where inline = false`, the Files-list predicate.
+ * Two arms: (1) `real = 0` on a flagged row; (2) `attachment_count <> real` — mixed messages: a
+ * half-corrected column would mean "all parts" on old rows and "downloadable parts" on new ones.
+ * `has_attachments = true` gates BOTH arms, a deliberate bound: measured, zero unflagged rows
+ * hold a real file, so a third arm would select nothing while widening the blast radius to every
+ * message. `FOR UPDATE OF messages` — `of` the one table: the lateral count subquery is not
+ * lockable, and `attachments` rows are written once at ingest.
  */
 async function selectCandidates(
   t: Tx,
