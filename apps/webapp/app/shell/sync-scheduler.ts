@@ -594,25 +594,20 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           return outcome;
         },
         /**
-         * FORWARDED, NOT GATED ON CADENCE, REFUSED WHEN CONTRADICTED.
-         *
-         * A body fetch happens because somebody selected a message, expanded a card, or
-         * opened a Screener row. It is the user's own intent, in a tab they are looking at,
-         * and it is bounded by that act: one request per message opened. The cadence gate
-         * exists to stop a DISCARDED engine paging through a thirty-seven page bootstrap on
-         * behalf of nobody — which is a different shape of cost entirely.
-         *
-         * Identity is the other question, and the answer here is `refuseIfForeign`'s: the id
-         * this request carries is only trustworthy while the session answering it belongs to
-         * the mirror that supplied the id. Once the jar names somebody else, a list this tab
-         * has already rendered can hand the body route an id that IS valid — for them — and
-         * the reply is their mail, in full, on this screen. See {@link refuseIfForeign}.
-         *
-         * It must be forwarded rather than omitted: a wrapper that dropped it would leave
-         * the engine with `adapter.fetchBody` undefined on the LIVE path only — the demo is
-         * unwrapped — so every live account would render snippets again while the whole
-         * suite stayed green. This is exactly the class of wiring bug the `transport` field
-         * below exists to keep visible.
+         * Forwarded, not gated on cadence, refused when contradicted. A body fetch happens because somebody selected
+         * a message, expanded a card, or opened a Screener row — the user's own intent, in a tab they are looking at,
+         * bounded by that act: one request per message opened. The cadence gate exists to stop a DISCARDED engine
+         * paging through a thirty-seven page bootstrap on behalf of nobody, a different shape of cost. Identity is
+         * the other question, answered by `refuseIfForeign`: the id this request carries is only trustworthy while
+         * the session answering it belongs to the mirror that supplied it — once the jar names somebody else, a list
+         * this tab already rendered can hand the body route an id that IS valid, for them, and the reply is their
+         * mail in full on this screen.
+         */
+
+        /**
+         * Forwarded rather than omitted: a wrapper that dropped it would leave `adapter.fetchBody` undefined on the
+         * LIVE path only (the demo is unwrapped), so every live account would render snippets again while the whole
+         * suite stayed green — exactly the class of wiring bug the `transport` field below exists to keep visible.
          */
         fetchBody: gatedRead(
           (messageId: string): Promise<MessageBodyWire | null> => adapter.fetchBody(messageId),
@@ -620,29 +615,23 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ),
 
         /*
-         * ── THE THREAD OPEN — FORWARDED, NOT GATED, AND SPREAD ────────────────────────────
-         *
-         * `GET /messages/bodies?ids=…`: every sibling of the conversation being opened, in one
-         * request instead of one per message.
-         *
-         * NOT GATED ON CADENCE, on `fetchBody`'s own argument — it fires because somebody
-         * opened a thread, in a tab they are looking at, and it is bounded by that act. It is
-         * in fact the LEAST speculative call on this list: one request for what used to be N.
-         * REFUSED WHEN CONTRADICTED, on `fetchBody`'s other argument, and more sharply: this
-         * one returns N bodies per call rather than one.
-         *
-         * SPREAD, and this is the line that decides whether the batch ever happens outside the
-         * demo. `OhmailEngine.hydrateThread` reads the capability structurally and falls back
-         * to asking per message when it is absent — a fallback that works, converges, and renders
-         * correctly, which is exactly what would make the omission invisible. The demo is never
-         * wrapped, so a missing line here is N requests per thread on the LIVE PATH ONLY, with
-         * the whole suite green. Sixth capability, same trap, same shape of guard:
-         * `test/thread-bodies-wired.test.ts` builds the real engine through `createEngine` and counts
-         * the requests.
-         *
-         * Unconditionally would be the opposite failure: a `FixturesAdapter` behind this gate
-         * claiming a batch endpoint it has no server for, and `?demo=1` issuing a request on the
-         * first thread anybody opens.
+         * The thread open — forwarded, not gated, and spread. `GET /messages/bodies?ids=…`:
+         * every sibling of the conversation being opened in one request instead of one per
+         * message. Not gated on cadence, on `fetchBody`'s own argument — it fires because
+         * somebody opened a thread, bounded by that act, and is the LEAST speculative call on
+         * this list (one request for what used to be N). Refused when contradicted, more
+         * sharply: this one returns N bodies per call rather than one.
+         */
+
+        /**
+         * Spread is the line that decides whether the batch ever happens outside the demo:
+         * `OhmailEngine.hydrateThread` reads the capability structurally and falls back to asking per message when
+         * absent — a fallback that works, converges and renders correctly, which is exactly what would make the
+         * omission invisible. The demo is never wrapped, so a missing line here is N requests per thread on the LIVE
+         * PATH ONLY with the whole suite green. Sixth capability, same trap, same guard:
+         * `test/thread-bodies-wired.test.ts` builds the real engine through `createEngine` and counts the requests.
+         * Unconditional would be the opposite failure: a `FixturesAdapter` claiming a batch endpoint it has no server
+         * for, and `?demo=1` issuing a request on the first thread anybody opens.
          */
         ...(adapter.fetchBodies
           ? { fetchBodies: gatedRead(adapter.fetchBodies.bind(adapter), "a thread's message bodies") }
@@ -685,124 +674,84 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           }
           : {}),
 
+        /**
+         * The worker doorbell — forwarded, not gated, and spread. `POST /sync/pull`: the "Pull new mail" press asking
+         * the worker to scan IMAP now. Not gated on cadence: it fires on a deliberate press in a tab the user is
+         * looking at, bounded by the act and by the route's own 5 s per-mailbox rate limit. Refused when
+         * contradicted, and not about bytes: every read on this list can only SHOW the wrong account's mail; this
+         * WRITES — the route stamps every mailbox on the answering session's account and wakes worker-side IMAP work,
+         * so a press in a stale tab bills and acts on an account nobody in this tab is. Spread, not always-defined:
+         * `OhmailEngine.pullAvailable()` is how the control decides to render at all, and a `FixturesAdapter` behind
+         * a gate must not claim a doorbell it has no worker for.
+         */
+
         /*
-         * ── THE WORKER DOORBELL — FORWARDED, NOT GATED, AND SPREAD ────────────────────────
-         *
-         * `POST /sync/pull`: the "Pull new mail" press asking the worker to scan IMAP now.
-         *
-         * NOT GATED ON CADENCE, on `fetchBody`'s own argument sharpened: it fires on a
-         * deliberate press, in a tab the user is looking at, and it is bounded twice over —
-         * once by the act, and once by the route's own 5 s per-mailbox rate limit. The cadence
-         * gate is about a DISCARDED engine paging through a bootstrap on behalf of nobody; a
-         * person pressing "Pull new mail" is the opposite of that.
-         *
-         * REFUSED WHEN CONTRADICTED, and this one is not about bytes at all. Every read on this
-         * list can only show the wrong account's mail; this WRITES — the route stamps every
-         * mailbox on the answering session's account and wakes worker-side IMAP work for it. A
-         * press in a stale tab therefore bills and acts on an account nobody in this tab is,
-         * and the person pressing it cannot see that they did. The strip already says this
-         * mailbox has stopped syncing; the button behind it must not be the exception.
-         *
-         * SPREAD, NOT ALWAYS-DEFINED: `OhmailEngine.pullAvailable()` is how the control decides
-         * to render at all, and it reads the adapter's own optional capability. Defining this
-         * unconditionally would make a `FixturesAdapter` behind a gate claim a doorbell it has
-         * no worker for.
-         *
-         * FORWARDED AT ALL — and this line is a REPAIR, not a precaution: the pull affordance
-         * shipped (2026-08-26) without it, and `OhmailEngine.requestPull` reads an absent
-         * capability as "this world has no worker to hurry" and returns null WITHOUT touching
-         * the wire. So on the live path — the only path this wrapper exists on — the button
-         * rendered, the click ran, no request left the browser, no state changed and nothing
-         * errored: a dead control indistinguishable from a broken one, with every suite green
-         * because every suite builds engines from bare adapters. The exact failure shape this
-         * literal's own header predicts, measured live on ohmail.app before this line existed.
-         * `test/pull-wired.test.ts` builds the real live engine through `createEngine` so that
-         * deleting this line goes red.
+         * Forwarded at all is a REPAIR: the pull affordance shipped (2026-08-26) without it,
+         * and `OhmailEngine.requestPull` reads an absent capability as "this world has no
+         * worker to hurry" and returns null without touching the wire. So on the live path the
+         * button rendered, the click ran, no request left the browser, nothing errored — a dead
+         * control indistinguishable from a broken one, every suite green because every suite
+         * builds engines from bare adapters; measured live on ohmail.app before this line
+         * existed. `test/pull-wired.test.ts` builds the real live engine through `createEngine`
+         * so deleting this line goes red.
          */
         ...(adapter.requestPull
           ? { requestPull: gatedRead(adapter.requestPull.bind(adapter), "a worker pull") }
           : {}),
 
+        /**
+         * The one-click unsubscribe — forwarded, refused when contradicted, and spread. `POST
+         * /messages/:id/unsubscribe`: RFC 8058, performed server-side so the reader's IP and reading time never reach
+         * the sender. Forwarded at all is a REPAIR, the third on this list: `OhmailEngine.unsubscribe` reads the
+         * capability structurally and answers `null` when absent, and this method was not in the gate's literal — so
+         * on the LIVE PATH every account got `null`, which `ScreenerView` mapped to the SUCCESS sentence: the control
+         * rendered, the press ran, no request left the browser, and the person was told it had been done.
+         * `test/sync-owner-gate.test.ts` builds the real engine through the gate and counts the request, so deleting
+         * this line goes red.
+         */
+
         /*
-         * ── THE ONE-CLICK UNSUBSCRIBE — FORWARDED, REFUSED WHEN CONTRADICTED, AND SPREAD ───
-         *
-         * `POST /messages/:id/unsubscribe`: RFC 8058, performed server-side so the reader's IP
-         * and reading time never reach the sender.
-         *
-         * FORWARDED AT ALL — and this line is a REPAIR, not a precaution, the third on this
-         * list to be one. `OhmailEngine.unsubscribe` reads the capability structurally and
-         * answers `null` when the adapter has none, which a surface is entitled to read as
-         * "this client cannot unsubscribe". The gate is an explicit object literal and this
-         * method was not in it, so on the LIVE PATH — the only path this wrapper exists on —
-         * every account got `null`. `ScreenerView` maps that answer to the SUCCESS sentence:
-         * the control rendered, the press ran, no request left the browser, no unsubscribe was
-         * ever asked for, and the person was told it had been. A silent failure wearing the
-         * face of a completed action, with every suite green because they build engines from
-         * bare adapters. `test/sync-owner-gate.test.ts` builds the real engine through the gate
-         * and counts the request, so deleting this line goes red.
-         *
-         * REFUSED WHEN CONTRADICTED, on `requestPull`'s argument rather than `fetchBody`'s:
-         * this does not read, it ACTS, and it acts at a third party in the answering account's
-         * name. Under a foreign session it would unsubscribe somebody else's mail from
-         * somebody else's list, irreversibly, on a press made in a window that is not theirs.
-         *
-         * SPREAD, for the usual reason: the FixturesAdapter has no server, the demo makes no
-         * external request, and a wrapper that defined this unconditionally would put a live
+         * Refused when contradicted, on `requestPull`'s argument rather than `fetchBody`'s:
+         * this does not read, it ACTS at a third party in the answering account's name — under
+         * a foreign session it would unsubscribe somebody else's mail from somebody else's
+         * list, irreversibly. Spread for the usual reason: the FixturesAdapter has no server,
+         * the demo makes no external request, and an unconditional definition would put a live
          * control over fixtures.
          */
         ...(adapter.unsubscribe
           ? { unsubscribe: gatedRead(adapter.unsubscribe.bind(adapter), "an unsubscribe") }
           : {}),
 
-        /*
-         * ── THE COLD-START READ — FORWARDED, AND THIS ONE **IS** THE GATED PAGE ────────────
-         *
-         * `GET /sync/snapshot` is not a sibling of `fetchBody` and `searchServer`; it is
-         * `sync()`'s own first page under another name. The engine takes it INSTEAD of
-         * `since=0` whenever the mirror's cursor is "0" — a first-ever start, a bootstrap that
-         * crashed before its last page, or the 410 branch. So the user's-own-intent argument
-         * that exempts the others points the other way here: a DISCARDED engine paging through
-         * a whole snapshot is exactly what this gate exists to refuse.
-         *
-         * It IS gated, on IDENTITY ONLY, through {@link gatedPage} — and the paragraph that
-         * used to stand here said the opposite, so read what it argued before trusting the
-         * reversal. It said a `SyncAbortedError` from page 1 would be swallowed by
-         * `runSnapshot`'s "this route is unusable" latch, and that page 2 onwards would be
-         * counted against the backoff. Half of that is still true and the other half was
-         * measured wrong.
-         *
-         * Page 1: the latch is real, and it is unreachable in practice. The scheduler re-reads
-         * identity BEFORE `syncOnce()` on every tick, so a drain only starts while the gate
-         * holds; reaching page 1 with a foreign jar needs the cookie to change inside the
-         * microtask between that check and the request. If it ever does happen the tab is
-         * `contradicted` and terminal anyway, and the cost is that a later healed session
-         * replays the log from seq zero instead of taking the snapshot — slower, never wrong.
-         *
-         * Pages 2..n: this is the window that matters and the reason the old paragraph was a
-         * defect rather than a trade-off. A cold account's bootstrap is ~37 pages over several
-         * seconds; a sign-in as somebody else in another tab of the same profile rewrites the
-         * jar in the middle of it, and every remaining page was selected from the NEW session
-         * and written into the mirror named for the old one — durably, because the mirror has
-         * no tombstones for ids it never should have held. `runSnapshot` rethrows from page 2
-         * onwards, and the scheduler's catch reads `SyncAbortedError` as a cancellation, which
-         * is exactly what this is: no failure count, no report, no retry.
-         *
-         * NOT gated on the CADENCE claim, deliberately: `mayContinue` is what a teardown moves,
-         * and refusing page 1 for a teardown WOULD hit the latch above for a reason that has
-         * nothing to do with identity. The gate on `sync()` still bounds the drain there — the
-         * delta pages that follow the snapshot refuse, and a torn-down loop stops.
-         *
-         * SPREAD, for the third time and the usual reason: defining it unconditionally would
-         * make a `FixturesAdapter` behind a gate claim a snapshot endpoint it has no server
-         * for, and `?demo=1` would issue a request on its first drain — the demo is fixtures,
-         * and a self-contained surface makes no external request at all.
-         *
-         * FORWARDED AT ALL: this literal is the whole surface the engine sees, and the demo is
-         * never wrapped — so a capability missing from this list is missing on the LIVE PATH
-         * ONLY. Every live account would fall back to replaying the log from seq zero, forever,
-         * with every test in the repo green because they build engines from bare adapters.
-         * `test/snapshot-wired.test.ts` builds the real live engine through `createEngine` so that
-         * deleting this line goes red.
+        /**
+         * The cold-start read — forwarded, and this one IS the gated page. `GET /sync/snapshot` is `sync()`'s own
+         * first page under another name: the engine takes it INSTEAD of `since=0` whenever the mirror's cursor is
+         * "0". So the user's-own-intent argument that exempts the others points the other way — a DISCARDED engine
+         * paging through a whole snapshot is exactly what this gate exists to refuse. It is gated on IDENTITY ONLY,
+         * through {@link gatedPage} — and the paragraph that used to stand here said the opposite: it said a
+         * `SyncAbortedError` from page 1 would be swallowed by `runSnapshot`'s "this route is unusable" latch, and
+         * that pages 2+ would count against the backoff. Half was still true; the other half was measured wrong.
+         */
+
+        /**
+         * Page 1: the latch is real and unreachable in practice — the scheduler re-reads identity BEFORE `syncOnce()`
+         * on every tick, so reaching page 1 with a foreign jar needs the cookie to change inside a microtask; if it
+         * does, the tab is `contradicted` and terminal anyway, and the cost is a later healed session replaying the
+         * log from seq zero — slower, never wrong. Pages 2..n are the window that matters: a cold bootstrap is ~37
+         * pages over seconds, a sign-in as somebody else in another tab rewrites the jar mid-drain, and every
+         * remaining page was selected from the NEW session and written durably into the mirror named for the old one.
+         * `runSnapshot` rethrows from page 2 on, and the scheduler's catch reads `SyncAbortedError` as a
+         * cancellation: no failure count, no report, no retry.
+         */
+
+        /**
+         * NOT gated on the CADENCE claim, deliberately: `mayContinue` is what a teardown moves, and refusing page 1
+         * for a teardown would hit the latch above for a reason unrelated to identity — the gate on `sync()` still
+         * bounds the drain there. SPREAD for the usual reason: unconditional, a `FixturesAdapter` behind a gate would
+         * claim a snapshot endpoint it has no server for and `?demo=1` would issue a request on its first drain.
+         * FORWARDED AT ALL: this literal is the whole surface the engine sees and the demo is never wrapped, so a
+         * capability missing here is missing on the LIVE PATH ONLY — every live account would replay the log from seq
+         * zero forever with every test green. `test/snapshot-wired.test.ts` builds the real live engine through
+         * `createEngine` so deleting this line goes red.
          */
         ...(adapter.snapshot
           ? {
@@ -813,30 +762,21 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           }
           : {}),
 
-        /*
-         * ── READING PAST THE END OF THE WINDOW — FORWARDED, NOT GATED, AND SPREAD ──────────
-         *
-         * `GET /messages?view=&cursor=`, the companion to the windowed store: a page of the mail
-         * this client chose not to keep on disk. Same rule as `fetchBody` and `searchServer` on
-         * all three counts.
-         *
-         * NOT GATED ON CADENCE: it fires when somebody scrolls to the bottom of a pile, in a
-         * tab they are looking at, and it is bounded by that act — one page per scroll, never
-         * speculative. The cadence gate is about a DISCARDED engine paging through a bootstrap
-         * on behalf of nobody.
-         *
-         * REFUSED WHEN CONTRADICTED, for `searchServer`'s reason exactly: this is the second
-         * read that returns a LIST rather than an answer about an id this mirror already holds,
-         * so a foreign session answers it with a foreign page of mail — rendered in the pile,
-         * and every id in it usable against the body route.
-         *
-         * SPREAD: `OhmailEngine.listOlderAvailable()` decides whether the end of a list offers a
-         * control at all. Defining this unconditionally would put "there is more, older mail" at
-         * the bottom of the demo's Ohbox, over fixtures that are the whole of Mila's world.
-         *
-         * FORWARDED AT ALL: without the line, a live windowed account reaches the end of its
-         * ninety-day window and is told that is the end of their mail — which is the falsest
-         * sentence this app could put on a screen, and it would say it only in production.
+        /**
+         * Reading past the end of the window — forwarded, not gated, and spread. `GET /messages?view=&cursor=`, the
+         * companion to the windowed store: a page of the mail this client chose not to keep on disk. Not gated on
+         * cadence: it fires when somebody scrolls to the bottom of a pile, one page per scroll, never speculative.
+         * Refused when contradicted, for `searchServer`'s reason exactly: the second read that returns a LIST rather
+         * than an answer about an id this mirror holds, so a foreign session answers with a foreign page of mail —
+         * rendered in the pile, every id usable against the body route. Spread: `OhmailEngine.listOlderAvailable()`
+         * decides whether the end of a list offers a control at all — unconditional would put "there is more, older
+         * mail" at the bottom of the demo's Ohbox.
+         */
+
+        /**
+         * Forwarded at all: without the line, a live windowed account reaches the end of its ninety-day window and is
+         * told that is the end of their mail — the falsest sentence this app could put on a screen, said only in
+         * production.
          */
         ...(adapter.listMessages
           ? { listMessages: gatedRead(adapter.listMessages.bind(adapter), "a page of older mail") }
@@ -859,38 +799,26 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           ? { restoreFromTrash: gatedRead(adapter.restoreFromTrash.bind(adapter), "restoring a message") }
           : {}),
 
+        /**
+         * Attachments — forwarded, not gated, and spread: three capabilities, one rule, `searchServer`'s for the
+         * third time. Not gated on cadence: `listAttachments` is one indexed row read when a message is opened, and
+         * the two byte methods fire on a click on a named file — gating them would mean a file that silently refuses
+         * to open whenever the predicate happens to be false. Refused when contradicted: an id reached through a
+         * foreign list opens a foreign file, and these three hand back its BYTES (`fetchAllAttachments` builds an
+         * archive of them). Spread: `OhmailEngine.attachmentsAvailable()` requires both functions, and the strip
+         * renders NOTHING when false — unconditional definitions would make a `FixturesAdapter` claim an attachment
+         * service it has no server for.
+         */
+
         /*
-         * ── ATTACHMENTS — FORWARDED, NOT GATED, AND SPREAD ────────────────────────────────
-         *
-         * Three capabilities, one rule, and it is `searchServer`'s rule for the third time.
-         *
-         * NOT GATED ON CADENCE: `listAttachments` is one indexed row read when a message is
-         * opened, and the two byte methods fire on a click on a named file. All three are the
-         * user's own intent in a tab they are looking at. The cadence gate is about a DISCARDED
-         * engine paging through a bootstrap on behalf of nobody; a person pressing a PDF is the
-         * opposite of that, and gating them on cadence would mean a file that silently refuses
-         * to open whenever the predicate happens to be false.
-         *
-         * REFUSED WHEN CONTRADICTED: an id reached through a foreign list opens a foreign
-         * file, and these three hand back its BYTES. `fetchAllAttachments` builds an archive of
-         * them.
-         *
-         * SPREAD, NOT ALWAYS-DEFINED: `OhmailEngine.attachmentsAvailable()` is `typeof
-         * adapter.listAttachments === "function" && typeof adapter.fetchAttachment ===
-         * "function"`, and the strip renders NOTHING when that is false. Defining these
-         * unconditionally would make a `FixturesAdapter` behind a gate claim an attachment
-         * service it has no server for — and `fetchAllAttachments` in particular would put a
-         * "Download all" button over an archive nothing can build.
-         *
-         * FORWARDED AT ALL: this object literal is the whole surface the engine sees. It is
-         * not a Proxy, and the demo engine is never wrapped (`engine-config.ts` returns before
-         * `guard`) — so a capability missing from THIS list is missing on the LIVE PATH ONLY.
-         * `attachmentsAvailable()` would answer false for every paying account, the strip
-         * would render nothing at all, and every unit test in the repo would stay green
-         * because they construct engines from bare adapters. That is the exact shape of the
-         * bug `transport` exists to keep visible, and `test/attachments-wired.test.ts` builds the
-         * real live engine through `createEngine` so that deleting any one of these three
-         * lines goes red.
+         * Forwarded at all: this object literal is the whole surface the engine sees. It is not
+         * a Proxy, and the demo engine is never wrapped (`engine-config.ts` returns before
+         * `guard`) — so a capability missing from THIS list is missing on the LIVE PATH ONLY:
+         * `attachmentsAvailable()` would answer false for every paying account, the strip would
+         * render nothing, and every unit test stays green because they construct engines from
+         * bare adapters — the exact bug `transport` exists to keep visible.
+         * `test/attachments-wired.test.ts` builds the real live engine through `createEngine`
+         * so deleting any one of these three lines goes red.
          */
         ...(adapter.listAttachments
           ? { listAttachments: gatedRead(adapter.listAttachments.bind(adapter), "an attachment list") }
@@ -1049,40 +977,31 @@ export interface SyncSchedulerOptions {
 }
 
 /**
- * Is this refusal PERMANENT — will no retry ever succeed?
- *
- * The adapter already knows: `HttpAdapter.rejectionOf` reads the wire's `retryable`, defaulting
- * to `status >= 500 || status === 429`, so a 401 or 403 arrives as `retryable: false` and the
- * loop ignored it. "Never gives up while the tab is visible" is the right rule for a mailbox
- * that is merely unreachable and the wrong one for a session that has been revoked or an
- * account that has been deleted: that tab can no longer be served AT ALL, and every retry it
- * makes is an invocation billed against an account with no entitlement behind it (#10).
- *
- * Anything that is not a typed refusal — a network error, a parse failure, an unknown throw —
- * stays retryable. Terminal is a positive claim, made only when the server made it.
- *
- * ── CORRECTED: THAT LAST SENTENCE WAS FALSE AS WRITTEN ──────────────────────────────────
- *
- * `retryable === false` alone caught far more than a revoked session. `HttpAdapter.rejectionOf`
- * defaults `retryable` to `status >= 500 || status === 429`, so **anything** else non-5xx latched:
- * a platform 401 from deployment protection (HTML body ⇒ no envelope ⇒ `code: null`), a
- * `DEPLOYMENT_NOT_FOUND` 404 mid-alias, any 400 from deploy skew, and a 403
- * `enrollment_incomplete` whose own middleware comment says the client must NOT discard the
- * session. Observed live: `ohmail.app` told a signed-in user "Sign in" while `/api/auth/session`,
- * `/api/sync` and `/api/mailboxes` all answered 200.
- *
- * So the claim is now checked rather than asserted. `code !== null` is the proof the refusal came
- * from OUR envelope and not from the platform, and 401/403 is the only pair that means "this
- * identity cannot be served". Everything else goes back to being retryable, which is what the
- * paragraph above always said.
- *
- * This narrowing is NOT sufficient on its own, and that is deliberate — see `revalidating` and
- * `refusedAt` below. The live recurrence was an APP-shaped 401 on `/api/sync?since=…` that was
- * merely TRANSIENT, and no classifier can tell a transient 401 from a permanent one at the moment
- * it arrives. Only asking again can — which is now done TWICE, at two different moments and for
- * two different reasons: once before the claim is ever made ({@link REFUSAL_CONFIRM_MS}), and
- * once on every wake after it has been (`lastProbeAt`). The first stops a short
- * refusal from being announced at all; the second stops a long one from outliving the transient.
+ * Is this refusal PERMANENT — will no retry ever succeed? The adapter already knows:
+ * `HttpAdapter.rejectionOf` reads the wire's `retryable` (default `status >= 500 || 429`), so a
+ * 401/403 arrives `retryable: false` and the loop ignored it. "Never gives up while the tab is
+ * visible" is right for a mailbox merely unreachable and wrong for a revoked session or a
+ * deleted account: that tab cannot be served at all, and every retry is an invocation billed
+ * against an account with no entitlement (#10). Anything that is not a typed refusal — a
+ * network error, a parse failure, an unknown throw — stays retryable: terminal is a positive
+ * claim, made only when the server made it.
+ */
+
+/**
+ * Corrected: `retryable === false` alone caught far more than a revoked session — anything non-5xx latched: a
+ * platform 401 from deployment protection (HTML body ⇒ no envelope ⇒ `code: null`), a `DEPLOYMENT_NOT_FOUND` 404
+ * mid-alias, any 400 from deploy skew, and a 403 `enrollment_incomplete` whose own middleware says the client must
+ * NOT discard the session. Observed live: ohmail.app told a signed-in user "Sign in" while `/api/auth/session`,
+ * `/api/sync` and `/api/mailboxes` all answered 200. So the claim is checked rather than asserted: `code !== null`
+ * proves the refusal came from OUR envelope, and 401/403 is the only pair meaning "this identity cannot be served";
+ * everything else stays retryable.
+ */
+
+/**
+ * The narrowing is deliberately not sufficient alone — see `revalidating` and `refusedAt`: the live recurrence was an
+ * app-shaped 401 on `/api/sync` that was merely TRANSIENT, and no classifier can tell a transient 401 from a
+ * permanent one when it arrives. Only asking again can — done TWICE: before the claim is ever made ({@link
+ * REFUSAL_CONFIRM_MS}), and on every wake after (`lastProbeAt`).
  */
 function isTerminalRefusal(err: unknown): boolean {
   return err instanceof MutationRejectedError
@@ -1092,44 +1011,31 @@ function isTerminalRefusal(err: unknown): boolean {
 }
 
 /**
- * Start the sync loop for one engine. Returns the teardown.
- *
- * ── ONE TIMER, ARMED ONLY AFTER THE PREVIOUS DRAIN HAS SETTLED ──────────────────────────
- *
- * `setInterval` is the trap the Cloud API's `/events` route documents for the server side and
- * it is the same trap here: under latency the ticks stack, and what you get is not a faster
- * sync but a queue of drains that each observe a cursor the one before them was about to
- * move. This loop awaits the drain and only then arms the next timeout, so the cadence is
- * "eight seconds of quiet", never "eight seconds since the last attempt began".
- *
- * ── A HIDDEN TAB HOLDS NO STREAM AND DRAINS ONCE A MINUTE ───────────────────────────────
- *
- * This section said "a hidden tab performs ZERO syncs — not 'fewer' and not 'cheaper ones'",
- * and the wake slice reversed it: hiding the tab now closes the wake stream (a background tab
- * must not pin a server connection) and slows the timer to {@link HIDDEN_POLL_MS}, so the
- * mailbox is at most a minute stale when somebody comes back to it. Coming back is still
- * instant — `visibilitychange` drains immediately and reopens the stream — and so is regaining
- * the network, via `online`; neither wake accelerates a HIDDEN tab past its cadence.
- *
- * What did NOT move is teardown, and the {@link SyncGate} exists for it: `stopped` cancels a
- * drain between pages rather than merely stopping to care — a live→demo navigation aborts the
- * discarded live engine's drain instead of letting it finish paging from behind a page that
- * promises zero egress. The gate deliberately no longer reads visibility: the loop that STARTS
- * a hidden drain cannot share a predicate with one that would cancel its second page.
- *
- * ── EVERYTHING FUNNELS THROUGH `syncOnce()` ─────────────────────────────────────────────
- *
- * Its single-flight (`engine.ts`) returns the in-flight promise to a second caller, so a wake,
- * a retry and a mutation's read-your-writes drain can never stack into two concurrent
- * `/sync` requests. The 410 re-bootstrap stays where it belongs, inside the engine's own
- * `drain()`; this loop never touches the cursor and never calls `resetForBootstrap`.
- *
- * `engine.hydrate()` is the one thing here that is not `syncOnce()`. It is the other half of
- * `engine.start()`, split out because the retry path must not re-read the whole IndexedDB
- * mirror on every backoff step while the network is down. It is called through the ENGINE
- * rather than through `engine.store`, and that is not tidying: only the engine holds the
- * listeners, so a bare `store.load()` hydrates the mirror without publishing it and the
- * cached mail stays invisible until a network round trip completes.
+ * Start the sync loop for one engine. Returns the teardown. One timer, armed only after the previous drain has
+ * settled: `setInterval` is the trap the Cloud API's `/events` route documents — under latency the ticks stack into a
+ * queue of drains each observing a cursor the one before was about to move. This loop awaits the drain and only then
+ * arms the next timeout, so the cadence is "eight seconds of quiet", never "eight seconds since the last attempt
+ * began". A hidden tab holds no stream and drains once a minute: hiding closes the wake stream (a background tab must
+ * not pin a server connection) and slows the timer to {@link HIDDEN_POLL_MS}; coming back is instant —
+ * `visibilitychange` drains immediately and reopens the stream, as does `online` — and neither wake accelerates a
+ * hidden tab past its cadence.
+ */
+
+/**
+ * Teardown did not move, and the {@link SyncGate} exists for it: `stopped` cancels a drain between pages rather than
+ * merely stopping to care — a live→demo navigation aborts the discarded live engine's drain instead of letting it
+ * page on behind a page that promises zero egress. The gate deliberately no longer reads visibility: the loop that
+ * STARTS a hidden drain cannot share a predicate with one that would cancel its second page. Everything funnels
+ * through `syncOnce()` — its single-flight (`engine.ts`) returns the in-flight promise to a second caller, so a wake,
+ * a retry and a mutation's read-your-writes drain never stack into two concurrent `/sync` requests; the 410
+ * re-bootstrap stays inside the engine's own `drain()`, and this loop never touches the cursor.
+ */
+
+/**
+ * `engine.hydrate()` is the one non-`syncOnce()` call: the other half of `engine.start()`, split out so the retry
+ * path does not re-read the whole IndexedDB mirror on every backoff step — and called through the ENGINE, not
+ * `engine.store`, because only the engine holds the listeners: a bare `store.load()` hydrates without publishing and
+ * the cached mail stays invisible until a network round trip completes.
  */
 export function startSyncScheduler(
   engine: OhmailEngine,
@@ -1177,34 +1083,25 @@ export function startSyncScheduler(
    */
   let terminal = false;
   /**
-   * WHY the loop is terminal, as two INDEPENDENT bits rather than one flag naming a winner.
-   *
-   * `terminal` is the union of them, and both causes are real and unrelated: the SERVER refused
-   * this session (sustained, and its own statement about this account), or the cookie jar names
-   * somebody else (this browser's own state, which can change back).
-   *
-   * One flag could not compose. It said "the current terminal is a contradiction's", so a server
-   * refusal that latched first and a contradiction observed afterwards overwrote it — and when
-   * the contradiction cleared, the release took the SERVER's verdict with it. The gate stayed
-   * shut and no bytes flowed, so nothing leaked; what disappeared was a true sentence the person
-   * needed. Two bits, and a contradiction can only ever clear its own.
-   *
-   * ── AND THE SEQUENCE THAT DISTINGUISHES THEM IS REAL, WHICH I CLAIMED IT WAS NOT ───────────
-   *
-   * This shipped with no test and a recorded argument that none was possible: a terminal loop
-   * holds NO TIMER, so the only thing that can drive a tick — and therefore observe a marker
-   * change — is `wake()`'s probe, floored at `BACKOFF_CAP_MS` and guarded by `visible()`.
-   *
-   * The argument was wrong, and the way it was wrong is worth keeping. The floor is real; my
-   * attempt to drive two observations through it advanced past the cap before the SECOND wake and
-   * not before the FIRST, so the probe that was meant to OBSERVE the contradiction was itself
-   * throttled and the gate never saw the other account at all. Two identical published sequences
-   * came back and I read that as "no sequence exists" rather than "my sequence did not run".
-   *
-   * `sync-owner-gate.test.ts`'s "a contradiction that comes and goes does not erase the server's
-   * own refusal" is that sequence, with the cap before BOTH wakes. Measured: with one flag it goes
-   * red, with two bits green. A guard nobody has watched fail is not evidence — and neither is an
-   * argument that it cannot.
+   * Why the loop is terminal, as two INDEPENDENT bits rather than one flag naming a winner.
+   * `terminal` is their union, and both causes are real and unrelated: the SERVER refused this
+   * session (sustained, its own statement about this account), or the cookie jar names somebody
+   * else (this browser's state, which can change back). One flag could not compose: it said
+   * "the current terminal is a contradiction's", so a server refusal that latched first was
+   * overwritten by a later contradiction — and when the contradiction cleared, the release took
+   * the SERVER's verdict with it. The gate stayed shut and nothing leaked; what disappeared was
+   * a true sentence the person needed. Two bits, and a contradiction can only clear its own.
+   */
+
+  /**
+   * The sequence that distinguishes them is real, which I claimed it was not. This shipped with no test and a
+   * recorded argument that none was possible: a terminal loop holds no timer, so only `wake()`'s probe — floored at
+   * `BACKOFF_CAP_MS`, guarded by `visible()` — can observe a marker change. The argument was wrong in an instructive
+   * way: my attempt advanced past the cap before the SECOND wake and not before the FIRST, so the probe meant to
+   * observe the contradiction was itself throttled — two identical published sequences, read as "no sequence exists"
+   * rather than "my sequence did not run". `sync-owner-gate.test.ts`'s "a contradiction that comes and goes does not
+   * erase the server's own refusal" is that sequence, with the cap before BOTH wakes: one flag red, two bits green. A
+   * guard nobody has watched fail is not evidence — and neither is an argument that it cannot.
    */
   let terminalByServer = false;
   let terminalByIdentity = false;
@@ -1435,43 +1332,33 @@ export function startSyncScheduler(
     return streamOpen ? wakeSafetyPollMs : pollMs;
   };
 
-  /* ════════════════════════════════════════════════════════════════════════════════════════
-     THE POLL FLOOR, AND WHY IT MAY ONLY EVER BE PULLED EARLIER
-     ════════════════════════════════════════════════════════════════════════════════════════
+  /**
+   * The poll floor, and why it may only ever be pulled earlier. A floor is a BOUND ON STALENESS. Every other timer in
+   * this loop is a schedule — a cadence, a backoff step, a confirm window — and `arm()` is right for those: it
+   * disarms and re-sets, the new schedule replacing the old. Re-arming a floor with it is a category error that
+   * shipped: `arm()` throws away the running countdown, so a floor re-armed more often than its own period NEVER
+   * FIRES. Measured in production: the stream's `error` handler re-armed the fast poll directly, and with
+   * `/api/events` killed at the transport layer `EventSource` retried on the server's `retry: 3000` hint, firing
+   * `error` every three seconds against an eight-second poll — one `/api/sync` in 210 seconds through ~100
+   * reconnects, a 127-second-old mutation not on screen.
+   */
 
-     A floor is a BOUND ON STALENESS. Every other timer in this loop is a schedule — a cadence,
-     a backoff step, a confirm window — and `arm()` is right for those: it disarms and re-sets,
-     because the new schedule replaces the old one. Re-arming a floor with it is a category
-     error, and one that shipped: `arm()` throws away the countdown that was already running, so
-     a floor re-armed more often than its own period NEVER FIRES.
+  /**
+   * The defect was not failing to re-arm — it re-armed seventy times — but that "re-arm" meant "restart the
+   * countdown": the sicker the stream, the harder the floor was held down, invisible to a suite that fires one
+   * `error` and waits.
+   */
 
-     ── MEASURED IN PRODUCTION, NOT REASONED ABOUT ──────────────────────────────────────────
-
-     The stream's `error` handler used to re-arm the fast poll directly. With `/api/events`
-     killed at the TRANSPORT layer (a proxy dropping SSE, a dead network, a blocked request),
-     `EventSource` retries on the server's `retry: 3000` hint and fires `error` on every failed
-     attempt — three seconds apart, against an eight second poll. The live tab issued EXACTLY
-     ONE `/api/sync` in 210 seconds and then none, through ~100 reconnect attempts, with a
-     127-second-old mutation still not on screen and nothing in the UI saying so. The same tab
-     reached the same state without any network fault at all, by the ordinary route: the server
-     cycles a stream at 270 s, and if the reconnect cannot land, the poll is starved from there.
-
-     The defect was NOT that the handler failed to re-arm. It re-armed about seventy times. It
-     is that "re-arm" meant "restart the countdown", so the sicker the stream got, the harder
-     the floor was held down — precisely backwards, and invisible to a test that fires one
-     `error` and waits, which is what the suite had.
-
-     ── THE RULE ────────────────────────────────────────────────────────────────────────────
-
-     `armFloor()` GUARANTEES a drain is pending no later than the current state's cadence and is
-     otherwise a no-op. It never delays a drain that is already sooner, so it is safe to call on
-     every stream event, however many arrive, and the caller does not have to know what else the
-     machine has armed. What it will not do is override the paths that own their own timing for
-     reasons stronger than staleness: a backoff (`failures > 0`) is already a bounded retry and
-     stomping it would turn one dead stream into an 8-second hammer on a mailbox that is failing
-     anyway; a refusal window is a contract with a claim the server made; `terminal` deliberately
-     holds no timer; and a running drain arms from its own settle, one line later, at the same
-     cadence this would have chosen. */
+  /*
+   * The rule: `armFloor()` GUARANTEES a drain is pending no later than the current state's
+   * cadence and is otherwise a no-op. It never delays a drain already sooner, so it is safe on
+   * every stream event, however many arrive. What it will not do is override paths that own
+   * their timing for reasons stronger than staleness: a backoff (`failures > 0`) is a bounded
+   * retry, and stomping it would turn one dead stream into an 8-second hammer on a mailbox that
+   * is failing anyway; a refusal window is a contract with a claim the server made; `terminal`
+   * deliberately holds no timer; and a running drain arms from its own settle, one line later,
+   * at the same cadence this would have chosen.
+   */
   const armFloor = (): void => {
     if (stopped || terminal || running || refusedAt !== null || failures > 0) return;
     const ms = steadyDelay();
