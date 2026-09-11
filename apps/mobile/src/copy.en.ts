@@ -318,6 +318,10 @@ const TABLE = {
     "ohmail needs your incoming server (IMAP). Open Server settings and give its address.",
   standaloneNoPort:
     "That IMAP port is not a number ohmail can dial. Open Server settings and check it.",
+  standaloneSignInRefused:
+    "Your mail server would not accept that address and password. Check them and try again — nothing has been saved.",
+  standaloneNoEncryption:
+    "Your mail server offers no encrypted connection on that port, and ohmail will not send your password in the clear. Try port 993 in Server settings.",
   standaloneRefused: (detail: string) =>
     `Opening the mailbox stopped: ${detail}`,
 

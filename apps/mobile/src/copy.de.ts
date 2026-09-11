@@ -171,6 +171,10 @@ export const DE: Deck = {
     "ohmail braucht deinen Posteingangsserver (IMAP). Öffne die Servereinstellungen und gib seine Adresse an.",
   standaloneNoPort:
     "Diesen IMAP-Port kann ohmail nicht wählen. Öffne die Servereinstellungen und prüfe ihn.",
+  standaloneSignInRefused:
+    "Dein Mailserver hat diese Adresse und dieses Passwort nicht akzeptiert. Prüfe beides und versuche es erneut — es wurde nichts gespeichert.",
+  standaloneNoEncryption:
+    "Dein Mailserver bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 993 in den Servereinstellungen.",
   standaloneRefused: (detail: string) =>
     `Das Öffnen des Postfachs wurde abgebrochen: ${detail}`,
 

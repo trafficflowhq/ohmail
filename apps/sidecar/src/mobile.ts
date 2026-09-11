@@ -43,10 +43,12 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
 import type { OrganizerKind } from "@trafficflow/core/adapters/organizer-lease";
 /* THE WORKER'S SOCKET PROFILE, not a third one. See {@link startPhoneEngine}. */
-import { WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
+import { DEFAULT_NET_TIMEOUTS, WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import {
   createSidecar,
+  credentialsRefused,
+  tlsRefused,
   type AdapterDialContext,
   type OrganizerState,
   type MailboxConnectionState,
@@ -574,22 +576,56 @@ export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngi
    * the built-tested-unreachable shape this whole composition exists to close, and it would have
    * put "does this install organize its mailbox?" in the app rather than in the engine.
    *
-   * `void` and a catch, not an `await`: the handle is usable the moment this function resolves,
-   * which is the desktop's own "door before mailbox" order. A launch that fails is not fatal — the
-   * runtime arms its poll on the way out and `wake()` re-dials when the app returns to the
-   * foreground — and it is VISIBLE without a logger, because the failure marks the connection dead
-   * and {@link PhoneEngine.runtimes} reports the row rather than the gate's optimism.
+   * ── A LAUNCH THE SERVER ANSWERED WITH A NO IS NOT HANDED BACK AS AN ENGINE ──────────────
    *
-   * This is a READ. Nothing moves before the lease is consulted; the dial and the gate are the
-   * engine's own, unchanged.
+   * This was `void sidecar.start().catch(...)` and the catch was UNREACHABLE: `start()` settles
+   * every mailbox with `allSettled` and logs, so it never rejects for one that could not be
+   * opened. Measured on a device: Connect was pressed, the server refused the dial, and the door
+   * reported the mailbox open and navigated away — nothing authenticated, nothing said.
+   *
+   * So the launch is awaited, bounded, and exactly two outcomes are refusals: the server rejected
+   * the sign-in, or it refused the encrypted way in. Both are choices a poll cannot heal. An
+   * OUTAGE is not a refusal — a refused socket, a timeout, a server that is down — because
+   * offline is a property of this mode and the poll re-dials.
+   *
+   * The bound is the dial's own connect + greeting, from the timeouts this composition already
+   * hands the adapter; a first drain still running is a healthy engine, so the bound elapsing is
+   * a yes. On a refusal the engine is STOPPED rather than returned.
    */
-  void sidecar.start().catch((err: unknown) => {
-    log("mailbox_start_failed", {
-      err,
-      reason: "the mailbox did not come up; the engine keeps serving the local store and the " +
-        "poll will re-dial",
+  /* MERGED THE WAY `imapFlowOptions` MERGES IT — `timeouts` on a config is PARTIAL, and a caller
+     that overrode only `socketMs` would otherwise leave the two halves of this bound undefined. */
+  const timeouts = { ...DEFAULT_NET_TIMEOUTS, ...(deps.imap.timeouts ?? WORKER_NET_TIMEOUTS) };
+  const launched = sidecar.start().then(
+    (report) => report.failures,
+    // `start()` does not reject per mailbox; an assembly-level throw is still a launch failure and
+    // is classified by the same two predicates rather than swallowed here.
+    (err: unknown) => [{ mailboxId: "", err }],
+  );
+  const bounded = await Promise.race([
+    launched,
+    new Promise<null>((resolve) => {
+      const t = setTimeout(() => resolve(null), timeouts.connectionMs + timeouts.greetingMs);
+      (t as unknown as { unref?: () => void }).unref?.();
+    }),
+  ]);
+  const answered = (bounded ?? []).find((f) => credentialsRefused(f.err) || tlsRefused(f.err));
+  if (answered !== undefined) {
+    log("mailbox_open_refused", {
+      err: answered.err,
+      mailboxId: answered.mailboxId,
+      reason: "the mail server answered this launch and refused it, so no engine is handed back " +
+        "and the caller can say why rather than reporting an opened mailbox",
     });
-  });
+    await sidecar.stop().catch(() => { /* nothing to keep: the launch is being refused */ });
+    // THE ORIGINAL ERROR, rethrown. It carries imapflow's own `authenticationFailed`/`tlsFailed`
+    // and its cause chain, so the caller classifies it with the same predicates this file used
+    // rather than being handed a verdict it cannot check. No password is in it.
+    throw answered.err;
+  }
+  /* The launch that is still running, or one that failed for a reason a poll may heal. Its own
+     failures are logged by `start()`; this attaches nothing so a later rejection cannot become an
+     unhandled one. */
+  void launched.catch(() => undefined);
 
   return {
     handle: (req) => sidecar.handle(req),

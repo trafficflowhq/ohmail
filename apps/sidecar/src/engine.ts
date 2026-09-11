@@ -646,8 +646,20 @@ export interface Sidecar {
    * hour. A snapshot per call, like its neighbour.
    */
   connectionStates(): Record<string, MailboxConnectionState>;
-  /** Connect, ensure the `ohmail/*` tree exists, drain, then poll. */
-  start(): Promise<void>;
+  /**
+   * Connect, ensure the `ohmail/*` tree exists, drain, then poll — and SAY WHICH MAILBOXES COULD
+   * NOT BE LAUNCHED.
+   *
+   * It still does not throw for a mailbox (see the implementation: one mailbox's dead server must
+   * not take the others down), and every caller that ignores the answer keeps the behaviour it
+   * had. The answer exists because the launch failure was previously visible only as a log line:
+   * a composition standing in front of a person who has just typed a password — the phone's
+   * fourth door — had no way to learn that the server had ANSWERED and said no, and reported the
+   * mailbox as opened. The report is data, not a flag: each entry carries the original error, so
+   * a caller classifies it with the same predicates this file uses ({@link credentialsRefused})
+   * instead of being handed somebody else's verdict.
+   */
+  start(): Promise<LaunchReport>;
   /**
    * Whether this install is currently this mailbox's organizer, and if not, who is.
    *
@@ -1267,6 +1279,36 @@ export const REDIAL_BACKOFF_BASE_MS = 15_000;
  * anything and long enough that a broken server sees single figures per hour.
  */
 export const REDIAL_BACKOFF_MAX_MS = 5 * 60_000;
+
+/**
+ * WHAT A LAUNCH COULD NOT OPEN — see {@link LocalSidecar.start}.
+ *
+ * Empty is the healthy answer AND the offline one: a mailbox with no usable password never
+ * dials, which is not a failed launch (`start()` returns before `connect()` for it).
+ */
+export interface LaunchReport {
+  readonly failures: readonly { readonly mailboxId: string; readonly err: unknown }[];
+}
+
+/**
+ * DID THE SERVER REFUSE THE ENCRYPTED WAY IN — the TLS twin of {@link credentialsRefused}.
+ *
+ * imapflow stamps `tlsFailed` on both of its TLS refusals: no STARTTLS where the options require
+ * it (`_failSTARTTLS`), and data injected between the tagged STARTTLS OK and the handshake. Both
+ * mean the same thing to a caller: this configuration cannot be dialled, and a poll will not make
+ * it dialable. That is what separates it from a timeout or a refused socket.
+ *
+ * The same `cause` walk and the same hop bound as its neighbour, for the same reason — the adapter
+ * wraps, and a predicate that only read the outermost error would answer `false` for the wrapped
+ * shape it exists to recognise.
+ */
+export function tlsRefused(err: unknown): boolean {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    if ((e as { tlsFailed?: unknown }).tlsFailed === true) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
 
 /**
  * DID THE SERVER REJECT OUR CREDENTIALS — one bit, and deliberately narrower than the worker's.
@@ -8093,11 +8135,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * throw here is not fatal to the process. What it must not do is take the OTHER mailboxes
        * down with it. Each runtime's own `start` already closes its login on the way out.
        */
-      async start() {
-        const runs = await Promise.allSettled(runtimes.all().map((r) => r.start()));
-        for (const r of runs) {
-          if (r.status === "rejected") log("mailbox_start_failed", { err: r.reason });
-        }
+      async start(): Promise<LaunchReport> {
+        /* CAPTURED BEFORE the launches, so the index of a settled result names the mailbox it
+           belongs to. Reading `runtimes.all()` again afterwards would be a different list — a
+           mailbox can be detached while its own launch is in flight. */
+        const all = runtimes.all();
+        const runs = await Promise.allSettled(all.map((r) => r.start()));
+        const failures: { mailboxId: string; err: unknown }[] = [];
+        runs.forEach((r, i) => {
+          if (r.status !== "rejected") return;
+          log("mailbox_start_failed", { err: r.reason });
+          failures.push({ mailboxId: all[i]?.mailboxId ?? "", err: r.reason });
+        });
+        return { failures };
       },
       async stop() {
         // The INSTALL is going down, which is what the account-scoped passes yield on. Each

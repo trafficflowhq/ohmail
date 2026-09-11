@@ -138,6 +138,37 @@ export type StandaloneOutcome =
   | { ok: false; reason: Refusal };
 
 /**
+ * ═══ WHY A DIAL FAILED, AS FAR AS THIS APP MAY JUDGE IT ════════════════════════════════════════
+ *
+ * The engine refuses a launch the mail server ANSWERED WITH A NO and rethrows the server's own
+ * error, which carries imapflow's two flags. These two predicates read them, and they are the
+ * whole of what this app decides about a dial.
+ *
+ * They are not imports. The engine reaches this app as a pre-bundled artifact (see the banner), so
+ * its `credentialsRefused`/`tlsRefused` cannot be named from here — and a second READING of the
+ * same flag is not a second decision: the flags are imapflow's published surface, not ours.
+ * `test/standalone-door.test.ts` pins the pair by BEHAVIOUR, driving the real artifact against a
+ * server that refuses, so a divergence is caught by what happens rather than by a name.
+ *
+ * The `cause` walk and the hop bound are the engine's, for the engine's reason: the adapter wraps,
+ * and a predicate that read only the outermost error would answer `false` for the wrapped shape it
+ * exists to recognise.
+ */
+const flagged = (err: unknown, flag: "authenticationFailed" | "tlsFailed"): boolean => {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    if ((e as Record<string, unknown>)[flag] === true) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+};
+
+/** The server answered and rejected the sign-in. A password, not a network. */
+export const signInRefused = (err: unknown): boolean => flagged(err, "authenticationFailed");
+
+/** The server offered no encrypted way in on that port, or one that could not be trusted. */
+export const encryptionRefused = (err: unknown): boolean => flagged(err, "tlsFailed");
+
+/**
  * Open it. Two refusals before the engine is asked anything, and after that the engine's own.
  *
  * The host check is here rather than on the button because a refusal that names the missing field
@@ -167,6 +198,14 @@ export async function openStandaloneMailbox(
     });
     return { ok: true, door: engine };
   } catch (err) {
+    /* ── THE TWO ANSWERS A MAIL SERVER GAVE, WORDED AS THIS APP'S OWN SENTENCES ──────────────
+     *
+     * Both arrive as the server's own error, and neither may be shown as one: an English library
+     * message inside a German screen is the defect `refusal.ts` exists for, and the sentence a
+     * person needs here is about their password or their port, not about STARTTLS. So each becomes
+     * a KEYED refusal with no arguments — which also means neither can carry the password. */
+    if (signInRefused(err)) return { ok: false, reason: refuse("standaloneSignInRefused") };
+    if (encryptionRefused(err)) return { ok: false, reason: refuse("standaloneNoEncryption") };
     /* `faultDetail`, never `String(err)`: it words a fault THIS APP authored (a store fault
        becomes a keyed refusal, rendered in the reader's language at the moment it is shown) and
        quotes anybody else's verbatim. The password is in neither — it is not in any argument this
