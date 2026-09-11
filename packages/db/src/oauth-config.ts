@@ -71,18 +71,14 @@ export const MS_OAUTH_ENV = {
 } as const;
 
 /**
- * ACCEPTED ALIASES, in the order they are tried. The `MS_OAUTH_*` names are CANONICAL and are what
- * documentation and refusals quote; the `MICROSOFT_*` names are accepted because that is what the
- * live deployment's environment already holds.
- *
- * Two names for one value is a smell and the alternative was worse: renaming the variables in the
- * platform's dashboards is a change nothing in this repository can verify, and a deployment where
- * the secret is present under a name the resolver does not read produces the single most misleading
- * failure this feature has — "Outlook is not configured", about a registration that is complete.
- * So the resolver reads both and the canonical name wins when both are set.
- *
- * ONE READER, so the two hosts cannot accept different sets: the worker's `loadConfig` and the API's
- * bootstrap both go through {@link msOAuthEnv}.
+ * Accepted aliases, in the order tried. The `MS_OAUTH_*` names are CANONICAL and what refusals
+ * quote; the `MICROSOFT_*` names are accepted because that is what the live deployment's
+ * environment already holds. Two names for one value is a smell and the alternative was worse:
+ * renaming variables in the platform's dashboards is a change nothing in this repository can
+ * verify, and a secret present under a name the resolver does not read produces the most
+ * misleading failure this feature has — "Outlook is not configured", about a complete
+ * registration. The resolver reads both; the canonical name wins. ONE READER, so the two hosts
+ * cannot accept different sets: both go through {@link msOAuthEnv}.
  */
 export const MS_OAUTH_ENV_ALIASES: Readonly<Record<keyof typeof MS_OAUTH_ENV, readonly string[]>> = {
   clientId: [MS_OAUTH_ENV.clientId, "MICROSOFT_CLIENT_ID"],
@@ -250,16 +246,13 @@ export interface WriteOAuthProviderConfigInput {
 }
 
 /**
- * Upsert the registration on `(provider)`.
- *
- * ── AN ABSENT FIELD IS "LEAVE IT ALONE", NOT "CLEAR IT" ───────────────────────────────────
- *
- * The console's form is partial by design: the secret is write-only, and an operator flipping
- * `enabled` is not restating the client id. So every field is optional and only the ones PRESENT
- * are written. The insert arm supplies the column defaults for whatever is absent; the update arm
- * touches nothing it was not given. Getting this backwards — assigning `undefined` wholesale — is
- * how "the operator toggled the switch" becomes "the operator erased the registration", which is
- * the identical defect `upsertCredOn` fixed for `mailbox_credentials.meta`.
+ * Upsert the registration on `(provider)`. An absent field is "leave it alone", not "clear it":
+ * the console's form is partial by design — the secret is write-only, and an operator flipping
+ * `enabled` is not restating the client id — so every field is optional and only the ones PRESENT
+ * are written. The insert arm supplies defaults for whatever is absent; the update arm touches
+ * nothing it was not given. Getting this backwards — assigning `undefined` wholesale — is how
+ * "the operator toggled the switch" becomes "the operator erased the registration", the identical
+ * defect `upsertCredOn` fixed for `mailbox_credentials.meta`.
  */
 export async function writeOAuthProviderConfig(
   tx: Tx, input: WriteOAuthProviderConfigInput,
@@ -380,21 +373,15 @@ export async function resolveOAuthProviderConfig(
 
 /** The first `https://` redirect URI — the one the BROWSER ceremony uses. See {@link webRedirectUri}. */
 export function webRedirectUri(cfg: Pick<ResolvedOAuthConfig, "redirectUris">): string | null {
-  /*
-   * WHY "the first https entry" AND NOT "the only entry".
-   *
-   * Azure holds every redirect URI the application may use, and this deployment will register two:
-   * the hosted web callback, and a `http://localhost:<port>/…` loopback for the desktop flow. Both
-   * belong in the operator's list — it is a record of what Azure has — so the browser ceremony
-   * cannot simply take `[0]`, and it must not take a loopback URI (Microsoft would redirect the
-   * consent back to a port on the user's machine, where the hosted callback is not listening).
-   *
-   * The selector is scheme-based rather than positional so the list can be reordered in the console
-   * without changing which URI the web flow names. START and CALLBACK both call this, so the value
-   * sent to `/authorize` and the value replayed at the token exchange are one expression — and
-   * Microsoft requires those two to match EXACTLY, which is why this is a function and not a
-   * convention two files follow.
-   */
+  // Why "the first https entry" and not "the only entry": Azure holds every redirect URI the
+  // application may use, and this deployment registers two — the hosted web callback and a
+  // `http://localhost:<port>/…` loopback for the desktop flow. Both belong in the operator's
+  // list, so the browser ceremony cannot take `[0]` and must not take a loopback URI (Microsoft
+  // would redirect the consent to a port on the user's machine). Scheme-based rather than
+  // positional so the list can be reordered without changing which URI the web flow names. START
+  // and CALLBACK both call this, so the value sent to `/authorize` and the value replayed at the
+  // token exchange are one expression — Microsoft requires them to match EXACTLY, which is why
+  // this is a function and not a convention two files follow.
   for (const uri of cfg.redirectUris) if (uri.startsWith("https://")) return uri;
   return null;
 }
@@ -416,18 +403,14 @@ function verdict(c: ResolvedOAuthConfig): Pick<ResolvedOAuthConfig, "enabled" | 
 }
 
 /**
- * PERSIST A ROTATED REFRESH TOKEN — the one write `UpdateSecretPort` makes, in one place.
- *
- * Microsoft may hand back a NEW refresh token on any refresh, and the old one may already be dead the
- * moment it does; a host that does not persist the new one keeps re-presenting a corpse and reports
- * it as `invalid_grant`, i.e. as the user's consent having expired. So both hosts wire this — the
- * always-on worker and the serverless API — and they wired it as two hand-written drizzle updates
- * until this function existed. Two copies of one credential write is one copy away from a predicate
- * that differs: the `transport = 'imap'` clause is what keeps a rotation from overwriting an
- * unrelated smtp row, and it is not the sort of thing to state twice.
- *
- * It targets the mailbox's OWN imap row and nothing else. The ciphertext is already encrypted by the
- * caller's own KeyProvider — this function holds no key material, exactly as {@link Decrypt} does not.
+ * Persist a rotated refresh token — the one write `UpdateSecretPort` makes, in one place.
+ * Microsoft may hand back a NEW refresh token on any refresh, and the old one may already be
+ * dead; a host that does not persist the new one keeps re-presenting a corpse and reports
+ * `invalid_grant`, i.e. the user's consent having expired. Two hand-written updates existed until
+ * this did: two copies of one credential write is one copy away from a predicate that differs,
+ * and the `transport = 'imap'` clause (which keeps a rotation from overwriting an unrelated smtp
+ * row) is not the sort of thing to state twice. It targets the mailbox's OWN imap row; the
+ * ciphertext is already encrypted by the caller — this function holds no key material.
  */
 export async function rotateMailboxOAuthSecret(
   tx: Tx,

@@ -3,20 +3,14 @@ import { organizerRequests } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  `organizer_requests` — THE READER'S OWN BOOKKEEPING (0.14.1)
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * The mailbox itself (`ohmail/_meta`, via `RequestIo`) is the record the organizer acts on. This
- * table is what the READER's own cycle reads to know which of ITS decisions are still in flight —
- * see `schema-mail.ts#organizerRequests`'s own header for the four states and why the row is not
- * the record. Every function here operates on ONE install's own database and is deliberately
- * unreachable from the organizer's side of a handover: the organizer never queries this table, it
- * only ever reads the folder (`apps/worker/src/request-drain.ts`).
- *
- * In `packages/db` rather than `packages/services` for `learning-signal.ts`'s reason: the worker's
- * reader cycle (`apps/worker/src/request-drain.ts`) writes these rows every poll and may not
- * import `@trafficflow/services` at runtime.
+ * `organizer_requests` — the READER'S OWN bookkeeping. The mailbox itself (`ohmail/_meta`, via
+ * `RequestIo`) is the record the organizer acts on; this table is what the reader's own cycle
+ * reads to know which of ITS decisions are still in flight (`schema-mail.ts#organizerRequests`
+ * has the four states and why the row is not the record). Every function operates on ONE
+ * install's own database and is deliberately unreachable from the organizer's side of a handover:
+ * the organizer never queries this table — it reads the folder. In `packages/db` for
+ * `learning-signal.ts`'s reason: the worker's reader cycle writes these rows every poll and may
+ * not import `@trafficflow/services` at runtime.
  */
 
 /**
@@ -105,16 +99,13 @@ export async function listSentRequests(tx: Tx, mailboxId: string): Promise<Organ
 }
 
 /**
- * HOW LONG A REFUSAL IS WORTH SHOWING SOMEBODY.
- *
- * A `refused` row is terminal, so without a bound it would ride the Screener list for ever — a
- * note about a decision the person made months ago, attached to a sender they have since dealt
- * with. It is shown for as long as an outstanding decision could have taken anyway, which is the
- * same day-long window both sides of the channel already use, and then it goes quiet.
- *
- * Spelled here rather than imported from the worker's `REQUEST_STALE_AFTER_MS`: this package must
- * not depend on `apps/worker`, and the two answer different questions that happen to want the same
- * number — "when does a reader give up waiting" and "when does a refusal stop being news".
+ * How long a refusal is worth showing somebody. A `refused` row is terminal, so without a bound
+ * it would ride the Screener list forever — a note about a decision made months ago. It is shown
+ * for as long as an outstanding decision could have taken anyway (the same day-long window both
+ * sides of the channel use), then goes quiet. Spelled here rather than imported from the worker's
+ * `REQUEST_STALE_AFTER_MS`: this package must not depend on `apps/worker`, and the two answer
+ * different questions that happen to want the same number — "when does a reader give up waiting"
+ * and "when does a refusal stop being news".
  */
 export const REFUSAL_VISIBLE_FOR_MS = 24 * 60 * 60 * 1000;
 
@@ -136,24 +127,14 @@ export interface OutstandingMatch {
 }
 
 /**
- * Every outstanding decision (`pending` or `sent`) THIS INSTALL has made for one ACCOUNT, across
- * all of its mailboxes — what `ScreenerReadService.list` reads to exclude a decided sender from
- * the queue and to populate `pendingDecisions[]`.
- *
- * Account-scoped rather than mailbox-scoped: `list`'s own query (`heldSenderPage`) does not carry
- * `mailboxId` per row, and the account is small enough (a handful of in-flight decisions at most —
- * this table is drained within a cycle or two of being written) that reading the whole account's
- * outstanding set costs nothing extra. An earlier mailbox-scoped, match-filtered sibling
- * (`listOutstandingByMatch`, a `payload->>'match'` JSONB lookup) had no production caller — this
- * function was always the one `ScreenerReadService.list` actually reaches for — and was deleted
- * rather than kept as a second, untested way to ask the same table the same question.
- *
- * **Rows here are visible ONLY on the door that made the decision.** `organizer_requests` is
- * per-install bookkeeping (the table's own header): if this account's mailbox is organized by
- * Cloud and the decision was made on a desktop, Cloud's OWN `GET /screener` sees no row for it at
- * all — its query runs against a different database. The exclusion is therefore a property of
- * "the Screener you are looking at from the same install you decided on," which is what "the
- * sender leaves the reader's queue immediately" means in the ruling: immediately on THAT door.
+ * Every outstanding decision (`pending` or `sent`) THIS INSTALL has made for one ACCOUNT — what
+ * `ScreenerReadService.list` reads to exclude a decided sender and to populate
+ * `pendingDecisions[]`. Account-scoped rather than mailbox-scoped: `list`'s query carries no
+ * per-row `mailboxId`, and the outstanding set is a handful of rows drained within a cycle or
+ * two. An earlier mailbox-scoped sibling had no production caller and was deleted. Rows are
+ * visible ONLY on the door that made the decision: this is per-install bookkeeping, so a decision
+ * made on a desktop is invisible to Cloud's own `GET /screener` — "the sender leaves the reader's
+ * queue immediately" means immediately on THAT door.
  */
 export async function listOutstandingForAccount(
   tx: Tx, accountId: string, now?: Date,
@@ -201,17 +182,13 @@ export async function markRequestsSent(tx: Tx, ids: readonly string[], sentAt: D
 }
 
 /**
- * `sent` → `applied`: the organizer ACKNOWLEDGED it as applied.
- *
- * Not "its id is no longer in the mailbox", which is what this used to mean and was wrong: a
- * refused record is equally absent, so absence reported success for decisions that were thrown
- * away. The evidence is now a signed ack (`AckRecord`), and this function only records what that
- * ack said.
- *
- * `from` exists for the ROLE FLIP. An install that becomes the organizer settles its own leftover
- * `pending` rows by applying them directly — they were never handed to anyone, so they move
- * `pending` → `applied` without ever being `sent`. Every other caller leaves it at the default and
- * gets the guarded `sent` → `applied` transition.
+ * `sent` → `applied`: the organizer ACKNOWLEDGED it as applied. Not "its id is no longer in the
+ * mailbox", which is what this used to mean and was wrong: a refused record is equally absent, so
+ * absence reported success for decisions that were thrown away. The evidence is now a signed ack
+ * (`AckRecord`), and this function only records what that ack said. `from` exists for the ROLE
+ * FLIP: an install that becomes the organizer settles its own leftover `pending` rows by applying
+ * them directly — never `sent`, so they move `pending` → `applied`. Every other caller leaves the
+ * default and gets the guarded `sent` → `applied` transition.
  */
 export async function markRequestsApplied(
   tx: Tx, ids: readonly string[], resolvedAt: Date,

@@ -38,15 +38,13 @@ import type { Tx } from "./change-log.js";
 export const PROFILE_FOUND_AUDIT_ACTION = "organizer_profile_found";
 
 /**
- * The `audit_log.action` under which the USER'S ANSWER to a found document is recorded.
- * Payload: `{ mailboxId, fingerprint, decision: "imported" | "declined", v? }` — `fingerprint`
- * names the exact document content that was answered (null for the `newer` state, which has no
- * readable payload to fingerprint; `v` carries the refused version instead).
- *
- * The row is the durable half of both buttons: *Import* writes it in the same transaction as
- * the applied sections, and *Not now* writes it alone. Either way the organizer's next admitted
- * cycle reads it and releases the hold — the local store, imported-into or deliberately kept,
- * is the user-ratified truth from that moment, and write-behind resumes.
+ * The `audit_log.action` under which the USER'S ANSWER to a found document is recorded. Payload:
+ * `{ mailboxId, fingerprint, decision: "imported" | "declined", v? }` — `fingerprint` names the
+ * exact document content answered (null for the `newer` state, which has no readable payload; `v`
+ * carries the refused version). The row is the durable half of both buttons: Import writes it in
+ * the same transaction as the applied sections, Not-now writes it alone. Either way the
+ * organizer's next admitted cycle reads it and releases the hold — the local store, imported-into
+ * or deliberately kept, is the user-ratified truth from that moment, and write-behind resumes.
  */
 export const PROFILE_IMPORT_RESOLVED_AUDIT_ACTION = "organizer_profile_import_resolved";
 
@@ -97,17 +95,16 @@ export async function latestProfileFoundMarker(
       ? (p as { mailboxId: string; state: string } & Partial<Omit<ProfileFoundMarker, "state">>)
       : null;
   };
-  /** Lapse subjects seen while walking newest→oldest; a held marker matching one is closed.
-   *
-   * A SAME-SUBJECT re-ask closed by a stale lapse is the accepted residual here, and the
-   * generation question behind it was pressed hard: a document that vanished and
-   * reappeared BYTE-IDENTICALLY across a handoff, with the old process's lapse landing after
-   * the successor's marker, reads as closed. It SELF-HEALS: the successor's in-memory hold
-   * keeps routing safe regardless, and the next preflight of any organizer re-arms and writes
-   * a fresh held marker — which, arriving after the lapse, stands (the dedup compares against
-   * the LATEST row, and that row is the lapse). Marker generations would close the window at
-   * the cost of a second identity scheme in a table read by three surfaces; the bounded,
-   * self-healing residual is the better trade. */
+  /**
+   * Lapse subjects seen while walking newest→oldest; a held marker matching one is closed. A
+   * same-subject re-ask closed by a stale lapse is the accepted residual: a document that
+   * vanished and reappeared byte-identically across a handoff, with the old process's lapse
+   * landing after the successor's marker, reads as closed. It SELF-HEALS — the successor's
+   * in-memory hold keeps routing safe, and the next preflight re-arms and writes a fresh held
+   * marker, which stands (the dedup compares against the LATEST row, and that row is the lapse).
+   * Marker generations would close the window at the cost of a second identity scheme in a table
+   * read by three surfaces; the bounded, self-healing residual is the better trade.
+   */
   const lapsedFingerprints = new Set<string>();
   const lapsedVersions = new Set<number>();
   for (const row of rows) {
