@@ -282,9 +282,7 @@ const TABLE = {
      ours. `probe_tls_hostname` / `probe_tls_hostname_suggest`. */
   probeTlsHostname: (certHost: string, expectedHost: string, protocol: string) =>
     `That server's certificate is for ${certHost}, not ${expectedHost}, so we stopped before sending the password. Check the ${protocol} host with your provider.`,
-  probeTlsHostnameSuggest: (
-    certHost: string, expectedHost: string, suggestedHost: string, protocol: string,
-  ) =>
+  probeTlsHostnameSuggest: (certHost: string, expectedHost: string, suggestedHost: string, protocol: string) =>
     `That server's certificate is for ${certHost}, not ${expectedHost}, so we stopped before sending the password. It answers to ${suggestedHost} — use that as the ${protocol} host.`,
 
   /**

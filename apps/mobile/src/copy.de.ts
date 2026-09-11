@@ -148,9 +148,7 @@ export const DE: Deck = {
   phoneStandaloneUseHost: (host: string) => `${host} nehmen`,
   probeTlsHostname: (certHost: string, expectedHost: string, protocol: string) =>
     `Das Zertifikat dieses Servers gilt für ${certHost}, nicht für ${expectedHost}, wir haben also abgebrochen, bevor das Passwort rausging. Frag deinen Anbieter nach dem richtigen ${protocol}-Server.`,
-  probeTlsHostnameSuggest: (
-    certHost: string, expectedHost: string, suggestedHost: string, protocol: string,
-  ) =>
+  probeTlsHostnameSuggest: (certHost: string, expectedHost: string, suggestedHost: string, protocol: string) =>
     `Das Zertifikat dieses Servers gilt für ${certHost}, nicht für ${expectedHost}, wir haben also abgebrochen, bevor das Passwort rausging. Er antwortet auf ${suggestedHost} — nimm das als ${protocol}-Server.`,
 
   /* Die fünf Zustandslabels sind die des Desktops, Byte für Byte. */
