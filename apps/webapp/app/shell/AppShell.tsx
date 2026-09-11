@@ -3997,35 +3997,29 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * ── THE TWO GATES THE SPLIT VIEWS' MESSAGE VERBS BORROW ────────────────────────────────
-   *
-   * Folder, Tag and History declare the nine message verbs over their OWN cursor
-   * (`useMessageVerbs`), because the bindings below act on `focused` and a split view's cursor
-   * is state this shell cannot see. Two of those verbs are gated on facts that live here and
-   * nowhere else, so they are resolved here and passed down rather than re-derived in three view
-   * files — which is how the `?` sheet comes to advertise a delete the bar refuses to draw.
-   *
-   * `canDeleteMessage` is the delete strip's OWN render gate, verbatim from the `d` binding
-   * below: the mirror actually holding the row. `canReplyAllTo` is `replyAllRecipients`
-   * against the account's addresses — the same call the bar's button and the `⇧R` binding
-   * both make, and the one `sendReply` resolves again at send time.
-   *
-   * ── WHY "USE FOLDERS" IS NOT A TERM HERE ANY MORE ─────────────────────────────────────
-   *
-   * It used to be the first term, and that was wrong twice over. Delete is a MOVE to the mail
-   * server's OWN \Trash — a system folder every account already has, discovered at connect
-   * beside \Junk — and never to a folder the user made, so the user-FOLDERS foundation flag
-   * was never a fact about whether this verb can run: the server's `message_delete` has never
-   * read it. And the same verb over a SELECTION never read it either (`OhboxView`'s bulk
-   * delete opens on `picked.size > 0` and nothing else), so one account could file a pile to
-   * Trash by picking it and could not file the row under the cursor — measured live on a
-   * folders-off account before this change: the selection press produced "Moved to Trash."
-   * and a `DELETE /messages/:id`, the cursor press produced nothing at all, no toast, no
-   * sentence and no request. Two admissions for one verb is what made that possible, so this
-   * is now the one admission both doors ask, and it asks only what it can act on.
-   *
-   * The flag is still supplied on the chrome and still read where it IS a fact: the folders
-   * rail group, the folder views, and Move-to-folder.
+   * The two gates the split views' message verbs borrow. Folder, Tag and History declare the nine message verbs over
+   * their OWN cursor (`useMessageVerbs`) because the bindings below act on `focused`, and a split view's cursor is
+   * state this shell cannot see; two verbs are gated on facts that live here and nowhere else, so they are resolved
+   * here and passed down rather than re-derived in three view files — which is how the `?` sheet comes to advertise a
+   * delete the bar refuses to draw. `canDeleteMessage` is the delete strip's own render gate, verbatim from the `d`
+   * binding: the mirror actually holding the row. `canReplyAllTo` is `replyAllRecipients` against the account's
+   * addresses — the same call the bar's button and `⇧R` make, and the one `sendReply` resolves again at send time.
+   */
+
+  /**
+   * "Use folders" is not a term here any more — it was the first, and wrong twice over. Delete is a move to the mail
+   * server's OWN \Trash, a system folder discovered at connect, never a folder the user made, so the user-FOLDERS
+   * flag was never a fact about this verb (the server's `message_delete` has never read it). And the same verb over a
+   * SELECTION never read it either (`OhboxView`'s bulk delete opens on `picked.size > 0`), so one account could file
+   * a pile to Trash by picking it and could not file the row under the cursor — measured live on a folders-off
+   * account: the selection press produced "Moved to Trash." and a `DELETE /messages/:id`, the cursor press produced
+   * nothing at all. Two admissions for one verb made that possible, so this is now the one admission both doors ask,
+   * and it asks only what it can act on.
+   */
+
+  /**
+   * The flag is still supplied on the chrome and read where it IS a fact: the folders rail group, the folder views,
+   * and Move-to-folder.
    */
   const canDeleteMessage = useStableCallback((m: EngineMessage): boolean =>
     reader.get<EngineMessage>("message", m.id) != null);
@@ -4070,29 +4064,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * Clicking a sender's circle or address, on ANY surface that shows one.
-   *
-   * ONE capture-phase handler on the stage rather than one per view: `MessageRow` renders a
-   * `<button>`, so a second interactive control cannot be nested inside it, and every list
-   * in the product already stamps `data-id` with a message id. Capture runs before the
-   * row's own click, so this opens the screening popover INSTEAD of moving the cursor.
-   * Shift is left alone — that gesture belongs to the Ohbox's range selection.
-   *
-   * ── AND THE READING SURFACES, NOT ONLY THE LISTS ────────────────────────────────────────
-   *
-   * The selector used to be `.row`-only, so screening a sender was reachable from every LIST
-   * and from the reading pane (which wires `onSender` itself), and from nowhere in Reads or
-   * Receipts — the two views whose whole content is mail from senders you might want to stop
-   * hearing from. The address was right there on every card, rendered in the same grey as the
-   * rows', and clicking it selected the card. A gesture that works on four surfaces and
-   * silently does nothing on the fifth is worse than one that does not exist.
-   *
-   * `.scast` stamps `data-sid` where a row stamps `data-id`; the anchor handed to `placePicker`
-   * is the card, exactly as it is the row. `stopPropagation` here is what keeps the card's own
-   * `onSelect` from also firing, which is the same reason it is here for rows.
-   *
-   * The hit test itself is `sender-hit.ts` — a pure function of one element, so which elements
-   * count as "the sender" can be asserted without standing up an engine and a router.
+   * Clicking a sender's circle or address, on ANY surface that shows one. One capture-phase handler on the stage
+   * rather than one per view: `MessageRow` renders a `<button>`, so a second interactive control cannot nest inside
+   * it, and every list already stamps `data-id`. Capture runs before the row's own click, so this opens the screening
+   * popover INSTEAD of moving the cursor; Shift is left alone — that gesture belongs to the Ohbox's range selection.
+   * The reading surfaces too, not only the lists: the selector used to be `.row`-only, so screening a sender was
+   * reachable everywhere except Reads and Receipts — the two views whose whole content is mail from senders you might
+   * want to stop hearing from, with the address right there on every card.
+   */
+
+  /**
+   * `.scast` stamps `data-sid` where a row stamps `data-id`; the anchor handed to `placePicker` is the card, exactly
+   * as it is the row; `stopPropagation` keeps the card's own `onSelect` from firing, same as for rows. The hit test
+   * is `sender-hit.ts` — a pure function of one element, so which elements count as "the sender" can be asserted
+   * without standing up an engine and a router.
    */
   const onStageClickCapture = useStableCallback((e: ReactMouseEvent<HTMLElement>) => {
     if (e.shiftKey) return;
@@ -4324,31 +4309,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         }
         case "delete": {
           /**
-           * THE DELETE VERB — a move to the provider's native \Trash, NEVER an expunge
-           * (FOLDERS-SPEC.md §16.3; `packages/core/src/adapters/imap-types.ts`, the third
-           * user-commanded write). Still the ONE dispatch site: the confirm strip the ⋯ menu
-           * opens (`MessagePane.ActionBar`) and the Backspace/Delete keys both arrive here, so
-           * there is one ceremony and one sentence however the delete was asked for.
-           *
-           * ── AND IT NOW CARRIES AN UNDO, WHICH IT DID NOT ────────────────────────────────
-           *
-           * What stood here was: "there is no un-delete on the wire, so the ask happens BEFORE
-           * the act and no Undo is offered after it". The first half is still true — nothing in
-           * `EngineMutation` brings a deleted row back — and the second half is what changed:
-           * the press no longer dispatches, it opens a window. `delete-undo.ts` hides the row
-           * at once, the toast carries Undo for `UNDO_MS`, and the mutation goes out only when
-           * that window closes. An Undo inside it cancels a delete that never happened, which
-           * is the only undo this wire can honour, and it is the Screener's own answer to the
-           * identical fork (its endpoint has no un-decide either).
-           *
-           * A READER IS REFUSED BEFORE ANY OF THAT, in `refuseMove`'s exact words: a delete is
-           * a folder move against mail another install is arranging, and the channel a reader's
-           * decisions travel has no vocabulary for moving mail. Nothing is hidden and nothing
-           * reaches the wire — see `readerMoveRefusal`.
-           *
-           * The reader sheet is closed on the way, and only for THIS message: the mirror still
-           * holds the row for the length of the window, so `readerMessage` would otherwise keep
-           * a sheet standing over mail every list has already let go of.
+           * The delete verb — a move to the provider's native \Trash, NEVER an expunge
+           * (FOLDERS-SPEC.md §16.3; the third user-commanded write). Still the ONE dispatch
+           * site: the confirm strip the ⋯ menu opens (`MessagePane.ActionBar`) and the
+           * Backspace/Delete keys both arrive here — one ceremony, one sentence. It now carries
+           * an Undo, which it did not: "there is no un-delete on the wire" is still true, and
+           * what changed is that the press no longer dispatches — it opens a window.
+           * `delete-undo.ts` hides the row at once, the toast carries Undo for `UNDO_MS`, and
+           * the mutation goes out only when the window closes; an Undo inside it cancels a
+           * delete that never happened, the only undo this wire can honour, and the Screener's
+           * own answer to the identical fork. A reader is refused BEFORE any of that, in
+           * `refuseMove`'s exact words: a delete is a folder move against mail another install
+           * is arranging — nothing hidden, nothing on the wire (see `readerMoveRefusal`). The
+           * reader sheet is closed on the way, and only for THIS message: the mirror holds the
+           * row for the length of the window, so `readerMessage` would otherwise keep a sheet
+           * standing over mail every list has let go of.
            */
           /* THE REFUSAL DECIDES FIRST, and the sheet closes only if the press acted. Reversed,
              a refused reader delete closed the reading sheet over the very message it had just
@@ -4361,29 +4336,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         }
         case "restore": {
           /**
-           * RESTORE — the Trash pane's one primary verb, and `⇧⌫` there.
-           *
-           * ── HELD, EXACTLY AS THE DELETE IS ───────────────────────────────────────────────
-           *
-           * There is no un-restore on the wire (a second press would 409 `not_in_trash`, which
-           * is true but is not an undo), so the only undo this wire can honour is the delayed
-           * commit — the row leaves the Trash list at the press, the toast carries Undo for
-           * `UNDO_MS`, and `POST /messages/:id/restore` goes out when the window closes. The
-           * `restoring` window above owns all of that.
-           *
-           * ── AND THE PLACE IS NAMED BY THE SERVER, AFTERWARDS ─────────────────────────────
-           *
-           * The row's own `restoreTo` is what the LIST was rendered with, and the origin folder
-           * can be deleted between the page and the press — so the place sentence is raised by
-           * the window's DISPATCH, when the server has answered, rather than here. Raising it
-           * here would need a second `restoreFromTrash` call at the press, which would issue the
-           * request immediately and cancel the undo window with every guard still green; see
-           * `restoreDispatch`. A press that never reaches the server raises no place sentence at
-           * all — the window's `failed` arm says the mail is still in Trash, which is the truth.
-           *
-           * The reader sheet closes only if the press ACTED, which is the delete arm's own
-           * ordering and for its measured reason: reversed, a refused reader restore closed the
-           * sheet over the very message it had declined to touch.
+           * Restore — the Trash pane's one primary verb, and `⇧⌫` there. Held exactly as the
+           * delete is: there is no un-restore on the wire (a second press would 409
+           * `not_in_trash`, true but not an undo), so the only undo this wire can honour is the
+           * delayed commit — the row leaves the Trash list at the press, the toast carries Undo
+           * for `UNDO_MS`, and `POST /messages/:id/restore` goes out when the window closes
+           * (the `restoring` window above owns all of that). The place is named by the SERVER,
+           * afterwards: the row's own `restoreTo` is what the LIST was rendered with, and the
+           * origin folder can be deleted between the page and the press — so the place sentence
+           * is raised by the window's DISPATCH, when the server has answered; raising it here
+           * would need a second `restoreFromTrash` call that issues immediately and cancels the
+           * undo window with every guard still green (see `restoreDispatch`). A press that
+           * never reaches the server raises no place sentence — the window's `failed` arm says
+           * the mail is still in Trash. The reader sheet closes only if the press ACTED, the
+           * delete arm's own ordering: reversed, a refused reader restore closed the sheet over
+           * the very message it had declined to touch.
            */
           if (restoring.remove({ id: m.id, mailboxId: m.mailboxId }) && readerFor === m.id) {
             setReaderFor(null);
@@ -4474,26 +4441,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * THE SAME VERBS, PRESSED FROM A STREAM CARD.
-   *
-   * Reads and Receipts read in the card and mount no `ReadingPane` at all, which is exactly why
-   * they had no verbs; they have the Ohbox's bar now (`MessageActionBar`), and every action on
-   * it means here what it means there — this delegates and invents nothing.
-   *
-   * The ONE thing it has to add is a place for an answer to be written. `reply` and `draft` open
-   * the inline editor, and that editor renders inside a message pane; a stream has none, so
-   * pressing Reply on a card would set a draft nobody can see and look like a dead button. The
-   * reader sheet IS a message pane over the current message, so it is raised first and the
-   * editor lands in it. Ordering does not matter — both are state setters, batched into one
-   * render — but it reads in the order it happens.
-   *
-   * Every other action is a mutation with a toast and needs no surface, so it is passed straight
-   * through and the card the reader is on stays where it is.
-   *
-   * `forward` is in the same list as `reply` for the same reason and not a fourth case: the inline
-   * forward IS the reply dock in forward mode (`openForward`), so it needs the identical pane.
-   * Left out, pressing Forward on a Reads or Receipts card would set `replyTo` with nothing
-   * mounted to render it — the dead-button shape this list exists to prevent.
+   * The same verbs, pressed from a stream card. Reads and Receipts read in the card and mount no `ReadingPane`, which
+   * is exactly why they had no verbs; they have the Ohbox's bar now (`MessageActionBar`), and every action means here
+   * what it means there — this delegates and invents nothing. The ONE addition is a place for an answer to be
+   * written: `reply` and `draft` open the inline editor, which renders inside a message pane, and a stream has none —
+   * pressing Reply on a card would set a draft nobody can see. The reader sheet IS a message pane over the current
+   * message, so it is raised first and the editor lands in it (both are state setters, batched into one render).
+   * Every other action is a mutation with a toast and needs no surface, passed straight through.
+   */
+
+  /**
+   * `forward` is in the same list as `reply` and not a fourth case: the inline forward IS the reply dock in forward
+   * mode (`openForward`), so it needs the identical pane — left out, Forward on a card would set `replyTo` with
+   * nothing mounted to render it, the dead-button shape this list exists to prevent.
    */
   const onStreamAction = useStableCallback((action: MessageAction, m: EngineMessage) => {
     if (action === "reply" || action === "reply_all" || action === "forward" || action === "draft") {
@@ -4512,26 +4472,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * on your own screen.
    */
   /**
-   * THE SELECTION'S VERBS — and whether the selection SURVIVES the press.
-   *
-   * It returns a boolean now, and the boolean is the refusal. Every verb here used to end the
-   * selection unconditionally, because every verb here used to happen; a reader's Move does
-   * not, and a set cleared by a press that did nothing leaves the person to rebuild it before
-   * they can try the verb that would have worked. `true` ⇒ dispatched, clear the pick;
-   * `false` ⇒ refused at the press, keep it. The Ohbox reads exactly that.
-   *
-   * ── A READER IS REFUSED HERE, BEFORE THE WIRE, AND ONCE ─────────────────────────────────
-   *
-   * `move:*` used to dispatch one `move` per message with no role check at all: the rows left
-   * the list, the server refused each of them, and they came back — a rollback per message,
-   * after the fact, for a decision the client could have answered instantly. The rule already
-   * existed one module over (`readerMoveRefusal`, which `screener-state.ts#refuseMove` and the
-   * delete window both ask), so this asks it too: ONE toast, nothing dispatched, the pick kept.
-   *
-   * WHICH VERBS. Filing verbs only — `move:*` here, `screen` in `onBulkScreen`, `delete`
-   * through the window's own `refusal`. Read, Unread, Tag and the three horizons are NOT folder
-   * moves and are not refused: a reader "reads, searches, marks read and sends"
-   * (`screener.moveBarWhy`), and refusing those would withhold presses that work.
+   * The selection's verbs — and whether the selection SURVIVES the press. It returns a boolean now, and the boolean
+   * is the refusal: every verb here used to end the selection unconditionally, because every verb used to happen; a
+   * reader's Move does not, and a set cleared by a press that did nothing leaves the person to rebuild it. `true` ⇒
+   * dispatched, clear the pick; `false` ⇒ refused at the press, keep it — the Ohbox reads exactly that. A reader is
+   * refused HERE, before the wire, and once: `move:*` used to dispatch one `move` per message with no role check —
+   * the rows left the list, the server refused each, and they came back, a rollback per message for a decision the
+   * client could answer instantly. The rule already existed one module over (`readerMoveRefusal`), so this asks it
+   * too: one toast, nothing dispatched, the pick kept.
+   */
+
+  /**
+   * Filing verbs only — `move:*` here, `screen` in `onBulkScreen`, `delete` through the window's own `refusal`; Read,
+   * Unread, Tag and the three horizons are not folder moves and are not refused — a reader "reads, searches, marks
+   * read and sends", and refusing those would withhold presses that work.
    */
   const onBulkAction = useStableCallback(
     (action: BulkAction, ids: string[]): boolean => {
