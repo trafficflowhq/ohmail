@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { readMailboxFactsVia } from "../src/DesktopMailboxes.js";
+import { readMailboxFactsVia } from "../src/mailbox-facts-wire.js";
 
 /**
  * ═══ THE SEAM BETWEEN THE LOCAL ENGINE AND THE SHARED SHELL MAY NOT DROP A FIELD ═══════════

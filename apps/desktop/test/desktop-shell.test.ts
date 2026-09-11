@@ -2409,14 +2409,17 @@ describe("the UI bundle's build config", () => {
     // transport now (`readMailboxFactsVia`), because the served host-client asks the identical
     // question over its bearer socket; the WINDOW's instance rides the bridge through the
     // RETRYING read, so one refused frame is not the whole answer.
-    const mailboxes = read("src/DesktopMailboxes.tsx");
-    expect(mailboxes).toMatch(/readMailboxFactsVia\(retryingBridgeFetch\)/);
-    expect(mailboxes, "the pane's reach poll rides the same retrying transport")
+    // The narrowing and the bridge binding are two files now, because the served host client
+    // imports the first and must not reach the second: anything that imports `bridge-fetch.ts`
+    // puts the shell command's name into the bundle a phone is handed.
+    const factsWire = read("src/mailbox-facts-wire.ts");
+    expect(read("src/local-mailbox-facts.ts")).toMatch(/readMailboxFactsVia\(retryingBridgeFetch\)/);
+    expect(read("src/DesktopMailboxes.tsx"), "the pane's reach poll rides the same retrying transport")
       .toMatch(/readMailboxReachVia\(retryingBridgeFetch\)/);
-    expect(mailboxes).toMatch(/fetchImpl\("\/mailboxes"\)/);
+    expect(factsWire).toMatch(/fetchImpl\("\/mailboxes"\)/);
     // A FAILED read is not an empty account. The ladder renders "No mailbox connected" for the
     // second, so collapsing the first into it would say that to somebody whose mailbox works.
-    expect(mailboxes).toMatch(/throw new Error/);
+    expect(factsWire).toMatch(/throw new Error/);
 
     // The pane names a THING, like every other entry beside it in that list. The word is a
     // catalogue read now (the nav label is translated with the rest of the window), so the

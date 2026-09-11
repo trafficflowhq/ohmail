@@ -127,7 +127,7 @@ describe("the takeover card states what it costs before it asks for anything", (
    */
   it("CLAIM: it does not promise servers it cannot fill in", () => {
     const wire = fs.readFileSync(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/DesktopMailboxes.tsx"),
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/mailbox-facts-wire.ts"),
       "utf8",
     );
     const shape = /interface MailboxWire \{[\s\S]*?\n\}/.exec(wire)?.[0] ?? "";

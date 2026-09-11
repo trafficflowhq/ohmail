@@ -4,9 +4,18 @@
  * The shared shell takes a handful of things it must not know how to fetch (the publish DENYs
  * `app/api-client`, and the desktop window injects bridge-backed implementations). This page is
  * the third consumer of the same seams, and the rule holds: the NARROWING and the refusal
- * contracts live once, in the window's modules (`readMailboxFactsVia`, `profileImportVia`), and
- * this file supplies only the transport — the manager's fetch, which carries the Authorization
- * header and the one 401 recovery.
+ * contracts live once, in the wire modules (`readMailboxFactsVia`, `profileImportVia`), and this
+ * file supplies only the transport — the manager's fetch, which carries the Authorization header
+ * and the one 401 recovery.
+ *
+ * ── AND EVERY ONE OF THOSE MODULES IS DOOR-FREE, WHICH IS A BUILD FACT ──────────────────────
+ *
+ * The factories used to sit in the window's `local-*` modules beside their bridge bindings, so
+ * importing one here pulled `bridge-fetch.ts` into the bundle the host door serves and the shell
+ * command's name was in the bytes a phone is handed. `scan:host` refuses that, and the packaged
+ * release runs it. So the factories live in `*-wire.ts` modules that import no transport at all,
+ * the `local-*` modules bind them to the bridge, and nothing this file imports names a shell
+ * channel. `host-client-no-engine-door.test.ts` measures it on the built artifact.
  */
 
 import type { JunkWire } from "../../../webapp/app/shell/junk-window";
@@ -14,11 +23,11 @@ import type { MailboxFacts } from "../../../webapp/app/shell/mail-state";
 import type { ProfileImportTransport } from "../../../webapp/app/shell/ProfileImportCard";
 import type { OlderBodyWire } from "../../../webapp/app/shell/older-body";
 import type { TrashWire } from "../../../webapp/app/shell/trash-window";
-import { readMailboxFactsVia } from "../DesktopMailboxes.js";
-import { junkVia } from "../local-junk.js";
-import { olderBodyVia } from "../local-older-body.js";
-import { profileImportVia } from "../local-profile-import.js";
-import { trashVia } from "../local-trash.js";
+import { olderBodyVia } from "@ohmail/client-engine";
+import { junkVia } from "../junk-wire.js";
+import { readMailboxFactsVia } from "../mailbox-facts-wire.js";
+import { profileImportVia } from "../profile-import-wire.js";
+import { trashVia } from "../trash-wire.js";
 import type { BearerManager } from "./bearer.js";
 
 /** The sync strip's mailbox facts — `GET /mailboxes` over the bearer, window rules verbatim. */

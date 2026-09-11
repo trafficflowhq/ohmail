@@ -29,68 +29,15 @@
  * wire is handed in on both doors regardless — `olderBodyOverBridge`'s transport-not-a-control
  * rule — so the day the standalone door grows a folders pane, the segment follows the switch with
  * no desktop change at all.
+ *
+ * The requests themselves — the paths, the status contract and the rescue verbs — are
+ * `junk-wire.ts`'s, which imports no door so the served host client can share them.
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
 import type { JunkWire } from "../../webapp/app/shell/junk-window";
+import { junkVia } from "./junk-wire.js";
 
-/**
- * Thrown for every non-2xx answer down the pipe; carries the status so the door can read a 410,
- * and the server's error CODE so it can read a partial outcome (`junk_rescue_move_failed`).
- */
-export class JunkBridgeError extends Error {
-  constructor(readonly status: number, readonly code: string | null, message: string) {
-    super(message);
-    this.name = "JunkBridgeError";
-  }
-}
-
-async function refusal(res: Response): Promise<JunkBridgeError> {
-  let said: string | undefined;
-  let code: string | null = null;
-  try {
-    const body = (await res.json()) as { error?: { message?: string; code?: string } };
-    said = body.error?.message;
-    code = typeof body.error?.code === "string" ? body.error.code : null;
-  } catch {
-    /* Not JSON, or an empty body. The status is all there is. */
-  }
-  return new JunkBridgeError(res.status, code, said ?? `the mail engine answered ${res.status}`);
-}
-
-async function jsonOf<T>(res: Response): Promise<T> {
-  if (!res.ok) throw await refusal(res);
-  return (await res.json()) as T;
-}
-
-/**
- * The wire over ANY fetch-shaped transport — the status contract lives once, here, and each door
- * supplies only its transport (`olderBodyVia`'s rule): the desktop window hands in `bridgeFetch`.
- */
-export function junkVia(fetchImpl: (path: string, init?: RequestInit) => Promise<Response>): JunkWire {
-  const post = (path: string, body?: unknown): Promise<Response> =>
-    fetchImpl(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body ?? {}),
-    });
-  return {
-    list: async (opts) =>
-      jsonOf(await fetchImpl(`/screener/junk${opts?.cursor ? `?cursor=${encodeURIComponent(opts.cursor)}` : ""}`)),
-    body: async (mailboxId, uid, uidValidity) =>
-      jsonOf(await fetchImpl(
-        `/screener/junk/body?mailboxId=${encodeURIComponent(mailboxId)}&uid=${uid}&uidValidity=${encodeURIComponent(uidValidity)}`,
-      )),
-    rescue: async (mailboxId, uid, uidValidity, opts) =>
-      jsonOf(await post("/screener/junk/rescue", {
-        mailboxId, uid, uidValidity, ...(opts?.allow ? { allow: opts.allow } : {}),
-      })),
-    search: async (q) => jsonOf(await fetchImpl(`/screener/junk/search?q=${encodeURIComponent(q)}`)),
-    sweepPreview: async () => jsonOf(await fetchImpl("/screener/junk/sweep")),
-    sweepRequest: async () => jsonOf(await post("/screener/junk/sweep")),
-    isGone: (err) => err instanceof JunkBridgeError && err.status === 410,
-    codeOf: (err) => (err instanceof JunkBridgeError ? err.code : null),
-  };
-}
+export { JunkBridgeError, junkVia } from "./junk-wire.js";
 
 export const junkOverBridge: JunkWire = junkVia(bridgeFetch);

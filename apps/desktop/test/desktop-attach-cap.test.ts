@@ -214,14 +214,14 @@ const WIRE_ROW = {
 
 describe("readMailboxFacts forwards the announced SIZE", () => {
   it("a probed value arrives as itself", async () => {
-    const { readMailboxFacts } = await import("../src/DesktopMailboxes.js");
+    const { readMailboxFacts } = await import("../src/local-mailbox-facts.js");
     wireItems = [{ ...WIRE_ROW, smtpMaxSizeBytes: 25 * MIB }];
     const [fact] = await readMailboxFacts();
     expect(fact!.smtpMaxSizeBytes).toBe(25 * MIB);
   });
 
   it("`null` (no announcement) arrives as null, and the cap then falls back to the constant", async () => {
-    const { readMailboxFacts } = await import("../src/DesktopMailboxes.js");
+    const { readMailboxFacts } = await import("../src/local-mailbox-facts.js");
     wireItems = [{ ...WIRE_ROW, smtpMaxSizeBytes: null }];
     const [fact] = await readMailboxFacts();
     expect(fact!.smtpMaxSizeBytes).toBeNull();
@@ -229,7 +229,7 @@ describe("readMailboxFacts forwards the announced SIZE", () => {
   });
 
   it("an ABSENT field (an engine that predates the column) stays absent, not null", async () => {
-    const { readMailboxFacts } = await import("../src/DesktopMailboxes.js");
+    const { readMailboxFacts } = await import("../src/local-mailbox-facts.js");
     wireItems = [{ ...WIRE_ROW }];
     const [fact] = await readMailboxFacts();
     expect("smtpMaxSizeBytes" in fact!).toBe(false);

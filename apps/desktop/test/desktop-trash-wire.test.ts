@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { trashVia, trashOverBridge, TrashBridgeError } from "../src/local-trash.js";
+import { trashVia, TrashBridgeError } from "../src/trash-wire.js";
+import { trashOverBridge } from "../src/local-trash.js";
 
 /**
  * THE LIVE TRASH WINDOW'S DESKTOP TRANSPORT — the requests that leave, and the verb that does not.
@@ -107,19 +108,29 @@ describe("the desktop's Trash transport is READ-ONLY, and the absence is the con
     expect(Object.keys(trashVia(recorder([]).fetchImpl)).sort()).toEqual(["body", "list"]);
   });
 
-  it("the SOURCE mentions no write — no method, no POST, no verb name anywhere in the module", () => {
-    // A census over the file, because the assertions above only measure the paths the two reads
+  it("the SOURCE mentions no write — no method, no POST, no verb name anywhere in EITHER module", () => {
+    // A census over the files, because the assertions above only measure the paths the two reads
     // take. This is what refuses a write being added beside them. `body` is NOT on the list: it
     // is the name of the second READ (one row's body, fetched live and never stored).
-    const src = readFileSync(new URL("../src/local-trash.ts", import.meta.url), "utf8");
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-    for (const forbidden of ["POST", "PATCH", "PUT", "DELETE", "method:", "restore", "rescue", "sweep"]) {
-      expect(code, `the transport's code mentions ${forbidden}`).not.toContain(forbidden);
+    //
+    // TWO files since the requests moved out of the bridge binding: the served host client imports
+    // the factory and must not reach `bridge-fetch.ts`, which would put the shell command's name
+    // into the bundle a phone is handed. Both are censused, and each carries its own positive
+    // control, so a write added to either one is refused — and neither can pass by being empty.
+    const CENSUS = [
+      { rel: "../src/trash-wire.ts", proves: ["/trash/window", "uidValidity", "trashVia"] },
+      { rel: "../src/local-trash.ts", proves: ["trashVia(bridgeFetch)"] },
+    ] as const;
+    for (const { rel, proves } of CENSUS) {
+      const src = readFileSync(new URL(rel, import.meta.url), "utf8");
+      const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      for (const forbidden of ["POST", "PATCH", "PUT", "DELETE", "method:", "restore", "rescue", "sweep"]) {
+        expect(code, `${rel}'s code mentions ${forbidden}`).not.toContain(forbidden);
+      }
+      // The positive control: the census really does read this file's code, so the absences above
+      // are measured rather than asserted of an empty string.
+      for (const proof of proves) expect(code, `${rel} — the census read nothing`).toContain(proof);
     }
-    // The positive control: the census really does read this file's code, so the absences above
-    // are measured rather than asserted of an empty string.
-    expect(code).toContain("/trash/window");
-    expect(code).toContain("uidValidity");
   });
 
   it("the shipped wire is built over the bridge — the window gets a real transport, not a stub", () => {
@@ -129,5 +140,8 @@ describe("the desktop's Trash transport is READ-ONLY, and the absence is the con
     expect(typeof trashOverBridge.body).toBe("function");
     const src = readFileSync(new URL("../src/local-trash.ts", import.meta.url), "utf8");
     expect(src).toContain("trashVia(bridgeFetch)");
+    // …and it takes the factory from the door-free module, which is what keeps the served host
+    // client's copy of the same two reads out of reach of the shell command.
+    expect(src).toContain('from "./trash-wire.js"');
   });
 });

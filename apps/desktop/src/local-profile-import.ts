@@ -31,72 +31,19 @@
  * The shared card's contract ({@link ProfileImportTransport}): a rejection's `message` is the
  * ENGINE's own sentence, fit to show verbatim. That matters most on the 409 for a changed
  * document — "review them again before importing" is an instruction the generic retry line
- * does not give — so {@link refusal} reads the engine's error body rather than composing words
- * of its own, the same shape every transport in this directory keeps.
+ * does not give — so the wire reads the engine's error body rather than composing words of its
+ * own, the same shape every transport in this directory keeps.
+ *
+ * The three calls themselves — the route, the narrowing and the refusal contract — are
+ * `profile-import-wire.ts`'s, which imports no door so the served host client can share them.
  */
 
-import { bridgeFetch, type BridgeFetch } from "./bridge-fetch.js";
+import { bridgeFetch } from "./bridge-fetch.js";
 import type { ProfileImportTransport } from "../../webapp/app/shell/ProfileImportCard";
-import type { ProfileImportAppliedWire, ProfileImportCandidateWire } from "../../webapp/app/api-client";
+import { profileImportVia } from "./profile-import-wire.js";
 
-/**
- * The mailbox group's confirm route, addressed root-relative like every path in this window.
- *
- * Exported so the suite pins the LITERAL: every other assertion addresses this function, so a
- * wrong path here would leave them all green around a transport the engine answers 404 to.
- * It is the hosted API's own endpoint too (`packages/api/src/routes/mailboxes.ts`), which is
- * what lets one transport serve both doors — locally answered on one, forwarded on the other.
- */
-export const profileImportPath = (mailboxId: string): string =>
-  `/mailboxes/${encodeURIComponent(mailboxId)}/profile-import`;
-
-/** The engine's own sentence for a refusal, or the status line when it composed none. */
-async function refusal(res: Response): Promise<Error> {
-  let said: string | undefined;
-  try {
-    said = ((await res.json()) as { error?: { message?: string } }).error?.message;
-  } catch {
-    /* Not JSON, or an empty body. The status is all there is. */
-  }
-  return new Error(said ?? `the mail engine answered ${res.status}`);
-}
-
-async function wireOf<T>(res: Response): Promise<T> {
-  if (!res.ok) throw await refusal(res);
-  return (await res.json()) as T;
-}
-
-/**
- * The three calls the shared card makes, over an injected transport function.
- *
- * A factory over the FETCH rather than over anything else, because the desktop now has two
- * consumers of the same three routes and the same refusal contract: the window (the bridge down
- * the pipe) and the served host-client (the loopback socket, bearer-authenticated — see
- * `host-client/transports.ts`). The wire narrowing and the engine's-own-sentence rule live once,
- * here, whichever transport carries the bytes.
- */
-export function profileImportVia(fetchImpl: BridgeFetch): ProfileImportTransport {
-  return {
-    candidate: async (mailboxId) =>
-      wireOf<ProfileImportCandidateWire>(await fetchImpl(profileImportPath(mailboxId))),
-    apply: async (mailboxId, fingerprint) =>
-      wireOf<ProfileImportAppliedWire>(
-        await fetchImpl(profileImportPath(mailboxId), {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ fingerprint }),
-        }),
-      ),
-    decline: async (mailboxId, subject) =>
-      wireOf<{ dismissed: boolean }>(
-        await fetchImpl(`${profileImportPath(mailboxId)}/decline`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(subject),
-        }),
-      ),
-  };
-}
+export { profileImportPath, profileImportVia } from "./profile-import-wire.js";
+export type { ProfileImportFetch } from "./profile-import-wire.js";
 
 /**
  * The WINDOW's instance, over the bridge. A module constant rather than a per-render factory

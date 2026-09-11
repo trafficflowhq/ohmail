@@ -66,7 +66,8 @@ import { BootStatus } from "./BootStatus.js";
 import { bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
-import { DesktopMailboxes, readMailboxFacts, readMirrorFreshness } from "./DesktopMailboxes.js";
+import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
+import { readMailboxFacts } from "./local-mailbox-facts.js";
 /* The OS-answer reader this window has to bring itself — see the injection below. */
 import { desktopNotificationHost } from "./notify-host.js";
 import { DesktopScreening } from "./DesktopScreening.js";

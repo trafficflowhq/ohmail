@@ -84,7 +84,7 @@ describe("the hosted count reaches the sentence it is quoted in, or the seam is 
      engine's answer and the sentence, any one of which can drop a field silently. */
 
   it("END TO END: an engine that reports 2,400 reaches the pane's pair as 1,900 of 2,400", async () => {
-    const { readMailboxFacts } = await import("../src/DesktopMailboxes.js");
+    const { readMailboxFacts } = await import("../src/local-mailbox-facts.js");
     wireItems = [{ ...WIRE_ROW, hostedMessageCount: 2_400 }];
     const facts = await readMailboxFacts();
     expect(facts[0]!.hostedMessageCount, "the narrowing dropped the account's own count").toBe(2_400);
@@ -99,7 +99,7 @@ describe("the hosted count reaches the sentence it is quoted in, or the seam is 
     // comparison would read the device as ahead of the account and the state would flip to silence
     // for the wrong reason — or, with the clamp written the other way, announce a deficit of
     // minus a thousand. A local-only install and an engine that predates the field both land here.
-    const { readMailboxFacts } = await import("../src/DesktopMailboxes.js");
+    const { readMailboxFacts } = await import("../src/local-mailbox-facts.js");
     wireItems = [{ ...WIRE_ROW }];
     const facts = await readMailboxFacts();
     expect("hostedMessageCount" in facts[0]!).toBe(false);
@@ -111,7 +111,7 @@ describe("the hosted count reaches the sentence it is quoted in, or the seam is 
   });
 
   it("one mailbox reporting and one silent is NO denominator — a partial sum is a wrong one", async () => {
-    const { readMailboxFacts } = await import("../src/DesktopMailboxes.js");
+    const { readMailboxFacts } = await import("../src/local-mailbox-facts.js");
     wireItems = [
       { ...WIRE_ROW, hostedMessageCount: 2_400 },
       { ...WIRE_ROW, id: "mbx-2", address: "other@example.test" },
@@ -122,7 +122,7 @@ describe("the hosted count reaches the sentence it is quoted in, or the seam is 
   });
 
   it("a caught-up device says nothing at all — the common case, and it must stay silent", async () => {
-    const { readMailboxFacts } = await import("../src/DesktopMailboxes.js");
+    const { readMailboxFacts } = await import("../src/local-mailbox-facts.js");
     wireItems = [{ ...WIRE_ROW, hostedMessageCount: 40_000 }];
     const facts = await readMailboxFacts();
     expect(deviceHoldings(facts, 40_000)).toBeNull();

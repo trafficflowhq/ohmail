@@ -741,7 +741,7 @@ describe("the mailbox wire is mapped with the safe default for an engine that pr
   const base = { id: "m1", address: "a@example.test", status: "connected", lastSyncAt: null };
 
   it("an absent role is an ORGANIZER, and an absent HOLDER stays absent", async () => {
-    const { readMailboxFactsVia } = await import("../src/DesktopMailboxes.js");
+    const { readMailboxFactsVia } = await import("../src/mailbox-facts-wire.js");
     const [row] = await readMailboxFactsVia(answer(base) as never);
     expect(row!.organizerRole, "an engine that predates the column demoted this install").toBe("organizer");
     /* ── THE HOLDER LINE USED TO READ `toBeNull()`, AND ITS PREMISE WAS THE DEFECT ────────────
@@ -768,14 +768,14 @@ describe("the mailbox wire is mapped with the safe default for an engine that pr
     /* The other side of the line above, and the reason it is not simply "the key is gone": an
        engine that DOES carry the field and says nothing organizes the mailbox has answered, and
        that answer is what moves a first run past the claim question. */
-    const { readMailboxFactsVia } = await import("../src/DesktopMailboxes.js");
+    const { readMailboxFactsVia } = await import("../src/mailbox-facts-wire.js");
     const [row] = await readMailboxFactsVia(answer({ ...base, organizedBy: null }) as never);
     expect("organizedBy" in row!, "the answer 'nobody organizes this' was dropped").toBe(true);
     expect(row!.organizedBy).toBeNull();
   });
 
   it("a role the wire does send is carried through, holder and all", async () => {
-    const { readMailboxFactsVia } = await import("../src/DesktopMailboxes.js");
+    const { readMailboxFactsVia } = await import("../src/mailbox-facts-wire.js");
     const [row] = await readMailboxFactsVia(
       answer({
         ...base,
@@ -792,7 +792,7 @@ describe("the mailbox wire is mapped with the safe default for an engine that pr
   it("a role the wire sends that this build does not know is an ORGANIZER too", async () => {
     // The same argument in the other direction: a value from a NEWER engine must not be guessed
     // into the demoting branch.
-    const { readMailboxFactsVia } = await import("../src/DesktopMailboxes.js");
+    const { readMailboxFactsVia } = await import("../src/mailbox-facts-wire.js");
     const [row] = await readMailboxFactsVia(answer({ ...base, organizerRole: "custodian" }) as never);
     expect(row!.organizerRole).toBe("organizer");
   });
