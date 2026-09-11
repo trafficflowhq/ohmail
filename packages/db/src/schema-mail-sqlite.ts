@@ -1845,22 +1845,14 @@ export const accountSettings = sqliteTable("account_settings", {
   /** When screening state was last wiped. A supported operation, so it is account state. */
   screeningResetAt: integer("screening_reset_at", { mode: "timestamp_ms" }),
   /**
-   * AUTO-SUGGEST FOR NEW SENDERS — when the account opted in, or NULL for off (mail 0040).
-   *
-   * ON means: while the Screener is open, ohmail buys a classifier suggestion for the senders at
-   * the front of the queue so each stranger arrives with a verdict and a reason. It does NOT
-   * decide — no rule, no contact, no `folder_state`, no move, and `ScreenerService.store` emits
-   * no `change_log` row, so a suggestion never reaches the delta feed. A stranger still waits for
-   * a human.
-   *
-   * The opt-in exists because a suggestion is a METERED action: this flag authorises spending the
-   * account's credits without a per-batch click, and nothing else. **NULL and "no row at all"
-   * must both read as OFF, and so must a settings read that failed** — defaulting the other way
-   * would spend money on a fetch error.
-   *
-   * A timestamp for the same reason as `seedConfirmedAt`: "was this on before or after the
-   * screening reset?" is a real question and a boolean cannot answer it. Read as `IS NOT NULL`
-   * and never as a deadline, so a skewed clock cannot make it mean anything else.
+   * Auto-suggest for new senders — when the account opted in, or NULL for off (mail 0040). ON
+   * means: while the Screener is open, ohmail buys a classifier suggestion for the senders at the
+   * front of the queue, so each stranger arrives with a verdict and a reason. It does NOT decide
+   * — no rule, no move, no `change_log` row; a stranger still waits for a human. The opt-in
+   * exists because a suggestion is a METERED action: this flag authorises spending the account's
+   * credits without a per-batch click, nothing else. NULL, "no row", and a FAILED settings read
+   * must all read as OFF — defaulting the other way would spend money on a fetch error. A
+   * timestamp, read as `IS NOT NULL`, never as a deadline.
    */
   autoSuggestAt: integer("auto_suggest_at", { mode: "timestamp_ms" }),
   /**
@@ -1878,71 +1870,38 @@ export const accountSettings = sqliteTable("account_settings", {
    */
   ohboxBar: text("ohbox_bar"),
   /**
-   * THE OHBOX BACKLOG TIDY — the resumable, re-armable marker for the one worker pass that
-   * re-routes mail ALREADY misfiled into the Ohbox under `people_only` (mail 0043). New mail is
-   * demoted live by the engine; these three columns are the durable state for the retroactive
-   * clean-up of what was placed before the account opted in. The shape is `rules.retro_*` lifted
-   * from a per-RULE marker to a per-ACCOUNT one, because the pass pages `folder_state` by
-   * `account_id` and one cursor covers all of an account's mailboxes.
-   *
-   *   ohbox_tidy_requested_at  the account asked for the backlog to be re-routed. Stamped by
-   *                            `setScreeningPreference` ONLY on the transition INTO `people_only`
-   *                            (and by the future "tidy now" button), and the cursor is NULLed in
-   *                            the same UPDATE — re-arming without resetting the cursor would resume
-   *                            at the end and move nothing.
-   *   ohbox_tidy_done_at       the pass drained the backlog. Owed = `people_only` AND
-   *                            `requested_at IS NOT NULL` AND (`done_at IS NULL` OR
-   *                            `done_at < requested_at`). Written LAST (0030's rule): claiming it
-   *                            first makes a crash permanent. Re-armable — a later `requested_at`
-   *                            past `done_at` re-owes the work, which is what the button needs.
-   *   ohbox_tidy_cursor        resume point: the last `messages.id` of the last COMMITTED page. The
-   *                            live pass reads it to resume across worker cycles; a dry-run plan
-   *                            reads it as a start and advances only in memory (it commits nothing).
-   *
-   * NULL on every existing account, and that is correct: no account has asked for a tidy, so none
-   * is owed. An account already `people_only` before this migration has no `requested_at` and is
-   * never owed until it re-saves the posture or presses the button — deliberate, so shipping the
-   * columns moves no mail.
+   * The Ohbox backlog tidy — the resumable, re-armable marker for the worker pass that re-routes
+   * mail ALREADY misfiled into the Ohbox under `people_only` (mail 0043). New mail is demoted
+   * live; these are the retroactive clean-up's durable state — `rules.retro_*` lifted to a
+   * per-ACCOUNT marker. `requested_at`: stamped ONLY on the transition INTO `people_only`, with
+   * the cursor NULLed in the same UPDATE — re-arming without resetting the cursor would resume at
+   * the end and move nothing. `done_at`: written LAST (claiming first makes a crash permanent);
+   * owed = requested and not yet done since. `cursor`: the last `messages.id` of the last
+   * COMMITTED page. NULL on every existing account: shipping the columns moves no mail.
    */
   ohboxTidyRequestedAt: integer("ohbox_tidy_requested_at", { mode: "timestamp_ms" }),
   ohboxTidyDoneAt: integer("ohbox_tidy_done_at", { mode: "timestamp_ms" }),
   ohboxTidyCursor: text("ohbox_tidy_cursor"),
   /**
-   * SCREENER AUTO-APPLY — when the account opted in, or NULL for off (mail 0046). ON means: the
-   * worker's auto-apply pass files obvious strong-bulk senders (the deterministic
-   * `migrationBulkPlacement` floor — `List-Unsubscribe` plus a corroborating list/ESP marker) OUT
-   * of the Screener into Reads/Receipts, so the queue is not clogged by newsletters and receipts a
-   * human would only wave through.
-   *
-   * It applies DETERMINISTIC routing only: no classifier call, no credit debit, no auto-purchase of
-   * paid AI suggestions. Every move is durable and user-reversible (a `folder_state` placement plus
-   * a `change_log` move plus an `audit_log` inverse), never a delete, and it writes NO `rules` row —
-   * the sender still screens next time. A sensitivity-flagged message (`sensitivity_category` set OR
-   * `no_ai`) is NEVER auto-moved — the same cross-class KEEP the live router and the Ohbox backfill
-   * apply — so a stranger's login code stays at the gate for a human.
-   *
-   * A timestamp, not a boolean, for the same reason as {@link autoSuggestAt}: "was this on before or
-   * after the screening reset?" is a real question. **NULL, no row, and a FAILED read must all read
-   * as OFF** — defaulting the other way would move mail on a fetch error. Read as `IS NOT NULL`,
-   * never as a deadline.
+   * Screener auto-apply — when the account opted in, or NULL for off (mail 0046). ON means: the
+   * worker files obvious strong-bulk senders (`migrationBulkPlacement`: `List-Unsubscribe` plus a
+   * corroborating list marker) out of the Screener into Reads/Receipts. DETERMINISTIC routing
+   * only: no classifier call, no credit debit. Every move is durable and user-reversible, never a
+   * delete, and it writes NO `rules` row — the sender still screens next time. A
+   * sensitivity-flagged message is NEVER auto-moved, so a stranger's login code stays at the gate
+   * for a human. NULL, no row, and a FAILED read all read as OFF — the other default would move
+   * mail on a fetch error.
    */
   screenerAutoApplyAt: integer("screener_auto_apply_at", { mode: "timestamp_ms" }),
   /**
-   * "USE FOLDERS" — when the account turned the optional folders feature on, or NULL for off
-   * (FOLDERS-SPEC.md §6; owner decision 1, 2026-08-22: fully optional, disabled by default).
-   *
-   * ON means: the mailbox's OWN folders — the passive-presence inventory in `mailbox_folders`,
-   * minus the organized six, the Sent folder and the `ohmail` namespace — are materialized as
-   * `folder` entities on /sync, so the client renders them in the rail with counts and opens
-   * them as views. It moves NO mail and issues NO IMAP command: first render on a
-   * fifteen-year-old mailbox is a read-only act (spec §10). The WRITE transition appends the
-   * matching `change_log` rows (creates on enable, delete tombstones on disable) so a live
-   * mirror follows without a re-bootstrap — see `setFoldersEnabled`.
-   *
-   * A timestamp for {@link autoSuggestAt}'s reason ("was this on before or after X" is a real
-   * question), read as `IS NOT NULL`, never as a deadline. **NULL, no row, and a failed read
-   * all mean OFF** — off is the pre-feature interface byte for byte, so there is no path from
-   * "I do not know" to a surface the account never asked for.
+   * "Use folders" — when the account turned the optional folders feature on, or NULL for off
+   * (FOLDERS-SPEC.md §6). ON means: the mailbox's OWN folders — the passive inventory minus the
+   * organized six, Sent and the `ohmail` namespace — are materialized as `folder` entities on
+   * /sync. It moves NO mail and issues NO IMAP command: first render on a fifteen-year-old
+   * mailbox is a read-only act. The WRITE transition appends the matching `change_log` rows
+   * (creates on enable, delete tombstones on disable) so a live mirror follows without a
+   * re-bootstrap — see `setFoldersEnabled`. Read as `IS NOT NULL`; NULL, no row, and a failed
+   * read all mean OFF — off is the pre-feature interface byte for byte.
    */
   foldersEnabledAt: integer("folders_enabled_at", { mode: "timestamp_ms" }),
   /**
@@ -1977,46 +1936,25 @@ export const accountSettings = sqliteTable("account_settings", {
    */
   screeningBaselineAt: integer("screening_baseline_at", { mode: "timestamp_ms" }),
   /**
-   * REMOTE IMAGES — the OPT-OUT, and the direction is the whole design (mail 0048).
-   *
-   * NULL (and no row) = the product default: a message's remote images load automatically,
-   * through `GET /img`, which fetches server-side so the sender never learns the reader's
-   * address. NOT NULL = this account asked to keep the per-message "Show images" consent flow,
-   * and the instant is when they asked.
-   *
-   * Stored as the opt-out rather than as an opt-in so the default moves with the product: an
-   * opt-in column would leave every existing account, and everyone who never finds the setting,
-   * on the old behaviour — which is a default nobody is on. Same argument as `dormancyDays`'
-   * "never store the default", one column over.
-   *
-   * **This is the ONE flag on this row whose failed read must default to the NON-null branch.**
-   * `autoSuggestAt` and `screenerAutoApplyAt` read a failed fetch as OFF because ON spends money
-   * or moves mail. Here, "off" is what loads remote content, so an unknown answer resolves to
-   * MANUAL (`consent-state.ts`'s resting value) — a client that could not ask must never load
-   * trackers for somebody who opted out. Row-absent is NOT that case: it is a real answer from a
-   * server that read the row, and it means auto.
-   *
-   * A TRACKING PIXEL IS UNAFFECTED IN EITHER MODE. The sanitizer classifies beacons and 1×1s
-   * separately and overrides the proxy for them; this flag governs pictures only.
+   * Remote images — the OPT-OUT (mail 0048). NULL (and no row) = the default: remote images load
+   * automatically through `GET /img`, which fetches server-side so the sender never learns the
+   * reader's address. NOT NULL = this account asked to keep the per-message "Show images" consent
+   * flow. Stored as the opt-out so the default moves with the product. The ONE flag on this row
+   * whose failed read defaults to the NON-null branch: "off" is what loads remote content, so an
+   * unknown answer resolves to MANUAL — a client that could not ask must never load trackers for
+   * somebody who opted out. Row-absent is NOT that case: a real answer meaning auto. A tracking
+   * pixel is unaffected in either mode.
    */
   blockRemoteImagesAt: integer("block_remote_images_at", { mode: "timestamp_ms" }),
   /**
-   * TRACKING PIXELS — the OPT-OUT of a protection, and the sign is the opposite of the column
-   * above (mail 0072).
-   *
-   * NULL (and no row) = the product default: a beacon, a 1×1 or a zero-dimension image is never
-   * fetched, in either images mode. NOT NULL = this account asked for tracking pixels to load
-   * along with the pictures, and the instant is when they asked.
-   *
-   * Two opt-out columns side by side whose NULLs mean OPPOSITE postures: {@link blockRemoteImagesAt}
-   * NULL is permissive (pictures load), this NULL is protective (pixels blocked). Both store the
-   * reader's departure from the default and never the default itself; what differs is which way
-   * the default points, and a reader of the row must not assume the two NULLs agree.
-   *
-   * The client's failed-read direction is therefore the SAME as its row-absent direction, unlike
-   * its neighbour: unknown ⇒ blocked, because loading a beacon for somebody who never asked is the
-   * one outcome this column may not produce. It governs only the sanitizer's pixel override, and
-   * only where a proxy exists — a pixel loads through `GET /img` like any picture or not at all.
+   * Tracking pixels — the OPT-OUT of a protection; the sign is the opposite of the column above
+   * (mail 0072). NULL (and no row) = the default: a beacon, a 1×1 or a zero-dimension image is
+   * never fetched, in either images mode. NOT NULL = this account asked for pixels to load. Two
+   * opt-out columns whose NULLs mean OPPOSITE postures: {@link blockRemoteImagesAt} NULL is
+   * permissive, this NULL is protective — a reader must not assume the two agree. The failed-read
+   * direction equals the row-absent direction here, unlike its neighbour: unknown means blocked,
+   * because loading a beacon for somebody who never asked is the one outcome this column may not
+   * produce. Governs only the sanitizer's pixel override.
    */
   loadTrackingPixelsAt: integer("load_tracking_pixels_at", { mode: "timestamp_ms" }),
   /**
@@ -2045,98 +1983,58 @@ export const accountSettings = sqliteTable("account_settings", {
    */
   blockAutoUnsubscribeAt: integer("block_auto_unsubscribe_at", { mode: "timestamp_ms" }),
   /**
-   * THE INTERFACE LANGUAGE — `'en' | 'de'`, or NULL for "nobody has chosen" (mail 0053). The CHECK
-   * (enum, closed) lives in the migration.
-   *
-   * The only column on this row that is neither a timestamp nor a switch, and the only one whose
-   * value a CLIENT resolves rather than a service. What reads it: `GET /consent` sends it, and the
-   * client adopts it at boot — which is the whole feature, because "my account is in German" has to
-   * hold on a machine that has never seen this account.
-   *
-   * **NULL is not `'en'`, and collapsing the two would break the one guard that matters.** A device
-   * remembers its own language in `localStorage` (the standalone install has nothing else, and the
-   * sign-in screen has no account yet). The rule is: an account preference WINS over the device's,
-   * and an account with no preference LEAVES THE DEVICE ALONE. Storing `'en'` for everyone who never
-   * opened the selector would make every boot on a German-set browser silently reset to English —
-   * so the default is never stored, exactly as `dormancyDays` is not, and `setLocale` maps a request
-   * for the default back to NULL.
-   *
-   * A FAILED read is not "English": `consent-state.ts` leaves the field null, which means "keep the
-   * device's language". That is the safe direction here in the same way MANUAL is for
-   * `blockRemoteImagesAt` — the cost of guessing wrong is an interface somebody cannot read, and the
-   * device's own remembered choice is a better guess than the product default.
+   * The interface language — `'en' | 'de'`, or NULL for "nobody has chosen" (mail 0053). The only
+   * column here a CLIENT resolves: `GET /consent` sends it and the client adopts it at boot — "my
+   * account is in German" has to hold on a machine that has never seen this account. NULL is not
+   * `'en'`: a device remembers its own language in `localStorage`, an account preference WINS
+   * over the device's, and an account with no preference LEAVES THE DEVICE ALONE. Storing `'en'`
+   * for everyone would make every boot on a German-set browser silently reset to English — the
+   * default is never stored, and `setLocale` maps a request for the default back to NULL. A
+   * FAILED read is not "English": the field stays null, meaning "keep the device's language".
    */
   locale: text("locale"),
   /**
-   * THE APPEARANCE FACE — `'paper' | 'ohmarchy'`, or NULL for "nobody has chosen" (mail 0082).
-   * The CHECK (enum, closed) lives in the migration. The paper/ohmarchy axis of appearance;
-   * light/dark stays device-local and never reaches this table.
-   *
-   * Reads and writes exactly as {@link locale} does — `GET /consent` sends it, the client adopts
-   * it, `PATCH /consent/settings` writes it — with ONE deliberate inversion: **the default IS
-   * stored.** `setThemeFace('paper')` persists `'paper'`, because NULL and "asked for paper" are
-   * different states on a LINUX device, which defaults to ohmarchy when nobody has chosen
-   * anywhere (Option B, OHMARCHY-PLAN.md §3a). An explicit account-wide 'paper' is what
-   * overrides that detection; collapsing it to NULL would make the request unsayable on the one
-   * class of device it targets. The migration's header carries the full argument.
-   *
-   * Scope note: this column is the "apply for all devices" half. "Only this device" never
-   * reaches the server — it is the device's `localStorage` pin, which outranks this column on
-   * that device (that is what the scope option promised when it was chosen).
+   * The appearance FACE — `'paper' | 'ohmarchy'`, or NULL for "nobody has chosen" (mail 0082);
+   * light/dark stays device-local. As {@link locale}, with ONE inversion: the default IS stored.
+   * `setThemeFace('paper')` persists `'paper'`, because NULL and "asked for paper" are different
+   * states on a Linux device, which defaults to ohmarchy when nobody has chosen anywhere — an
+   * explicit account-wide 'paper' overrides that detection, and collapsing it to NULL would make
+   * the request unsayable on the one class of device it targets. This column is the "apply for
+   * all devices" half; "only this device" never reaches the server — it is the device's
+   * `localStorage` pin, which outranks this column there.
    */
   themeFace: text("theme_face"),
   /**
-   * WHEN THIS ACCOUNT FINISHED (OR CANCELLED) THE FIRST-RUN FLOW — the mailbox-removal design.
-   *
-   * Onboarding state is DERIVED from truth-conditions and never from a step counter: the current
-   * step is the first UNMET of consent → screening baseline → import complete → AI answered →
-   * this. Every other condition already has a witness somewhere in the schema; this is the one
-   * that has none, because "the person is done with the flow" is not a fact about their mail.
-   *
-   * **CANCEL AND FINISH BOTH STAMP IT**, and that is the point rather than a shortcut: cancel
-   * means "stop asking me", and a cancel that left the column NULL would re-open the flow on the
-   * next launch for ever. Re-running from Settings re-renders pre-filled from truth and
-   * re-stamps, so the value is the LAST completion and not the first.
-   *
-   * Read as `IS NOT NULL`, like every other stamp on this row bar {@link screeningBaselineAt}.
+   * When this account finished (or cancelled) the first-run flow. Onboarding state is DERIVED
+   * from truth-conditions, never a step counter: the current step is the first UNMET of consent,
+   * screening baseline, import complete, AI answered, this. Every other condition has a witness
+   * in the schema; this one has none, because "done with the flow" is not a fact about mail.
+   * CANCEL AND FINISH BOTH STAMP IT: cancel means "stop asking me", and a cancel that left the
+   * column NULL would re-open the flow on every launch forever. Re-running from Settings
+   * re-stamps, so the value is the LAST completion. Read as `IS NOT NULL`, like every stamp on
+   * this row bar {@link screeningBaselineAt}.
    */
   onboardingCompletedAt: integer("onboarding_completed_at", { mode: "timestamp_ms" }),
   /**
-   * SCREENING SCOPE — `'window'` (the default) or `'all_time'`. Mail 0083, CHECK in the migration.
-   *
-   * **"All time" is a MODE, not a window value, and there was no way to spell it before.**
-   * `dormancyDays` is bounded 1–365 at the write site and NULL means the product default, so no
-   * number in that column says "no cutoff at all" — the onboarding step offers 90 · 180 · 365 ·
-   * all time, and the fourth option needed somewhere to live.
-   *
-   * `'all_time'` ⇒ NO cutoff and NO dormancy, in BOTH readers: `resolveScreeningCutoff` on the
-   * server and `consent-cutline.ts` on the client, held in step by a parity test. Everything is
-   * screened, nothing is filed to History unscreened, and no sender ever ages out of the queue
-   * unanswered.
-   *
-   * NOT NULL with the default stored, unlike {@link dormancyDays} beside it, and the difference
-   * is that this column has no device-local default to defer to: 'window' is what every existing
-   * account is on and what the absent value means, so storing it costs nothing and removes a
-   * three-valued read from two cutline implementations.
+   * Screening scope — `'window'` (the default) or `'all_time'` (mail 0083). "All time" is a MODE,
+   * not a window value, and there was no way to spell it: `dormancyDays` is bounded 1–365 and
+   * NULL means the product default, so no number there says "no cutoff at all". `'all_time'`
+   * means NO cutoff and NO dormancy in BOTH readers — `resolveScreeningCutoff` on the server and
+   * `consent-cutline.ts` on the client, held in step by a parity test: nothing is filed to
+   * History unscreened, and no sender ages out unanswered. NOT NULL with the default stored,
+   * unlike {@link dormancyDays}: no device-local default to defer to, so storing 'window' removes
+   * a three-valued read.
    */
   screeningScope: text("screening_scope").notNull().default("window"),
-  /*
-   * NO REQUEST-KEY COLUMN HERE, AND THE ABSENCE IS THE DESIGN (mail 0090).
-   *
-   * A reader's decision record is signed so an organizer can tell this account's own install from
-   * anything else with write access to `ohmail/_meta`. The first cut of that stored a per-account
-   * key on this row and handed it to each install over the hosted API. It is withdrawn: a LOCAL
-   * install talks only to the mail server and has no authenticated call to fetch one on, and
-   * giving it such a call would mean giving the sealed local artifact a session it deliberately
-   * does not have.
-   *
-   * The key is HKDF-SHA256 over the MAILBOX PASSWORD instead — the one secret both installs
-   * already hold, and one the attacker in question (folder rights via an ACL or a sieve rule) does
-   * not — computed at use and never stored. See `deriveRequestKey`
-   * (`@trafficflow/core/adapters/organizer-lease`). Nothing to store here, nothing to leak from
-   * this table, and no rotation column: changing the password changes the key, which is exactly
-   * when older records should stop verifying.
-   */
+  // NO request-key column here, and the absence is the design (mail 0090). A reader's decision
+  // record is signed so an organizer can tell this account's own install from anything else with
+  // write access to `ohmail/_meta`. A per-account key stored here and fetched over the hosted API
+  // was withdrawn: a LOCAL install talks only to the mail server and has no authenticated call to
+  // fetch one on — giving it one would give the sealed local artifact a session it deliberately
+  // does not have. The key is HKDF-SHA256 over the MAILBOX PASSWORD instead — the one secret both
+  // installs already hold and the attacker in question (folder rights via an ACL or sieve rule)
+  // does not — computed at use, never stored (`deriveRequestKey`). No rotation column: changing
+  // the password changes the key, which is exactly when older records should stop verifying.
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 });
