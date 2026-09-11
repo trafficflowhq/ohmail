@@ -6085,27 +6085,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * ── DISCOVERABILITY, WITHOUT A BADGE ON EVERY ROW AND WITHOUT A MESSAGE ────────────────
-   *
-   * A shortcut nobody knows about is not a feature, and a badge on every row forever is
-   * clutter charged to every user so that a few learn something once. Two layers, both quiet:
-   *
-   *   1. the `?` sheet lists them, free, because the bindings above declare their own labels
-   *      and the sheet is generated from the registry;
-   *   2. the row itself shows its keycap ON HOVER AND ON KEYBOARD FOCUS — you learn the key by
-   *      pointing at, or tabbing to, the row it belongs to. `navKey` rides on every numbered
-   *      row; `RailNav` reveals it only for the row under the pointer or focus and hides it
-   *      otherwise, so the resting rail carries counts and no keycaps. `RailNav` also clears the
-   *      reveal on click, so a tap that navigates does not leave a keycap standing where a touch
-   *      device has no pointer-leave to come.
-   *
-   * The `?` sheet ALSO paints every keycap at once while it is open (`kbdHint`), because the
-   * moment somebody is asking "what are the keys" the answer belongs on the things as well as
-   * in the list. `kbdHint` wins over the per-row reveal when both are set — see `RailItem`.
-   *
-   * There used to be a third layer: a one-time dismissible strip after a handful of rail
-   * clicks. It was removed — a line of chrome telling you a faster way exists is louder than
-   * the thing it points at, and the hover/focus keycap teaches the same fact without a message.
+   * Discoverability, without a badge on every row and without a message. A shortcut nobody knows about is not a
+   * feature, and a badge on every row forever is clutter charged to every user so a few learn something once. Two
+   * layers, both quiet: the `?` sheet lists them, free, because the bindings declare their own labels and the sheet
+   * is generated from the registry; and the row shows its keycap ON HOVER AND ON KEYBOARD FOCUS — `navKey` rides on
+   * every numbered row, `RailNav` reveals it only under pointer or focus (and clears the reveal on click, so a tap
+   * does not leave a keycap standing where a touch device has no pointer-leave to come). The `?` sheet also paints
+   * every keycap at once while open (`kbdHint`, which wins over the per-row reveal — see `RailItem`): the moment
+   * somebody asks "what are the keys", the answer belongs on the things as well as in the list.
+   */
+
+  /**
+   * There used to be a third layer — a one-time dismissible strip after a handful of rail clicks — removed: a line of
+   * chrome telling you a faster way exists is louder than the thing it points at, and the hover/focus keycap teaches
+   * the same fact without a message.
    */
   const railGroupsWithHints = useMemo(
     () =>
@@ -6394,31 +6387,23 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * THE TWO APP-LEVEL CONTROLS, AT THE FOOT OF THE RAIL.
-   *
-   * They were a fixed capsule floating bottom-centre over every view. That cost two things: a
-   * clearance band at the bottom of every scrolling surface so the last row was not under the
-   * pill (132px, in four stylesheets), and two controls permanently on top of somebody's mail.
-   * Neither acts on mail — one opens the palette, one switches the theme — so they belong with
-   * the rest of the app's own chrome, which is the rail.
-   *
-   * Written in the RAIL'S vocabulary, not in a component of their own: `.ritem` rows with the
-   * keycap in `.cnt`, exactly as the Search row carries "/". A row that looks like a rail row
-   * and is a rail row needs no new idiom to learn and no second stylesheet to keep in step.
-   *
-   * ONE LINE, NOT TWO. Command keeps the full-width row and its keycap; the theme control is an
-   * icon at the right end of that same line. Two stacked rows spent a second line of the rail's
-   * foot on a control that is a single glyph's worth of meaning, and pushed the account line up
-   * by that much on every viewport.
-   *
-   * The theme button is therefore the one thing here WITHOUT visible text, so it carries its
-   * name twice over: `aria-label` for assistive tech and the palette-less keyboard path, `title`
-   * for the pointer user who needs to identify a lone glyph. Dropping either leaves a button
-   * whose only description is a sun. The palette still carries the same action by name
-   * ("Toggle light / dark"), so nothing about switching the theme is reachable only by icon.
-   *
-   * On a phone these ride the navigation drawer, which is the same rail. See `touch-keys.css`
-   * for why the keycap goes away there and the Command label does not.
+   * The two app-level controls, at the foot of the rail. They were a fixed capsule floating bottom-centre over every
+   * view, costing a clearance band at the bottom of every scrolling surface (132px, in four stylesheets) and two
+   * controls permanently on top of somebody's mail. Neither acts on mail — one opens the palette, one switches the
+   * theme — so they belong with the app's own chrome, the rail. Written in the RAIL'S vocabulary, not a component of
+   * their own: `.ritem` rows with the keycap in `.cnt`, exactly as the Search row carries "/". One line, not two:
+   * Command keeps the full-width row and its keycap; the theme control is an icon at the right end of that line — two
+   * stacked rows spent a second line on a control worth a single glyph.
+   */
+
+  /**
+   * The theme button is the one thing here without visible text, so it carries its name twice:
+   * `aria-label` for assistive tech and the palette-less keyboard path, `title` for the pointer
+   * user identifying a lone glyph — dropping either leaves a button whose only description is a
+   * sun. The palette still carries the same action by name ("Toggle light / dark"), so nothing
+   * about switching the theme is reachable only by icon. On a phone these ride the navigation
+   * drawer, the same rail; see `touch-keys.css` for why the keycap goes away there and the
+   * Command label does not.
    */
   const railDock = (
     <>
@@ -7061,26 +7046,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 now={now}
                 /**
                  * The reader, IN PLACE — not `openMessage`, and the difference is a defect
-                 * rather than a preference.
-                 *
-                 * `openMessage` answers "open it where it lives", and where a History message
-                 * lives is the INBOX — so it would navigate to the Ohbox and select a row that
-                 * is not in the Ohbox's list, because the whole point of History is that this
-                 * message does not present there. The reader takes an id and reads the message
-                 * straight from the mirror, so it works for a message belonging to no pile.
-                 *
-                 * `setReaderFor` and not `enterReader`: in the SOLO list there is no reading
-                 * column at any width, so the sheet is the only reading surface — the gate that
-                 * suppresses the sheet where a column exists would leave the solo list unable to
-                 * open anything. The split layout has a column and reads there instead; the
-                 * sheet is only its mobile fallback, where the column is `display:none` and this
-                 * is again the one surface. Either way the body hydrates through the
-                 * `readerFor`-keyed effect above.
-                 *
-                 * It is what makes decide-on-encounter work: the pane renders the full body and
-                 * thread, and the sender menu inside it offers the screening decision with the
-                 * sender's count and the explicit retro-apply — the same affordance as
-                 * everywhere else, reached from the mail that prompted the thought.
+                 * rather than a preference: `openMessage` answers "open it where it lives", and
+                 * where a History message lives is the INBOX — it would navigate to the Ohbox
+                 * and select a row that is not in the Ohbox's list, because the whole point of
+                 * History is that this message does not present there. The reader takes an id
+                 * and reads straight from the mirror, so it works for a message belonging to no
+                 * pile. `setReaderFor` and not `enterReader`: in the SOLO list there is no
+                 * reading column at any width, so the sheet is the only reading surface — the
+                 * gate that suppresses the sheet where a column exists would leave the solo
+                 * list unable to open anything; the split layout reads in its column, the sheet
+                 * its mobile fallback. Either way the body hydrates through the
+                 * `readerFor`-keyed effect above. It is what makes decide-on-encounter work:
+                 * the pane renders the full body and thread, and the sender menu inside offers
+                 * the screening decision with the sender's count and the explicit retro-apply,
+                 * reached from the mail that prompted the thought.
                  */
                 onOpen={(m) => setReaderFor(m.id)}
                 /* The split reading column hydrates its own selection, the way ReadsView does. */
@@ -7356,34 +7335,31 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    `ScreeningSection` reaches an API client that is not in that build and renders
                    nothing at all, which is a Screener pane present in the nav and blank when
                    opened. See `AppShell`'s prop. */
-                /* "USE FOLDERS" — the folders feature's master toggle (FOLDERS-SPEC.md §6).
-                   Built here, not injected, for `dormancySection`'s reason: it must write through
-                   the SAME `useConsentState` the rail group and the folder views above are gated
-                   on, or a flipped switch would leave this tab's rail where it was. Gated on
-                   `consent.known` for the two rows' flash argument (a switch drawn before the
-                   server answered shows OFF to an account that turned it ON). Absent on the demo.
-                   Present on the desktop's hosted door, where `known` becomes true through its
-                   transport.
+                /**
+                 * "Use folders" — the folders feature's master toggle (FOLDERS-SPEC.md §6). Built here, not injected,
+                 * for `dormancySection`'s reason: it must write through the SAME `useConsentState` the rail group and
+                 * the folder views are gated on, or a flipped switch would leave this tab's rail where it was. Gated
+                 * on `consent.known` for the flash argument (a switch drawn before the server answered shows OFF to
+                 * an account that turned it ON); absent on the demo, present on the desktop's hosted door.
+                 */
 
-                   AND GATED ON `foldersStorable` AS WELL, which is the clause the comment here
-                   used to make as a claim about the standalone door — *"absent on a standalone
-                   install (no consent row anywhere)"* — that stopped being true when the screening
-                   window reached that door. `consentRoutes` are mounted on `localRoutes` now, so
-                   the standalone engine answers `GET /consent` and `known` goes true; what it does
-                   NOT serve is a single folder verb, so `packages/api`'s `withoutFoldersFlag`
-                   forces the flag off on the read and drops it silently on the write. The pane
-                   drew anyway: a master switch that flipped, stored nothing and snapped back, over
-                   a per-mailbox list that governed nothing.
+                /**
+                 * Gated on `foldersStorable` as well — this used to claim "absent on a standalone install (no consent
+                 * row anywhere)", which stopped being true when the screening window reached that door:
+                 * `consentRoutes` are on `localRoutes` now, so `known` goes true, but not one folder verb is served —
+                 * `withoutFoldersFlag` forces the flag off on the read and drops it on the write, and the pane drew a
+                 * master switch that flipped, stored nothing and snapped back.
+                 */
 
-                   THE CAPABILITY IS DECLARED BY THE TRANSPORT, and that is where it can be
-                   declared TRUTHFULLY on exactly one of the four wires — the standalone door's.
-                   The sentence here used to end "because only the thing that built the wire knows
-                   which route table is behind it", which is a claim about all of them and is false
-                   of three: the browser's constant cannot interrogate its server, and the
-                   desktop's hosted wire serves BOTH the managed door and the self-host one, which
-                   is the same `{ mode: "cloud" }` pointed at a different table. See
-                   {@link ConsentTransport.foldersStorable} for what each wire can honestly say and
-                   for the `/hello` word that would settle all four at the server. */
+                /* The capability is declared by the TRANSPORT, where it can be declared
+                   truthfully on exactly one of the four wires — the standalone door's. The old
+                   ending, "because only the thing that built the wire knows which route table
+                   is behind it", is a claim about all of them and false of three: the browser's
+                   constant cannot interrogate its server, and the desktop's hosted wire serves
+                   BOTH the managed door and the self-host one — the same `{ mode: "cloud" }`
+                   pointed at a different table. See {@link ConsentTransport.foldersStorable}
+                   for what each wire can honestly say and for the `/hello` word that would
+                   settle all four at the server. */
                 foldersSection={demo || !consent.known || !consent.foldersStorable ? undefined : (
                   <FoldersRow
                     on={consent.foldersEnabled}
@@ -7672,25 +7648,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           ) : undefined
         }
         /**
-         * DONE SENDS. That is all it does.
-         *
-         * Through `useMailSend` and never `engine.mutate({kind:"mail_send"})`: the lock that
-         * makes a second press within one tick a no-op is a ref inside that hook
-         * (`mail-send.ts:203-215`, which names a Reply Run step as exactly the caller a
-         * button's `disabled` cannot save), and a second key is a second reservation and a
-         * second delivery to a real person. The send path never delivers twice.
-         *
-         * ── AN EMPTY TEXTAREA ───────────────────────────────────────────────────────────
-         *
-         * Nothing happens: no send, no advance, no discharge. `canSend` already refuses a
-         * blank body — the server would accept and post one (`drafts-service.ts:167-171`) —
-         * and Skip is the affordance for moving on without writing. Letting Done fall through
-         * to Skip would put back a second way to leave a step having sent no mail, which is
-         * the shape of the bug this change removes; the run stays put instead, and the pile
-         * keeps the reminder.
-         *
-         * An entry with no `messageId` is refused for the same reason twice over: there is no
-         * message to reply to, so there is nothing to send and nothing that could be paid.
+         * Done sends. That is all it does. Through `useMailSend` and never `engine.mutate({kind:"mail_send"})`: the
+         * lock that makes a second press within one tick a no-op is a ref inside that hook (`mail-send.ts:203-215`,
+         * which names a Reply Run step as exactly the caller a button's `disabled` cannot save), and a second key is
+         * a second reservation and a second delivery. An empty textarea: nothing happens — no send, no advance, no
+         * discharge. `canSend` already refuses a blank body (the server would accept and post one,
+         * `drafts-service.ts:167-171`), and Skip is the affordance for moving on without writing; letting Done fall
+         * through to Skip would put back a second way to leave a step having sent no mail — the shape of the bug this
+         * change removes.
+         */
+
+        /**
+         * An entry with no `messageId` is refused for the same reason twice over: nothing to send, and nothing that
+         * could be paid.
          */
         onDone={() => {
           if (!frItem?.messageId) return;
@@ -7796,23 +7766,17 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         />
       ) : null}
 
-      {/* ── THE FIRST-RUN STAGE ────────────────────────────────────────────────────────────
-          Over the app, at `#/first-run`, and gated on FOUR things rather than on the route
-          alone:
-
-           · `firstRun` — a door that can actually make the calls. Absent on the demo.
-           · `route.firstRun` — the person asked for it, or an entry point sent them. The stage
-             never opens itself; a dialog that appears over somebody's mail unbidden is the
-             thing every entry point is written to avoid.
-           · `onboardingFacts` — `GET /mailboxes` has answered. Null is "we cannot see", and
-             the flow's second row reads a null mailbox as "none connected", which over an
-             unreachable API would open setup on an account with five mailboxes.
-           · `consent.known` — `GET /consent` has answered. `onboardingCompletedAt` RESTS null,
-             and null means "never been through setup", so rendering before the wire replies
-             would put a setup dialog over a finished account on every cold boot.
-
-          The last two are the same rule twice: this overlay's resting inputs both read as
-          "nothing has happened yet", so it may only be drawn on answers, never on defaults. */}
+      {/* The first-run stage — over the app, at `#/first-run`, gated on FOUR things rather than
+          the route alone: `firstRun`, a door that can actually make the calls (absent on the
+          demo); `route.firstRun`, the person asked for it — the stage never opens itself, since
+          a dialog appearing over somebody's mail unbidden is the thing every entry point is
+          written to avoid; `onboardingFacts`, `GET /mailboxes` has answered — null is "we
+          cannot see", and the flow's second row reads a null mailbox as "none connected", which
+          over an unreachable API would open setup on an account with five mailboxes; and
+          `consent.known`, `GET /consent` has answered — `onboardingCompletedAt` RESTS null,
+          meaning "never been through setup". The last two are the same rule twice: this
+          overlay's resting inputs both read as "nothing has happened yet", so it may only be
+          drawn on answers, never on defaults. */}
       {firstRun && route.firstRun && onboardingFacts && consent.known ? (
         <FirstRun
           host={firstRun}
