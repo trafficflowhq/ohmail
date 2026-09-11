@@ -95,8 +95,8 @@ export interface StandaloneEngine {
      *
      * `organizer` answers who files the mailbox; this answers whether anything can. The two are
      * different questions with different remedies, and dropping this half is why the phone's only
-     * sentence during a measured 2 min 27 s outage was "As of 19:42 · catching up" — true, and
-     * useless. `unreachableSince` is the FIRST observation of the current outage, never the
+     * sentence through a measured two-and-a-half-minute outage was the freshness stamp — true,
+     * and useless. `unreachableSince` is the FIRST observation of the current outage, never the
      * latest attempt.
      */
     connection: Record<string, {

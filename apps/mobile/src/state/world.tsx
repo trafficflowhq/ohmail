@@ -115,8 +115,8 @@ export interface World {
      * (`live.ts#connectionSay`). `null` is "nothing has said": a paired session, a build with no
      * engine, or a door whose first cycle has not run.
      *
-     * It sits beside `staleAsOf` because it OUTRANKS it on screen. Through the whole outage
-     * device run 2 measured, the only sentence anywhere was "As of 19:42 · catching up" — true,
+     * It sits beside `staleAsOf` because it OUTRANKS it on screen. Through a measured
+     * two-and-a-half-minute outage the only sentence anywhere was the freshness stamp — true,
      * and the reader could not learn from it that nothing was dialling.
      */
     connection: ConnectionSay | null;

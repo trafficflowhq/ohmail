@@ -1049,7 +1049,7 @@ export const REDIAL_BACKOFF_MAX_MS = 5 * 60_000;
  * The four numbers above were measured for a desktop that runs for days, where a dead socket is
  * rare and a login the provider counts is the expensive mistake. A phone organizes the mailbox
  * only while ohmail is open — a session of minutes — and loses its route for seconds at a time,
- * so the same numbers read as a broken app: device run 2 measured 2 min 27 s of failing cycles
+ * so the same numbers read as a broken app: measured on a phone, 2 min 27 s of failing cycles
  * with ONE `mailbox_reconnect_failed` in them, which is exactly what 8 cycles at a 15 s poll and
  * a ladder starting at 15 s produce.
  *
@@ -1084,7 +1084,7 @@ export const DESKTOP_RECONNECT: ReconnectProfile = {
 };
 
 /**
- * A PHONE (owner ruling, 2026-09-11). Detection at 3 cycles or 45 s — a phone's session is
+ * A PHONE. Detection at 3 cycles or 45 s — a phone's session is
  * minutes, so two minutes of silence is most of it — and a ladder of 5/15/30/60 s with the last
  * step repeating. The ladder never runs out, which is why the sentence a person reads keys on the
  * wall clock and not on an exhausted ladder.
