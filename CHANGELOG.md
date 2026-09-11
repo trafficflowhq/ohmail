@@ -13,6 +13,51 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A large mailbox no longer costs the desktop window the whole mailbox
+
+Opening a big account could take the app past four gigabytes and hold a CPU core for minutes after
+the first sync — on an 8 GB machine the system ran out of memory and began killing other
+applications. The window now keeps a window of your mail — the last ninety days, or five thousand
+messages, whichever is larger — and reaches past it on demand. Nothing about what you can read
+changes: the whole mailbox is still on the machine, in the engine's own store, and older mail and
+search are answered from there. A message's full text is now written once per batch instead of
+twice per message, so loading the recent mail after a first sync no longer pins a core, and the
+full messages the window holds are bounded too. The window also reports what it is costing every
+five minutes beside the engine's own figures, and on Linux it volunteers itself to the kernel ahead
+of your other applications.
+
+### A phone asks for a mailbox only when you ask it to
+
+Opening the app used to ask for the mailbox. Only pressing Connect, or "Start organizing here" in
+Settings, does now — so a phone reopened beside a computer already organizing that mailbox leaves
+it alone, and says which machine has it. Stopping is remembered: dismissing the notification, or
+handing the mailbox back from Settings, records the stop on the phone itself, so reopening the app
+does not start organizing again and there is a verb to start again. The phone keeps reading the
+mailbox and keeps its mail either way. A phone that stood down because another machine held the
+mailbox now takes it back when that machine lets go, instead of waiting to be restarted, and
+Settings › This phone follows the mailbox while it is open rather than showing what was true when
+the screen was opened.
+
+### A phone that loses its network says so
+
+The app organizes your mailbox while it is open, and it loses its network for seconds at a time —
+but it waited two minutes before dialling the mail server again, and fifteen seconds more between
+attempts, which are a computer's numbers. On a phone it now gives up on a quiet connection after
+three cycles, retries after five seconds, and says what is happening: "Connection lost.
+Reconnecting…" at the top of the screen and in Settings › This phone, and after five minutes the
+time it went instead. A server that answered and refused your password keeps its own sentence.
+Computers and ohmail Cloud keep the numbers they had. Stopping is bounded too: on a connection that
+stays open and answers nothing, "Stop organizing here" used to wait for a reply that never came.
+
+### A connection that dies without saying so is replaced
+
+A mail server that stops answering while its socket stays open used to leave the app asking the
+dead connection to log out — a request that waits behind the command already stuck, so it never
+returned. Nothing dialled again and no mail was filed until the app was restarted. A connection
+found dead is now ended outright, the next attempt happens, and each attempt is recorded. On a
+phone, a command written to a connection that had just closed could also take the app down; those
+bytes are refused at the socket and the write is told why.
+
 ### The phone names the machine organizing your mailbox
 
 Settings → This phone said “Nothing organizes this mailbox” whether nothing did or another
