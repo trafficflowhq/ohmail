@@ -40,7 +40,8 @@ import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
 import {
-  endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizerRestricted,
+  endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused,
+  sayOrganizerRestricted, standaloneHere,
 } from "../engine/organizer-session";
 import {
   PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
@@ -327,17 +328,30 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
    * a session that is now organizing.
    */
   const consentHere = useCallback(async (session: ConnectedSession): Promise<void> => {
-    const rows = await readMailboxes(session);
-    const id = rows?.[0]?.id ?? "";
+    /**
+     * THE ID COMES OFF THE DOOR, NOT OVER A REQUEST — the keys of `runtimes().organizer` ARE
+     * mailbox ids, and the engine is in this process. This first read the roster over the loopback
+     * door and was REFUSED on a device, on the read whose three silent outcomes had already made
+     * Settings' panel dark; the engine's own word needs no transport and cannot fail that way.
+     *
+     * The roster stays as the second answer, for a launch whose engine has not reported a mailbox
+     * yet. Neither answering is a sentence, not a silent skip: a phone that reads its own mailbox
+     * and organizes nothing while every surface says it is fine is the whole defect.
+     */
+    const id = standaloneHere()?.id ?? (await readMailboxes(session))?.[0]?.id ?? "";
+    if (live.current.k !== "live" || live.current.session !== session) return;
     if (id === "") {
-      setSyncError(refuse("organizeHereUnreadable"));
+      sayOrganizeRefused(refuse("organizeHereUnreadable"));
       return;
     }
     const outcome = await organizeHere(session, id);
     /* Only for THIS session: a verdict that outlives its session (a switch, a forget) must not
        write a sentence under the next one — the rule every other late answer here follows. */
     if (live.current.k !== "live" || live.current.session !== session) return;
-    setSyncError(outcome.kind === "refused" ? outcome.reason : null);
+    /* NOT `syncError`, which the Servers screen renders inside "Sync failed" — measured on a
+       device announcing a sync failure for a mailbox whose sync had not failed. See
+       `organizer-session.ts#organizeRefused` for where it goes and why. */
+    sayOrganizeRefused(outcome.kind === "refused" ? outcome.reason : null);
   }, []);
 
   /**

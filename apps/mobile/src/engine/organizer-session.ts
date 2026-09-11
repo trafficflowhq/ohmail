@@ -27,6 +27,7 @@
  * handed back here for that same reason — it is already gone, and asking the server to expunge
  * records by our own id afterwards is a write about a mailbox this install no longer holds.
  */
+import type { Refusal } from "../refusal";
 import type { StandaloneEngine } from "./standalone-door";
 import {
   createBackgroundOrganizing,
@@ -111,23 +112,54 @@ export const organizerDoor = (): StandaloneEngine | null => door;
  * the first gated cycle, and reading that as "nothing organizes this mailbox" would put a false
  * sentence on screen a second after the door opened.
  */
-export function standaloneHere(): { address: string; organizing: boolean | null } | null {
+export function standaloneHere():
+  { id: string | null; address: string; organizing: boolean | null } | null {
   const held = door;
   if (held === null) return null;
   let organizing: boolean | null = null;
+  let id: string | null = null;
   try {
-    const states = Object.values(held.runtimes().organizer);
+    const entries = Object.entries(held.runtimes().organizer);
     /* ONE MAILBOX ON THIS PHONE is the fourth door's own ruled line and the door carries one
        address, so this asks "does this install organize the mailbox it opened" and any entry
        saying so is that. */
-    if (states.length > 0) organizing = states.some((state) => state.organizing);
+    if (entries.length > 0) organizing = entries.some(([, state]) => state.organizing);
+    /**
+     * AND THE MAILBOX ID, WHICH IS THE MAP'S OWN KEY — the only id the app can have on this door
+     * without asking for it, and the consent press needs one. `null` where the engine reports a
+     * number of mailboxes this reader cannot name truthfully: one entry is the ruled shape, and
+     * picking the first of several would consent for whichever came back first.
+     */
+    if (entries.length === 1) id = entries[0]![0];
   } catch {
     /* An unreadable runtime is "has not said", never "does not organize" — the background half
        takes the same reading, and for the same reason: a momentary failure must not end
        somebody's organizing on screen. */
   }
-  return { address: held.address, organizing };
+  return { id, address: held.address, organizing };
 }
+
+/**
+ * ══ WHAT THE CONSENT PRESS ANSWERED, WHERE A PERSON ASKS THE QUESTION ══════════════════════
+ *
+ * `restrictedSaid`'s idiom one fact over, and it exists because the first surface chosen for this
+ * was wrong: a consent refusal was written into `syncError`, which the Servers screen renders
+ * INSIDE "Sync failed — the mirror keeps what it has". Read on a device: a mailbox whose sync had
+ * not failed announced a sync failure. A sentence in the wrong frame is a false sentence.
+ *
+ * So it lives here and is rendered by the panel that names this phone, under the line describing
+ * what this phone does — which is where somebody asking "is my mail being filed?" is looking.
+ * Cleared by a later success, so a refusal cannot outlive the thing it was about.
+ */
+let organizeRefused: Refusal | null = null;
+
+/** Record what the consent press answered. `null` clears it — a later press succeeded. */
+export function sayOrganizeRefused(reason: Refusal | null): void {
+  organizeRefused = reason;
+}
+
+/** The standing consent refusal, or `null`. Read by Settings' "This phone" panel. */
+export const organizeRefusal = (): Refusal | null => organizeRefused;
 
 /**
  * THE PERSON'S HAND-BACK FROM SETTINGS, on this door — the engine's own release, and no route.
@@ -263,4 +295,5 @@ export function forgetOrganizerSessionForTests(): void {
   live = null;
   door = null;
   restrictedSaid = false;
+  organizeRefused = null;
 }

@@ -18,6 +18,7 @@ import { useState } from "react";
 import { Platform, View } from "react-native";
 import { buildLabel } from "../src/build-info";
 import { Copy } from "../src/copy";
+import { sayRefusal } from "../src/refusal";
 import { type WakeState } from "../src/net/push";
 import { useWake } from "../src/state/wake";
 import {
@@ -32,7 +33,8 @@ import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } fro
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import {
-  handBackStandalone, organizerRestrictedSaid, standaloneHere, stopOrganizerSession,
+  handBackStandalone, organizeRefusal, organizerRestrictedSaid, standaloneHere,
+  stopOrganizerSession,
 } from "../src/engine/organizer-session";
 import { PHONE_CLAIM_NAME, standaloneAvailable } from "../src/engine/standalone-door";
 import { releaseMailbox } from "../src/net/mailboxes";
@@ -373,6 +375,8 @@ function ThisPhonePanel() {
    * engine's `handBack` releases every mailbox it holds).
    */
   const here = standaloneHere();
+  /* Only where there is a door to have asked — a paired session's panel says nothing of it. */
+  const consentRefusal = here === null ? null : organizeRefusal();
   const cards: readonly { key: string; address: string; claim: PhoneClaim }[] = here !== null
     ? [{
         key: HERE_CARD,
@@ -432,6 +436,15 @@ function ThisPhonePanel() {
                 {organizerRestrictedSaid() ? (
                   <Txt variant="note" tone="ink2">{Copy.organizerRestricted}</Txt>
                 ) : null}
+                {/* WHAT THE CONSENT PRESS ANSWERED, where somebody asking "is my mail being
+                    filed?" is already looking. It was written into `syncError` first, which the
+                    Servers screen renders inside "Sync failed" — read on a device announcing a
+                    sync failure for a mailbox whose sync had not failed. */}
+                {consentRefusal === null ? null : (
+                  <Txt variant="note" tone="ink2" accessibilityRole="alert">
+                    {sayRefusal(consentRefusal)}
+                  </Txt>
+                )}
                 {mayStopHere(claim) ? (
                   <Button
                     label={Copy.settingsStopHere}
