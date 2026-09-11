@@ -104,23 +104,13 @@ export function normalizePathname(pathname: string): string {
 }
 
 /**
- * `normalizeRequest` USED TO LIVE HERE AND NOW LIVES IN `normalize.ts`, and the reason is a
- * deploy break rather than tidiness.
- *
- * It grew a body door, which needs the route table — `import { apiRoutes, bodyCeilingFor, … }
- * from "@trafficflow/api"`. The web app's own test suite imports {@link API_PREFIX} from HERE, so
- * that the rewrite the browser sees and the prefix this host strips cannot drift apart; and that
- * app typechecks its tests, so the new import became part of the WEB APP's TypeScript program.
- * `@trafficflow/api` is not one of that app's dependencies, and its production build failed with
- * *"Cannot find module '@trafficflow/api'"*.
- *
- * **It passed locally.** Building that app on a development machine was green, and so was its
- * typecheck — measured, by putting the import back and running them again. In a workspace
- * checkout the package resolves through the repository root whether or not the app declares it;
- * a clean install scoped to one app is the only place the accident stops, and that only exists
- * on the build server. A local build is necessary here and not sufficient: it cannot see a
- * dependency that is present by accident.
- *
- * Keeping this module free of workspace imports is what makes it safe to import from another
- * app's tests, which is what it is for. Path normalization only.
+ * `normalizeRequest` used to live here and now lives in `normalize.ts`, moved for a deploy
+ * break: it grew a body door needing `@trafficflow/api`, and the web app's tests import
+ * `API_PREFIX` from HERE (so the browser rewrite and the stripped prefix cannot drift) — that
+ * import made `@trafficflow/api` part of the web app's TypeScript program, which does not
+ * declare it, and its production build failed with "Cannot find module". It passed locally:
+ * in a workspace checkout the package resolves through the repository root whether or not the
+ * app declares it; only a clean install scoped to one app — the build server — stops the
+ * accident. Keeping this module free of workspace imports is what makes it safe to import
+ * from another app's tests. Path normalization only.
  */
