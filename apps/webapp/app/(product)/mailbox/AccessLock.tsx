@@ -10,18 +10,13 @@ import { readOwner } from "../../shell/owner-cookie";
 import type { AccessRefusedFacts } from "../../api-client";
 
 /**
- * THE LOCK SCREEN — what an account the service has refused sees instead of its mail.
- *
- * Two things it must do, and they are the reason it exists rather than a banner:
- *
- *  · say that NOTHING IS GONE. The refusal is about a payment, and the mail is on the customer's
- *    own IMAP server either way. A screen that only says "no" reads as data loss;
- *  · leave the two doors that must never be behind a lock open — signing out (this may be a
- *    shared machine) and the way back to paying, when the service supplies one. A lock with no
- *    way out is a trap, not a control.
- *
- * It deletes nothing and it wipes nothing on its own; only the sign-out button does, and that is
- * the same wipe the Settings pane's own control performs.
+ * The lock screen — what an account the service has refused sees instead of its mail. Two things it
+ * must do, the reason it is a screen rather than a banner: say that NOTHING IS GONE — the refusal
+ * is about a payment, and the mail is on the customer's own IMAP server either way; a screen that
+ * only says "no" reads as data loss — and leave the two doors that must never be behind a lock
+ * open: signing out (this may be a shared machine) and the way back to paying, when the service
+ * supplies one. A lock with no way out is a trap, not a control. It deletes nothing and wipes
+ * nothing on its own; only the sign-out button does, the same wipe the Settings control performs.
  */
 export function AccessLock({ facts }: { facts: AccessRefusedFacts }) {
   const t = useTranslations("accessLock");

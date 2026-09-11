@@ -3,28 +3,18 @@ import type { SearchParamsLike } from "../../demo-mode";
 import { publicSignupEnabled } from "../../signup-mode";
 
 /**
- * `/join?code=…` — the URL the invite mail links to (`MailService.sendInvite` builds
- * `${appUrl}/join?code=…`, and that construction is the mail service's, not a caller's).
- *
- * The code is read here and handed to the client as an initial value only: it prefills the
- * field and skips the "paste your code" step, and it is validated by nothing until
- * `POST /auth/register` consumes it inside the transaction that creates the account. A
- * client-side check would be a second opinion about the one credential that gates the beta.
- *
- * A repeated `?code=a&code=b` arrives as an array; the FIRST value wins and the rest are
- * ignored, which is the safe direction — the worst outcome is a prefilled field the user
- * corrects, and the server refuses anything wrong regardless.
- *
- * `?billing=success|cancelled` is the OTHER way into this page: the account page the plan step
- * links out to redirects back here, because that step sits mid-wizard rather than at the end.
- * Anything other than those two literals is dropped — it is a value a stranger can put in a
- * link, and the only thing it is allowed to influence is whether the wizard WAITS for the
- * account to become entitled, which it then reads from the server rather than believing.
- *
- * `publicSignup` decides where the wizard STARTS and nothing else — the server still
- * validates every code and still refuses a missing one when the deployment is gated. It is
- * read here, on the server, rather than passed down from the landing, so a visitor who
- * bookmarks `/join` gets the same answer as one who followed the CTA.
+ * `/join?code=…` — the URL the invite mail links to (`MailService.sendInvite` builds it). The code is read here and
+ * handed to the client as an initial value only: it prefills the field, and it is validated by nothing until `POST
+ * /auth/register` consumes it inside the transaction that creates the account — a client-side check would be a second
+ * opinion about the one credential that gates the beta.
+ */
+
+/**
+ * A repeated `?code=a&code=b` arrives as an array; the FIRST value wins — the worst outcome is a prefilled field the
+ * user corrects. `?billing=success|cancelled` is the other way in (the plan step's account page redirects back here);
+ * anything else is dropped — a stranger's link value may only influence whether the wizard WAITS for entitlement,
+ * which it then reads from the server. `publicSignup` decides where the wizard STARTS and nothing else, read here on
+ * the server so a bookmarked `/join` gets the same answer as the CTA.
  */
 export default async function JoinPage({
   searchParams,

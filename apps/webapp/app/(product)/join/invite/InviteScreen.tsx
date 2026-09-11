@@ -1,49 +1,32 @@
 "use client";
 
 /**
- * THE INVITE, OPENED — one form, one submit, and the person has an account.
- *
- * The operator minted `<origin>/join/invite#<token>` in Settings → Invites and handed it over
- * (a message, a scan of the QR). This page is what the link does: it takes the token out of
- * the fragment, asks for the three things an account is (email, name, password), and drives
- *
- *   `POST /pair/redeem` (invite grant, binds the email → a short-lived invite code)
- *   → `POST /auth/register` (the existing invite path — nothing new consumes the code)
- *   → an enrollment session → `/join`, which resumes at the second-factor step and carries
- *     on through recovery codes to the first mailbox.
- *
- * This is `SetupScreen`'s proven ceremony minus the token field (the link carried it), and the
- * one-submit shape is inherited for the same reason: the pairing token is SINGLE-USE, so a
- * flow that redeemed on one screen and registered on the next would strand anyone who fell
- * between. A register refusal after a successful redeem KEEPS the minted code, keyed to the
- * address it is bound to, so a retry re-uses it instead of burning a token that no longer
- * exists — and changing the address after that point is the one unrecoverable edit, refused
- * with the true remedy (ask for a fresh link).
- *
- * ── THE THREAT POSTURE, PLAINLY ───────────────────────────────────────────────────────────
- *
- * Possession of the link IS the invitation. That is the design, not an oversight: the
- * operator hands it over a channel they already trust — the same standing as handing someone
- * a house key — and everything else bounds the blast radius of a link that leaks:
- *
- *  · the token rides the FRAGMENT, never the path or query. A fragment is not sent in the
- *    page request, so it cannot reach the server's or a proxy's access log, and it never
- *    rides a `Referer`. This page refuses a query-borne token outright (`?token=` renders the
- *    incomplete-link screen), so the safe shape cannot regress by convenience.
- *  · the fragment is SCRUBBED from the address bar the moment it is in component state —
- *    `JoinScreen`'s `?code=` discipline — so an abandoned tab on a shared machine is not a
- *    standing credential display.
- *  · the token is single-use, expires (seven days by default), and is revocable from the
- *    minting pane; the invite code a redeem answers is email-bound and lives fifteen minutes.
- *  · the ONLY request that carries the token is the redeem's JSON body. A test pins that no
- *    fetch URL ever contains it.
- *  · `middleware.ts` serves this path under the strict nonce CSP — the mitigation that
- *    matters for a fragment credential, since injected inline script reading `location.hash`
- *    is the exposure that remains.
- *
- * A wrong, spent or expired token gets THIS form's sentence: the service's wire message
- * ("ask whoever minted it") is technically right here but names nobody — the person holding
- * an invite link knows exactly one human to ask, so the form says that.
+ * The invite, opened — one form, one submit, and the person has an account. The operator minted
+ * `<origin>/join/invite#<token>`; this page takes the token out of the fragment, asks for the three things an account
+ * is, and drives `POST /pair/redeem` → `POST /auth/register` → an enrollment session → `/join`, resuming at the
+ * second-factor step.
+ */
+
+/**
+ * `SetupScreen`'s proven ceremony minus the token field, one submit for the same reason: the pairing token is
+ * SINGLE-USE, so a two-screen flow would strand anyone who fell between. A register refusal after a successful redeem
+ * KEEPS the minted code, keyed to the address it is bound to, so a retry re-uses it; changing the address after that
+ * point is the one unrecoverable edit, refused with the true remedy (ask for a fresh link).
+ */
+
+/**
+ * The threat posture, plainly: possession of the link IS the invitation — handed over a channel the operator already
+ * trusts — and everything else bounds a leak. The token rides the FRAGMENT (never sent in a request; a `?token=`
+ * query is refused outright so the safe shape cannot regress); the fragment is scrubbed from the address bar the
+ * moment it is in state (`JoinScreen`'s `?code=` discipline); the token is single-use, expires and is revocable, and
+ * the redeem's email-bound invite code lives fifteen minutes; the ONLY request carrying the token is the redeem's
+ * JSON body (a test pins that no fetch URL contains it); `middleware.ts` serves this path under the strict nonce CSP
+ * — the mitigation that matters, since injected inline script reading `location.hash` is the exposure that remains.
+ */
+
+/**
+ * A wrong or spent token gets THIS form's sentence: the wire message ("ask whoever minted it") names nobody, and the
+ * person holding an invite link knows exactly one human to ask.
  */
 
 import { useEffect, useRef, useState } from "react";

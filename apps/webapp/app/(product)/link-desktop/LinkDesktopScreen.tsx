@@ -1,61 +1,38 @@
 "use client";
 
 /**
- * "Link the desktop app" — mint a one-use code, show it, and let it die on screen.
- *
- * ── THE CODE IS NOT MINTED ON LOAD ──────────────────────────────────────────────────────────
- *
- * A press mints it, and that is a decision rather than a step. A code minted by a page load is
- * minted by a prefetch, by a browser restoring tabs, and by every accidental navigation — each
- * one a live credential nobody asked for, printed on a screen that may be shared, and each one
- * counting against nothing because there is no bound on how often you may load a page. The press
- * is also where the honest sentence goes: this is the moment somebody is deciding to hand a
- * machine access to their mail.
- *
- * ── IT COUNTS DOWN, AND THE COUNTDOWN IS THE SERVER'S NUMBER ────────────────────────────────
- *
- * `expiresIn` comes back with the code. Rendering "valid for 2 minutes" from a literal here would
- * be a second copy of `desktopLinkTtlMs` that drifts the first time the server's changes — and a
- * page that says "2 minutes" about a code that died after one is worse than a page that says
- * nothing. When it reaches zero the code is REMOVED from the screen rather than greyed out: a
- * dead credential left visible is something a person will keep trying to type.
- *
- * ── THE STEP-UP IS RE-ASSERTED HERE, IN PLACE, AND THAT IS THE LOOP FIX ─────────────────────
- *
- * `POST /auth/desktop-link` is step-up gated: it mints a credential a new machine keeps on a
- * rolling four-hundred-day window, so a session that has merely been left open must prove a
- * second factor within the last few minutes first. The refusal is `403 step_up_required`, and a plain `401` is the same
- * remedy from the other end — no session on this browser at all.
- *
- * The page used to answer both by sending the visitor to `/login`. That is the reported
- * loop: `/login` treats a live full session as "already done" and bounces straight back to
- * the app WITHOUT re-asserting a factor (it exists to stop signing a signed-in person in again),
- * so the very next mint 403'd on the same stale step-up — round and round, and the code could
- * never be minted. Nothing on the server refreshes `sessions.last_twofa_at` except completing a
- * factor, so the only cure is to complete one. That is done RIGHT HERE, the way `AccountSection`
- * and `MailboxSection` already do it for their own step-up-gated writes — a password step and a
- * factor step, and the mint is retried the instant the factor verifies. No navigation, so there
- * is nowhere for the loop to live.
- *
- * The 401 case falls through the same ceremony for free: a full password-plus-factor sign-in
- * establishes a session AND lands it step-up fresh, so the retried mint succeeds on the first
- * try. A visitor with no factor at all cannot step up — their account is unfinished — and is
- * pointed at `/join` to complete setup rather than shown a dead ceremony.
- *
- * ── THE DEEP LINK IS OFFERED ONLY FOR A CODE THAT IS BOUND ──────────────────────────────────
- *
- * When the app opened this page it appended `?challenge=` — the public half of a PKCE pair whose
- * verifier stays in its own memory. The page passes it to the mint, and the code that comes back
- * is then spendable ONLY by a caller that can produce that verifier. That is the whole licence
- * for the "Open ohmail" button: `ohmail://` is claimed by whichever program on the machine
- * registered it, and nothing authenticates that, so a program that intercepts the link receives a
- * code it cannot use.
- *
- * With NO challenge there is no button — and that is a deliberate refusal rather than an
- * unfinished branch. An unbound code sent over a scheme anybody can claim is strictly worse than
- * the same code retyped into a window a person is looking at: the interceptor could spend it.
- * A visitor who opened this page themselves therefore gets exactly the page that shipped before
- * this existed, and the retype path is unchanged for everybody.
+ * "Link the desktop app" — mint a one-use code, show it, and let it die on screen. The code is NOT
+ * minted on load: a page-load mint is a prefetch mint, a restored-tab mint, an accidental
+ * navigation mint — each a live credential nobody asked for; the press is also where the honest
+ * sentence goes. The countdown is the SERVER's number (`expiresIn`): a literal here would be a
+ * second copy of `desktopLinkTtlMs` that drifts, and a page saying "2 minutes" about a code that
+ * died after one is worse than a page saying nothing. At zero the code is REMOVED, not greyed out —
+ * a dead credential left visible is something a person keeps trying to type.
+ */
+
+/**
+ * The step-up is re-asserted here, in place — the loop fix. `POST /auth/desktop-link` is step-up
+ * gated (it mints a credential on a rolling four-hundred-day window); the page used to answer the
+ * 403 by sending the visitor to `/login`, which treats a live session as "already done" and
+ * bounces straight back WITHOUT re-asserting a factor — so the next mint 403'd again, round and
+ * round. Nothing refreshes `sessions.last_twofa_at` except completing a factor, so one is completed
+ * RIGHT HERE (the `AccountSection`/`MailboxSection` ceremony) and the mint retried the instant it
+ * verifies; a plain 401 falls through the same ceremony for free, and a visitor with no factor is
+ * pointed at `/join` rather than shown a dead ceremony.
+ */
+
+/**
+ * The deep link is offered only for a code that is BOUND: when the app opened this page it appended `?challenge=` —
+ * the public half of a PKCE pair whose verifier stays in the app's memory — and the code that comes back is spendable
+ * only by a caller producing that verifier. That is the whole licence for the "Open ohmail" button: `ohmail://` is
+ * claimed by whichever program registered it, and nothing authenticates that, so an interceptor receives a code it
+ * cannot use.
+ */
+
+/**
+ * With NO challenge there is no button — a deliberate refusal: an unbound code over a scheme anybody can claim is
+ * strictly worse than the same code retyped into a window a person is looking at. A visitor who opened this page
+ * themselves gets exactly the page that shipped before; the retype path is unchanged.
  */
 
 import { useEffect, useRef, useState } from "react";

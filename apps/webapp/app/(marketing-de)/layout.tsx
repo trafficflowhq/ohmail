@@ -9,38 +9,20 @@ import {
 import "../(marketing)/landing.css";
 import "../(marketing)/landing-face.css";
 
-/*
- * THE GERMAN MARKETING TREE — a root layout, a mount at `/de`, and deliberately nothing else.
- *
- * `messages/de.json` has held full key parity with `messages/en.json` for months, landing
- * namespaces included, and a guard keeps it there. Until this group existed none of it was
- * REACHABLE: the request config pinned English, the marketing root layout hard-wired
- * `lang="en"`, and there was no address a German reader could be sent or link to. A complete
- * translation nobody can open is not a translation.
- *
- * ── WHY A WHOLE ROOT LAYOUT FOR ONE PAGE ───────────────────────────────────────────────────
- *
- * `<html lang>` is written by the root layout, and an App Router layout is not told which path
- * it is rendering. So a single marketing root layout could only learn the language by reading a
- * cookie or `Accept-Language` per request — which makes the landing dynamic and ends its CDN
- * cache. Two root layouts, each holding its locale as a literal, keep both trees static. The
- * full argument, and why next-intl's `app/[locale]/…` shape is ruled out by the single-origin
- * merge, is in `(marketing)/marketing-root.tsx`.
- *
- * ── WHAT THIS GROUP MAY CONTAIN ────────────────────────────────────────────────────────────
- *
- * Routing. Nothing else. Every section, stylesheet, image and constant comes from
- * `(marketing)`, so there is exactly one landing composition and one set of marketing sources
- * for every guard that sweeps them — the off-origin scan, the competitor sweep, the claims
- * checks. A component that existed only here would be marketing copy outside all of them.
- *
- * ── WHAT IS NOT TRANSLATED, AND WHY THAT IS NOT AN OVERSIGHT ───────────────────────────────
- *
- * `/privacy`, `/imprint` and `/subprocessors` have no German twin. Their text is the binding
- * legal text of the Swiss operator and is deliberately kept out of the catalogue (see
- * `(marketing)/privacy/page.tsx`); a translated policy would be a second legal document, not a
- * second rendering of one. The German footer therefore links to the English originals, which is
- * the honest arrangement rather than a gap.
+/**
+ * The German marketing tree — a root layout, a mount at `/de`, and deliberately nothing else. `messages/de.json` has
+ * held full key parity for months; until this group existed none of it was REACHABLE — a complete translation nobody
+ * can open is not a translation. A whole root layout for one page because `<html lang>` is written by the root
+ * layout, and a layout is not told which path it renders — one marketing root could only learn the language per
+ * request, ending the CDN cache; two layouts, each holding its locale as a literal, keep both trees static (the full
+ * argument is in `(marketing)/marketing-root.tsx`).
+ */
+
+/**
+ * This group may contain ROUTING and nothing else: every section, stylesheet and constant comes from `(marketing)`,
+ * so the sweeping guards cover one set of sources. `/privacy`, `/imprint` and `/subprocessors` have no German twin,
+ * deliberately: their text is the operator's binding legal text, and a translated policy would be a second legal
+ * document — the German footer links the English originals.
  */
 
 const LOCALE = "de" satisfies AppLocale;
