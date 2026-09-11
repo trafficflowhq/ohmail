@@ -4781,36 +4781,33 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * OPEN IT WHERE IT LIVES — the one answer, finished.
-   *
-   * Reported as "search does not allow a message to be opened; it should open the message
-   * where it lives". The literal claim was wrong — a `SearchHit` is a real `<button>` and has
-   * always called this. What was wrong is everything AFTER the routing
-   * decision, and it is the same seam in every arm: this function set a view and a cursor
-   * and then stopped, so on three of the five destinations the user arrived at a list and
-   * had to find the thing they had just clicked, and on the fourth they arrived at a pane
-   * that is `display:none` at their screen width.
-   *
-   *   · **ohbox** — the split pane IS the open, so the cursor is enough… on a desktop. Under
-   *     900px the reading column is hidden, so the reader sheet is what "opened" means
-   *     there, exactly as `OhboxView`'s own tap handler already decided.
-   *   · **reads / receipts** — cursor plus a `jump`, which extends the mounted run through the
-   *     card, anchors the stream on it and OPENS it (`ReadsView`, `StreamShell.scrollTo`). These
-   *     piles open in place, and "open" here is the card expanded with its verbs up — a card the
-   *     stream merely scrolled near is not the message the reader clicked.
-   *   · **screener / screened / spam** — now SELECTS THE SENDER as well as navigating. The
-   *     segment alone was the misroute the ruling named third: a consent surface that drops
-   *     you at a queue of strangers when you asked about one of them. Reached whenever the
-   *     PRESENTATION is the Screener, which is not the same set as "physically in a Screener
-   *     folder" — an undecided sender's INBOX mail lands here, which is the whole of the
-   *     presentation fix (`openTargetFor`). A hit whose sender the queue holds NO row for is
-   *     routed to the reader instead of a rowless queue — see `openTargetFor`.
-   *   · **History, or a folder this client has no view for** — the reader, over wherever you
-   *     are. History is now a REACHABLE case, not just the defensive one: a dormant-undecided
-   *     message presents in History (`placeOf` is `null`), belongs to no pile, and so opens in
-   *     the reader exactly as HistoryView's own row does. The defensive half remains — `Folder`
-   *     is a closed union and `VIEW_OF_FOLDER` is total, so an unknown folder cannot reach here
-   *     from the wire — and its answer is the same: the message itself.
+   * Open it where it lives — the one answer, finished.
+   */
+
+  /**
+   * Reported as "search does not allow a message to be opened"; the literal claim was wrong (a `SearchHit` is a real
+   * `<button>` and has always called this) — what was wrong is everything AFTER the routing decision: this set a view
+   * and a cursor and stopped, so on three of five destinations the user arrived at a list and had to find the thing
+   * they had just clicked, and on the fourth at a pane that is `display:none` at their screen width. ohbox — the
+   * split pane IS the open on a desktop; under 900px the reading column is hidden, so the reader sheet is what
+   * "opened" means, exactly as `OhboxView`'s own tap handler decided. reads/receipts — cursor plus a `jump`, which
+   * extends the mounted run through the card, anchors the stream on it and OPENS it (`ReadsView`,
+   * `StreamShell.scrollTo`): a card the stream merely scrolled near is not the message the reader clicked.
+   */
+
+  /**
+   * screener/screened/spam — now SELECTS THE SENDER as well as navigating: the segment alone was the misroute the
+   * ruling named third, a consent surface dropping you at a queue of strangers when you asked about one of them.
+   * Reached whenever the PRESENTATION is the Screener — not the same set as "physically in a Screener folder": an
+   * undecided sender's INBOX mail lands here, the whole of the presentation fix (`openTargetFor`); a hit whose sender
+   * the queue holds no row for routes to the reader instead of a rowless queue.
+   */
+
+  /**
+   * History, or a folder this client has no view for — the reader, over wherever you are: History is a REACHABLE case
+   * now (a dormant-undecided message presents there, `placeOf` null, belongs to no pile), and the defensive half
+   * remains — `Folder` is a closed union and `VIEW_OF_FOLDER` total, so an unknown folder cannot reach here from the
+   * wire; its answer is the same, the message itself.
    */
   /**
    * DOES THAT PILE HOLD THIS MESSAGE — asked of the SAME lists the views render.
@@ -4897,38 +4894,29 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   openMessageRef.current = openMessage;
 
   /**
-   * ═══ THE OPEN MESSAGE LIVES IN THE URL ════════════════════════════════════════════════════
-   *
-   * `#/<view>/m/<id>` (`Route.messageId`): the bar claims the reading on screen, so a RELOAD
-   * restores it, Back walks out of it, and a copied link hands somebody the exact message.
-   * Before this, a reload booted to the bare view and the open message was simply gone — the
-   * URL knew the place and not the reading.
-   *
-   * ONE EFFECT, ARBITRATED BY WHO MOVED. The route and the open state mirror each other, and a
-   * two-way mirror with two writers is a loop; the refs below remember the last agreed pair, so
-   * each run knows which side changed and lets THAT side win:
-   *
-   *   · the ROUTE moved (Back/Forward, a typed link, a reload) → apply it to the open state —
-   *     the Ohbox selection (plus the sheet at a narrow width, the same rule `openMessage`'s
-   *     ohbox arm applies), a stream's cursor-with-jump, or the reader overlay for every other
-   *     view. An id the mirror does not hold yet WAITS (the effect re-runs per delta) — a
-   *     reload restores before the boot drain finishes filling the mirror — and an id the
-   *     mirror never produces (another account's message, a deleted row) drops out of the bar
-   *     once the mail state settles, rather than erroring or restoring somebody else's reading.
-   *   · the STATE moved (a click, j/k, an open, a close) → reflect it into the bar
-   *     (`reflectMessage`): an OPEN pushes, so history walks readings; a move between messages
-   *     or a close REPLACES, so a `j`-walk does not bury the view under fifty entries.
-   *
-   * WHAT RESTORING DOES NOT DO: arm a read. The restore sets the selection and the surfaces;
-   * it never calls the view's `open`, so nothing is marked read by arriving — reloading IS a
-   * leave-and-revisit, the departure's own commit (`pagehide`) already spent the last reading,
-   * and the restored message re-arms only the way any on-screen message does (the dwell, or an
-   * explicit open). The session-order lease starts fresh, exactly as any reload starts it.
-   *
-   * WHAT THE BAR MIRRORS, deliberately narrow: the reader overlay on any message view, and the
-   * Ohbox's own selection (at a split width the column IS the open). A stream's expanded card
-   * is a scroll posture, not shell state, so in-place stream reading does not rewrite the URL —
-   * but a stream deep link RESTORES through the same cursor-plus-jump a search arrival uses.
+   * The open message lives in the URL — `#/<view>/m/<id>` (`Route.messageId`): the bar claims the reading on screen,
+   * so a reload restores it, Back walks out of it, and a copied link hands somebody the exact message; before this, a
+   * reload booted to the bare view. One effect, arbitrated by who moved — a two-way mirror with two writers is a
+   * loop, so the refs below remember the last agreed pair and let the side that changed win. The ROUTE moved
+   * (Back/Forward, a typed link, a reload) → apply it to the open state: the Ohbox selection (plus the sheet at a
+   * narrow width), a stream's cursor-with-jump, or the reader overlay. An id the mirror does not hold yet WAITS (the
+   * effect re-runs per delta — a reload restores before the boot drain finishes), and an id the mirror never produces
+   * drops out of the bar once the mail state settles.
+   */
+
+  /**
+   * The STATE moved (a click, j/k, an open, a close) → reflect it into the bar (`reflectMessage`): an OPEN pushes, so
+   * history walks readings; a move or a close REPLACES, so a `j`-walk does not bury the view under fifty entries.
+   */
+
+  /**
+   * What restoring does not do: arm a read. The restore sets the selection and the surfaces, never calls the view's
+   * `open`, so nothing is marked read by arriving — reloading IS a leave-and-revisit, the departure's own commit
+   * (`pagehide`) already spent the last reading, and the restored message re-arms only the way any on-screen message
+   * does. The session-order lease starts fresh, as any reload starts it. What the bar mirrors is deliberately narrow:
+   * the reader overlay on any message view, and the Ohbox's own selection (at a split width the column IS the open).
+   * A stream's expanded card is a scroll posture, not shell state, so in-place stream reading does not rewrite the
+   * URL — but a stream deep link RESTORES through the same cursor-plus-jump a search arrival uses.
    */
   // The last pair the two sides agreed on — `view|id`, because the SAME message deep-linked on
   // a DIFFERENT view is a route move (the overlay must open there), not a state echo.
@@ -5032,32 +5020,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   }, [route.messageId, route.view, readerFor, ohboxSel, version, mailState.settled, pileHolds, reader]);
 
   /**
-   * ═══ LOCATE THE ROW, IN WHICHEVER VIEW IT LANDED ══════════════════════════════════════
-   *
-   * ── WHY THIS IS ONE DOM EFFECT AND NOT FOUR PROPS ─────────────────────────────────────
-   *
-   * A search hit can land in four view shapes — the Ohbox's split pane, the two skim streams,
-   * and the Screener's sender queue — and threading a `locatedId` through all four would be
-   * four props, four effects and four chances for the fifth view to be added without one.
-   *
-   * All four already agree on a contract this can use instead: every row is
-   * `.row[data-id="<id>"]`, and each view already finds its own cursor that way to scroll it
-   * (`ReadsView`, `ReceiptsView`, `ScreenerView`) or to anchor the screening popover
-   * (`OhboxView`, and `AppShell`'s own `s` binding). This is a fifth reader of an established
-   * selector, not a new coupling — and it means a view added later is located correctly
-   * without being taught anything.
-   *
-   * ── WHY IT RETRIES ────────────────────────────────────────────────────────────────────
-   *
-   * `openMessage` sets the cursor and CHANGES THE ROUTE in the same gesture. The destination
-   * view has not mounted when this effect first runs, so a single query would miss every time
-   * — the row appears a frame or two later, after the hash change, the route effect and the
-   * view's own render. It re-tries on animation frames for a short bounded window and then
-   * gives up rather than looping: a hit whose row never appears is a message that is no longer
-   * in that pile, and flashing nothing is the honest outcome.
-   *
-   * The class is removed on a timer AND on unmount, so leaving the view mid-flash cannot
-   * leave a row permanently marked.
+   * Locate the row, in whichever view it landed. One DOM effect and not four props: a search hit can land in four
+   * view shapes, and threading a `locatedId` through all four is four props, four effects and four chances for the
+   * fifth view to be added without one. All four already agree on a contract: every row is `.row[data-id="<id>"]`,
+   * and each view already finds its own cursor that way — this is a fifth reader of an established selector, not a
+   * new coupling, and a view added later is located without being taught anything. It retries because `openMessage`
+   * sets the cursor and CHANGES THE ROUTE in one gesture: the destination view has not mounted when this first runs,
+   * so a single query would miss every time.
+   */
+
+  /**
+   * It re-tries on animation frames for a short bounded window and then gives up — a hit whose row never appears is a
+   * message no longer in that pile, and flashing nothing is the honest outcome. The class is removed on a timer AND
+   * on unmount, so leaving the view mid-flash cannot leave a row permanently marked.
    */
   useEffect(() => {
     if (!located) return;
@@ -5163,32 +5138,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   useEffect(() => setBarPanel(null), [focusedId]);
 
   /**
-   * PUT THE CURSOR ON THE FIRST ROW — the first press of a message verb on a list that has rows
-   * and no cursor on any of them. See `keymap.tsx#DisabledReason` for the dispatcher's half.
-   *
-   * ── WHY A PRESS AND NOT AN ARRIVAL ──────────────────────────────────────────────────────────
-   *
-   * `selectedOhbox` above records what happened the last time a list opened with a cursor already
-   * on something: `?? allOhbox[0]` meant an Ohbox nobody had touched reported its newest unread as
-   * "the open one", which fetched a body from the user's own server and put somebody's mail in the
-   * reading column on arrival. ⌫ is that hazard with a delete on the end of it — a key whose first
-   * press files the top message because a list happened to be under it. So nothing is placed until
-   * somebody presses something, and the press that places performs nothing.
-   *
-   * ── AND WHY IT ANSWERS `false` MORE OFTEN THAN IT LOOKS ─────────────────────────────────────
-   *
-   * Three views, the three whose cursor this shell holds, and the SAME three `focused` reads —
-   * anything else and the ring would land on a row the pressed verb does not act on. `route.view`
-   * and not `effectiveView`, again because that is what `focused` reads: a `tag` route with no
-   * group renders the Ohbox while `focused` stays null, and placing an Ohbox cursor for a verb
-   * that would act on nothing is the one outcome worth refusing.
-   *
-   * The DOM row is read because the scroll needs the element, and the null-check that comes with
-   * it earns its keep twice: it is what a click would have hit, so this stays on the click's own
-   * path, and it is `null` for a surface that holds a list in state without rendering it (the
-   * seed screen owes a first run over a mirror that may already carry rows). A `false` consumes
-   * nothing: the keypress stays exactly as inert as it was, which is what an empty list should
-   * feel like.
+   * Put the cursor on the first row — the first press of a message verb on a list that has rows and no cursor. See
+   * `keymap.tsx#DisabledReason` for the dispatcher's half. A press and not an arrival: `selectedOhbox` records what
+   * happened when a list opened with a cursor already placed — `?? allOhbox[0]` meant an untouched Ohbox reported its
+   * newest unread as "the open one", fetched a body, and put somebody's mail in the reading column on arrival; ⌫ is
+   * that hazard with a delete on the end. So nothing is placed until somebody presses, and the press that places
+   * performs nothing. It answers `false` more often than it looks: three views, the three whose cursor this shell
+   * holds, the SAME three `focused` reads — anything else and the ring lands on a row the verb does not act on;
+   * `route.view`, not `effectiveView`, because that is what `focused` reads.
+   */
+
+  /**
+   * The DOM row is read because the scroll needs the element, and the null-check earns its keep twice: it is what a
+   * click would have hit, and it is `null` for a surface holding a list in state without rendering it. A `false`
+   * consumes nothing — the keypress stays exactly as inert as an empty list should feel.
    */
   const placeCursor = useStableCallback((label: string): boolean => {
     if (focused != null) return false;
