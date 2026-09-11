@@ -3,47 +3,14 @@ import {
 } from "./ssrf-guard.js";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE UNIFIEDPUSH ENDPOINT GATE — ONE policy, read at registration AND at every send
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * A UnifiedPush endpoint is a URL the DEVICE chose: the user picks a distributor (ntfy, NextPush,
- * Sunup, a self-hosted one), the distributor mints an endpoint, and the app registers that string
- * with us. From the server's point of view it is a caller-supplied URL that a background process
- * will POST to, unattended, for as long as the registration lives. That is the SSRF shape exactly,
- * with two aggravations an ordinary webhook does not have:
- *
- *  · it is dialled REPEATEDLY and by a process with database credentials and KEK material
- *    (`apps/worker`), not once by a request handler;
- *  · the dial happens long after the registration was validated, so a name that resolved to a
- *    public address in January can resolve to `169.254.169.254` in March. **Registration-time
- *    clearance is not send-time clearance**, which is why this guard is called in BOTH places and
- *    why it returns the PIN rather than a boolean.
- *
- * ── WHY IT LIVES IN `core` AND NOT BESIDE EITHER CALLER ───────────────────────────────────────
- *
- * `PushService.subscribe` (in `packages/services`) validates at registration; the wake sender (in
- * `apps/worker`) validates at send. The worker may import `@trafficflow/core` and
- * `@trafficflow/db` and nothing else, enforced by that app's own dependency test. So a policy
- * written beside the registration would have to be copied to reach the sender — and the copy that
- * matters is the one where a range is added on one side only. One policy, two callers.
- *
- * ── THE TWO ARMS, AND WHY THE ABSENT VALUE PICKS THE STRICT ONE ───────────────────────────────
- *
- * STRICT (managed, and every self-host that has not said otherwise): https only, public addresses
- * only, an explicit port allowed. The port allowance is not a hole — a self-hosted distributor
- * behind a reverse proxy on 8443 is ordinary, and the address rules are untouched by it. The
- * https-only rule is a PRIVACY rule as much as a security one: a plaintext wake tells anyone on
- * the path that this account just received mail, which is the one fact the content-free payload
- * exists to withhold.
- *
- * RELAXED (`allowPrivate`): the address rules are skipped and `http:` is permitted, for the
- * operator whose distributor is on their own LAN — the same decision, and the same shape, as
- * `TF_PROBE_ALLOW_PRIVATE` for the add-mailbox probe. It is reached ONLY by an explicit operator
- * value; the absent value selects STRICT, because a security default obtained by omission is not a
- * default anyone chose. What the relaxed arm does NOT skip: the URL must parse, be http(s), carry
- * no userinfo, and RESOLVE — because the return value is still the pin, and dialling by name would
- * put the rebinding window back on the one arm that was meant to be the operator's own network.
+ * The UnifiedPush endpoint gate — one policy, read at registration AND at every send. An endpoint
+ * is a URL the DEVICE chose, POSTed to unattended by a process holding database credentials and
+ * KEK material — the SSRF shape, dialled long after validation: a name public in January can
+ * resolve to `169.254.169.254` in March. Registration-time clearance is not send-time clearance,
+ * which is why this returns the PIN, not a boolean. In `core` because the worker may import core
+ * + db only. STRICT (absent-means-strict): https only, public addresses, an explicit port
+ * allowed. RELAXED (`allowPrivate`): the operator's own LAN — the URL must still parse, be
+ * http(s), carry no userinfo, and RESOLVE.
  */
 
 /**

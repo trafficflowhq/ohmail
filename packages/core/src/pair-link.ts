@@ -1,59 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE PAIRING LINK — one shape, composed on the desktop, parsed on the phone
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * `${origin}/pair#${fragment}` is the QR the Devices pane draws and the string a client reads —
- * from a scanner, or pasted into a field. The composer and the parsers drifting apart is a
- * pairing that fails on a stranger's kitchen table with nothing on either machine to look at, so
- * there is exactly one of each and they are in this file.
- *
- * ── WHY IT IS IN `core` AND NOT IN THE CLIENT ENGINE, WHERE IT WAS WRITTEN ──────────────────
- *
- * It began in `packages/client-engine`, which was the one package both sides then compiled. A
- * THIRD graph parses these links now and it cannot reach that package: the desktop's CLIENT door
- * pastes a link printed by ANOTHER machine's desktop, and that parse runs in `apps/sidecar`,
- * whose own one-pipeline census asserts `@ohmail/client-engine`
- * appears in no import in the mirror's graph — the barrel reaches IndexedDB, the search index and
- * the whole optimistic overlay, and a Node mirror driver that linked it would be carrying a
- * second client.
- *
- * So it moved to the package all three already depend on, on a dependency-free SOURCE subpath —
- * `./drain-policy`'s reasoning exactly, and for the same failure. Copying was the alternative;
- * two copies agree on the day they are written and the next change to the fragment's form lands
- * on the composer and misses a parser. `packages/client-engine/src/pair-link.ts` re-exports this
- * file, so every existing importer is unmoved and there is still one definition to mutate.
- *
- * ── THE FRAGMENT, AND WHY THE TOKEN IS STILL IN IT ──────────────────────────────────────────
- *
- * The token rides the FRAGMENT and not the query or the path, for the reasons the Invites pane
- * established: a fragment is not sent in the page request, cannot land in an access log, and
- * never rides a `Referer`. That rule is unchanged and the parser still refuses a token moved
- * anywhere else.
- *
- * What is new is the KEY FINGERPRINT beside it. The desktop's same-network door serves TLS with
- * a key of its own (`apps/sidecar/src/host-lan-tls.ts`), because a release build of the mobile
- * app cannot open a cleartext socket at all — and no certificate authority will vouch for a DHCP
- * address. So the ceremony carries the trust: the fingerprint the person scans is the key the
- * phone will accept, and nothing else.
- *
- * Two forms, and the parser reads both:
- *
- *   `#<token>`                    the original. No pin. Still correct for every origin whose
- *                                 certificate a phone can check on its own — the hosted service,
- *                                 and a self-host box with a real name and a real certificate.
- *   `#k1.<fingerprint>.<token>`   pinned. `k1` is the pin format's version, so a later scheme
- *                                 (a second key, a different hash) is `k2` and an old phone
- *                                 refuses it by name instead of misreading it.
- *
- * ── WHY A VERSIONED PREFIX RATHER THAN "SPLIT ON THE DOT" ───────────────────────────────────
- *
- * The token is `generateToken()` — 32 random bytes, base64url — whose alphabet contains no dot,
- * so a bare split would work today. It is not what happens today that decides this: a fragment
- * with no self-description is one whose next revision cannot be distinguished from a corrupted
- * copy of this one. With the prefix, a phone that has never heard of `k2` says so; without it,
- * the same phone would hand a `k2` fingerprint to a server as a pairing token and report
- * "that pairing code was not accepted".
+ * The pairing link — one shape, composed on the desktop, parsed on the phone:
+ * `${origin}/pair#${fragment}`. Composer and parsers drifting apart is a pairing that fails with
+ * nothing on either machine to look at, so there is one of each, here. In `core` because a THIRD
+ * graph parses these links and cannot reach `client-engine`; that package re-exports this file.
+ * The token rides the FRAGMENT — not sent in the page request, never in an access log or a
+ * `Referer`. Beside it, the KEY FINGERPRINT: the LAN door serves TLS with its own key, and the
+ * ceremony carries the trust. Two forms: `#<token>` and `#k1.<fingerprint>.<token>` — a versioned
+ * prefix, so a phone that has never heard of `k2` says so instead of misreading it.
  */
 
 /** The pin format this build composes and understands. */
@@ -100,15 +53,13 @@ export function pairLink(origin: string, token: string, pin: string | null): str
 
 /**
  * Parse `${origin}/pair#${fragment}`. A hand regex rather than `new URL`, so node tests and
- * Hermes parse identically. Refused, deliberately:
- *  · a non-http(s) scheme (nothing else can be redeemed against);
- *  · any path but `/pair` (a token in the path would ride access logs);
- *  · ANY query string — `?token=` is the regression the fragment rule exists to prevent;
- *  · an empty fragment (there is no token to redeem);
- *  · a `k<n>` fragment this build does not understand, and a `k1` one whose fingerprint is not
- *    the right shape or whose token half is empty. Refusing a malformed pinned link is the
- *    point: the alternative is redeeming the token with NO pin, which is the unencrypted
- *    pairing this whole shape exists to make impossible.
+ * Hermes parse identically. Refused, deliberately: a non-http(s) scheme (nothing else can be
+ * redeemed against); any path but `/pair` (a token in the path would ride access logs); ANY query
+ * string — `?token=` is the regression the fragment rule exists to prevent; an empty fragment; a
+ * `k<n>` fragment this build does not understand, and a `k1` one whose fingerprint is the wrong
+ * shape or whose token half is empty. Refusing a malformed pinned link is the point: the
+ * alternative is redeeming the token with NO pin, the unencrypted pairing this shape exists to
+ * make impossible.
  */
 export function parsePairLink(text: string): PairLink | null {
   const m = /^(https?):\/\/([^/?#\s]+)(\/[^?#\s]*)?(\?[^#\s]*)?(?:#(\S+))?$/i.exec(text.trim());
@@ -138,27 +89,14 @@ export function parsePairLink(text: string): PairLink | null {
 }
 
 /**
- * DOES THIS ORIGIN NEED A PIN TO BE SAFE TO PAIR WITH?
- *
- * The rule is the host's SHAPE, and it is the honest line rather than a convenient one:
- *
- *  · **An IP literal cannot have a certificate anybody can check.** No public authority issues
- *    for `192.168.1.10`, so a TLS connection to one is either pinned or unverified — and
- *    unverified is worth nothing at all. These MUST carry a pin.
- *  · **A DNS name can.** The hosted service (`api.ohmail.app`) and a self-host box behind the
- *    operator's own certificate are verified by the platform's trust store exactly as any other
- *    site is, and a pin there would add a way for the pairing to break on renewal without adding
- *    any security the trust store does not already provide.
- *  · **LOOPBACK is exempt, and it is an exemption rather than an oversight.** `127.0.0.1` and
- *    `localhost` are an IP literal and a name that no authority issues for either — but there is
- *    no network path to attack: the packets never leave the machine, so there is nothing for a
- *    pin to authenticate against an attacker who by construction is already inside. It is also
- *    where the node test suite's servers live, which means the rule is exercised rather than
- *    merely stated.
- *
- * Note what this deliberately does NOT do: decide anything about the scheme. `http:` is refused
- * separately and for a different reason (the platform will not open the socket, and a downgrade
- * must be refused loudly by us rather than obscurely by the OS) — see `pairWithServer`.
+ * Does this origin need a pin to be safe to pair with? The rule is the host's SHAPE: an IP
+ * literal cannot have a certificate anybody can check — TLS to one is either pinned or
+ * unverified, and unverified is worth nothing; these MUST carry a pin. A DNS name can — the
+ * hosted service and a self-host behind a real certificate are verified by the platform's trust
+ * store, and a pin there only adds a way for pairing to break on renewal. LOOPBACK is exempt: no
+ * network path to attack — the packets never leave the machine — and it is where the test suite's
+ * servers live, so the rule is exercised. This decides nothing about the scheme: `http:` is
+ * refused separately, loudly, by us.
  */
 export function originNeedsPin(origin: string): boolean {
   const host = normalize(origin).replace(/^https?:\/\//, "").replace(/:\d+$/, "");
@@ -170,21 +108,14 @@ export function originNeedsPin(origin: string): boolean {
 }
 
 /**
- * THE TWELVE CHARACTERS A PERSON ACTUALLY COMPARES — first six, an ellipsis, last six.
- *
- * The fingerprint is forty-three base64url characters. Shown whole it is a credential-shaped
- * string nobody reads to the end, and a check nobody performs is worse than no check because it
- * looks like one. Twelve is what fits in one glance across two screens.
- *
- * IT LIVES HERE BECAUSE THE COMPARISON HAS THREE ENDS, NOT TWO. It was written in the desktop
- * window, which shows this computer's key under Settings → Devices and the same twelve on its own
- * client door. The PHONE is the third, and it is the end the whole ceremony is for: the desktop's
- * copy says "a device pairing over your network shows these characters before it pairs", so a
- * phone computing them by another rule — or not showing them — is that sentence being false. One
- * function, in the package all three graphs compile.
- *
- * A value SHORTER than the twelve it would elide is returned whole rather than padded with an
- * ellipsis that hides nothing.
+ * The twelve characters a person actually compares — first six, an ellipsis, last six. The
+ * fingerprint is forty-three base64url characters; shown whole it is a credential-shaped string
+ * nobody reads to the end, and a check nobody performs is worse than no check because it looks
+ * like one. Twelve fits in one glance across two screens. It lives here because the comparison
+ * has THREE ends: the desktop window shows this computer's key, the desktop's client door shows
+ * the same twelve, and the PHONE is the third — a phone computing them by another rule makes the
+ * desktop's sentence false. One function, in the package all three graphs compile. A value
+ * shorter than the twelve it would elide is returned whole.
  */
 export function shortPin(pin: string): string {
   return pin.length <= 13 ? pin : `${pin.slice(0, 6)}…${pin.slice(-6)}`;

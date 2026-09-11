@@ -1,52 +1,12 @@
 /**
- * PLAIN TEXT → THE TWO HALVES OF ONE OUTBOUND MESSAGE.
- *
- * A drafter answers with prose: `DraftResult` is `{subject, body, rationale}`, and `body` is
- * text. A stored draft has room for two halves — `drafts.body` and `drafts.html` — and the send
- * path puts BOTH on the wire as a `multipart/alternative` when the second one is present. Until
- * this module existed the second one was never written on a generated draft, so a reply the
- * model wrote left the building as `text/plain` while the person who sent it had been editing
- * it in a rich editor. Two shipped capabilities that never met.
- *
- * ── WHY THE SERVER PROMOTES, RATHER THAN THE MODEL EMITTING MARKUP ───────────────────────
- *
- * Asking the model for html as well would make the two halves two independent answers, and the
- * promise a `multipart/alternative` makes is that its parts say the same thing. It would also
- * make the shape of a reply a property of a prompt, which is the least testable place to put
- * it. Deriving the markup from the words the model actually wrote keeps one source of truth and
- * changes no model behaviour at all: nothing in the drafting question moves.
- *
- * ── THE GRAMMAR IS THE SMALLEST ONE THAT SURVIVES THE ROUND TRIP ─────────────────────────
- *
- * `<p>` per paragraph, `<br />` between the lines inside one, `<p></p>` for a blank line
- * between two. Nothing else — no emphasis, no lists, no links, because the source is text and
- * inventing structure out of it would put formatting in a message that its author never wrote.
- * Punctuation that happens to look like markup stays punctuation: `&`, `<` and `>` are escaped,
- * so a reply containing `a < b` is a reply containing `a < b` and not a message with a mangled
- * tag in it.
- *
- * Every one of those four constructs is inside the outbound sanitizer's allow-list by
- * construction, so promotion cannot widen what a composed message may contain — a property the
- * suite asserts as a fixed point (`sanitize(html) === html`) rather than leaving as a reading
- * of two files.
- *
- * ── THE TEXT HALF IS RETURNED, NOT ASSUMED ───────────────────────────────────────────────
- *
- * `plainTextToOutboundBody` hands back BOTH halves for the same reason `prepareOutboundBody`
- * does: a caller that took the markup from here and the words from somewhere else could ship a
- * message whose two parts disagree. The text it returns is the NORMALIZED source — line endings
- * unified, runs of whitespace inside a line collapsed to one space, blank runs collapsed to a
- * single blank line, both ends trimmed — because that is exactly what a renderer does to the
- * markup, in a browser and in `htmlToPlainText` alike. Handing back the raw source instead would
- * hand back a text half that no reader of the html half will ever see.
- *
- * That normalization is the only way the promoted body differs from what the model wrote, and
- * it is invisible in every case that matters: html collapses whitespace when it is displayed, so
- * the alternative that keeps it would be the one that disagreed.
- *
- * It lives in `core` with no dependency at all because both generated-draft writers need it and
- * they are in different packages — the request path in `services`, the workflow step in `core`.
- * A second copy is how the two would come to write two different messages from one model answer.
+ * Plain text → the two halves of one outbound message. A drafter answers with prose; the send
+ * path puts `body` and `html` on the wire as `multipart/alternative` when the second is present —
+ * until this module, a generated draft never wrote it, so a model-written reply went out
+ * `text/plain`. The SERVER promotes, not the model: two independent answers could disagree. The
+ * grammar is the smallest that survives the round trip — `<p>`, `<br />`, `<p></p>`; `&`, `<`,
+ * `>` escaped — inside the outbound sanitizer's allow-list, asserted as a fixed point. Both
+ * halves return together: the text half is the NORMALIZED source, what every renderer of the html
+ * shows. In `core` because both generated-draft writers live in different packages.
  */
 
 /** The two halves of one message, derived together and never separately. */

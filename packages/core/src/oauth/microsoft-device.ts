@@ -1,42 +1,13 @@
-// THE DEVICE AUTHORIZATION GRANT (RFC 8628) — the door a SELF-HOSTED instance connects Exchange
-// Online through, and the reason a self-host operator needs no Azure registration of their own.
-//
-// ══ WHY THIS FLOW EXISTS HERE AT ALL ═══════════════════════════════════════════════════════
-//
-// The managed deployment's ceremony (`packages/api/src/routes/mailbox-oauth.ts`) turns on a
-// REDIRECT URI registered in Entra: `https://ohmail.app/api/mailboxes/oauth/microsoft/callback`.
-// That value is per-deployment, and a self-hoster running on `mail.example.invalid` cannot use it —
-// Microsoft would send their consent to somebody else's server. Their options were therefore: run
-// their own Azure app registration (real work, and a hard stop for anyone whose organisation will
-// not let them), or send their users' tokens through ohmail's infrastructure (RULED OUT — no
-// stranger's refresh token transits our servers, ever).
-//
-// The device grant removes the choice. There is NO redirect URI: the operator's instance asks
-// Microsoft for a code, shows the user a short code and a URL, the user approves on any browser they
-// like, and the tokens are issued DIRECTLY to the operator's instance over its own back channel.
-// Nothing about the exchange touches ohmail. That is the whole reason it is the self-host default.
-//
-// ══ NO PKCE HERE, AND THAT IS NOT AN OMISSION ══════════════════════════════════════════════
-//
-// PKCE protects an authorization code on the one leg the client cannot see: the browser redirect.
-// This flow HAS no redirect and no authorization code — the `device_code` is minted on the back
-// channel, held only by the process that asked, and redeemed on the back channel. There is nothing
-// for a verifier to bind. Adding a `code_challenge` "for consistency" would be a parameter Entra
-// ignores, and a reader who assumed it was doing something.
-//
-// What DOES carry the security property is that the `device_code` is a bearer credential for the
-// duration of the ceremony. It is never logged, never rendered, and never leaves this process — the
-// user is shown the `user_code`, which is the short human one and is useless without a session at
-// Microsoft.
-//
-// ══ THE SINGLE-USE DISCIPLINE, AND WHERE IT LIVES ══════════════════════════════════════════
-//
-// The redirect flow gets its replay defence from the ceremony store (`packages/db/src/oauth-ceremony.ts`),
-// whose consume-once UPDATE is the security property. The device flow's equivalent is enforced by
-// MICROSOFT, not by us, and that is a real difference worth stating rather than papering over: a
-// `device_code` is redeemable exactly once and expires on its own schedule, so there is no state for
-// us to replay-protect. What this module owns instead is the BOUND — see {@link deviceDeadline} —
-// so a poll loop cannot outlive the grant it is polling for.
+// The device authorization grant (RFC 8628) — the door a SELF-HOSTED instance connects Exchange
+// Online through, and why an operator needs no Azure registration. The managed ceremony turns on
+// a per-deployment redirect URI; a self-hoster cannot use it, and the alternatives were running
+// their own registration or sending tokens through ohmail's infrastructure (ruled out — no
+// stranger's refresh token transits our servers, ever). The device grant removes the choice: no
+// redirect URI — the instance asks for a code, the user approves in any browser, tokens are
+// issued directly over the instance's own back channel. NO PKCE, not an omission: PKCE protects a
+// code on the browser redirect, and this flow has neither — the `device_code` is a back-channel
+// bearer credential, never logged, rendered or let out of this process. Single-use is enforced by
+// MICROSOFT; this module owns the BOUND ({@link deviceDeadline}).
 import {
   MS_CLIENT_ID_ENV, MS_MAIL_SCOPE, MS_TENANT_RE,
   OAuthConfigError, OAuthProviderUnavailableError,
@@ -45,23 +16,14 @@ import {
 } from "./microsoft.js";
 
 /**
- * THE PUBLIC CLIENT THIS FLOW RUNS AS — a registration of its own, with no secret field anywhere in
- * the type.
- *
- * ── WHY IT CANNOT BE THE CONFIDENTIAL REGISTRATION'S CLIENT ID ─────────────────────────────
- *
- * A confidential application is one Entra expects to authenticate with a secret. Presenting its
- * client id on the device grant — which by definition carries no secret — is refused with
- * `unauthorized_client`, and that refusal is not something this code can pre-empt: a client id is an
- * opaque uuid, and nothing about the string says which kind of application it names. So the two ids
- * live in two variables and this flow reads only its own. An operator who has set up their own
- * confidential registration has NOT thereby armed the device door, and an operator who pastes their
- * confidential id here gets Entra's `unauthorized_client` surfaced as an operator-side fault, which
- * is what it is.
- *
- * The absent secret is also a structural refusal rather than a convention: there is no field to put
- * one in, and {@link clientAuthFields} refuses a secret on the public arm even if a caller found a
- * way to supply one.
+ * The public client this flow runs as — a registration of its own, with no secret field anywhere
+ * in the type. It cannot be the confidential registration's client id: a confidential application
+ * is one Entra expects to authenticate with a secret, and presenting its id on the device grant
+ * is refused with `unauthorized_client` — a refusal this code cannot pre-empt, because a client
+ * id is an opaque uuid. So the two ids live in two variables and this flow reads only its own; a
+ * pasted confidential id surfaces as an operator-side fault, which it is. The absent secret is
+ * structural: there is no field for one, and {@link clientAuthFields} refuses a secret on the
+ * public arm regardless.
  */
 export interface MicrosoftDeviceClient {
   /** The PUBLIC application's client id. `MS_DEVICE_CLIENT_ID`. */
@@ -81,15 +43,12 @@ export const MS_DEVICE_ENV = {
 
 /**
  * Read the device door's registration out of an environment, or `null` when it is not armed.
- *
- * `null` and not a blank object: "this deployment has no public client" is the state the routes and
- * the settings pane both branch on, and a half-filled record would make that branch a field check
- * every reader has to remember to write. A missing client id is the whole answer — the tenant alone
- * arms nothing.
- *
- * The tenant defaults to `common` rather than being required, because for the shared multi-tenant
- * public registration `common` is the only correct value and requiring it would be a variable with
- * one acceptable setting. An operator whose registration is single-tenant sets it.
+ * `null` and not a blank object: "this deployment has no public client" is the state the routes
+ * and the settings pane both branch on, and a half-filled record would make that branch a field
+ * check every reader has to remember. A missing client id is the whole answer — the tenant alone
+ * arms nothing. The tenant defaults to `common` rather than being required: for the shared
+ * multi-tenant public registration `common` is the only correct value, and requiring it would be
+ * a variable with one acceptable setting.
  */
 export function msDeviceEnv(env: Record<string, string | undefined>): MicrosoftDeviceClient | null {
   const pick = (name: string): string => (typeof env[name] === "string" ? env[name]!.trim() : "");
@@ -175,15 +134,13 @@ export interface DeviceCodeRequest {
   tenant: string;
   clientId: string;
   /**
-   * Defaults to {@link MS_MAIL_SCOPE} — IMAP, SMTP and `offline_access`.
-   *
-   * NOTE the OIDC scopes are NOT included by default, unlike the redirect flow's
-   * `MS_AUTHORIZE_SCOPES`. The redirect flow needs `openid`/`email` because it reads the mailbox
-   * address from the `id_token` and the user never types it. A caller that wants the same here must
-   * ask for them explicitly and read {@link DeviceTokens.idToken}; a caller that does not gets a
-   * grant with no identity claim, and has to obtain the address some other way. Stated because
-   * silently adding identity scopes to a headless operator's consent screen is a change to what the
-   * person is being asked to approve.
+   * Defaults to {@link MS_MAIL_SCOPE} — IMAP, SMTP and `offline_access`. The OIDC scopes are NOT
+   * included by default, unlike the redirect flow's: that flow reads the mailbox address from the
+   * `id_token` because the user never types it. A caller that wants the same here must ask
+   * explicitly and read {@link DeviceTokens.idToken}; one that does not gets a grant with no
+   * identity claim and obtains the address another way. Stated because silently adding identity
+   * scopes to a headless operator's consent screen is a change to what the person is being asked
+   * to approve.
    */
   scopes?: readonly string[];
   fetch: FetchLike;
@@ -204,17 +161,13 @@ const n = (v: unknown, fallback: number): number =>
   (typeof v === "number" && Number.isFinite(v) ? v : fallback);
 
 /**
- * READ A JSON BODY THAT MAY NOT BE ONE — and never let that be a `TypeError`.
- *
- * `res.json()` has two failure shapes and only one of them throws. An HTML error page REJECTS, which
- * a `try/catch` handles. A body that is empty, `null`, or a bare JSON scalar RESOLVES — to
- * `undefined` or `null` — and a `catch` never runs, so the next property read is
- * `Cannot read properties of undefined`. That escapes as a `TypeError`, i.e. as a crash rather than
- * as this module's honest "we could not ask" verdict, and it does so precisely on the paths that
- * matter: a 5xx from a load balancer that returns no body at all.
- *
- * Found by the test that asserts every transport failure maps to
- * {@link OAuthProviderUnavailableError}; the 503-with-no-body case threw a `TypeError` instead.
+ * Read a JSON body that may not be one — and never let that be a `TypeError`. `res.json()` has
+ * two failure shapes and only one throws: an HTML error page REJECTS, which a `try/catch`
+ * handles; a body that is empty, `null` or a bare scalar RESOLVES, and the next property read is
+ * `Cannot read properties of undefined` — a crash rather than this module's honest "we could not
+ * ask", precisely on the paths that matter: a 5xx from a load balancer with no body. Found by the
+ * test asserting every transport failure maps to {@link OAuthProviderUnavailableError}; the
+ * 503-with-no-body case threw a `TypeError` instead.
  */
 async function readJsonObject(res: { json(): Promise<unknown> }): Promise<Record<string, unknown>> {
   try {
@@ -226,15 +179,12 @@ async function readJsonObject(res: { json(): Promise<unknown> }): Promise<Record
 }
 
 /**
- * STEP 1 — ask Microsoft for a device code.
- *
- * Public client only: this grant is defined for clients that cannot hold a secret, and
- * {@link clientAuthFields} refuses a secret on the public arm, so a caller that passed one gets a
- * named config error rather than a request that leaks it.
- *
- * Error mapping follows the same law as the rest of this package — a 5xx, a network throw or an
- * unparseable body means WE COULD NOT ASK, never that a credential is bad. There is no credential
- * yet at this point, so there is nothing an auth verdict could even be about.
+ * Step 1 — ask Microsoft for a device code. Public client only: this grant is defined for clients
+ * that cannot hold a secret, and {@link clientAuthFields} refuses a secret on the public arm, so
+ * a caller that passed one gets a named config error rather than a request that leaks it. Error
+ * mapping follows the package's law: a 5xx, a network throw or an unparseable body means WE COULD
+ * NOT ASK, never that a credential is bad — there is no credential yet, so there is nothing an
+ * auth verdict could even be about.
  */
 export async function requestDeviceCode(
   p: DeviceCodeRequest, now: () => number = Date.now,
@@ -310,15 +260,13 @@ export interface DeviceTokens {
 }
 
 /**
- * ONE POLL'S VERDICT — a closed set, and deliberately a RETURN rather than a throw for the four
- * states that are part of normal operation.
- *
- * `authorization_pending` is the overwhelmingly common answer and it arrives as an HTTP **400**.
- * That is the trap this type exists to close: the sibling module's refresh mapping turns a
- * non-`invalid_grant` 4xx into {@link OAuthProviderUnavailableError}, so a device poll routed
- * through it would report "the token endpoint rejected the grant" once every five seconds for the
- * entire fifteen minutes a person spends walking to their browser. Every one of those would look
- * like a Microsoft outage. The device flow needs its own mapping and this is it.
+ * One poll's verdict — a closed set, and deliberately a RETURN rather than a throw for the four
+ * states that are normal operation. `authorization_pending` is the overwhelmingly common answer
+ * and arrives as an HTTP 400 — the trap this type closes: the sibling module's refresh mapping
+ * turns a non-`invalid_grant` 4xx into {@link OAuthProviderUnavailableError}, so a device poll
+ * routed through it would report "the token endpoint rejected the grant" every five seconds for
+ * the fifteen minutes a person spends walking to their browser, each one looking like a Microsoft
+ * outage. The device flow needs its own mapping and this is it.
  */
 export type DevicePollVerdict =
   /** Nobody has approved it yet. Wait `intervalMs` and poll again. The normal answer. */
@@ -353,22 +301,14 @@ export const SLOW_DOWN_STEP_MS = 5_000;
 export const DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 
 /**
- * STEP 2 — poll the token endpoint ONCE.
- *
- * One poll, not a loop, and that is the shape on purpose: the loop needs a clock and a way to sleep,
- * and both of those belong to the host (a Node CLI, a Tauri command, a test with fake timers). This
- * function is pure over its injected `fetch` and holds no timers, so a test can drive the entire
- * state machine — pending, slow_down, declined, expired, granted — without waiting a real second.
- * {@link pollDeviceCodeUntilDone} is the loop, for hosts that want it.
- *
- * ── WHAT THROWS AND WHAT RETURNS ───────────────────────────────────────────────────────────
- *
- * The five states above RETURN. Everything else — a 5xx, a network failure, an unparseable body, an
- * `error` code this flow does not define — throws {@link OAuthProviderUnavailableError}, because
- * "we could not ask" is the honest reading and none of them says anything about a credential.
- *
- * NOTHING here throws the re-auth verdict. There is no stored credential to declare dead: the same
- * reasoning `exchangeAuthorizationCode` records for its own `invalid_grant`.
+ * Step 2 — poll the token endpoint ONCE. One poll, not a loop, on purpose: the loop needs a clock
+ * and a way to sleep, and both belong to the host (a CLI, a Tauri command, a test with fake
+ * timers). This function is pure over its injected `fetch`, so a test can drive the whole state
+ * machine — pending, slow_down, declined, expired, granted — without waiting a real second;
+ * {@link pollDeviceCodeUntilDone} is the loop. The five states RETURN; everything else — a 5xx, a
+ * network failure, an unparseable body, an unknown `error` code — throws {@link
+ * OAuthProviderUnavailableError}. Nothing here throws the re-auth verdict: there is no stored
+ * credential to declare dead.
  */
 export async function pollDeviceCodeOnce(
   p: DevicePollParams, now: () => number = Date.now,
@@ -456,18 +396,13 @@ export interface DevicePollLoopParams {
 }
 
 /**
- * The whole ceremony's second half: poll until it resolves, or until the grant expires.
- *
- * ── THE LOOP IS BOUNDED BY THE GRANT, NOT BY A COUNT ───────────────────────────────────────
- *
- * The deadline is {@link DeviceCodeGrant.expiresAtMs}, which came from Microsoft and is clamped on
- * the way in. A poll count would be the wrong bound: `slow_down` legitimately stretches the interval,
- * so a fixed count silently shortens the window a person has to approve — and it shortens it exactly
- * when Microsoft has asked us to go slower, which is the worst time to give up.
- *
- * The clock is read BEFORE each poll and the loop exits without one when the deadline has passed, so
- * the bound holds even if the host's `sleep` overshoots badly (a laptop that suspended mid-ceremony
- * is the ordinary case).
+ * The ceremony's second half: poll until it resolves, or until the grant expires. The loop is
+ * bounded by the GRANT, not by a count: the deadline is {@link DeviceCodeGrant.expiresAtMs}, from
+ * Microsoft, clamped on the way in. A poll count would be the wrong bound — `slow_down`
+ * legitimately stretches the interval, so a fixed count silently shortens the window a person has
+ * to approve, exactly when Microsoft has asked us to go slower. The clock is read BEFORE each
+ * poll and the loop exits when the deadline has passed, so the bound holds even if the host's
+ * `sleep` overshoots badly (a laptop that suspended mid-ceremony is the ordinary case).
  */
 export async function pollDeviceCodeUntilDone(
   p: DevicePollLoopParams,
@@ -509,26 +444,14 @@ export async function pollDeviceCodeUntilDone(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The loopback redirect URI a desktop app listens on (RFC 8252 §7.3 — "the native app is the
- * authorization server's redirect target on a port it opened itself").
- *
- * ── `127.0.0.1`, NOT `localhost` ───────────────────────────────────────────────────────────
- *
- * RFC 8252 §8.3 is explicit that the IP LITERAL is preferred: `localhost` resolves through the
- * host's name resolution, which a compromised or merely misconfigured `hosts` file, a DNS search
- * suffix, or an IPv6-first stack can point somewhere the app is not listening. The literal cannot be
- * redirected by any of them. `http` is correct here and is not a downgrade — the redirect never
- * leaves the machine, and RFC 8252 §7.3 says so in as many words.
- *
- * ── THE PORT IS EPHEMERAL, AND THE REGISTRATION MUST ALLOW THAT ────────────────────────────
- *
- * A fixed port would collide with whatever else is on the machine and would let another local
- * process squat the redirect before ohmail binds it. So the app binds port 0, learns the port the
- * OS gave it, and builds the URI from that — which means the Entra registration has to accept a
- * VARYING port. Microsoft documents that it does so for loopback redirect URIs registered under the
- * "Mobile and desktop applications" platform; that behaviour is Microsoft's and not something this
- * repository can prove at build time, so it must be checked against the real Entra app
- * registration rather than asserted here as fact.
+ * The loopback redirect URI a desktop app listens on (RFC 8252 §7.3). `127.0.0.1`, not
+ * `localhost`: §8.3 prefers the IP literal — `localhost` resolves through name resolution, which
+ * a misconfigured `hosts` file or an IPv6-first stack can point somewhere the app is not
+ * listening. `http` is correct, not a downgrade: the redirect never leaves the machine. The port
+ * is ephemeral: a fixed port would collide and could be squatted, so the app binds port 0 and
+ * builds the URI from what the OS gave — the Entra registration must accept a varying port, which
+ * Microsoft documents for loopback URIs; that is Microsoft's behaviour, checked against the real
+ * registration rather than asserted here.
  */
 export function loopbackRedirectUri(port: number, path = "/oauth/microsoft"): string {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {

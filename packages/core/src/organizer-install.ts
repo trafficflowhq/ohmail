@@ -1,22 +1,12 @@
 /**
- * WHO THIS INSTALL IS TO A MAILBOX — one definition, because two would be the defect it closes.
- *
- * The organizer's identity is a property of the ORGANIZER, never of whichever store it keeps notes
- * in: a cutover to a fresh database must not change who holds a mailbox. And it is SCOPED BY
+ * Who this install is to a mailbox — one definition, because two would be the defect it closes.
+ * The organizer's identity is a property of the ORGANIZER, never of whichever store it keeps
+ * notes in: a cutover to a fresh database must not change who holds a mailbox. Scoped by
  * ENVIRONMENT, so a staging deployment pointed at a production mailbox is a different organizer —
- * two deployments sharing one id do not coexist gracefully, because the renew's cleanup matches on
- * install id and each would expunge the other's claim.
- *
- * ── WHY IT LIVES HERE RATHER THAN IN THE WORKER ─────────────────────────────────────────────
- *
- * Because the API tier has to answer the same question. A release asks "is the claim on this
- * mailbox OURS", and it was answered with `organized_by_kind === "cloud"` — a category, not an
- * identity. `cloud` is what a second Cloud deployment also is, so the API cleared rows over claims
- * it could not remove: the removal has always matched on the install id, and the decision was
- * matching on the kind. Two vocabularies for one rule, and the row and the folder disagreed.
- *
- * So the id is defined once, in the package both the worker and the services already depend on,
- * and both resolve it the same way from the same inputs.
+ * two deployments sharing one id expunge each other's claims on renew. It lives here rather than
+ * in the worker because the API tier answers the same question: a release asked "is the claim
+ * ours" with `organized_by_kind === "cloud"` — a category, not an identity — and cleared rows
+ * over claims it could not remove. One id, defined once, resolved the same way by both.
  */
 
 /** The prefix every hosted organizer's id carries, so a human reading `ohmail/_meta` can tell. */
@@ -55,18 +45,14 @@ export function organizerEnvironment(env: OrganizerInstallEnv): string {
 }
 
 /**
- * THE BYTES THE MAILBOX WILL HOLD.
- *
- * `formatClaim` writes the id through `headerSafe`, which collapses CR/LF to a space and trims —
- * a claim is an IMAP message, so a newline in a header would be a header injection. Anything that
- * normalises differently produces an identity that cannot match its own claim, and the comparison
- * is exact.
- *
- * The trim alone was not enough: an override with an interior newline, or an environment name with
- * one, still differed after serialization. This applies the SAME transformation at the source, so
- * config, row and folder carry one value. It is deliberately a copy of `headerSafe`'s rule rather
- * than an import — `organizer-lease` imports from here, not the other way round — and the two are
- * held together by `organizer-identity-bytes.test.ts`, which fails if they ever diverge.
+ * The bytes the mailbox will hold. `formatClaim` writes the id through `headerSafe`, which
+ * collapses CR/LF to a space and trims — a claim is an IMAP message, and a newline in a header is
+ * header injection. Anything that normalises differently produces an identity that cannot match
+ * its own claim, and the comparison is exact; a trim alone was not enough — an override with an
+ * interior newline still differed after serialization. This applies the SAME transformation at
+ * the source, so config, row and folder carry one value. Deliberately a copy of `headerSafe`'s
+ * rule rather than an import (`organizer-lease` imports from here, not the other way round);
+ * `organizer-identity-bytes.test.ts` holds the two together.
  */
 export function headerSafeIdentity(v: string): string {
   return v.replace(/[\r\n]+/g, " ").trim();

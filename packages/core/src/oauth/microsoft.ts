@@ -1,21 +1,12 @@
-// MICROSOFT IDENTITY PLATFORM — the OAuth2 refresh-token client for Exchange Online / Microsoft 365 IMAP+SMTP.
-//
-// In CORE, not services: the always-on worker depends on core + db ONLY (services resolves Stripe and
-// the transactional-mail SDK, which are not in the worker's image). The worker needs to mint access tokens to open IMAP,
-// so the token client lives where the worker can reach it.
-//
-// It speaks the refresh_token grant against `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token`
-// and nothing else. Two invariants shape the whole file:
-//
-//   1. THE ENDPOINT IS DERIVED, NEVER STORED. A stored token URL is a one-PATCH refresh-token exfil
-//      channel — flip the host in a mailbox row and every refresh POSTs the secret to the attacker.
-//      So the host is a constant here and only the tenant SEGMENT comes from data, validated against a
-//      closed shape before it is interpolated.
-//
-//   2. A MICROSOFT OUTAGE IS NOT A BAD CREDENTIAL. `invalid_grant` (the token is dead — the user must
-//      re-consent) is the ONLY auth verdict. A 5xx, a network failure, a timeout — anything that means
-//      "we could not ask" — is a NON-auth error, because classifying it as auth would quarantine every
-//      oauth mailbox in the fleet as "bad credentials" the instant Microsoft has a bad minute.
+// Microsoft identity platform — the OAuth2 refresh-token client for Exchange Online IMAP+SMTP. In
+// CORE: the always-on worker depends on core + db only, and it mints access tokens to open IMAP.
+// It speaks the refresh_token grant against the tenant token endpoint and nothing else. Two
+// invariants: (1) THE ENDPOINT IS DERIVED, NEVER STORED — a stored token URL is a one-PATCH
+// refresh-token exfil channel: flip the host in a mailbox row and every refresh POSTs the secret
+// to the attacker; the host is a constant and only the tenant SEGMENT comes from data, validated
+// against a closed shape. (2) A MICROSOFT OUTAGE IS NOT A BAD CREDENTIAL — `invalid_grant` is the
+// ONLY auth verdict; a 5xx, a network failure or a timeout is non-auth, or every oauth mailbox in
+// the fleet would quarantine as "bad credentials" the instant Microsoft has a bad minute.
 import { createHash } from "node:crypto";
 import type { KeyProvider } from "../crypto.js";
 import type { AccessTokenFetcherFactory, OAuthTokenProvider } from "../adapters/imap-auth.js";
@@ -80,49 +71,26 @@ export class OAuthConfigError extends Error {
 }
 
 /**
- * WHICH KIND OF APPLICATION REGISTRATION IS ASKING — the one seam the three doors differ on, and
- * the reason it is a discriminated value rather than "a secret, or the empty string".
- *
- * ohmail talks to Entra through three doors and they do not authenticate the same way:
- *
- *  · **managed cloud** — a CONFIDENTIAL registration. The secret lives only on ohmail's servers and
- *    every token request carries it.
- *  · **desktop** — a PUBLIC registration. There is no secret, because a secret shipped in a binary
- *    is not a secret; PKCE on a loopback redirect is what authenticates the exchange instead
- *    (RFC 8252, the model Thunderbird uses).
- *  · **self-host, shared client** — the SAME public registration, driven through the device-code
- *    flow so an operator's instance needs no redirect URI of its own.
- *
- * ── WHY THIS IS EXPLICIT AND NOT INFERRED FROM AN EMPTY SECRET ────────────────────────────
- *
- * The tempting shape is `clientSecret: string` where `""` means public. It is wrong in the
- * direction that costs the most: a CONFIDENTIAL deployment whose secret failed to resolve — an
- * unset variable, a decrypt that returned nothing, a rotation half-applied — would silently emit a
- * PUBLIC token request. Entra answers that with `invalid_client`, which this client maps to
- * {@link OAuthProviderUnavailableError} (deliberately: a rejected client is not the mailbox's
- * fault). So the fleet would stop refreshing, nothing would quarantine, nothing would page, and the
- * true cause — a missing secret — would be indistinguishable from Microsoft having a bad week.
- *
- * With the kind stated, that same deployment gets {@link OAuthConfigError} naming
- * `MS_OAUTH_CLIENT_SECRET`, which is a sentence an operator can act on. And the inverse mistake —
- * a secret handed to a public-client request — is refused too, because a caller that supplied one
- * has mixed two doors up and the request it is about to make is not the one it thinks.
+ * Which kind of application registration is asking — the seam the three doors differ on. Managed
+ * cloud: CONFIDENTIAL. Desktop: PUBLIC — a secret shipped in a binary is not a secret; PKCE
+ * authenticates instead. Self-host shared client: the same public registration via the
+ * device-code flow. Explicit, not inferred from an empty secret: `"" means public` fails in the
+ * costliest direction — a confidential deployment whose secret failed to resolve would silently
+ * emit a PUBLIC request; Entra answers `invalid_client`, mapped to a provider outage, so the
+ * fleet stops refreshing and nothing quarantines. With the kind stated, that deployment gets
+ * {@link OAuthConfigError} naming `MS_OAUTH_CLIENT_SECRET` — actionable.
  */
 export type MicrosoftClientKind = "confidential" | "public";
 
 /**
- * WHICH ENVIRONMENT VARIABLE CARRIES EACH DOOR'S CLIENT ID — one map, because the refusals name it.
- *
- * The two registrations are different applications and cannot be one (a secret shipped inside a
- * downloadable binary, or handed to a stranger's self-hosted server, is not a secret), so they have
- * separate variables and a deployment may hold either, both, or neither. What makes the split useful
- * rather than merely tidy is that every refusal quotes the name of the variable for the door that
- * was actually being asked for: an operator whose device-code mailbox cannot refresh must be sent to
- * `MS_DEVICE_CLIENT_ID` and not to `MS_OAUTH_CLIENT_ID`, which on their install is very likely set,
- * perfectly valid, and completely irrelevant to the failure in front of them.
- *
- * `MS_DEVICE_CLIENT_ID` has NO legacy aliases, unlike the confidential names: it is new, so no
- * deployment's environment already spells it another way, and one name is one name.
+ * Which environment variable carries each door's client id — one map, because the refusals name
+ * it. The two registrations are different applications and cannot be one (a secret shipped in a
+ * downloadable binary is not a secret), so a deployment may hold either, both or neither. What
+ * makes the split useful is that every refusal quotes the variable for the door actually being
+ * asked for: an operator whose device-code mailbox cannot refresh must be sent to
+ * `MS_DEVICE_CLIENT_ID` and not to `MS_OAUTH_CLIENT_ID`, which on their install is very likely
+ * set, valid, and irrelevant. `MS_DEVICE_CLIENT_ID` has no legacy aliases: it is new, so one name
+ * is one name.
  */
 export const MS_CLIENT_ID_ENV: Readonly<Record<MicrosoftClientKind, string>> = {
   confidential: "MS_OAUTH_CLIENT_ID",
@@ -130,18 +98,13 @@ export const MS_CLIENT_ID_ENV: Readonly<Record<MicrosoftClientKind, string>> = {
 };
 
 /**
- * Read a stored `clientKind` as a door, fail-safe.
- *
- * The value arrives from a jsonb column, so it is `string | undefined` and could be anything. ONLY
- * the exact string `"public"` selects the public door; absent, misspelt or unknown all read as
- * `"confidential"`, which is the door every token stored before the device flow existed came
- * through and is therefore the answer that keeps an existing fleet working.
- *
- * The failure direction matters and this is the safe one: a confidential mailbox misread as public
- * would drop its secret and be refused by Entra; a device mailbox misread as confidential is
- * refused by the kind check in {@link MicrosoftTokenProvider} with a named variable, before any
- * request is made. Neither silently succeeds, and only one of them can be caused by a typo in a
- * column.
+ * Read a stored `clientKind` as a door, fail-safe. The value arrives from a jsonb column, so it
+ * could be anything: only the exact string `"public"` selects the public door; absent, misspelt
+ * or unknown all read as `"confidential"` — the door every token stored before the device flow
+ * came through, the answer that keeps an existing fleet working. The failure direction is the
+ * safe one: a confidential mailbox misread as public would drop its secret and be refused by
+ * Entra; a device mailbox misread as confidential is refused by the kind check with a named
+ * variable, before any request. Neither silently succeeds.
  */
 export function wantedClientKind(clientKind: string | undefined): MicrosoftClientKind {
   return clientKind === "public" ? "public" : "confidential";
@@ -197,40 +160,26 @@ export const MS_OAUTH_CLIENT_SECRET_VAR = "MS_OAUTH_CLIENT_SECRET";
 export const MS_TENANT_RE = /^(common|organizations|consumers)$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Default IMAP+SMTP scopes for Exchange Online. `offline_access` is what returns a refresh token.
- *
- * ── THE SCOPE HOST IS `outlook.office.com`, AND THE IMAP HOST IS `outlook.office365.com` ───
- *
- * These two look like the same name typed twice and they are NOT the same thing, so the difference
- * is recorded here rather than left to be "corrected" by the next reader:
- *
- *  · `https://outlook.office.com/IMAP.AccessAsUser.All` is a RESOURCE IDENTIFIER. It is the string
- *    Entra matches against the application registration's delegated permissions, and it must equal
- *    what is registered there byte-for-byte or the authorize request is refused. Microsoft's own
- *    canonical spelling is `outlook.office.com`; `outlook.office365.com` is the legacy alias and is
- *    what this constant said until the registration was checked against it.
- *  · `outlook.office365.com:993` is a HOSTNAME the IMAP client dials. It is unchanged, it is not
- *    part of any scope, and rewriting it to match the scope would point the dialler at a host that
- *    does not serve IMAP.
- *
- * A scope host that does not match the registration fails at the CONSENT SCREEN, before any code
- * exists — which is the good direction, but it presents as "the application is misconfigured" with
- * no clue as to which of the two strings is wrong.
+ * Default IMAP+SMTP scopes for Exchange Online; `offline_access` is what returns a refresh token.
+ * The scope host is `outlook.office.com` and the IMAP host is `outlook.office365.com` — they look
+ * like the same name typed twice and are NOT: the scope is a RESOURCE IDENTIFIER Entra matches
+ * byte-for-byte against the registration's delegated permissions (Microsoft's canonical spelling
+ * is `outlook.office.com`); `outlook.office365.com:993` is a HOSTNAME the IMAP client dials, not
+ * part of any scope — rewriting either to match the other breaks its own half. A mismatched scope
+ * host fails at the CONSENT SCREEN, before any code exists, presenting as "the application is
+ * misconfigured" with no clue which string is wrong.
  */
 export const MS_MAIL_SCOPE =
   "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access";
 
 /**
- * The OIDC scopes the AUTHORIZE request adds, and they are not optional decoration.
- *
- * The callback learns the mailbox address from the `id_token`'s `preferred_username` / `email`
- * claim — the user never types it (see {@link addressFromIdToken}). No `openid` means no `id_token`
- * at all, and no `email` means the claim may be absent from the one that is issued. Either way the
- * ceremony completes, the tokens are valid, and there is no address to store: a failure that looks
- * like a Microsoft problem and is a scope list one line long.
- *
- * They are NOT in {@link MS_MAIL_SCOPE}, because that constant is also what the REFRESH grant asks
- * for and a refresh has no identity to establish.
+ * The OIDC scopes the AUTHORIZE request adds, and they are not decoration. The callback learns
+ * the mailbox address from the `id_token`'s `preferred_username`/`email` claim — the user never
+ * types it. No `openid` means no `id_token` at all; no `email` means the claim may be absent from
+ * the one issued. Either way the ceremony completes, the tokens are valid, and there is no
+ * address to store: a failure that looks like a Microsoft problem and is a scope list one line
+ * long. NOT in {@link MS_MAIL_SCOPE}, because that constant is also what the REFRESH grant asks
+ * for, and a refresh has no identity to establish.
  */
 export const MS_OIDC_SCOPES: readonly string[] = ["openid", "email"];
 
@@ -257,16 +206,13 @@ export function microsoftTokenEndpoint(tenant: string): string {
 }
 
 /**
- * The AUTHORIZE endpoint for a tenant — the URL a browser is sent to.
- *
- * Same derivation and same validation as {@link microsoftTokenEndpoint}, and it is a separate
- * function rather than a string built at the call site for the derivation invariant's reason: the host is a
- * constant in this file and the tenant SEGMENT is the only thing that comes from data. A caller that
- * assembled this URL itself would be a second place a stored value could become a host.
- *
- * This one is less dangerous than the token endpoint — no secret is POSTed to it — but a redirect
- * to an attacker's host is a credible phish of the user's Microsoft password, so it is held to the
- * same rule rather than to a weaker one.
+ * The AUTHORIZE endpoint for a tenant — the URL a browser is sent to. Same derivation and
+ * validation as {@link microsoftTokenEndpoint}, and a separate function rather than a string
+ * built at the call site for the derivation invariant's reason: the host is a constant in this
+ * file and the tenant SEGMENT is the only thing that comes from data — a caller assembling this
+ * URL itself would be a second place a stored value could become a host. Less dangerous than the
+ * token endpoint (no secret is POSTed), but a redirect to an attacker's host is a credible phish
+ * of the user's Microsoft password, so it is held to the same rule.
  */
 export function microsoftAuthorizeEndpoint(tenant: string): string {
   const t = (tenant ?? "").trim();
@@ -294,16 +240,13 @@ export interface PkcePair {
 const b64u = (b: Buffer): string => b.toString("base64url");
 
 /**
- * Mint a PKCE pair.
- *
- * S256 ONLY. RFC 7636 permits `plain`, and `plain` in a redirect flow is no protection at all — the
- * challenge and the verifier are the same string, so anyone who can read the authorize URL can
- * complete the exchange. There is no parameter to select it.
- *
- * PKCE is here even though this is a CONFIDENTIAL client that also sends a secret, and that is not
- * belt-and-braces for its own sake: the authorization code travels through the user's browser and
- * through Microsoft's redirect, which is the one leg this service cannot see. PKCE is what makes a
- * code captured on that leg useless without the verifier, which never leaves the server.
+ * Mint a PKCE pair. S256 ONLY: RFC 7636 permits `plain`, and `plain` in a redirect flow is no
+ * protection at all — the challenge and the verifier are the same string, so anyone who can read
+ * the authorize URL can complete the exchange. There is no parameter to select it. PKCE is here
+ * even though this is a CONFIDENTIAL client that also sends a secret: the authorization code
+ * travels through the user's browser and Microsoft's redirect, the one leg this service cannot
+ * see, and PKCE makes a code captured there useless without the verifier, which never leaves the
+ * server.
  */
 export function pkcePair(randomBytes: (n: number) => Buffer): PkcePair {
   const verifier = b64u(randomBytes(32));
@@ -336,17 +279,13 @@ export interface AuthorizeUrlParams {
 }
 
 /**
- * The URL the browser is sent to.
- *
- * `prompt=select_account` rather than the default, deliberately: the default reuses whatever session
- * the browser already has at Microsoft, which on a shared machine (or for somebody with a work and
- * a personal account) silently connects the wrong mailbox — and the address is taken from the token,
- * so "silently" is exact. Being asked which account is the point of the screen.
- *
- * `response_mode` is left at its default (`query`) so the callback reads its parameters from the
- * query string of a GET. `fragment` would put them where no server can see them and `form_post`
- * would make the callback a POST, which the reduced pipeline's `withRequestGuard` would then have to
- * treat as a mutation with no CSRF token — a cross-site POST by construction.
+ * The URL the browser is sent to. `prompt=select_account` rather than the default, deliberately:
+ * the default reuses whatever session the browser already has at Microsoft, which on a shared
+ * machine — or for somebody with a work and a personal account — silently connects the wrong
+ * mailbox; the address is taken from the token, so "silently" is exact. Being asked which account
+ * IS the point of the screen. `response_mode` stays at its default (`query`) so the callback
+ * reads a GET's query string: `fragment` would put the parameters where no server can see them,
+ * and `form_post` would make the callback a cross-site POST by construction.
  */
 export function buildMicrosoftAuthorizeUrl(p: AuthorizeUrlParams): string {
   const url = new URL(microsoftAuthorizeEndpoint(p.tenant));
@@ -396,20 +335,14 @@ export interface ExchangeResult {
 }
 
 /**
- * Redeem an authorization code for tokens — the CONFIDENTIAL-client half of the ceremony.
- *
- * Error mapping is deliberately NOT the same as {@link refreshAccessToken}'s, and the difference is
- * the point. There, `invalid_grant` means "this mailbox's stored credential is dead, tell the user
- * to reconnect", which is a durable verdict about a stored row. Here there is no stored row yet:
- * `invalid_grant` means the code was already redeemed, or expired, or the verifier did not match —
- * i.e. THIS ATTEMPT failed and there is nothing to quarantine. So it raises
- * {@link OAuthExchangeFailedError} and never {@link OAuthReauthRequiredError}, because emitting the
- * re-auth verdict from a path with no mailbox would put `error_code='auth'` on whatever the caller
- * happened to be holding.
- *
- * `invalid_client` — OUR secret is wrong — is the one an operator must be able to see, and it is
- * carried in `reason` so the callback can say "this deployment's Outlook credentials were rejected"
- * rather than blaming the person who clicked the button.
+ * Redeem an authorization code for tokens — the confidential-client half of the ceremony. The
+ * error mapping is deliberately NOT {@link refreshAccessToken}'s: there, `invalid_grant` means a
+ * stored credential is dead — a durable verdict about a row. Here there is no stored row: it
+ * means the code was already redeemed, expired, or the verifier did not match — THIS ATTEMPT
+ * failed, nothing to quarantine. So it raises {@link OAuthExchangeFailedError}, never the re-auth
+ * verdict, which with no mailbox would land `error_code='auth'` on whatever the caller was
+ * holding. `invalid_client` — OUR secret is wrong — is carried in `reason`, so the callback
+ * blames the deployment's credentials, not the person who clicked.
  */
 export async function exchangeAuthorizationCode(
   p: ExchangeParams, now: () => number = Date.now,
@@ -477,32 +410,14 @@ export class OAuthExchangeFailedError extends Error {
 }
 
 /**
- * THE MAILBOX ADDRESS, FROM THE `id_token`. The user never types it.
- *
- * ── WHY THE SIGNATURE IS NOT VERIFIED, AND WHY THAT IS SOUND HERE ─────────────────────────
- *
- * This token was not presented by a client. It came back in the BODY of a TLS response to a POST
- * this process made to a URL it derived itself, authenticated with the confidential client's secret.
- * There is no untrusted party on that leg, which is exactly the case OpenID Connect Core §3.1.3.7
- * names: a client MAY skip id_token signature validation when the token is obtained directly from
- * the token endpoint over a protected channel. Fetching Microsoft's JWKS to verify a token we just
- * received from Microsoft would add a network dependency and a key-rotation failure mode to buy
- * nothing.
- *
- * It is therefore parsed and NOT trusted for anything beyond the address. No `iss`, no `aud`, no
- * role, no group, no entitlement is read from here — the account this mailbox lands on comes from
- * the SESSION and from the ceremony row's `account_id`, which the callback asserts are the same. If
- * that ever changes, the argument above stops being sufficient and the verification has to be
- * written.
- *
- * ── WHICH CLAIM, AND IN WHICH ORDER ───────────────────────────────────────────────────────
- *
- * `preferred_username` first: for Microsoft work/school accounts it is the UPN, which is the string
- * the IMAP server authenticates as, and that is the one property this address must have — it is
- * about to be stored as `meta.user` and used as the XOAUTH2 login. `email` second, for personal
- * accounts where `preferred_username` may be absent. `upn` last, as the legacy spelling. `sub` is
- * deliberately NOT a fallback: it is an opaque pairwise identifier, not an address, and storing it
- * would produce a mailbox row whose `address` no mail server has ever heard of.
+ * The mailbox address, from the `id_token`. The user never types it. The signature is NOT
+ * verified, and that is sound: the token came back in the BODY of a TLS response to a POST this
+ * process made to a URL it derived itself — no untrusted party on that leg, the case OpenID
+ * Connect Core §3.1.3.7 names. Parsed and NOT trusted beyond the address: no `iss`, `aud`, role
+ * or entitlement is read — the account comes from the SESSION and the ceremony row, which the
+ * callback asserts agree; if that changes, the verification must be written. `preferred_username`
+ * first (the UPN, what the IMAP server authenticates as), `email` second, `upn` last; `sub` is
+ * NOT a fallback — an opaque pairwise identifier is not an address.
  */
 export function addressFromIdToken(idToken: string | null): string | null {
   if (!idToken) return null;
@@ -718,35 +633,14 @@ export interface MicrosoftOAuthRuntime {
    */
   kind?: MicrosoftClientKind;
   /**
-   * RESOLVE THE REGISTRATION AT TOKEN TIME, rather than at construction. When present it WINS over
-   * the three static fields above, which stay as the fallback for a host that has nothing to resolve
-   * from (and for every existing test).
-   *
-   * ── WHY THIS IS NOT A CONSTRUCTOR ARGUMENT ────────────────────────────────────────────────
-   *
-   * The whole point of moving the registration into a database row (cloud 0009) is that an operator
-   * can rotate an expiring Entra client secret from the admin console WITHOUT redeploying. The
-   * always-on worker builds this provider ONCE, at boot, and then lives for weeks — so a
-   * registration read at construction is a registration frozen at the last deploy, and the console's
-   * save would appear to work while every refresh in the fleet kept using the dead secret. That
-   * failure is silent in the worst way: `refreshAccessToken` maps a rejected client to
-   * `OAuthProviderUnavailableError` (deliberately — it is not the mailbox's fault), so nothing is
-   * quarantined, nothing pages, and mail simply stops arriving.
-   *
-   * It is called on the path that already makes an HTTP round trip to Microsoft, and only when the
-   * cached access token is inside its refresh margin — at most once per mailbox per ~55 minutes — so
-   * there is deliberately NO CACHE in front of it. A cache here would reintroduce exactly the
-   * staleness window this field exists to remove, to save a single-row indexed SELECT per hour.
-   *
-   * ── IT IS ASKED FOR A DOOR, AND IT MUST ANSWER ABOUT THAT DOOR ────────────────────────────
-   *
-   * `want` is the registration kind the MAILBOX's stored token came through
-   * ({@link CredMetaAuth.clientKind}), not a preference. A host holding both registrations — the
-   * self-hosted install with its own confidential app AND the shared public client behind the
-   * device-code flow — must return the one that was asked for, and a host holding neither of a
-   * given kind must return an empty `clientId` so the refusal is named. Returning the OTHER door's
-   * credentials is the one answer that produces a silent failure, which is why
-   * {@link MicrosoftTokenProvider} re-checks the `kind` it gets back.
+   * Resolve the registration at TOKEN TIME, not construction; when present it wins over the
+   * static fields, which stay as the fallback. Not a constructor argument: the point of the
+   * database row is rotating an expiring Entra secret WITHOUT redeploying — the worker builds
+   * this provider once at boot and lives for weeks, so a construction-time read is frozen at the
+   * last deploy and the console's save would appear to work while every refresh used the dead
+   * secret. Called only inside the refresh margin — at most once per mailbox per ~55 minutes — so
+   * there is deliberately NO cache in front of it. Asked for a DOOR, it answers about that door;
+   * a host that cannot serve it returns an empty `clientId`, never the other door's credentials.
    */
   resolveClient?: (want: MicrosoftClientKind) => Promise<MicrosoftClientCredentials>;
   keyProvider: KeyProvider;
@@ -763,17 +657,13 @@ const DEFAULT_REFRESH_MARGIN_MS = 5 * 60_000;
 const DEFAULT_SKEW_MS = 120_000;
 
 /**
- * Mints and caches Microsoft access tokens, and persists a rotated refresh token.
- *
- * The cache is keyed by mailbox id. A cached token is reused only while it has more than
- * `refreshMargin + skew` of life left; inside that window the next call refreshes. On the worker the
- * instance lives for the process, so the cache spans reconnects for one mailbox; on the API a fresh
- * instance per invocation makes the cache per-request, which is all a serverless send needs.
- *
- * NO mid-session re-auth is implied by any of this: a live IMAP session is not driven from here, and
- * `connect()` calls the fetcher exactly once per dial. The cache only spares a redundant token POST
- * when the SAME provider is asked again (a second send in one API invocation, a re-dial that lands
- * inside the token's life).
+ * Mints and caches Microsoft access tokens, and persists a rotated refresh token. The cache is
+ * keyed by mailbox id; a cached token is reused only while it has more than `refreshMargin +
+ * skew` of life left. On the worker the instance lives for the process, so the cache spans
+ * reconnects for one mailbox; on the API a fresh instance per invocation makes it per-request,
+ * which is all a serverless send needs. No mid-session re-auth is implied: a live IMAP session is
+ * not driven from here, and `connect()` calls the fetcher exactly once per dial — the cache only
+ * spares a redundant token POST when the same provider is asked again.
  */
 export class MicrosoftTokenProvider implements OAuthTokenProvider {
   private readonly cache = new Map<string, { accessToken: string; expiresAtMs: number }>();
@@ -832,53 +722,27 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
         `OAuth mailbox requires ${MS_CLIENT_ID_ENV[want]}, which is not set`,
       );
     }
-    /* THE SECRET REFUSAL BELONGS TO THE CONFIDENTIAL DOOR ONLY. A public registration has no secret
-     * to be missing, and demanding one here would make the desktop and the self-host device-code
-     * install unable to refresh at all. `clientAuthFields` is what refuses an EMPTY confidential
-     * secret — one place, reached by every grant — so there is no second copy of the rule here.
-     *
-     * ── THE SECRET IS PASSED THROUGH UNCONDITIONALLY, AND THAT IS THE WHOLE POINT ────────────
-     *
-     * This used to read `...(kind === "confidential" ? { clientSecret } : {})`, which DROPPED the
-     * secret before the seam could look at it — and in doing so bypassed the guard this seam exists
-     * to be. A review caught it. The case it re-opened is the mirror of the one
-     * `clientAuthFields` was written for: a CONFIDENTIAL registration MISLABELLED `public` (a wrong
-     * `kind` on a config row, a resolver returning the wrong door) would have its perfectly good
-     * secret silently discarded, send a secretless request, and have Entra's `invalid_client`
-     * surface as {@link OAuthProviderUnavailableError} — the fleet quietly failing to refresh while
-     * looking like a Microsoft outage, which is EXACTLY the failure the explicit kind was
-     * introduced to make impossible.
-     *
-     * So the value goes to the seam and the seam decides. A public runtime whose secret is empty
-     * (the correct configuration) is unaffected; one carrying a secret is refused by name.
+    /**
+     * The secret refusal belongs to the confidential door only — a public registration has no
+     * secret to be missing, and demanding one would break the desktop and device-code installs;
+     * `clientAuthFields` refuses an EMPTY confidential secret in one place. The secret is passed
+     * through UNCONDITIONALLY, and that is the point: this used to drop it for a `public` kind
+     * before the seam could look — bypassing the guard. The re-opened case: a CONFIDENTIAL
+     * registration mislabelled `public` would have its good secret silently discarded and Entra's
+     * `invalid_client` surface as a provider outage — exactly the failure the explicit kind
+     * exists to prevent. The value goes to the seam and the seam decides.
      */
     const kind: MicrosoftClientKind = client.kind ?? "confidential";
 
-    /*
-     * THE DOOR THAT ANSWERED MUST BE THE DOOR THAT WAS ASKED FOR.
-     *
-     * `want` came from the mailbox's own credential; `kind` is what the host resolved. A mismatch
-     * means the host is about to renew a refresh token against a registration that did not issue
-     * it, and Microsoft's answer to that is `invalid_client` or `invalid_grant` — the first of which
-     * `refreshAccessToken` deliberately maps to {@link OAuthProviderUnavailableError} (a rejected
-     * client is not the mailbox's fault) and the second to the re-auth verdict, i.e. to
-     * "your consent expired" about a consent granted ten minutes ago.
-     *
-     * Both readings are wrong and both are actionable by the wrong person. So the mismatch is
-     * refused HERE, by name, before a request goes out — the same argument `clientAuthFields` makes
-     * one level down about a secret on the wrong door, applied to the registration itself. A host
-     * whose `resolveClient` cannot serve the door being asked for must return an empty `clientId`
-     * (refused above with the right variable name), never the other door's credentials.
-     *
-     * ── IT APPLIES ONLY WHEN A RESOLVER WAS ASKED, AND THAT IS NOT A LOOPHOLE ─────────────────
-     *
-     * The static `clientId`/`clientSecret`/`kind` fallback is for a host that holds exactly ONE
-     * registration and has said which. There is nothing for it to select between, so `want` is not
-     * a question it can answer differently — checking it there would refuse every mailbox on a
-     * single-door host that happens to disagree with the stored provenance, with no configuration
-     * change available that would satisfy the check. Every host in this repository wires a resolver
-     * (`apps/server`, `apps/api-vercel`, `apps/worker`), so every host is under the check; the
-     * static path remains what it always was, a host declaring its one door.
+    /**
+     * The door that answered must be the door that was asked for. `want` came from the mailbox's
+     * credential; `kind` is what the host resolved. A mismatch means renewing a refresh token
+     * against a registration that did not issue it — Microsoft answers `invalid_client` or
+     * `invalid_grant`, read as a provider outage or as "your consent expired" ten minutes after
+     * consent: both wrong, both actionable by the wrong person. Refused HERE, by name, before a
+     * request goes out. Applies only when a RESOLVER was asked — not a loophole: the static
+     * fallback is a host declaring its one door, and checking `want` there would refuse every
+     * mailbox on a single-door host with no fix available.
      */
     if (this.rt.resolveClient && kind !== want) {
       throw new OAuthConfigError(
