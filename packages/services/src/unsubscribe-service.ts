@@ -29,42 +29,28 @@ export const ONE_CLICK_BODY = "List-Unsubscribe=One-Click";
 const ONE_CLICK_TIMEOUT_MS = 8_000;
 
 /**
- * ── THE OUTBOUND PORT, AND WHY ITS SIGNATURE IS A GUARANTEE ───────────────────────────────────
- *
- * `post(url, pin)` takes the URL and the validated address(es) to connect to, and NOTHING ELSE.
- * There is no headers bag, no body parameter, no request object — so there is no parameter through
- * which the user's IP, cookies, referer, address or message could reach the sender. `pin` is not
- * caller data: it is the output of {@link assertPublicHttpUrl}, the addresses that gate already
- * cleared, and it is here so the POST connects to a PRE-VALIDATED address rather than re-resolving
- * the sender's hostname — the DNS-rebinding hole a bare re-resolving fetch would leave open.
- * {@link ONE_CLICK_BODY} is fixed by the implementation, so "what we sent" is a property of this
- * module and not of its caller.
- *
- * This mirrors `PrivacyService`'s `RemoteFetch` deliberately: this repository has one shape for
- * "a server-side fetch on the user's behalf" and a second one would be a second thing to keep
- * correct. It is a separate port only because `RemoteFetch` cannot POST.
- *
- * **There is no mail port here and there must never be one.** A `mailto:` unsubscribe would mean
- * sending mail on the user's behalf to a third party, which is prohibited; the parser refuses one
- * (`rules.ts#oneClickUnsubscribeUri`), and the absence of any SMTP dependency in this file is the
- * structural half of the same rule — a defeated parser still could not send.
+ * THE OUTBOUND PORT, AND WHY ITS SIGNATURE IS A GUARANTEE. `post(url, pin)` takes the URL and the
+ * validated address(es) to connect to, NOTHING ELSE — no headers bag, no body, no request object
+ * — so no parameter exists through which the user's IP, cookies, referer or message could reach
+ * the sender. `pin` is `assertPublicHttpUrl`'s output: the POST connects to a PRE-VALIDATED
+ * address rather than re-resolving. `ONE_CLICK_BODY` is fixed by the implementation. Mirrors
+ * `RemoteFetch`; a separate port only because it cannot POST. THERE IS NO MAIL PORT AND MUST
+ * NEVER BE: a `mailto:` unsubscribe sends mail on the user's behalf; the parser refuses one, and
+ * the absence of any SMTP dependency is the structural half.
  */
 export interface OneClickPost {
   post(url: string, pin: readonly string[]): Promise<{ status: number }>;
 }
 
 /**
- * Production {@link OneClickPost}.
- *
- * The POST is PINNED to the address the SSRF gate validated (see `pinned-fetch.ts`), so a sender
- * whose name resolved to a public address for {@link assertPublicHttpUrl} cannot have the POST
- * land on a private one — the DNS-rebinding hole a re-resolving fetch would leave open. Redirects
- * are never followed, which the stdlib client gives for free: a sender who answers `302 Location:
- * http://169.254.169.254/` gets that 3xx returned as-is and treated as a refusal, with no second
- * connection opened by anyone.
- *
- * The response BODY is discarded unread. We have no use for whatever a sender writes back, and not
- * reading it is one less piece of attacker-chosen data in the process.
+ * Production `OneClickPost`. The POST is PINNED to the address the SSRF gate validated
+ * (`pinned-fetch.ts`), so a sender whose name resolved to a public address for
+ * `assertPublicHttpUrl` cannot have the POST land on a private one — the DNS-rebinding hole a
+ * re-resolving fetch leaves open. Redirects are never followed, which the stdlib client gives for
+ * free: a `302 Location: http://169.254.169.254/` comes back as-is and is treated as a refusal,
+ * no second connection opened. The response BODY is discarded unread: we have no use for whatever
+ * a sender writes back, and not reading it is one less piece of attacker-chosen data in the
+ * process.
  */
 export function makeNodeOneClickPost(opts: { timeoutMs?: number } = {}): OneClickPost {
   const timeoutMs = opts.timeoutMs ?? ONE_CLICK_TIMEOUT_MS;
@@ -105,21 +91,13 @@ export interface UnsubscribeDeps {
   resolver: HostResolver;
   /**
    * The authserv-ids a MAILBOX's own provider signs `Authentication-Results` with, resolved PER
-   * MESSAGE from the mailbox that holds it.
-   *
-   * This replaced `trustedAuthservIds: ReadonlySet<string>` — one set for the whole deployment —
-   * because the trusted position is a fact about the provider serving EACH mailbox, and one
-   * service instance serves mailboxes at different providers. The deployment-wide set had
-   * exactly one production value, the empty set, which made `authVerdictFromHeaders` answer
-   * `"unavailable"` for every message and left the `author_failed_authentication` refusal
-   * unreachable: a forged `From` could choose whose list the button leaves.
-   *
-   * **Still required, and still never defaulted** — the absent-config default is the dangerous
-   * branch. Production wires `adapters/drizzle-repo.ts#mailboxProviderAuthservIds`, which reads
-   * the IMAP host off the mailbox's own credential row (one indexed PK read per unsubscribe) and
-   * maps it through the provider table; a caller that has decided to trust nothing types
-   * `async () => NO_TRUSTED_AUTHSERV_IDS`. See `rules.ts#authVerdictFromHeaders` for what the
-   * set means.
+   * MESSAGE from the mailbox that holds it. This replaced one deployment-wide set: the trusted
+   * position is a fact about EACH mailbox's provider, and the deployment-wide set had one
+   * production value — the empty set — which made every verdict `"unavailable"` and left the
+   * `author_failed_authentication` refusal unreachable: a forged `From` could choose whose list
+   * the button leaves. Still REQUIRED and never defaulted — the absent-config default is the
+   * dangerous branch. Production wires `mailboxProviderAuthservIds`; a caller that trusts nothing
+   * types `async () => NO_TRUSTED_AUTHSERV_IDS`.
    */
   trustedAuthservIdsFor: (db: Tx, mailboxId: string) => Promise<ReadonlySet<string>>;
 }
@@ -182,33 +160,14 @@ export interface UnsubscribeSweep {
 }
 
 /**
- * ── WHICH MESSAGES MAY BE UNSUBSCRIBED FROM: REJECT DESTINATIONS ONLY ─────────────────────────
- *
- * **THE RULE IS: REJECT DESTINATIONS ONLY, NEVER KEEP DESTINATIONS.** The user's consent to
- * leave a list is the decision they already made about the sender, and only a rejection is that
- * decision.
- *
- *  · `ohmail/Screened` and `ohmail/Quarantine` — the user said no. Every reject path lands in
- *    one of these two: the Screener's spam verb, an explicit screen-out, a block rule. That is
- *    why this set is two folders and not five verbs — `folder_state.desired_folder` is the one
- *    sink all of them write, so naming the destinations covers every route to them, including
- *    ones added later.
- *
- * Absent from the set, deliberately:
- *
- *  · `ohmail/Reads` — **THIS WAS IN THE SET AND HAS BEEN REMOVED.** An earlier design offered it
- *    on Reads too; that was withdrawn. Reads is mail the user CHOSE TO KEEP, so unsubscribing
- *    from it inverts the very decision that put it there.
- *  · `ohmail/Receipts` — removed with it, on the same reasoning and with a sharper edge: it
- *    holds order confirmations, invoices and delivery notices. A sender unsubscribed here stops
- *    sending the receipt for a purchase the user has ALREADY MADE, which is unrecoverable in a
- *    way a missed newsletter is not.
- *  · `ohmail/Screener` — the user has NOT decided. Acting here would make first contact itself
- *    an unsubscribe, which is the consent gate running backwards.
- *  · `INBOX` — the user's real mail. Nothing here should ever leave a list on their behalf.
- *
- * These five are the whole `Destination` union, so the set is exhaustive by construction rather
- * than by hoping nobody adds a sixth folder without reading this.
+ * WHICH MESSAGES MAY BE UNSUBSCRIBED FROM: REJECT DESTINATIONS ONLY, NEVER KEEP DESTINATIONS.
+ * `ohmail/Screened` and `ohmail/Quarantine` — the user said no; `folder_state.desired_folder` is
+ * the one sink every reject path writes, so naming the destinations covers every route, later
+ * ones included. Absent, deliberately: `ohmail/Reads` (removed — mail the user CHOSE TO KEEP);
+ * `ohmail/Receipts` (same, sharper: a sender unsubscribed here stops sending the receipt for a
+ * purchase already made); `ohmail/Screener` (the user has NOT decided — acting would make first
+ * contact itself an unsubscribe); `INBOX` (the user's real mail). These five are the whole
+ * `Destination` union, so the set is exhaustive by construction.
  */
 const ACTIONABLE_FOLDERS: ReadonlySet<string> = new Set<Destination>([
   "ohmail/Screened", "ohmail/Quarantine",
@@ -253,121 +212,14 @@ function authorDomain(fromAddress: string): string {
 const escapeKeyPart = (s: string): string => s.replace(/%/g, "%25").replace(/\|/g, "%7c");
 
 /**
- * ── THE IDEMPOTENCY KEY, AND THE IDENTITY IT IS BOUND TO ──────────────────────────────────────
- *
- * The record table's uniqueness is `(mailbox_id, list_key)`, and everything the feature promises
- * — at most one request per list, per mailbox, ever — rests on this function returning the same
- * string for two messages that belong to the same subscription and different strings otherwise.
- *
- * **AND ON ONE MORE THING THIS FUNCTION USED TO GET WRONG: no sender may produce another
- * sender's key.** An at-most-once key is a scarce resource, so whoever can name it can EXHAUST
- * it. That half is written out below because it is the half that was missing.
- *
- * **NOT THE UNSUBSCRIBE URL.** It is the most specific thing available and it is not a key at
- * all: a one-click URL normally carries a per-message opaque token (`…/u?t=<random>`), so a
- * URL-keyed record mints a fresh key for every message and sends once per message. That is the
- * exact defect the table exists to prevent, reintroduced by the choice that looks most precise.
- *
- * **NOT `from_address` ALONE.** A common counter-example: a mailbox receives
- * `no-reply-<opaque>@example.com`, a per-send address from a sender the user experiences as one
- * list. Keyed on `From`, every message would be a new list.
- *
- * **AND NOT RFC 2919 `List-ID` ALONE — WHICH IS WHAT IT WAS, AND WHICH WAS A DENIAL OF SERVICE
- * ON A STRANGER'S UNSUBSCRIBE.** This function took `fromAddress` and, whenever a `List-ID`
- * existed, ignored it. `List-ID` is a header the SENDER writes, so the key was a string the
- * sender chose freely:
- *
- *   1. An attacker sends ordinary mail from `evil.example`, a domain they legitimately own and
- *      pass DKIM/DMARC for — **no forgery anywhere** — carrying `List-ID: <news.victim.example>`
- *      and their own one-click URL.
- *   2. One ordinary screen-out of that sender claims `(mailbox, list:news.victim.example)`.
- *   3. A genuine message from the real `news.victim.example` is later screened out, derives the
- *      same key, loses the `ON CONFLICT`, and is answered `already_recorded`.
- *   4. **The real list's unsubscribe URL is never called, for the life of that mailbox.**
- *
- * The prefixes were not the defence they looked like: `list:`/`addr:` stop the two NAMESPACES
- * colliding, which is a different question from whether one sender can occupy another's slot
- * inside one namespace.
- *
- * **SO THE KEY IS NAMESPACED BY THE CLAIMED AUTHOR'S DOMAIN: `list:<from-domain>|<List-ID>`.**
- * The `List-ID` still does the work it was chosen for — it is the sender's own stable name for
- * the list, so one address carrying several lists yields several keys and several addresses
- * carrying one list still collapse to one — but it can only ever name a slot inside the domain
- * the message claims to come from. `evil.example` cannot reach `victim.example`'s slot, whatever
- * it writes in its own headers.
- *
- * **WHY THE DOMAIN AND NOT THE VERIFIED SIGNING DOMAIN.** Because the signing domain is not
- * knowable here for most mail, and pretending otherwise would ship a binding that is inert:
- * `authVerdictFromHeaders` answers `"unavailable"` whenever the mailbox's provider has no trusted
- * authserv-id, which measured against the production corpus is **every message** — 75 165
- * `unavailable`, 11 112 unset, and not one `pass` or `fail`. A key derived from a cryptographic
- * verdict would therefore have had exactly one value in production, which is no namespace at all.
- * The claimed domain is what the product can bind to unconditionally; whether that claim is
- * VERIFIED is a separate gate, and it lives at the automatic entry point rather than in the key
- * (see {@link UnsubscribeService.onScreenOut}).
- *
- * **THE RESIDUAL, STATED.** A sender who FORGES `From: @victim.example` still derives the
- * victim's namespace. That needs forgery plus a deployment whose provider vouches for nothing,
- * and it is the same residual the `authVerdict === "fail"` gate already carries — it is not
- * closed here and must not be read as closed. What IS closed is the no-forgery attack above,
- * unconditionally and in every deployment.
- *
- * **THE SECOND RESIDUAL, FOUND BY REVIEW AND ACCEPTED RATHER THAN CLOSED: A LIST WHOSE POSTERS
- * KEEP THEIR OWN `From` DOMAIN NO LONGER COLLAPSES TO ONE CLAIM.** Some mailing-list software
- * preserves each poster's original `From` while the list infrastructure injects one shared
- * `List-ID` and one shared one-click route — a discussion list rather than a newsletter. Under
- * this key, `alice@a.example` and `bob@b.example` posting to the SAME list now derive TWO keys,
- * not one, so the automatic pass may send an RFC 8058 POST once per author domain actually seen
- * rather than once per list.
- *
- * **NOT REVERSED, because reversing it reopens the vulnerability this whole function exists for.**
- * Any rule that collapses two different claimed domains onto one key — "same List-ID, any
- * domain" — is EXACTLY the rule an attacker exploits: `evil.example` carrying the victim's
- * `List-ID` would once again match whatever the victim's real domain claims, because nothing
- * distinguishes "a second legitimate poster" from "a hostile domain claiming the same list name"
- * without an authenticated signal, and an authenticated signal is unavailable for the entire
- * production corpus (above). There is no version of this key that is BOTH domain-independent and
- * closed against the sender-chosen-key attack; picking one is picking which failure mode to keep.
- *
- * **WHAT "BOUNDED" DOES NOT MEAN HERE — CORRECTED BY A SECOND REVIEW ROUND, WHICH IS THE REASON
- * THIS PARAGRAPH DOES NOT SAY "HARMLESS".** The first version of this note leaned on "RFC 8058
- * requests are idempotent at the sender" — true of RETRYING the SAME request (this file's own
- * `onScreenOut` doc, and the standing project decision that `POST /messages/:id/unsubscribe` is
- * not idempotent because "a repeat POST re-sends the same RFC 8058 request, which is what a mail
- * client's own button does"). It does NOT cover this case: a one-click URL normally carries a
- * PER-MESSAGE opaque token, so Alice's and Bob's messages POST to two DIFFERENT URLs. These are
- * not a replay of one request — they are two DISTINCT requests, and nothing here can promise a
- * third party's system treats "confirm from token A" and "confirm from token B" for the same
- * underlying subscription identically. **In the fully adversarial-shaped case — a discussion list
- * whose every poster happens to use a distinct domain — this key provides NO deduplication at
- * all: N messages derive N keys and N sends, exactly the per-message granularity `unsubscribeListKey`
- * was written to avoid**, proven rather than asserted by the all-distinct-domain regression
- * alongside the mixed-domain one.
- *
- * **WHY THIS DIRECTION IS STILL THE RIGHT ONE TO KEEP, ARGUED ON THE ASYMMETRY THAT ACTUALLY
- * HOLDS.** Not "the fan-out is harmless" — that a repeated send to a legitimate, real third party
- * costs at most a redundant unsubscribe confirmation at THEIR system, for a recipient who already
- * asked to leave the list, is a bounded, recoverable, self-correcting cost even without an
- * idempotency guarantee. A silenced victim list is neither: the mailbox never asks again, ever,
- * for the life of that mailbox. Over-splitting is bounded by the number of distinct domains a
- * list's own posters actually use (which the mixed-domain and all-distinct-domain regressions
- * both measure directly rather than assume); under-splitting is unbounded in the worst
- * direction — permanent. That asymmetry, not a claim of harmlessness, is the whole argument.
- *
- * **THE COST OF CHANGING THE KEY, MEASURED.** Old `list:<id>` rows no longer match the key their
- * list now derives — 58 rows across 5 mailboxes in production. Each may cost ONE further
- * one-click POST the next time a message from that list is screened out; RFC 8058 requests are
- * idempotent at the sender, and the alternative (a partial SQL rewrite of keys whose From domain
- * is only reachable through a `message_id` that deliberately carries no foreign key) could
- * collide under the unique index. Deliberately NOT reconciled, and deliberately no
- * read-the-old-key-too compatibility check: **any key an attacker has already burned is released
- * by this change**, which is the point.
- *
- * `lower(from_address)` remains the fallback for a sender that publishes `List-Unsubscribe` and
- * `List-Unsubscribe-Post` but no `List-ID` — unusual but permitted, and refusing to act on one
- * would let a sender defeat the whole feature by omitting a header. It needs no namespacing of
- * its own: the full address already contains the domain, so it was already bound to the claimed
- * author, and its bytes are unchanged so no existing `addr:` record is orphaned.
+ * THE IDEMPOTENCY KEY. Uniqueness is `(mailbox_id, list_key)`: at most one request per list per
+ * mailbox — and NO SENDER MAY PRODUCE ANOTHER SENDER'S KEY. Not the URL (per-message tokens); not
+ * `from_address` alone; not bare `List-ID` — sender-written, so an attacker's mail carrying a
+ * victim's `List-ID` claimed the victim's slot for ever. SO: `list:<from-domain>|<List-ID>`, the
+ * list name bound inside the domain the message claims. Residuals: a FORGED `From` still reaches
+ * the victim's namespace; a discussion list whose posters keep their own domains derives one key
+ * per author domain. NOT REVERSED: over-splitting is bounded, a silenced list permanent. 58 old
+ * rows released, unreconciled. `lower(from_address)` is the no-`List-ID` fallback.
  */
 export function unsubscribeListKey(
   headers: Readonly<Record<string, unknown>>, fromAddress: string,
@@ -428,21 +280,15 @@ export class UnsubscribeService {
   ): Promise<UnsubscribeResult> {
     const row = await this.load(ctx, messageId);
 
-    /* -- A READER SENDS NO UNSUBSCRIBE (mail 0083) -----------------------------------------
-     *
-     * An RFC 8058 one-click POST is an IRREVERSIBLE outbound request made in the mailbox owner's
-     * name to a third party, and it is made on behalf of an ORGANIZING decision: the automatic
-     * arm fires on a screen-out, and the manual arm is a person acting on mail this install is
-     * arranging. On a mailbox another install organizes, the decision that justifies it is not
-     * ours to have taken.
-     *
-     * BOTH ARMS, deliberately — this is the shared body and the check is here rather than on
-     * `unsubscribe()` alone. The automatic arm is already unreachable for a reader (its trigger
-     * is `decide`, which is refused), so the manual one is the arm this actually closes; putting
-     * the check in the shared body is what keeps a third entry point from being added past it.
-     *
-     * PER MAILBOX: `row.mailboxId` is already loaded and is used one line below for the trust
-     * set, so this costs one indexed read on a row this request has already touched.
+    /**
+     * A READER SENDS NO UNSUBSCRIBE (mail 0083). An RFC 8058 one-click POST is an IRREVERSIBLE
+     * outbound request made in the mailbox owner's name, on behalf of an ORGANIZING decision — on
+     * a mailbox another install organizes, that decision is not ours to have taken. BOTH ARMS,
+     * deliberately: the check is in the shared body, not on `unsubscribe()` alone — the automatic
+     * arm is already unreachable for a reader (its trigger is `decide`, refused), so the manual
+     * one is what this closes, and the shared body keeps a third entry point from being added
+     * past it. PER MAILBOX: `row.mailboxId` is already loaded and used one line below for the
+     * trust set, so this costs one indexed read on a row already touched.
      */
     await assertOrganizerRole(asTx(ctx), dialect(ctx.db), ctx.accountId, row.mailboxId);
 
@@ -469,47 +315,30 @@ export class UnsubscribeService {
         "unsubscribe applies to a sender you have screened out — not to mail you chose to keep");
     }
 
-    // ── THE COUPLING THIS CHECK EXISTS TO CLOSE ───────────────────────────────────────────
-    //
-    // The unsubscribe URI is chosen by whoever wrote the message, and `From` is chosen by the
-    // same person. If the claimed author is forged, the list we leave is a stranger's choice —
-    // at best confirming to a spammer that this address is read, at worst carrying somebody
-    // ELSE'S subscription token and unsubscribing a third party.
-    //
+    // THE COUPLING THIS CHECK EXISTS TO CLOSE. The unsubscribe URI is chosen by whoever wrote the
+    // message, and `From` by the same person: if the claimed author is forged, the list we leave
+    // is a stranger's choice — at best confirming to a spammer that this address is read, at
+    // worst carrying somebody ELSE'S subscription token and unsubscribing a third party.
     // Demote-only: an explicit failure from the account's own provider refuses. Absent evidence
-    // does NOT — `"unavailable"` is the answer for every deployment that has not yet named its
+    // does NOT — `"unavailable"` is the answer for every deployment that has not named its
     // provider, and refusing on it would make the feature dead on arrival while teaching the
-    // codebase the exact "absence selects the destructive branch" habit that `rules.ts` spends a
-    // page arguing against. The residual is stated in the report rather than hidden here.
+    // codebase the exact "absence selects the destructive branch" habit `rules.ts` argues
+    // against.
     if (authVerdict === "fail") {
       refuse("author_failed_authentication", 409,
         "your provider reports that this message failed authentication for its claimed sender");
     }
 
-    // ── THE AUTOMATIC PASS WANTS A VOUCHED-FOR AUTHOR, THE BUTTON DOES NOT ────────────────
-    //
-    // `unsubscribeListKey` namespaces a `list:` claim under the CLAIMED author domain, which
-    // stops one sender occupying another's slot without any forgery. The residual it cannot
-    // close is a FORGED `From`: a message claiming `@victim.example` derives the victim's
-    // namespace. This gate is that residual's other half, and it is deliberately narrow in two
-    // directions:
-    //
-    //  · **Automatic only.** `unsubscribe()` is the per-message button — a person looking at the
-    //    mail in front of them, who can see who it claims to be from. `onScreenOut` is a pass
-    //    nobody is watching, so it is the one that must be conservative. This mirrors the account
-    //    switch a few lines down, which gates the automatic pass and deliberately not the button.
-    //  · **Only where the claim is CHECKABLE.** `identityCheckable` is false whenever the
-    //    mailbox's provider has no trusted authserv-id, and refusing there would not be caution —
-    //    it would silently retire the feature. Measured against the production corpus,
-    //    `auth_verdict` is `unavailable` or unset for EVERY message (75 165 / 11 112; not one
-    //    `pass`, not one `fail`), so a gate that demanded a `pass` unconditionally would refuse
-    //    100% of real traffic while reading like hardening.
-    //
-    // **SO, STATED PLAINLY: THIS GATE IS INERT IN PRODUCTION TODAY.** It fires the day
-    // `authserv-ids.ts#providerAuthservIds` resolves a real authserv-id for a mailbox's IMAP
-    // host, and not before. It is written now because the alternative is writing it later, under
-    // the belief that the key's namespacing already covered forgery — which it does not. The
-    // tests inject a trusted set precisely so the branch is EXECUTED rather than shipped unrun.
+    // THE AUTOMATIC PASS WANTS A VOUCHED-FOR AUTHOR, THE BUTTON DOES NOT. `unsubscribeListKey`
+    // namespaces under the CLAIMED author domain; the residual is a FORGED `From`, and this gate
+    // is its other half, narrow in two directions. AUTOMATIC ONLY: `unsubscribe()` is a person
+    // looking at the mail; `onScreenOut` is a pass nobody watches. ONLY WHERE THE CLAIM IS
+    // CHECKABLE: `identityCheckable` is false where the provider has no trusted authserv-id — the
+    // production corpus has `auth_verdict` `unavailable` or unset for EVERY message, so demanding
+    // a `pass` unconditionally refuses 100% of real traffic while reading like hardening. STATED
+    // PLAINLY: THIS GATE IS INERT IN PRODUCTION TODAY — it fires when `providerAuthservIds`
+    // resolves a real authserv-id; the tests inject a trusted set so the branch is EXECUTED, not
+    // shipped unrun.
     if (mode === "automatic" && identityCheckable && authVerdict !== "pass") {
       refuse("sender_identity_unverified", 409,
         "your provider did not confirm who sent this, and ohmail only leaves lists " +
@@ -577,53 +406,26 @@ export class UnsubscribeService {
   }
 
   /**
-   * ── THE AUTOMATIC TRIGGER ─────────────────────────────────────────────────────────────────
-   *
-   * Called with the messages a screen-out just re-routed. This is the entry point that makes the
-   * feature automatic rather than a button, and its contract is deliberately narrow:
-   *
-   * **IT NEVER THROWS, AND IT NEVER RETURNS AN ERROR THE CALLER MUST HANDLE.** The user's filing
-   * decision is the product; the unsubscribe is a courtesy on top of it. A sender that times
-   * out, a URL the SSRF gate refuses, a database that rejects the claim — none of those may
-   * reach the caller, because the caller is a screen-out and a screen-out that fails because a
-   * stranger's web server is down is a worse product than one that quietly does not unsubscribe.
-   *
-   * That is one of TWO independent mechanisms, and the second is stronger because it does not
-   * depend on this function being written correctly: **call it AFTER the screen-out transaction
-   * has committed.** Then a process that dies anywhere inside here leaves the screen-out durable,
-   * because the screen-out was already durable before the first byte left the building. The
-   * `try`/`catch` protects the response; the ordering protects the data.
-   *
-   * It filters to reject destinations itself rather than trusting the caller to have done so —
-   * the caller is a screen-out path, and a screen-out path that one day also handles a promote
-   * must not be able to turn this into an unsubscribe by passing the wrong ids.
+   * THE AUTOMATIC TRIGGER — called with the messages a screen-out just re-routed. IT NEVER THROWS
+   * AND NEVER RETURNS AN ERROR THE CALLER MUST HANDLE: the filing decision is the product, the
+   * unsubscribe a courtesy. One of TWO independent mechanisms, and the second is stronger: call
+   * it AFTER the screen-out transaction commits, so a process dying here leaves the screen-out
+   * durable — the `try`/`catch` protects the response; the ordering protects the data. It filters
+   * to reject destinations itself: a screen-out path that one day also handles a promote must not
+   * turn this into an unsubscribe by passing the wrong ids.
    */
   async onScreenOut(ctx: ServiceContext, messageIds: readonly string[]): Promise<UnsubscribeSweep> {
     const sweep: UnsubscribeSweep = { considered: 0, posted: 0, skipped: 0, failed: 0 };
 
-    // ── THE ACCOUNT SWITCH, READ HERE AND NOWHERE ELSE (mail 0054) ────────────────────────
-    //
-    // `account_settings.block_auto_unsubscribe_at` NOT NULL means this account asked that a
-    // screen-out stop leaving lists on their behalf. The read is at the TOP of the automatic
-    // entry point, before the loop, for three reasons that are each independent:
-    //
-    //  1. **It is the seam, not the surface.** The client is told what will happen by the same
-    //     flag, but a client is a description and this is the decision. A build that never got
-    //     the setting, a stale tab, a script calling the API directly — none of them can make a
-    //     request go out that this row forbids, because the request is made here.
-    //  2. **`unsubscribe()` is deliberately NOT gated.** That is the per-message button: a person
-    //     pressing unsubscribe on mail in front of them. A switch labelled "auto" that also
-    //     disabled a manual control would be a control whose label lies, and the label is the
-    //     whole contract. `sweepScreenedOut` IS gated, because it comes through here.
-    //  3. **Once, not per message.** A screen-out on a domain hands over every held message from
-    //     every sender under it; one row read for the pass is the same answer for all of them and
-    //     cannot go half-applied between two ids.
-    //
-    // The zero sweep is the honest return. `considered` counts what the pass LOOKED at, and it
-    // looked at nothing: reporting `considered: n, skipped: n` would put this account's opt-out
-    // in the same bucket as the healthy majority of screen-outs whose senders publish no
-    // one-click route at all, which is precisely the conflation `UnsubscribeSweep`'s own note
-    // refuses between `skipped` and `failed`.
+    // THE ACCOUNT SWITCH, READ HERE AND NOWHERE ELSE (mail 0054). `block_auto_unsubscribe_at` NOT
+    // NULL means this account asked that a screen-out stop leaving lists on their behalf. Read at
+    // the TOP of the automatic entry point: it is the seam, not the surface — a stale tab or a
+    // direct API call cannot make a request this row forbids, because the request is made here;
+    // `unsubscribe()` is deliberately NOT gated — a switch labelled "auto" that also disabled a
+    // manual control has a lying label (`sweepScreenedOut` IS gated, it comes through here);
+    // ONCE, not per message — one read is the same answer for all ids and cannot go half-applied.
+    // The zero sweep is the honest return: `considered` counts what the pass LOOKED at, and it
+    // looked at nothing.
     if (await this.blocked(ctx)) return sweep;
 
     for (const id of messageIds) {
@@ -651,25 +453,13 @@ export class UnsubscribeService {
   }
 
   /**
-   * ── THE DRAIN, AND WHY IT REFUSES TO RUN WITHOUT A CUTOFF ─────────────────────────────────
-   *
-   * `folder_state.desired_folder` is the single sink every reject path writes — the Screener's
-   * spam verb, an explicit screen-out, a block rule, the re-screen pass, ingest-time routing.
-   * So the STATE is the queue: anything sitting in a reject destination without a record row is,
-   * by definition, a screen-out this feature has not yet considered. Nothing has to be enqueued,
-   * and a reject path added later is covered the day it is written rather than the day somebody
-   * remembers to add a call to it.
-   *
-   * **`since` IS REQUIRED AND HAS NO DEFAULT, WHICH IS THE WHOLE SAFETY ARGUMENT.** A mature
-   * mailbox can hold many thousands of senders screened out before this existed. A drain that
-   * defaulted to "all of it" would, on its first run after one deploy, make thousands of outbound
-   * requests to thousands of strangers — announcing this address to every one of them, including
-   * the spam that was screened out precisely because nobody wanted it confirmed as live. Making
-   * the cutoff a required argument means that sweep can only ever happen because somebody typed
-   * the date.
-   *
-   * `limit` is required for the same reason at a smaller scale: an unbounded drain is a drain
-   * whose blast radius is whatever the mailbox happens to contain.
+   * THE DRAIN, AND WHY IT REFUSES TO RUN WITHOUT A CUTOFF. `folder_state.desired_folder` is the
+   * single sink every reject path writes, so the STATE is the queue — nothing is enqueued, and a
+   * later reject path is covered the day it is written. `since` IS REQUIRED, NO DEFAULT: a mature
+   * mailbox holds thousands of pre-feature screen-outs, and a drain defaulting to "all of it"
+   * would make thousands of outbound requests — announcing this address to the very spam screened
+   * out because nobody wanted it confirmed live. The sweep happens only because somebody typed
+   * the date. `limit` is required for the same reason at smaller scale.
    */
   async sweepScreenedOut(
     ctx: ServiceContext, opts: { since: Date; limit: number },
@@ -703,29 +493,14 @@ export class UnsubscribeService {
   }
 
   /**
-   * HAS THIS ACCOUNT TURNED THE AUTOMATIC PASS OFF? (mail 0054)
-   *
-   * One column, one row, primary key. `true` iff `block_auto_unsubscribe_at IS NOT NULL`.
-   *
-   * **An absent row is FALSE — the pass runs — and that is the product default rather than a
-   * lenient fallback.** `account_settings` rows are created lazily by whichever feature writes
-   * first, so most accounts have never had one; reading "no row" as "turned off" would switch a
-   * shipping behaviour off for everybody who has not opened Settings, which is the same mistake
-   * the migration refuses to make by storing the opt-out instead of an opt-in.
-   *
-   * ── A FAILED READ ANSWERS `true`, AND THE TRY/CATCH IS LOAD-BEARING TWICE ─────────────────
-   *
-   * `onScreenOut`'s contract is that it NEVER throws — its one production caller,
-   * `screener-service.ts#decide`, awaits it after the commit with no `try` of its own, so an
-   * escaping error would turn a screen-out that has already durably committed into a 500. This is
-   * the only `await` in `onScreenOut` outside the per-message loop that already catches, so
-   * without this `catch` the guard would have opened exactly that hole while adding a switch.
-   *
-   * It answers `true` — do not send — rather than falling through to the default. The two are not
-   * symmetric: not sending is recoverable (the next message from that list is still a candidate,
-   * because a blocked pass writes no record row), and sending is not. A 42703 from an API deployed
-   * ahead of the migration lands here too, which is the case `/health`'s marker exists to make
-   * loud rather than leave to this branch.
+   * HAS THIS ACCOUNT TURNED THE AUTOMATIC PASS OFF? (mail 0054). `true` iff
+   * `block_auto_unsubscribe_at IS NOT NULL`. An absent row is FALSE — the pass runs — the product
+   * default: rows are created lazily, and "no row means off" would switch a shipping behaviour
+   * off for everybody who never opened Settings. A FAILED READ ANSWERS `true`, load-bearing
+   * twice: `onScreenOut` never throws (its caller awaits it after the commit with no `try`), and
+   * "do not send" is the recoverable direction — a blocked pass writes no record row, so the next
+   * message is still a candidate; sending is not recoverable. A 42703 from an API deployed ahead
+   * of the migration lands here too.
    */
   private async blocked(ctx: ServiceContext): Promise<boolean> {
     try {
@@ -741,15 +516,12 @@ export class UnsubscribeService {
   }
 
   /**
-   * Win the right to send, or discover somebody already has it.
-   *
-   * `ON CONFLICT DO NOTHING … RETURNING` is the entire mutual exclusion. There is no
-   * `SELECT … FOR UPDATE` because there is nothing to lock: the row does not exist yet, and a
-   * read-then-write would have exactly the window this is written to close. Two transactions
-   * inserting the same `(mailbox_id, list_key)` serialize on the unique index — the second
-   * blocks until the first commits, then returns zero rows.
-   *
-   * `null` means "already recorded". It never means "an error happened".
+   * Win the right to send, or discover somebody already has it. `ON CONFLICT DO NOTHING …
+   * RETURNING` is the entire mutual exclusion. No `SELECT … FOR UPDATE` because there is nothing
+   * to lock: the row does not exist yet, and a read-then-write has exactly the window this
+   * closes. Two transactions inserting the same `(mailbox_id, list_key)` serialize on the unique
+   * index — the second blocks until the first commits, then returns zero rows. `null` means
+   * "already recorded"; it never means "an error happened".
    */
   private async claim(
     ctx: ServiceContext, row: MessageRow, messageId: string,
