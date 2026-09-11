@@ -2060,16 +2060,15 @@ export function OhboxView({
             are entirely outside the window renders neither its label nor an empty listbox — the
             heading-over-nothing rule, kept as the window slides. */}
         {/* Resurfaced — pinned at the very top under its own quiet label, whole and outside the
-            window (a scheduled set is small). A different claim from "New for you": not "this
-            arrived" but "you asked to see this again now", so it earns its own heading. Every
-            row here is drawn unread whatever its stored flag says (owner ruling 2026-08-31 —
-            `presentsUnread`, with `effUnread` above keeping the armed read off it). A
-            DELIBERATE read clears the pin server-side (`MessageService.markSeen` without the
-            glance label) and the row slides down to "Earlier" — but only once the selector
-            actually files it there, which is why the slide keys on section membership rather
-            than the read flag (see `earlierIds`). A GLANCE — the two-second dwell — records
-            the reading and spends no pin, so the row does not move or change: the fix for the
-            reported flip-flop. Each pinned row carries the "Done" release — see `doneFor`. */}
+            window (a scheduled set is small): not "this arrived" but "you asked to see this
+            again now", so it earns its own heading. Every row here is drawn unread whatever its
+            stored flag says (owner ruling 2026-08-31 — `presentsUnread`, with `effUnread` above
+            keeping the armed read off it). A DELIBERATE read clears the pin server-side
+            (`MessageService.markSeen` without the glance label) and the row slides to "Earlier"
+            — once the selector actually files it there, why the slide keys on section
+            membership rather than the read flag (see `earlierIds`). A GLANCE — the two-second
+            dwell — records the reading and spends no pin, so the row does not move or change:
+            the fix for the reported flip-flop. Each row carries "Done" — see `doneFor`. */}
         {displayResurfaced.length > 0 ? (
           <>
             <ListGroupLabel>{t("resurfacedGroup")}</ListGroupLabel>
@@ -2122,12 +2121,11 @@ export function OhboxView({
             ends where its mail ends (`older.available === false`, read from the engine); a
             windowed client gets the control and a sentence once shipped unconditionally when it
             was FALSE (the mirror held every message), true now of this client. Every message is
-            a real row — never an "N more" count. `settled` gates the windowed arm: "this
-            device keeps your recent mail" says where the reader's mail IS, which before the
-            first drain has no referent (reported on first open, for up to a minute), and
-            `olderAction` was a wrong INSTRUCTION, pointing backwards past mail still in
-            flight. The cost — a returning tab loses the tail for one drain — is the cheap side:
-            `SyncBar` narrates throughout, and both return with the drained mirror. */}
+            a real row — never an "N more" count. `settled` gates the windowed arm: "this device
+            keeps your recent mail" has no referent before the first drain (reported on first
+            open, for up to a minute), and `olderAction` was a wrong INSTRUCTION, pointing
+            backwards past mail still in flight. The cost — a returning tab loses the tail for
+            one drain — is cheap: `SyncBar` narrates, and both return with the drained mirror. */}
         {demo ? <div className="tail-row">{t("tail")}</div> : null}
         {!demo && older.available && settled ? (
           <div className="tail-row" role="status">
