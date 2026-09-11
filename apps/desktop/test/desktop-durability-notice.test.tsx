@@ -44,7 +44,6 @@ import { BearerManager, REFRESH_STORAGE_KEY } from "../src/host-client/bearer.js
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 /** A jar that refuses every write the way a window with storage denied does. */
@@ -87,11 +86,9 @@ async function mountShellNotice(): Promise<HTMLElement> {
   root = createRoot(mountPoint);
   await act(async () => {
     root!.render(
-      h(
-        IntlProvider,
-        { locale: "en", messages: messages as never, timeZone: "UTC" },
-        h(DurabilityNotice, null),
-      ),
+      <IntlProvider locale="en" messages={messages as never} timeZone="UTC">
+        <DurabilityNotice />
+      </IntlProvider>,
     );
   });
   return mountPoint;
@@ -151,11 +148,9 @@ describe("the desktop's lost writes reach the shell's own notice", () => {
     const themeRoot = createRoot(themePoint);
     await act(async () => {
       themeRoot.render(
-        h(
-          ThemeProvider,
-          { storageKey: "ohmail.theme", faces: true, storage: localStorageDoor("theme") },
-          h("span", null),
-        ),
+        <ThemeProvider storageKey="ohmail.theme" faces storage={localStorageDoor("theme")}>
+          <span />
+        </ThemeProvider>,
       );
     });
     // The provider adopts post-mount and then STAMPS, which is the write that answers.
