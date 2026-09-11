@@ -146,6 +146,7 @@ export const accountRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/account/access",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -188,6 +189,7 @@ export const accountRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/account/manage-link",
+    relay: true,
     cost: "paid",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);

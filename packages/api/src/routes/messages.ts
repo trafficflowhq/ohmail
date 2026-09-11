@@ -242,6 +242,7 @@ export const messageRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/messages/:id/restore",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {

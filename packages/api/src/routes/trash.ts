@@ -23,6 +23,7 @@ export const trashRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/trash/window",
+    relay: true,
     cost: "connection",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -36,6 +37,7 @@ export const trashRoutes: Route[] = [
     // bounded by `TRASH_BODY_MAX_BYTES`, never persisted.
     method: "GET",
     pattern: "/trash/window/body",
+    relay: true,
     cost: "connection",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -61,6 +63,7 @@ export const trashRoutes: Route[] = [
     // up empty, so the first paint never waits on this.
     method: "GET",
     pattern: "/trash/window/search",
+    relay: true,
     cost: "connection",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
