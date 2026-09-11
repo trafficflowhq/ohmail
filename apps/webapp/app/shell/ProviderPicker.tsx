@@ -5,11 +5,10 @@
  * Settings → Mailboxes, the desktop's local door): the two bare `<select>`s it replaced drifted
  * twice. The seven named providers render as a radiogroup of tiles; the generic "any IMAP" entry
  * is a different kind of answer and renders as its own recessed row. NO brand logos: hotlinked
- * marks are forbidden (zero off-origin loads) and self-drawn imitations of trademarks are
- * liability with no upside. Selection reveals the provider's `note` — the sentence that stops
- * someone typing their ACCOUNT password into a third-party form — carried via `aria-describedby`;
- * only `manual` reveals host fields, which stay with the callers. A radiogroup with roving
- * tabindex: arrows move focus AND selection (per the APG radio pattern), Enter/Space select.
+ * marks are forbidden (zero off-origin loads), self-drawn trademark imitations are liability.
+ * Selection reveals the provider's `note` — the sentence that stops someone typing their ACCOUNT
+ * password into a third-party form — via `aria-describedby`; only `manual` reveals host fields. A
+ * radiogroup with roving tabindex: arrows move focus AND selection (APG), Enter/Space select.
  */
 
 import { useId, useRef } from "react";
