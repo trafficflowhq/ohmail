@@ -56,9 +56,18 @@ export async function proposalGeneratePass(
    * loser, a refusal, a throw before the gate — takes it from the holder mid-model-call.
    */
   let claimed = false;
-  /** Given back exactly once: set before the await, so a release that faults cannot be turned
-   *  into a second call by the catch below. */
+  /** Given back exactly once: set before the await, so a release that faults is never retried. */
   let released = false;
+  /**
+   * DOES THE ONE RELEASE REVERSE THE CHARGE — the throw path, and nothing else.
+   *
+   * Unlike the classify path, refunding a throw is right here: the next pass falls in a LATER
+   * bucket and is charged again, so this pass's charge has no future free retry to honour it, and
+   * the refund closes the attempt so a re-run inside the same bucket pays afresh rather than being
+   * served free. Only an attempt THIS pass charged — a `duplicate` names an earlier pass's
+   * attempt, whose proposals may well have been delivered, so its claim goes back unrefunded.
+   */
+  let refundOnRelease = false;
   const releaseClaim = async (refund: boolean): Promise<void> => {
     if (!deps.credits || !claimed || released) return;
     released = true;
@@ -95,26 +104,27 @@ export async function proposalGeneratePass(
           }
         : undefined,
     });
-    // THE CLAIM GOES BACK ON THE WAY OUT, AND AFTER THE STORE. Held for the rest of the TTL it
-    // costs the next pass in the window a whole cycle on an account whose work is finished;
-    // given back before the store there is a window with proposals not yet on record and
-    // nothing holding the bucket, where a second pass is told to proceed and buys the same
-    // model call again.
-    await releaseClaim(false);
     return { generated: stored.length };
   } catch (err) {
-    // Charged for a proposer pass that threw: give it back exactly once, then rethrow so the
-    // cron's per-account try/catch logs it and the other accounts still run.
-    //
-    // Unlike the classify path, refunding is right here: the next pass falls in a LATER period
-    // bucket and is charged again, so this pass's charge has no future free retry to honour
-    // it. The refund closes the attempt, so a re-run inside the same bucket pays afresh rather
-    // than being served free. Nothing is sent at all when this pass held no claim — an
-    // empty-pattern pass never reached the gate, and a loser of the race holds nothing.
-    // Only an attempt THIS pass charged. A `duplicate` names an earlier pass's attempt, whose
-    // proposals may well have been delivered, so its claim goes back unrefunded.
-    await releaseClaim(true);
+    // The proposer, the store or the gate faulted. Rethrown so the cron's per-account try/catch
+    // logs it and the other accounts still run; the claim goes back refunded, at the door below.
+    refundOnRelease = true;
     throw err;
+  } finally {
+    // ONE DOOR, AND AFTER THE STORE. Every exit from the try leaves through here — the return, a
+    // throw, and any exit added later — because a release written on the exits somebody had in
+    // mind is a release the next exit does not have, and a claim left behind costs the next pass
+    // in the window a whole cycle on an account whose work is finished. Not earlier than the
+    // store: given back before it there is a window with proposals not yet on record and nothing
+    // holding the bucket, where a second pass is told to proceed and buys the same model call
+    // again. Nothing is sent when this pass held no claim. A release that faults is reported once
+    // and never retried (the latch above), and it never replaces the error the pass is already
+    // carrying — an operator needs the fault they can act on, not this one.
+    try {
+      await releaseClaim(refundOnRelease);
+    } catch (err) {
+      log.error(cronEvent("proposals", "release_failed"), { accountId: deps.accountId, err });
+    }
   }
 }
 
