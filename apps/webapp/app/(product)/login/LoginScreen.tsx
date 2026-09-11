@@ -211,17 +211,14 @@ export function LoginScreen() {
        * rather than to cancel one: it writes, then we write. See `refreshSettled`.
        */
       await refreshSettled();
-      /*
-       * ── THE ORIGIN-WIDE LOCK IS THE CLIENT'S NOW, NOT THIS SCREEN'S ─────────────────────
-       *
-       * This call took `withSessionCookieLock` explicitly, which fixed the sign-in and nothing
-       * else: registration, first-run, and four in-shell reauthentications write session cookies
-       * too and none of them knew. `auth.login` and every other cookie-writing method carries the
-       * lock itself now (`api-client.ts`), so this reads as an ordinary call and is ordered
-       * against a refresh in any tab whether or not this file remembers why.
-       *
-       * `refreshSettled` above stays: it is the SAME-tab ordering, and it is what makes the
-       * common case wait for a refresh this tab started rather than queue behind it.
+      /**
+       * THE ORIGIN-WIDE LOCK IS THE CLIENT'S NOW, NOT THIS SCREEN'S: This call took `withSessionCookieLock`
+       * explicitly, which fixed the sign-in and nothing else: registration, first-run, and four in-shell
+       * reauthentications write session cookies too and none of them knew. `auth.login` and every other
+       * cookie-writing method carries the lock itself now (`api-client.ts`), so this reads as an ordinary call and is
+       * ordered against a refresh in any tab whether or not this file remembers why. `refreshSettled` above stays: it
+       * is the SAME-tab ordering, and it is what makes the common case wait for a refresh this tab started rather
+       * than queue behind it.
        */
       const result = await auth.login({ email: email.trim(), password });
       setPassword("");

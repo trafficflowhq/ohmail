@@ -784,18 +784,19 @@ function applyCode(editor: Editor): void {
     return;
   }
   /**
-   * The block, over WHOLE LINES. The selection is expanded and isolated first
-   * ({@link splitTargetLines}), for the two defects the exact-range replacement had:
-   *
-   *  · a mid-line selection put the block boundary mid-line, so half a sentence became code;
-   *  · the boundary break stayed behind in the neighbour — `<p>one<br></p>` before the block,
-   *    a dangling break that rendered (and SENT) as a stray blank line under "one". Measured,
-   *    not reasoned: that exact markup came out of the pre-fix command.
-   *
-   * After isolation the target lines are whole textblocks, so the replacement covers the
-   * NODES (`$pos.before()`/`after()`), which is what leaves no empty `<p>` where their content
-   * used to be. A selection that never resolved to textblocks (nothing to isolate) keeps the
-   * old exact-range behaviour, which is the select-all case the suite pins.
+   * The block, over WHOLE LINES. The selection is expanded and isolated first ({@link splitTargetLines}), for the two
+   * defects the exact-range replacement had:
+   * · a mid-line selection put the block boundary mid-line, so half a sentence became code;
+   * · the boundary break stayed behind in the neighbour — `<p>one<br></p>` before the block, a dangling break that
+   *   rendered (and SENT) as a stray blank line under "one". Measured, not reasoned: that exact markup came out of
+   *   the pre-fix command.
+   * After isolation the target lines are whole textblocks, so the replacement covers the NODES
+   * (`$pos.before()`/`after()`), which is what leaves no empty `<p>` where their content used to be.
+   */
+
+  /**
+   * A selection that never resolved to textblocks (nothing to isolate) keeps the old exact-range behaviour, which is
+   * the select-all case the suite pins.
    */
   editor.chain().focus()
     .command(({ state, tr }) => splitTargetLines(state, tr, false))

@@ -185,19 +185,19 @@ export function useOlderMail(
     }
     return paging.current!;
   };
-  /*
-   * PUBLISHED DURING THE COMMIT — `useCommitEffect` (the browser's `useLayoutEffect`), not a
-   * passive `useEffect`, and that is load-bearing twice over:
-   *
-   *  · the committed scope validates ASYNCHRONOUS answers, and a passive effect runs after
-   *    paint — a response settling in that window was validated against the PREVIOUS commit's
-   *    scope and queued into the new scope's freshly reset page. The layout phase runs
-   *    synchronously inside the commit, before any microtask can observe it;
-   *  · the previous paging incarnation is retired HERE, on every committed scope change — not
-   *    lazily on the next ask — because an A→B→A round trip in which B never asks must not
-   *    hand A back its old cursor (page one skipped), exhaustion (the empty-folder probe
-   *    no-ops, silently), in-flight flag (the button dead until reload) or latch, beside a
-   *    page state the round trip reset.
+  /**
+   * PUBLISHED DURING THE COMMIT — `useCommitEffect` (the browser's `useLayoutEffect`), not a passive `useEffect`, and
+   * that is load-bearing twice over:
+   * · the committed scope validates ASYNCHRONOUS answers, and a passive effect runs after paint — a response
+   *   settling in that window was validated against the PREVIOUS commit's scope and queued into the new scope's
+   *   freshly reset page. The layout phase runs synchronously inside the commit, before any microtask can observe it;
+   */
+
+  /**
+   * · the previous paging incarnation is retired HERE, on every committed scope change — not lazily on the next ask
+   *   — because an A→B→A round trip in which B never asks must not hand A back its old cursor (page one skipped),
+   *   exhaustion (the empty-folder probe no-ops, silently), in-flight flag (the button dead until reload) or latch,
+   *   beside a page state the round trip reset.
    */
   useCommitEffect(() => {
     committed.current = { scope, engine };
@@ -205,21 +205,22 @@ export function useOlderMail(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, scope]);
 
-  /*
-   * THE PAGE-STATE RESET, SYNCHRONOUS WITH THE RENDER THAT CHANGES THE SCOPE — deliberately
-   * not an effect, twice over:
-   *
-   *  · deferred to an effect, it ran one render LATE, so the mismatch render needed a guard to
-   *    keep the previous folder's rows from rendering under the new folder's title;
-   *  · worse, it ran AFTER children's effects — and the consumer that needs the reset most is
-   *    exactly a child mount effect: FolderView mounts when a folder entity (re)enters the
-   *    mirror and immediately probes an empty folder, so the probe read the PREVIOUS scope's
-   *    paging state. A stale exhaustion swallowed it with no state change to ever re-run it.
-   *
-   * The render-phase `setPage` is React's documented adjust-state-during-render pattern; the
-   * guard is STATE (a replayed render still sees the old `resetFor` and re-runs the block,
-   * where a ref guard desyncs — see `paging`), and the block touches NOTHING but state: the
-   * paging ref belongs to post-commit code, and resets itself lazily there.
+  /**
+   * THE PAGE-STATE RESET, SYNCHRONOUS WITH THE RENDER THAT CHANGES THE SCOPE — deliberately not an effect, twice
+   * over:
+   * · deferred to an effect, it ran one render LATE, so the mismatch render needed a guard to keep the previous
+   *   folder's rows from rendering under the new folder's title;
+   * · worse, it ran AFTER children's effects — and the consumer that needs the reset most is exactly a child mount
+   *   effect: FolderView mounts when a folder entity (re)enters the mirror and immediately probes an empty folder, so
+   *   the probe read the PREVIOUS scope's paging state. A stale exhaustion swallowed it with no state change to ever
+   *   re-run it.
+   */
+
+  /**
+   * The render-phase `setPage` is React's documented adjust-state-during-render pattern; the guard is STATE (a
+   * replayed render still sees the old `resetFor` and re-runs the block, where a ref guard desyncs — see `paging`),
+   * and the block touches NOTHING but state: the paging ref belongs to post-commit code, and resets itself lazily
+   * there.
    */
   const [resetFor, setResetFor] = useState<{ scope: string; engine: OhmailEngine }>({ scope, engine });
   if (resetFor.scope !== scope || resetFor.engine !== engine) {

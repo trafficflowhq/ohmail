@@ -281,17 +281,15 @@ export function useBarDensity(): {
       }
     }
     if (base === 0) return;
-    /* THE COMPACT FLOOR — one word out of the floor, and it is the WIDEST of the words the
-       floor is carrying. Measured off the copy's own label span (same font, same size) plus
-       the gap its button closes when the span goes; each button's `gap` is read, not assumed,
-       for the reason the paddings are.
-
-       TWO CANDIDATES, ONE CONCESSION. A message pill carries the read switch's label; a
-       selection pill carries that AND the count capsule's word. Taking the widest saves the
-       most pixels for one lost word, and taking only one keeps "the floor yields its words
-       once" literally true — see the header. A pill with neither (there is no such mount
-       today) simply reports no `compact`, which is the honest answer rather than a token that
-       hides nothing. */
+    /**
+     * THE COMPACT FLOOR — one word out of the floor, and it is the WIDEST of the words the floor is carrying.
+     * Measured off the copy's own label span (same font, same size) plus the gap its button closes when the span
+     * goes; each button's `gap` is read, not assumed, for the reason the paddings are. TWO CANDIDATES, ONE
+     * CONCESSION. A message pill carries the read switch's label; a selection pill carries that AND the count
+     * capsule's word. Taking the widest saves the most pixels for one lost word, and taking only one keeps "the floor
+     * yields its words once" literally true — see the header. A pill with neither (there is no such mount today)
+     * simply reports no `compact`, which is the honest answer rather than a token that hides nothing.
+     */
     const tokens: string[] = [];
     let floor = base;
     if (base > avail) {

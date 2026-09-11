@@ -248,14 +248,12 @@ export type ScreenerMode = "organizer" | "pending" | "blocked";
 
 /**
  * WHY A DECISION HAS NOWHERE TO GO — the finer answer under {@link ScreenerMode} `blocked`.
- *
- *  · `organizer_outdated` — somebody holds the mailbox and their build cannot take a decision
- *    from a reader. The way out is to take the mailbox over, or to update that install.
- *  · `no_organizer` — nobody holds it at all. Nothing is filing this mailbox, which is a
- *    different sentence and a different remedy.
- *
- * The same two words the decision door answers with, so the pane and the refusal cannot come to
- * describe one state differently.
+ * · `organizer_outdated` — somebody holds the mailbox and their build cannot take a decision from a reader. The way
+ *   out is to take the mailbox over, or to update that install.
+ * · `no_organizer` — nobody holds it at all. Nothing is filing this mailbox, which is a different sentence and a
+ *   different remedy.
+ * The same two words the decision door answers with, so the pane and the refusal cannot come to describe one state
+ * differently.
  */
 export type ScreenerBlockReason = "organizer_outdated" | "no_organizer";
 
@@ -493,23 +491,23 @@ function noticeKind(m: OrganizerRow): OrganizerNoticeKind | null {
      is the agreement rather than a notice about a handover that never happened. `=== null` and
      not `== null`, so an absent stamp (a build that cannot tell) says nothing. */
   if (m.organizeConsentedAt === null || m.organizeConsentedAt === undefined) return null;
-  /* ── NO HOLDER, CONSENTED: TWO STATES, AND ONLY THE MARKER TELLS THEM APART ────────────────
-   *
-   * This line answered `released` for both of them, and one of the two is not a release. The
-   * per-cycle peek rewrites all four holder columns and writes them ALL NULL when it finds an
-   * empty claim folder — so a stand-down whose winner was removed DECAYS into this exact shape,
-   * with nobody having released anything. Worse, the same write stamps `organizer_event_at` on a
-   * flip in either direction INCLUDING to and from NULL, so the decayed row arrives here with a
-   * fresh unacknowledged event and the line fires on it: "You stopped organizing … here", about
-   * something the person never did.
-   *
-   * So `released` needs the marker `readerStandDown` keys on, and the decayed row gets the
-   * sentence that is true of it — organizing here has stopped and nobody known holds it, which is
-   * `stopped` with no name. That is the ONE open condition of the four: nothing files this
-   * mailbox, and mail accumulates unsorted while it is true, which is precisely the decayed row's
-   * situation and worth the emphasis the sentence carries. `organizerNotices` withholds the name
-   * for a row with no named holder already, so the unknown-holder wording is reached by the same
-   * rule that serves a stopped holder whose claim recorded no name. */
+  /**
+   * NO HOLDER, CONSENTED: TWO STATES, AND ONLY THE MARKER TELLS THEM APART: This line answered `released` for both of
+   * them, and one of the two is not a release. The per-cycle peek rewrites all four holder columns and writes them
+   * ALL NULL when it finds an empty claim folder — so a stand-down whose winner was removed DECAYS into this exact
+   * shape, with nobody having released anything. Worse, the same write stamps `organizer_event_at` on a flip in
+   * either direction INCLUDING to and from NULL, so the decayed row arrives here with a fresh unacknowledged event
+   * and the line fires on it: "You stopped organizing … here", about something the person never did. So `released`
+   * needs the marker `readerStandDown` keys on, and the decayed row gets the sentence that is true of it — organizing
+   * here has stopped and nobody known holds it, which is `stopped` with no name.
+   */
+
+  /**
+   * That is the ONE open condition of the four: nothing files this mailbox, and mail accumulates unsorted while it is
+   * true, which is precisely the decayed row's situation and worth the emphasis the sentence carries.
+   * `organizerNotices` withholds the name for a row with no named holder already, so the unknown-holder wording is
+   * reached by the same rule that serves a stopped holder whose claim recorded no name.
+   */
   return m.organizerReleasedAt !== null && m.organizerReleasedAt !== undefined
     ? "released"
     : "stopped";

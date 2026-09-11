@@ -124,24 +124,21 @@ function landOnMailboxesPane(): void {
  * and a second POST would answer 400 about a ceremony that had just succeeded.
  */
 /**
- * ═══ WHICH ACCOUNT STARTED THIS CEREMONY ══════════════════════════════════════════════════
- *
- * The consent flow leaves this origin and comes back, and "comes back" can be minutes later —
- * long enough for another tab to have signed in as somebody else. The completion used to pend
- * whatever the cookie jar named ON RETURN, which is the wrong account by exactly the amount that
- * matters: the server then consumes the single-use `state` BEFORE it compares accounts, so the
- * legitimate owner's ceremony is destroyed and they have to start over, with nothing on screen
- * explaining why. No mailbox is attached to the wrong account — the server's comparison is sound
- * — but the person who did everything right is the one who pays.
- *
- * So the account is written down when the ceremony STARTS, keyed by the `state` the server issued
- * for it, and read back at return. `sessionStorage` because the lifetime is exactly right: one
- * tab, across navigations, gone when the tab is.
- *
- * Best-effort by construction. A private window with storage disabled, a `state` that never got
- * recorded, an entry evicted — all answer `null`, and the caller then falls back to the marker,
- * which is what it did before this existed. This narrows a window; it is not a proof of identity,
- * and it must not be able to BLOCK a legitimate completion.
+ * WHICH ACCOUNT STARTED THIS CEREMONY: The consent flow leaves this origin and comes back, and "comes back" can be
+ * minutes later — long enough for another tab to have signed in as somebody else. The completion used to pend
+ * whatever the cookie jar named ON RETURN, which is the wrong account by exactly the amount that matters: the server
+ * then consumes the single-use `state` BEFORE it compares accounts, so the legitimate owner's ceremony is destroyed
+ * and they have to start over, with nothing on screen explaining why. No mailbox is attached to the wrong account —
+ * the server's comparison is sound — but the person who did everything right is the one who pays. So the account is
+ * written down when the ceremony STARTS, keyed by the `state` the server issued for it, and read back at return.
+ * `sessionStorage` because the lifetime is exactly right: one tab, across navigations, gone when the tab is.
+ */
+
+/**
+ * Best-effort by construction. A private window with storage disabled, a `state` that never got recorded, an entry
+ * evicted — all answer `null`, and the caller then falls back to the marker, which is what it did before this
+ * existed. This narrows a window; it is not a proof of identity, and it must not be able to BLOCK a legitimate
+ * completion.
  */
 const OAUTH_OWNER_PREFIX = "ohmail.oauth.owner.";
 

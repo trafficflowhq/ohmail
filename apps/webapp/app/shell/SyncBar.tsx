@@ -260,17 +260,15 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
       };
 
     case "filing": {
-      /* ── FOUR SENTENCES, NOT ONE (mail 0097) ─────────────────────────────────────────────────
-       *
-       * This arm rendered one sentence — "Filing N messages on your mail server… · your decisions
-       * are already applied here; the server is catching up." — for every reason a filing can be
-       * outstanding, and the second clause was FALSE in two of them: a deferred row is not being
-       * caught up with, and on a reader install the server is not the organizer at all.
-       * `mail-state.ts`'s {@link FilingArm} carries the reported sighting and the four cases.
-       *
-       * `state.filing === null` is the OLDER SERVER and it keeps the original pair of sentences,
-       * minus the false clause: the count is still true, and a build that cannot say why must not
-       * be made to guess. */
+      /**
+       * FOUR SENTENCES, NOT ONE (mail 0097): This arm rendered one sentence — "Filing N messages on your mail server…
+       * · your decisions are already applied here; the server is catching up." — for every reason a filing can be
+       * outstanding, and the second clause was FALSE in two of them: a deferred row is not being caught up with, and
+       * on a reader install the server is not the organizer at all. `mail-state.ts`'s {@link FilingArm} carries the
+       * reported sighting and the four cases. `state.filing === null` is the OLDER SERVER and it keeps the original
+       * pair of sentences, minus the false clause: the count is still true, and a build that cannot say why must not
+       * be made to guess.
+       */
       const f = state.filing;
       const asOf = f?.asOf ? clockTime(f.asOf) : null;
       /* TWO KEYS, AND THE UNDATED ONE IS NOT REDUNDANT. `asOf` comes from the aggregate, which an

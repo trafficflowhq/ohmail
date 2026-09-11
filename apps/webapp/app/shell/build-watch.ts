@@ -98,18 +98,16 @@ export function startBuildWatch(options: BuildWatchOptions): () => void {
       const served = servedTokenOf(await response.json());
       if (stopped || served === null || served === token) return;
 
-      /* A NEWER BUILD, AND THE RESTRAINT THAT DECIDES WHETHER TO SAY SO. Once per day per
-         build: a person who has already been told about this one and carried on working is
-         not told again by the same tab today. Recorded on the SPEAKING rather than on a
-         dismissal, because the promise is about how often the app talks.
-
-         THE OFFER CARRIES THE BUILD, and the key is derived from the offer rather than spelled
-         beside it. `offerKey` is the one keying rule for the once-a-day restraint and the
-         desktop path already goes through it; an offer with no build on it keys as the bare
-         word "reload", so the two would silently key differently the moment anything else — a
-         dismissal, a shared "was this asked?" helper — read the offer instead of this line.
-         Nothing renders the value: the browser's sentence names no build, because a digest is
-         not a thing to show somebody. */
+      /**
+       * A NEWER BUILD, AND THE RESTRAINT THAT DECIDES WHETHER TO SAY SO. Once per day per build: a person who has
+       * already been told about this one and carried on working is not told again by the same tab today. Recorded on
+       * the SPEAKING rather than on a dismissal, because the promise is about how often the app talks. THE OFFER
+       * CARRIES THE BUILD, and the key is derived from the offer rather than spelled beside it. `offerKey` is the one
+       * keying rule for the once-a-day restraint and the desktop path already goes through it; an offer with no build
+       * on it keys as the bare word "reload", so the two would silently key differently the moment anything else — a
+       * dismissal, a shared "was this asked?" helper — read the offer instead of this line. Nothing renders the
+       * value: the browser's sentence names no build, because a digest is not a thing to show somebody.
+       */
       const offer: UpdateOffer = { kind: "reload", version: served, act: reload };
       const memory = readAskMemory();
       const key = offerKey(offer);

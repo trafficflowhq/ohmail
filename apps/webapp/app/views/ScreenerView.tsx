@@ -1391,17 +1391,15 @@ export function ScreenerView({
           ) : state.decided.length === 0 ? (
             <Empty segment={segment} settled={settled} />
           ) : null}
-          {/* ── DECIDED, NOT DONE ──────────────────────────────────────────────────────────
-              A sender whose decision is waiting on another install is out of the queue and not
-              finished, which is a third state this list has never had. Under the Ohbox's own
-              group label rather than above it: the question has been answered, so it is not part
-              of the work in front of somebody, and it is still on screen because the answer has
-              not taken effect and the mail has not moved.
-
-              The rows are the REAL rows — the mail is still in the mirror — so a decided sender
-              looks like what it is, with a badge saying where it is going or that the organizer
-              refused it. Never rendered outside `pending`: in the other two modes nothing can be
-              decided here, so the list is empty by construction. */}
+          {/*
+              DECIDED, NOT DONE: A sender whose decision is waiting on another install is out of the queue and not
+              finished, which is a third state this list has never had. Under the Ohbox's own group label rather than
+              above it: the question has been answered, so it is not part of the work in front of somebody, and it is
+              still on screen because the answer has not taken effect and the mail has not moved. The rows are the
+              REAL rows — the mail is still in the mirror — so a decided sender looks like what it is, with a badge
+              saying where it is going or that the organizer refused it. Never rendered outside `pending`: in the
+              other two modes nothing can be decided here, so the list is empty by construction.
+            */}
           {segment === "waiting" && state.decided.length > 0 ? (
             <>
               <ListGroupLabel group="decided">{t("pendingHeading")}</ListGroupLabel>
@@ -1543,23 +1541,21 @@ function heldRemoteProps(
 }
 
 /**
- * THE UNSUBSCRIBE CONTROL FOR ONE HELD MESSAGE (C).
- *
- * Rendered only in the screened-out and spam previews — the two piles whose held mail sits in a
- * reject folder the server will act on — and only once the body has hydrated to `full`, because
- * the posture is derived from the sender's headers and "we have not asked yet" (`no_header` on a
+ * THE UNSUBSCRIBE CONTROL FOR ONE HELD MESSAGE (C). Rendered only in the screened-out and spam previews — the two
+ * piles whose held mail sits in a reject folder the server will act on — and only once the body has hydrated to
+ * `full`, because the posture is derived from the sender's headers and "we have not asked yet" (`no_header` on a
  * snippet) must not read as "there is no way out".
- *
- *  · `one_click`     — one explicit press IS the consent (the remote-images precedent: a control
- *                      that names the act needs no second dialog). The POST is server-side and
- *                      SSRF-gated, the URL never leaves the server, and `unsubscribe_records`
- *                      makes it at-most-once, so a repeat press is safe. The returned result is
- *                      rendered verbatim; a refusal arrives as a throw carrying the server's own
- *                      sentence.
- *  · `not_one_click` — no one-click route, but the sender publishes an https page: a plain
- *                      outbound link the reader opens themselves, named as leaving to the sender.
- *  · `mailto_only`   — the one refusal we owe an explanation: a route exists and ohmail declines
- *                      it, because it never sends mail on the user's behalf. Indicator, no action.
+ * · `one_click`     — one explicit press IS the consent (the remote-images precedent: a control that names the act
+ *   needs no second dialog). The POST is server-side and SSRF-gated, the URL never leaves the server, and
+ *   `unsubscribe_records` makes it at-most-once, so a repeat press is safe. The returned result is rendered verbatim;
+ *   a refusal arrives as a throw carrying the server's own sentence.
+ */
+
+/**
+ * · `not_one_click` — no one-click route, but the sender publishes an https page: a plain outbound link the reader
+ *   opens themselves, named as leaving to the sender.
+ * · `mailto_only`   — the one refusal we owe an explanation: a route exists and ohmail declines it, because it
+ *   never sends mail on the user's behalf. Indicator, no action.
  */
 function HeldUnsubscribe({
   state,
@@ -1758,24 +1754,21 @@ export function HeldMail({
    *     · in flight → the spinner, which is the original argument, kept for the case it holds.
    */
   /**
-   * ── AND EVEN A SPINNER OVER A REAL REQUEST HAS TO END ───────────────────────────────────
-   *
-   * `bodyStall` bounds the two cases where `hydrateBody` asks for NOTHING — a protected message
-   * and a row that has left the mirror. It says nothing about the third: a request that departs,
-   * is accepted, and never comes back. The record stays `loading`, no further mirror bump is
-   * coming to re-drive it, and this preview says the body is on its way for as long as the sender
-   * stays selected, with no control to escape it — the exact shape the reader surfaces were bounded
-   * for, in the one pile where the text is the basis of a consent decision.
-   *
-   * So the same bound, from the same hook: past {@link BODY_STALL_MS} — the engine's own fetch
-   * deadline plus the queue, derived rather than chosen here — the claim is retired and the
-   * failure sentence WITH its Retry is shown instead. A body that arrives first clears `waiting`
-   * and the timer with it, and `messageId` keys it so a stalled message cannot hand its verdict to
-   * the next one rendered in its place.
-   *
-   * The Retry is the same human re-ask the `failed` state offers, and it is what makes the new
-   * sentence honest: `hydrateBody` refuses an automatic re-ask, so without the button this state
-   * would be a dead end with better wording.
+   * AND EVEN A SPINNER OVER A REAL REQUEST HAS TO END: `bodyStall` bounds the two cases where `hydrateBody` asks for
+   * NOTHING — a protected message and a row that has left the mirror. It says nothing about the third: a request that
+   * departs, is accepted, and never comes back. The record stays `loading`, no further mirror bump is coming to
+   * re-drive it, and this preview says the body is on its way for as long as the sender stays selected, with no
+   * control to escape it — the exact shape the reader surfaces were bounded for, in the one pile where the text is
+   * the basis of a consent decision. So the same bound, from the same hook: past {@link BODY_STALL_MS} — the engine's
+   * own fetch deadline plus the queue, derived rather than chosen here — the claim is retired and the failure
+   * sentence WITH its Retry is shown instead.
+   */
+
+  /**
+   * A body that arrives first clears `waiting` and the timer with it, and `messageId` keys it so a stalled message
+   * cannot hand its verdict to the next one rendered in its place. The Retry is the same human re-ask the `failed`
+   * state offers, and it is what makes the new sentence honest: `hydrateBody` refuses an automatic re-ask, so without
+   * the button this state would be a dead end with better wording.
    */
   const protectedMail = bodyStall === "protected";
   const waiting =
@@ -1880,15 +1873,13 @@ function ReaderNote({
   name: string | null;
   /**
    * WHICH WITHHOLDING THIS IS — three, and collapsing them was the temptation worth refusing.
-   *
-   *  · `decide` — somebody holds the mailbox and their build cannot take a decision from a
-   *    reader. Nothing here files, and taking the mailbox over is the way out.
-   *  · `none` — NOBODY holds it. The remedy is the same button and the sentence is not: there is
-   *    no other install to stop, and mail is piling up unfiled, which is worth knowing.
-   *  · `move` — the reader CAN decide (its organizer takes decisions) but this particular verb
-   *    releases or rescues mail, which is a folder move and stays the organizer's alone. Saying
-   *    "this computer does not decide about senders" here would be false on the same screen the
-   *    decision bar is working on one segment over.
+   * · `decide` — somebody holds the mailbox and their build cannot take a decision from a reader. Nothing here
+   *   files, and taking the mailbox over is the way out.
+   * · `none` — NOBODY holds it. The remedy is the same button and the sentence is not: there is no other install to
+   *   stop, and mail is piling up unfiled, which is worth knowing.
+   * · `move` — the reader CAN decide (its organizer takes decisions) but this particular verb releases or rescues
+   *   mail, which is a folder move and stays the organizer's alone. Saying "this computer does not decide about
+   *   senders" here would be false on the same screen the decision bar is working on one segment over.
    */
   variant: "decide" | "none" | "move";
   /**

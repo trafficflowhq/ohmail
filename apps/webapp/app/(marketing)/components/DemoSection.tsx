@@ -583,18 +583,15 @@ export function DemoSection() {
     }
   }, [demoTheme, loaded]);
 
-  /* Re-measure once the demo's own layout exists, and retire the whole
-     annotation layer — leaders, rings AND cards — the moment the visitor
-     actually uses the app. A guide that stays drawn over a live interface
-     is graffiti, and its geometry is one view change away from being a lie.
-
-     `scroll` rather than `wheel`: a wheel event over a region the demo
-     cannot scroll bubbles out to scroll the PAGE, so wheel fires on a
-     visitor who is merely scrolling past with the cursor over the frame —
-     the annotations would retire before they had been read. A scroll event
-     inside the demo's document only exists if something in the demo
-     actually moved. It does not bubble, but it does propagate down the
-     capture phase, which is why this listener sees it. */
+  /**
+   * Re-measure once the demo's own layout exists, and retire the whole annotation layer — leaders, rings AND cards —
+   * the moment the visitor actually uses the app. A guide that stays drawn over a live interface is graffiti, and its
+   * geometry is one view change away from being a lie. `scroll` rather than `wheel`: a wheel event over a region the
+   * demo cannot scroll bubbles out to scroll the PAGE, so wheel fires on a visitor who is merely scrolling past with
+   * the cursor over the frame — the annotations would retire before they had been read. A scroll event inside the
+   * demo's document only exists if something in the demo actually moved. It does not bubble, but it does propagate
+   * down the capture phase, which is why this listener sees it.
+   */
   const onFrameLoad = useCallback(() => {
     setLoaded(true);
     requestAnimationFrame(measure);
@@ -616,21 +613,22 @@ export function DemoSection() {
       if (!fullRef.current) openFull(frameRef.current);
     };
     doc.addEventListener("pointerup", enter, { capture: true, passive: true });
-    /* Escape pressed INSIDE the app returns to the page ONLY when the app has nothing of
-       its own for Escape to mean. The app's own consumers handle Escape without stopping
-       propagation or preventing default, so "was it handled" cannot be read off the event —
-       it is read off the DOM, in two steps:
+    /**
+     * Escape pressed INSIDE the app returns to the page ONLY when the app has nothing of its own for Escape to mean.
+     * The app's own consumers handle Escape without stopping propagation or preventing default, so "was it handled"
+     * cannot be read off the event — it is read off the DOM, in two steps:
+     * · A dialog on screen (the Reader, the palette, a reply run — all `role="dialog"`; the Reader also marks
+     *   `body.reading`) reliably owns the key: those surfaces always close themselves on Escape, so the outer window
+     *   simply yields.
+     */
 
-       · A dialog on screen (the Reader, the palette, a reply run — all `role="dialog"`;
-         the Reader also marks `body.reading`) reliably owns the key: those surfaces always
-         close themselves on Escape, so the outer window simply yields.
-       · A focused field MIGHT own it — a search clears itself, some fields blur — or might
-         bind nothing at all, in which case Escape must still be a way out of the full
-         window rather than a dead key. So the decision waits one macrotask, until after
-         every in-app handler has run: if the Escape visibly did something (focus moved,
-         the field's text changed, a dialog appeared or the reading marker flipped), it was
-         the app's; if the demo looks exactly as it did, nothing consumed it and the full
-         window closes. */
+    /**
+     * · A focused field MIGHT own it — a search clears itself, some fields blur — or might bind nothing at all, in
+     *   which case Escape must still be a way out of the full window rather than a dead key. So the decision waits
+     *   one macrotask, until after every in-app handler has run: if the Escape visibly did something (focus moved,
+     *   the field's text changed, a dialog appeared or the reading marker flipped), it was the app's; if the demo
+     *   looks exactly as it did, nothing consumed it and the full window closes.
+     */
     /* Duck-typed, never instanceof: the demo document is another realm — its elements are
        not instances of THIS window's Element/HTMLInputElement, in every real browser. */
     const fieldValue = (el: Element | null): string | null =>

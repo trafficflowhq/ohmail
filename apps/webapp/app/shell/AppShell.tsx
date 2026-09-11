@@ -3259,21 +3259,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * THE COMPOSE PLAN — the mutation, the rejected recipients and the empty-subject note, all
-   * derived in one place from the form (`compose.ts`).
-   *
-   * The mailbox is resolved here rather than left to `Engine.enrich`, even though enrich would
-   * fill a value: the BUTTON has to know whether a mailbox exists, because offering Send on an
-   * account with nothing to send from is the inert affordance Compose used to be. One derivation, two
-   * consumers — the same discipline as `canSend`.
-   *
-   * ── AND IT IS NO LONGER `sendingMailboxId` THAT DECIDES ─────────────────────────────────
-   *
-   * `sendingMailboxId` answers with the mailbox of the account's NEWEST MESSAGE, which on an
-   * account with two connected addresses flips the From line every time the other one receives
-   * mail. It survives only as the last resort for the case `resolveComposeFrom` cannot speak
-   * to — no facts and no seeded mirror rows — where it is still better than refusing to send,
-   * and where there is no From line on screen for it to contradict.
+   * THE COMPOSE PLAN — the mutation, the rejected recipients and the empty-subject note, all derived in one place
+   * from the form (`compose.ts`). The mailbox is resolved here rather than left to `Engine.enrich`, even though
+   * enrich would fill a value: the BUTTON has to know whether a mailbox exists, because offering Send on an account
+   * with nothing to send from is the inert affordance Compose used to be. One derivation, two consumers — the same
+   * discipline as `canSend`. AND IT IS NO LONGER `sendingMailboxId` THAT DECIDES: `sendingMailboxId` answers with the
+   * mailbox of the account's NEWEST MESSAGE, which on an account with two connected addresses flips the From line
+   * every time the other one receives mail.
+   */
+
+  /**
+   * It survives only as the last resort for the case `resolveComposeFrom` cannot speak to — no facts and no seeded
+   * mirror rows — where it is still better than refusing to send, and where there is no From line on screen for it to
+   * contradict.
    */
   /**
    * ── AND THE RECIPIENT MOVES IT, WHILE NOBODY HAS PICKED ─────────────────────────────────
@@ -3404,17 +3402,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       d.inReplyToMessageId != null && reader.get<EngineMessage>("message", d.inReplyToMessageId) != null,
   );
   /**
-   * ── A DRAFT IS NEVER OPENED WITH A BODY THIS CLIENT DOES NOT HAVE ─────────────────────────
-   *
-   * A bounded sync page can carry a draft row without its text (`EngineDraft.body` is `null`
-   * then), and the resume freshen applies page 1 over the mirror on every session older than
-   * five minutes. Seeded as "" that row becomes an empty editor, and autosave's next PUT writes
-   * the blank over what the person actually wrote.
-   *
-   * So the text is asked for — `GET /drafts/:id`, one read, the route the AI draft already reads
-   * back — and the editor opens only once it has arrived. If it cannot be had, the draft does not
-   * open and the row says so; a refusal is the only honest arm, because every other one presents
-   * a message as shorter than it is.
+   * A DRAFT IS NEVER OPENED WITH A BODY THIS CLIENT DOES NOT HAVE: A bounded sync page can carry a draft row without
+   * its text (`EngineDraft.body` is `null` then), and the resume freshen applies page 1 over the mirror on every
+   * session older than five minutes. Seeded as "" that row becomes an empty editor, and autosave's next PUT writes
+   * the blank over what the person actually wrote. So the text is asked for — `GET /drafts/:id`, one read, the route
+   * the AI draft already reads back — and the editor opens only once it has arrived. If it cannot be had, the draft
+   * does not open and the row says so; a refusal is the only honest arm, because every other one presents a message
+   * as shorter than it is.
    */
   const openDraft = useStableCallback((d: EngineDraft) => {
     void openDraftDecision(d, {
@@ -3434,19 +3428,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         ? reader.get<EngineMessage>("message", d.inReplyToMessageId)
         : null;
       /**
-       * ── THE HOLD IS ASKED FIRST, AND THE REPLY ARM IS WHY ─────────────────────────────────
-       *
-       * This used to be computed BELOW the reply arm, which meant a held REPLY never reached it:
-       * a draft whose parent message is in the mirror was seeded straight into the inline reply
-       * editor with Send live, and `replySeedDrafts` marked it for discard on the next confirmed
-       * reply. So the one row that must not be re-sent — a message we could not confirm the
-       * delivery of — was the one row that opened with a Send button and a second copy of its
-       * text, while the same draft opened from the Drafts list was correctly parked. The row in
-       * the report that found this IS a reply, which is how it slipped past every check.
-       *
-       * Moving the read above the arm makes the hold a property of OPENING THE ROW rather than
-       * of which surface happens to open it. A held reply now takes the held view below — the
-       * banner, the two verbs, the frozen text — like any other held row.
+       * THE HOLD IS ASKED FIRST, AND THE REPLY ARM IS WHY: This used to be computed BELOW the reply arm, which meant
+       * a held REPLY never reached it: a draft whose parent message is in the mirror was seeded straight into the
+       * inline reply editor with Send live, and `replySeedDrafts` marked it for discard on the next confirmed reply.
+       * So the one row that must not be re-sent — a message we could not confirm the delivery of — was the one row
+       * that opened with a Send button and a second copy of its text, while the same draft opened from the Drafts
+       * list was correctly parked. The row in the report that found this IS a reply, which is how it slipped past
+       * every check. Moving the read above the arm makes the hold a property of OPENING THE ROW rather than of which
+       * surface happens to open it.
+       */
+
+      /**
+       * A held reply now takes the held view below — the banner, the two verbs, the frozen text — like any other held
+       * row.
        */
       const heldRow = readComposeRow();
       const hold = holdOf(engine, {
@@ -3521,54 +3515,54 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           return sig && sig.kind !== "following" ? { sig } : {};
         })(),
       };
-      /* ── IS THIS ROW A MESSAGE WE ARE STILL WAITING TO LEARN THE FATE OF? ──────────────────
-         Asked FIRST — before the form is touched — because it decides which of the doors below
-         this is, and one of them does not open at all.
+      /**
+       * IS THIS ROW A MESSAGE WE ARE STILL WAITING TO LEARN THE FATE OF?: Asked FIRST — before the form is touched —
+       * because it decides which of the doors below this is, and one of them does not open at all. `holdOf` and not a
+       * reading of its own: the SAME question is asked when a reload brings this surface back (`compose-autosave.ts`)
+       * and when Send is pressed, and the three answering differently was a duplicate delivery each time. It answers
+       * with the record's own names as well as a verdict, because "yes" is not enough here — the parked branch has to
+       * put the message's identity BACK, which means knowing what it was. THE SESSION IS ASKED ABOUT ONLY WHEN THE
+       * ROW BEING OPENED IS THE ONE THIS COMPOSE IS HOLDING. Passing it unconditionally would park every draft in the
+       * account behind one unresolved send, because the session names whichever message the composer has open.
+       */
 
-         `holdOf` and not a reading of its own: the SAME question is asked when a reload brings
-         this surface back (`compose-autosave.ts`) and when Send is pressed, and the three
-         answering differently was a duplicate delivery each time. It answers with the record's own
-         names as well as a verdict, because "yes" is not enough here — the parked branch has to
-         put the message's identity BACK, which means knowing what it was.
-
-         THE SESSION IS ASKED ABOUT ONLY WHEN THE ROW BEING OPENED IS THE ONE THIS COMPOSE IS
-         HOLDING. Passing it unconditionally would park every draft in the account behind one
-         unresolved send, because the session names whichever message the composer has open.
-         Passing it NEVER misses the message whose record names a session and no row: a send
-         pressed before the first save has only `compose:<session>`, autosave then creates the row
-         moments later, and nothing had attached it to the record — so the row that appears in
-         Drafts belonged to a parked message that the row alone could not identify. `readComposeRow`
-         is the link: that row IS this compose's row, so this compose's session speaks for it. */
-      /* ── AND IT DOES NOT OPEN OVER SOMETHING SOMEBODY IS STILL WRITING ─────────────────────
-         The parked door deliberately does NOT re-mint the compose session or clear the scratch
-         buffer — that is what keeps the reopened message recognisable as itself. The cost is that
-         `writeComposeDraft` below then overwrites the buffer of whatever WAS on screen, and that
-         buffer is the only copy of a message the account has not been given yet. Measured on the
-         release candidate: write s2, reopen the held s1, and s2's text was gone with nothing having
-         asked.
-         Saving s2 first is not the alternative — that is a write, and this door has no business
-         writing a row on the way through. So the reopen is REFUSED and says why. Only against
-         unsaved text, and only for a row this composer is not already holding: reopening the very
-         row on screen changes nothing about it. */
+      /**
+       * Passing it NEVER misses the message whose record names a session and no row: a send pressed before the first
+       * save has only `compose:<session>`, autosave then creates the row moments later, and nothing had attached it
+       * to the record — so the row that appears in Drafts belonged to a parked message that the row alone could not
+       * identify. `readComposeRow` is the link: that row IS this compose's row, so this compose's session speaks for
+       * it.
+       */
+      /**
+       * AND IT DOES NOT OPEN OVER SOMETHING SOMEBODY IS STILL WRITING: The parked door deliberately does NOT re-mint
+       * the compose session or clear the scratch buffer — that is what keeps the reopened message recognisable as
+       * itself. The cost is that `writeComposeDraft` below then overwrites the buffer of whatever WAS on screen, and
+       * that buffer is the only copy of a message the account has not been given yet. Measured on the release
+       * candidate: write s2, reopen the held s1, and s2's text was gone with nothing having asked. Saving s2 first is
+       * not the alternative — that is a write, and this door has no business writing a row on the way through. So the
+       * reopen is REFUSED and says why. Only against unsaved text, and only for a row this composer is not already
+       * holding: reopening the very row on screen changes nothing about it.
+       */
       if (parked && reopenWouldOverwrite(composeRef.current, seeded)) {
         toast(t("drafts.heldReopenBlocked"));
         return;
       }
       setCompose(seeded);
-      /* A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION. The id is what parks an unresolved
-         send (`compose.ts`), and leaving it in place made one session span every draft this
-         surface opened: a send of the FIRST one that came back unverified then parked whichever
-         draft replaced it, with the warning above a refused Send button. Cleared before the new
-         buffer is written, so the next read of `composeSessionId` mints a fresh id.
+      /**
+       * A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION. The id is what parks an unresolved send (`compose.ts`),
+       * and leaving it in place made one session span every draft this surface opened: a send of the FIRST one that
+       * came back unverified then parked whichever draft replaced it, with the warning above a refused Send button.
+       * Cleared before the new buffer is written, so the next read of `composeSessionId` mints a fresh id. NOT for a
+       * parked row, and that exception is the whole of the defect above. Re-minting is what makes the reopened
+       * message a NEW one, and a new message is exactly what the record must not be told: both names it carries — the
+       * row and the session — would be off the message at once, the park could not recognise it, Send would light up,
+       * and one press would deliver a second copy under a fresh key. Measured end to end, recipient total 2.
+       */
 
-         NOT for a parked row, and that exception is the whole of the defect above. Re-minting is
-         what makes the reopened message a NEW one, and a new message is exactly what the record
-         must not be told: both names it carries — the row and the session — would be off the
-         message at once, the park could not recognise it, Send would light up, and one press
-         would deliver a second copy under a fresh key. Measured end to end, recipient total 2.
-
-         `unknown` keeps the session for the same reason, on weaker evidence: this browser cannot
-         read its own record, so it cannot say the message is new either. */
+      /**
+       * `unknown` keeps the session for the same reason, on weaker evidence: this browser cannot read its own record,
+       * so it cannot say the message is new either.
+       */
       if (!parked) clearComposeDraft();
       writeComposeDraft(seeded);
       if (parked) {
@@ -3623,16 +3617,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     },
   );
   /**
-   * ── THE SCHEDULED SENDS (mail 0077), and their two verbs ────────────────────────────────
-   *
-   * The list is every `scheduled` draft, soonest first (`scheduledSendsList`). CANCEL flips
-   * the row back to an ordinary draft; the interesting outcome is the refusal — the server's
-   * claim got there first and the mail is leaving — which is reported in its own sentence
-   * rather than pretending the cancel landed (the overlay rolls back with the rejection, so
-   * the row on screen never falsely reads "cancelled"). EDIT is cancel-then-open, in that
-   * order and gated on the cancel confirming, because a `scheduled` row is frozen on the
-   * server (`DraftsService.update` refuses it) and adopting one for autosave would point
-   * every PUT at a 409.
+   * THE SCHEDULED SENDS (mail 0077), and their two verbs: The list is every `scheduled` draft, soonest first
+   * (`scheduledSendsList`). CANCEL flips the row back to an ordinary draft; the interesting outcome is the refusal —
+   * the server's claim got there first and the mail is leaving — which is reported in its own sentence rather than
+   * pretending the cancel landed (the overlay rolls back with the rejection, so the row on screen never falsely reads
+   * "cancelled"). EDIT is cancel-then-open, in that order and gated on the cancel confirming, because a `scheduled`
+   * row is frozen on the server (`DraftsService.update` refuses it) and adopting one for autosave would point every
+   * PUT at a 409.
    */
   const scheduled = useMemo(() => scheduledSendsList(reader), [reader, version]);
   /**
@@ -3672,18 +3663,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     },
   );
   /**
-   * ── A PERSON ANSWERS FOR A SEND WE COULD NOT CONFIRM ────────────────────────────────────
-   *
-   * The one sanctioned exit from the hold, and the reason a held row is no longer a dead end.
-   * It asks `holdOf` NOTHING, deliberately: every other write site in this shell asks the
-   * predicate because it is about to change a message somebody may already have received, and
-   * this one is the opposite — it is how the reader tells us WHICH of those two worlds we are
-   * in. Gating it on the hold would make the hold unliftable, which is the defect.
-   *
-   * No toast on success. The row itself is the answer: it either leaves the list (`arrived`) or
-   * turns into an ordinary draft with Discard live (`not_arrived`), and saying so in a toast as
-   * well would be narrating what the reader can see. A refusal is reported, because that is the
-   * case where the screen does NOT change.
+   * A PERSON ANSWERS FOR A SEND WE COULD NOT CONFIRM: The one sanctioned exit from the hold, and the reason a held
+   * row is no longer a dead end. It asks `holdOf` NOTHING, deliberately: every other write site in this shell asks
+   * the predicate because it is about to change a message somebody may already have received, and this one is the
+   * opposite — it is how the reader tells us WHICH of those two worlds we are in. Gating it on the hold would make
+   * the hold unliftable, which is the defect. No toast on success. The row itself is the answer: it either leaves the
+   * list (`arrived`) or turns into an ordinary draft with Discard live (`not_arrived`), and saying so in a toast as
+   * well would be narrating what the reader can see. A refusal is reported, because that is the case where the screen
+   * does NOT change.
    */
   const resolveHeldSend = useStableCallback(
     (draftId: string, outcome: "arrived" | "not_arrived") => {
@@ -3716,21 +3703,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const discardDraft = useStableCallback(
     (draftId: string) => {
       /**
-       * ── THE LIST'S DELETE IS A WRITE SITE, AND IT WAS THE ONE NOT COUNTED ──────────────────
-       *
-       * Every other `draft_discard` in the shell goes through the autosave hook, which asks the
-       * predicate. This one is a person pressing Delete on a row in the list and it fired straight
-       * at the wire. For a row with a send on record the server refuses it by name now, so the
-       * mutation rolled back and the row came SILENTLY back — the same ending the 500 used to
-       * give, and the reason "a discard that cannot happen says why" was true only from the
-       * composer.
-       *
-       * THE SESSION IS ASKED ABOUT ONLY FOR THE ROW THIS COMPOSE IS HOLDING — `openDraft`'s rule,
-       * for its reason: passing it unconditionally would park every draft in the account behind
-       * one unresolved send, because the session names whichever message the composer has open.
-       *
-       * `unknown` is refused with `parked`: a delete cannot be taken back, and a browser that
-       * cannot read its own record has no evidence this row is free.
+       * THE LIST'S DELETE IS A WRITE SITE, AND IT WAS THE ONE NOT COUNTED: Every other `draft_discard` in the shell
+       * goes through the autosave hook, which asks the predicate. This one is a person pressing Delete on a row in
+       * the list and it fired straight at the wire. For a row with a send on record the server refuses it by name
+       * now, so the mutation rolled back and the row came SILENTLY back — the same ending the 500 used to give, and
+       * the reason "a discard that cannot happen says why" was true only from the composer. THE SESSION IS ASKED
+       * ABOUT ONLY FOR THE ROW THIS COMPOSE IS HOLDING — `openDraft`'s rule, for its reason: passing it
+       * unconditionally would park every draft in the account behind one unresolved send, because the session names
+       * whichever message the composer has open.
+       */
+
+      /**
+       * `unknown` is refused with `parked`: a delete cannot be taken back, and a browser that cannot read its own
+       * record has no evidence this row is free.
        */
       const heldRow = readComposeRow();
       const hold = holdOf(engine, {
@@ -3861,21 +3846,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * WRITE TO ONE PERSON — the contact popover's Write verb (viewer redesign).
-   *
-   * A NEW message with the To line prefilled, in the same `Name <address>` shape `openDraft`'s
-   * `line()` writes and `parseRecipients` reads back. The ADDRESS is the stored wire form —
-   * the chip decodes only its face — so what reaches the envelope is what the mirror holds.
-   *
-   * ── IT RELEASES THE AUTOSAVE FIRST ─────────────────────────────────────────────────────
-   *
-   * This seeds a NEW message. Without the release, `composePlan` would still carry the
-   * `draftId` of whatever the form last held — an unrelated draft, possibly one opened from
-   * the drafts list — so this send would overwrite that row and send from it. `openDraft`
-   * adopts for exactly the opposite reason; this is the same rule read the other way round.
-   * (The rule used to be stated on `forwardMessage`, the compose-seeding forward this shell
-   * no longer has — Forward is the thread's inline dock now, `openForward`, and never touches
-   * the compose form at all.)
+   * WRITE TO ONE PERSON — the contact popover's Write verb (viewer redesign). A NEW message with the To line
+   * prefilled, in the same `Name <address>` shape `openDraft`'s `line()` writes and `parseRecipients` reads back. The
+   * ADDRESS is the stored wire form — the chip decodes only its face — so what reaches the envelope is what the
+   * mirror holds. IT RELEASES THE AUTOSAVE FIRST: This seeds a NEW message. Without the release, `composePlan` would
+   * still carry the `draftId` of whatever the form last held — an unrelated draft, possibly one opened from the
+   * drafts list — so this send would overwrite that row and send from it. `openDraft` adopts for exactly the opposite
+   * reason; this is the same rule read the other way round.
+   */
+
+  /**
+   * (The rule used to be stated on `forwardMessage`, the compose-seeding forward this shell no longer has — Forward
+   * is the thread's inline dock now, `openForward`, and never touches the compose form at all.)
    */
   const writeTo = useStableCallback(
     (address: string, name?: string) => {
@@ -3957,19 +3939,17 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   }, [mailtoDraft, autosave, go, onMailtoDraftSeeded]);
 
   /**
-   * SCREENING FROM ANYWHERE — one call site for every surface.
-   *
-   * The plan comes from `sender-screening.ts`, which decides whether the endpoint can be
-   * used at all; this only dispatches it and tells the truth about what happened.
-   *
-   * ── THE RULE'S OUTCOME IS AWAITED, AND ONLY THE RULE'S ──────────────────────────────────
-   *
-   * This used to toast on click for every outcome, which was survivable while the only claim
-   * was "your mail moved" — a `move` that fails rolls its own row back on screen. It stopped
-   * being survivable the moment the sentence started claiming something about FUTURE mail:
-   * the rules surface's first cut printed "Rule revoked" over a 403 on a live account, and the fixtures
-   * adapter never refuses, so every test was green. So `plan.ruleMutations` — and nothing else
-   * — is awaited, and `screeningToast` picks the sentence from what the server actually said.
+   * SCREENING FROM ANYWHERE — one call site for every surface. The plan comes from `sender-screening.ts`, which
+   * decides whether the endpoint can be used at all; this only dispatches it and tells the truth about what happened.
+   * THE RULE'S OUTCOME IS AWAITED, AND ONLY THE RULE'S: This used to toast on click for every outcome, which was
+   * survivable while the only claim was "your mail moved" — a `move` that fails rolls its own row back on screen. It
+   * stopped being survivable the moment the sentence started claiming something about FUTURE mail: the rules
+   * surface's first cut printed "Rule revoked" over a 403 on a live account, and the fixtures adapter never refuses,
+   * so every test was green. So `plan.ruleMutations` — and nothing else — is awaited, and `screeningToast` picks the
+   * sentence from what the server actually said.
+   */
+
+  /**
    * The branch lives beside the sentences in `sender-screening.ts`, never here.
    */
   const changeScreening = useStableCallback((
@@ -4214,17 +4194,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * ═══ THE TAG, WITHOUT A MESSAGE ═══════════════════════════════════════════════════════
-   *
-   * Reported as: the sidebar should let you add tags, and Settings → Tags is not implemented.
-   * Both had one cause — `tag_assign`'s tag-or-create was the only way to mint a tag, so a
-   * name had to be attached to a message to exist, and there was no rename or delete verb at
-   * all. `POST /tags`, `PATCH /tags/:id` and `DELETE /tags/:id` had been mounted the whole
-   * time with no caller; these three are the callers.
-   *
-   * The id is minted here for the optimistic row only. `POST /tags` lets the DATABASE choose
-   * the id (unlike tag-or-create, which mints under the client's), so this uuid names a row
-   * that lives exactly as long as the overlay — see the mutation's own comment.
+   * THE TAG, WITHOUT A MESSAGE: Reported as: the sidebar should let you add tags, and Settings → Tags is not
+   * implemented. Both had one cause — `tag_assign`'s tag-or-create was the only way to mint a tag, so a name had to
+   * be attached to a message to exist, and there was no rename or delete verb at all. `POST /tags`, `PATCH /tags/:id`
+   * and `DELETE /tags/:id` had been mounted the whole time with no caller; these three are the callers. The id is
+   * minted here for the optimistic row only. `POST /tags` lets the DATABASE choose the id (unlike tag-or-create,
+   * which mints under the client's), so this uuid names a row that lives exactly as long as the overlay — see the
+   * mutation's own comment.
    */
   const createTagAlone = useStableCallback((name: string) => {
     void engine.mutate({ kind: "tag_create", tagId: crypto.randomUUID(), name });
@@ -4303,18 +4279,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           draftReply.open(m.id);
           break;
         /**
-         * ═══ THE THREE HORIZONS ARE TOGGLES — the way OUT of a pile ═══════════════════════
-         *
-         * The wire has carried `state:"none"` since the triage route shipped
-         * (`TriageWireState`; `TriageService.setState` accepts it) and NOTHING in the UI ever
-         * dispatched it: the footer only switched piles, the ⋯ menu and ⌘K had no verb, and
-         * the key that filed a message answered a re-press with a toast about being already
-         * queued. One mis-key was irreversible until reply or resurface.
-         *
-         * So the verb that put a message IN a pile takes it out again — the same convention
-         * `r` (reply editor) and `u` (read state) already keep, reached from the same three
-         * places at once because the key, the footer button and the palette all dispatch
-         * through here. The toast states the direction each press actually took.
+         * THE THREE HORIZONS ARE TOGGLES — the way OUT of a pile: The wire has carried `state:"none"` since the
+         * triage route shipped (`TriageWireState`; `TriageService.setState` accepts it) and NOTHING in the UI ever
+         * dispatched it: the footer only switched piles, the ⋯ menu and ⌘K had no verb, and the key that filed a
+         * message answered a re-press with a toast about being already queued. One mis-key was irreversible until
+         * reply or resurface. So the verb that put a message IN a pile takes it out again — the same convention `r`
+         * (reply editor) and `u` (read state) already keep, reached from the same three places at once because the
+         * key, the footer button and the palette all dispatch through here. The toast states the direction each press
+         * actually took.
          */
         case "later":
           if (m.triage?.state === "reply_later") {
@@ -4554,19 +4526,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * ═══ THE SELECTION'S VERBS ══════════════════════════════════════════════════════════
-   *
-   * The requirement: a selection must offer more than mark unseen, mark read and Escape — it
-   * needs the sender's screening and its tags too. The count was exact: ⇧U and Escape, in
-   * one view.
-   *
-   * The vocabulary is the ACTION BAR's, not a second one invented for bulk — the same three
-   * horizons, the same two filing verbs, the same read state. Reply is the one verb that is
-   * dropped, because "reply to eleven messages" is not a thing the product can mean.
-   *
-   * Everything here dispatches through the ordinary engine path, one mutation per message,
-   * and says ONE sentence at the end. A per-message toast over a selection of forty is not
-   * feedback, it is a denial of service on your own screen.
+   * THE SELECTION'S VERBS: The requirement: a selection must offer more than mark unseen, mark read and Escape — it
+   * needs the sender's screening and its tags too. The count was exact: ⇧U and Escape, in one view. The vocabulary is
+   * the ACTION BAR's, not a second one invented for bulk — the same three horizons, the same two filing verbs, the
+   * same read state. Reply is the one verb that is dropped, because "reply to eleven messages" is not a thing the
+   * product can mean. Everything here dispatches through the ordinary engine path, one mutation per message, and says
+   * ONE sentence at the end. A per-message toast over a selection of forty is not feedback, it is a denial of service
+   * on your own screen.
    */
   /**
    * THE SELECTION'S VERBS — and whether the selection SURVIVES the press.
@@ -5795,17 +5761,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       },
     },
     {
-      /* DELETE — the prototype's two-press ceremony: the first `d` ASKS (the same confirm
-         strip the ⋯ menu opens, focus landing on Cancel), the second CONFIRMS by clicking
-         the strip's own danger button — the ONE dispatch site of `"delete"` stays that
-         button, so a gate closing under the ask cannot ghost-delete (gate gone ⇒ strip gone
-         ⇒ nothing to click). The gate is the strip's own render gate (the mirror holds the
-         row), so the sheet never advertises a delete the bar would refuse to draw.
-
-         THIS `disabled` IS WHAT THE `?` SHEET PRINTS, so it is half the defect and not a
-         mirror of it: with "Use folders" off the sheet drew this row greyed and the strip
-         could not be opened at all, while the same verb over a selection worked. It reads
-         the mirror alone now, exactly like `canDeleteMessage` above and the strip itself. */
+      /**
+       * DELETE — the prototype's two-press ceremony: the first `d` ASKS (the same confirm strip the ⋯ menu opens,
+       * focus landing on Cancel), the second CONFIRMS by clicking the strip's own danger button — the ONE dispatch
+       * site of `"delete"` stays that button, so a gate closing under the ask cannot ghost-delete (gate gone ⇒ strip
+       * gone ⇒ nothing to click). The gate is the strip's own render gate (the mirror holds the row), so the sheet
+       * never advertises a delete the bar would refuse to draw. THIS `disabled` IS WHAT THE `?` SHEET PRINTS, so it
+       * is half the defect and not a mirror of it: with "Use folders" off the sheet drew this row greyed and the
+       * strip could not be opened at all, while the same verb over a selection worked. It reads the mirror alone now,
+       * exactly like `canDeleteMessage` above and the strip itself.
+       */
       chord: "d",
       group: "message",
       label:
@@ -5828,20 +5793,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         }
       },
     },
-    /* BACKSPACE AND DELETE — the keys the mail apps everybody arrives from already use, filing
-       the focused message to Trash in one press with Undo in the toast. They are not a second
-       delete: both run `onMessageAction("delete", …)`, the ONE dispatch site `d`'s confirm
-       button also reaches, so there is one ceremony, one refusal and one sentence.
+    /**
+     * BACKSPACE AND DELETE — the keys the mail apps everybody arrives from already use, filing the focused message to
+     * Trash in one press with Undo in the toast. They are not a second delete: both run `onMessageAction("delete",
+     * …)`, the ONE dispatch site `d`'s confirm button also reaches, so there is one ceremony, one refusal and one
+     * sentence. WHY THEY DO NOT ASK FIRST, WHILE `d` DOES. `d`'s two-press ceremony exists because a delete used to
+     * be unrecoverable the instant it dispatched. It is not any more — the press opens an undo window
+     * (`delete-undo.ts`) — so a key whose whole point is one press does not need a strip in front of it. `d` keeps
+     * its ask because a keycap on a bar button that deletes on a single press is a different promise; both now land
+     * in the same window.
+     */
 
-       WHY THEY DO NOT ASK FIRST, WHILE `d` DOES. `d`'s two-press ceremony exists because a
-       delete used to be unrecoverable the instant it dispatched. It is not any more — the
-       press opens an undo window (`delete-undo.ts`) — so a key whose whole point is one press
-       does not need a strip in front of it. `d` keeps its ask because a keycap on a bar button
-       that deletes on a single press is a different promise; both now land in the same window.
-
-       The gate is `d`'s own, deliberately: the sheet must not advertise on one row a delete
-       the row beside it would refuse to draw. It is the mirror holding the row and nothing
-       else — see `canDeleteMessage` for why "Use folders" stopped being a term. */
+    /**
+     * The gate is `d`'s own, deliberately: the sheet must not advertise on one row a delete the row beside it would
+     * refuse to draw. It is the mirror holding the row and nothing else — see `canDeleteMessage` for why "Use
+     * folders" stopped being a term.
+     */
     ...deleteKeyBindings({
       focused,
       label: t("shortcuts.deleteKey"),
@@ -6162,17 +6129,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             ),
           }]
         : []),
-      /* ── TRASH, WHILE YOU ARE IN IT ───────────────────────────────────────────────────────
-         A `custom` group spread into the rail ONLY while Trash is the route, positioned after
-         the Folders group (after Tags when folders are off) and before the dock — the rail's
-         lower part. It disappears the moment the route leaves, because the memo's deps carry
-         `route.view` and the group is a conditional spread rather than a hidden node: outside
-         Trash the rail is BYTE-IDENTICAL to today, no extra `.rgroup`, nothing — the parity
-         shape `test/folders-rail.test.tsx` already pins for the Folders group, pinned again for
-         this one.
-         `items: []`, so `numberNav` reads nothing here and the digits are unchanged. A place
-         reached by ⌘K and `g t` does not earn a number, and taking one would renumber every
-         pile below it while somebody is standing in Trash. */
+      /**
+       * TRASH, WHILE YOU ARE IN IT: A `custom` group spread into the rail ONLY while Trash is the route, positioned
+       * after the Folders group (after Tags when folders are off) and before the dock — the rail's lower part. It
+       * disappears the moment the route leaves, because the memo's deps carry `route.view` and the group is a
+       * conditional spread rather than a hidden node: outside Trash the rail is BYTE-IDENTICAL to today, no extra
+       * `.rgroup`, nothing — the parity shape `test/folders-rail.test.tsx` already pins for the Folders group, pinned
+       * again for this one. `items: []`, so `numberNav` reads nothing here and the digits are unchanged. A place
+       * reached by ⌘K and `g t` does not earn a number, and taking one would renumber every pile below it while
+       * somebody is standing in Trash.
+       */
       ...(route.view === "trash"
         ? [{
             items: [],
@@ -6245,23 +6211,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * ═══ THE NUMBER KEYS ══════════════════════════════════════════════════════════════════
-   *
-   * `1`…`N` reach the piles in the order the rail lists them. Requested as navigation that
-   * does not need the mouse and does not need a two-key sequence — `g o` / `g r` / `g e` /
-   * `g s` already exist but only cover four destinations and none of the triage horizons.
-   *
-   * ── DERIVED FROM THE RAIL, NOT WRITTEN OUT BESIDE IT ──────────────────────────────────
-   *
-   * The numbers ARE the menu order, so they are read off `railGroups` rather than declared in
-   * a parallel list. A hand-written table would be a second enumeration of the nav — the shape
-   * the (i) panel's hand-typed key list had, and the one the `?` sheet is generated to avoid —
-   * and it would go wrong the first time a group gained an item.
-   *
-   * Only the PILES are numbered: the three streams, the Screener and the three triage
-   * horizons. Tags is a collapsible group whose contents are the user's own and change; Search
-   * has `/` and Settings is not somewhere you flick to. `slice(0, 9)` because there is no key
-   * `10` — a tenth pile would simply not be numbered rather than silently shifting the rest.
+   * THE NUMBER KEYS: `1`…`N` reach the piles in the order the rail lists them. Requested as navigation that does not
+   * need the mouse and does not need a two-key sequence — `g o` / `g r` / `g e` / `g s` already exist but only cover
+   * four destinations and none of the triage horizons. DERIVED FROM THE RAIL, NOT WRITTEN OUT BESIDE IT: The numbers
+   * ARE the menu order, so they are read off `railGroups` rather than declared in a parallel list. A hand-written
+   * table would be a second enumeration of the nav — the shape the (i) panel's hand-typed key list had, and the one
+   * the `?` sheet is generated to avoid — and it would go wrong the first time a group gained an item. Only the PILES
+   * are numbered: the three streams, the Screener and the three triage horizons. Tags is a collapsible group whose
+   * contents are the user's own and change; Search has `/` and Settings is not somewhere you flick to.
+   */
+
+  /**
+   * `slice(0, 9)` because there is no key `10` — a tenth pile would simply not be numbered rather than silently
+   * shifting the rest.
    */
   const numberNav = useMemo(
     () =>
@@ -6680,17 +6642,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             from the DOM when there are none, like every other strip the shell mounts once. */}
         <UnsavedChanges variant="shell" />
 
-        {/* A NEWER OHMAIL, IN EVERY VIEW. The strip's sibling and its argument: rendered once by
-            the shell so no view can forget it, outside every list's scroller, and absent from the
-            DOM whenever there is nothing to say. What is on offer differs by door — a build this
-            origin is already serving, or a signed release the desktop shell has fetched and
-            verified — and this shell knows neither; `app-update.ts` holds the one offer and the
-            once-a-day restraint on saying it.
-
-            HELD WHILE A MESSAGE IS BEING WRITTEN. A strip appearing above somebody mid-sentence
-            moves the layout under their cursor, and the press it offers throws the draft's window
-            away. The offer is not withdrawn and not re-decided — it is simply not drawn until the
-            compose is closed. */}
+        {/*
+            A NEWER OHMAIL, IN EVERY VIEW. The strip's sibling and its argument: rendered once by the shell so no view
+            can forget it, outside every list's scroller, and absent from the DOM whenever there is nothing to say.
+            What is on offer differs by door — a build this origin is already serving, or a signed release the desktop
+            shell has fetched and verified — and this shell knows neither; `app-update.ts` holds the one offer and the
+            once-a-day restraint on saying it. HELD WHILE A MESSAGE IS BEING WRITTEN. A strip appearing above somebody
+            mid-sentence moves the layout under their cursor, and the press it offers throws the draft's window away.
+            The offer is not withdrawn and not re-decided — it is simply not drawn until the compose is closed.
+          */}
         <UpdateNotice quiet={effectiveView === "compose"} />
 
         {/* THIS BROWSER IS NOT KEEPING DECISIONS — the same slot and the same argument as the
@@ -6787,17 +6747,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 <UnsavedChanges variant="rail" />
               </>
             }
-            /* The account line at the foot of the rail. The "Get ohmail for desktop" prompt
-               shares that slot in the signed-in BROWSER only, and it travels as the PURE
-               platform branch (`offerDesktopCta` — never the desktop app, never the demo);
-               its DISMISSAL is `ShellRail`'s own persisted state, held down there so the
-               post-mount storage read re-renders the rail and not this whole component (see
-               `ShellRail`). The two contents do not coexist — `account` is a demo-only fixture
-               (`/sync` emits no `view_meta`), and the prompt shows only when `!demo`.
-               `ShellRail` hands `RailNav` an `undefined` footer when NOTHING will render:
-               `RailNav` keeps a padded `.rail-mail` box for any truthy footer, so a footer
-               whose every child renders null is a dead band under the Command row — the exact
-               defect the dismissal used to cause from inside `DesktopCta`. */
+            /**
+             * The account line at the foot of the rail. The "Get ohmail for desktop" prompt shares that slot in the
+             * signed-in BROWSER only, and it travels as the PURE platform branch (`offerDesktopCta` — never the
+             * desktop app, never the demo); its DISMISSAL is `ShellRail`'s own persisted state, held down there so
+             * the post-mount storage read re-renders the rail and not this whole component (see `ShellRail`). The two
+             * contents do not coexist — `account` is a demo-only fixture (`/sync` emits no `view_meta`), and the
+             * prompt shows only when `!demo`.
+             */
+
+            /**
+             * `ShellRail` hands `RailNav` an `undefined` footer when NOTHING will render: `RailNav` keeps a padded
+             * `.rail-mail` box for any truthy footer, so a footer whose every child renders null is a dead band under
+             * the Command row — the exact defect the dismissal used to cause from inside `DesktopCta`.
+             */
             footer={
               account?.email ? <span className="rail-mail-addr">{account.email}</span> : undefined
             }
@@ -6911,36 +6874,34 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                        (above, so a fresh Linux sign-in sees it first) and the organizer notice.
                        Each keeps its own gate; the slot is undefined only when both are absent,
                        so OhboxView's spacing never reserves an empty band. */
-                    /* ── ONE ASK AT A TIME ON A FIRST RUN ──────────────────────────────
-                       MEASURED on the released 0.13.7: at +15 s after connecting a mailbox a
-                       person faced THREE asks at once — the setup flow's modal, the OS
-                       "Open email links with ohmail?" prompt stacked over the flow's own
-                       Continue and Cancel row, and this banner behind both.
-
-                       `route.firstRun` is the stage's own gate (see the mount below), so this
-                       is the same condition rather than a second opinion about it. WAITS, not
-                       withheld: `faceOffer.eligible` is unchanged and the banner is there the
-                       moment the flow closes — a first run is the one visit where somebody has
-                       a screen full of decisions already. */
+                    /**
+                     * ONE ASK AT A TIME ON A FIRST RUN: MEASURED on the released 0.13.7: at +15 s after connecting a
+                     * mailbox a person faced THREE asks at once — the setup flow's modal, the OS "Open email links
+                     * with ohmail?" prompt stacked over the flow's own Continue and Cancel row, and this banner
+                     * behind both. `route.firstRun` is the stage's own gate (see the mount below), so this is the
+                     * same condition rather than a second opinion about it. WAITS, not withheld: `faceOffer.eligible`
+                     * is unchanged and the banner is there the moment the flow closes — a first run is the one visit
+                     * where somebody has a screen full of decisions already.
+                     */
                     const offer = faceOffer.eligible && applyFaceAllDevices !== null
                       && !route.firstRun
                       ? <OhmarchyOffer apply={applyFaceAllDevices} onDone={faceOffer.dismiss} />
                       : null;
-                    /* ── AND THE ORGANIZER NOTICE, THE SLOT'S OTHER TENANT ─────────────
-                       Below the offer, and the order is the amount of decision each one asks
-                       for: the offer proposes something, this reports something that already
-                       happened. (The away line, which states a standing setting, is the
-                       list's first block now — `standingNotice` above.) Its own gate is
-                       inside the component (it renders
-                       nothing without an unacknowledged change), so the only thing decided
-                       here is whether there is any way to acknowledge — see
-                       `acknowledgeOrganizerNotice`. Withheld on the demo, which has no row
-                       to stamp and no other install to change hands with.
+                    /**
+                     * AND THE ORGANIZER NOTICE, THE SLOT'S OTHER TENANT: Below the offer, and the order is the amount
+                     * of decision each one asks for: the offer proposes something, this reports something that
+                     * already happened. (The away line, which states a standing setting, is the list's first block
+                     * now — `standingNotice` above.) Its own gate is inside the component (it renders nothing without
+                     * an unacknowledged change), so the only thing decided here is whether there is any way to
+                     * acknowledge — see `acknowledgeOrganizerNotice`. Withheld on the demo, which has no row to stamp
+                     * and no other install to change hands with.
+                     */
 
-                       THE TRANSPORT ITSELF is the condition, not the callback: the callback is
-                       stable and always present (it holds no render scope, which is why), so
-                       the honest question is whether either door supplied a way to write the
-                       stamp. A notice that cannot be acknowledged is withheld. */
+                    /**
+                     * THE TRANSPORT ITSELF is the condition, not the callback: the callback is stable and always
+                     * present (it holds no render scope, which is why), so the honest question is whether either door
+                     * supplied a way to write the stamp. A notice that cannot be acknowledged is withheld.
+                     */
                     const organizer = demo || organizerNoticeTransport === undefined
                       ? null
                       : (
@@ -7075,21 +7036,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {effectiveView === "screener" ? (
               <ScreenerView
                 state={screener}
-                /* Bound HERE, at the render, to the exact list the state computed this
-                   frame — so the set that gets priced and the set that gets bought are one
-                   list rather than two computations that agree today.
+                /**
+                 * Bound HERE, at the render, to the exact list the state computed this frame — so the set that gets
+                 * priced and the set that gets bought are one list rather than two computations that agree today.
+                 * WITHHELD WHEREVER THERE IS NO SERVER TO ASK, and `demo` was never the whole of that. The desktop
+                 * app is not the demo — it shows somebody's real mail — and it has no Cloud API at all, so this
+                 * control rendered there, offered a button, and answered every press with "that did not work": a
+                 * control with nothing behind it, which is the one thing this surface must never be. The condition is
+                 * now the same one `AutoOptInControl.supported` uses, and the host that DOES have a way to ask brings
+                 * its own control below.
+                 */
 
-                   WITHHELD WHEREVER THERE IS NO SERVER TO ASK, and `demo` was never the whole
-                   of that. The desktop app is not the demo — it shows somebody's real mail —
-                   and it has no Cloud API at all, so this control rendered there, offered a
-                   button, and answered every press with "that did not work": a control with
-                   nothing behind it, which is the one thing this surface must never be. The
-                   condition is now the same one `AutoOptInControl.supported` uses, and the
-                   host that DOES have a way to ask brings its own control below.
-
-                   Read off `autoOptIn.supported` rather than by calling `apiConfigured()` here,
-                   so "is there a server to ask" has ONE answer in this file and this shared
-                   shell keeps its standing rule of not importing the Cloud API client. */
+                /**
+                 * Read off `autoOptIn.supported` rather than by calling `apiConfigured()` here, so "is there a server
+                 * to ask" has ONE answer in this file and this shared shell keeps its standing rule of not importing
+                 * the Cloud API client.
+                 */
                 /* BOTH HALVES OF THE QUEUE, and the second one is why the control no longer
                    vanishes on a worked account. `unsuggestedSenders` is what a purchase buys;
                    `suggestedSenders` is what a re-ask covers, and it is the count the resting
@@ -7311,19 +7273,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
               />
             ) : null}
 
-            {/**
-              * `#/address/<addr>` — EVERYTHING FROM AND TO ONE CORRESPONDENT.
-              *
-              * The route parsed, the view existed, and every address control linked to it before
-              * this branch: `effectiveView` had no `address` case, so following an address put
-              * NOTHING on the stage under a URL naming a person. Nothing failed anywhere — the
-              * router was right, the view's own suite was green over a hand-mounted `AddressView`,
-              * and the address bar said what had been asked for.
-              *
-              * Seven props and no derivation here. `AddressView` composes the two halves of the
-              * answer itself through `shell/address-view.ts`, so this is a mount and not a place
-              * where a projection is computed: a whole-mirror derivation in the same render scope
-              * as this file's memoized callbacks is what the webview leak was made of.
+            {/*
+                `#/address/<addr>` — EVERYTHING FROM AND TO ONE CORRESPONDENT. The route parsed, the view existed, and
+                every address control linked to it before this branch: `effectiveView` had no `address` case, so
+                following an address put NOTHING on the stage under a URL naming a person. Nothing failed anywhere —
+                the router was right, the view's own suite was green over a hand-mounted `AddressView`, and the
+                address bar said what had been asked for. Seven props and no derivation here. `AddressView` composes
+                the two halves of the answer itself through `shell/address-view.ts`, so this is a mount and not a
+                place where a projection is computed: a whole-mirror derivation in the same render scope as this
+                file's memoized callbacks is what the webview leak was made of.
               */}
             {effectiveView === "address" ? (
               <AddressView
@@ -7475,18 +7433,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    `?demo=1` to leak. */
                 defaultMailSection={defaultMailSection}
                 {...(notificationHost ? { notificationHost } : {})}
-                /* DEMO-MASKED, unlike `desktopSection` directly above — and this line used to
-                   read `devicesSection={devicesSection}` with a comment whose premise ("a
-                   browser tab passes nothing") the Cloud Devices pane retired. With the seam
-                   unmasked, `?demo=1` in a signed-in browser grew a Devices entry — the one
-                   account pane that leaked — and opened onto the REAL device list with a live
-                   mint verb, every verb a cookie-authenticated credential mutation inside a UI
-                   that promises fixtures and zero network. The Cloud host also gates its node
-                   on the same flag (`useDevicePairing(demo)`), so this mask is the shared
-                   shell's own guarantee, not the only one. The desktop is unaffected: its gate
-                   wires the pane only on the standalone door with an engine behind it, which
-                   is never a `demo` render (a demo render there means the sample mount, whose
-                   shell reports no status for `hostDoorFor` to say "local" about). */
+                /**
+                 * DEMO-MASKED, unlike `desktopSection` directly above — and this line used to read
+                 * `devicesSection={devicesSection}` with a comment whose premise ("a browser tab passes nothing") the
+                 * Cloud Devices pane retired. With the seam unmasked, `?demo=1` in a signed-in browser grew a Devices
+                 * entry — the one account pane that leaked — and opened onto the REAL device list with a live mint
+                 * verb, every verb a cookie-authenticated credential mutation inside a UI that promises fixtures and
+                 * zero network. The Cloud host also gates its node on the same flag (`useDevicePairing(demo)`), so
+                 * this mask is the shared shell's own guarantee, not the only one.
+                 */
+
+                /**
+                 * The desktop is unaffected: its gate wires the pane only on the standalone door with an engine
+                 * behind it, which is never a `demo` render (a demo render there means the sample mount, whose shell
+                 * reports no status for `hostDoorFor` to say "local" about).
+                 */
                 devicesSection={demo ? undefined : devicesSection}
                 /* Same rule: `?demo=1` has no session, so "connect a mailbox" there would
                    be a form posting to a server this tab is not talking to. The demo keeps
@@ -7513,23 +7474,24 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                     </>
                   ),
                 }}
-                /* THE AUTO-WORK OPT-IN. Built here rather than injected from `CloudShell` for
-                   the reason `seedSection` gives — it needs shell state — but a different piece
-                   of it: the flag has to be written through the SAME `useConsentState` the
-                   Screener's spender reads (`suggestions` above), or turning it off in Settings
-                   leaves this tab still authorised and the next Screener open buys a batch the
-                   user just revoked. `autoOptIn` is bound to `screener.unsuggestedSenders` here,
-                   at the render, so the set that is priced is the set that will be bought.
+                /**
+                 * THE AUTO-WORK OPT-IN. Built here rather than injected from `CloudShell` for the reason
+                 * `seedSection` gives — it needs shell state — but a different piece of it: the flag has to be
+                 * written through the SAME `useConsentState` the Screener's spender reads (`suggestions` above), or
+                 * turning it off in Settings leaves this tab still authorised and the next Screener open buys a batch
+                 * the user just revoked. `autoOptIn` is bound to `screener.unsuggestedSenders` here, at the render,
+                 * so the set that is priced is the set that will be bought. `supported` is `wire.configured()`.
+                 */
 
-                   `supported` is `wire.configured()`. It used to be `apiConfigured()` and this
-                   comment used to name that, which made it false of BOTH desktop doors: the row
-                   was withheld from a hosted install that has an account, an allowance and a
-                   balance behind it, for want of a way to ask — `CloudSuggest.tsx` states the
-                   consequence from the other side ("the setting that authorises it is written
-                   from a Settings row this app does not render"). A host that hands in a
-                   {@link suggestWire} has that way, and this is the row. A STANDALONE install
-                   hands in none: no server, no account, nothing to buy. `demo` is withheld for
-                   the same reason as every other injected pane. */
+                /**
+                 * It used to be `apiConfigured()` and this comment used to name that, which made it false of BOTH
+                 * desktop doors: the row was withheld from a hosted install that has an account, an allowance and a
+                 * balance behind it, for want of a way to ask — `CloudSuggest.tsx` states the consequence from the
+                 * other side ("the setting that authorises it is written from a Settings row this app does not
+                 * render"). A host that hands in a {@link suggestWire} has that way, and this is the row. A
+                 * STANDALONE install hands in none: no server, no account, nothing to buy. `demo` is withheld for the
+                 * same reason as every other injected pane.
+                 */
                 autoSuggestSection={
                   demo || !autoOptIn.supported ? undefined : (
                     <AutoSuggestRow
@@ -7627,22 +7589,24 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                   <DormancyRow days={consent.dormancyDays} scope={consent.screeningScope}
                     setDormancyDays={consent.setDormancyDays} />
                 )}
-                /* REMOTE IMAGES. Gated on `consent.known` for a sharper version of the dial's
-                   reason: the resting value is MANUAL, so drawing the row before the server has
-                   answered would show a switch in the OFF position to an account whose stored
-                   setting is ON — and somebody who then left it alone would believe they had
-                   chosen the state they were merely shown. Absent on the demo (no server).
+                /**
+                 * REMOTE IMAGES. Gated on `consent.known` for a sharper version of the dial's reason: the resting
+                 * value is MANUAL, so drawing the row before the server has answered would show a switch in the OFF
+                 * position to an account whose stored setting is ON — and somebody who then left it alone would
+                 * believe they had chosen the state they were merely shown. Absent on the demo (no server). AND ON
+                 * EVERY DESKTOP DOOR, INCLUDING THE HOSTED ONE, which is the clause a `consentTransport` made
+                 * necessary: `known` becomes true there, and this row would then govern a mechanism that does not
+                 * exist in the window.
+                 */
 
-                   AND ON EVERY DESKTOP DOOR, INCLUDING THE HOSTED ONE, which is the clause a
-                   `consentTransport` made necessary: `known` becomes true there, and this row
-                   would then govern a mechanism that does not exist in the window. Consented
-                   images load through `GET /img` on THIS ORIGIN — the proxy is what keeps the
-                   reader's address away from the sender, and the same-origin url is what carries
-                   the session cookie and satisfies the frame's `img-src 'self'`. A window under
-                   `connect-src 'none'` has no such origin and `useRemoteImages` hands back nothing
-                   at all there (`remote-images.ts`), so the switch would store a preference and
-                   change no picture. `cloudClient` is exactly that build fact, and it is checked
-                   rather than `remoteImages !== undefined` only because it names WHY. */
+                /**
+                 * Consented images load through `GET /img` on THIS ORIGIN — the proxy is what keeps the reader's
+                 * address away from the sender, and the same-origin url is what carries the session cookie and
+                 * satisfies the frame's `img-src 'self'`. A window under `connect-src 'none'` has no such origin and
+                 * `useRemoteImages` hands back nothing at all there (`remote-images.ts`), so the switch would store a
+                 * preference and change no picture. `cloudClient` is exactly that build fact, and it is checked
+                 * rather than `remoteImages !== undefined` only because it names WHY.
+                 */
                 remoteImagesSection={demo || !consent.known || !consent.cloudClient ? undefined : (
                   <>
                     <RemoteImagesRow
@@ -7660,47 +7624,48 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                     />
                   </>
                 )}
-                /* AUTO-UNSUBSCRIBE ON SCREEN-OUT. Gated on BOTH `consent.known` and
-                   `autoOptIn.supported`, and each gate answers a different question.
+                /**
+                 * AUTO-UNSUBSCRIBE ON SCREEN-OUT. Gated on BOTH `consent.known` and `autoOptIn.supported`, and each
+                 * gate answers a different question. `known` is the flash argument the two rows above make, pointing
+                 * the other way: this switch rests ON, so drawing it before the server has answered would show it ON
+                 * to an account that turned it OFF — and somebody who then left it alone would believe they had
+                 * chosen the state they were merely shown. `supported` is the structural one, and it is why this is
+                 * not simply `known`: a STANDALONE install wires no unsubscribe service into its screener at all, so
+                 * nothing there could be switched off, and a control drawn on that build would store nothing and
+                 * govern nothing.
+                 */
 
-                   `known` is the flash argument the two rows above make, pointing the other way:
-                   this switch rests ON, so drawing it before the server has answered would show it
-                   ON to an account that turned it OFF — and somebody who then left it alone would
-                   believe they had chosen the state they were merely shown.
-
-                   `supported` is the structural one, and it is why this is not simply `known`: a
-                   STANDALONE install wires no unsubscribe service into its screener at all, so
-                   nothing there could be switched off, and a control drawn on that build would
-                   store nothing and govern nothing. It used to read `apiConfigured()`, which
-                   also excluded the desktop's HOSTED door — where the screening decisions this
-                   flag qualifies are forwarded to the account and the hosted pass is what sends
-                   the request, so the switch governs exactly what it says it does. That door
-                   hands in a wire; the standalone door hands in none and is still excluded.
-                   Withheld from the demo like every other injected pane. */
+                /**
+                 * It used to read `apiConfigured()`, which also excluded the desktop's HOSTED door — where the
+                 * screening decisions this flag qualifies are forwarded to the account and the hosted pass is what
+                 * sends the request, so the switch governs exactly what it says it does. That door hands in a wire;
+                 * the standalone door hands in none and is still excluded. Withheld from the demo like every other
+                 * injected pane.
+                 */
                 autoUnsubscribeSection={demo || !consent.known || !autoOptIn.supported ? undefined : (
                   <AutoUnsubscribeRow
                     on={consent.autoUnsubscribe}
                     setBlockAutoUnsubscribe={consent.setBlockAutoUnsubscribe}
                   />
                 )}
-                /* THE AWAY RESPONDER — its OWN Settings section since it became the one control in
-                   the product that makes the app send mail unprompted, and a menu is where people
-                   look for that. This node IS that pane: absent ⇒ no pane and no nav entry, which
-                   is the whole of how the Cloud-only rule is expressed on screen.
+                /**
+                 * THE AWAY RESPONDER — its OWN Settings section since it became the one control in the product that
+                 * makes the app send mail unprompted, and a menu is where people look for that. This node IS that
+                 * pane: absent ⇒ no pane and no nav entry, which is the whole of how the Cloud-only rule is expressed
+                 * on screen. Gated on `awaySupported` and NOT on `consent.known`, unlike the two rows above: it holds
+                 * no consent state and loads its own row, so it has nothing to flash the wrong way round.
+                 */
 
-                   Gated on `awaySupported` and NOT on `consent.known`, unlike the two rows above:
-                   it holds no consent state and loads its own row, so it has nothing to flash the
-                   wrong way round. But the "is there anywhere to store this" gate is required, and
-                   for a stronger reason than the auto-suggest row's — the SENDER is a pass in the
-                   hosted worker, so a standalone install drawing this control would store a
-                   configuration that answers nobody, which is the built-and-unreachable shape this
-                   whole surface exists to remove, reintroduced one layer up. See `awaySupported`
-                   for the two ways it is true, and {@link awayTransport} for why the desktop's
-                   HOSTED door is one of them and its standalone door is not.
-
-                   The `onChanged` echo is how the Ohbox notice above hears a same-tab save
-                   without a refetch — the row reports what the SERVER answered, never what a
-                   click asked for, into the one `useAwayNotice` state the shell holds. */
+                /**
+                 * But the "is there anywhere to store this" gate is required, and for a stronger reason than the
+                 * auto-suggest row's — the SENDER is a pass in the hosted worker, so a standalone install drawing
+                 * this control would store a configuration that answers nobody, which is the built-and-unreachable
+                 * shape this whole surface exists to remove, reintroduced one layer up. See `awaySupported` for the
+                 * two ways it is true, and {@link awayTransport} for why the desktop's HOSTED door is one of them and
+                 * its standalone door is not. The `onChanged` echo is how the Ohbox notice above hears a same-tab
+                 * save without a refetch — the row reports what the SERVER answered, never what a click asked for,
+                 * into the one `useAwayNotice` state the shell holds.
+                 */
                 awaySection={demo || !awaySupported ? undefined : (
                   <AwayResponderRow onChanged={awayNotice.update} transport={awayTransport} local={awayIsLocal ?? false} host={awayOnHost ?? null} />
                 )}
@@ -8007,17 +7972,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
              mailbox step once a mailbox exists, where the form is withheld and a statement
              stands in its place. */
           {...(firstRunMailbox?.address ? { mailboxAddress: firstRunMailbox.address } : {})}
-          /* ── WHEN THE HOLDER BECAME THE ORGANIZER, IN WORDS — AND NOTHING PASSED IT ────────
-             `FirstRunProps.organizedSince` is interpolated into `mailboxes.readerSince*` by two
-             screens (the claim question's banner, and now a reader's summary), and this mount —
-             the only one there is — never supplied it. Both rendered "Since  · ohmail Cloud."
-             with a blank where the date belongs, which is a sentence that reads as a bug about
-             the mailbox rather than about the copy. Withheld when the DTO names no instant, so
-             the screens keep their own "we do not know" arm instead of printing an empty one.
-
-             A DATE, with no clock on it, and the same formatting the desktop pane uses for the
-             same sentence: this is a standing fact somebody reads once, and a timestamp on it
-             invites watching a heartbeat that is deliberately not persisted. */
+          /**
+           * WHEN THE HOLDER BECAME THE ORGANIZER, IN WORDS — AND NOTHING PASSED IT: `FirstRunProps.organizedSince` is
+           * interpolated into `mailboxes.readerSince*` by two screens (the claim question's banner, and now a
+           * reader's summary), and this mount — the only one there is — never supplied it. Both rendered "Since  ·
+           * ohmail Cloud." with a blank where the date belongs, which is a sentence that reads as a bug about the
+           * mailbox rather than about the copy. Withheld when the DTO names no instant, so the screens keep their own
+           * "we do not know" arm instead of printing an empty one. A DATE, with no clock on it, and the same
+           * formatting the desktop pane uses for the same sentence: this is a standing fact somebody reads once, and
+           * a timestamp on it invites watching a heartbeat that is deliberately not persisted.
+           */
           {...(holderSince ? { organizedSince: holderSince } : {})}
           serverMessageCount={firstRunMailbox?.serverMessageCount}
           /* The counters. `screened` is what the mirror holds MINUS what History lists —
@@ -8047,25 +8011,24 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
              rather than an assignment: the create is not a place somebody navigated to, and a
              history entry there would make Back walk into a form for a mailbox that now exists. */
           onConnected={nameFirstRunMailbox}
-          /* WHAT THE ACCOUNT ALREADY STORED, so a re-run shows the state it is about to change.
-             `dormancyDays` is always a number on this object; `screeningScope` rests `window`,
-             which is what every build did before the mode existed.
+          /**
+           * WHAT THE ACCOUNT ALREADY STORED, so a re-run shows the state it is about to change. `dormancyDays` is
+           * always a number on this object; `screeningScope` rests `window`, which is what every build did before the
+           * mode existed. AND ONLY WHERE SOMETHING IS ACTUALLY STORED, WHICH THIS PASSED UNCONDITIONALLY:
+           * `FirstRunProps.screening` is documented "Absent on a first run, where there is nothing stored to show",
+           * and this handed it the RESTING values on every run. Those rest at `DEFAULT_DORMANCY_DAYS` (60),
+           * `initialWindow` snaps a stored 60 to the nearest offered rung, and 60 is nearer 90 than 365 — so a fresh
+           * first run showed "90 days" pre-selected while the row beside it read "One year · usual".
+           */
 
-             ── AND ONLY WHERE SOMETHING IS ACTUALLY STORED, WHICH THIS PASSED UNCONDITIONALLY ──
-
-             `FirstRunProps.screening` is documented "Absent on a first run, where there is
-             nothing stored to show", and this handed it the RESTING values on every run. Those
-             rest at `DEFAULT_DORMANCY_DAYS` (60), `initialWindow` snaps a stored 60 to the
-             nearest offered rung, and 60 is nearer 90 than 365 — so a fresh first run showed
-             "90 days" pre-selected while the row beside it read "One year · usual". Measured on
-             the released 0.13.6, on a fresh HOME: nobody had chosen 60, and the control was
-             reporting a product default as the person's own answer.
-
-             `screeningBaselineAt` is the truth-condition for "an answer exists": it is written
-             by the consent transaction and by the first screener decision, and by nothing else,
-             and it rests null (the one consent field deliberately NOT filled in with a plausible
-             value — see `ConsentState.screeningBaselineAt`). Withheld, `initialWindow` answers
-             365, which is the number the flow stores. */
+          /**
+           * Measured on the released 0.13.6, on a fresh HOME: nobody had chosen 60, and the control was reporting a
+           * product default as the person's own answer. `screeningBaselineAt` is the truth-condition for "an answer
+           * exists": it is written by the consent transaction and by the first screener decision, and by nothing
+           * else, and it rests null (the one consent field deliberately NOT filled in with a plausible value — see
+           * `ConsentState.screeningBaselineAt`). Withheld, `initialWindow` answers 365, which is the number the flow
+           * stores.
+           */
           {...(consent.screeningBaselineAt
             ? { screening: { dormancyDays: consent.dormancyDays, scope: consent.screeningScope } }
             : {})}

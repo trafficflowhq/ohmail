@@ -1529,17 +1529,15 @@ export function useScreenerState(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
-    /* AND NOT ON A MAILBOX THIS INSTALL NO LONGER ORGANIZES. The journal outlives the session
-       that wrote it, so an install that organized yesterday and is a reader today would replay
-       decisions the engine will not make — the exact rollback-with-no-reason this slice closes,
-       arriving through the durable path instead of a keypress. Nothing is consumed: the entries
-       stay in the journal for the next boot, and age out on {@link INTENT_TTL_MS} if this install
-       never gets the mailbox back.
-
-       `blocked` ONLY, on the same argument the live guard makes: a decision restored onto a
-       mailbox whose organizer WILL carry it out is a decision the person made and the product
-       kept, which is what the journal is for. Only the state with nowhere to send it withholds
-       the replay. */
+    /**
+     * AND NOT ON A MAILBOX THIS INSTALL NO LONGER ORGANIZES. The journal outlives the session that wrote it, so an
+     * install that organized yesterday and is a reader today would replay decisions the engine will not make — the
+     * exact rollback-with-no-reason this slice closes, arriving through the durable path instead of a keypress.
+     * Nothing is consumed: the entries stay in the journal for the next boot, and age out on {@link INTENT_TTL_MS} if
+     * this install never gets the mailbox back. `blocked` ONLY, on the same argument the live guard makes: a decision
+     * restored onto a mailbox whose organizer WILL carry it out is a decision the person made and the product kept,
+     * which is what the journal is for. Only the state with nowhere to send it withholds the replay.
+     */
     if (role.mode === "blocked") return;
     /**
      * THE READ HAPPENS AT MOUNT; ONLY THE DISPATCH WAITS FOR THE OTHER TABS. The order matters and getting it wrong
@@ -1661,17 +1659,15 @@ export function useScreenerState(
     isExiting: (id) => s.pending.has(id),
     refused: (id) => s.refused.has(id),
     bodyStall,
-    /* THE SEVEN VERBS THAT WRITE, every one behind a wall — but not the SAME wall, and the split
-       is the point rather than an inconsistency.
-
-       The first three express a DECISION about a sender, which is the one thing a reader's
-       organizer will carry out on its behalf, so they are open wherever there is an organizer to
-       carry it out. The last four MOVE MAIL — a release out of Screened, a rescue out of
-       Quarantine, a delete — and no organizer takes those from a reader in any mode.
-
-       `flush` is deliberately outside both. It commits decisions ALREADY armed, so on a blocked
-       reader there are none and wrapping it would only make a route change raise a sentence about
-       nothing; on a pending one the armed decisions are exactly the ones that should be sent. */
+    /**
+     * THE SEVEN VERBS THAT WRITE, every one behind a wall — but not the SAME wall, and the split is the point rather
+     * than an inconsistency. The first three express a DECISION about a sender, which is the one thing a reader's
+     * organizer will carry out on its behalf, so they are open wherever there is an organizer to carry it out. The
+     * last four MOVE MAIL — a release out of Screened, a rescue out of Quarantine, a delete — and no organizer takes
+     * those from a reader in any mode. `flush` is deliberately outside both. It commits decisions ALREADY armed, so
+     * on a blocked reader there are none and wrapping it would only make a route change raise a sentence about
+     * nothing; on a pending one the armed decisions are exactly the ones that should be sent.
+     */
     decide: guard(decide),
     applyAll: guard(applyAll),
     markAllSpam: guard(markAllSpam),

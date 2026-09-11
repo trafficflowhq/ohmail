@@ -804,21 +804,18 @@ export function SettingsView({
   }, [notificationHost, showDelivery, t]);
 
   /**
-   * ── RECONCILE ON MOUNT, BECAUSE THE STORED INTENT IS ALREADY "ON" ────────────────────────
-   *
-   * The defaults are master-on and new-mail-on, so the ordinary first visit has an intent to be
-   * woken that NOTHING HAS ACTED ON: before this, a subscription was only ever created by a
-   * PRESS, and a reader whose browser had already granted permission got a pane that said yes to
-   * everything over a browser no server could reach. The same held for anybody upgrading into
-   * this build, which is everybody.
-   *
-   * Reconciling here also picks up the recoverable failures the sync now reports rather than
-   * swallows — a row that outlived its browser, a registration that did not land — so they are
-   * retried on the next visit instead of being permanent.
-   *
-   * `setDelivery` runs only for an outcome worth a sentence. That keeps a pane that reconciled
-   * normally from re-rendering, which matters beyond tidiness: an unconditional state write here
-   * makes every test that mounts this view without `act` print a React warning, and a suite that
+   * RECONCILE ON MOUNT, BECAUSE THE STORED INTENT IS ALREADY "ON": The defaults are master-on and new-mail-on, so the
+   * ordinary first visit has an intent to be woken that NOTHING HAS ACTED ON: before this, a subscription was only
+   * ever created by a PRESS, and a reader whose browser had already granted permission got a pane that said yes to
+   * everything over a browser no server could reach. The same held for anybody upgrading into this build, which is
+   * everybody. Reconciling here also picks up the recoverable failures the sync now reports rather than swallows — a
+   * row that outlived its browser, a registration that did not land — so they are retried on the next visit instead
+   * of being permanent. `setDelivery` runs only for an outcome worth a sentence.
+   */
+
+  /**
+   * That keeps a pane that reconciled normally from re-rendering, which matters beyond tidiness: an unconditional
+   * state write here makes every test that mounts this view without `act` print a React warning, and a suite that
    * prints warnings is one where a real one is not noticed.
    */
   useEffect(() => {

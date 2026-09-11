@@ -412,18 +412,16 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
     if (el) el.scrollTop = el.scrollTop + dir * READER_SCROLL_STEP;
   };
 
-  /* Two bindings per contested chord, gated to disjoint zones, so the `?` sheet shows the
-     label for the zone the reader is actually in — the dedup keeps the enabled one.
-
-     ── h / l ARE THE ARROWS' LATERAL TWINS (the ohmarchy keymap, Phase 1) ────────────────
-     The prototype's one-table grammar reads "h / l · ← / →: move tile focus", and the
-     letters ride HERE, beside the arrows they alias, rather than in a second table — same
-     zone gates, same handlers, so the pair cannot drift. Only the LATERAL axis gets
-     letters: j/k already walk the list from the views' own bindings (view scope, which
-     wins over these), so a vertical twin here would be a third opinion about what j is.
-     The letters obey the typing guard exactly as every bare key does — `h` in a field
-     types an h — which the arrows never needed; that asymmetry is why the reader-scroll
-     pair below has no letter twins (`inInput` scrolling is the arrows' alone). */
+  /**
+   * Two bindings per contested chord, gated to disjoint zones, so the `?` sheet shows the label for the zone the
+   * reader is actually in — the dedup keeps the enabled one. h / l ARE THE ARROWS' LATERAL TWINS (the ohmarchy
+   * keymap, Phase 1): The prototype's one-table grammar reads "h / l · ← / →: move tile focus", and the letters ride
+   * HERE, beside the arrows they alias, rather than in a second table — same zone gates, same handlers, so the pair
+   * cannot drift. Only the LATERAL axis gets letters: j/k already walk the list from the views' own bindings (view
+   * scope, which wins over these), so a vertical twin here would be a third opinion about what j is. The letters obey
+   * the typing guard exactly as every bare key does — `h` in a field types an h — which the arrows never needed; that
+   * asymmetry is why the reader-scroll pair below has no letter twins (`inInput` scrolling is the arrows' alone).
+   */
   const lateralTwins = (alias: "h" | "l") =>
     (b: KeyBinding): KeyBinding[] => [b, { ...b, chord: alias, inInput: false }];
   const left = lateralTwins("h");

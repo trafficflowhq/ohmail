@@ -463,21 +463,21 @@ export function deleteKeyBindings(input: {
   const noCursor = input.focused == null;
   const parked = noCursor ? ({ disabledReason: "no_cursor" } as const) : {};
   /**
-   * A HELD KEY IS ONE PRESS, AND A QUESTION ON SCREEN OWNS THE KEY. Both are `when` conditions,
-   * which is what makes them right rather than merely convenient:
-   *
-   *  · auto-repeat — Backspace repeats faster than any key somebody leans on, and without this a
-   *    resting finger walks a whole pile into Trash one window at a time, each toast replacing the
-   *    last so only the final one is still undoable. `d` carries the identical guard;
-   *  · the modal gate — it is a DOM read (`isModalOpen`), and a DOM read cannot be a `disabled`
-   *    flag: `disabled` is computed while React renders, and the More menu this is meant to catch
-   *    opens without the shell re-rendering at all. As a `when` it is evaluated at the keypress,
-   *    which is the only moment the answer is true of.
-   *
-   * A `false` here FALLS THROUGH to the next binding rather than consuming the key, so a press
-   * under an open dialog is not `preventDefault`ed and the dialog's own handling is untouched.
-   * That is also why neither is folded into `disabled`: the `?` sheet must keep listing the verb,
-   * because the key IS bound here — it is simply not the innermost thing being asked.
+   * A HELD KEY IS ONE PRESS, AND A QUESTION ON SCREEN OWNS THE KEY. Both are `when` conditions, which is what makes
+   * them right rather than merely convenient:
+   * · auto-repeat — Backspace repeats faster than any key somebody leans on, and without this a resting finger
+   *   walks a whole pile into Trash one window at a time, each toast replacing the last so only the final one is
+   *   still undoable. `d` carries the identical guard;
+   * · the modal gate — it is a DOM read (`isModalOpen`), and a DOM read cannot be a `disabled` flag: `disabled` is
+   *   computed while React renders, and the More menu this is meant to catch opens without the shell re-rendering at
+   *   all. As a `when` it is evaluated at the keypress, which is the only moment the answer is true of.
+   */
+
+  /**
+   * A `false` here FALLS THROUGH to the next binding rather than consuming the key, so a press under an open dialog
+   * is not `preventDefault`ed and the dialog's own handling is untouched. That is also why neither is folded into
+   * `disabled`: the `?` sheet must keep listing the verb, because the key IS bound here — it is simply not the
+   * innermost thing being asked.
    */
   const when = (e: KeyboardEvent) =>
     !e.repeat && !isModalOpen(e.view?.document ?? document);

@@ -108,16 +108,18 @@ export interface TrashWindowControl {
 }
 
 /**
- * WHAT THE SECTION SAYS, decided in one place. The order is the honesty: a stronger state is
- * never reported as a weaker one.
- *
- *  · `read_limited` OUTRANKS `empty` — zero rows beside a mailbox the server could not finish
- *    reading inside its budget is a read limit, not an empty folder;
- *  · `unavailable` is "there is no folder to read" — no mailbox this window serves, or every one
- *    of them without a native \Trash;
- *  · `empty` needs a DRAINED walk as well as zero rows: ohmail's own deletes are dropped from
- *    this population, so a page can arrive holding nothing for this section while older pages
- *    still hold rows. That case is `more_to_read`, which claims nothing and offers the press.
+ * WHAT THE SECTION SAYS, decided in one place. The order is the honesty: a stronger state is never reported as a
+ * weaker one.
+ * · `read_limited` OUTRANKS `empty` — zero rows beside a mailbox the server could not finish reading inside its
+ *   budget is a read limit, not an empty folder;
+ * · `unavailable` is "there is no folder to read" — no mailbox this window serves, or every one of them without a
+ *   native \Trash;
+ */
+
+/**
+ * · `empty` needs a DRAINED walk as well as zero rows: ohmail's own deletes are dropped from this population, so a
+ *   page can arrive holding nothing for this section while older pages still hold rows. That case is `more_to_read`,
+ *   which claims nothing and offers the press.
  */
 export type TrashLiveState =
   | { state: "loading" }

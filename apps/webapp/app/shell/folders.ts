@@ -139,20 +139,24 @@ export function folderMatches(path: string, query: string): boolean {
 }
 
 /**
- * THE FOLDER TAIL'S PER-ROW VERDICT — the reach-past's overlap predicate, pure so every branch
- * is testable (`older-mail.ts`'s `suppress` documents what each verdict does to the latch).
- *
- *  · the mirror does not hold the message → `"show"` (evicted, or genuinely older);
- *  · no folder scope, or the folder ENTITY absent from the mirror (the flag mid-toggle over an
- *    open URL) → `"hold"`: out of the tail, latches untouched — NOTHING is judged while the
- *    scope itself is not readable. An earlier revision judged the gap from the entity's
- *    last-known name; review retired it, because any move sequence that ends in a window
- *    prune before the entity returns erases its own evidence, and every policy that keeps
- *    latch state across the gap tells a lie in one direction or the other. The gap's END is
- *    the answer instead: the caller bumps the hook's `scopeEpoch` when the entity returns,
- *    dropping pages and latches so the tail re-earns its rows from the server;
- *  · the entity is PRESENT → the mirror's full word: in this folder `"hide"` (clears a latch —
- *    an observed return), elsewhere `"ban"` (an observed leave, latched).
+ * THE FOLDER TAIL'S PER-ROW VERDICT — the reach-past's overlap predicate, pure so every branch is testable
+ * (`older-mail.ts`'s `suppress` documents what each verdict does to the latch).
+ * · the mirror does not hold the message → `"show"` (evicted, or genuinely older);
+ */
+
+/**
+ * · no folder scope, or the folder ENTITY absent from the mirror (the flag mid-toggle over an open URL) → `"hold"`:
+ *   out of the tail, latches untouched — NOTHING is judged while the scope itself is not readable. An earlier
+ *   revision judged the gap from the entity's last-known name; review retired it, because any move sequence that ends
+ *   in a window prune before the entity returns erases its own evidence, and every policy that keeps latch state
+ *   across the gap tells a lie in one direction or the other. The gap's END is the answer instead: the caller bumps
+ *   the hook's `scopeEpoch` when the entity returns, dropping pages and latches so the tail re-earns its rows from
+ *   the server;
+ */
+
+/**
+ * · the entity is PRESENT → the mirror's full word: in this folder `"hide"` (clears a latch — an observed return),
+ *   elsewhere `"ban"` (an observed leave, latched).
  */
 export function folderTailVerdict(
   m: EngineMessage | undefined,

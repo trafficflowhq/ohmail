@@ -268,22 +268,20 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
 
     const tick = async (): Promise<void> => {
       if (cancelled) return;
-      /*
-       * ── A POLL IS A READ, AND A READ IS AN ACTION HERE ──────────────────────────────────
-       *
-       * Every button on this wizard asks whose browser this is before it acts. This loop did
-       * not, and it is the one thing on the screen that runs WITHOUT a press — repeatedly, for
-       * up to a minute, after a return from checkout. A sign-in in another tab between two
-       * ticks and the next one reads that account's subscription: if they have one, the line
-       * below advances this wizard to the mailbox step on the strength of somebody else's
-       * plan; if they do not, their plan state is rendered here.
-       *
-       * Distinct from the disclosed preflight-to-write window, which is about the gap between
-       * an ask and a write. This had no ask at all.
-       *
-       * A refusal ENDS the loop rather than retrying: `sameAccount` has already put the
-       * account-changed sentence on screen, and a poll that kept running behind it would
-       * eventually overwrite that with a plan state for whoever is signed in now.
+      /**
+       * A POLL IS A READ, AND A READ IS AN ACTION HERE: Every button on this wizard asks whose browser this is before
+       * it acts. This loop did not, and it is the one thing on the screen that runs WITHOUT a press — repeatedly, for
+       * up to a minute, after a return from checkout. A sign-in in another tab between two ticks and the next one
+       * reads that account's subscription: if they have one, the line below advances this wizard to the mailbox step
+       * on the strength of somebody else's plan; if they do not, their plan state is rendered here. Distinct from the
+       * disclosed preflight-to-write window, which is about the gap between an ask and a write. This had no ask at
+       * all.
+       */
+
+      /**
+       * A refusal ENDS the loop rather than retrying: `sameAccount` has already put the account-changed sentence on
+       * screen, and a poll that kept running behind it would eventually overwrite that with a plan state for whoever
+       * is signed in now.
        */
       if (!await sameAccount()) return;
       if (cancelled) return;
@@ -346,18 +344,14 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
         setFatal(t(needsInvite ? "expired" : "expiredOpen"));
         setFatalAction("signIn");
       } else if (code === "session_conflict") {
-        /*
-         * ── THE WINDOW BETWEEN THE ASK AND THE WRITE, CLOSED ON THE SERVER ──────────────────
-         *
-         * `sameAccount()` asks who this browser holds and then makes the request, and a session
-         * that changes between those two is not something this side can see. The server refuses
-         * that request outright — a live session and a credential that disagree are a `409
-         * session_conflict` — so what is left here is saying so in the same words the preflight
-         * uses, rather than rendering the raw sentence of an error the person cannot act on.
-         *
-         * No email in this one, deliberately: the refusal happened on the server and this client
-         * was never told whose session it collided with. Naming an account we did not read would
-         * be inventing the most load-bearing word in the sentence.
+        /**
+         * THE WINDOW BETWEEN THE ASK AND THE WRITE, CLOSED ON THE SERVER: `sameAccount()` asks who this browser holds
+         * and then makes the request, and a session that changes between those two is not something this side can
+         * see. The server refuses that request outright — a live session and a credential that disagree are a `409
+         * session_conflict` — so what is left here is saying so in the same words the preflight uses, rather than
+         * rendering the raw sentence of an error the person cannot act on. No email in this one, deliberately: the
+         * refusal happened on the server and this client was never told whose session it collided with. Naming an
+         * account we did not read would be inventing the most load-bearing word in the sentence.
          */
         setError(t("accountConflict"));
       } else if (code === "step_up_required") {

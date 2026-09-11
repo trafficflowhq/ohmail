@@ -121,16 +121,11 @@ export function dropLocalStorageKeys(prefixes: readonly string[]): LocalSweep {
     return { survivors, enumerated: true };
   } catch {
     /**
-     * ── AN UNREADABLE JAR IS NOT AN EMPTY ONE ────────────────────────────────────────────
-     *
-     * This returned `[]`, which the caller read as "nothing survived" — so a browser that
-     * refused to enumerate `localStorage` during a sign-out certified a clean browser while
-     * every draft, reply body and journalled decision sat there untouched, readable again the
-     * moment storage came back. The comment even said "nothing was ever cached there", which
-     * is a claim about a jar this call could not open.
-     *
-     * `enumerated: false` says what actually happened, and the caller refuses to call the
-     * browser clean on it.
+     * AN UNREADABLE JAR IS NOT AN EMPTY ONE: This returned `[]`, which the caller read as "nothing survived" — so a
+     * browser that refused to enumerate `localStorage` during a sign-out certified a clean browser while every draft,
+     * reply body and journalled decision sat there untouched, readable again the moment storage came back. The
+     * comment even said "nothing was ever cached there", which is a claim about a jar this call could not open.
+     * `enumerated: false` says what actually happened, and the caller refuses to call the browser clean on it.
      */
     return { survivors: [], enumerated: false };
   }

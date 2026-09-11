@@ -213,21 +213,19 @@ export class SyncAbortedError extends Error {
 const isAborted = (err: unknown): err is SyncAbortedError => err instanceof SyncAbortedError;
 
 /**
- * A READ was refused because this browser's session belongs to a different account than the
- * mirror on screen. Not a cancellation and not a network failure: a positive refusal.
- *
- * ── WHY IT IS ITS OWN CLASS AND NOT {@link SyncAbortedError} ────────────────────────────────
- *
- * `SyncAbortedError` means "the drain stopped between pages", and the scheduler's own catch
- * reads it that way — no failure count, no report, no retry armed. A body fetch, a search or a
- * page of older mail is none of those things: it is one request a person made, and it has to
- * surface to that person as a failure they can see rather than be swallowed as a cancellation
- * of a loop they never started. Reusing the sync class here would make the scheduler's catch
- * silently correct for the wrong reason and would put a false sentence ("aborted before the
- * next page") on a request that has no pages.
- *
- * Every consumer already has a path for a rejected read — these are HTTP calls that can 500 —
- * so this arrives as the failure state that path already renders.
+ * A READ was refused because this browser's session belongs to a different account than the mirror on screen. Not a
+ * cancellation and not a network failure: a positive refusal. WHY IT IS ITS OWN CLASS AND NOT {@link
+ * SyncAbortedError}: `SyncAbortedError` means "the drain stopped between pages", and the scheduler's own catch reads
+ * it that way — no failure count, no report, no retry armed. A body fetch, a search or a page of older mail is none
+ * of those things: it is one request a person made, and it has to surface to that person as a failure they can see
+ * rather than be swallowed as a cancellation of a loop they never started. Reusing the sync class here would make the
+ * scheduler's catch silently correct for the wrong reason and would put a false sentence ("aborted before the next
+ * page") on a request that has no pages.
+ */
+
+/**
+ * Every consumer already has a path for a rejected read — these are HTTP calls that can 500 — so this arrives as the
+ * failure state that path already renders.
  */
 export class ForeignSessionError extends Error {
   readonly code = "foreign_session";
@@ -669,19 +667,15 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           ? { searchServer: gatedRead(adapter.searchServer.bind(adapter), "a server-side search") }
           : {}),
 
-        /*
-         * ── THE ARCHIVE'S ADDRESS ARM — the same door, forwarded on the same terms ─────────
-         *
-         * `GET /search?address=&direction=from`, behind the address view. Every argument the
-         * paragraph above makes applies unchanged: one request per opened view, from a tab the
-         * user is looking at; and the same identity half, because this too asks the server for a
-         * LIST of ids rather than for something keyed on what the mirror already holds.
-         *
-         * SPREAD, and forwarded SEPARATELY from `searchServer` rather than beside it in one
-         * condition. Two capabilities, resolved independently by the engine, and an adapter can
-         * legitimately have one: pairing them here would define this one on the strength of the
-         * other being present, which is exactly the shape that makes a surface claim an archive
-         * it cannot reach — and it would do it only on the live path.
+        /**
+         * THE ARCHIVE'S ADDRESS ARM — the same door, forwarded on the same terms: `GET
+         * /search?address=&direction=from`, behind the address view. Every argument the paragraph above makes applies
+         * unchanged: one request per opened view, from a tab the user is looking at; and the same identity half,
+         * because this too asks the server for a LIST of ids rather than for something keyed on what the mirror
+         * already holds. SPREAD, and forwarded SEPARATELY from `searchServer` rather than beside it in one condition.
+         * Two capabilities, resolved independently by the engine, and an adapter can legitimately have one: pairing
+         * them here would define this one on the strength of the other being present, which is exactly the shape that
+         * makes a surface claim an archive it cannot reach — and it would do it only on the live path.
          */
         ...(adapter.searchAddressServer
           ? {
@@ -848,22 +842,15 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           ? { listMessages: gatedRead(adapter.listMessages.bind(adapter), "a page of older mail") }
           : {}),
 
-        /*
-         * ── TRASH — FORWARDED, GATED, AND SPREAD, both of them ────────────────────────────
-         *
-         * `listMessages`' rule three times over, and the reasons are the same three:
-         *
-         * SPREAD: `OhmailEngine.trashAvailable()` decides whether the palette offers the row and
-         * whether the chord works at all. Defining these unconditionally would put a Trash
-         * destination in the demo's palette over fixtures that have no server to ask.
-         *
-         * GATED: a Trash page is somebody's deleted mail — the most private list in the product
-         * — and the restore MOVES it. A foreign session must reach neither.
-         *
-         * TWO LINES: the engine binds the pair independently, so forwarding one and not the
-         * other is a coherent program. `trashAvailable()` asks for both, so a half-forward
-         * turns the feature off rather than half on — which is the safe direction and is why the
-         * gate reports the pair.
+        /**
+         * TRASH — FORWARDED, GATED, AND SPREAD, both of them: `listMessages`' rule three times over, and the reasons
+         * are the same three: SPREAD: `OhmailEngine.trashAvailable()` decides whether the palette offers the row and
+         * whether the chord works at all. Defining these unconditionally would put a Trash destination in the demo's
+         * palette over fixtures that have no server to ask. GATED: a Trash page is somebody's deleted mail — the most
+         * private list in the product — and the restore MOVES it. A foreign session must reach neither. TWO LINES:
+         * the engine binds the pair independently, so forwarding one and not the other is a coherent program.
+         * `trashAvailable()` asks for both, so a half-forward turns the feature off rather than half on — which is
+         * the safe direction and is why the gate reports the pair.
          */
         ...(adapter.listTrash
           ? { listTrash: gatedRead(adapter.listTrash.bind(adapter), "your deleted mail") }
@@ -1340,18 +1327,14 @@ export function startSyncScheduler(
 
   const connectStream = (): void => {
     if (!wakeFactory || streamDead || stopped || stream !== null || !visible()) return;
-    /*
-     * ── AND NOT WHILE THIS MIRROR'S IDENTITY DOES NOT HOLD ────────────────────────────────
-     *
-     * `/events` is a SESSION-authenticated stream and the server emits the answering account's
-     * sequence on it. Opened without asking, a stale shell for A held a live subscription to B's
-     * activity: content-free as mail goes, and still that account's metadata arriving in a window
-     * that is not theirs, on a connection nobody in it opened.
-     *
-     * The gated tick downstream is what stops the mail being merged, which is why this is a
-     * narrowing rather than a repair of a leak. It is also why it belongs here: the stream is the
-     * one thing in this loop that is not a request, so nothing else in the file was ever going to
-     * ask the question for it.
+    /**
+     * AND NOT WHILE THIS MIRROR'S IDENTITY DOES NOT HOLD: `/events` is a SESSION-authenticated stream and the server
+     * emits the answering account's sequence on it. Opened without asking, a stale shell for A held a live
+     * subscription to B's activity: content-free as mail goes, and still that account's metadata arriving in a window
+     * that is not theirs, on a connection nobody in it opened. The gated tick downstream is what stops the mail being
+     * merged, which is why this is a narrowing rather than a repair of a leak. It is also why it belongs here: the
+     * stream is the one thing in this loop that is not a request, so nothing else in the file was ever going to ask
+     * the question for it.
      */
     if (!identityHolds()) return;
     try {
@@ -1385,18 +1368,14 @@ export function startSyncScheduler(
       s.addEventListener("error", () => {
         if (stream !== s || stopped) return;
         streamOpen = false;
-        /*
-         * ── AND THIS IS WHERE THE RECONNECT IS ACTUALLY PREVENTED ─────────────────────────
-         *
-         * The error arm below deliberately leaves a CONNECTING stream alive, because that is
-         * the ordinary transient failure and `EventSource` recovers from it on its own. That
-         * recovery is exactly the hazard when the jar has changed in the meantime: the object
-         * re-dials with the new session and the server binds the connection to that account.
-         *
-         * The safety poll's tick closes a contradicted stream, but it runs on the relaxed
-         * cadence a tab with a live stream keeps — the reconnect lands long before it. So the
-         * question is asked at the moment the reconnect is about to be armed. Closing here is
-         * what makes the two checks above defence in depth rather than the only defence.
+        /**
+         * AND THIS IS WHERE THE RECONNECT IS ACTUALLY PREVENTED: The error arm below deliberately leaves a CONNECTING
+         * stream alive, because that is the ordinary transient failure and `EventSource` recovers from it on its own.
+         * That recovery is exactly the hazard when the jar has changed in the meantime: the object re-dials with the
+         * new session and the server binds the connection to that account. The safety poll's tick closes a
+         * contradicted stream, but it runs on the relaxed cadence a tab with a live stream keeps — the reconnect
+         * lands long before it. So the question is asked at the moment the reconnect is about to be armed. Closing
+         * here is what makes the two checks above defence in depth rather than the only defence.
          */
         if (!identityHolds()) {
           closeStream();
@@ -1522,42 +1501,37 @@ export function startSyncScheduler(
         // violation that made the omission possible in the first place.
         await engine.hydrate();
         hydrated = true;
-        // ── RE-ASK AFTER THE AWAIT, BEFORE THE FIRST PAID REQUEST ──────────────────────
-        //
-        // `store.load()` opens IndexedDB and reads the whole mirror; on a cold, large account
-        // that is hundreds of milliseconds to seconds, and it is the ONE await this loop makes
-        // before its first `/sync`. The scheduler can be TORN DOWN underneath it — a live→demo
-        // navigation swaps the engine and runs this cleanup, and the discarded LIVE engine
-        // then called `/sync` from behind a page whose whole promise is that nothing leaves
-        // the tab. (This check used to cover a mid-hydration HIDE as well; a hidden tab is
-        // now entitled to its drain, so teardown and terminal are what remain.)
-        //
-        // Hydration is kept (`hydrated` stays true) — the mirror is loaded and re-reading it
-        // on the next wake would be pure waste. Only the REQUEST is withheld.
-        // The CADENCE half only — identity is answered below, where it can say which of its
-        // two closed states this is.
+        // RE-ASK AFTER THE AWAIT, BEFORE THE FIRST PAID REQUEST: `store.load()` opens IndexedDB and reads the whole
+        // mirror; on a cold, large account that is hundreds of milliseconds to seconds, and it is the ONE await this
+        // loop makes before its first `/sync`. The scheduler can be TORN DOWN underneath it — a live→demo navigation
+        // swaps the engine and runs this cleanup, and the discarded LIVE engine then called `/sync` from behind a
+        // page whose whole promise is that nothing leaves the tab. (This check used to cover a mid-hydration HIDE as
+        // well; a hidden tab is now entitled to its drain, so teardown and terminal are what remain.) Hydration is
+        // kept (`hydrated` stays true) — the mirror is loaded and re-reading it on the next wake would be pure waste.
+        // Only the REQUEST is withheld.
+
+        // The CADENCE half only — identity is answered below, where it can say which of its two closed states this
+        // is.
         if (!mayRunNow()) {
           disarm();
           return;
         }
       }
-      /* ── WHOSE MAILBOX IS THIS, ASKED BEFORE EVERY DRAIN ─────────────────────────────
-       *
-       * On EVERY tick, not only the first. The check above runs inside `if (!hydrated)`, so
-       * from the second tick onward nothing stood between the timer and `syncOnce()` — and
-       * `syncOnce` reaches for `/sync/snapshot` first, which is deliberately UNGATED (a page-1
-       * throw latches the route unusable), so page one would leave the browser whatever the
-       * per-page gate said afterwards.
-       *
-       * The two closed answers are told apart because they mean different things to a person:
-       *
-       *  · `contradicted` — the jar names another account. That is positive evidence this tab
-       *    is no longer the one it was, so the loop LATCHES terminal and the strip says so.
-       *    This is the only cover for a `ready` tab whose browser signs into another account
-       *    mid-use: the confirm's comparison answers once, and nothing re-runs it on a live binding.
-       *    `wake()`'s terminal probe re-reads identity, so restoring the cookie self-heals.
-       *  · `unconfirmed` — nobody has said yet. Nothing is wrong, nothing is syncing, and the
-       *    strip may not claim either: it disarms QUIETLY and waits for `onOpen`.
+      /**
+       * WHOSE MAILBOX IS THIS, ASKED BEFORE EVERY DRAIN: On EVERY tick, not only the first. The check above runs
+       * inside `if (!hydrated)`, so from the second tick onward nothing stood between the timer and `syncOnce()` —
+       * and `syncOnce` reaches for `/sync/snapshot` first, which is deliberately UNGATED (a page-1 throw latches the
+       * route unusable), so page one would leave the browser whatever the per-page gate said afterwards. The two
+       * closed answers are told apart because they mean different things to a person:
+       */
+
+      /**
+       * · `contradicted` — the jar names another account. That is positive evidence this tab is no longer the one
+       *   it was, so the loop LATCHES terminal and the strip says so. This is the only cover for a `ready` tab whose
+       *   browser signs into another account mid-use: the confirm's comparison answers once, and nothing re-runs it
+       *   on a live binding. `wake()`'s terminal probe re-reads identity, so restoring the cookie self-heals.
+       * · `unconfirmed` — nobody has said yet. Nothing is wrong, nothing is syncing, and the strip may not claim
+       *   either: it disarms QUIETLY and waits for `onOpen`.
        */
       const owns = gate?.identity() ?? "holds";
       if (owns === "contradicted") {

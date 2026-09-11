@@ -290,15 +290,13 @@ function preview(body: string): string {
   return line.length > 140 ? `${line.slice(0, 140)}…` : line;
 }
 
-/* WHEN IT WAS LAST TOUCHED — through `displayTime`, which is the shell's one stamp.
- *
- * This was a private `stamp()` here: its own day-banding, its own hardcoded English month table,
- * and its own `getUTC*` reads. It therefore carried both defects the shared stamp had already had
- * fixed — a German reader saw "Aug", and every reader saw the server's clock rather than their
- * own — and it would have gone on carrying them, because a formatter that is not the seam is not
- * touched when the seam is. That is the whole argument for there being exactly one.
- *
- * What changed on screen: a draft touched within the last six days now names its weekday ("Sat")
- * where it used to give a date ("8 Aug"). That is the same rule every other list in the product
- * follows, and it is coarser rather than finer, which is what the old comment here was protecting.
+/**
+ * WHEN IT WAS LAST TOUCHED — through `displayTime`, which is the shell's one stamp. This was a private `stamp()`
+ * here: its own day-banding, its own hardcoded English month table, and its own `getUTC*` reads. It therefore carried
+ * both defects the shared stamp had already had fixed — a German reader saw "Aug", and every reader saw the server's
+ * clock rather than their own — and it would have gone on carrying them, because a formatter that is not the seam is
+ * not touched when the seam is. That is the whole argument for there being exactly one. What changed on screen: a
+ * draft touched within the last six days now names its weekday ("Sat") where it used to give a date ("8 Aug"). That
+ * is the same rule every other list in the product follows, and it is coarser rather than finer, which is what the
+ * old comment here was protecting.
  */

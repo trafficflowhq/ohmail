@@ -73,22 +73,19 @@ const EN = {
   darkOriginalTitle: "Show this message in its original colours",
   darkAdaptTitle: "Adapt this message to the dark theme",
   /**
-   * ── THE WAY BACK TO THE SENDER'S OWN RENDERING ─────────────────────────────────────────
-   *
-   * Mail that declares no canvas is set in the app's type over the message's TEXT part, which
-   * draws no pictures at all. For most mail that is the better rendering and nothing is lost —
-   * but "nothing is lost" is a claim about the AVERAGE message, and this control is what makes
-   * it safe to be wrong about a particular one. A photograph a sender embedded, a table whose
-   * columns carry the meaning, a receipt whose layout IS the information: one press and the
-   * message is drawn exactly as it was sent, in the frame, with the sandbox and the image
-   * blocking unchanged.
-   *
-   * It replaces an earlier attempt that tried to be clever — messages whose remote pictures the
-   * reader had consented to were kept in the frame automatically. That reverted the whole
-   * default on any account where remote images load by default, because consent is then true
-   * from the first paint: measured on a live account, every message in a four-message thread
-   * came back framed. A DECISION THE READER MAKES cannot be inferred from a setting they made
-   * once about something else.
+   * THE WAY BACK TO THE SENDER'S OWN RENDERING: Mail that declares no canvas is set in the app's type over the
+   * message's TEXT part, which draws no pictures at all. For most mail that is the better rendering and nothing is
+   * lost — but "nothing is lost" is a claim about the AVERAGE message, and this control is what makes it safe to be
+   * wrong about a particular one. A photograph a sender embedded, a table whose columns carry the meaning, a receipt
+   * whose layout IS the information: one press and the message is drawn exactly as it was sent, in the frame, with
+   * the sandbox and the image blocking unchanged. It replaces an earlier attempt that tried to be clever — messages
+   * whose remote pictures the reader had consented to were kept in the frame automatically.
+   */
+
+  /**
+   * That reverted the whole default on any account where remote images load by default, because consent is then true
+   * from the first paint: measured on a live account, every message in a four-message thread came back framed. A
+   * DECISION THE READER MAKES cannot be inferred from a setting they made once about something else.
    */
   design: "Show original",
   designTitle: "Show this message with the sender's own formatting",
@@ -167,20 +164,18 @@ const ALLOWED_TAGS = [
 const URL_ATTR = ["href", "src", "srcset", "background"];
 
 /**
- * The presentational vocabulary bulk mail is actually written in. No `on*` in it.
- *
- * ── THESE MUST BE DECLARED URI-SAFE, AND FINDING THAT OUT COST AN EXPERIMENT ────────────
- *
- * DOMPurify runs `ALLOWED_URI_REGEXP` against the value of EVERY attribute except the ones
- * in its `URI_SAFE_ATTRIBUTES` set (`alt`, `class`, `id`, `style`, `title`, `role`, …). With
- * {@link SAFE_HREF} as that regexp — which is strict, and deliberately so — `width="100%"`,
- * `align="center"`, `bgcolor="#fff"` and `cellpadding="0"` all FAIL it and are stripped.
- *
- * Measured against dompurify 3.4.13: `<table width="100%" align="center" cellpadding="0">`
- * came back as `<table>`, and every fixed-width mail collapsed to a single unstyled column
- * while every security assertion stayed green. That is the failure shape this repo keeps
- * naming — a change that is correct about safety and silently wrong about the product — so
- * it is written down here rather than left as a list somebody has to re-derive.
+ * The presentational vocabulary bulk mail is actually written in. No `on*` in it. THESE MUST BE DECLARED URI-SAFE,
+ * AND FINDING THAT OUT COST AN EXPERIMENT: DOMPurify runs `ALLOWED_URI_REGEXP` against the value of EVERY attribute
+ * except the ones in its `URI_SAFE_ATTRIBUTES` set (`alt`, `class`, `id`, `style`, `title`, `role`, …). With {@link
+ * SAFE_HREF} as that regexp — which is strict, and deliberately so — `width="100%"`, `align="center"`,
+ * `bgcolor="#fff"` and `cellpadding="0"` all FAIL it and are stripped. Measured against dompurify 3.4.13: `<table
+ * width="100%" align="center" cellpadding="0">` came back as `<table>`, and every fixed-width mail collapsed to a
+ * single unstyled column while every security assertion stayed green.
+ */
+
+/**
+ * That is the failure shape this repo keeps naming — a change that is correct about safety and silently wrong about
+ * the product — so it is written down here rather than left as a list somebody has to re-derive.
  */
 const PRESENTATION_ATTR = [
   "alt", "title", "width", "height", "align", "valign", "border", "cellpadding",
@@ -880,17 +875,13 @@ export function textDisagreesWithHref(text: string, host: string): boolean {
 // ── how light is this mail? ────────────────────────────────────────────────────────────
 
 /**
- * ── WHY THE DARK RENDERING HAS TO ASK THIS AT ALL ───────────────────────────────────────
- *
- * The dark rendering is one filter — `invert(1) hue-rotate(180deg)` — and a filter has no
- * opinion about what it is given. Applied to a mail that is ALREADY dark it produces a light
- * one, so a reader in a dark theme gets a white flash from exactly the senders who took the
- * trouble to design for dark. That is not a rough edge; it is the transform doing its job to
- * the wrong input, and no amount of tuning the filter fixes it.
- *
- * So the filter is gated on a cheap reading of the mail's own paper: invert what is light,
- * leave alone what is not. Everything below exists to answer that one question from the
- * document this file already has in its hands, and nothing else reads it.
+ * WHY THE DARK RENDERING HAS TO ASK THIS AT ALL: The dark rendering is one filter — `invert(1) hue-rotate(180deg)` —
+ * and a filter has no opinion about what it is given. Applied to a mail that is ALREADY dark it produces a light one,
+ * so a reader in a dark theme gets a white flash from exactly the senders who took the trouble to design for dark.
+ * That is not a rough edge; it is the transform doing its job to the wrong input, and no amount of tuning the filter
+ * fixes it. So the filter is gated on a cheap reading of the mail's own paper: invert what is light, leave alone what
+ * is not. Everything below exists to answer that one question from the document this file already has in its hands,
+ * and nothing else reads it.
  */
 
 /**
@@ -1110,21 +1101,20 @@ export function mailIsLight(bg: Rgb | null): boolean {
 export const NEUTRAL_CHROMA = 12;
 
 /**
- * ── THE PAPER ACTUALLY PAINTED, WITH A NEAR-NEUTRAL LIGHT GROUND CLAMPED TO THE APP'S WHITE ─
- *
- * {@link effectiveBackground} reads what a mail DECLARES; this decides what to PAINT it on, and
- * the two are kept apart deliberately — the declared value still drives {@link mailIsLight} and
- * the dark-viewing seam untouched, so the inversion tests keep asserting the real colour.
- *
- * A letter that declares a faint grey/off-white page is not asking the reader to keep that
- * grey; it is the sender's template, and painting the frame's paper grey puts a dull sheet
- * behind a white letter. So a paper that is BOTH light (above the inversion threshold) AND
- * effectively colourless (chroma within {@link NEUTRAL_CHROMA}) becomes `null` — the app's own
- * white, the same default a mail that declares no background at all is drawn on.
- *
- * Two papers keep their ground: a DELIBERATE colour (chroma past the band — a tinted card, a
- * brand ground) and a DARK canvas (a sender who drew a dark page). Only the near-white-grey
- * middle is dropped. `null` in, `null` out: a mail that declared nothing is unchanged.
+ * ── THE PAPER ACTUALLY PAINTED, WITH A NEAR-NEUTRAL LIGHT GROUND CLAMPED TO THE APP'S WHITE ─ {@link
+ * effectiveBackground} reads what a mail DECLARES; this decides what to PAINT it on, and the two are kept apart
+ * deliberately — the declared value still drives {@link mailIsLight} and the dark-viewing seam untouched, so the
+ * inversion tests keep asserting the real colour. A letter that declares a faint grey/off-white page is not asking
+ * the reader to keep that grey; it is the sender's template, and painting the frame's paper grey puts a dull sheet
+ * behind a white letter. So a paper that is BOTH light (above the inversion threshold) AND effectively colourless
+ * (chroma within {@link NEUTRAL_CHROMA}) becomes `null` — the app's own white, the same default a mail that declares
+ * no background at all is drawn on.
+ */
+
+/**
+ * Two papers keep their ground: a DELIBERATE colour (chroma past the band — a tinted card, a brand ground) and a DARK
+ * canvas (a sender who drew a dark page). Only the near-white-grey middle is dropped. `null` in, `null` out: a mail
+ * that declared nothing is unchanged.
  */
 export function clampedPaper(bg: Rgb | null): Rgb | null {
   if (bg === null) return null;
@@ -2354,25 +2344,19 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
       }
       if (REMOTE_URL.test(src)) {
         record(src, "img", pixel);
-        // ── A BEACON IS NEVER FETCHED, NOT EVEN AFTER CONSENT, NOT EVEN THROUGH THE PROXY ──
-        //
-        // Found by driving a real browser at a live newsletter with consent granted: the
-        // beacon went through the proxy alongside the message's real images. That is not a
-        // leak of the READER — the proxy's url-only signature means their IP never travels —
-        // but the ESP still learns that this message was opened, at that minute, because
-        // somebody asked. "Show images" is a request for the pictures; nobody consents to a
-        // beacon, and there is no image behind one to show. So `pixel` overrides `proxy`.
-        //
-        // It is decided from the two signals in the message itself ({@link declaresPixel},
-        // {@link BEACON_PATH}) and it can therefore be wrong in one direction: a 1×1 image
+        // A BEACON IS NEVER FETCHED, NOT EVEN AFTER CONSENT, NOT EVEN THROUGH THE PROXY: Found by driving a real
+        // browser at a live newsletter with consent granted: the beacon went through the proxy alongside the
+        // message's real images. That is not a leak of the READER — the proxy's url-only signature means their IP
+        // never travels — but the ESP still learns that this message was opened, at that minute, because somebody
+        // asked. "Show images" is a request for the pictures; nobody consents to a beacon, and there is no image
+        // behind one to show. So `pixel` overrides `proxy`. It is decided from the two signals in the message itself
+        // ({@link declaresPixel}, {@link BEACON_PATH}) and it can therefore be wrong in one direction: a 1×1 image
         // that is genuinely a spacer stays blank. That costs a reader nothing.
-        //
-        // ── UNLESS THE ACCOUNT SAID OTHERWISE (mail 0072) ──────────────────────────────────
-        //
-        // `loadPixels` is the reader's own switch, off by default, and it lifts exactly this
-        // override: a classified beacon then takes the proxy like any picture. It cannot widen
-        // anything else — with no proxy it is inert, and the CSP still admits only the proxy's
-        // own path, so a beacon that reached the document by another route fetches nothing.
+
+        // UNLESS THE ACCOUNT SAID OTHERWISE (mail 0072): `loadPixels` is the reader's own switch, off by default, and
+        // it lifts exactly this override: a classified beacon then takes the proxy like any picture. It cannot widen
+        // anything else — with no proxy it is inert, and the CSP still admits only the proxy's own path, so a beacon
+        // that reached the document by another route fetches nothing.
         if (proxy && (!pixel || loadPixels)) {
           node.setAttribute("src", proxy(src));
         } else {
@@ -2534,38 +2518,30 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
       ALLOWED_ATTR,
       ALLOWED_URI_REGEXP: SAFE_HREF,
       ADD_URI_SAFE_ATTR: PRESENTATION_ATTR,
-      // ── `FORCE_BODY` IS WHY THE SENDER'S STYLESHEET SURVIVES AT ALL ──────────────────
-      //
-      // Without it, DOMPurify's own `DOMParser` pass hoists a leading `<style>` into
-      // `<head>` — the html parser's ordinary behaviour — and DOMPurify returns
-      // `body.innerHTML`, so the stylesheet is silently gone. Measured against dompurify
-      // 3.4.13: `<style>.a{color:red}</style><p>hi</p>` sanitized to `<p>hi</p>` under
-      // FOUR different configurations, including one that named `style` in `ALLOWED_TAGS`
-      // and emptied `FORBID_CONTENTS`. With `FORCE_BODY: true` the same input keeps the
-      // style. It is the difference between "mail renders like mail" and "every designed
-      // message arrives as a single unstyled column", and no security assertion notices.
-      //
-      // Safe here for the reason the whole shape is safe: the stylesheet lands in a
-      // sandboxed frame with `default-src 'none'`, where it can neither fetch nor escape.
-      // DOMPurify's own mXSS rule still removes a `<style>` whose text contains element
-      // markup (measured: `<style><img src=x onerror=…></style>` → empty string) — and since
-      // the pre-pass above, the text that rule inspects is the NEUTRALISED text, which is the
-      // text the frame is going to get. Before, it inspected a string nobody shipped.
+      // `FORCE_BODY` IS WHY THE SENDER'S STYLESHEET SURVIVES AT ALL: Without it, DOMPurify's own `DOMParser` pass
+      // hoists a leading `<style>` into `<head>` — the html parser's ordinary behaviour — and DOMPurify returns
+      // `body.innerHTML`, so the stylesheet is silently gone. Measured against dompurify 3.4.13:
+      // `<style>.a{color:red}</style><p>hi</p>` sanitized to `<p>hi</p>` under FOUR different configurations,
+      // including one that named `style` in `ALLOWED_TAGS` and emptied `FORBID_CONTENTS`. With `FORCE_BODY: true` the
+      // same input keeps the style. It is the difference between "mail renders like mail" and "every designed message
+      // arrives as a single unstyled column", and no security assertion notices.
+
+      // Safe here for the reason the whole shape is safe: the stylesheet lands in a sandboxed frame with `default-src
+      // 'none'`, where it can neither fetch nor escape. DOMPurify's own mXSS rule still removes a `<style>` whose
+      // text contains element markup (measured: `<style><img src=x onerror=…></style>` → empty string) — and since
+      // the pre-pass above, the text that rule inspects is the NEUTRALISED text, which is the text the frame is going
+      // to get. Before, it inspected a string nobody shipped.
       FORCE_BODY: true,
-      // ── `ALLOW_DATA_ATTR: false` IS THE GATE ON MARKER FORGERY, AND IT IS THE ONLY ONE ──
-      //
-      // Everything this file marks up with — `data-ohmail-host`, `data-ohmail-elsewhere`,
-      // `data-ohmail-inert`, `target`, `rel` — is written by the post-pass, which runs AFTER
-      // DOMPurify has filtered every attribute, so none of them needs to be allowed here.
-      // A SENDER'S copy of them must not survive: `<a href="mailto:x@y" data-ohmail-host=
-      // A `mailto:` has no host, so the post-pass cannot overwrite a forged
-      // `data-ohmail-host` on one — this line is the ONLY thing that
-      // refuses it, and the post-pass deliberately does not clear markers
-      // it did not set: a second removal would leave this flag unwatchable
-      // (deleting either would keep the suite green). Measured: adding
-      // `ADD_ATTR: ["data-ohmail-host", "target"]` leaves the suite GREEN
-      // (the post-pass overwrites both on any http(s) link); flipping THIS
-      // to `true` goes red. The mutation in `test/message-body.test.ts` is
+      // `ALLOW_DATA_ATTR: false` IS THE GATE ON MARKER FORGERY, AND IT IS THE ONLY ONE: Everything this file marks up
+      // with — `data-ohmail-host`, `data-ohmail-elsewhere`, `data-ohmail-inert`, `target`, `rel` — is written by the
+      // post-pass, which runs AFTER DOMPurify has filtered every attribute, so none of them needs to be allowed here.
+      // A SENDER'S copy of them must not survive: `<a href="mailto:x@y" data-ohmail-host= A `mailto:` has no host, so
+      // the post-pass cannot overwrite a forged `data-ohmail-host` on one — this line is the ONLY thing that refuses
+      // it, and the post-pass deliberately does not clear markers it did not set: a second removal would leave this
+      // flag unwatchable (deleting either would keep the suite green).
+
+      // Measured: adding `ADD_ATTR: ["data-ohmail-host", "target"]` leaves the suite GREEN (the post-pass overwrites
+      // both on any http(s) link); flipping THIS to `true` goes red. The mutation in `test/message-body.test.ts` is
       // therefore on this flag, and the fixture is a `mailto:`.
       ALLOW_DATA_ATTR: false,
       ALLOW_ARIA_ATTR: true,
@@ -2978,17 +2954,13 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
 `;
 
 /**
- * Assemble the whole `srcdoc`. A pure string function on purpose: it is what the jsdom
- * tests assert on, while the live browser test asserts on what a real engine does with it.
- *
- * ── `dark` IS ONE ATTRIBUTE AND NOTHING ELSE ────────────────────────────────────────────
- *
- * The dark transform lives entirely in {@link FRAME_CSS}, gated on `:root[data-ohmail-dark]`.
- * All this option does is stamp that attribute on the root element, so the light and dark
- * documents are byte-identical apart from it — which is the property that lets the live flip
- * be a `toggleAttribute` on the frame's own `documentElement` rather than a rebuilt srcdoc.
- * `test/message-body.test.ts` pins that: strip the attribute from the dark output and it must equal
- * the light output exactly, so a dark path that wrapped or re-sheeted the body would go red.
+ * Assemble the whole `srcdoc`. A pure string function on purpose: it is what the jsdom tests assert on, while the
+ * live browser test asserts on what a real engine does with it. `dark` IS ONE ATTRIBUTE AND NOTHING ELSE: The dark
+ * transform lives entirely in {@link FRAME_CSS}, gated on `:root[data-ohmail-dark]`. All this option does is stamp
+ * that attribute on the root element, so the light and dark documents are byte-identical apart from it — which is the
+ * property that lets the live flip be a `toggleAttribute` on the frame's own `documentElement` rather than a rebuilt
+ * srcdoc. `test/message-body.test.ts` pins that: strip the attribute from the dark output and it must equal the light
+ * output exactly, so a dark path that wrapped or re-sheeted the body would go red.
  */
 export function buildMailDocument(
   bodyHtml: string,
@@ -3311,17 +3283,13 @@ export function MessageBody({
   const [ready, setReady] = useState(false);
 
   /**
-   * ── DARK VIEWING — READ THE THEME, LET THE READER OVERRIDE IT PER MESSAGE ────────────────
-   *
-   * `useOptionalTheme` and not `useTheme`: this component renders bare (the desktop shell,
-   * `test/message-body.test.ts`), and `null` there means light, the same default the provider
-   * itself starts from. The transform only ever engages in a dark theme.
-   *
-   * A message can be dropped back to its original light rendering — a dark-mode invert is a
-   * lightness transform, and some mail (a poster, a logo-heavy newsletter) is worse for it.
-   * That decision is per message and remembered: `usePersistedIdSet` holds the ids the reader
-   * chose to keep original, in one capped key. Without a `messageId` the override is
-   * session-only, which is the right amount for a surface that cannot name the message.
+   * DARK VIEWING — READ THE THEME, LET THE READER OVERRIDE IT PER MESSAGE: `useOptionalTheme` and not `useTheme`:
+   * this component renders bare (the desktop shell, `test/message-body.test.ts`), and `null` there means light, the
+   * same default the provider itself starts from. The transform only ever engages in a dark theme. A message can be
+   * dropped back to its original light rendering — a dark-mode invert is a lightness transform, and some mail (a
+   * poster, a logo-heavy newsletter) is worse for it. That decision is per message and remembered:
+   * `usePersistedIdSet` holds the ids the reader chose to keep original, in one capped key. Without a `messageId` the
+   * override is session-only, which is the right amount for a surface that cannot name the message.
    */
   const theme = useOptionalTheme();
   const themeDark = theme?.resolved === "dark";
@@ -3336,17 +3304,13 @@ export function MessageBody({
     [messageId, overrides],
   );
   /**
-   * ── "SHOW ORIGINAL" — THE FRAME, ON REQUEST, FOR MAIL THAT DECLARES NO CANVAS ────────────
-   *
-   * SESSION-ONLY AND PER MOUNT, which is the opposite of the dark override above and is
-   * deliberate. The dark choice is about a PROPERTY OF THE SENDER — their poster inverts badly,
-   * and it will invert badly every time — so it is remembered across reloads. This one is about
-   * a moment: "I want to see how this particular message was laid out, now". Persisting it would
-   * accumulate a set of messages that quietly opt out of the app's own typography for ever,
-   * which is the default this component was just rearranged to establish.
-   *
-   * It resets when `messageId` changes so that selecting the next message does not inherit the
-   * last one's answer.
+   * "SHOW ORIGINAL" — THE FRAME, ON REQUEST, FOR MAIL THAT DECLARES NO CANVAS: SESSION-ONLY AND PER MOUNT, which is
+   * the opposite of the dark override above and is deliberate. The dark choice is about a PROPERTY OF THE SENDER —
+   * their poster inverts badly, and it will invert badly every time — so it is remembered across reloads. This one is
+   * about a moment: "I want to see how this particular message was laid out, now". Persisting it would accumulate a
+   * set of messages that quietly opt out of the app's own typography for ever, which is the default this component
+   * was just rearranged to establish. It resets when `messageId` changes so that selecting the next message does not
+   * inherit the last one's answer.
    */
   const [showOriginal, setShowOriginal] = useState(false);
   useEffect(() => { setShowOriginal(false); }, [messageId]);
@@ -3371,19 +3335,19 @@ export function MessageBody({
   useEffect(() => { setMounted(true); }, []);
 
   /**
-   * ── THE POLICY AND THE REWRITE ARE THE SAME DECISION, SO THEY READ ONE VALUE ────────────
-   *
-   * {@link proxyImgSource} answers "can this file state, truthfully, where a consented image
-   * comes from?" — and a `null` there is not a detail of the CSP. It is the answer to whether
-   * the proxy may be used AT ALL. A document whose `<img src>` was rewritten through a proxy
-   * the policy then refuses is a broken picture, and — worse — a blocked-content bar that has
-   * already counted that image as loaded. So the source is computed from the PROP rather than
-   * from the consented proxy, and every place the proxy is offered or used is gated on it:
-   * the sanitizer's rewrite, the frame's policy, and the "Show images" button.
-   *
-   * Not reachable in a shipped build — `next.config.mjs` fails the build if the api base is
-   * ever an absolute origin, so the minted url is always same-origin — which is precisely why
-   * it is wired as one value instead of three checks that could disagree later.
+   * THE POLICY AND THE REWRITE ARE THE SAME DECISION, SO THEY READ ONE VALUE: {@link proxyImgSource} answers "can
+   * this file state, truthfully, where a consented image comes from?" — and a `null` there is not a detail of the
+   * CSP. It is the answer to whether the proxy may be used AT ALL. A document whose `<img src>` was rewritten through
+   * a proxy the policy then refuses is a broken picture, and — worse — a blocked-content bar that has already counted
+   * that image as loaded. So the source is computed from the PROP rather than from the consented proxy, and every
+   * place the proxy is offered or used is gated on it: the sanitizer's rewrite, the frame's policy, and the "Show
+   * images" button.
+   */
+
+  /**
+   * Not reachable in a shipped build — `next.config.mjs` fails the build if the api base is ever an absolute origin,
+   * so the minted url is always same-origin — which is precisely why it is wired as one value instead of three checks
+   * that could disagree later.
    */
   const imgSource = useMemo(
     () =>
@@ -3610,19 +3574,14 @@ export function MessageBody({
     }
     frame.style.height = h > 0 ? `${h}px` : restore;
     /**
-     * ── THE FRAME'S HEIGHT AND ITS DOCUMENT'S SCROLLABILITY ARE ONE DECISION ────────────────
-     *
-     * A scaled document's layout height is its UNSCALED one — a transform is a paint operation —
-     * so sizing the frame to the painted extent leaves the document with scrollable overflow
-     * that has nothing in it. That overflow captured the wheel over a collapsed reading-stream
-     * card: measured, the frame's own document moved 25px at 1440 (157 at 390) while the stream
-     * did not move at all. `:root[data-ohmail-fitclip]` in the document's own stylesheet takes
-     * the root out of the wheel's chain, and it is written HERE, in the statement after the
-     * height, because the two facts are the same fact — a second place deciding it could differ
-     * from this one.
-     *
-     * NOT when the ceiling clamped the height: then the mail is genuinely taller than its frame
-     * and its own document is the only way to reach the rest of it.
+     * THE FRAME'S HEIGHT AND ITS DOCUMENT'S SCROLLABILITY ARE ONE DECISION: A scaled document's layout height is its
+     * UNSCALED one — a transform is a paint operation — so sizing the frame to the painted extent leaves the document
+     * with scrollable overflow that has nothing in it. That overflow captured the wheel over a collapsed
+     * reading-stream card: measured, the frame's own document moved 25px at 1440 (157 at 390) while the stream did
+     * not move at all. `:root[data-ohmail-fitclip]` in the document's own stylesheet takes the root out of the
+     * wheel's chain, and it is written HERE, in the statement after the height, because the two facts are the same
+     * fact — a second place deciding it could differ from this one. NOT when the ceiling clamped the height: then the
+     * mail is genuinely taller than its frame and its own document is the only way to reach the rest of it.
      */
     root.toggleAttribute("data-ohmail-fitclip", scale < 1 && !clampedByCeiling && h > 0);
 
@@ -3646,16 +3605,13 @@ export function MessageBody({
   }, [ready, measure, mail]);
 
   /**
-   * ── IS THERE A FRAME ON SCREEN, OR IS THIS THE APP'S OWN TYPE? ────────────────────────────
-   *
-   * Computed HERE, above the three early returns below, because it is read by a hook and a hook
-   * may not sit behind a return. That placement is also what makes it total: `!mail` (no html, or
-   * nothing left after sanitizing), `unsupported` and `oversize` all render {@link BodyText} and
-   * therefore all draw NO IMAGES — the same fact the `ok` branch's `proseView` states, reached by
-   * a different road. Answering only for the `ok` branch would have left three renderings this
-   * component treats identically reported as though they carried a frame.
-   *
-   * The `ok` branch's own `proseView` is this value; see its note below for the three terms.
+   * IS THERE A FRAME ON SCREEN, OR IS THIS THE APP'S OWN TYPE?: Computed HERE, above the three early returns below,
+   * because it is read by a hook and a hook may not sit behind a return. That placement is also what makes it total:
+   * `!mail` (no html, or nothing left after sanitizing), `unsupported` and `oversize` all render {@link BodyText} and
+   * therefore all draw NO IMAGES — the same fact the `ok` branch's `proseView` states, reached by a different road.
+   * Answering only for the `ok` branch would have left three renderings this component treats identically reported as
+   * though they carried a frame. The `ok` branch's own `proseView` is this value; see its note below for the three
+   * terms.
    */
   const framelessView =
     mail?.state !== "ok" ? true : mail.prose && text.trim().length > 0 && !showOriginal;
@@ -3672,18 +3628,14 @@ export function MessageBody({
   }, [framelessView, onRenderMode]);
 
   /**
-   * ── ASK FOR THE EMBEDDED IMAGES THE FRAME IS SHOWING BLANKED — see {@link
-   * MessageBodyProps.onCidImages} ────────────────────────────────────────────────────────────
-   *
-   * Framed renderings only: the frameless path draws no images at all, and the strip lists the
-   * message's pictures there instead — fetching bytes a rendering cannot show would be pure
-   * spend. A reader's "Show original" press flips `framelessView`, this fires, and the frame's
-   * blanked boxes are asked for at that moment.
-   *
-   * TERMINATION is the `cids` array draining, not any state here: resolved references stop
-   * being reported by the sanitize pass, and the engine refuses to re-fetch what failed. So a
-   * re-fire with an unchanged list — a re-render, an unstable callback — is a cheap no-op by
-   * the callee's contract, not by this effect's memory.
+   * ── ASK FOR THE EMBEDDED IMAGES THE FRAME IS SHOWING BLANKED — see {@link MessageBodyProps.onCidImages}
+   * ──────────────────────────────────────────────────────────── Framed renderings only: the frameless path draws no
+   * images at all, and the strip lists the message's pictures there instead — fetching bytes a rendering cannot show
+   * would be pure spend. A reader's "Show original" press flips `framelessView`, this fires, and the frame's blanked
+   * boxes are asked for at that moment. TERMINATION is the `cids` array draining, not any state here: resolved
+   * references stop being reported by the sanitize pass, and the engine refuses to re-fetch what failed. So a re-fire
+   * with an unchanged list — a re-render, an unstable callback — is a cheap no-op by the callee's contract, not by
+   * this effect's memory.
    */
   const wantedCids = mail?.state === "ok" && !framelessView ? mail.cids : undefined;
   useEffect(() => {

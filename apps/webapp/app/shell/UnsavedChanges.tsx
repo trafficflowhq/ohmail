@@ -172,23 +172,20 @@ export function UnsavedChangesList({
 type Translate = (key: string, values?: Record<string, string | number>) => string;
 
 /**
- * WHAT THE PERSON WAS DOING, in their words rather than the wire's.
- *
- * A verb kind is an implementation name (`mark_seen`, `triage_set`), and showing it would make the
- * one surface that exists to explain a failure the least explicable thing on screen.
- *
- * ── AN EXPLICIT MAP, NOT A COMPUTED KEY, AND THAT IS THE WHOLE POINT ───────────────────────
- *
- * The obvious spelling is `t(\`unsavedKind.\${kind}\`)`. It is wrong here in a way that only shows
- * up in production: next-intl THROWS `MISSING_MESSAGE` for a key it does not hold, so the first
- * time a verb without a string reaches this list the strip crashes — and the strip only renders
- * when something has already gone wrong, which is the worst possible moment to add a second
- * failure. A map keyed by a known kind cannot miss: an unlisted verb takes the generic sentence.
- *
- * Deliberately NOT `satisfies Record<MutationKind, string>`: that would make a new verb a COMPILE
- * error, which sounds stricter and is worse. It would put a translation chore in the path of every
- * verb anyone adds, and the pressure then is to write a filler string. Degrading to "a change to
- * your mailbox" is honest, and the fallback is exercised by the guard rather than assumed.
+ * WHAT THE PERSON WAS DOING, in their words rather than the wire's. A verb kind is an implementation name
+ * (`mark_seen`, `triage_set`), and showing it would make the one surface that exists to explain a failure the least
+ * explicable thing on screen. AN EXPLICIT MAP, NOT A COMPUTED KEY, AND THAT IS THE WHOLE POINT: The obvious spelling
+ * is `t(\`unsavedKind.\${kind}\`)`. It is wrong here in a way that only shows up in production: next-intl THROWS
+ * `MISSING_MESSAGE` for a key it does not hold, so the first time a verb without a string reaches this list the strip
+ * crashes — and the strip only renders when something has already gone wrong, which is the worst possible moment to
+ * add a second failure. A map keyed by a known kind cannot miss: an unlisted verb takes the generic sentence.
+ */
+
+/**
+ * Deliberately NOT `satisfies Record<MutationKind, string>`: that would make a new verb a COMPILE error, which sounds
+ * stricter and is worse. It would put a translation chore in the path of every verb anyone adds, and the pressure
+ * then is to write a filler string. Degrading to "a change to your mailbox" is honest, and the fallback is exercised
+ * by the guard rather than assumed.
  */
 const KIND_LABELS = new Map<string, string>(Object.entries({
   move: "unsavedKindMove",

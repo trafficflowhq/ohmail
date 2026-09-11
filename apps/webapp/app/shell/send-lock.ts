@@ -440,22 +440,19 @@ function save(rows: SendLock[], owner: string | null = storageOwner()): DurableW
  */
 function isLive(r: SendLock, nowMs: number, pendingLanes?: ReadonlySet<string>): boolean {
   /**
-   * ── A LANE WHOSE SEND IS STILL IN THE OUTBOX IS NOT AGED OUT, WHATEVER THE CLOCK SAYS ───────
-   *
-   * The age limit and the durable outbox disagree about how long a send can be unresolved, and the
-   * outbox is right. It replays INDEFINITELY — an entry survives every reload until the server
-   * answers — while this record expires after seven days. Leave the tab shut for a week, come back,
-   * and the replay carries the mail out under its original key while the record naming that key has
-   * just been pruned: the composer still holds the text, nothing recognises it, and the next press
-   * mints a fresh key. The recipient gets it twice, a week apart.
-   *
-   * So the verb, not the clock, decides when this record has done its job. The exemption is exactly
-   * as wide as the evidence: only lanes with a pending `mail_send` right now, and it lapses the
-   * moment the outbox drains.
-   *
-   * IT ALSO STOPS A READ FROM DESTROYING ITS OWN ANSWER. `allSendLocks` PERSISTS the filtered list,
-   * so without this the first read after eight days deletes the record and every read after it —
-   * including the one about to ask this question — sees nothing.
+   * A LANE WHOSE SEND IS STILL IN THE OUTBOX IS NOT AGED OUT, WHATEVER THE CLOCK SAYS: The age limit and the durable
+   * outbox disagree about how long a send can be unresolved, and the outbox is right. It replays INDEFINITELY — an
+   * entry survives every reload until the server answers — while this record expires after seven days. Leave the tab
+   * shut for a week, come back, and the replay carries the mail out under its original key while the record naming
+   * that key has just been pruned: the composer still holds the text, nothing recognises it, and the next press mints
+   * a fresh key. The recipient gets it twice, a week apart. So the verb, not the clock, decides when this record has
+   * done its job. The exemption is exactly as wide as the evidence: only lanes with a pending `mail_send` right now,
+   * and it lapses the moment the outbox drains. IT ALSO STOPS A READ FROM DESTROYING ITS OWN ANSWER.
+   */
+
+  /**
+   * `allSendLocks` PERSISTS the filtered list, so without this the first read after eight days deletes the record and
+   * every read after it — including the one about to ask this question — sees nothing.
    */
   if (pendingLanes?.has(r.lane) === true) return true;
   /**
@@ -485,37 +482,34 @@ export function resumeSendLock(
   if (rows.length === 0) return null;
   const live = rows.filter((r) => isLive(r, nowMs));
   /**
-   * ── ONE LANE MAY HOLD SEVERAL RECORDS, AND ONLY ONE OF THEM IS ORDINARY ────────────────────
-   *
-   * This used to take the FIRST record for the lane and answer about it alone. That was true
-   * while a lane could hold at most one record, and an unresolved send broke it: the record has
-   * to outlive the next press (it is the only thing naming the key a message may already have
-   * gone under), so the lane now carries the unresolved ones alongside whichever ordinary claim
-   * is current. Reading by `(lane, fingerprint)` is what keeps them apart — see
-   * {@link unverifiedSendIntents} for the other half.
-   *
-   * ── ONE COMPARISON, IN THIS BUILD'S ALGEBRA, AND NO DECODE ─────────────────────────────────
-   *
-   * A press never decodes a 0.14.0 record and never resumes its key — see {@link load}, which
-   * rewrites such a record into a nameless UNRESOLVED one before any reader sees it. That record
-   * is then exempt from the spent-record sweep below (it is `unverified`), it parks its own
-   * message at the surface, and it is not offered here to any message at all.
+   * ONE LANE MAY HOLD SEVERAL RECORDS, AND ONLY ONE OF THEM IS ORDINARY: This used to take the FIRST record for the
+   * lane and answer about it alone. That was true while a lane could hold at most one record, and an unresolved send
+   * broke it: the record has to outlive the next press (it is the only thing naming the key a message may already
+   * have gone under), so the lane now carries the unresolved ones alongside whichever ordinary claim is current.
+   * Reading by `(lane, fingerprint)` is what keeps them apart — see {@link unverifiedSendIntents} for the other half.
+   * ONE COMPARISON, IN THIS BUILD'S ALGEBRA, AND NO DECODE: A press never decodes a 0.14.0 record and never resumes
+   * its key — see {@link load}, which rewrites such a record into a nameless UNRESOLVED one before any reader sees
+   * it.
+   */
+
+  /**
+   * That record is then exempt from the spent-record sweep below (it is `unverified`), it parks its own message at
+   * the surface, and it is not offered here to any message at all.
    */
   /**
-   * ── A RECORD RESUMES ACROSS SESSIONS ONLY WHEN IT IS UNRESOLVED — invariant S, decision 1 ────
-   *
-   * An ordinary claim belongs to the message-in-progress it was pressed in. The compose lane is
-   * one lane for every message this browser will ever write, so a claim left behind by a message
-   * that was replaced (a new compose, a mail link, a contact's Write — each of which re-mints the
-   * session) would otherwise be handed to whatever is on screen next, and the server replays the
-   * FIRST send's stored result at it: "Sent." about a message that never left.
-   *
-   * An UNRESOLVED record is the opposite case and keeps resuming regardless of session: it is the
-   * only thing naming the key a message may already have gone under, and refusing to resume it is
-   * precisely how the next press mints a fresh one for mail that is already delivered.
-   *
-   * A record with no session of its own (a reply, a forward, a 0.14.0 rewrite) is not scoped by
-   * this: it is named by the message it answers, which no session can change.
+   * A RECORD RESUMES ACROSS SESSIONS ONLY WHEN IT IS UNRESOLVED — invariant S, decision 1: An ordinary claim belongs
+   * to the message-in-progress it was pressed in. The compose lane is one lane for every message this browser will
+   * ever write, so a claim left behind by a message that was replaced (a new compose, a mail link, a contact's Write
+   * — each of which re-mints the session) would otherwise be handed to whatever is on screen next, and the server
+   * replays the FIRST send's stored result at it: "Sent." about a message that never left. An UNRESOLVED record is
+   * the opposite case and keeps resuming regardless of session: it is the only thing naming the key a message may
+   * already have gone under, and refusing to resume it is precisely how the next press mints a fresh one for mail
+   * that is already delivered.
+   */
+
+  /**
+   * A record with no session of its own (a reply, a forward, a 0.14.0 rewrite) is not scoped by this: it is named by
+   * the message it answers, which no session can change.
    */
   const sessionAdmits = (r: SendLock): boolean =>
     r.unverified === true || r.session === undefined || id.session === null
@@ -749,24 +743,22 @@ export interface SendIntent {
 }
 
 /**
- * ── WHAT A SEND IS *OF* — the identity an unresolved attempt parks ───────────────────────────
- *
- * Not the fingerprint. The fingerprint changes the moment the person edits what they wrote, and an
- * edited reply is the same reply — so keying the park on it was a designed escape from the lock:
- * type one character into a reply whose outcome nobody knows, press Send, and a fresh key goes out
- * for a message that may already have been delivered.
- *
- * The subject is the thing being answered or written, which an edit does not change:
- *  · a reply — the parent message;
- *  · a forward — the message being forwarded;
- *  · a draft-backed compose — the draft row;
- *  · a new compose with no row yet — the compose session (`composeSessionId`), which lives exactly
- *    as long as the message-in-progress does. `null` here means this browser cannot name it, and
- *    that is NOT "a new message": see the fail-closed arm in `canSend`.
- *
- * The fingerprint keeps its own job, which is a different question: whether a stored key may be
- * RESUMED for the content in hand. Two messages with one subject (an edit) must not share a key;
- * one message pressed twice must.
+ * WHAT A SEND IS *OF* — the identity an unresolved attempt parks: Not the fingerprint. The fingerprint changes the
+ * moment the person edits what they wrote, and an edited reply is the same reply — so keying the park on it was a
+ * designed escape from the lock: type one character into a reply whose outcome nobody knows, press Send, and a fresh
+ * key goes out for a message that may already have been delivered. The subject is the thing being answered or
+ * written, which an edit does not change:
+ * · a reply — the parent message;
+ * · a forward — the message being forwarded;
+ * · a draft-backed compose — the draft row;
+ */
+
+/**
+ * · a new compose with no row yet — the compose session (`composeSessionId`), which lives exactly as long as the
+ *   message-in-progress does. `null` here means this browser cannot name it, and that is NOT "a new message": see the
+ *   fail-closed arm in `canSend`.
+ * The fingerprint keeps its own job, which is a different question: whether a stored key may be RESUMED for the
+ * content in hand. Two messages with one subject (an edit) must not share a key; one message pressed twice must.
  */
 /**
  * EVERY NAME THIS MESSAGE ANSWERS TO, most specific first — the identity a park compares.
@@ -831,21 +823,19 @@ function lockSubjects(r: SendLock): string[] {
 }
 
 /**
- * WHICH SENDS ON THIS LANE ARE IN THE TERMINAL-UNKNOWN STATE, according to DURABLE storage.
- *
- * The composer's own phase is component state and does not survive reopening the draft, a reload,
- * or another tab — and those are exactly the paths by which a person arrives back at a send that
- * may already have gone. This is the fact that outlives all of them.
- *
- * ── IT ANSWERS *WHICH*, NOT *WHETHER*, AND THAT IS THE CORRECTION ───────────────────────────
- *
- * It used to answer a boolean about the LANE. The compose surface has one lane for every message
- * this browser will ever write, so one ambiguous delivery parked that lane for good: the surface
- * read `unverified`, `canSend` refuses `unverified`, the record is exempt from the age limit on
- * purpose, and Send and Send Later were therefore disabled for every future new message — with
- * the only exit being the reload that mints a fresh key for a message that may already be gone.
- * Naming the messages lets the uncertain one stay protected while a genuinely different message
- * sends, which is the whole of what a person needs here.
+ * WHICH SENDS ON THIS LANE ARE IN THE TERMINAL-UNKNOWN STATE, according to DURABLE storage. The composer's own phase
+ * is component state and does not survive reopening the draft, a reload, or another tab — and those are exactly the
+ * paths by which a person arrives back at a send that may already have gone. This is the fact that outlives all of
+ * them. IT ANSWERS *WHICH*, NOT *WHETHER*, AND THAT IS THE CORRECTION: It used to answer a boolean about the LANE.
+ * The compose surface has one lane for every message this browser will ever write, so one ambiguous delivery parked
+ * that lane for good: the surface read `unverified`, `canSend` refuses `unverified`, the record is exempt from the
+ * age limit on purpose, and Send and Send Later were therefore disabled for every future new message — with the only
+ * exit being the reload that mints a fresh key for a message that may already be gone.
+ */
+
+/**
+ * Naming the messages lets the uncertain one stay protected while a genuinely different message sends, which is the
+ * whole of what a person needs here.
  */
 export function unverifiedSendIntents(lane: string, owner: string | null = storageOwner()): SendIntent[] {
   // EMPTY on an unreadable jar, and that is the ADMIT arm of invariant S(4) rather than an
@@ -965,17 +955,17 @@ export type Hold =
   | { kind: "free" }
   /**
    * A send of this message has not been confirmed. `by` names the witness:
-   *
-   *  · `"record"` — the durable record this browser wrote. The only witness for a row the server
-   *    still calls `draft`, and for a message with no row at all.
-   *  · `"status"` — the mirror says the row is past `draft`. The only witness for a row this
-   *    browser never learned the id of: a press with no row makes the ADAPTER create one, that row
-   *    is what the server marks, and nothing here can name it.
-   *
-   * `draftId`/`session` are the identity to RESTORE — a door in between (a contact's Write, a mail
-   * link) legitimately mints a new session, so a caller that only learned "yes" would present the
-   * message under a session the record has never heard of: no warning, Send live, one press, a
-   * second copy.
+   * · `"record"` — the durable record this browser wrote. The only witness for a row the server still calls
+   *   `draft`, and for a message with no row at all.
+   * · `"status"` — the mirror says the row is past `draft`. The only witness for a row this browser never learned
+   *   the id of: a press with no row makes the ADAPTER create one, that row is what the server marks, and nothing
+   *   here can name it.
+   */
+
+  /**
+   * `draftId`/`session` are the identity to RESTORE — a door in between (a contact's Write, a mail link) legitimately
+   * mints a new session, so a caller that only learned "yes" would present the message under a session the record has
+   * never heard of: no warning, Send live, one press, a second copy.
    */
   | {
       kind: "parked";
@@ -1170,16 +1160,12 @@ export function attachSendLockDraft(
 }
 
 /**
- * ── WHICH LANE AND WHICH MESSAGE AN IDEMPOTENCY-KEY BELONGS TO ──────────────────────────────
- *
- * The reverse of every other reader here, and it exists for the one answer that arrives with no
- * caller: a send whose owning session died, replayed at boot and settled by the engine. That
- * result carries the KEY it went out under and the row it was delivered from — and nothing else
- * this browser can act on. The record is what turns the key back into a message: it was written
- * at the press, synchronously, with the lane and the names.
- *
- * Live records only, and this build's format only: a key from a shape this build cannot read is
- * one whose meaning it would be guessing at.
+ * WHICH LANE AND WHICH MESSAGE AN IDEMPOTENCY-KEY BELONGS TO: The reverse of every other reader here, and it exists
+ * for the one answer that arrives with no caller: a send whose owning session died, replayed at boot and settled by
+ * the engine. That result carries the KEY it went out under and the row it was delivered from — and nothing else this
+ * browser can act on. The record is what turns the key back into a message: it was written at the press,
+ * synchronously, with the lane and the names. Live records only, and this build's format only: a key from a shape
+ * this build cannot read is one whose meaning it would be guessing at.
  */
 export function recordForSendKey(
   key: string, nowMs: number, owner: string | null = storageOwner(),

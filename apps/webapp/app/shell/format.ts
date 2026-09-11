@@ -370,21 +370,19 @@ export interface SentRowRecipient {
 }
 
 /**
- * WHO AN OWN-SENT ROW IS ABOUT.
- *
- * A sent message's `from` is the reader's own identity — the one fact on the row that says
- * nothing. The row says who the mail WENT TO instead ("Me → Nora Lindt"), assembled by the
- * caller from this structure. Pure and i18n-free like {@link recipientSummary}, for the same
- * reason: the words ("Me", "+N") are the app's, read from `en.json` where the row renders.
- *
- * `null` twice, and both mean "keep the ordinary sender display":
- *  · a row that is not the account's own sent mail;
- *  · an own-sent row with no To recipient to name — rows ingested before recipients reached
- *    the wire carry an empty `to`, and "Me →" with nothing after the arrow is the same
- *    punctuation-shaped lie the dangling "·" was ({@link metaLine}).
- *
- * Cc is deliberately not consulted: the label names who the mail was written to, not everyone
- * who was copied — the open view's recipients block is where Cc is said.
+ * WHO AN OWN-SENT ROW IS ABOUT. A sent message's `from` is the reader's own identity — the one fact on the row that
+ * says nothing. The row says who the mail WENT TO instead ("Me → Nora Lindt"), assembled by the caller from this
+ * structure. Pure and i18n-free like {@link recipientSummary}, for the same reason: the words ("Me", "+N") are the
+ * app's, read from `en.json` where the row renders. `null` twice, and both mean "keep the ordinary sender display":
+ * · a row that is not the account's own sent mail;
+ * · an own-sent row with no To recipient to name — rows ingested before recipients reached the wire carry an empty
+ *   `to`, and "Me →" with nothing after the arrow is the same punctuation-shaped lie the dangling "·" was ({@link
+ *   metaLine}).
+ */
+
+/**
+ * Cc is deliberately not consulted: the label names who the mail was written to, not everyone who was copied — the
+ * open view's recipients block is where Cc is said.
  */
 export function sentRowRecipient(m: EngineMessage): SentRowRecipient | null {
   if (!isOwnSent(m)) return null;
@@ -496,18 +494,18 @@ export interface RecipientRowChip {
 }
 
 /**
- * WHO THE MESSAGE WENT TO, in full — the summarised single line and its "+N" fold are retired
- * with the viewer redesign: every To and Cc recipient renders as its own chip, so nothing here
- * caps, counts or folds. Pure and i18n-free like the summary it replaces: the row labels
- * ("To", "Cc") are the card's, from `messages/*.json`.
- *
- * The two rules that survive from the old fold, because they are invariants and not layout:
- *  · **Nothing to say → `empty`.** No To and no Cc renders no block at all — never a dangling
- *    label with nothing after it.
- *  · **The me-fold compares STORED addresses.** `ownAddresses` is what `GET /mailboxes`
- *    answered — A-labels — so a fold on the decoded string would stop recognising the reader
- *    on their own internationalized mailbox. An empty set recognises the reader nowhere and
- *    every address renders in full, which is the honest degradation.
+ * WHO THE MESSAGE WENT TO, in full — the summarised single line and its "+N" fold are retired with the viewer
+ * redesign: every To and Cc recipient renders as its own chip, so nothing here caps, counts or folds. Pure and
+ * i18n-free like the summary it replaces: the row labels ("To", "Cc") are the card's, from `messages/*.json`. The two
+ * rules that survive from the old fold, because they are invariants and not layout:
+ * · **Nothing to say → `empty`.** No To and no Cc renders no block at all — never a dangling label with nothing
+ *   after it.
+ */
+
+/**
+ * · **The me-fold compares STORED addresses.** `ownAddresses` is what `GET /mailboxes` answered — A-labels — so a
+ *   fold on the decoded string would stop recognising the reader on their own internationalized mailbox. An empty set
+ *   recognises the reader nowhere and every address renders in full, which is the honest degradation.
  */
 export interface RecipientRows {
   to: RecipientRowChip[];

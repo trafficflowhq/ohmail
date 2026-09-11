@@ -285,16 +285,14 @@ export function MessageCard({
   const nativeBody = bodyRendering === `${message.id}:prose`;
 
   /**
-   * ── WHAT THE BODY HAD REFUSED — reported by the viewer, worn by the header ──────────────────
-   *
-   * `MessageBody` says what it refused (`onNotice`: the caption a meta line shows and the whole
-   * sentence behind it) and this panel puts it in its own header, the way the stream card puts it
-   * in its head — so the sentence leaves the bar above the body and every surface wears one shape.
-   * Keyed by message for the reason `bodyRendering` above is: a panel re-pointed at another
-   * message must not wear the last message's glyph for the frame between the re-point and the
-   * viewer's next report. The setter is built per message so the viewer's effect re-fires once on
-   * a re-point and never once per render; the viewer itself reports only when its three strings
-   * change, so a message with nothing refused costs no re-render here.
+   * WHAT THE BODY HAD REFUSED — reported by the viewer, worn by the header: `MessageBody` says what it refused
+   * (`onNotice`: the caption a meta line shows and the whole sentence behind it) and this panel puts it in its own
+   * header, the way the stream card puts it in its head — so the sentence leaves the bar above the body and every
+   * surface wears one shape. Keyed by message for the reason `bodyRendering` above is: a panel re-pointed at another
+   * message must not wear the last message's glyph for the frame between the re-point and the viewer's next report.
+   * The setter is built per message so the viewer's effect re-fires once on a re-point and never once per render; the
+   * viewer itself reports only when its three strings change, so a message with nothing refused costs no re-render
+   * here.
    */
   const [noticeFor, setNoticeFor] = useState<{ id: string; notice: BlockNotice | null } | null>(null);
   const onNotice = useCallback(
@@ -314,37 +312,32 @@ export function MessageCard({
     [chrome.attachments, message.id],
   );
 
-  /*
-   * ── THE SIBLING'S FILES — the found defect this block closes ──────────────────────────────
-   *
-   * A conversation panel rendered header and body and NOTHING said the message carried files:
-   * the strip lived only on the focused panel, so a reader's own sent reply — ingested from the
-   * Sent folder with its attachments extracted and stamped — showed none of them anywhere on the
-   * open thread. The strip below is the same `AttachmentStrip` over the same chrome reads the
-   * focused pane uses (`itemsOf` / `open` / `downloadAll` — the metadata ask lives in
-   * `useMessageAttachments`, which loads the whole conversation's lists); `isProtectedMessage`
-   * gates it for the reason the focused pane's does: a protected message renders no content, and
-   * a file a sender attached is content.
+  /**
+   * THE SIBLING'S FILES — the found defect this block closes: A conversation panel rendered header and body and
+   * NOTHING said the message carried files: the strip lived only on the focused panel, so a reader's own sent reply —
+   * ingested from the Sent folder with its attachments extracted and stamped — showed none of them anywhere on the
+   * open thread. The strip below is the same `AttachmentStrip` over the same chrome reads the focused pane uses
+   * (`itemsOf` / `open` / `downloadAll` — the metadata ask lives in `useMessageAttachments`, which loads the whole
+   * conversation's lists); `isProtectedMessage` gates it for the reason the focused pane's does: a protected message
+   * renders no content, and a file a sender attached is content.
    */
   const attachments = isProtectedMessage(message) ? undefined : chrome.attachments;
 
   const loadingNote: ReactNode = !stalled && waiting ? <p className="hm-state">{tb("loading")}</p> : null;
   /**
-   * ── WITHHELD IS ANSWERED, NOT FAILED — the same rule the focused pane follows ──────────────
-   *
-   * The panel used to enumerate only `loading`/`snippet` and `failed`, so the storage-cap
-   * slice's terminal `withheld` state matched NEITHER arm and fell through to a bare
-   * {@link MessageBody} over `bodyOf`'s snippet — the PREVIEW presented as the message, with
-   * nothing on screen saying the body was never stored. The focused message was honest
-   * throughout, which is what kept this invisible: the dishonesty only ever appeared on a
-   * sibling of an open thread.
-   *
-   * No Retry, deliberately, and this is not a styling choice: the server ANSWERED, and its
-   * answer is that it holds no content for this message because the account's storage space was
-   * full when it arrived. A retry cannot change that, and `failed`'s control exists precisely
-   * because a state with no way out is a dead end — offering one that cannot succeed is worse
-   * than offering none. Not `warn` either: nothing went wrong, and the mail itself is untouched
-   * in the mailbox on the user's own server.
+   * WITHHELD IS ANSWERED, NOT FAILED — the same rule the focused pane follows: The panel used to enumerate only
+   * `loading`/`snippet` and `failed`, so the storage-cap slice's terminal `withheld` state matched NEITHER arm and
+   * fell through to a bare {@link MessageBody} over `bodyOf`'s snippet — the PREVIEW presented as the message, with
+   * nothing on screen saying the body was never stored. The focused message was honest throughout, which is what kept
+   * this invisible: the dishonesty only ever appeared on a sibling of an open thread. No Retry, deliberately, and
+   * this is not a styling choice: the server ANSWERED, and its answer is that it holds no content for this message
+   * because the account's storage space was full when it arrived.
+   */
+
+  /**
+   * A retry cannot change that, and `failed`'s control exists precisely because a state with no way out is a dead end
+   * — offering one that cannot succeed is worse than offering none. Not `warn` either: nothing went wrong, and the
+   * mail itself is untouched in the mailbox on the user's own server.
    */
   const withheldNote: ReactNode =
     // Per MARKER, not one sentence for the state: which policy emptied the stored body decides

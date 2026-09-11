@@ -355,17 +355,15 @@ export function TriageView({
                 label: t("segLabel", { name: t(PILE_KEY[id]), count: PILE_ENTRIES[id](piles).length }),
               }))}
             />
-            {/* THE REPLY RUN BELONGS TO ONE PILE, SO IT IS ON ONE PANE.
-                It was under all three, saying "Steps through the Answer Later pile, one message
-                per screen" while Parked was on screen — a primary action that operates on a
-                different pile than the one being looked at reads as misplacement, and it is:
-                the run's items are `piles.replyLater` whichever pane you start it from. Scoped
-                rather than re-worded, because no wording makes a button that acts elsewhere
-                belong here.
-
-                The other two piles keep the same row and put their own one-line explanation in
-                it, so the header is one shape at three horizons rather than a band that appears
-                and disappears as the segments change. */}
+            {/*
+                THE REPLY RUN BELONGS TO ONE PILE, SO IT IS ON ONE PANE. It was under all three, saying "Steps through
+                the Answer Later pile, one message per screen" while Parked was on screen — a primary action that
+                operates on a different pile than the one being looked at reads as misplacement, and it is: the run's
+                items are `piles.replyLater` whichever pane you start it from. Scoped rather than re-worded, because
+                no wording makes a button that acts elsewhere belong here. The other two piles keep the same row and
+                put their own one-line explanation in it, so the header is one shape at three horizons rather than a
+                band that appears and disappears as the segments change.
+              */}
             <div className="triage-cta">
               {pile === "reply" ? (
                 <Button variant="primary" icon="spark" kbdHint="f" onClick={onStartFR}>

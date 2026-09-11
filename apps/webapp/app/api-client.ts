@@ -629,15 +629,12 @@ async function attempt<T>(
 }
 
 /**
- * ═══ THE ACCESS REFUSAL, RAISED ONCE FOR THE WHOLE CLIENT ═════════════════════════════════
- *
- * The server answers `402 subscription_required` at every door an inactive account may not
- * reach, so every one of this module's ~200 callers could meet it. Handling it at the call sites
- * would mean two hundred chances to render mail beside a refusal; the shell needs to know instead,
- * once, and swap the whole surface for the lock screen.
- *
- * A NOTIFIER and not a thrown state: the `ApiError` still propagates unchanged, so nothing that
- * already handles a refusal changes behaviour. This is a side channel the shell subscribes to.
+ * THE ACCESS REFUSAL, RAISED ONCE FOR THE WHOLE CLIENT: The server answers `402 subscription_required` at every door
+ * an inactive account may not reach, so every one of this module's ~200 callers could meet it. Handling it at the
+ * call sites would mean two hundred chances to render mail beside a refusal; the shell needs to know instead, once,
+ * and swap the whole surface for the lock screen. A NOTIFIER and not a thrown state: the `ApiError` still propagates
+ * unchanged, so nothing that already handles a refusal changes behaviour. This is a side channel the shell subscribes
+ * to.
  */
 export const ACCESS_REFUSED_STATUS = 402;
 export const ACCESS_REFUSED_CODE = "subscription_required";
@@ -751,17 +748,14 @@ export interface MailboxDTO {
    */
   authKind?: "password" | "oauth";
   /**
-   * ── WHO ORGANIZES THIS MAILBOX, AND WHETHER IT WAS EVER AGREED TO (mail 0083) ────────────
-   *
-   * `organizer` is this install; `reader` is somebody else's, or nobody's. A reader is CONNECTED
-   * and its mirror is growing — what it does not do is move, file or delete mail. The server has
-   * projected these since mail 0083 and this client did not declare them, which is why the web
-   * pane's claim control was still gated on `status === "disabled"`: the one set the server
-   * refuses, since a `disabled` row is a tombstone and a stood-down row is `connected`.
-   *
-   * OPTIONAL, and absent reads as `organizer` at every site. Every install was one before the
-   * column existed, so a server that cannot say has not demoted anybody; the dangerous default is
-   * the other one, which would put a claim banner over a mailbox this install already organizes.
+   * WHO ORGANIZES THIS MAILBOX, AND WHETHER IT WAS EVER AGREED TO (mail 0083): `organizer` is this install; `reader`
+   * is somebody else's, or nobody's. A reader is CONNECTED and its mirror is growing — what it does not do is move,
+   * file or delete mail. The server has projected these since mail 0083 and this client did not declare them, which
+   * is why the web pane's claim control was still gated on `status === "disabled"`: the one set the server refuses,
+   * since a `disabled` row is a tombstone and a stood-down row is `connected`. OPTIONAL, and absent reads as
+   * `organizer` at every site. Every install was one before the column existed, so a server that cannot say has not
+   * demoted anybody; the dangerous default is the other one, which would put a claim banner over a mailbox this
+   * install already organizes.
    */
   organizerRole?: "organizer" | "reader";
   /**
@@ -790,19 +784,14 @@ export interface MailboxDTO {
    */
   organizedByThisInstall?: boolean;
   /**
-   * WHEN somebody agreed to let ohmail organize this mailbox, or `null` for "nobody has".
-   *
-   * ── ABSENT AND `null` ARE DIFFERENT HERE, AND THE DIFFERENCE IS A CONTROL ────────────────
-   *
-   * The claim offer's server-side rule is `status <> 'disabled' AND (organizer_role = 'reader' OR
-   * organize_consented_at IS NULL)`. Read `== null`, an ABSENT field — an API deployed before
-   * mail 0083 — satisfies the second disjunct on every row, and the pane sprouts an "Organize
-   * here instead" button on every mailbox of every older deployment, each of which would be
-   * refused. So every reader of this field tests `=== null`, and the seam that maps it
-   * (`CloudShell`) forwards it UNTOUCHED rather than with a `?? null`.
-   *
-   * This is the same absent-versus-null rule {@link initialImportCompletedAt} carries, with the
-   * sign chosen for the same reason: collapse the unknown toward the state that offers LESS.
+   * WHEN somebody agreed to let ohmail organize this mailbox, or `null` for "nobody has". ABSENT AND `null` ARE
+   * DIFFERENT HERE, AND THE DIFFERENCE IS A CONTROL: The claim offer's server-side rule is `status <> 'disabled' AND
+   * (organizer_role = 'reader' OR organize_consented_at IS NULL)`. Read `== null`, an ABSENT field — an API deployed
+   * before mail 0083 — satisfies the second disjunct on every row, and the pane sprouts an "Organize here instead"
+   * button on every mailbox of every older deployment, each of which would be refused. So every reader of this field
+   * tests `=== null`, and the seam that maps it (`CloudShell`) forwards it UNTOUCHED rather than with a `?? null`.
+   * This is the same absent-versus-null rule {@link initialImportCompletedAt} carries, with the sign chosen for the
+   * same reason: collapse the unknown toward the state that offers LESS.
    */
   organizeConsentedAt?: string | null;
   /**
@@ -1903,23 +1892,20 @@ export const consent = {
       body: { autoSuggest: enabled },
     }),
   /**
-   * SET THE DORMANCY WINDOW — the cutline dial, on the SAME route as {@link consent.setAutoSuggest}
-   * with `dormancyDays` in the body instead of `autoSuggest` (field-present ⇒ acted-on, so the two
-   * never touch each other's column).
-   *
-   * ── AND "ALL TIME", WHICH IS THIS SAME DIAL'S OTHER ANSWER ─────────────────────────────
- *
- * `scope` is `'window'` (the cutline is `screeningBaselineAt − dormancyDays`) or `'all_time'`
- * (no cutline at all). It rides THIS call rather than one of its own because the two are one
- * answer to one question, and the server writes them in one upsert for the same reason. Either
- * argument may be omitted and omitted means UNTOUCHED, in both directions; the echo carries back
- * only the halves that were named.
- *
- * `days` is an integer 1–365, or `null` to revert to the product default. The server refuses
-   * anything outside the band with a 400 rather than storing a value that would later crash the
-   * `GET /consent` read, and it NEVER stores the default itself — so the response's `dormancyDays`
-   * is the EFFECTIVE window (a null store reads back as the default). The caller updates its hook
-   * from that echo, which is what re-partitions the open tab.
+   * SET THE DORMANCY WINDOW — the cutline dial, on the SAME route as {@link consent.setAutoSuggest} with
+   * `dormancyDays` in the body instead of `autoSuggest` (field-present ⇒ acted-on, so the two never touch each
+   * other's column). AND "ALL TIME", WHICH IS THIS SAME DIAL'S OTHER ANSWER: `scope` is `'window'` (the cutline is
+   * `screeningBaselineAt − dormancyDays`) or `'all_time'` (no cutline at all). It rides THIS call rather than one of
+   * its own because the two are one answer to one question, and the server writes them in one upsert for the same
+   * reason. Either argument may be omitted and omitted means UNTOUCHED, in both directions; the echo carries back
+   * only the halves that were named. `days` is an integer 1–365, or `null` to revert to the product default.
+   */
+
+  /**
+   * The server refuses anything outside the band with a 400 rather than storing a value that would later crash the
+   * `GET /consent` read, and it NEVER stores the default itself — so the response's `dormancyDays` is the EFFECTIVE
+   * window (a null store reads back as the default). The caller updates its hook from that echo, which is what
+   * re-partitions the open tab.
    */
   setDormancyDays: (days: number | null | undefined, scope?: "window" | "all_time") =>
     api<{ dormancyDays?: number; screeningScope?: "window" | "all_time" }>("/consent/settings", {
@@ -2676,18 +2662,14 @@ function isSessionBusy(err: unknown): boolean {
 
 export function messageOf(err: unknown): string {
   if (err instanceof ApiError) return err.message;
-  /*
-   * ── THE ONE REFUSAL THIS CLIENT RAISES THAT IS NOT AN `ApiError` ──────────────────────────
-   *
-   * `SessionBusyError` is thrown when another tab has held the origin-wide session lock past the
-   * deadline. Its own message says what happened and what to do — "another tab is finishing a
-   * sign-in or sign-out, try that again in a moment" — and every surface renders refusals through
-   * this function, which dropped it to "Something went wrong. Please try again."
-   *
-   * That is worse than losing detail. The person is looking at a form that refused for a reason
-   * that clears by itself in seconds, and the generic sentence gives them no way to know that;
-   * the published note for the lock change promised them this sentence, so the claim was false as
-   * well as unhelpful. Matched by CODE rather than by class, because importing the class here
+  /**
+   * THE ONE REFUSAL THIS CLIENT RAISES THAT IS NOT AN `ApiError`: `SessionBusyError` is thrown when another tab has
+   * held the origin-wide session lock past the deadline. Its own message says what happened and what to do — "another
+   * tab is finishing a sign-in or sign-out, try that again in a moment" — and every surface renders refusals through
+   * this function, which dropped it to "Something went wrong. Please try again." That is worse than losing detail.
+   * The person is looking at a form that refused for a reason that clears by itself in seconds, and the generic
+   * sentence gives them no way to know that; the published note for the lock change promised them this sentence, so
+   * the claim was false as well as unhelpful. Matched by CODE rather than by class, because importing the class here
    * would make `api-client` depend on `session-refresh`, which depends on it.
    */
   if (isSessionBusy(err)) return (err as Error).message;

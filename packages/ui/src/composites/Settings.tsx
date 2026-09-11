@@ -63,17 +63,16 @@ export function SettingsRow({ label, description, value, control, leading }: Set
         <b id={labelId}>{label}</b>
         {description ? <span id={descId}>{description}</span> : null}
       </div>
-      {/* ── THE VALUE CELL IS THE ROW'S STATE, AND IT HAS TO BE IN THE TREE ──────────────────
-          A bare `<span>` of text inside a `<div>` is dropped by the Linux WebKit mapping: an
-          AT-SPI walk over a mailbox row read the row's two buttons and nothing else, in every
-          state, while the same markup IS exposed through UIA on Windows — so "Up to date" and
-          the reach sentence under an outage were the one thing on the row a person most needs
-          and the only thing a reader could not get.
-
-          `role="status"` makes it a named node carrying its own text. `aria-live="off"`
-          deliberately: the cell restates a MINUTE STAMP that ticks on its own, and a polite
-          live region would re-announce the same fact every time the clock moved. What changes
-          here is what a reader can REACH, never what it is told without asking. */}
+      {/*
+          THE VALUE CELL IS THE ROW'S STATE, AND IT HAS TO BE IN THE TREE: A bare `<span>` of text inside a `<div>` is
+          dropped by the Linux WebKit mapping: an AT-SPI walk over a mailbox row read the row's two buttons and
+          nothing else, in every state, while the same markup IS exposed through UIA on Windows — so "Up to date" and
+          the reach sentence under an outage were the one thing on the row a person most needs and the only thing a
+          reader could not get. `role="status"` makes it a named node carrying its own text. `aria-live="off"`
+          deliberately: the cell restates a MINUTE STAMP that ticks on its own, and a polite live region would
+          re-announce the same fact every time the clock moved. What changes here is what a reader can REACH, never
+          what it is told without asking.
+        */}
       {value !== undefined ? (
         <span className="set-val" role="status" aria-live="off">{value}</span>
       ) : null}
@@ -259,24 +258,21 @@ export interface SettingsBannerProps {
 }
 
 /**
- * A standing condition about the pane's subject, with its one verb — the reader state.
- *
- * ── THE DESCRIPTION IS REFERENCED, NOT MERELY RENDERED ──────────────────────────────────────
- *
- * The label and the sentence were two siblings inside one `role="note"`, and a `note` whose
- * children are plain text is read as a single unnamed block: an AT-SPI whole-tree walk over the
- * mailboxes pane returned `text='Organizing'` for the banner and lost all three sentences it can
- * carry — the pending one, the released one and the holder — while a screen capture of the same
- * moment showed them on screen.
- *
- * So the label NAMES the region and the sentence DESCRIBES it, both by id. The region is a real
- * `role="region"`, because a labelled region is the one role whose name and description are both
- * computed and announced; `note` has no name of its own to hang the description from. Nothing is
- * hidden and nothing moves: the sentence is the same visible node it always was, still the label
- * block's direct child so `.set-banner .lab > span` still styles it.
- *
- * The description id is emitted ONLY when there is a description — a dangling `aria-describedby`
- * pointing at no element is a description a reader is promised and does not get.
+ * A standing condition about the pane's subject, with its one verb — the reader state. THE DESCRIPTION IS REFERENCED,
+ * NOT MERELY RENDERED: The label and the sentence were two siblings inside one `role="note"`, and a `note` whose
+ * children are plain text is read as a single unnamed block: an AT-SPI whole-tree walk over the mailboxes pane
+ * returned `text='Organizing'` for the banner and lost all three sentences it can carry — the pending one, the
+ * released one and the holder — while a screen capture of the same moment showed them on screen. So the label NAMES
+ * the region and the sentence DESCRIBES it, both by id. The region is a real `role="region"`, because a labelled
+ * region is the one role whose name and description are both computed and announced; `note` has no name of its own to
+ * hang the description from.
+ */
+
+/**
+ * Nothing is hidden and nothing moves: the sentence is the same visible node it always was, still the label block's
+ * direct child so `.set-banner .lab > span` still styles it. The description id is emitted ONLY when there is a
+ * description — a dangling `aria-describedby` pointing at no element is a description a reader is promised and does
+ * not get.
  */
 export function SettingsBanner({ label, description, action }: SettingsBannerProps) {
   const id = useId();

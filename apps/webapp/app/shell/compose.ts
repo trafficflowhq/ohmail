@@ -286,19 +286,18 @@ export function writeComposeSession(session: string, owner: string | null = stor
 }
 
 /**
- * ── THE DRAFT ROW THE COMPOSE SURFACE IS HOLDING, ACROSS A RELOAD ───────────────────────────
- *
- * `useComposeAutosave` keeps the row in React state, and React state does not survive a reload —
- * while the scratch buffer, which holds the TEXT of the same message, does. So a reload restored
- * the message and lost its row: the next pause created a SECOND row for it, and the durable send
- * record still named the first. One message under two rows is how a send whose outcome nobody
- * could confirm read as two messages and unlocked Send for the one that may already have gone.
- *
- * The row is written here rather than into the buffer because it is not part of the form: it is a
- * fact about which message the surface is holding, with the same lifetime as
- * {@link composeSessionId} — and it is cleared by the same call, at the same doors, for the same
- * reason. `null` clears it. A blocked jar answers `null` on read, which the hook reads as "no row
- * to adopt", never as "there is no row".
+ * THE DRAFT ROW THE COMPOSE SURFACE IS HOLDING, ACROSS A RELOAD: `useComposeAutosave` keeps the row in React state,
+ * and React state does not survive a reload — while the scratch buffer, which holds the TEXT of the same message,
+ * does. So a reload restored the message and lost its row: the next pause created a SECOND row for it, and the
+ * durable send record still named the first. One message under two rows is how a send whose outcome nobody could
+ * confirm read as two messages and unlocked Send for the one that may already have gone. The row is written here
+ * rather than into the buffer because it is not part of the form: it is a fact about which message the surface is
+ * holding, with the same lifetime as {@link composeSessionId} — and it is cleared by the same call, at the same
+ * doors, for the same reason. `null` clears it.
+ */
+
+/**
+ * A blocked jar answers `null` on read, which the hook reads as "no row to adopt", never as "there is no row".
  */
 export const COMPOSE_ROW_PREFIX = "ohmail.compose.row.";
 
@@ -362,24 +361,19 @@ export function clearComposeDraft(owner: string | null = storageOwner()): void {
 }
 
 /**
- * IS THIS AN ADDRESS? — checked HERE, before Send lights up, and not by the SMTP server.
- *
- * "An SMTP rejection after the fact is a bad way to learn about a typo": the send path is two
- * requests and a reservation, and a 550 arrives as `unverified` — the one outcome the product
- * cannot resolve for the user. A local check costs nothing and turns "we couldn't confirm
- * this send" back into "that address has no dot in it".
- *
- * ── CONSERVATIVE ON PURPOSE ─────────────────────────────────────────────────────────────
- *
- * The rule is not RFC 5322 and does not try to be — the grammar admits quoted local parts,
- * comments and bare IP-literal domains, and a validator that implemented it would reject
- * nothing anyone types by hand while adding a page of code. What it DOES do is refuse the
- * four things a human actually mistypes: no `@`, two `@`, no dot in the domain, and a stray
- * space. Anything past that is the server's business, which is where a genuinely exotic but
- * legal address is still accepted — this gate only decides whether Send is offered.
- *
- * It must never reject a valid ordinary address, so `+` tags, dots, dashes, apostrophes and
- * underscores in the local part all pass, and so do multi-label domains and long TLDs.
+ * IS THIS AN ADDRESS? — checked HERE, before Send lights up, and not by the SMTP server. "An SMTP rejection after the
+ * fact is a bad way to learn about a typo": the send path is two requests and a reservation, and a 550 arrives as
+ * `unverified` — the one outcome the product cannot resolve for the user. A local check costs nothing and turns "we
+ * couldn't confirm this send" back into "that address has no dot in it". CONSERVATIVE ON PURPOSE: The rule is not RFC
+ * 5322 and does not try to be — the grammar admits quoted local parts, comments and bare IP-literal domains, and a
+ * validator that implemented it would reject nothing anyone types by hand while adding a page of code. What it DOES
+ * do is refuse the four things a human actually mistypes: no `@`, two `@`, no dot in the domain, and a stray space.
+ */
+
+/**
+ * Anything past that is the server's business, which is where a genuinely exotic but legal address is still accepted
+ * — this gate only decides whether Send is offered. It must never reject a valid ordinary address, so `+` tags, dots,
+ * dashes, apostrophes and underscores in the local part all pass, and so do multi-label domains and long TLDs.
  */
 export function isEmailAddress(raw: string): boolean {
   const s = raw.trim();

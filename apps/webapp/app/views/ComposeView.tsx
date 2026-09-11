@@ -302,23 +302,20 @@ export function ComposeView({
   }, []);
 
   /**
-   * ── OPENING PUTS THE CARET WHERE THE WRITING STARTS ─────────────────────────────────────
-   *
-   * This form used to open with NOTHING focused. Two failures rode on that, measured on the
-   * deployed desktop: the person who pressed `c` and started typing was typing into nowhere,
-   * and — worse — every letter was still a mailbox shortcut, so the message selected behind
-   * the form was filed, parked and resurfaced letter by letter while the placeholders stayed
-   * empty. The claim below (`useWritingSurface`) closes the shortcut half at the dispatcher;
-   * this closes the caret half.
-   *
-   * WHERE the caret goes is the first field with nothing in it, in writing order — To, then
-   * Subject, then the body (the editor's own `autoFocus`, because `immediatelyRender: false`
-   * means there is no editor to reach during this component's first effects). A fresh compose
-   * therefore lands on To; a reopened draft or a forward-shaped form with the addressing
-   * already answered lands where the writing resumes. DECIDED ONCE, at mount, in a `useState`
-   * initializer: `fields` changes on every keystroke, and a decision that re-ran would steal
-   * the caret from wherever the user has moved it since — the exact reason the effect below
-   * has no dependencies.
+   * OPENING PUTS THE CARET WHERE THE WRITING STARTS: This form used to open with NOTHING focused. Two failures rode
+   * on that, measured on the deployed desktop: the person who pressed `c` and started typing was typing into nowhere,
+   * and — worse — every letter was still a mailbox shortcut, so the message selected behind the form was filed,
+   * parked and resurfaced letter by letter while the placeholders stayed empty. The claim below (`useWritingSurface`)
+   * closes the shortcut half at the dispatcher; this closes the caret half. WHERE the caret goes is the first field
+   * with nothing in it, in writing order — To, then Subject, then the body (the editor's own `autoFocus`, because
+   * `immediatelyRender: false` means there is no editor to reach during this component's first effects).
+   */
+
+  /**
+   * A fresh compose therefore lands on To; a reopened draft or a forward-shaped form with the addressing already
+   * answered lands where the writing resumes. DECIDED ONCE, at mount, in a `useState` initializer: `fields` changes
+   * on every keystroke, and a decision that re-ran would steal the caret from wherever the user has moved it since —
+   * the exact reason the effect below has no dependencies.
    */
   const [initialFocus] = useState<"to" | "subject" | "body">(() => {
     if (!fields.to.trim()) return "to";
@@ -336,21 +333,19 @@ export function ComposeView({
   }, []);
 
   /**
-   * ── SEND LATER (mail 0077) — the picker, inline in the foot ─────────────────────────────
-   *
-   * The compose-confirm's idiom on purpose: a panel above the send row, never a modal (the
-   * form was moved OUT of a dialog the keyboard could not leave), `role="dialog"` with focus
-   * moving in and Escape closing it first (the cascade rule below). `openedAt` freezes "now"
-   * at the moment the panel opens, so the three presets and the custom floor are computed once
-   * per opening rather than drifting under the reader mid-decision.
-   *
-   * A DRAFT ROW STORES NO BYTES AND NO FORWARD REFERENCE (§13.2/§14), so a message carrying
-   * either cannot be scheduled — the affordance says so in its title instead of failing after
-   * the pick; the http adapter refuses the same combination where it cannot be bypassed.
-   *
-   * A PAST TIME REFUSES BEFORE THE WIRE: the custom input's floor is a few minutes ahead, the
-   * confirm stays disabled below it, and the sentence under the field says why — the server's
-   * own refusal (against ITS clock, the one the due scan runs on) remains the authority.
+   * SEND LATER (mail 0077) — the picker, inline in the foot: The compose-confirm's idiom on purpose: a panel above
+   * the send row, never a modal (the form was moved OUT of a dialog the keyboard could not leave), `role="dialog"`
+   * with focus moving in and Escape closing it first (the cascade rule below). `openedAt` freezes "now" at the moment
+   * the panel opens, so the three presets and the custom floor are computed once per opening rather than drifting
+   * under the reader mid-decision. A DRAFT ROW STORES NO BYTES AND NO FORWARD REFERENCE (§13.2/§14), so a message
+   * carrying either cannot be scheduled — the affordance says so in its title instead of failing after the pick; the
+   * http adapter refuses the same combination where it cannot be bypassed.
+   */
+
+  /**
+   * A PAST TIME REFUSES BEFORE THE WIRE: the custom input's floor is a few minutes ahead, the confirm stays disabled
+   * below it, and the sentence under the field says why — the server's own refusal (against ITS clock, the one the
+   * due scan runs on) remains the authority.
    */
   /** Is the send chord bound here (a provider stands above)? Gates the Send button's keycap. */
   const sendChord = useBinding("mod+Enter");

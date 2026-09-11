@@ -129,15 +129,13 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
   const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
 
   /**
-   * ── THE CHROME'S IDENTITY IS A PERFORMANCE CONTRACT, SO `onFailed` RIDES A REF ──────────
-   *
-   * The stream cards compare this hook's return BY REFERENCE (`StreamCardMemo`'s comparator),
-   * because a changed chrome is exactly when every mounted card must re-sanitize — a setting
-   * flipped, a consent recorded. The one caller passes `onFailed` as an inline arrow, so its
-   * identity changes on every shell render — including the render every `/sync` apply causes —
-   * and an `onFailed` dependency here would hand the stream a fresh chrome per poll, re-running
-   * the sanitizer over every mounted card to deliver nothing. The ref keeps the LATEST callback
-   * reachable from a `consent` whose identity moves only with the consent state itself.
+   * THE CHROME'S IDENTITY IS A PERFORMANCE CONTRACT, SO `onFailed` RIDES A REF: The stream cards compare this hook's
+   * return BY REFERENCE (`StreamCardMemo`'s comparator), because a changed chrome is exactly when every mounted card
+   * must re-sanitize — a setting flipped, a consent recorded. The one caller passes `onFailed` as an inline arrow, so
+   * its identity changes on every shell render — including the render every `/sync` apply causes — and an `onFailed`
+   * dependency here would hand the stream a fresh chrome per poll, re-running the sanitizer over every mounted card
+   * to deliver nothing. The ref keeps the LATEST callback reachable from a `consent` whose identity moves only with
+   * the consent state itself.
    */
   const onFailedRef = useRef(opts.onFailed);
   useEffect(() => { onFailedRef.current = opts.onFailed; });

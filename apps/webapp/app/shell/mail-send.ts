@@ -217,37 +217,35 @@ export function sendUnsettledFromLastSession(
   owner: string | null = null,
 ): boolean {
   /**
-   * ── THE COMPOSE ON SCREEN IS THE MESSAGE A SEND IS STILL CARRYING ──────────────────────────
-   *
-   * KEYED ON IDENTITY, NOT ON THE LANE, and the difference is why this holds where two earlier
-   * shapes could not. A lane is `"compose"` — the name of every message this browser will ever
-   * write. Refusing a press on the lane refuses a genuinely NEW message written after a crash,
-   * which is the worse defect of the pair: a silently unsent mail. Measured twice, in both shapes
-   * tried, against the durable lock's own kill test. Keyed on WHICH MESSAGE, a different one
-   * simply never matches.
-   *
-   * The identity is {@link composeBufferFingerprint} on both sides — the value the press recorded
-   * ({@link SendLock.bfp}) against the value the buffer computes now. The sent message's own
-   * fingerprint cannot be used: a mount after a reload cannot reproduce it (the signature and the
-   * resolved sending mailbox are not in the buffer), so that comparison would match only for an
-   * account with no signature.
-   *
-   * ── FOUR ARMS, IN THIS ORDER, AND THE ORDER IS THE RULE ─────────────────────────────────────
+   * THE COMPOSE ON SCREEN IS THE MESSAGE A SEND IS STILL CARRYING: KEYED ON IDENTITY, NOT ON THE LANE, and the
+   * difference is why this holds where two earlier shapes could not. A lane is `"compose"` — the name of every
+   * message this browser will ever write. Refusing a press on the lane refuses a genuinely NEW message written after
+   * a crash, which is the worse defect of the pair: a silently unsent mail. Measured twice, in both shapes tried,
+   * against the durable lock's own kill test. Keyed on WHICH MESSAGE, a different one simply never matches. The
+   * identity is {@link composeBufferFingerprint} on both sides — the value the press recorded ({@link SendLock.bfp})
+   * against the value the buffer computes now.
    */
-  /* 1. AN UNVERIFIED SEND *OF THIS MESSAGE* OUTRANKS THIS. `unverified` IS an answer — the worst
-        one: the key is spent and nobody knows whether the mail left. THAT message parks by its
-        record with the sentence naming that state, and holding it under "still being sent" would
-        be false.
 
-        PER MESSAGE, NOT PER LANE, and the difference was a second delivery. The lane is
-        `"compose"` — the name of every message this browser will ever write — so ANY unverified
-        record on it switched the restored hold off for a DIFFERENT message whose own send was
-        still replaying: the fields stayed editable, an edit changed the fingerprint, and the press
-        minted a fresh key for mail already on its way. Same correction `canSend`'s
-        `unresolvedNames` carries, for the same reason.
+  /**
+   * The sent message's own fingerprint cannot be used: a mount after a reload cannot reproduce it (the signature and
+   * the resolved sending mailbox are not in the buffer), so that comparison would match only for an account with no
+   * signature. FOUR ARMS, IN THIS ORDER, AND THE ORDER IS THE RULE:
+   */
+  /**
+   * 1. AN UNVERIFIED SEND *OF THIS MESSAGE* OUTRANKS THIS. `unverified` IS an answer — the worst one: the key is
+   *   spent and nobody knows whether the mail left. THAT message parks by its record with the sentence naming that
+   *   state, and holding it under "still being sent" would be false.
+   * PER MESSAGE, NOT PER LANE, and the difference was a second delivery. The lane is `"compose"` — the name of every
+   * message this browser will ever write — so ANY unverified record on it switched the restored hold off for a
+   * DIFFERENT message whose own send was still replaying: the fields stayed editable, an edit changed the
+   * fingerprint, and the press minted a fresh key for mail already on its way. Same correction `canSend`'s
+   * `unresolvedNames` carries, for the same reason.
+   */
 
-        A record that cannot be SHOWN to name this message does not yield here — it falls through
-        to arms 2 and 3, which hold it while its send is pending. */
+  /**
+   * A record that cannot be SHOWN to name this message does not yield here — it falls through to arms 2 and 3, which
+   * hold it while its send is pending.
+   */
   if (unverifiedSendIntents(lane, owner).some((i) => intentNamesLatched(i, latch))) return false;
 
   /* The lane's records, with the outbox exempting a pending one from the age limit — and from
@@ -701,22 +699,19 @@ export function sendStateFor(state: SendState, m: MailSend): SendState {
 }
 
 /**
- * ── A ROW THE SERVER ITSELF MARKED UNVERIFIED, HELD BY THIS COMPOSE ─────────────────────────
- *
- * The record in this browser is one witness that a send may already have gone. The SERVER's own
- * `unverified` status on the row is another, and it is the one that survives everything the first
- * does not: a record this browser never wrote (the row the send created for itself, whose id the
- * client never learns), a record lost with the storage it lives in, another device's send.
- * Measured live: such a row is listed in Drafts, opening it took the recovery door, and one press
- * delivered the message a second time while the server held the first as unverified.
- *
- * So a compose HOLDING such a row is refused on the row's status alone, with the same sentence
- * the record produces — `phase` as well as `unresolved`, because the warning renders off the
- * phase (`sendStateFor`) and a lock with no sentence is a button that is broken for no stated
- * reason. Both names go in the intent: the row, and the session holding it, so the refusal
- * matches whether or not the composer has adopted it.
- *
- * A press already in flight is left alone — it is locked for a stronger reason and its own
+ * A ROW THE SERVER ITSELF MARKED UNVERIFIED, HELD BY THIS COMPOSE: The record in this browser is one witness that a
+ * send may already have gone. The SERVER's own `unverified` status on the row is another, and it is the one that
+ * survives everything the first does not: a record this browser never wrote (the row the send created for itself,
+ * whose id the client never learns), a record lost with the storage it lives in, another device's send. Measured
+ * live: such a row is listed in Drafts, opening it took the recovery door, and one press delivered the message a
+ * second time while the server held the first as unverified. So a compose HOLDING such a row is refused on the row's
+ * status alone, with the same sentence the record produces — `phase` as well as `unresolved`, because the warning
+ * renders off the phase (`sendStateFor`) and a lock with no sentence is a button that is broken for no stated reason.
+ */
+
+/**
+ * Both names go in the intent: the row, and the session holding it, so the refusal matches whether or not the
+ * composer has adopted it. A press already in flight is left alone — it is locked for a stronger reason and its own
  * outcome is on its way.
  */
 export function heldRowUnverified(
@@ -744,18 +739,17 @@ export function heldRowUnverified(
    */
   if (hold.kind !== "parked") return state;
   /**
-   * ── THE MIRROR'S `sent` IS AUTHORITATIVE OVER THIS BROWSER'S "NOBODY KNOWS" ────────────────
-   *
-   * A send commits, `/sync` brings the row back as `sent`, and the tab that owned the response
-   * died before it could settle the record. The restored compose is still holding that row, so
-   * the status arm parks it — correctly, nothing may WRITE to a sent row — and projecting that
-   * park into `unverified` put "We couldn't confirm this send" on screen about a message the
-   * mirror says was delivered. A false state is worse than no state: it sends somebody to look
-   * for mail that is in their Sent folder, and it refuses the press that would have replayed the
-   * original key if it had not been sent.
-   *
-   * So the WRITE refusal and the SENTENCE part company here, and only here. The hold still says
-   * parked, so `holdOf`'s consumers keep their hands off the row; the surface says nothing.
+   * THE MIRROR'S `sent` IS AUTHORITATIVE OVER THIS BROWSER'S "NOBODY KNOWS": A send commits, `/sync` brings the row
+   * back as `sent`, and the tab that owned the response died before it could settle the record. The restored compose
+   * is still holding that row, so the status arm parks it — correctly, nothing may WRITE to a sent row — and
+   * projecting that park into `unverified` put "We couldn't confirm this send" on screen about a message the mirror
+   * says was delivered. A false state is worse than no state: it sends somebody to look for mail that is in their
+   * Sent folder, and it refuses the press that would have replayed the original key if it had not been sent. So the
+   * WRITE refusal and the SENTENCE part company here, and only here. The hold still says parked, so `holdOf`'s
+   * consumers keep their hands off the row; the surface says nothing.
+   */
+
+  /**
    * `compose-autosave.ts`'s adoption drops the row and settles the record on the same evidence.
    */
   if (hold.by === "status" && hold.status === "sent") return state;
@@ -787,21 +781,19 @@ export function canSend(state: SendState, m: MailSend): boolean {
    */
   if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return false;
   /**
-   * ── THE UNVERIFIED LOCK IS PER MESSAGE, AND IT FAILS CLOSED WHEN NOBODY NAMED ONE ──────────
-   *
-   * `unverified` locked the whole lane, and for the compose surface a lane is every message this
-   * browser will ever write — so one ambiguous delivery disabled Send and Send Later for all
-   * future new messages, permanently: the durable record is exempt from the age limit by design,
-   * and `stateOf` reads it on every mount. The mailbox was locked out of composing.
-   *
-   * So the refusal reads {@link SendState.unresolved}, which names the messages an unresolved
-   * send belongs to. A press on one of them is refused for exactly the reason it always was; a
-   * press on a genuinely different message is not.
-   *
-   * The two arms below are the two states that field distinguishes, and they must stay apart. An
-   * `unverified` phase with NOTHING named is a state nobody supplied intents for — `phaseFor`
-   * cannot, it sees a result and not the message — and it refuses, which is the behaviour before
-   * this field existed. `unresolved` present is the answered case, and only a match locks.
+   * THE UNVERIFIED LOCK IS PER MESSAGE, AND IT FAILS CLOSED WHEN NOBODY NAMED ONE: `unverified` locked the whole
+   * lane, and for the compose surface a lane is every message this browser will ever write — so one ambiguous
+   * delivery disabled Send and Send Later for all future new messages, permanently: the durable record is exempt from
+   * the age limit by design, and `stateOf` reads it on every mount. The mailbox was locked out of composing. So the
+   * refusal reads {@link SendState.unresolved}, which names the messages an unresolved send belongs to. A press on
+   * one of them is refused for exactly the reason it always was; a press on a genuinely different message is not. The
+   * two arms below are the two states that field distinguishes, and they must stay apart.
+   */
+
+  /**
+   * An `unverified` phase with NOTHING named is a state nobody supplied intents for — `phaseFor` cannot, it sees a
+   * result and not the message — and it refuses, which is the behaviour before this field existed. `unresolved`
+   * present is the answered case, and only a match locks.
    */
   if (unresolvedNames(state, m)) return false;
   const isForward = typeof m.forwardOf === "string" && m.forwardOf.length > 0;
@@ -1097,22 +1089,20 @@ export function useMailSend(
   const owner = useRef<string | null>(storageOwner());
 
   /**
-   * THE COMPOSE SESSION ID FOR A LANE — the compose surface's, and `null` for every other lane.
-   *
-   * ── IT USED TO BE READ ONLY FOR A MESSAGE WITH NO NAME OF ITS OWN, AND THAT WAS THE DEFECT ──
-   *
-   * The old rule was `sendSubject(m, null) === undefined ? composeSessionId() : null`: a
-   * draft-backed compose never touched storage for it, on the reasoning that the row already
-   * names the message. The row does name it — but not for the whole of its life. A compose
-   * pressed before autosave has written anything is named `compose:<session>`, and the row
-   * appears half a second later; with the session unread from that point on, the record and the
-   * surface could no longer be shown to be about the same message, and an unresolved send
-   * unlocked and went out twice.
-   *
-   * So the session is the lane's fact, not the message's: read for the compose surface whatever
-   * the message currently carries, and never for a reply or a forward, which are named by the
-   * message they answer and cannot be renamed under them. This is the same expression
-   * {@link stateFor} uses, in one place, so the record's identity and the surface's cannot drift.
+   * THE COMPOSE SESSION ID FOR A LANE — the compose surface's, and `null` for every other lane. IT USED TO BE READ
+   * ONLY FOR A MESSAGE WITH NO NAME OF ITS OWN, AND THAT WAS THE DEFECT: The old rule was `sendSubject(m, null) ===
+   * undefined ? composeSessionId() : null`: a draft-backed compose never touched storage for it, on the reasoning
+   * that the row already names the message. The row does name it — but not for the whole of its life. A compose
+   * pressed before autosave has written anything is named `compose:<session>`, and the row appears half a second
+   * later; with the session unread from that point on, the record and the surface could no longer be shown to be
+   * about the same message, and an unresolved send unlocked and went out twice.
+   */
+
+  /**
+   * So the session is the lane's fact, not the message's: read for the compose surface whatever the message currently
+   * carries, and never for a reply or a forward, which are named by the message they answer and cannot be renamed
+   * under them. This is the same expression {@link stateFor} uses, in one place, so the record's identity and the
+   * surface's cannot drift.
    */
   const sessionOf = useCallback(
     (key: string): string | null => (key === COMPOSE_SEND_KEY ? composeSessionId(owner.current) : null),
@@ -1258,19 +1248,19 @@ export function useMailSend(
   );
 
   /**
-   * ── HANDING A LIVE MOUNT'S OWN LATE RESULT BACK TO IT ───────────────────────────────────────
-   *
-   * `flushPending()` is DESTRUCTIVE: whatever it returns is gone from the engine. The restore
-   * collector below used to pull everything and then SKIP any key this mount was tracking, on the
-   * reasoning that such a key is `flush`'s business — but by then the answer had been consumed and
-   * `flush` would never see it. Nothing was left anywhere: no pending mutation, no late result, no
-   * answer. The compose stayed `queued` for the rest of the session, every field and Cancel
-   * disabled, for a message that HAD been delivered — and the only exit was a reload, which is
-   * where a second Idempotency-Key comes from.
-   *
-   * So the collector routes by OWNERSHIP: a result whose key this mount owns is handed to exactly
-   * the code path its own press would have run. This is that path, kept in a ref because the
-   * collector's effect must not re-subscribe every time a callback identity moves.
+   * HANDING A LIVE MOUNT'S OWN LATE RESULT BACK TO IT: `flushPending()` is DESTRUCTIVE: whatever it returns is gone
+   * from the engine. The restore collector below used to pull everything and then SKIP any key this mount was
+   * tracking, on the reasoning that such a key is `flush`'s business — but by then the answer had been consumed and
+   * `flush` would never see it. Nothing was left anywhere: no pending mutation, no late result, no answer. The
+   * compose stayed `queued` for the rest of the session, every field and Cancel disabled, for a message that HAD been
+   * delivered — and the only exit was a reload, which is where a second Idempotency-Key comes from. So the collector
+   * routes by OWNERSHIP: a result whose key this mount owns is handed to exactly the code path its own press would
+   * have run.
+   */
+
+  /**
+   * This is that path, kept in a ref because the collector's effect must not re-subscribe every time a callback
+   * identity moves.
    */
   const absorbOwn = useRef<(res: MutationResult) => boolean>(() => false);
 
@@ -1396,44 +1386,44 @@ export function useMailSend(
           && record.session !== composeSessionId(owner.current)
         );
         if (res.status === "confirmed") {
-          /* THE SEND COMPLETED WHILE NOBODY WAS LISTENING. The surface bound to that message is
-             told, with the row the send was delivered from, so it can end the way a live
-             confirmation ends it.
+          /**
+           * THE SEND COMPLETED WHILE NOBODY WAS LISTENING. The surface bound to that message is told, with the row
+           * the send was delivered from, so it can end the way a live confirmation ends it. AND THE RECORD IS LEFT
+           * STANDING, which is the opposite of what `flush` does on the same status — measured, not chosen. Releasing
+           * here made "a reload inside the queued window cannot deliver the same mail twice" deliver twice: the
+           * replay had already put the mail out under key K, the release freed K, and the press that followed minted
+           * a SECOND key for a message the server had no way left to recognise. Two mails to a real person, from the
+           * fix meant to stop the spare draft row. The asymmetry is the difference between the two paths, not an
+           * oversight.
+           */
 
-             AND THE RECORD IS LEFT STANDING, which is the opposite of what `flush` does on the
-             same status — measured, not chosen. Releasing here made "a reload inside the queued
-             window cannot deliver the same mail twice" deliver twice: the replay had already put
-             the mail out under key K, the release freed K, and the press that followed minted a
-             SECOND key for a message the server had no way left to recognise. Two mails to a real
-             person, from the fix meant to stop the spare draft row.
+          /**
+           * `flush` releases because the surface that pressed is right there and clears itself in the same beat, so
+           * the key can go. This pass speaks for a surface it cannot see: settling is a message it sends, never a
+           * fact it can check. So the only durable evidence that this message has ALREADY GONE stays in the jar, and
+           * a press of the same message resumes K and is replayed rather than re-sent. A different message is
+           * unaffected — it has a different fingerprint, and the next press sweeps this record as spent.
+           */
 
-             The asymmetry is the difference between the two paths, not an oversight. `flush`
-             releases because the surface that pressed is right there and clears itself in the same
-             beat, so the key can go. This pass speaks for a surface it cannot see: settling is a
-             message it sends, never a fact it can check. So the only durable evidence that this
-             message has ALREADY GONE stays in the jar, and a press of the same message resumes K
-             and is replayed rather than re-sent. A different message is unaffected — it has a
-             different fingerprint, and the next press sweeps this record as spent. */
+          /**
+           * WHICH COMPOSE THIS ANSWER IS FOR, AND THE ONE IT IS NOT: `settleCompose`'s `sentByMirror` arm CLEARS the
+           * form unconditionally — right on the live path, where the surface being cleared is the one that pressed.
+           * Here it is not: a contact's Write or a mail link re-mints the compose session and puts a DIFFERENT
+           * message on the same lane while the replay is still out there, and settling then wipes words nobody has
+           * sent. Measured — the case in the trace file read `expected '' to be 'Wann kommt der Ofen?'` before this
+           * guard, which is a data loss the person cannot undo and cannot see the cause of. This pass opened that
+           * route; it closes it. The record names the message it was minted for; the surface names what it holds now.
+           * Equal means the answer is about what is on screen.
+           */
 
-          /* ── WHICH COMPOSE THIS ANSWER IS FOR, AND THE ONE IT IS NOT ─────────────────────
-             `settleCompose`'s `sentByMirror` arm CLEARS the form unconditionally — right on the
-             live path, where the surface being cleared is the one that pressed. Here it is not:
-             a contact's Write or a mail link re-mints the compose session and puts a DIFFERENT
-             message on the same lane while the replay is still out there, and settling then wipes
-             words nobody has sent. Measured — the case in the trace file read `expected '' to be
-             'Wann kommt der Ofen?'` before this guard, which is a data loss the person cannot undo
-             and cannot see the cause of. This pass opened that route; it closes it.
-
-             The record names the message it was minted for; the surface names what it holds now.
-             Equal means the answer is about what is on screen. Different means it is about a
-             message this surface no longer holds, and the only correct action is to leave the
-             screen alone — the record stays, so the message it names is still recognised if it
-             comes back, and the diagnostic says so rather than the seam going quiet.
-
-             A record with NO session is not a mismatch; it is a build or a lane that never had one
-             (a reply and a forward are named by the message they answer, which no re-mint can
-             change). Those settle as before: a rule that fails closed needs the state it fails
-             closed ON to be distinguishable from "this shell has no such thing". */
+          /**
+           * Different means it is about a message this surface no longer holds, and the only correct action is to
+           * leave the screen alone — the record stays, so the message it names is still recognised if it comes back,
+           * and the diagnostic says so rather than the seam going quiet. A record with NO session is not a mismatch;
+           * it is a build or a lane that never had one (a reply and a forward are named by the message they answer,
+           * which no re-mint can change). Those settle as before: a rule that fails closed needs the state it fails
+           * closed ON to be distinguishable from "this shell has no such thing".
+           */
           if (!speaksForScreen) {
             console.warn(
               "ohmail: send_settled_unbound — a send settled for a compose this surface no longer "
@@ -1494,23 +1484,23 @@ export function useMailSend(
         }
       }
     };
-    /* AND ONCE AT MOUNT, for the boot that finished its replay before this surface existed — the
-       answer waits in `lateResults` precisely so a later reader can have it.
+    /**
+     * AND ONCE AT MOUNT, for the boot that finished its replay before this surface existed — the answer waits in
+     * `lateResults` precisely so a later reader can have it. GUARDED BY THE SAME QUESTION, and the guard is NOT
+     * COVERED BY A TEST — recorded here rather than left to be discovered, because a comment in this file is the
+     * claim under test. Removing the guard is GREEN across this suite, and the green has a reason: every harness
+     * awaits `engine.start()` before it mounts, so the replay has already emptied the outbox and there is nothing
+     * left for an unconditional pull to dispatch. The shipped shell does not await it.
+     */
 
-       GUARDED BY THE SAME QUESTION, and the guard is NOT COVERED BY A TEST — recorded here rather
-       than left to be discovered, because a comment in this file is the claim under test.
-
-       Removing the guard is GREEN across this suite, and the green has a reason: every harness
-       awaits `engine.start()` before it mounts, so the replay has already emptied the outbox and
-       there is nothing left for an unconditional pull to dispatch. The shipped shell does not
-       await it. There, a mount can land mid-replay, and `flushPending()` DISPATCHES the queue as
-       well as handing back late answers — so an unconditional pull is a second dispatch road
-       beside the replay's own, on the one seam where a second road means a second mail. That is
-       the property the guard defends and it is the whole reason it stays; it is not evidence, and
-       nobody should read it as covered.
-
-       (The red that prompted it was a different defect — releasing the send lock on adoption, in
-       the `confirmed` arm below. That one IS measured, and it is why the release is gone.) */
+    /**
+     * There, a mount can land mid-replay, and `flushPending()` DISPATCHES the queue as well as handing back late
+     * answers — so an unconditional pull is a second dispatch road beside the replay's own, on the one seam where a
+     * second road means a second mail. That is the property the guard defends and it is the whole reason it stays; it
+     * is not evidence, and nobody should read it as covered. (The red that prompted it was a different defect —
+     * releasing the send lock on adoption, in the `confirmed` arm below. That one IS measured, and it is why the
+     * release is gone.)
+     */
     if (engine.hasLateResults()) void collect();
     return () => { cancelled = true; off(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1541,18 +1531,14 @@ export function useMailSend(
   }, [flush]);
 
   /**
-   * ── WHAT THIS LANE'S STATE IS, ONCE, FOR EVERY READER ──────────────────────────────────────
-   *
-   * `stateOf` and the refusal inside `send` are the same question, and they used to read two
-   * different sources: `stateOf` consulted the durable record, `send` read `states[key]` alone.
-   * The file's own comment beside that line claims `canSend` there "applies the SAME rule the
-   * button's `disabled` uses" — which was false for exactly the durable half, because React
-   * state starts empty on every mount and the record is what survives one. So a press that did
-   * not come through the button could get past something the button enforces.
-   *
-   * The durable intents ride on whatever phase this answers rather than replacing it: a live
-   * `sending` or `queued` must still refuse the press it is about, and an unresolved send from
-   * another tab or an earlier session must still lock the message it belongs to.
+   * WHAT THIS LANE'S STATE IS, ONCE, FOR EVERY READER: `stateOf` and the refusal inside `send` are the same question,
+   * and they used to read two different sources: `stateOf` consulted the durable record, `send` read `states[key]`
+   * alone. The file's own comment beside that line claims `canSend` there "applies the SAME rule the button's
+   * `disabled` uses" — which was false for exactly the durable half, because React state starts empty on every mount
+   * and the record is what survives one. So a press that did not come through the button could get past something the
+   * button enforces. The durable intents ride on whatever phase this answers rather than replacing it: a live
+   * `sending` or `queued` must still refuse the press it is about, and an unresolved send from another tab or an
+   * earlier session must still lock the message it belongs to.
    */
   const stateFor = useCallback((key: string): SendState => {
     const held = states[key];
@@ -1618,18 +1604,14 @@ export function useMailSend(
       // shortcut, a future Reply Run step) cannot get past something the button enforces.
       if (locked.current.has(key)) return;
       /**
-       * ── THE HOLD, ASKED AT THE PRESS AND NOT ONLY AT THE BUTTON ────────────────────────────
-       *
-       * `canSend` below reads the durable RECORD through `stateFor`. It does not read the row's
-       * status, and the row's status is the only witness for a send whose row this browser never
-       * learned the id of — so the surface's own `heldRowUnverified` (applied where the button is
-       * rendered) refused a press the button could see while THIS door, which a keyboard shortcut
-       * and every non-button caller comes through, let it past.
-       *
-       * `parked` refuses. `unknown` does NOT: a browser that will not let this app read its own
-       * storage must still be able to send, and the key it sends under is session-only (invariant
-       * S(4)). The row is written onto whatever record does exist on the way out, for the same
-       * reason the `canSend` refusal below does it.
+       * THE HOLD, ASKED AT THE PRESS AND NOT ONLY AT THE BUTTON: `canSend` below reads the durable RECORD through
+       * `stateFor`. It does not read the row's status, and the row's status is the only witness for a send whose row
+       * this browser never learned the id of — so the surface's own `heldRowUnverified` (applied where the button is
+       * rendered) refused a press the button could see while THIS door, which a keyboard shortcut and every
+       * non-button caller comes through, let it past. `parked` refuses. `unknown` does NOT: a browser that will not
+       * let this app read its own storage must still be able to send, and the key it sends under is session-only
+       * (invariant S(4)). The row is written onto whatever record does exist on the way out, for the same reason the
+       * `canSend` refusal below does it.
        */
       /* `opts.heldRow` IS THE INLINE REPLY'S ONLY NAME FOR A ROW. Its mutation carries no
          `draftId` — the reply's row is the adapter's — and its editor is a per-message scratch
@@ -1647,17 +1629,13 @@ export function useMailSend(
       }
 
       /**
-       * ── HELD FOR A SEND FROM THE LAST SESSION ────────────────────────────────────────────
-       *
-       * The compose came up holding a message a send is still carrying. The surface renders that
-       * as a read-only form with a sentence, and this is the same refusal at the layer the wire
-       * is actually reached from — a caller that is not the button (a keyboard shortcut, a future
-       * Reply Run step) must not get past what the button enforces.
-       *
-       * It refuses the EDITED text as well as the identical one, and that is the point: an
-       * identical press resumes the key through `resumeSendLock` below and is harmless, while an
-       * edited one is a fingerprint mismatch, a fresh key, and a second copy at the recipient.
-       * The hold is keyed on WHICH MESSAGE, so a different message never reaches this line.
+       * HELD FOR A SEND FROM THE LAST SESSION: The compose came up holding a message a send is still carrying. The
+       * surface renders that as a read-only form with a sentence, and this is the same refusal at the layer the wire
+       * is actually reached from — a caller that is not the button (a keyboard shortcut, a future Reply Run step)
+       * must not get past what the button enforces. It refuses the EDITED text as well as the identical one, and that
+       * is the point: an identical press resumes the key through `resumeSendLock` below and is harmless, while an
+       * edited one is a fingerprint mismatch, a fresh key, and a second copy at the recipient. The hold is keyed on
+       * WHICH MESSAGE, so a different message never reaches this line.
        */
       if (key === COMPOSE_SEND_KEY
         && sendUnsettledFromLastSession(
@@ -1684,20 +1662,19 @@ export function useMailSend(
       }
 
       /**
-       * ── THE DURABLE HALF, AND IT DOES NOT REFUSE THE PRESS ────────────────────────────────
-       *
-       * A stored key means this lane has an unsettled send. The press is allowed through and
-       * RESUMES that key, rather than being refused, and the difference matters: refusing would
-       * leave the reader holding a message the product will not send and cannot explain, with the
-       * only exit being a reload that produces the very second key this exists to prevent.
-       * Resuming makes the SERVER the authority instead — `SendService.resumeExisting` replays a
-       * `sent` row's stored result without re-sending, reports a `failed` one, answers `in_flight`
-       * while the first attempt may still be running, and never sends again under a key it has
-       * already reserved. One press, one delivery, decided where the delivery lives.
-       *
-       * The claim is written BEFORE `engine.mutate`, synchronously. A key persisted afterwards
-       * would leave the window this whole file is about: a process killed between the POST and
-       * the write comes back with the mail possibly sent and no record of the key it went under.
+       * THE DURABLE HALF, AND IT DOES NOT REFUSE THE PRESS: A stored key means this lane has an unsettled send. The
+       * press is allowed through and RESUMES that key, rather than being refused, and the difference matters:
+       * refusing would leave the reader holding a message the product will not send and cannot explain, with the only
+       * exit being a reload that produces the very second key this exists to prevent. Resuming makes the SERVER the
+       * authority instead — `SendService.resumeExisting` replays a `sent` row's stored result without re-sending,
+       * reports a `failed` one, answers `in_flight` while the first attempt may still be running, and never sends
+       * again under a key it has already reserved. One press, one delivery, decided where the delivery lives. The
+       * claim is written BEFORE `engine.mutate`, synchronously.
+       */
+
+      /**
+       * A key persisted afterwards would leave the window this whole file is about: a process killed between the POST
+       * and the write comes back with the mail possibly sent and no record of the key it went under.
        */
       const now = Date.now();
       const session = sessionOf(key);

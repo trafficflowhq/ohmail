@@ -191,19 +191,16 @@ export function DecisionBar({
             { id: "domain", label: copy.scopeDomain },
           ]}
         />
-        {/* THE CONSEQUENCE LINE, WHICH IS THE CONSENT DISCLOSURE.
-            "Becomes a rule — future mail from … files automatically" is the sentence that has
-            to be readable BEFORE the click, because screening a sender out arms
-            auto-unsubscribe. It is the LEAD, so it is on screen with the disclosure shut and
-            no press can reveal less of it than it says now.
-
-            WHICH HALF OF THE SPLIT BUTTON DOES WHAT is a different kind of sentence: it
-            explains a control that is in front of the reader, it is as true on the hundredth
-            decision as the first, and it was costing a second line of a bar that already holds
-            a segmented control on the same row. That is what moved behind the (i).
-
-            A `note` passed in is a caller's own whole sentence and is not split — the caller
-            wrote one line and gets one line. */}
+        {/*
+            THE CONSEQUENCE LINE, WHICH IS THE CONSENT DISCLOSURE. "Becomes a rule — future mail from … files
+            automatically" is the sentence that has to be readable BEFORE the click, because screening a sender out
+            arms auto-unsubscribe. It is the LEAD, so it is on screen with the disclosure shut and no press can reveal
+            less of it than it says now. WHICH HALF OF THE SPLIT BUTTON DOES WHAT is a different kind of sentence: it
+            explains a control that is in front of the reader, it is as true on the hundredth decision as the first,
+            and it was costing a second line of a bar that already holds a segmented control on the same row. That is
+            what moved behind the (i). A `note` passed in is a caller's own whole sentence and is not split — the
+            caller wrote one line and gets one line.
+          */}
         {note ? (
           <span className="d-note">{note}</span>
         ) : (

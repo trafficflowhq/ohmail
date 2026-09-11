@@ -564,16 +564,13 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     /**
-     * ═══ THE FOLDER VERBS — pending MARKERS, never pretended completion (types.ts carries the
-     * model). Each effect paints what the server will confirm in seconds via the wake channel;
-     * none of them re-spells a message's folder locally, because `FolderEntity.name` keeps the
-     * mailbox's truth until the worker lands the change and every join stays consistent. ═══
-     *
-     * CREATE — the full optimistic row under the client-local id (`tag_create`'s rule: the two
-     * ids never coexist). The owning address is borrowed from a sibling entity of the same
-     * mailbox — with one mailbox the rail shows no labels, and the server echo replaces the
-     * row in the same breath. An empty name yields no effects; the surface validates the rest
-     * (`folderNameError`) before dispatching.
+     * ═══ THE FOLDER VERBS — pending MARKERS, never pretended completion (types.ts carries the model). Each effect
+     * paints what the server will confirm in seconds via the wake channel; none of them re-spells a message's folder
+     * locally, because `FolderEntity.name` keeps the mailbox's truth until the worker lands the change and every join
+     * stays consistent. ═══ CREATE — the full optimistic row under the client-local id (`tag_create`'s rule: the two
+     * ids never coexist). The owning address is borrowed from a sibling entity of the same mailbox — with one mailbox
+     * the rail shows no labels, and the server echo replaces the row in the same breath. An empty name yields no
+     * effects; the surface validates the rest (`folderNameError`) before dispatching.
      */
     case "folder_create": {
       const name = m.name.trim();
@@ -771,22 +768,19 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     /**
-     * ── AUTOSAVE ─────────────────────────────────────────────────────────────────────────
-     *
-     * CREATE (`draftId: null`) mints a client-local id for the overlay, exactly as `rule_create`
-     * and `tag_create` do and for the same reason: the server's row does not exist yet, the
-     * overlay is dropped the moment the mutation confirms, and the server's own row arrives in
-     * the echo — so the two ids never coexist. What is different here is that the caller then
-     * ADOPTS the server's id (`MutationResult.entityId`), because the next autosave has to reach
-     * the same row.
-     *
-     * UPDATE patches the row already in the mirror. An unknown id yields [] ⇒ the engine rejects
-     * locally with `not_found` and nothing goes on the wire, which is right for a draft another
-     * device deleted while this tab was typing.
-     *
-     * `status` is never written here: a draft is created at `draft` and only the send route may
-     * move it. `mailboxId` is required for the create and refused when absent — the server would
-     * 400 it, and a row written without one cannot be sent from anywhere.
+     * AUTOSAVE: CREATE (`draftId: null`) mints a client-local id for the overlay, exactly as `rule_create` and
+     * `tag_create` do and for the same reason: the server's row does not exist yet, the overlay is dropped the moment
+     * the mutation confirms, and the server's own row arrives in the echo — so the two ids never coexist. What is
+     * different here is that the caller then ADOPTS the server's id (`MutationResult.entityId`), because the next
+     * autosave has to reach the same row. UPDATE patches the row already in the mirror. An unknown id yields [] ⇒ the
+     * engine rejects locally with `not_found` and nothing goes on the wire, which is right for a draft another device
+     * deleted while this tab was typing. `status` is never written here: a draft is created at `draft` and only the
+     * send route may move it.
+     */
+
+    /**
+     * `mailboxId` is required for the create and refused when absent — the server would 400 it, and a row written
+     * without one cannot be sent from anywhere.
      */
     case "draft_save": {
       if (m.draftId === null) {

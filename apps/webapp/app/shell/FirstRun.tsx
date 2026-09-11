@@ -822,17 +822,15 @@ export function FirstRun({
 
         {step === "mailbox" ? screen(
           () => {
-            /* ── BACK ONTO THIS SCREEN MUST NOT CONNECT A SECOND MAILBOX ────────────────────
-             *
-             * This step's forward verb CREATES, and Back from the consent screen lands here —
-             * on a run whose mailbox already exists. Pressing it again would call `connect` for
-             * a mailbox that is already connected, on the strength of a verdict from before it
-             * was. So when the facts already hold a mailbox, the press CONTINUES: the work this
-             * screen does has been done, and the person is walking back through it, not redoing
-             * it.
-             *
-             * The derivation agrees — it answers `consent` for this state — which is what makes
-             * "continue" the honest reading of the press rather than a special case. */
+            /**
+             * BACK ONTO THIS SCREEN MUST NOT CONNECT A SECOND MAILBOX: This step's forward verb CREATES, and Back
+             * from the consent screen lands here — on a run whose mailbox already exists. Pressing it again would
+             * call `connect` for a mailbox that is already connected, on the strength of a verdict from before it
+             * was. So when the facts already hold a mailbox, the press CONTINUES: the work this screen does has been
+             * done, and the person is walking back through it, not redoing it. The derivation agrees — it answers
+             * `consent` for this state — which is what makes "continue" the honest reading of the press rather than a
+             * special case.
+             */
             if (facts.mailbox !== null) { forward(); return; }
             if (!tested) return;
             void run(async () => {
@@ -850,20 +848,21 @@ export function FirstRun({
                * since been stored; leaving it standing would arm this screen's primary again the
                * moment somebody walked back onto it. */
               retireTest();
-              /* ── WHICH ROW THE REST OF THIS RUN IS ABOUT — ON AN ADD RUN, AND ONLY THERE ────
-               *
-               * The caller resolves the run's subject from the route, and an ADD run's route names
-               * no mailbox until this moment because there was no row to name.
-               *
-               * `add === true` IS LOAD-BEARING AND WAS MISSING. Called unconditionally, this
-               * re-pointed the hash at `#/first-run/add` after every connect — including a FIRST
-               * run's, on the door where the flow's form IS the connect (cloud) and on the
-               * standalone path through "Start over → forget this mailbox". From the next render
-               * `route.firstRunAdd` was true, so `onboardingPath` dropped `ai`, `provider` and
-               * `pair`: the AI question was never asked, the standalone door's provider form was
-               * never shown, and the phone was never offered — on the one run that exists to
-               * offer them. A first run needs no id in its hash anyway: its new row is the only
-               * row, so `facts[0]` is already the right answer. */
+              /**
+               * WHICH ROW THE REST OF THIS RUN IS ABOUT — ON AN ADD RUN, AND ONLY THERE: The caller resolves the
+               * run's subject from the route, and an ADD run's route names no mailbox until this moment because there
+               * was no row to name. `add === true` IS LOAD-BEARING AND WAS MISSING. Called unconditionally, this
+               * re-pointed the hash at `#/first-run/add` after every connect — including a FIRST run's, on the door
+               * where the flow's form IS the connect (cloud) and on the standalone path through "Start over → forget
+               * this mailbox". From the next render `route.firstRunAdd` was true, so `onboardingPath` dropped `ai`,
+               * `provider` and `pair`: the AI question was never asked, the standalone door's provider form was never
+               * shown, and the phone was never offered — on the one run that exists to offer them.
+               */
+
+              /**
+               * A first run needs no id in its hash anyway: its new row is the only row, so `facts[0]` is already the
+               * right answer.
+               */
               if (add === true) onConnected?.(id);
             });
           },
@@ -871,17 +870,15 @@ export function FirstRun({
             <>
               <h1 id={`${ids}-title`}>{t("mailboxTitle")}</h1>
               <p className="sub">{t("mailboxLead")}</p>
-              {/* ── ONCE A MAILBOX EXISTS THIS SCREEN IS A STATEMENT, NOT A FORM ───────────────
-                  Back from the consent screen lands here on a run whose mailbox is connected, and
-                  a connect form there is a form whose every control is a lie: the fields describe
-                  a mailbox that has been stored, "Test connection" would prove a login nobody is
-                  about to use, and the primary — whatever the verdict says — can only navigate.
-                  A person who tested, got a green tick and pressed on would have watched a
-                  successful test authorise nothing at all.
-
-                  So the form is withheld and the screen says which mailbox this run is about. The
-                  way to connect a DIFFERENT one is "Start over", which is on this foot and which
-                  offers to forget this one. */}
+              {/*
+                  ONCE A MAILBOX EXISTS THIS SCREEN IS A STATEMENT, NOT A FORM: Back from the consent screen lands
+                  here on a run whose mailbox is connected, and a connect form there is a form whose every control is
+                  a lie: the fields describe a mailbox that has been stored, "Test connection" would prove a login
+                  nobody is about to use, and the primary — whatever the verdict says — can only navigate. A person
+                  who tested, got a green tick and pressed on would have watched a successful test authorise nothing
+                  at all. So the form is withheld and the screen says which mailbox this run is about. The way to
+                  connect a DIFFERENT one is "Start over", which is on this foot and which offers to forget this one.
+                */}
               {facts.mailbox !== null ? (
                 <>
                   <SettingsBanner
@@ -1018,19 +1015,16 @@ export function FirstRun({
              * cursor once the claim question is answered — which the line above has just
              * recorded — so this cannot be thrown back to the choice it came from. */
             if (elsewhereChoice === "read") { goTo("summary"); return; }
-            /* ── "ORGANIZE HERE INSTEAD" — AND WHY IT USUALLY CALLS NOTHING EITHER ────────
-             *
-             * The claim, the consent and the window ride ONE request
-             * (`POST /mailboxes/:id/organize`), and the consent screen and the window screen
-             * are the two halves of composing it. Reaching this screen means the derivation's
-             * row 3 fired, which is gated on `!consented` — so in a first run the answer here
-             * is forward navigation, and the window's press is what claims.
-             *
-             * The one exception is the RE-ENTRY path: a mailbox this account already consented
-             * to, that another install has since taken, reached from the Settings banner. There
-             * is nothing left to ask, so the claim goes at once and the verdict says what
-             * actually happened — asked for, decided by the worker on its next pass. Never
-             * "done": this authorizes ONE attempt and does not win anything. */
+            /**
+             * "ORGANIZE HERE INSTEAD" — AND WHY IT USUALLY CALLS NOTHING EITHER: The claim, the consent and the
+             * window ride ONE request (`POST /mailboxes/:id/organize`), and the consent screen and the window screen
+             * are the two halves of composing it. Reaching this screen means the derivation's row 3 fired, which is
+             * gated on `!consented` — so in a first run the answer here is forward navigation, and the window's press
+             * is what claims. The one exception is the RE-ENTRY path: a mailbox this account already consented to,
+             * that another install has since taken, reached from the Settings banner. There is nothing left to ask,
+             * so the claim goes at once and the verdict says what actually happened — asked for, decided by the
+             * worker on its next pass. Never "done": this authorizes ONE attempt and does not win anything.
+             */
             if (!facts.mailbox?.organizeConsentedAt) { forward(); return; }
             if (!mailboxId) return;
             void run(async () => {
@@ -1048,19 +1042,21 @@ export function FirstRun({
                   : held === "unnamed"
                     ? tm("readerLabelLegacy")
                     : tm("readerLabel", { name: holderName(facts)! })}
-                /* NOBODY IS TESTED FIRST, ahead of the stopped arm and both "since" sentences,
-                   because every one of them names or dates a holder: `readerStopped` interpolates
-                   the holder's name (falling back to "another install"), and the three `readerSince*`
-                   sentences all open with a date. With no holder recorded there is nothing to name
-                   and no date to print, so the state gets its own sentence and NO date line.
+                /**
+                 * NOBODY IS TESTED FIRST, ahead of the stopped arm and both "since" sentences, because every one of
+                 * them names or dates a holder: `readerStopped` interpolates the holder's name (falling back to
+                 * "another install"), and the three `readerSince*` sentences all open with a date. With no holder
+                 * recorded there is nothing to name and no date to print, so the state gets its own sentence and NO
+                 * date line. AND IT IS A FAIL-CLOSED DEFAULT NOW, NOT A STATE THIS SCREEN IS IN. The cursor check in
+                 * `firstRunStep` takes the whole screen away once nothing holds the mailbox, because the four
+                 * sentences AROUND this banner — the title, the lead and both choices — all name the other install
+                 * and cannot be told the truth for that state.
+                 */
 
-                   AND IT IS A FAIL-CLOSED DEFAULT NOW, NOT A STATE THIS SCREEN IS IN. The cursor
-                   check in `firstRunStep` takes the whole screen away once nothing holds the
-                   mailbox, because the four sentences AROUND this banner — the title, the lead
-                   and both choices — all name the other install and cannot be told the truth for
-                   that state. This arm stays because the branch below it interpolates
-                   `holderName(facts)!`, and a routing bug that reached it must render a sentence
-                   rather than the word "null". */
+                /**
+                 * This arm stays because the branch below it interpolates `holderName(facts)!`, and a routing bug
+                 * that reached it must render a sentence rather than the word "null".
+                 */
                 description={held === "nobody"
                   ? tm("readerNobodyReads")
                   : facts.mailbox?.organizerState === "stopped"
@@ -1102,17 +1098,16 @@ export function FirstRun({
                   },
                 ]}
               />
-              {/* ── ONE SENTENCE, ON EVERY DOOR, AND IT IS TRUE ON ALL THREE AGAIN ─────────
-                  This was door-aware for a day. The standalone install read its takeover stamp
-                  ONCE, when it assembled its engine, so a claim made while the app was running
-                  was not spent until a restart — and "on its next pass, within a minute" would
-                  have been a promise that door could not keep. It said what had to be done
-                  instead, in the mailbox pane's own words.
-
-                  The engine re-reads the stamp at the top of every gate now, so a press on a
-                  running install is honoured on the next poll with no relaunch. The premise the
-                  branch stood on is gone, and the branch goes with it rather than surviving as a
-                  vaguer sentence on one door — which would understate what that door does. */}
+              {/*
+                  ONE SENTENCE, ON EVERY DOOR, AND IT IS TRUE ON ALL THREE AGAIN: This was door-aware for a day. The
+                  standalone install read its takeover stamp ONCE, when it assembled its engine, so a claim made while
+                  the app was running was not spent until a restart — and "on its next pass, within a minute" would
+                  have been a promise that door could not keep. It said what had to be done instead, in the mailbox
+                  pane's own words. The engine re-reads the stamp at the top of every gate now, so a press on a
+                  running install is honoured on the next poll with no relaunch. The premise the branch stood on is
+                  gone, and the branch goes with it rather than surviving as a vaguer sentence on one door — which
+                  would understate what that door does.
+                */}
               {/* THE BLOCK THAT PRINTED A REFUSAL IS GONE, WITH THE REFUSAL.
                   It said the press could not take the mailbox while the holder was checking in,
                   and named the order to do it in. That was true while a hosted claim outranked a
@@ -1432,20 +1427,16 @@ export function FirstRun({
               )}
             </div>
             <p className="set-note-inline">{t("doneSettings")}</p>
-            {/* ── THE PAIR OFFER IS A SECOND VERB HERE, AND IT HAS TO BE ────────────────────
-             *
-             * `pair` is in the path and lights a rail dot, and NOTHING COULD REACH IT: this
-             * screen's only verb stamps completion and leaves, so the pairing step was rendered
-             * by no state the flow could produce. Found while building the render harness, before
-             * a pixel — the step existed in the type, the path and the rail, and in no reachable
-             * run.
-             *
-             * A second VERB rather than making "Open ohmail" advance, because that label would
-             * then be false: it would not open ohmail, it would show another setup screen. Two
-             * true labels beat one that navigates somewhere its words do not name.
-             *
-             * Withheld where the door does not pair, structurally: no panel, no offer, and the
-             * step is skipped rather than rendered empty. */}
+            {/*
+                THE PAIR OFFER IS A SECOND VERB HERE, AND IT HAS TO BE: `pair` is in the path and lights a rail dot,
+                and NOTHING COULD REACH IT: this screen's only verb stamps completion and leaves, so the pairing step
+                was rendered by no state the flow could produce. Found while building the render harness, before a
+                pixel — the step existed in the type, the path and the rail, and in no reachable run. A second VERB
+                rather than making "Open ohmail" advance, because that label would then be false: it would not open
+                ohmail, it would show another setup screen. Two true labels beat one that navigates somewhere its
+                words do not name. Withheld where the door does not pair, structurally: no panel, no offer, and the
+                step is skipped rather than rendered empty.
+              */}
             {foot({
               cancel: false,
               primary: (

@@ -282,23 +282,19 @@ export class SearchIndex {
   }
 
   /**
-   * EVERY MESSAGE ON THIS DEVICE INVOLVING ONE ADDRESS, newest first, with the counts for all
-   * three directions — the address view's whole device half.
-   *
-   * ── THE COUNTS ARE ALWAYS ALL THREE, WHATEVER `direction` ASKS FOR ─────────────────────
-   *
-   * `items` is filtered by `direction`; `counts` is not, and that asymmetry is deliberate. The
-   * toggle has to be able to say "All 12 · From them 9 · To them 4" while showing one of the
-   * three, and a caller that had to call three times to fill in its own control would either
-   * walk the postings three times or (far more likely) label the two it did not ask for with the
-   * number it did.
-   *
-   * ── ORDER: NEWEST FIRST, BY {@link compareRanked} WITH AN EQUAL SCORE ──────────────────
-   *
-   * Not a private date comparator. With every `score` equal, `compareRanked` degrades exactly to
-   * `date desc, nulls last, id` — which IS newest-first, with the undated-sorts-last rule and
-   * the stable `id` tail that keep a list from reshuffling itself between renders. Writing a
-   * second comparator here would be a second place for those two rules to be got wrong.
+   * EVERY MESSAGE ON THIS DEVICE INVOLVING ONE ADDRESS, newest first, with the counts for all three directions — the
+   * address view's whole device half. THE COUNTS ARE ALWAYS ALL THREE, WHATEVER `direction` ASKS FOR: `items` is
+   * filtered by `direction`; `counts` is not, and that asymmetry is deliberate. The toggle has to be able to say "All
+   * 12 · From them 9 · To them 4" while showing one of the three, and a caller that had to call three times to fill
+   * in its own control would either walk the postings three times or (far more likely) label the two it did not ask
+   * for with the number it did. ORDER: NEWEST FIRST, BY {@link compareRanked} WITH AN EQUAL SCORE: Not a private date
+   * comparator.
+   */
+
+  /**
+   * With every `score` equal, `compareRanked` degrades exactly to `date desc, nulls last, id` — which IS
+   * newest-first, with the undated-sorts-last rule and the stable `id` tail that keep a list from reshuffling itself
+   * between renders. Writing a second comparator here would be a second place for those two rules to be got wrong.
    */
   messagesWith(address: string, direction: AddressDirection = "any"): AddressResult {
     const key = addressMatchKey(address);
@@ -523,16 +519,12 @@ export class SearchIndex {
   }
 
   /**
-   * THE ANSWER, IN TIERS. Exact and prefix matches are the result; typo tolerance is a second,
-   * separately-labelled answer that exists only when the first one is empty.
-   *
-   * ── THE FUZZY ARM IS NOT RUN AT ALL WHEN THERE ARE EXACT HITS ───────────────────────────
-   *
-   * That is the rule's shape and it is also where the cost went. The literal arms are a map
-   * lookup plus one pass over the term list for prefixes; the fuzzy arm computes a trigram
-   * set intersection against EVERY indexed term, for every query token, on every keystroke.
-   * On a large mirror that is the dominant cost of a search, and under this rule the
-   * common case — a query with an answer — never pays it.
+   * THE ANSWER, IN TIERS. Exact and prefix matches are the result; typo tolerance is a second, separately-labelled
+   * answer that exists only when the first one is empty. THE FUZZY ARM IS NOT RUN AT ALL WHEN THERE ARE EXACT HITS:
+   * That is the rule's shape and it is also where the cost went. The literal arms are a map lookup plus one pass over
+   * the term list for prefixes; the fuzzy arm computes a trigram set intersection against EVERY indexed term, for
+   * every query token, on every keystroke. On a large mirror that is the dominant cost of a search, and under this
+   * rule the common case — a query with an answer — never pays it.
    */
   search(query: string, opts: { limit?: number } = {}): LocalSearchResult {
     const qTokens = tokenize(query);

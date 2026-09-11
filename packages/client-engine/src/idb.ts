@@ -100,20 +100,14 @@ async function commitWrite(tx: IDBTransaction): Promise<void> {
 
 export interface IndexedDbMirrorStoreOptions {
   /**
-   * THE ACCOUNT THIS MIRROR BELONGS TO — a server-verified account id, never a client
-   * guess. Required unless {@link IndexedDbMirrorStoreOptions.dbName} is given.
-   *
-   * It does two separate jobs and both are load-bearing:
-   *
-   *  1. it NAMES the database ({@link mirrorDbName}), so two accounts on one browser open
-   *     two different databases and can never see each other's cursor or records;
-   *  2. it is STAMPED inside the database and checked on every open, so a database whose
-   *     name says one account and whose contents were written by another is wiped rather
-   *     than read.
-   *
-   * (2) is not redundant with (1). A name is a convention; the stamp is what makes the
-   * guarantee survive a future change to the naming scheme, a restored profile, or a
-   * database somebody opened by hand.
+   * THE ACCOUNT THIS MIRROR BELONGS TO — a server-verified account id, never a client guess. Required unless {@link
+   * IndexedDbMirrorStoreOptions.dbName} is given. It does two separate jobs and both are load-bearing:
+   * 1. it NAMES the database ({@link mirrorDbName}), so two accounts on one browser open two different databases
+   *   and can never see each other's cursor or records;
+   * 2. it is STAMPED inside the database and checked on every open, so a database whose name says one account and
+   *   whose contents were written by another is wiped rather than read.
+   * (2) is not redundant with (1). A name is a convention; the stamp is what makes the guarantee survive a future
+   * change to the naming scheme, a restored profile, or a database somebody opened by hand.
    */
   owner?: string;
   /**
@@ -407,15 +401,12 @@ export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Pro
   );
 
   /**
-   * ── AND THEN READ BACK, because the delete's own answer is not the whole story ──────────
-   *
-   * `blocked` is the one this exists for: another tab of this origin still holds the mirror
-   * open, so the database is still on disk with the mail in it. But a `deleted` is worth
-   * re-checking too where the browser can be asked, because between the delete and this read
-   * the same other tab may have re-OPENED (and so recreated) the name. Where `databases()`
-   * does not exist (older Firefox, some privacy modes) the delete's own outcome is the best
-   * evidence available and is used as such — an unavailable enumeration must not be reported
-   * as a survival.
+   * AND THEN READ BACK, because the delete's own answer is not the whole story: `blocked` is the one this exists for:
+   * another tab of this origin still holds the mirror open, so the database is still on disk with the mail in it. But
+   * a `deleted` is worth re-checking too where the browser can be asked, because between the delete and this read the
+   * same other tab may have re-OPENED (and so recreated) the name. Where `databases()` does not exist (older Firefox,
+   * some privacy modes) the delete's own outcome is the best evidence available and is used as such — an unavailable
+   * enumeration must not be reported as a survival.
    */
   const stillHere = new Set(outcomes.filter(([, o]) => o !== "deleted").map(([n]) => n));
   /**
@@ -473,15 +464,12 @@ export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Pro
 }
 
 /**
- * The IndexedDB-backed mirror (brief §2: "apply them into a local store —
- * IndexedDB for web"). Layout:
- *
- *   - object store `entities`: key "type:id" → MirrorRecord (tombstones INCLUDED —
- *     they carry the seq guard that makes replays converge);
- *   - object store `meta`: key string → value; the /sync cursor lives at "cursor".
- *
- * Every page is flushed in ONE readwrite transaction across both stores, so the
- * cursor never persists ahead of its page (contract §3.3 step 3).
+ * The IndexedDB-backed mirror (brief §2: "apply them into a local store — IndexedDB for web"). Layout:
+ * - object store `entities`: key "type:id" → MirrorRecord (tombstones INCLUDED — they carry the seq guard that
+ *   makes replays converge);
+ * - object store `meta`: key string → value; the /sync cursor lives at "cursor".
+ * Every page is flushed in ONE readwrite transaction across both stores, so the cursor never persists ahead of its
+ * page (contract §3.3 step 3).
  */
 export class IndexedDbMirrorStore extends BaseMirrorStore {
   private readonly dbName: string;
@@ -578,20 +566,18 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
       db.close();
       if (this.db === db) this.db = null;
       /**
-       * ── AND A DELETE FENCES THIS STORE FOR GOOD ──────────────────────────────────────────
-       *
-       * Yielding is only half of cooperating. `newVersion === null` means the connection was
-       * closed for a DELETE, and every modern tab of this app runs this same handler — so the
-       * usual two-tab sign-out does not even produce a `blocked`: both stores close, the delete
-       * succeeds, the verdict is clean, and then the OTHER tab's next drain, flush or tap calls
-       * `open()`, recreates the database at generation 0 and writes mail back into it. The
-       * person was told this browser holds nothing while a live tab was re-filling it.
-       *
-       * So a delete is permanent for this instance. `open()` refuses afterwards; `load()` reads
-       * that refusal as "empty", which is the truth and keeps a lingering page from throwing;
-       * every WRITE path lets it through, because a write that silently vanished would be the
-       * same lie one layer down. The tab recovers by reloading, which is what a signed-out tab
-       * has to do anyway.
+       * AND A DELETE FENCES THIS STORE FOR GOOD: Yielding is only half of cooperating. `newVersion === null` means
+       * the connection was closed for a DELETE, and every modern tab of this app runs this same handler — so the
+       * usual two-tab sign-out does not even produce a `blocked`: both stores close, the delete succeeds, the verdict
+       * is clean, and then the OTHER tab's next drain, flush or tap calls `open()`, recreates the database at
+       * generation 0 and writes mail back into it. The person was told this browser holds nothing while a live tab
+       * was re-filling it. So a delete is permanent for this instance. `open()` refuses afterwards; `load()` reads
+       * that refusal as "empty", which is the truth and keeps a lingering page from throwing; every WRITE path lets
+       * it through, because a write that silently vanished would be the same lie one layer down.
+       */
+
+      /**
+       * The tab recovers by reloading, which is what a signed-out tab has to do anyway.
        */
       if ((ev as IDBVersionChangeEvent).newVersion === null) this.fenced = true;
     };
@@ -600,18 +586,13 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
   }
 
   /**
-   * Claim this database for {@link owner}, or empty it first.
-   *
-   * Three cases, and the middle one is the whole point:
-   *
-   *  - **unstamped** — a database this build has never opened. Claim it. (A mirror written
-   *    by a pre-repair build cannot appear here: that one is called
-   *    {@link LEGACY_MIRROR_DB} and {@link purgeLegacyMirror} deletes it.)
-   *  - **stamped with somebody else** — should be unreachable, because the account is part
-   *    of the name. Unreachable states are exactly the ones worth handling: WIPE, then claim.
-   *    Refusing to open instead would leave a user staring at a broken client with no way
-   *    out; wiping costs a re-bootstrap from `/sync` and is invisible.
-   *  - **stamped with us** — the ordinary path, one extra indexed read per session.
+   * Claim this database for {@link owner}, or empty it first. Three cases, and the middle one is the whole point:
+   * - **unstamped** — a database this build has never opened. Claim it. (A mirror written by a pre-repair build
+   *   cannot appear here: that one is called {@link LEGACY_MIRROR_DB} and {@link purgeLegacyMirror} deletes it.)
+   * - **stamped with somebody else** — should be unreachable, because the account is part of the name. Unreachable
+   *   states are exactly the ones worth handling: WIPE, then claim. Refusing to open instead would leave a user
+   *   staring at a broken client with no way out; wiping costs a re-bootstrap from `/sync` and is invisible.
+   * - **stamped with us** — the ordinary path, one extra indexed read per session.
    */
   private async bindOwner(db: IDBDatabase): Promise<void> {
     if (this.owner === null) return;

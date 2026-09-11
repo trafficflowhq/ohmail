@@ -595,24 +595,22 @@ function ActionBar({
     if (!press("shift+i")) onAction("unread");
   };
 
-  /* ── THE BAR IN TRASH: RESTORE, THEN THE READ SWITCH ───────────────────────────────────────
-   *
-   * Placed HERE, after every hook and derivation this component owns and before the eleven
-   * groups are composed, for two reasons that are both mechanical. React requires every hook to
-   * run on every render, so the return cannot sit above them; and the `trash` prop's own block
-   * explains why it is one return rather than eleven predicates.
-   *
-   * No density measurement, no More menu and no admission walk: two controls fit every width a
-   * message is read at, so the machinery that decides which groups the row can hold has nothing
-   * to decide. That is also why the row carries no `data-*` shape attributes — the container
-   * queries in `action-bar.css` switch groups that are not here.
-   *
-   * Restore wears `abar-b abar-solo primary`, the SAME class the pill's first verb wears today
-   * (Reply's), read off that button rather than given a class of its own: it is the one primary
-   * verb of this bar, and a second accent rule would be a second answer to what "primary" looks
-   * like. The read switch is the resting bar's own three-way slot, transcribed — a trashed
-   * message can be resurfaced-pinned like any other (the pin is our triage state and survives a
-   * delete), so the `Done` face is kept rather than dropped as unreachable.
+  /**
+   * THE BAR IN TRASH: RESTORE, THEN THE READ SWITCH: Placed HERE, after every hook and derivation this component owns
+   * and before the eleven groups are composed, for two reasons that are both mechanical. React requires every hook to
+   * run on every render, so the return cannot sit above them; and the `trash` prop's own block explains why it is one
+   * return rather than eleven predicates. No density measurement, no More menu and no admission walk: two controls
+   * fit every width a message is read at, so the machinery that decides which groups the row can hold has nothing to
+   * decide. That is also why the row carries no `data-*` shape attributes — the container queries in `action-bar.css`
+   * switch groups that are not here.
+   */
+
+  /**
+   * Restore wears `abar-b abar-solo primary`, the SAME class the pill's first verb wears today (Reply's), read off
+   * that button rather than given a class of its own: it is the one primary verb of this bar, and a second accent
+   * rule would be a second answer to what "primary" looks like. The read switch is the resting bar's own three-way
+   * slot, transcribed — a trashed message can be resurfaced-pinned like any other (the pin is our triage state and
+   * survives a delete), so the `Done` face is kept rather than dropped as unreachable.
    */
   if (trash) {
     return (
@@ -1634,24 +1632,21 @@ export function MessagePane({
    * throwing on `message.protected!` the moment this branch became reachable for real mail.
    */
   /**
-   * ── WHICH RENDERING IS ON SCREEN, BECAUSE THE STRIP BELOW DEPENDS ON IT ──────────────────
-   *
-   * Mail that declares no layout canvas is drawn in the app's own typography over the TEXT part,
-   * and that rendering draws NO IMAGES. So a picture the sender embedded with `cid:` — a photo
-   * pasted into a reply, a scanned page, a chart — is painted nowhere, while the strip beside it
-   * has always withheld exactly those parts on the grounds that the body already showed them. Two
-   * defensible rules that between them made a picture in somebody's mailbox unreachable from the
-   * whole product.
-   *
-   * The strip therefore lists the message's pictures WHEN, AND ONLY WHEN, nothing else is drawing
-   * them. In the framed rendering the html paints them and the filter stands, because a strip that
-   * listed them there would be naming each picture a second time.
-   *
-   * ONE STRING, KEYED BY MESSAGE, AND BOTH HALVES MATTER. Keyed, so the answer for the last
-   * message cannot decide this one's strip for the frame between selecting it and its body
-   * reporting; a primitive, so `setState` with an unchanged value hits React's bail-out and a
-   * child effect that reports on every render cannot become a render loop. Unknown reads as
-   * FRAMED — today's behaviour — so the widened list is something a positive signal turns on.
+   * WHICH RENDERING IS ON SCREEN, BECAUSE THE STRIP BELOW DEPENDS ON IT: Mail that declares no layout canvas is drawn
+   * in the app's own typography over the TEXT part, and that rendering draws NO IMAGES. So a picture the sender
+   * embedded with `cid:` — a photo pasted into a reply, a scanned page, a chart — is painted nowhere, while the strip
+   * beside it has always withheld exactly those parts on the grounds that the body already showed them. Two
+   * defensible rules that between them made a picture in somebody's mailbox unreachable from the whole product. The
+   * strip therefore lists the message's pictures WHEN, AND ONLY WHEN, nothing else is drawing them. In the framed
+   * rendering the html paints them and the filter stands, because a strip that listed them there would be naming each
+   * picture a second time. ONE STRING, KEYED BY MESSAGE, AND BOTH HALVES MATTER.
+   */
+
+  /**
+   * Keyed, so the answer for the last message cannot decide this one's strip for the frame between selecting it and
+   * its body reporting; a primitive, so `setState` with an unchanged value hits React's bail-out and a child effect
+   * that reports on every render cannot become a render loop. Unknown reads as FRAMED — today's behaviour — so the
+   * widened list is something a positive signal turns on.
    */
   const [bodyRendering, setBodyRendering] = useState("");
   const onRenderMode = useCallback(
@@ -1838,21 +1833,20 @@ export function MessagePane({
   const waitingForBody = body.state === "loading" || body.state === "snippet";
   const stalled = useBodyStalled(message.id, !isProtected && waitingForBody);
   /**
-   * ── THE FAILURE'S TAXONOMY: AUTH LOSS IS NOT A CONTENT FAILURE ───────────────────────────
-   *
-   * "Couldn't load the full message — Retry" was this pane's one sentence for every failure,
-   * and during a dead session it was the WRONG one: the message is fine, the session is gone,
-   * and the offered Retry could only re-401 — observed in live use, with the reader told the
-   * MESSAGE was broken. So when the session's death is CONFIRMED (`session-truth.ts`: the
-   * server itself refused the refresh; never one request's evidence), the note names the real
-   * fact and offers the real remedy. On the desktop and in the demo the store never leaves its
-   * resting value and this branch is unreachable.
-   *
-   * And a failure recorded while the session was bad must not outlive the recovery: on every
-   * REVIVAL — a real 204 minting a real session — a body still sitting in `failed` is asked for
-   * once more. `retry: true` is legitimate here for the same reason the human press is: the
-   * engine's no-auto-re-ask rule guards against looping on a server that KEEPS refusing, and a
-   * freshly minted session is the world having changed, bounded to one ask per revival.
+   * THE FAILURE'S TAXONOMY: AUTH LOSS IS NOT A CONTENT FAILURE: "Couldn't load the full message — Retry" was this
+   * pane's one sentence for every failure, and during a dead session it was the WRONG one: the message is fine, the
+   * session is gone, and the offered Retry could only re-401 — observed in live use, with the reader told the MESSAGE
+   * was broken. So when the session's death is CONFIRMED (`session-truth.ts`: the server itself refused the refresh;
+   * never one request's evidence), the note names the real fact and offers the real remedy. On the desktop and in the
+   * demo the store never leaves its resting value and this branch is unreachable. And a failure recorded while the
+   * session was bad must not outlive the recovery: on every REVIVAL — a real 204 minting a real session — a body
+   * still sitting in `failed` is asked for once more.
+   */
+
+  /**
+   * `retry: true` is legitimate here for the same reason the human press is: the engine's no-auto-re-ask rule guards
+   * against looping on a server that KEEPS refusing, and a freshly minted session is the world having changed,
+   * bounded to one ask per revival.
    */
   const sessionDead = useSessionDead();
   const bodyFailed = body.state === "failed";

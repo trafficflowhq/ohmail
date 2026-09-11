@@ -453,17 +453,16 @@ export function useComposeAutosave(opts: {
         lane: COMPOSE_SEND_KEY, draftId: readComposeRow(), session: composeSessionId(),
       });
       if (hold.kind === "parked") return;
-      /* ── AND A CREATE BESIDE A ROW THE MIRROR CANNOT YET NAME ──────────────────────────────
-         The one place `unknown` refuses a WRITE, and it is scoped as narrowly as the case is.
-         A reload with a row written down and a send that is unconfirmed but not `unverified` — a
-         transport-queued send, or a record a sweep has taken — comes back to an EMPTY mirror. The
-         adoption WAITS (correctly), so this hook holds no row; without this line the timer then
-         mints a SECOND row for the message that row belongs to, which is invariant S(1) broken on
-         the very path the adoption exists for.
-         `readComposeRow() !== null` is the whole scope: with nothing written down there is no
-         message this could be a second row FOR, and a first compose in a browser that refuses
-         storage must still reach the account. The PUT arm is untouched — a row that exists is
-         still this message's row, whatever the mirror can say about it. */
+      /**
+       * AND A CREATE BESIDE A ROW THE MIRROR CANNOT YET NAME: The one place `unknown` refuses a WRITE, and it is
+       * scoped as narrowly as the case is. A reload with a row written down and a send that is unconfirmed but not
+       * `unverified` — a transport-queued send, or a record a sweep has taken — comes back to an EMPTY mirror. The
+       * adoption WAITS (correctly), so this hook holds no row; without this line the timer then mints a SECOND row
+       * for the message that row belongs to, which is invariant S(1) broken on the very path the adoption exists for.
+       * `readComposeRow() !== null` is the whole scope: with nothing written down there is no message this could be a
+       * second row FOR, and a first compose in a browser that refuses storage must still reach the account. The PUT
+       * arm is untouched — a row that exists is still this message's row, whatever the mirror can say about it.
+       */
       if (draftId === null && readComposeRow() !== null && hold.kind === "unknown") return;
       /* ── AND A PRESS THAT BEAT THE FIRST SAVE IS NOT A REASON TO MAKE A ROW ────────────────
          The press-before-first-autosave race, from the write side. The composer's timer is armed,

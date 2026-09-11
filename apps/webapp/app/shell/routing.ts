@@ -491,19 +491,18 @@ export function goSettings(pane: PaneId): void {
 }
 
 /**
- * MIRROR THE OPEN MESSAGE INTO THE BAR — the shell's one writer for the `m/<id>` tail.
- *
- * Two verbs on purpose, because history is the product surface here:
- *   · OPENING a message PUSHES (`location.hash` assignment), so Back walks out of the reading
- *     and Forward walks back into it — the reader's actual history;
- *   · MOVING between messages, and CLOSING, REPLACE — a `j`-walk down a pile must not bury the
- *     view under fifty entries, and Back from a closed reading returns to before the reading
- *     rather than to the reading it just closed.
- *
- * `replaceState` fires no `hashchange`, so the replace arm also notifies the route store the
- * way `useHashRoute`'s normalize pass does not need to: the rendered state ALREADY matches (the
- * shell only mirrors what is on screen), so nothing re-renders from it; the event is for the
- * store's own snapshot.
+ * MIRROR THE OPEN MESSAGE INTO THE BAR — the shell's one writer for the `m/<id>` tail. Two verbs on purpose, because
+ * history is the product surface here:
+ * · OPENING a message PUSHES (`location.hash` assignment), so Back walks out of the reading and Forward walks back
+ *   into it — the reader's actual history;
+ * · MOVING between messages, and CLOSING, REPLACE — a `j`-walk down a pile must not bury the view under fifty
+ *   entries, and Back from a closed reading returns to before the reading rather than to the reading it just closed.
+ */
+
+/**
+ * `replaceState` fires no `hashchange`, so the replace arm also notifies the route store the way `useHashRoute`'s
+ * normalize pass does not need to: the rendered state ALREADY matches (the shell only mirrors what is on screen), so
+ * nothing re-renders from it; the event is for the store's own snapshot.
  */
 export function reflectMessage(route: Route, messageId: string | null): void {
   const next = canonicalHash({ ...route, messageId });

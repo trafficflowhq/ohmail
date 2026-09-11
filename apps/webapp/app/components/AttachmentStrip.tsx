@@ -141,16 +141,14 @@ const EN = {
   /** en.json: "{size} · too large to fetch" */
   tooLarge: (size: string) => `${size} · too large to fetch`,
 
-  /* ── the LIST's own sentences ─────────────────────────────────────────────────────────
-   *
-   * NONE OF THESE MAY SAY "MAILBOX", and that is a fact about the route rather than a
-   * preference. `GET /messages/:id/attachments` is `cost: "read"` and
-   * `AttachmentsService.listForMessage` opens no IMAP adapter — the list comes from ohmail's
-   * own indexed rows, synced at ingest. The per-ITEM copy above says "your mailbox" because
-   * the BYTES really are fetched from IMAP on demand; borrowing that phrasing here would
-   * blame the user's mail server for ohmail failing to answer. For the same reason there is
-   * no "the mailbox is busy" line: `mailbox_busy` is thrown inside `makeOpenAdapter` and only
-   * the two `cost: "connection"` byte routes go through it.
+  /**
+   * the LIST's own sentences: NONE OF THESE MAY SAY "MAILBOX", and that is a fact about the route rather than a
+   * preference. `GET /messages/:id/attachments` is `cost: "read"` and `AttachmentsService.listForMessage` opens no
+   * IMAP adapter — the list comes from ohmail's own indexed rows, synced at ingest. The per-ITEM copy above says
+   * "your mailbox" because the BYTES really are fetched from IMAP on demand; borrowing that phrasing here would blame
+   * the user's mail server for ohmail failing to answer. For the same reason there is no "the mailbox is busy" line:
+   * `mailbox_busy` is thrown inside `makeOpenAdapter` and only the two `cost: "connection"` byte routes go through
+   * it.
    */
   /** en.json: the general case — a 5xx from ohmail, or a throw nothing classified. */
   listFailed: "Couldn't load this message's files.",
