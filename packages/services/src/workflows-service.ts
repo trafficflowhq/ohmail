@@ -73,18 +73,14 @@ function toRunDTO(row: typeof workflowRuns.$inferSelect): WorkflowRunDTO {
 }
 
 /**
- * WorkflowsService — account-scoped CRUD over `workflows` plus the
- * single-tx run ENQUEUE. REST-only: NO `recordChange`,
- * NO `EntityType` growth — clients refetch via `GET /workflows` + `GET /workflow-runs`.
- *
- * The security gate lives in `create`/`update`: `validateSteps` refuses any
- * step outside the file_message/draft_reply/add_kb_entry allowlist, so a workflow
- * declaring `send`/`forward` can never be persisted. `softDelete` marks
- * `deletedAt` instead of hard-deleting so `workflow_runs` history survives; every
- * read excludes soft-deleted rows. `enqueueRun` mirrors `MessageService.move`:
- * the `workflow_runs` row + the verbatim `idempotency_keys` response commit in ONE
- * tx, so a retried Idempotency-Key replays the same runId and never double-enqueues.
- * The worker that DRAINS `pending` runs is separate — here runs just sit pending.
+ * WorkflowsService — account-scoped CRUD over `workflows` plus the single-tx run ENQUEUE.
+ * REST-only: no `recordChange`, no `EntityType` growth — clients refetch. The security gate lives
+ * in `create`/`update`: `validateSteps` refuses any step outside the
+ * file_message/draft_reply/add_kb_entry allowlist, so a workflow declaring `send`/`forward` can
+ * never be persisted. `softDelete` marks `deletedAt` so run history survives. `enqueueRun`
+ * mirrors `MessageService.move`: the `workflow_runs` row + the verbatim `idempotency_keys`
+ * response commit in ONE tx, so a retried key replays the same runId and never double-enqueues.
+ * The worker that DRAINS `pending` runs is separate.
  */
 export class WorkflowsService {
   async list(ctx: ServiceContext): Promise<WorkflowDTO[]> {
@@ -283,16 +279,13 @@ export class WorkflowsService {
         ))
         .orderBy(sql`${dialect(ctx.db).castInt(sql`${auditLog.payload}->>'stepIndex'`)} desc`);
 
-      /* ── REFUSED WHOLE ON A READER, BEFORE THE FIRST INVERSE RUNS (mail 0094) ────────────
-       *
-       * `applyInverse`'s `file_message` arm re-sets `folder_state.desired_folder` with
-       * `last_set_by: 'us'`, which the reconciler turns into a physical IMAP move — so an undo
-       * moves mail, once per recorded step, and it asked nothing about who organizes the
-       * mailboxes involved.
-       *
-       * It REFUSES rather than travelling because N records from one press is a shape ruling 6
-       * does not have; `refuseBulkMoveOnReader` carries that argument and the 0.17 design it is
-       * waiting on. Placed AHEAD of the loop so a refused undo leaves nothing half-applied —
+      /**
+       * REFUSED WHOLE ON A READER, BEFORE THE FIRST INVERSE RUNS (mail 0094). `applyInverse`'s
+       * `file_message` arm re-sets `folder_state.desired_folder` with `last_set_by: 'us'`, which
+       * the reconciler turns into a physical IMAP move — an undo moves mail, once per recorded
+       * step, and asked nothing about who organizes. It REFUSES rather than travelling because N
+       * records from one press is a shape without a design yet; `refuseBulkMoveOnReader` carries
+       * that argument. Placed AHEAD of the loop so a refused undo leaves nothing half-applied —
        * inside it, the steps before the blocking one would already have been written.
        */
       const moved = rows.flatMap((r) => {
@@ -326,17 +319,14 @@ export class WorkflowsService {
    */
   private async applyInverse(tx: LedgerTx, ctx: ServiceContext, inv: WorkflowInverse): Promise<void> {
     if (inv.tool === "file_message") {
-      // THE SAME ACCOUNT SCOPE ITS TWO SIBLINGS ALREADY HAVE. `draft_reply` deletes with
-      // `eq(drafts.accountId, ctx.accountId)` and `add_kb_entry` with
-      // `eq(kbEntries.accountId, ctx.accountId)`; this branch wrote `folder_state` keyed on
-      // `message_id` alone, which has no account column to disagree with.
-      //
-      // The inverse rows are read from `audit_log` scoped to this account, so the only way a
-      // foreign message id could appear in one was for a RUN to have written it — which the
-      // workflow runner's own ownership check now refuses. This is therefore the second lock on a
-      // door that is already shut, and it is worth having for two reasons: an audit row written
-      // before that check existed is still undoable, and a branch that is account-scoped in two of
-      // its three arms is a branch whose third arm reads as an oversight to everyone who edits it.
+      // THE SAME ACCOUNT SCOPE ITS TWO SIBLINGS HAVE. `draft_reply` deletes with the account
+      // predicate and `add_kb_entry` too; this branch wrote `folder_state` keyed on `message_id`
+      // alone, which has no account column to disagree with. The inverse rows are read from
+      // `audit_log` scoped to this account, so a foreign message id could only appear if a RUN
+      // wrote it — which the runner's own ownership check now refuses. A second lock on a door
+      // already shut, worth having twice over: an audit row written before that check is still
+      // undoable, and a branch account-scoped in two of its three arms reads as an oversight to
+      // everyone who edits it.
       const [owned] = await tx.select({ id: messages.id }).from(messages)
         .where(and(eq(messages.id, inv.messageId), eq(messages.accountId, ctx.accountId)))
         .limit(1);
@@ -387,63 +377,24 @@ export class WorkflowsService {
 
   /** Load a live (non-soft-deleted) account-owned workflow row, or undefined (→ 404). */
   /**
-   * REFUSE AT ENQUEUE what the drain provably cannot execute.
-   *
-   * A `202 {runId}` is a promise, and the honest place to break a promise you cannot keep is
-   * BEFORE making it. Until this existed, `POST /workflows/:id/run` answered 202 and durably
-   * recorded a `workflow_runs` row for a workflow whose `draft_reply` step the worker could
-   * only ever fail — because a production worker has no `config.drafter`, substitutes
-   * `unconfiguredDrafter`, and every such step throws. The user got a receipt for work the
-   * platform had already decided it would not do, and the failure then surfaced as a step
-   * that went wrong rather than as configuration that is missing.
-   *
-   * ── WHY REFUSING THE WHOLE RUN IS NOT OVER-BROAD ────────────────────────────────────────
-   *
-   * Because a workflow has no branches. `WorkflowStep` is `{tool, args}` — there is no
-   * condition, predicate or guard field (`packages/core/src/workflow-shapes.ts`) — and the
-   * runner runs a FLAT array straight through, `for (i = stepCursor; i < steps.length; i++)`
-   * with no conditional skip (`packages/core/src/ai/workflows/`). So a `draft_reply`
-   * step present in `steps` is a step this run WILL reach unless an earlier one fails first.
-   * There is no "branch that never executes" to be wrong about. If workflows ever gain
-   * conditional steps, this check becomes over-broad in exactly that moment and must move to
-   * the step boundary — that is the one change that invalidates it.
-   *
-   * ── WHAT `drafterConfigured` ACTUALLY KNOWS, WHICH IS LESS THAN IT SOUNDS ────────────────
-   *
-   * It reflects the **API** deployment's `ANTHROPIC_API_KEY`, which is a PROXY for
-   * the **worker's** — two separate deployments that each read their own env. The
-   * two divergent states both fail safe, but neither is silent:
-   *   - API keyed / worker bare  → 202 as before, then a run that fails. Today that failure is
-   *     recorded with the generic reason `"error"`, NOT `draft_reply_unconfigured`, because
-   *     `unconfiguredDrafter` throws a plain `Error` and the runner's catch only preserves a
-   *     `WorkflowStepError`'s reason. That residual is the remaining half and is fixed in the
-   *     worker, not here.
-   *   - API bare / worker keyed → refusals a worker could in fact have served.
-   * The operational rule that keeps both away: the key is set or unset on BOTH deployments in
-   * the same change.
-   *
-   * OMITTED (`undefined`) is deliberately permissive — "this caller does not know", not "no
-   * drafter". Only an explicit `false` refuses, so no existing caller changes behaviour.
+   * REFUSE AT ENQUEUE what the drain provably cannot execute. A `202 {runId}` is a promise, and
+   * the honest place to break one is BEFORE making it: this used to answer 202 for a workflow
+   * whose `draft_reply` step the worker could only fail (no `config.drafter`). NOT OVER-BROAD: a
+   * workflow has no branches — the runner runs a FLAT array, so a `draft_reply` step present WILL
+   * be reached; if workflows gain conditional steps this check must move to the step boundary.
+   * `drafterConfigured` reflects the API deployment's key, a PROXY for the worker's; both
+   * divergent states fail safe — set or unset the key on BOTH in one change. OMITTED is
+   * permissive; only an explicit `false` refuses.
    */
   private assertRunnable(steps: unknown, drafterConfigured?: boolean): void {
     /**
-     * ── THE STEP CEILING IS RE-CHECKED HERE, AND THE WORD "STORED" IS WHY ────────────────────
-     *
-     * `validateSteps` refuses an over-long `steps` array at the WRITE, which closes the door for
-     * every workflow created after it shipped and closes nothing for a row that already exists.
-     * A workflow stored before the ceiling — or written by any future path that reaches the
-     * column without going through `create`/`update` — is still runnable, and one
-     * `POST /workflows/:id/run` makes the SHARED worker execute every element of it: the runner
-     * flattens the whole array and then loops over `steps.length`.
-     *
-     * So the stored value is treated as an input in its own right, because it is one. Refused at
-     * ENQUEUE rather than in the runner, on the same reasoning `validateSteps` gives for the
-     * write: the request that asks for the run is the one that learns why it cannot happen, and a
-     * refusal discovered from the worker's logs is a refusal nobody sees.
-     *
-     * A 409, not a 400: nothing about THIS request is wrong. The stored workflow is the problem,
-     * and the fix is to edit it — which the same account can do, through a `PATCH` that
-     * `validateSteps` will hold to the same ceiling.
+     * THE STEP CEILING IS RE-CHECKED HERE, AND THE WORD "STORED" IS WHY. `validateSteps` refuses
+     * an over-long array at the WRITE, which closes nothing for a row that already exists: a
+     * workflow stored before the ceiling is still runnable, and one run makes the SHARED worker
+     * execute every element. The stored value is an input in its own right. Refused at ENQUEUE
+     * rather than in the runner: the request that asks learns why — a refusal in the worker's
+     * logs is a refusal nobody sees. A 409, not a 400: nothing about THIS request is wrong; the
+     * stored workflow is, and the fix is a `PATCH` held to the same ceiling.
      */
     const stored = (steps as WorkflowStep[] | null) ?? [];
     if (stored.length > MAX_WORKFLOW_STEPS) {
