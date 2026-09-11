@@ -1,30 +1,12 @@
 /**
- * THE LOCALE DIMENSION — the vocabulary two hosts and one non-React surface share.
- *
- * `messages/en.json` was the whole of i18n here: `i18n/request.ts` pinned `LOCALE = "en"` and
- * every `useTranslations` read one catalogue. Shipping German did not need a new accessor — `t()`
- * is unchanged and no key moved — it needed a LOCALE to resolve, in three places that cannot
- * share a React tree:
- *
- *  1. the Next app's `(product)` layout, which renders `NextIntlClientProvider` on the server;
- *  2. `apps/desktop/src/main.tsx`, which wires `IntlProvider` by hand and has no Next at all;
- *  3. modules that are NOT components and therefore cannot call a hook — `format.ts`, which
- *     `screener-state.ts` and `AppShell` import as a plain function library, and the three
- *     reading-pane components whose copy is still a local constant.
- *
- * This file is the part all three can hold: the closed set of locales, how a stored or negotiated
- * string is reduced to one of them, where the local preference is kept, and — for (3) — a
- * TRANSLATOR THAT IS NOT A HOOK. It imports nothing but `next-intl`'s `createTranslator`, which
- * `apps/desktop/vite.config.ts` aliases to the identical `use-intl` function, so it compiles into
- * the desktop bundle exactly as `AppShell` does.
- *
- * It deliberately does NOT import a catalogue. `messages/en.json` is 100 KB; a static import here
- * would put it in the client JS bundle a second time (the web app already ships it through the RSC
- * payload) and would make every consumer of `format.ts` drag it along. The catalogue arrives by
- * INJECTION — {@link setActiveCatalog}, called by whichever host built the provider — and until it
- * does {@link activeTranslator} answers `null` and each caller falls back to its own English
- * constant. That is what keeps a bare component render in a unit test deterministic and
- * English-only without a provider in it.
+ * The locale dimension — the vocabulary two hosts and one non-React surface share. Shipping German needed a locale
+ * resolved in three places that cannot share a React tree: the Next `(product)` layout (server render),
+ * `apps/desktop/src/main.tsx` (hand-wired IntlProvider, no Next), and modules that are not components and cannot call
+ * a hook (`format.ts` and the reading-pane constants) — hence a TRANSLATOR THAT IS NOT A HOOK. It imports nothing but
+ * `createTranslator` (the desktop aliases it to the identical `use-intl` function). It deliberately does NOT import a
+ * catalogue: `messages/en.json` is 100 KB and a static import would ship it twice; the catalogue arrives by injection
+ * ({@link setActiveCatalog}) and until then {@link activeTranslator} answers `null` and each caller falls back to its
+ * own English constant — which keeps a bare component render in a unit test deterministic without a provider.
  */
 import { createTranslator } from "next-intl";
 import { durableSet } from "./durable";
@@ -55,18 +37,13 @@ export type AppLocale = (typeof LOCALES)[number];
 export const DEFAULT_LOCALE = "en" satisfies AppLocale;
 
 /**
- * WHERE THE LOCAL PREFERENCE LIVES, and why there are two of them.
- *
- * `localStorage` is what a STANDALONE install has and all it has: there is no account to store a
- * preference on, so the selector in Settings writes here and the desktop's own `main.tsx` reads it
- * before the first paint — the same shape as `ohmail.theme` beside it.
- *
- * The COOKIE exists for one thing the storage cannot do: `(product)/layout.tsx` renders on the
- * SERVER, and a server has no way to read `localStorage`. Without it the first paint of every
- * navigation would be English and would then flip, which is the flash the whole single-origin
- * gate was built to avoid. Both are written together by {@link rememberLocale} so they cannot
- * disagree; the cookie is host-only and carries no `Domain=`, exactly like the session cookie,
- * because widening it is never worth it for a display preference.
+ * Where the local preference lives, and why there are two. `localStorage` is what a standalone
+ * install has and all it has — the selector writes here and the desktop's `main.tsx` reads it
+ * before first paint, the same shape as `ohmail.theme`. The cookie exists for the one thing storage
+ * cannot do: `(product)/layout.tsx` renders on the SERVER, and without it the first paint of every
+ * navigation would be English and then flip — the flash the single-origin gate was built to avoid.
+ * Both are written together by {@link rememberLocale} so they cannot disagree; the cookie is
+ * host-only with no `Domain=`, exactly like the session cookie.
  */
 export const LOCALE_STORAGE_KEY = "ohmail.locale";
 export const LOCALE_COOKIE = "ohmail.locale";
@@ -79,15 +56,13 @@ export function isAppLocale(value: unknown): value is AppLocale {
 }
 
 /**
- * Reduce anything to a member of {@link LOCALES}, or `null` for "this says nothing".
- *
- * The PRIMARY SUBTAG only: `de-CH`, `de-DE` and `de` are one catalogue here, and a Swiss reader
- * asking for `de-CH` must not fall through to English on a tag mismatch. Case is folded because
- * `Accept-Language` and a hand-set cookie both arrive in either.
- *
- * `null` rather than `DEFAULT_LOCALE`, and that is the whole point of the return type: a caller
- * has to distinguish "nobody has said" (fall back, keep looking at the next source) from "they
- * said English". The account read in `consent-state.ts` depends on exactly that difference.
+ * Reduce anything to a member of {@link LOCALES}, or `null` for "this says nothing". The primary
+ * subtag only: `de-CH`, `de-DE` and `de` are one catalogue here, and a Swiss reader asking for
+ * `de-CH` must not fall through to English on a tag mismatch; case is folded because
+ * `Accept-Language` and a hand-set cookie arrive in either. `null` rather than `DEFAULT_LOCALE` is
+ * the whole point of the return type: a caller must distinguish "nobody has said" (keep looking at
+ * the next source) from "they said English" — the account read in `consent-state.ts` depends on
+ * exactly that difference.
  */
 export function normalizeLocale(value: string | null | undefined): AppLocale | null {
   if (typeof value !== "string") return null;

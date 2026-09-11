@@ -1,53 +1,27 @@
 "use client";
 
 /**
- * THE SCREENER'S DECISIONS, ON DISK THE MOMENT THEY ARE MADE.
- *
- * ── THE DEFECT THIS CLOSES ──────────────────────────────────────────────────────────────────
- *
- * A Screener decision used to exist ONLY as a `setTimeout` closure for its whole undo window:
- * `screener-state.ts#decide` armed `commitTimer: setTimeout(() => commit(id), COMMIT_MS)` and the
- * toast said the mail was filed. `COMMIT_MS` is `UNDO_MS + COMMIT_GRACE_MS` = 8.4 s, so for eight
- * and a half seconds the only record of an explicit consent decision was a timer in one tab's
- * event loop. Close the tab, navigate away, crash, or let the OS reclaim the process inside that
- * window and the decision was gone — with the product having already told the reader it happened.
- *
- * That is the class the closing review named as the top blocker ("this product decides in memory
- * and persists afterwards"), met at the product's primary consent gate.
- *
- * ── THE SHAPE, AND WHY IT IS THIS ONE ───────────────────────────────────────────────────────
- *
- * The undo window is deliberate UX and is kept. What changes is what the delay is made of: a
- * SCHEDULED DURABLE INTENT rather than an unpersisted timer. The intent lands here — synchronously
- * — before the timer is armed; Undo deletes it; the commit deletes it only once the engine has
- * taken the verb (the durable outbox's own `putOutbox` runs ahead of the wire, so from that moment
- * the outbox is the durable record and this journal has nothing left to hold).
- *
- * A crash inside the window therefore resolves ONE way, deterministically: the next boot reads the
- * journal and commits. **The user's decision survives.** That direction is chosen rather than
- * assumed — the alternative is discarding an act the toast has already reported as done, on the
- * one screen a person visits in order to be sure about their mail. A decision that lands 30 s late
- * is a decision; a decision that evaporates is the product being wrong about the reader's mail.
- *
- * ── WHY `localStorage` AND NOT THE MIRROR STORE ─────────────────────────────────────────────
- *
- * Because it is SYNCHRONOUS. The engine's durable outbox is the right home for a verb that has
- * been expressed, and that is exactly where a committed decision goes; but this journal has to
- * survive the window BETWEEN the press and the express, and an IndexedDB write is a promise that
- * a killed tab need never settle. `window.localStorage.setItem` has returned before `decide()`
- * does. The same reasoning the compose scratch buffer already runs on, one surface over.
- *
- * Owner-keyed, in the shape `composeDraftKey` and `searchSortKey` already use and for the same
- * reason: `localStorage` is per-ORIGIN, and a decision one account made must never be replayed by
- * the next account to sign in on the same browser. The owner is `storageOwner()` — the cookie
- * where there is one, and otherwise the identity the HOST establishes, because the standalone
- * desktop has no cookie and mounts one engine per mailbox: a `"local"` fallback there meant every
- * mailbox on the install replaying every other mailbox's decisions. The fallback is now only what
- * it always claimed to be, a surface with genuinely no account.
- *
- * Storage can refuse (Safari private mode throws on write). Every access is wrapped, and a refusal
- * means a decision is only as durable as the tab — which is precisely today's behaviour, so a
- * blocked jar is no worse off than before this file existed.
+ * The Screener's decisions, on disk the moment they are made. A decision used to exist ONLY as a
+ * `setTimeout` closure for its whole undo window (8.4 s): close the tab, navigate away or crash
+ * inside it and the decision was gone — with the product having already told the reader it happened,
+ * at the product's primary consent gate. The undo window is kept; what changes is what the delay is
+ * made of: a scheduled DURABLE INTENT lands here synchronously before the timer is armed, Undo
+ * deletes it, and the commit deletes it only once the engine has taken the verb (from that moment
+ * the durable outbox is the record). A crash inside the window resolves one way, deterministically:
+ * the next boot reads the journal and commits — a decision that lands 30 s late is a decision; one
+ * that evaporates is the product being wrong about the reader's mail.
+ */
+
+/**
+ * `localStorage` and not the mirror store, because it is SYNCHRONOUS: an IndexedDB write is a
+ * promise a killed tab need never settle, while `setItem` has returned before `decide()` does — the
+ * compose scratch buffer's own reasoning. Owner-keyed in the shape `composeDraftKey` uses: a
+ * decision one account made must never replay for the next account on the same browser. The owner
+ * is `storageOwner()` — the cookie where there is one, otherwise the identity the host establishes:
+ * the standalone desktop has no cookie and mounts one engine per mailbox, and a `"local"` fallback
+ * there meant every mailbox replaying every other mailbox's decisions. Storage can refuse (Safari
+ * private mode); every access is wrapped, and a refusal means a decision is only as durable as the
+ * tab — exactly the behaviour before this file existed.
  */
 
 import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
@@ -55,20 +29,14 @@ import { durableRemove, durableSet, type DurableWrite } from "./durable";
 import { storageOwner } from "./storage-owner";
 
 /**
- * ONE SCHEDULED DECISION — the trim, not the row.
- *
- * `ScreenerSenderDTO` carries every held message in full (`held: ScreenerHeldMail[]`, subject and
- * snippet each), and a bulk "apply all" over a busy queue is hundreds of rows. Persisting the DTO
- * would put megabytes of mail text in `localStorage` to record a five-field decision. What the
- * commit path actually consumes is here and nothing else: the id it names, where it files, whether
- * it marks read, its scope, whether the sender's own held ids ride along (derived rows only), and
- * enough of the sender to name them in a refusal.
- *
- * `v` names the shape so a future build can migrate rather than guess. An entry this build does
- * not recognise is DROPPED rather than replayed — the opposite of the outbox's rule, and
- * deliberately: an outbox entry is a verb the server may already have seen, so guessing at it is
- * dangerous; a journal entry is a decision that has not been expressed at all, and replaying one
- * whose fields this build cannot read would file mail somewhere nobody chose.
+ * One scheduled decision — the trim, not the row. `ScreenerSenderDTO` carries every held message in full, and a
+ * bulk "apply all" over a busy queue is hundreds of rows; persisting the DTO would put megabytes of mail text
+ * in `localStorage` to record a five-field decision. What the commit path consumes is here and nothing else:
+ * the id, where it files, whether it marks read, its scope, whether the sender's held ids ride along, and
+ * enough of the sender to name them in a refusal. `v` names the shape so a future build can migrate rather than
+ * guess; an unrecognised entry is DROPPED rather than replayed — the opposite of the outbox's rule,
+ * deliberately: an outbox entry is a verb the server may have seen, a journal entry has not been expressed at
+ * all, and replaying one this build cannot read would file mail somewhere nobody chose.
  */
 export interface ScreenerIntent {
   v: 1;
@@ -90,17 +58,13 @@ export interface ScreenerIntent {
 }
 
 /**
- * HOW LONG A SCHEDULED DECISION IS STILL THE READER'S DECISION.
- *
- * Twenty-four hours, the same horizon the engine's outbox uses for its own age rule
- * (`OUTBOX_UNKEYED_CREATE_TTL_MS`), and for a related reason. Inside it, replaying is obviously
- * right: the reader pressed a key about a stranger and the queue has not moved. Past it the queue
- * HAS moved — the sender may have been decided on another device, the held mail swept, the rep
- * evicted — and quietly filing a day-old decision into a queue the reader has since re-read is a
- * surprise rather than a restoration. An expired intent is dropped, not committed.
- *
- * This is a ceiling on staleness, not a retry budget: nothing here retries, because the moment a
- * decision reaches `engine.mutate` the durable outbox owns it and retries it under its own key.
+ * How long a scheduled decision is still the reader's decision. Twenty-four hours, the engine
+ * outbox's own horizon (`OUTBOX_UNKEYED_CREATE_TTL_MS`): inside it, replaying is obviously right —
+ * the reader pressed a key about a stranger and the queue has not moved; past it the queue HAS
+ * moved (decided on another device, held mail swept, the rep evicted), and quietly filing a day-old
+ * decision into a re-read queue is a surprise, not a restoration — an expired intent is dropped,
+ * not committed. A ceiling on staleness, not a retry budget: the moment a decision reaches
+ * `engine.mutate` the durable outbox owns it and retries under its own key.
  */
 export const INTENT_TTL_MS = 24 * 60 * 60 * 1000;
 

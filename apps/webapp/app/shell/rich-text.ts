@@ -1,33 +1,14 @@
 "use client";
 
 /**
- * THE TWO HALVES OF A TYPED MESSAGE, AND HOW THEY SURVIVE A DEPLOY.
- *
- * Compose and reply used to hold one string each. A rich editor holds two — the markup the
- * user is looking at, and the plain text it renders as — and both have to survive navigation
- * the way the single string already did, because the scratch buffers are a data-loss guarantee
- * rather than a convenience. That guarantee is the whole reason this module exists separately
- * from the editor component: the storage rules are testable without a DOM, and they are the
- * part that must not break, so they are not mixed into a React component that cannot be
- * reasoned about without mounting one.
- *
- * ── THE LEGACY READ IS SHAPE-BASED, NOT PARSE-BASED ──────────────────────────────────────
- *
- * The reply buffer's key already holds a BARE STRING for anybody who was mid-reply when this
- * shipped, and that text must not be thrown away by a deploy. So a stored value is read as an
- * envelope only if it PARSES to a non-array object whose `text` is a string; anything else is
- * taken verbatim as plain text.
- *
- * "It parsed as JSON" is deliberately not the test, and the case that forces it is real: a
- * person replying with `{"text": "see attached"}` — a fragment of config pasted into an email,
- * which is an ordinary thing to send — would parse, and a parse-based read would silently
- * restore their message as an envelope and lose the braces. The shape check costs one
- * `typeof` and closes it.
- *
- * There is no version field. It would not remove the legacy read (a bundle still has to
- * understand what is in the key TODAY), so it would be a second thing to keep true in
- * exchange for nothing — the same conclusion `readComposeDraft` reached about its own
- * field-wise guards.
+ * The two halves of a typed message, and how they survive a deploy. A rich editor holds two strings
+ * — the markup and the plain text it renders as — and both must survive navigation: the scratch
+ * buffers are a data-loss guarantee, which is why this module is separate from the editor component
+ * (the storage rules are testable without a DOM). The legacy read is SHAPE-based, not parse-based:
+ * a stored value is an envelope only if it parses to a non-array object whose `text` is a string —
+ * "it parsed as JSON" would silently turn a reply of `{"text": "see attached"}` (config pasted
+ * into an email) into an envelope and lose the braces. No version field: it would not remove the
+ * legacy read, so it would be a second thing to keep true in exchange for nothing.
  */
 
 /** What the editor holds: the markup, and the plain text it renders as. */
@@ -80,29 +61,14 @@ export function parseRichValue(raw: string | null | undefined): RichValue {
 }
 
 /**
- * The string to store for a value, or `null` when there is nothing worth storing.
- *
- * A value with no text is stored as nothing at all rather than as an empty envelope: the
- * buffers' own rule has always been that an empty draft removes its key, and writing
- * `{"text":"","html":"<p></p>"}` would resurrect an empty editor on every navigation.
- *
- * A value with text but NO markup is stored as the bare string, not as an envelope. That
- * keeps a plain reply readable by a bundle that predates this module — the same
- * forward/backward courtesy `readComposeDraft`'s field-wise guards extend — and it means the
- * common case does not grow a JSON wrapper for a field that is empty.
- *
- * ── EXCEPT WHEN THE TEXT IS ITSELF ENVELOPE-SHAPED, WHICH IS A REAL BUG THIS CLOSES ──────
- *
- * A person replying with the literal text `{"text":"gotcha"}` — config pasted into an email —
- * stored as a bare string, would be READ BACK by the shape rule above as an envelope, and
- * they would get `gotcha` with their braces gone. The shape rule closes that case coming from
- * an OLD key; this closes it coming from a new write, and the two together are what make the
- * buffer lossless.
- *
- * The condition is the round trip itself rather than a hand-written "does it look like JSON"
- * test. That is deliberate: a second predicate could disagree with {@link parseRichValue},
- * and the disagreement would be invisible until somebody's message came back wrong. Asking
- * the reader is the only check that cannot drift from the reader.
+ * The string to store for a value, or `null` when there is nothing worth storing. No text ⇒ nothing at
+ * all (an empty draft removes its key; an empty envelope would resurrect an empty editor on every
+ * navigation). Text but no markup ⇒ the bare string, readable by a bundle that predates this module.
+ * Except when the text is itself envelope-shaped: the literal `{"text":"gotcha"}` — config pasted into an
+ * email — stored bare would be read back as an envelope and lose its braces; the shape rule closes that
+ * from an OLD key, this closes it from a new write, and together the buffer is lossless. The condition is
+ * the round trip itself, not a hand-written "looks like JSON" test: a second predicate could drift from
+ * {@link parseRichValue}, invisibly, until somebody's message came back wrong.
  */
 export function serializeRichValue(v: RichValue): string | null {
   if (isRichEmpty(v)) return null;
@@ -113,16 +79,12 @@ export function serializeRichValue(v: RichValue): string | null {
 /* ── turning a value into a document ──────────────────────────────────────────────────── */
 
 /**
- * Plain text as paragraphs, escaped.
- *
- * ESCAPING IS NOT OPTIONAL even though the text came from the user's own keyboard, because
- * every consumer hands the result to an HTML parser. Somebody who typed `<b>` into the old
- * textarea and left it there must get `<b>` back when their draft is restored — not bold text,
- * and certainly not bold text that the next keystroke then persists as markup they never wrote.
- *
- * It lives here rather than in the editor component for the reason the rest of this module
- * does: it is DOM-free, it is the part that must not break, and it now has three consumers —
- * the editor's initial content, the editor's sync effect, and {@link appendRich}.
+ * Plain text as paragraphs, escaped. Escaping is not optional even though the text came from the
+ * user's own keyboard, because every consumer hands the result to an HTML parser: somebody who typed
+ * `<b>` into the old textarea must get `<b>` back when their draft is restored — not bold text, and
+ * certainly not bold text the next keystroke persists as markup they never wrote. It lives here for
+ * the reason the rest of the module does: DOM-free, the part that must not break, three consumers
+ * (the editor's initial content, its sync effect, and {@link appendRich}).
  */
 export function escapeAsParagraphs(text: string): string {
   const esc = text
