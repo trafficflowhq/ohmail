@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
-import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
 import { runInTransaction, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
@@ -113,6 +113,33 @@ const AUTO_MINT_DEVICE_LABELS: Partial<Record<DeviceKind, string>> = {
   "desktop-macos": "ohmail for Mac",
   "desktop-windows": "ohmail for Windows",
 };
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The age cutoff `revokeWebSessions` accepts, in whole days. `1` is the smallest window that
+ * still means "not today's sessions" — the thing the cutoff exists for; `3650` is ten years,
+ * past which the value stops narrowing anything a `last_seen_at` can hold.
+ */
+export const REVOKE_WEB_SESSIONS_MIN_AGE_DAYS = 1;
+export const REVOKE_WEB_SESSIONS_MAX_AGE_DAYS = 3650;
+
+/**
+ * Refused HERE and not only at the route, so a second caller cannot be added past the bound —
+ * the reason `organizeHere` checks its own `dormancyDays` inside the transaction. Only an
+ * OMITTED value means "no cutoff": `null` is a client bug, and silently reading it as "revoke
+ * every other session" is the exact failure this parameter was added to remove.
+ */
+export function assertWebSessionAge(days: number | undefined): void {
+  if (days === undefined) return;
+  if (typeof days !== "number" || !Number.isInteger(days)
+    || days < REVOKE_WEB_SESSIONS_MIN_AGE_DAYS || days > REVOKE_WEB_SESSIONS_MAX_AGE_DAYS) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `olderThanDays must be a whole number between ${REVOKE_WEB_SESSIONS_MIN_AGE_DAYS} and ${REVOKE_WEB_SESSIONS_MAX_AGE_DAYS}`,
+    );
+  }
+}
 
 export interface SessionLifecycleDeps {
   config: AuthConfig;
@@ -375,8 +402,14 @@ export class SessionLifecycle {
   }
 
   /**
-   * Revoke every DEVICE-LESS full session of the caller except the caller's own — the one
-   * bulk verb behind "sign out all other web sessions".
+   * Revoke the caller's DEVICE-LESS full sessions except the caller's own — the one bulk verb
+   * behind "sign out all other web sessions", optionally narrowed to sessions last seen more
+   * than `olderThanDays` days ago.
+   *
+   * The cutoff is what makes the verb usable for THINNING rather than only for taking
+   * everything back: without it, an account carrying hundreds of stale rows could only be
+   * cleaned by signing out the sessions in use today as well, so the act was done one
+   * `DELETE /devices/:id` at a time instead. Omitted, the scope is unchanged.
    *
    * The scope is structural, never a label: `device_id IS NULL` is what a plain browser
    * sign-in is (a device row means a NAMED device — a pairing redeem's mint or the desktop's
@@ -391,8 +424,11 @@ export class SessionLifecycle {
    * viewer must never be able to kill; the route array that carries this verb is spread into
    * `authRoutes` only, and `desktop-host.test.ts` censuses the absence.
    */
-  async revokeWebSessions(ctx: ServiceContext): Promise<{ revoked: number }> {
+  async revokeWebSessions(
+    ctx: ServiceContext, opts: { olderThanDays?: number } = {},
+  ): Promise<{ revoked: number }> {
     const userId = this.requireUser(ctx);
+    assertWebSessionAge(opts.olderThanDays);
     await this.requireStepUp(ctx);
     const db = asTx(ctx);
     const now = ctx.now();
@@ -408,6 +444,14 @@ export class SessionLifecycle {
     ];
     if (ctx.sessionId) preds.push(ne(sessions.id, ctx.sessionId));
     if (current) preds.push(ne(sessions.familyId, current.familyId));
+    // THE AGE CUTOFF IS ADDITIVE, NEVER A REPLACEMENT: absent means the whole device-less
+    // remainder, which is what the person's "sign out everywhere else" press means and must keep
+    // meaning. Present, it narrows by `last_seen_at` — `notNull` with a `defaultNow()`, so every
+    // row has one and there is no NULL arm to decide. A typed column comparison rather than a raw
+    // `sql` fragment: the two drivers disagree on serializing a bound timestamp into one.
+    if (opts.olderThanDays !== undefined) {
+      preds.push(lt(sessions.lastSeenAt, new Date(now.getTime() - opts.olderThanDays * DAY_MS)));
+    }
     // SET-BASED AND ATOMIC — both properties review-bought, one per pass. Set-based: the loop
     // shape (`revokeFamily` per family — two awaited UPDATEs each, serially) was 400+ round
     // trips on exactly the accounts this verb exists for, inside a hosted request with a

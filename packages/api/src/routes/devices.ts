@@ -1,6 +1,6 @@
 import { serviceContext } from "../context.js";
 import type { Route } from "../router.js";
-import { json, noContent } from "./shared.js";
+import { json, noContent, readBody } from "./shared.js";
 // The LIFECYCLE accessor, not `shared-cloud.ts#auth` (Phase 3): all three routes here are
 // session MACHINERY — the device list, its revoke, the audit read — which `SessionLifecycle`
 // carries whole, so probing the bag for the ceremony would 500 the desktop-host door, whose
@@ -63,6 +63,16 @@ export const deviceRoutes: Route[] = [
  *
  * `stepUp: true` for `logout {allDevices}`'s exact reason: mass sign-out is device revocation
  * in effect. `ceremony` because it is identity lifecycle that can only reduce risk.
+ *
+ * The body carries ONE optional field, `olderThanDays` — an age cutoff on `last_seen_at`, so
+ * an account carrying hundreds of stale rows can be thinned without signing out the sessions
+ * in use today. OMITTED means the scope is exactly what it was, which is what the pane's one
+ * press has to keep meaning; `null` is refused rather than read as absent.
+ *
+ * The value is handed to the verb UNCHECKED here, deliberately: `assertWebSessionAge` owns the
+ * bound, inside `revokeWebSessions`, where every caller meets it — the stdio door included. A
+ * second copy of the range at this door would answer the same 400 for the same inputs and could
+ * therefore never be watched fail through the route, which is the definition of decoration.
  */
 export const webSessionRevokeRoutes: Route[] = [
   {
@@ -71,7 +81,14 @@ export const webSessionRevokeRoutes: Route[] = [
     relay: true,
     cost: "ceremony",
     options: { stepUp: true },
-    handler: async (req, deps) =>
-      json(await sessionLifecycle(deps).revokeWebSessions(serviceContext(deps, req)), 200),
+    handler: async (req, deps) => {
+      const raw = (await readBody<{ olderThanDays?: unknown }>(req)).olderThanDays;
+      // PRESENCE is the only thing decided here; the VALUE is the verb's to refuse. The cast is
+      // what carries an arbitrary wire value to `assertWebSessionAge`, which is typed for the
+      // caller it is protecting and shape-checks at runtime for this one — so a string, a
+      // fraction, a `null` or an out-of-range integer all leave as one 400.
+      const opts = raw === undefined ? {} : { olderThanDays: raw as number };
+      return json(await sessionLifecycle(deps).revokeWebSessions(serviceContext(deps, req), opts), 200);
+    },
   },
 ];

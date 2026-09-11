@@ -6,6 +6,8 @@ export {
 // can run it without the ceremony. See `session-lifecycle.ts`'s header for the boundary.
 export {
   SessionLifecycle, makeSessionLifecycle, PAIRED_DEVICE_KINDS,
+  assertWebSessionAge,
+  REVOKE_WEB_SESSIONS_MIN_AGE_DAYS, REVOKE_WEB_SESSIONS_MAX_AGE_DAYS,
   type SessionLifecycleDeps, type PairedDeviceKind,
 } from "./session-lifecycle.js";
 // The stale-web-session reaper — HOSTED-barrel only, deliberately: `src/auth.ts` (the engine
