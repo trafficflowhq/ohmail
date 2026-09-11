@@ -8,101 +8,14 @@ import {
 } from "./staff-grants.js";
 
 /**
- * THE CONTENT-BLIND STAFF CONNECTION — the structural half of the rule that staff can operate
- * the service without ever being able to read anyone's mail.
- *
- * `scripts/harden-staff-role.sql` creates `ohmail_admin`, a Postgres role with column-level
- * grants that make `SELECT subject FROM messages` raise 42501. This module is the other half:
- * the handle the staff surfaces run on, and the two independent mechanisms that stop it from
- * ever being the runtime handle by accident.
- *
- * ## Why a second connection and not a role swap on the first
- *
- * The boundary is **staff-surface vs. user-serving runtime**, not "the API must not read
- * content". The API *must* read `subject`/`snippet`/`from_address` — those columns exist so it
- * can serve them to the account's own user, which is the isolation rule's first clause. Denying the
- * runtime role those columns kills the product. But the admin reads run in the SAME API
- * process on the SAME connection (`routes/admin.ts` passed `deps.db` to all six), so the seam
- * has to be a second connection inside that process.
- *
- * Per-request `SET ROLE` was considered and rejected: the production pooler runs in TRANSACTION
- * mode, where a session-level `SET ROLE` leaks across pooled requests in both directions.
- *
- * ## Mechanism 1 — the compile-time half
- *
- * {@link ContentBlind} is a nominal brand. `adminAccounts(db: AdminDb, …)` therefore refuses
- * `deps.db` at the type level: passing the runtime handle to a staff read is a TYPE ERROR, not
- * a review comment. Only {@link adminDbFor} mints the brand, and only after mechanism 2.
- *
- * ## Mechanism 2 — the boot attestation, because an absent-var check cannot see a WRONG value
- *
- * The realistic accident is not a missing `DATABASE_URL_ADMIN`; it is runtime credentials
- * pasted into it. A configuration check sees a non-empty string and is satisfied, the console
- * comes up, every screen works, and the isolation is gone with nothing anywhere reporting it.
- *
- * So the factory ASKS THE DATABASE — and it now asks the whole question.
- *
- * ### What the first cut got wrong, in its own words
- *
- * It asked ONE question: `select subject from messages where false`, and let a single 42501
- * mint the brand. The security review's finding, rated Critical:
- *
- * > Provision or drift a `DATABASE_URL_ADMIN` role so it lacks `SELECT(messages.subject)` but
- * > retains `SELECT(message_bodies.*)`, `SELECT(messages.snippet)`, `SELECT(messages.
- * > from_address)`, or access through another relation […] `assertContentBlind` treats that
- * > one denial as sufficient and brands the connection `AdminDb`.
- *
- * The oracle was sound in one direction only. A role that CAN read `messages.subject` is
- * certainly the wrong role; a role that CANNOT is not thereby the right one. Every other
- * mail-bearing column in the schema fell through the hole.
- *
- * ### What it does now: an effective-capability attestation, then a bite test
- *
- * {@link assertContentBlind} runs {@link STAFF_CAPABILITY_SQL} — one statement that enumerates
- * every relation, column, sequence, schema, role membership, role attribute, relation
- * ownership and SECURITY DEFINER routine the connected role can reach, using
- * `has_column_privilege` and friends so that a privilege inherited from a role, granted to
- * `PUBLIC`, or implied by OWNERSHIP counts exactly as much as a direct grant. It now also
- * asks every question of BOTH `current_user` and `session_user` and refuses outright when the
- * two differ, because a wrapper login defaulting `role = ohmail_admin` used to pass the whole
- * census while an unprivileged `SET ROLE NONE` stood ready to recover the wrapper — the
- * costume attested, the wearer did not. The answer is
- * compared to {@link STAFF_SELECT_GRANTS} — **the same allowlist `staff-role.pg.test.ts`
- * compares against, imported from `./staff-grants.js`, not a second copy of it.** Anything the
- * allowlist does not name refuses the brand and names itself in the error.
- *
- * The bite tests survive, and run FIRST, because they are the fast unambiguous answer to
- * the accident that actually happens: runtime credentials in the admin variable produce a
- * probe that SUCCEEDS, and "this connection can read message content" is a better first line
- * of a log than four hundred census rows. They are corroboration — the planner agreeing with
- * the catalog — and no longer the proof. The review asked for exactly that split.
- *
- * Both bites are `WHERE false`: Postgres checks column privileges when it PLANS the statement,
- * so the refusal arrives without a row being read and without a sequential scan on a table
- * with millions of rows in it.
- *
- * ### Cost
- *
- * Four round trips — three bites and the census — once per connection string per cold
- * instance, on the first staff request of that instance's life, or the first `/health` — see
- * {@link attestStaffDbFault}, which surfaces the outcome on `/health` non-fatally and
- * awaits this same memoised factory, so whichever comes first pays the round trips and the other
- * is instant. Never on a user-serving request, because the factory is lazy. (The third
- * bite, `count(*) from messages`, arrived with the row-existence fix; it is a refusal at plan
- * time and costs the round trip, not a scan.)
- *
- * MEASURED against PostgreSQL 16 on a fully migrated database (185 relations, 659 columns in
- * `public` + `admin`), averaged over 20 runs on a warm connection: the census is **1.4 ms**
- * and the whole of `assertContentBlind` is **2.0 ms**, against a 0.17 ms empty-round-trip
- * baseline on the same connection. It is catalog scans and syscache lookups; nothing in it
- * touches an application row, and the cost grows with the SCHEMA, not with the data. On a
- * remote database the network round trips will dominate that server time, and four round trips
- * once per cold instance is not a number worth optimising.
- *
- * It is deliberately not cached separately from the handle: the per-URL memo in
- * {@link adminDbFor} already means SUCCESS is paid once per instance and FAILURE is never
- * cached, which is the correct pair — a transient fault must not darken the console until the
- * instance recycles, and a passing attestation must not be re-run per request.
+ * The content-blind staff connection — the structural half of "staff can operate the service
+ * without ever reading anyone's mail". `harden-staff-role.sql` creates `ohmail_admin`, whose
+ * grants make `SELECT subject FROM messages` raise 42501; this is the handle staff surfaces run
+ * on. A second connection, not a role swap: the API must read subject/snippet for the account's
+ * own user, and `SET ROLE` leaks across a transaction-mode pooler. Mechanism 1: {@link
+ * ContentBlind}, a brand only {@link adminDbFor} mints — `deps.db` in a staff read is a type
+ * error. Mechanism 2: the boot attestation — the bite tests, then {@link STAFF_CAPABILITY_SQL}
+ * against {@link STAFF_SELECT_GRANTS}. Success memoised; failure never cached.
  */
 
 /**

@@ -4,69 +4,14 @@ import {
 } from "./alerts.js";
 
 /**
- * The PUSH arm of the pager — one JSON POST to the Telegram Bot API, no vendor SDK, no new
- * dependency, and no relationship with the vendor that carries the other arm.
- *
- * ## Why a second vendor at all, and why THIS one — measured, not preferred
- *
- * The pager has been single-vendor since the webhook arm was removed: `TF_ALERT_WEBHOOK_URL`
- * pointed at ntfy.sh, ntfy.sh blackholes this deployment's hosting egress, and after that was
- * proven the dead variable was deleted rather than left as permanent noise. Correct, and it
- * left every page in the world travelling through one transactional-mail account. That account
- * going down — an outage, a suspension, a revoked key, a bounced domain — takes the pager with
- * it, at exactly the moment something is wrong.
- *
- * The candidates were probed from inside the running container, not chosen from memory:
- *
- * ```
- *   api.telegram.org   → 200   86 ms      discord.com     → 200    65 ms
- *   api.resend.com     → 200  110 ms      hooks.slack.com → 200   566 ms
- *   ntfy.sh            → ETIMEDOUT 258 ms (still blackholed — the control)
- * ```
- *
- * Telegram wins on the axes that matter for a pager and on no others:
- *
- *  · **A different failure domain, on every axis.** Different company, different network,
- *    different credential (a bot token, not the mail key), and a different DELIVERY CHANNEL:
- *    a push to a device rather than a message into a mailbox. That last one is not a detail
- *    here — the operator address is a mailbox this very product serves, so "the product's mail
- *    path is broken" is both a thing worth paging about and a reason the page may never be
- *    seen. An arm that does not touch mail at all is the only arm that survives that.
- *  · **No billing relationship**, so it cannot be suspended alongside anything else, and
- *    nothing about it expires quietly.
- *  · **One JSON POST**, so it obeys the constraint that shaped every sink here: the worker may
- *    import `core` + `db` only, and this file reaches for nothing but `fetch`.
- *
- * Slack and Discord are equally reachable and were rejected for needing a workspace or a
- * server to exist and stay owned; ntfy is dead on evidence, not on assumption.
- *
- * ## Arming, and why it differs from the mail arm's rule
- *
- * `resendAlertSink` treats its DESTINATION as the arming variable: `RESEND_API_KEY` and
- * `MAIL_FROM` exist for customer mail regardless, so an operator clearing `TF_ALERT_EMAIL` has
- * deliberately disarmed the arm and must not be escalated at.
- *
- * Neither Telegram variable exists for any other purpose. So EITHER of them present means
- * somebody meant to arm this, and the missing half is a fault to be named rather than a
- * disarm to be respected:
- *
- *  · neither set ⇒ **null** — the arm is not configured, quietly. The pass reports how many
- *    arms it has, and the worker says so at startup;
- *  · one set, the other missing ⇒ a sink that refuses every delivery NAMING the missing
- *    variable. Set-but-unusable is not the same state as unset — the `webhookAlertSink`
- *    lesson, and a half-configured second arm that looked like an absent one would be the
- *    single-vendor state wearing a two-vendor label;
- *  · both set but one of them malformed (the quoted-env trap, a chat title instead of an id)
- *    ⇒ the same, with the fault named. Parsed once, at build time, like the other two arms.
- *
- * ## What it may say and send
- *
- * Subject and body come from `Alert` fields only — counts, ages and rule names, never mail —
- * via {@link renderAlertText}, and the text is capped to Telegram's own limit rather than left
- * to be refused as a 400 on the day an incident fires several rules at once. The bot token is
- * a URL-PATH credential, exactly like the webhook arm's endpoint, so diagnostics go through
- * {@link redactEndpoint} plus a token-shaped scrub for anything the API echoes back. No retry
- * loop: `runAlertPass` releases an undelivered claim and the driver's cadence is the retry.
+ * The push arm of the pager — one JSON POST to the Telegram Bot API, no SDK, no shared vendor
+ * with the other arm. Measured: candidates probed from inside the container; Telegram wins on a
+ * different failure domain on every axis — company, network, credential, channel (a device push,
+ * not a message into a mailbox this very product serves); no billing relationship. Arming differs
+ * from the mail arm: neither variable exists for any other purpose, so either present means
+ * somebody meant to arm it — neither ⇒ null; one missing or malformed ⇒ a sink refusing every
+ * delivery naming the fault. Text capped to Telegram's limit; the token is a URL-path credential,
+ * redacted plus a token-shaped scrub. No retry loop: the cadence is the retry.
  */
 
 /** Where the push arm posts. The token picks the bot, so the origin is fixed. */
