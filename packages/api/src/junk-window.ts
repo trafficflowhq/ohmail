@@ -22,107 +22,14 @@ import { IMAP_DOOR_DEADLINE_MS, withinDoorBudget } from "./imap-door.js";
 import type { ApiDeps } from "./deps.js";
 
 /**
- * ═══ THE JUNK WINDOW — a live, UN-MIRRORED view of the provider's own \Junk ═══════════════════
- *
- * FOLDERS-SPEC.md §16.2: the Screener's third segment becomes a window into the mailbox's native
- * Junk folder. The DEFINING property is that Junk never enters `messages` or any client mirror —
- * the window reads the folder itself, on request, bounded. The LIST and BODY reads write nothing
- * anywhere; the RESCUE writes exactly three things, each argued at its site: the user-commanded
- * MOVE on the user's own server (the `imap-types.ts` carve-out's second write), the
- * `sync_requested_at` doorbell that follows it, and — for a message OUR OWN verdict husked — the
- * restoration of the husked body, which is the verdict's reversal made whole. No NEW mirror row
- * is ever created here, and `junk-window.test.ts` counts the tables to keep it that way.
- *
- * ── WHY THE API DIALS DIRECTLY INSTEAD OF QUEUEING ON THE WORKER ────────────────────────────
- *
- * The architecture rule draws its line at applying ORGANIZATION: moves defer to the worker via
- * desired state so a serverless function can never leave a mailbox half-moved, while on-demand
- * reads that store nothing — attachment fetch, the gated send — already open a short-lived
- * connection. A junk LIST/BODY read is exactly that second shape: on-demand, short-lived,
- * nothing stored. The API↔worker seam is a database stamp polled every ~3 s (`sync-kick.ts`) —
- * routing an interactive read through it would add seconds of latency per page AND a result
- * channel that marshals junk headers/bodies through the database, which is precisely the
- * storage the window exists to avoid. So the reads go through `withinDoorBudget`, the SAME
- * admission-capped, budget-counted, force-closing door every other API dial uses
- * (`MAX_IMAP_PER_MAILBOX` — the worker's own connection is priced into that budget), and the
- * connection is down before the response leaves. The window also serves only mailboxes whose `status` is `connected`: a
- * stood-down mailbox is another organizer's (a local install holds the lease), and this module
- * never dials — much less writes into — a mailbox Cloud does not organize. The rescue itself is
- * a single-UID move in a folder no ohmail pass ever enumerates, so it contends with no
- * organizer write by construction; the residual — the spec's letter has the worker execute it
- * under the lease — is a recorded deviation, not an accident.
- *
- * ── EVERYTHING IS EPOCH-SCOPED, because \Junk is a folder other software rewrites ───────────
- *
- * A UID names a message only within one UIDVALIDITY epoch, and junk folders get purged and
- * recreated by providers on their own schedule. So: the list carries each row's epoch; the body
- * read REQUIRES the row's epoch and answers 410 on a mismatch rather than serving whatever
- * message now wears the number; the rescue's move is
- * refused on a mismatch by the adapter's own epoch guard, so a stale press can never move a
- * stranger; and the pagination cursor stores each mailbox's epoch beside its
- * watermark — a renumbered folder restarts that mailbox's window at the top instead of silently
- * skipping everything above a stale mark.
- *
- * ── THE RESCUE RE-ENTERS THROUGH THE PIPELINE, NOT AROUND IT (§16.2/G3) ─────────────────────
- *
- * "Not junk" performs one server-side move OUT of Junk into INBOX — which is what un-trains the
- * provider's filter — and then files NOTHING itself: the message's next appearance is a new UID
- * in a watched folder, which the worker ingests like any arrival. Provider-origin junk is
- * genuinely new mail — an unknown sender therefore waits in the Screener, an allowed sender
- * lands in the Ohbox. A message OUR verdict filed is already a (husked) mirror row, and its
- * re-appearance is the adoption path `junk-filing.ts` designed for exactly this restore; what
- * adoption cannot do is un-husk the body the verdict dropped, so the rescue restores it — the
- * same fetch-verify-rewrite `redacted-restore.ts` performs, byte accounting included. A message
- * the provider expunged mid-flight fails HONESTLY: `MessageGoneError` → 410, never a phantom.
- *
- * ── THE SECOND VERB: "NOT JUNK, ALWAYS ALLOW" — the same rescue plus ONE rule transaction ──
- *
- * The plain rescue deliberately touches no rule: a message can be in Junk for reasons that have
- * nothing to do with the sender (the provider's filter, a one-off verdict), and moving it back is
- * not a statement about their future mail. The second verb IS that statement — §16.2: *"the
- * row's second verb, '…and always allow this sender', mints the allow first — a Screener
- * yes-decision, the standard shape — so the mail and every later mail skips the gate."* It runs
- * `allowSender` BEFORE the move, in one transaction, and it has to do two things, not one:
- *
- *  · DISABLE the sender's own spam-promoting rule(s) — `kind:'sender'`, this address,
- *    `destination:'ohmail/Quarantine'`, enabled. Necessary, not decorative: `compareRules` ranks
- *    DENY above ALLOW at equal priority (core/rules.ts — "the user's explicit no is never lost to
- *    a tie"), so a fresh allow rule beside a standing spam rule would LOSE, and the rescued
- *    message would re-file straight back to Junk on arrival. Sender-scoped on purpose: a
- *    domain-wide spam rule covers other senders too, and one press about one address must not
- *    widen to them (a domain rule still outranks the sender allow, exactly as it does for a
- *    Screener yes-decision today — the standard shape, standard limits).
- *  · MINT the allow — `kind:'sender'`, `destination:'INBOX'`, `provenance:'promoted'`, plus the
- *    `contacts` row a yes-decision writes — unless an enabled sender allow already stands (any
- *    allow-side destination: their admission is already given, and a second row at the same rank
- *    would make the pile a UUID coin toss). Both halves emit their `rule` change rows, so every
- *    mirror's rules surface converges.
- *
- * Rules first, move second: the allow must exist before the message's new INBOX UID is ingested,
- * or the arrival is routed under the old rules. A move that then fails 410 leaves the allow
- * standing — the press was about the SENDER, and the sentence the client shows says both halves.
- *
- * ── THE SEARCH-APPEND (§16.2's table: "async search-append with a timeout") ──────────────────
- *
- * `searchJunk` is the list read's exact shape — the same parallel, deadline-raced, force-closed
- * per-mailbox dial — pointed at `searchFolderPage` instead of `listFolderPage`: one server-side
- * `UID SEARCH` per mailbox, the newest `FOLDER_PAGE_MAX` hits fetched, merged and origin-
- * attributed like a page. A mailbox that does not answer within the bound is stated
- * `unreachable` ("Junk could not be searched"), never silently empty; the client asks it only
- * AFTER its client-side filter over the loaded window found nothing, so the window's first paint
- * never waits on it.
- *
- * ── THE ONE-TIME SWEEP OFFER (§16.1) — a COMMAND recorded here, EXECUTED by the worker ──
- *
- * `junkSweepPreview` is the dry run the offer shows: per mailbox, how much mail still sits
- * physically in `ohmail/Quarantine` (`native_locator`), whether a native \Junk is known to move
- * it into, and whether a press is already queued. Database only, no dial. `requestJunkSweep`
- * stamps `mailboxes.junk_sweep_requested_at` (mail 0076) on the mailboxes that have both
- * candidates and a junk folder; the worker consumes the stamp at the top of the mailbox's serial
- * cycle and runs `junkSweepPass` — the CLI's exact function — under the lease. The sweep is the
- * one junk write this module does NOT perform itself: it is a bulk act over MIRRORED rows, which
- * is the organization the API never applies (the architecture line the header above draws).
- * "Never offered twice" is the candidate count itself — a swept pile has none.
+ * The Junk window — a live, un-mirrored view of the provider's own \Junk (FOLDERS-SPEC.md §16.2).
+ * Junk never enters `messages` or any client mirror; LIST and BODY write nothing, and the rescue
+ * writes exactly three things — the move, the `sync_requested_at` doorbell, the restoration of a
+ * body our own verdict husked (`junk-window.test.ts` counts the tables). The API dials directly,
+ * on demand, through `withinDoorBudget`, serving only `connected` mailboxes. Epoch-scoped
+ * throughout: 410 on a body-read mismatch, the rescue refused by the adapter's epoch guard. The
+ * rescue re-enters through the pipeline: the move files nothing; the second verb mints the allow
+ * first, in one transaction. The sweep is a command the worker executes under the lease.
  */
 
 /** The junk body read's transfer ceiling — a bounded window never pulls a 90 MB spam payload. */
@@ -182,36 +89,14 @@ export interface JunkPage {
 interface CursorEntry { v: string; s: number }
 
 /**
- * How large a junk-window cursor may be on the wire.
- *
- * ── WHY BOTH, AND WHY THEY ARE HERE ─────────────────────────────────────────────────────────
- *
- * This cursor is not an id: it is a caller-supplied base64 JSON OBJECT, one entry per mailbox,
- * and it was bounded by nothing. `parseCursor` decoded the whole value, `JSON.parse`d it and
- * looped every entry — so `?cursor=` could carry any number of keys with any-length `v` strings,
- * and the work was linear in a value the caller typed. The shared `decodeListCursor` never sees
- * this one (it has its own decoder), and the input census recorded `routes/screener.ts#cursor`
- * once for two different readers, so neither guard covered it. Each entry's key must now be a
- * mailbox uuid and its epoch a uint32, which is what stops "any-length `v` strings".
- *
- * ── ONE CEILING, AND A RESIDUAL STATED RATHER THAN HIDDEN ────────────────────────────────
- *
- * This cursor's size IS the account's mailbox count — `listJunk` mints one entry per read lane —
- * and the self-host imposes NO mailbox count limit (`SELF_HOST_MAILBOX_ALLOWANCE`). **So any
- * entry ceiling here rejects a cursor this function itself minted, at some account size.** Two
- * review rounds moved that threshold — 64 entries, then 1 024 — and moving it is not fixing it:
- * the shape of the defect is unchanged, only the account it bites is larger. It is gone.
- *
- * What remains is ONE number, and it is the one this class is actually about: a WIRE ceiling,
- * consulted BEFORE the decode, so an arbitrarily long cursor costs a `.length` rather than a
- * base64 decode, a `JSON.parse` and a loop. It bounds the entry count too, because an entry
- * cannot weigh less than its uuid key.
- *
- * **What it does NOT do, said plainly:** an account with roughly two thousand mailboxes would
- * mint a cursor this refuses. That is not a number a parser can fix — it needs either a real
- * product mailbox ceiling or a cursor whose size does not scale with the mailbox count — and it
- * is a known gap of its own — the same one that carries the unbounded mailbox
- * cardinality this rests on.
+ * How large a junk-window cursor may be on the wire. The cursor is a caller-supplied base64 JSON
+ * object, one entry per mailbox, bounded by nothing until now. Each entry's key must be a mailbox
+ * uuid and its epoch a uint32. One ceiling, consulted before the decode, so an arbitrarily long
+ * cursor costs a `.length`; it bounds the entry count too, since an entry cannot weigh less than
+ * its uuid key. Deliberately no entry-count ceiling: the cursor's size is the account's mailbox
+ * count and the self-host imposes no mailbox limit, so any entry ceiling rejects a cursor this
+ * function itself minted at some account size — roughly two thousand mailboxes still mint a
+ * cursor this refuses.
  */
 export const JUNK_CURSOR_MAX_CHARS = 128 * 1024;
 
@@ -542,28 +427,14 @@ export async function searchJunk(
  * since answers 410 — never the body of whatever message now wears the UID.
  */
 /**
- * A UIDVALIDITY that arrived over the wire is only usable if it is a REAL epoch — a positive
- * integer with no leading zero, no sign, no exponent, no whitespace.
- *
- * The two verbs below take `(uid, uidValidity)` from the client and `rescueJunk` builds
- * `${uidValidity}:${uid}` from it, so this value IS the epoch the adapter's guard
- * (`ImapAdapter#assertLocatorEpoch`) compares against the live folder. That guard treats `"0"` as
- * "this locator never claimed an epoch" and lets it through — correct for the worker's cold-drain
- * sentinels, which are minted internally, and wrong for a number a request chose: `uidValidity=0`
- * would switch the guard off for that caller's own rescue and move whatever now wears the UID.
- * Nothing crosses an account boundary (the mailbox is still theirs), so this is a footgun rather
- * than a breach — but it is a footgun in the one place the epoch rule is supposed to hold, and the
- * adapter cannot tell a supplied zero from a sentinel one. So the boundary that accepts the value
- * is the boundary that refuses it.
- *
- * Rejected here rather than in `routes/screener.ts` so there is ONE rule rather than one per
- * route: every present and future caller of these two functions gets it, and it is asserted at the
- * same seam the rest of this module's behaviour is proven at — the Junk window's own suite, which
- * calls these two functions directly.
- *
- * Not `Number(v) > 0`: that accepts `"1e9"`, `" 7 "`, `"0x7"` and `"Infinity"`, none of which is an
- * epoch — and the comparison downstream is a STRING one against the server's decimal digits, so
- * such a value would not match anything and would fail somewhere less honest than here.
+ * A UIDVALIDITY that arrived over the wire is only usable if it is a real epoch — a positive
+ * integer, no leading zero, no sign, no exponent, no whitespace. The verbs below build
+ * `${uidValidity}:${uid}` from it, and the adapter's epoch guard treats `"0"` as "never claimed
+ * an epoch" — correct for the worker's internally minted sentinels, wrong for a number a request
+ * chose: `uidValidity=0` would switch the guard off for the caller's own rescue. The boundary
+ * that accepts the value refuses it, here rather than per route, so every caller gets one rule.
+ * Not `Number(v) > 0`: that accepts `"1e9"`, `" 7 "`, `"0x7"` and `"Infinity"`, and the
+ * downstream comparison is a string one.
  */
 function requireRealEpoch(uidValidity: string): void {
   // ── AND IT IS BOUNDED, because the protocol bounds it ──────────────────────────────────
@@ -807,19 +678,15 @@ export async function rescueJunk(
     }, { budgetMs: JUNK_READ_TIMEOUT_MS });
   } catch (err) {
     if (err instanceof MessageGoneError) {
-      // The provider (or another client) took it first — or the folder was renumbered. The
-      // rescue fails honestly: never a phantom arrival, never a claim of a move that did not
-      // happen, and never a different message moved in this one's name. With the second verb
-      // the allow was written BEFORE this, and stands — carried in `details` so the client can
-      // say both halves.
-      //
-      // THE SENTENCE NAMES ALL THREE CAUSES AND THEN THE FIX. It used to read "it may have been
-      // deleted there", which picks the most alarming of the three and is the least likely: the
-      // guard fires on ANY epoch mismatch, and a provider rebuilding the Junk folder renumbers
-      // every message in it without deleting one. Naming a deletion that usually did not happen,
-      // and offering nothing to do about it, is the over-claim living in the reassuring half of a
-      // refusal. The recovery is real — the next scan re-finds the message by Message-ID and
-      // repoints it, after which the same press works.
+      // The provider (or another client) took it first — or the folder was renumbered. The rescue
+      // fails honestly: never a phantom arrival, never a claim of a move that did not happen,
+      // never a different message moved in this one's name. With the second verb the allow was
+      // written before this and stands — carried in `details` so the client can say both halves.
+      // The sentence names all three causes and then the fix: the guard fires on any epoch
+      // mismatch, and a provider rebuilding the Junk folder renumbers every message without
+      // deleting one, so naming only a deletion would over-claim. The recovery is real — the next
+      // scan re-finds the message by Message-ID and repoints it, after which the same press
+      // works.
       throw new ServiceError(
         "junk_message_gone", 410,
         "this message is no longer where the mailbox recorded it — it may have moved, been "
@@ -988,18 +855,15 @@ export async function requestJunkSweep(deps: ApiDeps, ctx: ServiceContext): Prom
   if (targets.length === 0) {
     throw new ServiceError("nothing_to_sweep", 409, "there is nothing left in ohmail/Quarantine to move");
   }
-  /* -- A READER PRESSES NO SWEEP (mail 0083) ------------------------------------------------
-   *
-   * The sweep is a bulk MOVE — the whole `ohmail/Quarantine` pile into the provider's native
-   * Junk — executed by the organizer inside its serial cycle. Stamping the command on a mailbox
-   * this install does not organize would either do nothing (this install's worker never reaches
-   * it) or, worse, be picked up after a later promotion and move a pile somebody has since
-   * rearranged.
-   *
-   * PER MAILBOX, and every target, because the press covers a SET: an account with one organized
-   * and one read mailbox may sweep the first, and the refusal must name the second rather than
-   * refusing the whole press. Filtering silently would be the other failure — a button that
-   * reports success for mailboxes it skipped.
+  /**
+   * A reader presses no sweep (mail 0083). The sweep is a bulk move — the whole
+   * `ohmail/Quarantine` pile into the provider's native Junk — executed by the organizer inside
+   * its serial cycle. Stamping the command on a mailbox this install does not organize would
+   * either do nothing or be picked up after a later promotion and move a pile somebody has since
+   * rearranged. Per mailbox, and every target, because the press covers a set: an account with
+   * one organized and one read mailbox may sweep the first, and the refusal must name the second
+   * rather than refusing the whole press — filtering silently would be a button that reports
+   * success for mailboxes it skipped.
    */
   for (const id of targets) {
     await assertOrganizerRole(deps.db as unknown as Tx, dialect(deps.db), accountId, id);

@@ -1,16 +1,10 @@
 /**
- * `@trafficflow/api/local` — the API surface a LOCAL engine mounts.
- *
- * The default barrel re-exports `apiRoutes`, and `apiRoutes` imports every route module there is.
- * So a consumer that wanted `createApp` and the mail routes got the billing handler, the Stripe
- * webhook, the waitlist and the six cross-account admin reads as well — not as dead code a
- * bundler could drop, but as live modules in the graph.
- *
- * This entry point exists so the local engine can say what it actually mounts. It deliberately
- * re-exports from the individual modules rather than from `./index.js`: going through the default
- * barrel would pull `routes/index.js` back in and undo the whole point.
- *
- * Additive. `./index.js` is unchanged and still exports everything it did.
+ * `@trafficflow/api/local` — the API surface a local engine mounts. The default barrel re-exports
+ * `apiRoutes`, which imports every route module there is, so a consumer that wanted `createApp`
+ * and the mail routes got the billing handler, the webhook, the waitlist and the cross-account
+ * admin reads as live modules in the graph. This entry point says what the local engine actually
+ * mounts, re-exporting from the individual modules rather than `./index.js` — going through the
+ * barrel would pull `routes/index.js` back in. Additive: `./index.js` is unchanged.
  */
 export { API_VERSION } from "./version.js";
 export type {

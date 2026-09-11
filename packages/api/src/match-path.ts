@@ -12,15 +12,12 @@ export type RouteParams = Record<string, string>;
 const segsOf = (p: string): string[] => p.split("/").filter((s) => s.length > 0);
 
 /**
- * Percent-decode a path segment WITHOUT throwing.
- *
- * `decodeURIComponent` raises `URIError` on a malformed escape (`/messages/%ZZ/move`), and this
- * runs inside route matching — above `withErrorEnvelope` in `createApp` — so that throw used to
- * escape the pipeline entirely and surface as the host's generic 500 with a logged stack, for
- * what is plainly a 400. Hosts that can reject malformed encoding earlier do
- * (the hosted API host's `normalizePathname` answers 400); this is the floor for every other
- * host: an undecodable segment is matched VERBATIM, which simply finds no route for a
- * nonsense id and answers the 404 it deserves.
+ * Percent-decode a path segment without throwing. `decodeURIComponent` raises `URIError` on a
+ * malformed escape (`/messages/%ZZ/move`), and this runs inside route matching — above
+ * `withErrorEnvelope` — so the throw used to escape the pipeline and surface as the host's
+ * generic 500 for what is plainly a 400. Hosts that can reject malformed encoding earlier do (the
+ * hosted host's `normalizePathname` answers 400); this is the floor for every other host: an
+ * undecodable segment is matched verbatim, finds no route, and answers the 404 it deserves.
  */
 function safeDecodeSegment(v: string): string {
   try {
