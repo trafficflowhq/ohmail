@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Trash also lists what your mail server deleted
+
+The Trash view also lists what sits in your mail server's Trash folder, read-only — mail you
+deleted in another mail app, which ohmail does not mirror. Nothing there offers a move, because
+that mail records no folder to go back to; your own deletions, in the section above it, still
+restore where they came from.
+
 ### Building from source is pinned end to end
 
 `apps/desktop` carries a lockfile, so `npm ci` installs the dependency tree this app was built and
