@@ -54,17 +54,21 @@ import {
   credentialsRefused,
   tlsRefused,
   type AdapterDialContext,
+  type CredentialState,
   type OrganizerState,
   type MailboxConnectionState,
   type SidecarImapConfig,
 } from "./engine.js";
 import type { LocalDb, OpenLocalDb } from "./db.js";
-import type { Diagnostic } from "./log.js";
+/* A VALUE import now: {@link PhoneEngineDeps.logSink} builds the hardened logger HERE, in the
+   artifact, rather than letting the app assemble log lines of its own. `log.ts` is this package's
+   own funnel — the allowlist, the redaction and the value grammars come with it. */
+import { createSidecarLog, type Diagnostic } from "./log.js";
 /* `@trafficflow/core/mail` and NOT the default barrel, for the reason `engine.ts:6` and
    `log.ts:1` both give: the barrel is `export *` over twenty-odd modules and reaches the private
    half. Type-only here, so it erases — but a specifier a later edit turns into a value import
    would carry the whole barrel into a phone's artifact, and the census would be the only witness. */
-import type { LogFields, Logger, LogLevel } from "@trafficflow/core/mail";
+import type { LogFields, Logger, LogLevel, LogSink } from "@trafficflow/core/mail";
 
 /**
  * ONE STATEMENT AT A TIME, ONE HANDLE, AND ROWS AS ARRAYS IN THE STATEMENT'S COLUMN ORDER.
@@ -170,6 +174,25 @@ export interface PhoneEngineDeps {
   organizerKind?: OrganizerKind;
   now?: () => Date;
   log?: Diagnostic;
+  /**
+   * ══ WHERE A DIAGNOSTIC LINE GOES ON THIS PHONE — the bytes' destination, and nothing else ══
+   *
+   * A phone's engine wrote NOTHING anywhere, because the app had no way to give it a channel:
+   * {@link log} is a `Diagnostic`, which means composing `detail` objects, and the app composing
+   * them would be a second logger outside every control `log.ts` exists for. Measured on a device:
+   * two `ReactNativeJS` lines in a whole run, neither from the engine — so three device-only
+   * defects had to be read off the mail server's wire instead, and the ones that never reach the
+   * wire could not be read at all.
+   *
+   * So the app supplies a SINK — one finished line in, nowhere out — and this file builds
+   * {@link createSidecarLog} over it. The field allowlist, the name-keyed redaction, the value
+   * grammars, the string bounds and `err` collapsing to a class and a code all come with it, and
+   * the line is byte-identical in shape to the one the desktop writes to stderr.
+   *
+   * {@link log} still WINS where a caller passes one: the suite reads structured events rather
+   * than parsing lines, and a composition that passes both gets the structured channel.
+   */
+  logSink?: LogSink;
   /**
    * A nominal directory, for the few paths that name one in a log line. Nothing is created here and
    * nothing is read from here: the store arrives open and this build has no filesystem module.
@@ -576,8 +599,13 @@ async function composePhoneEngine(
 
   /* ONE DIAGNOSTIC, handed to the engine AND to the launch catch below. Two would be two places a
      caller has to wire up, and the one that gets forgotten is the one that swallows the only
-     record of a mailbox that never came up. */
-  const log: Diagnostic = deps.log ?? ((): void => undefined);
+     record of a mailbox that never came up.
+     A supplied `log` wins; a supplied SINK is wrapped in this package's own hardened logger (see
+     {@link PhoneEngineDeps.logSink}); neither, and every call below is a no-op, which is the
+     pre-existing shape for the compositions that pass nothing. */
+  const wired = deps.log !== undefined || deps.logSink !== undefined;
+  const log: Diagnostic = deps.log
+    ?? (deps.logSink !== undefined ? createSidecarLog({ sink: deps.logSink }) : (): void => undefined);
 
   const store = await openPhoneStore(deps.exec);
   /**
@@ -615,12 +643,14 @@ async function composePhoneEngine(
     installId: deps.installId,
     organizerKind: deps.organizerKind ?? "mobile",
     ...(deps.now ? { now: deps.now } : {}),
-    ...(deps.log ? { log: deps.log } : {}),
+    ...(wired ? { log } : {}),
     /* BOTH FACES OF THE ONE CHANNEL, spread on the same condition — see {@link loggerOver}. A
-       caller that supplies no `log` gets neither, which keeps the pre-existing shape for the many
-       compositions that pass nothing (`exactOptionalPropertyTypes` wants absence, not
-       `undefined`); a caller that supplies one gets the sync loop's diagnostics too. */
-    ...(deps.log ? { logger: loggerOver(deps.log) } : {}),
+       caller that supplies NEITHER a `log` nor a `logSink` gets neither, which keeps the
+       pre-existing shape for the many compositions that pass nothing (`exactOptionalPropertyTypes`
+       wants absence, not `undefined`); a caller that supplies either gets the sync loop's
+       diagnostics too. `wired` rather than a second `deps.log` test, because the sink arm has to
+       reach both faces or the phone would get the launch's lines and none of the drain's. */
+    ...(wired ? { logger: loggerOver(log) } : {}),
     ...(deps.adapterFactory ? { adapterFactory: deps.adapterFactory } : {}),
     // Hex to bytes happens HERE and nowhere else: `Buffer` is bound in this bundle by the builder's
     // `inject`, and the app-side code that reads the keystore has no such global.
@@ -678,6 +708,39 @@ async function composePhoneEngine(
       (t as unknown as { unref?: () => void }).unref?.();
     }),
   ]);
+  /**
+   * ══ A REFUSED LAUNCH DOES NOT LEAVE THE CREDENTIAL IT SEALED ON THE WAY IN ═════════════════
+   *
+   * `attachLocal` seals the supplied password at ATTACH, which is before anything dials. So a
+   * first press with the wrong password — or the wrong host — writes the row and is then refused,
+   * and the next press composes from the form again and is ignored: `resolveLogin` lets the STORE
+   * win, so the wrong password is what dials; and where the HOST was corrected the row reads
+   * FOREIGN, the runtime's `start()` returns without dialling at all, and this function used to
+   * hand back an engine over a door that never authenticated. Measured on a release build: the
+   * Ohbox mounted in under six seconds with zero bytes reaching the mail server.
+   *
+   * Only where THIS start SUPPLIED A PASSWORD — a person at the form. Neither a sealed start nor
+   * a coordinates-only relaunch carries a second copy of it, so removing their row would destroy
+   * the one credential this phone has; and a relaunch over an `unreadable` row is the documented
+   * dial-with-nothing state the form recovers from, not a row to delete.
+   */
+  const typed = imap === null ? undefined : (imap.auth as { pass?: string } | undefined)?.pass;
+  const suppliedPassword = typeof typed === "string" && typed !== "";
+
+  const removeRefusedSeal = async (why: string): Promise<void> => {
+    if (!suppliedPassword) return;
+    await sidecar.forgetStoredLogin().catch((err: unknown) => {
+      log("stored_login_clear_failed", {
+        err,
+        reason: "a refused launch could not remove the password it had just sealed, so the next " +
+          "attempt would dial the refused one again; entering it again replaces the row",
+      });
+    });
+    log("mailbox_open_seal_discarded", {
+      reason: why,
+    });
+  };
+
   const answered = (bounded ?? []).find((f) => credentialsRefused(f.err) || tlsRefused(f.err));
   if (answered !== undefined) {
     log("mailbox_open_refused", {
@@ -686,11 +749,58 @@ async function composePhoneEngine(
       reason: "the mail server answered this launch and refused it, so no engine is handed back " +
         "and the caller can say why rather than reporting an opened mailbox",
     });
+    await removeRefusedSeal(
+      "the mail server refused this launch, so the password it had just sealed is not a "
+        + "credential for this mailbox and the next press composes from the form again",
+    );
     await sidecar.stop().catch(() => { /* nothing to keep: the launch is being refused */ });
     // THE ORIGINAL ERROR, rethrown. It carries imapflow's own `authenticationFailed`/`tlsFailed`
     // and its cause chain, so the caller classifies it with the same predicates this file used
     // rather than being handed a verdict it cannot check. No password is in it.
     throw answered.err;
+  }
+
+  /**
+   * ══ AND AN ENGINE THAT DIALLED NOTHING IS NOT AN OPENED MAILBOX ════════════════════════════
+   *
+   * The runtime's `start()` returns without dialling whenever the login does not resolve to a
+   * usable password — `foreign-host` (the row names another server), `unreadable` (this install's
+   * key does not open its own row), `absent`. It reports no failure doing so, correctly: on the
+   * desktop that is the documented no-password state and the shell shows a password field.
+   *
+   * A CONFIGURED start has no such field to fall back to. The person has just typed a password,
+   * and an engine handed back here is an Ohbox over a door that never authenticated — the state
+   * the door's own refusals exist to make impossible, reached one press later. So the row that
+   * could not be used is removed and the launch refuses; pressing Connect again seals what is on
+   * the form. Reachable independently of the arm above: a keystore that minted a new ring leaves
+   * a row this install cannot open, with nothing refused by any server.
+   *
+   * A start with NO password of its own is deliberately untouched — that is the relaunch, whose
+   * `unreadable` row dials with nothing and whose recovery is the form, not a deletion.
+   */
+  if (suppliedPassword) {
+    const credential = await sidecar.credentialState().then(
+      (state) => state,
+      /* An unreadable store is not an opened mailbox either. Named rather than defaulted to
+         `ready`, which would make this guard decorative. */
+      (): CredentialState => "unreadable",
+    );
+    if (credential !== "ready") {
+      log("mailbox_open_no_login", {
+        state: credential,
+        reason: "this launch supplied a password and the store answered with a credential it "
+          + "could not dial, so nothing was dialled and no engine is handed back",
+      });
+      await removeRefusedSeal(
+        "the stored password for this mailbox could not be used by this launch, so it is removed "
+          + "and the next press seals what is on the form",
+      );
+      await sidecar.stop().catch(() => { /* nothing to keep: the launch is being refused */ });
+      throw new Error(
+        "this phone had a stored password for this mailbox that it could not use, so nothing was "
+          + "signed in. It has been removed — press Connect again.",
+      );
+    }
   }
   /* The launch that is still running, or one that failed for a reason a poll may heal. Its own
      failures are logged by `start()`; this attaches nothing so a later rejection cannot become an

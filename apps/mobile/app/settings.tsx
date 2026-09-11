@@ -387,7 +387,17 @@ function ThisPhonePanel() {
                `unknown`: no chip and no stop verb, rather than "nothing organizes this mailbox"
                a second after the door opened. */
             known: here.organizing !== null,
-            organizer: here.organizing === true ? { name: PHONE_CLAIM_NAME, stopped: false } : null,
+            /* ── AND THE STAND-DOWN IS SAID, WHICH IT WAS NOT ─────────────────────────────────
+             *
+             * `organizer: null` for everything that is not ours collapsed two facts into one
+             * sentence: a FREE mailbox and one ANOTHER MACHINE holds both read `Nothing organizes
+             * this mailbox`. Measured on a device with a second install holding the claim — the
+             * phone took no claim, which is the invariant holding, and said nothing about why.
+             * `heldBy` is the engine's own peek, so `claimFrom` answers `theirs` and the chip
+             * names the holder. */
+            organizer: here.organizing === true
+              ? { name: PHONE_CLAIM_NAME, stopped: false }
+              : (here.heldBy !== null ? { name: here.heldBy, stopped: false } : null),
           },
           PHONE_CLAIM_NAME,
           asked.includes(HERE_CARD),

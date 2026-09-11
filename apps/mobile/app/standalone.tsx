@@ -16,6 +16,7 @@ import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { sayRefusal, type Refusal } from "../src/refusal";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
+import { consoleEngineLogSink } from "../src/engine/engine-log";
 import { holdStandaloneDoor, sayOrganizerRestricted } from "../src/engine/organizer-session";
 import { PHONE_CLAIM_NAME, openStandaloneMailbox } from "../src/engine/standalone-door";
 import { useConnection } from "../src/net/connection";
@@ -136,6 +137,10 @@ function Credentials() {
         const marker = await import("../src/state/install-marker");
         return (await marker.installGeneration(native.nativeEngineDeps())) ?? "";
       },
+      /* THE ENGINE'S OWN LOG, to the platform's log — `engine-log.ts` for what this is and is
+         not. Without it a dial that authenticated and then filed nothing wrote no line anywhere,
+         which is how three device-only defects had to be diagnosed off a mail server's wire. */
+      logSink: consoleEngineLogSink(),
     });
     if (outcome.ok) {
       /* ══ AND THE APP GOES LIVE ON IT, THROUGH THE PATH A PAIRED CONNECT TAKES ══════════════

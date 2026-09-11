@@ -43,6 +43,8 @@ import {
   endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused,
   sayOrganizerRestricted, standaloneHere,
 } from "../engine/organizer-session";
+import { consoleEngineLogSink } from "../engine/engine-log";
+import { decidedState, type DecidedState } from "./decided";
 import {
   PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
   type ReopenOutcome, type StandaloneEngine,
@@ -249,6 +251,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
                reads its own claim as somebody else's; the engine refuses a nameless claimant rather
                than this layer inventing one. */
             installId: async () => (await installGeneration(nativeEngineDeps())) ?? "",
+            /* THE ENGINE'S OWN LOG — `engine-log.ts`. A relaunch has no screen in front of it, so
+               this is the only place a dial that comes up and then files nothing can be read. */
+            logSink: consoleEngineLogSink(),
           }),
         },
       };
@@ -267,8 +272,21 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
      change. It is worded where it is shown. */
   const [syncError, setSyncError] = useState<RefusalArg | null>(null);
 
-  const live = useRef<ConnectionState>(state);
-  live.current = state;
+  /**
+   * ══ WHAT THIS LAYER HAS DECIDED THE CONNECTION IS — and every state change goes through it ══
+   *
+   * This was `live.current = state` in the body, so the ref moved when React PAINTED. Measured on
+   * a device: on the standalone door the work that follows `adopt` settles in microtasks while the
+   * paint is a task, so the identity verdict and the consent press both read `connecting` and
+   * returned — no first drain ever, and no consent — while every paired door was unaffected and
+   * the node suite could not reach the question at all. `net/decided.ts` carries the measurement.
+   *
+   * `enter` is the only writer — it records and then paints — and
+   * `test/connection-decided-state.test.ts` refuses a state change written any other way here.
+   */
+  const decidedRef = useRef<DecidedState<ConnectionState> | null>(null);
+  const live = (decidedRef.current ??= decidedState<ConnectionState>(state, setState));
+  const enter = live.enter;
   /**
    * The sync rounds, single-flighted ({@link SyncRunner}) — extracted so the honest-settle
    * and quiet-refusal contracts are testable without this provider. The retry queue is NOT
@@ -339,7 +357,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
      * and organizes nothing while every surface says it is fine is the whole defect.
      */
     const id = standaloneHere()?.id ?? (await readMailboxes(session))?.[0]?.id ?? "";
-    if (live.current.k !== "live" || live.current.session !== session) return;
+    const atId = live.now();
+    if (atId.k !== "live" || atId.session !== session) return;
     if (id === "") {
       sayOrganizeRefused(refuse("organizeHereUnreadable"));
       return;
@@ -347,7 +366,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     const outcome = await organizeHere(session, id);
     /* Only for THIS session: a verdict that outlives its session (a switch, a forget) must not
        write a sentence under the next one — the rule every other late answer here follows. */
-    if (live.current.k !== "live" || live.current.session !== session) return;
+    const atPress = live.now();
+    if (atPress.k !== "live" || atPress.session !== session) return;
     /* NOT `syncError`, which the Servers screen renders inside "Sync failed" — measured on a
        device announcing a sync failure for a mailbox whose sync had not failed. See
        `organizer-session.ts#organizeRefused` for where it goes and why. */
@@ -391,17 +411,18 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         // The server judged this family's token — a revoke or a reuse-past. Render mail no
         // further: tear down and say the one-gesture remedy.
         teardown(session);
-        setState({ k: "ended", reason: refuse("pairEndedOnServer") });
+        enter({ k: "ended", reason: refuse("pairEndedOnServer") });
         void refreshProfiles();
       }) ?? null;
-      setState({ k: "live", session });
+      enter({ k: "live", session });
       // Only a mismatch acts, and only on the session it was asked about — a verdict that
       // outlives its session (a switch, a forget) clears nothing and drains nothing.
       const gate = session.verifyIdentity().then((verdict) => {
-        if (live.current.k !== "live" || live.current.session !== session) return false;
+        const atVerdict = live.now();
+        if (atVerdict.k !== "live" || atVerdict.session !== session) return false;
         if (verdict.kind === "mismatch") {
           teardown(session);
-          setState({ k: "refused", reason: verdict.reason });
+          enter({ k: "refused", reason: verdict.reason });
           return false;
         }
         return true;
@@ -427,12 +448,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       // the OUTGOING session was still on screen and restart work against it — the retry
       // flush, the folders re-read, an owed drain — racing the scheduled store close.
       const row = (await env.profiles.list()).find((p) => p.id === id);
-      if (live.current.k === "live") teardown(live.current.session);
+      { const at = live.now(); if (at.k === "live") teardown(at.session); }
       if (row === undefined) {
-        if (stillCurrent()) setState({ k: "refused", reason: refuse("notPairedHere") });
+        if (stillCurrent()) enter({ k: "refused", reason: refuse("notPairedHere") });
         return { ok: false, reason: refuse("notPairedHere") };
       }
-      if (stillCurrent()) setState({ k: "connecting", origin: row.origin });
+      if (stillCurrent()) enter({ k: "connecting", origin: row.origin });
       const outcome = await connectProfileById(env, id);
       await refreshProfiles();
       if (!stillCurrent()) {
@@ -440,7 +461,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         return { ok: false, reason: SUPERSEDED() };
       }
       if (outcome.kind === "refused") {
-        setState({ k: "refused", reason: outcome.reason });
+        enter({ k: "refused", reason: outcome.reason });
         return { ok: false, reason: outcome.reason };
       }
       adopt(outcome.session);
@@ -506,7 +527,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    the pairings alone rather than act on a guess. Not using them and not destroying
         //    them are different acts, and only the first is safe to take on a maybe.
         if (install.kind === "purge-refused") {
-          if (stillCurrent()) setState({ k: "refused", reason: refuse("serversPurgeRefused", install.reason) });
+          if (stillCurrent()) enter({ k: "refused", reason: refuse("serversPurgeRefused", install.reason) });
           return;
         }
         //    AND `unknown` STOPS THE LAUNCH TOO, without deleting anything.
@@ -523,7 +544,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    mirror does, so a launch that cannot open it is a launch that could not have read
         //    any mail either.
         if (install.kind === "unknown") {
-          if (stillCurrent()) setState({ k: "refused", reason: refuse("serversInstallUnknown", install.reason) });
+          if (stillCurrent()) enter({ k: "refused", reason: refuse("serversInstallUnknown", install.reason) });
           return;
         }
         // 2. FINISH THE FORGETS THAT DID NOT FINISH. A forget writes its intent before it
@@ -539,20 +560,21 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         const active = await env.profiles.active();
         if (!stillCurrent()) return;
         if (active === null) {
-          setState((s) => (s.k === "starting" ? { k: "idle" } : s));
+          /* ONLY OUT OF `starting`, read from the DECIDED state rather than from React's
+             updater: a tap that has already begun connecting must not be dropped back to idle. */
+          if (live.now().k === "starting") enter({ k: "idle" });
           return;
         }
         await runConnect(active.id, stillCurrent);
       })
       .catch((err) => {
-        setState((s) =>
-          s.k === "starting"
-            ? { k: "refused", reason: refuse("pairingsUnreadable", faultDetail(err)) }
-            : s,
-        );
+        /* `starting` only — see the arm above. */
+        if (live.now().k === "starting") {
+          enter({ k: "refused", reason: refuse("pairingsUnreadable", faultDetail(err)) });
+        }
       });
     return () => {
-      if (live.current.k === "live") teardown(live.current.session);
+      { const at = live.now(); if (at.k === "live") teardown(at.session); }
     };
     // Mount-only: the provider outlives every screen; later transitions come through the API.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -573,8 +595,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       probePair: (origin, pin) => probePairing(env, { origin, pin: pin ?? null }),
       pairConfirmed: (admission, token) =>
         gate.run(async (stillCurrent) => {
-          if (live.current.k === "live") teardown(live.current.session);
-          if (stillCurrent()) setState({ k: "connecting", origin: admission.origin });
+          { const at = live.now(); if (at.k === "live") teardown(at.session); }
+          if (stillCurrent()) enter({ k: "connecting", origin: admission.origin });
           const outcome = await pairWithServer(env, { admission, token });
           await refreshProfiles();
           if (!stillCurrent()) {
@@ -582,7 +604,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             return { ok: false, reason: SUPERSEDED() };
           }
           if (outcome.kind === "refused") {
-            setState({ k: "refused", reason: outcome.reason });
+            enter({ k: "refused", reason: outcome.reason });
             return { ok: false, reason: outcome.reason };
           }
           adopt(outcome.session);
@@ -590,8 +612,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         }),
       openStandalone: (door) =>
         gate.run(async (stillCurrent) => {
-          if (live.current.k === "live") teardown(live.current.session);
-          if (stillCurrent()) setState({ k: "connecting", origin: LOCAL_ENGINE_ORIGIN });
+          { const at = live.now(); if (at.k === "live") teardown(at.session); }
+          if (stillCurrent()) enter({ k: "connecting", origin: LOCAL_ENGINE_ORIGIN });
           /* HELD BEFORE THE ROW IS WRITTEN, so the connect below finds it. `holdStandaloneDoor` is
              first-start-wins: a second press on a phone that already has an engine keeps the one
              that is running, and the row it writes is the same row (same origin, same account). */
@@ -612,7 +634,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
                it, which is exactly the state a relaunch could not recover from, so it is said here
                rather than navigated past. */
             const reason = refuse("standaloneNotStored", faultDetail(err));
-            if (stillCurrent()) setState({ k: "refused", reason });
+            if (stillCurrent()) enter({ k: "refused", reason });
             return { ok: false, reason };
           }
           await refreshProfiles();
@@ -644,14 +666,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
              nothing on the chooser mentions, with a notification standing over it. */
           const row = (await env.profiles.list()).find((p) => p.id === profileId);
           if (row?.origin === LOCAL_ENGINE_ORIGIN) await endStandaloneHere();
-          if (live.current.k === "live" && live.current.session.profile.id === profileId) {
-            const bearer = live.current.session.bearer;
+          const atForget = live.now();
+          if (atForget.k === "live" && atForget.session.profile.id === profileId) {
+            const bearer = atForget.session.bearer;
             /* NO LOGOUT WITHOUT A MANAGER — the standalone door's session has none, and the seam
                answers `told` for it on its own (`pairing.ts#forgetProfile`). */
             revokeLive = bearer === null ? null : () => bearer.logout();
-            closed = teardown(live.current.session);
-            setState({ k: "idle" });
-          } else if (live.current.k === "connecting") {
+            closed = teardown(atForget.session);
+            enter({ k: "idle" });
+          } else if (atForget.k === "connecting") {
             // SETTLE a state no later transition will. Every other transition ends by setting
             // its own state; forget was the one that could leave a SUPERSEDED boot's
             // `connecting` standing — tap a profile, tap Forget before the boot settles, and
@@ -660,7 +683,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             // that boot stale, and the gate serializes, so nothing else is in flight — idle
             // is the truth. `refused`/`ended` stay: they are terminal, and their sentence is
             // the reason the Servers screen exists.
-            setState({ k: "idle" });
+            enter({ k: "idle" });
           }
           const outcome = await forgetProfile(env, profileId, { closed, revoke: revokeLive });
           await refreshProfiles();
@@ -668,8 +691,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         }),
       disconnect: () =>
         gate.run(async () => {
-          if (live.current.k === "live") teardown(live.current.session);
-          setState({ k: "idle" });
+          { const at = live.now(); if (at.k === "live") teardown(at.session); }
+          enter({ k: "idle" });
           setSyncError(null);
         }),
       syncNow: () => {
@@ -679,11 +702,13 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         // round's completion — the honest settle a pull spinner renders on. A pull landing
         // mid-probe chains on the verdict: the first drain starts the instant it clears (the
         // adopt continuation registered first, so this one joins that very round).
-        if (live.current.k !== "live") return Promise.resolve();
-        const session = live.current.session;
+        const atSync = live.now();
+        if (atSync.k !== "live") return Promise.resolve();
+        const session = atSync.session;
         const gate = clearance.current.get(session) ?? Promise.resolve(false);
         return gate.then((ok) => {
-          if (!ok || live.current.k !== "live" || live.current.session !== session) return;
+          const atDrain = live.now();
+          if (!ok || atDrain.k !== "live" || atDrain.session !== session) return;
           // ── RING THE WORKER'S DOORBELL, THEN DRAIN ────────────────────────────────────────
           //
           // The drain below answers "what does the worker already have"; the person pulling was
@@ -705,7 +730,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             if (!r || r.requested === 0) return;
             for (const delayMs of [4_000, 10_000]) {
               setTimeout(() => {
-                if (live.current.k === "live" && live.current.session === session) {
+                const atRound = live.now();
+                if (atRound.k === "live" && atRound.session === session) {
                   void runner.request(session.engine);
                 }
               }, delayMs);

@@ -113,17 +113,33 @@ export const organizerDoor = (): StandaloneEngine | null => door;
  * sentence on screen a second after the door opened.
  */
 export function standaloneHere():
-  { id: string | null; address: string; organizing: boolean | null } | null {
+  { id: string | null; address: string; organizing: boolean | null; heldBy: string | null } | null {
   const held = door;
   if (held === null) return null;
   let organizing: boolean | null = null;
   let id: string | null = null;
+  /**
+   * WHO HOLDS THE MAILBOX WHEN THIS INSTALL DOES NOT — the engine's own peek at the claim.
+   *
+   * `null` is "nobody, or not read yet"; a name is another machine. Without it the panel could
+   * only say `Nothing organizes this mailbox`, which is also what it says when the mailbox is
+   * free — so a phone standing down correctly told a person nothing was organizing their mail.
+   */
+  let heldBy: string | null = null;
   try {
     const entries = Object.entries(held.runtimes().organizer);
     /* ONE MAILBOX ON THIS PHONE is the fourth door's own ruled line and the door carries one
        address, so this asks "does this install organize the mailbox it opened" and any entry
        saying so is that. */
-    if (entries.length > 0) organizing = entries.some(([, state]) => state.organizing);
+    if (entries.length > 0) {
+      organizing = entries.some(([, state]) => state.organizing);
+      /* The holder only where this install is NOT organizing: over our own claim the engine
+         reports us, and rendering that as "another machine has it" would be the false state in
+         the other direction. */
+      if (!organizing) {
+        heldBy = entries.map(([, state]) => state.heldBy).find((n) => n !== null && n !== "") ?? null;
+      }
+    }
     /**
      * AND THE MAILBOX ID, WHICH IS THE MAP'S OWN KEY — the only id the app can have on this door
      * without asking for it, and the consent press needs one. `null` where the engine reports a
@@ -136,7 +152,7 @@ export function standaloneHere():
        takes the same reading, and for the same reason: a momentary failure must not end
        somebody's organizing on screen. */
   }
-  return { id, address: held.address, organizing };
+  return { id, address: held.address, organizing, heldBy };
 }
 
 /**

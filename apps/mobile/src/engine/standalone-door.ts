@@ -26,6 +26,7 @@
 import { portMeansImplicitTls } from "@ohmail/client-engine";
 import { LOCAL_ENGINE_ORIGIN } from "./boot";
 import { faultDetail, refuse, type Refusal } from "../refusal";
+import type { EngineLogSink } from "./engine-log";
 import type { StandaloneFields } from "../ui/standalone-form";
 
 /**
@@ -58,9 +59,27 @@ export interface StandaloneEngine {
   handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
   /** Force one gated cycle per mailbox, so the lease is re-read now. */
   resume(): Promise<void>;
-  /** What each mailbox reports — the row's answer, not the gate's optimism. */
-  runtimes(): { organizer: Record<string, { organizing: boolean }> };
+  /**
+   * What each mailbox reports — the row's answer, not the gate's optimism.
+   *
+   * `heldBy` is the OTHER install's name when this one has stood down: the engine knows it (it is
+   * the holder the lease read peeked) and this type did not carry it, so a phone that had correctly
+   * taken no claim showed `Nothing organizes this mailbox` — the same sentence it shows when NOBODY
+   * holds it. Two states, one sentence, and the one a person needs was the one missing.
+   */
+  runtimes(): { organizer: Record<string, { organizing: boolean; heldBy: string | null }> };
 }
+
+/**
+ * WHERE THE ENGINE'S OWN DIAGNOSTIC LINES GO — a sink, on both entries.
+ *
+ * The engine writes one finished JSON line per event and this is where it goes; `engine-log.ts`
+ * holds the whole argument for why the app supplies a DESTINATION and never a `Diagnostic` it
+ * would have to compose fields for. Without it a phone's engine wrote nothing anywhere, so every
+ * device-only defect had to be read off the mail server's wire and the ones that never reach the
+ * wire could not be read at all.
+ */
+export type StartPhoneEngineLogging = { logSink?: EngineLogSink };
 
 /** The engine's composition root, as the artifact exports it. */
 export type StartPhoneEngine = (deps: {
@@ -76,7 +95,7 @@ export type StartPhoneEngine = (deps: {
   machineName: string;
   installId: string;
   keks?: Record<number, string>;
-}) => Promise<StandaloneEngine>;
+} & StartPhoneEngineLogging) => Promise<StandaloneEngine>;
 
 /**
  * THE RELAUNCH'S ENTRY — the same engine, started from what it sealed for itself.
@@ -96,7 +115,9 @@ export type StartPhoneEngineFromSealed = (deps: {
   machineName: string;
   installId: string;
   keks?: Record<number, string>;
-}) => Promise<{ kind: "started"; engine: StandaloneEngine } | { kind: "no-credential" }>;
+} & StartPhoneEngineLogging) => Promise<
+  { kind: "started"; engine: StandaloneEngine } | { kind: "no-credential" }
+>;
 
 /** What this module needs of the app. Each one is a seam the suite drives directly. */
 export interface StandaloneDeps {
@@ -108,6 +129,13 @@ export interface StandaloneDeps {
   machineName: () => string;
   /** This install's durable id, from the app's install marker. Never the store's account id. */
   installId: () => Promise<string>;
+  /**
+   * WHERE THE ENGINE'S LINES GO. `undefined` and it writes nothing, which is what a phone did.
+   *
+   * A seam like every other member here, so a case can read the exact lines a dial produced
+   * instead of asserting that a channel was passed.
+   */
+  logSink?: EngineLogSink;
 }
 
 /**
@@ -239,6 +267,9 @@ export async function openStandaloneMailbox(
       machineName: deps.machineName(),
       installId: await deps.installId(),
       keks: platform.keks,
+      /* ABSENT rather than `undefined` when this app has no sink: the engine spreads on presence
+         (`exactOptionalPropertyTypes`), and an `undefined` member would read as a channel. */
+      ...(deps.logSink !== undefined ? { logSink: deps.logSink } : {}),
     });
     return { ok: true, door: engine };
   } catch (err) {
@@ -274,6 +305,8 @@ export interface ReopenDeps {
   machineName: () => string;
   /** This install's durable id, from the app's install marker. Never the store's account id. */
   installId: () => Promise<string>;
+  /** See {@link StandaloneDeps.logSink}. A relaunch has no screen, so it needs it more. */
+  logSink?: EngineLogSink;
 }
 
 /** The relaunch's answer. A refusal is a keyed sentence, never a fall-through to the chooser. */
@@ -298,6 +331,7 @@ export async function reopenStandaloneMailbox(deps: ReopenDeps): Promise<ReopenO
       machineName: deps.machineName(),
       installId: await deps.installId(),
       keks: platform.keks,
+      ...(deps.logSink !== undefined ? { logSink: deps.logSink } : {}),
     });
     if (started.kind === "no-credential") {
       return { ok: false, reason: refuse("standaloneNoSealedCredential") };
