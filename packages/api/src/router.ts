@@ -7,30 +7,14 @@ export { matchSpec, type RouteParams };
 export type Handler = (req: Request, deps: ApiDeps, params: RouteParams) => Promise<Response>;
 
 /**
- * **WHAT DOES THIS HANDLER CAUSE?** Every route declares it, and the
- * declaration is what `withSpendGate` judges an unverified account against.
- *
- * The invariant: *an unverified account must not be able to generate meaningful cost*, hosting
- * included. Its acceptance test is `anything that does work, holds a connection, or calls a
- * paid API refuses an unverified account`, so the classification has to be about the
- * EFFECT of the handler, not about its verb or its path. `POST /messages/:id/move` writes one
- * row and enqueues an IMAP move the worker performs; `GET /attachments/:id` opens a socket to
- * somebody's mail server. Those are different amounts of money and the route table is the only
- * place both facts are visible at once.
- *
- * ── WHY IT IS A REQUIRED FIELD, AND NOT AN OPTION ────────────────────────────────────────
- *
- * The predecessor was an optional boolean in {@link RouteOptions} — opt-IN, so route 125 was
- * ungated by default and 122 of 124 routes were ungated in fact. Every flag in
- * {@link RouteOptions} is a behavioural toggle whose ABSENCE is a documented default; this is
- * the opposite, a question with no safe default, so it sits on {@link Route} itself where
- * omitting it is a compile error. The route table lives under `src`, which this package's main
- * `tsconfig` includes, so typechecking is a real guard here — whereas an ordinary test file is
- * not included at all, and a type-level assertion written in one would never be compiled.
- *
- * `withSpendGate` ALSO fails closed at runtime on an absent or unrecognised value, because a
- * type is not a guarantee against a JavaScript caller, a cast, or a synthetic route in a test
- * file that the compiler never sees.
+ * What does this handler cause? Every route declares it, and the declaration is what
+ * `withSpendGate` judges an unverified account against. The invariant: an unverified account must
+ * not generate meaningful cost, hosting included — so the classification is about the effect of
+ * the handler, not its verb or path. A required field, not an option: the predecessor was an
+ * opt-in boolean carried by two of 124 routes. It sits on {@link Route} itself where omitting it
+ * is a compile error (the route table lives under `src`, which this package's tsconfig
+ * typechecks), and `withSpendGate` also fails closed at runtime for the casts and synthetic
+ * routes the compiler never sees.
  */
 export type CostClass =
   /**
@@ -44,21 +28,14 @@ export type CostClass =
    */
   | "unauthenticated"
   /**
-   * The identity lifecycle: entering, proving, extending and LEAVING. Register, verify,
-   * re-send the verification mail, log in, read/refresh/end the session, enrol or remove a
-   * second factor, mint an OAuth token, revoke a device, erase the account.
-   *
-   * Reachable before verification by construction — this is the only path OUT of the
-   * unverified state, and two of its exits must hold even for somebody who can never verify
-   * (a registrant who mistyped their address holds a session, will never get the mail, and
-   * must still be able to revoke a credential and to leave under Art. 17).
-   *
-   * **Some of these spend.** `POST /auth/register` and `POST /auth/verify-email/resend` send
-   * mail through the transactional mail provider. They are not exempt from cost control — they are controlled by a
-   * DIFFERENT mechanism, because verification cannot be the control on the route that
-   * produces verification: the per-recipient `unsolicited` quota and the per-IP `verify:ip`
-   * limiter. A new `ceremony` route that sends mail owes its own quota, and the frozen
-   * census over this class is where its author is made to notice.
+   * The identity lifecycle: entering, proving, extending and leaving. Reachable before
+   * verification by construction — this is the only path out of the unverified state, and two of
+   * its exits must hold even for somebody who can never verify (a mistyped address still holds a
+   * session and must be able to revoke a credential and leave under Art. 17). Some of these
+   * spend: register and resend send mail, controlled by a different mechanism — the per-recipient
+   * `unsolicited` quota and the per-IP `verify:ip` limiter — because verification cannot be the
+   * control on the route that produces verification. A new `ceremony` route that sends mail owes
+   * its own quota; the frozen census over this class is where its author notices.
    */
   | "ceremony"
   /** Reads rows already stored for the caller's own account, and writes nothing. */
@@ -88,14 +65,11 @@ export const UNVERIFIED_MAY_REACH: ReadonlySet<CostClass> =
   new Set<CostClass>(["unauthenticated", "ceremony", "read"]);
 
 /**
- * THE DOORS THAT STAY OPEN TO A REFUSED ACCOUNT — the classes, and the one route outside them.
- *
- * When the entitlements port refuses an account, the app renders a lock screen instead of mail.
- * Three things must still work from inside that lock, or it is a trap rather than a control:
- * signing out and every identity call (`ceremony`), leaving under Art. 17 (`DELETE /account`, also
- * `ceremony`), and the way back to paying — which is `POST /account/manage-link`, a `paid` route
- * and therefore the one door this set names explicitly rather than by class.
- *
+ * The doors that stay open to a refused account — the classes, and the one route outside them.
+ * When the entitlements port refuses an account, the app renders a lock screen; three things must
+ * still work from inside it or it is a trap: signing out and every identity call (`ceremony`),
+ * leaving under Art. 17 (`DELETE /account`, also `ceremony`), and the way back to paying — `POST
+ * /account/manage-link`, a `paid` route and therefore the one door this set names explicitly.
  * `unauthenticated` is here because it serves no account at all, so there is no verdict to judge.
  */
 export const ACCESS_REFUSED_MAY_REACH: ReadonlySet<CostClass> =
@@ -139,26 +113,14 @@ export interface RouteOptions {
    */
   enrollmentOk?: boolean;
   /**
-   * PATH PARAMETERS THAT ARE **NOT** UUIDS — the opt-out from the shape check
-   * `createApp.handle` applies to every `:param` before any pipeline runs.
-   *
-   * **Absent means validated**, and that direction is the whole point. A path parameter is a
-   * caller-chosen string that reaches a `uuid` column verbatim, so the default has to be the safe
-   * one: a new `:id` route is covered by code nobody has to remember to call. The inverted
-   * spelling — an opt-IN list of routes to check — is the shape that leaves the next route
-   * uncovered, which is exactly how `GET /drafts/:id` answered 500 to `/drafts/not-a-uuid` for its
-   * whole life while a 1 679-line input census stayed green.
-   *
-   * **It ships EMPTY, and that is a measured claim rather than a default.** All 78 `:id` patterns
-   * in the table resolve to a `uuid` column — including the three that looked like exceptions:
-   * `attachments.id` IS a uuid (its live 502 came from that route's own blanket catch, not from a
-   * non-uuid id), `mailbox_folders.id` is one, and `/screener/:id` reads `messages.id`. So there is
-   * no entry to make today, and the option exists for the `:token` or `:name` route somebody adds
-   * later — which then has to SAY so here, visibly, instead of silently widening the door.
-   *
-   * Named per parameter, not per route, so a route with two params can declare one opaque and keep
-   * the other checked. `input-bounds-census.test.ts` holds the frozen cross-check in both
-   * directions, so an entry added here without an argument there is a red test.
+   * Path parameters that are not UUIDs — the opt-out from the shape check applied to every
+   * `:param` before any pipeline runs. Absent means validated: a path parameter is a
+   * caller-chosen string that reaches a `uuid` column verbatim, so a new `:id` route is covered
+   * by code nobody has to remember to call (the opt-in spelling is how `GET /drafts/:id` answered
+   * 500 to `/drafts/not-a-uuid` for its whole life). It ships empty, a measured claim: all 78
+   * `:id` patterns resolve to a uuid column. Named per parameter, so a route with two params can
+   * declare one opaque. `input-bounds-census.test.ts` holds the frozen cross-check in both
+   * directions.
    */
   opaqueParams?: readonly string[];
   /** Honors `Idempotency-Key` (`withIdempotency`). */
@@ -166,27 +128,14 @@ export interface RouteOptions {
   /** SSE / oauth-redirect: reduced pipeline — no JSON envelope, no CSRF, no idempotency. */
   raw?: boolean;
   /**
-   * **THIS ROUTE ANSWERS FOR THE CREDENTIAL IT RESOLVED, NOT FOR THE SESSION THAT CARRIED THE
-   * REQUEST.** The sign-in, token and pairing routes — the ones whose handler mints or rotates a
-   * session from a credential in the request BODY.
-   *
-   * **The set is not listed here on purpose.** It was, and the list said five while the true count
-   * was ten; a second review then found the derivation itself short by a seam. A list of route
-   * names in a comment is a fact about who last counted. `account-header-census.test.ts` derives
-   * the set from the handlers and asserts the flags match it, so the authority is the code.
-   *
-   * They are all `public`, so `withSession` resolves whatever credential is ambient — and then
-   * the handler resolves a SECOND one out of the body, which is the one the response is about.
-   * A browser refreshing an expired token has no session at all and the response still belongs to
-   * an account; a caller holding a live session presents a credential that must belong to the
-   * same account or be refused (`refuseCrossAccountCredential`).
-   *
-   * The flag changes only where {@link ACCOUNT_HEADER} takes its value: `deps.credentialAccount`
-   * instead of `deps.session`. It grants nothing and gates nothing, so a route that carries it
-   * wrongly cannot become more permissive — it can only stop naming an account, which
-   * `account-header-census.test.ts` checks. And it checks against a set DERIVED from the
-   * handlers, not against a list — there was a frozen list, it said five when the truth was ten,
-   * and this sentence went on citing it after the list was deleted.
+   * This route answers for the credential it resolved, not the session that carried the request —
+   * the sign-in, token and pairing routes, whose handler mints a session from a credential in the
+   * body. The set is not listed here: a list of route names in a comment is a fact about who last
+   * counted; `account-header-census.test.ts` derives the set from the handlers and asserts the
+   * flags match. All are `public`, so the handler resolves a second credential out of the body —
+   * which must belong to the same account or be refused (`refuseCrossAccountCredential`). The
+   * flag changes only where {@link ACCOUNT_HEADER} takes its value; it grants nothing, so
+   * carrying it wrongly can only stop naming an account.
    */
   credentialSubject?: boolean;
   /**
@@ -209,15 +158,14 @@ export interface Route {
    */
   cost: CostClass;
   /**
-   * REQUIRED. May a Cloud-mode install's write-through relay forward this route to the server its
-   * door names? `false` for a route that resolves a credential out of the REQUEST BODY
+   * Required. May a Cloud-mode install's write-through relay forward this route to the server its
+   * door names? `false` for a route that resolves a credential out of the request body
    * (`credentialSubject`), for the browser hand-off ceremony, and for the hosted console, intake,
-   * back-office, waitlist and OAuth server surfaces.
-   *
-   * No default in either direction: a silent `true` leaks on the next route added, a silent
-   * `false` breaks a shipped client without a word. `relay-allowlist.ts` is the import-free
-   * projection the sidecar reads; `relay-allowlist-census.test.ts` holds the two in agreement and
-   * derives the credential-subject refusal from the handlers rather than from a list.
+   * back-office, waitlist and OAuth server surfaces. No default in either direction: a silent
+   * `true` leaks on the next route added, a silent `false` breaks a shipped client without a
+   * word. `relay-allowlist.ts` is the import-free projection the sidecar reads;
+   * `relay-allowlist-census.test.ts` holds the two in agreement and derives the
+   * credential-subject refusal from the handlers.
    */
   relay: boolean;
   handler: Handler;

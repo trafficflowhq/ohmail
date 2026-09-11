@@ -7,33 +7,14 @@ import { isImapDoorTimeout, withinDoorBudget } from "./imap-door.js";
 import type { ApiDeps } from "./deps.js";
 
 /**
- * WHO IS ORGANIZING THIS MAILBOX RIGHT NOW — read from the mailbox, on demand.
- *
- * ── WHY THIS CANNOT BE A COLUMN ───────────────────────────────────────────────────────────
- *
- * Exactly one organizer per mailbox is enforced by a claim message in an unsubscribed
- * `ohmail/_meta` folder, because a desktop install running on its own local database and the
- * hosted service running on ours share no store except the mailbox itself. When this side loses
- * the mailbox it writes `disabled` plus a reason and stops — and a disabled mailbox is off the
- * worker's roster, so from that moment nothing re-reads the claim. The reason column therefore
- * records what was true at the instant we stood down, and only that.
- *
- * The question a person actually asks is a present-tense one: *is my laptop still organizing this,
- * or did it stop?* Answering it from the stored reason would mean answering it from a snapshot
- * that may be days old, and the answer decides which action they are offered. So it is answered by
- * looking — one short-lived connection, under the same cap every other IMAP dial from this process
- * queues behind.
- *
- * ── AND WHY IT CANNOT USE THE GATE ────────────────────────────────────────────────────────
- *
- * The gate (`runLeaseGate`) writes on every path: it creates the folder, and it either renews our
- * claim or releases it. Running it here — with any identity at all — would make opening a settings
- * pane an act of organizing. Against an empty folder it would APPEND a claim and every other
- * install would stand down for ten minutes. So this uses `leasePeekIo()`, whose object has exactly
- * one method and no way to write, and `readLeasePeek`, which returns facts and no verdict.
- *
- * Nothing here decides anything. The decision belongs to the worker's gate, later, in the process
- * that will actually do the organizing.
+ * Who is organizing this mailbox right now — read from the mailbox, on demand. Not a column: one
+ * organizer per mailbox is enforced by a claim message in an unsubscribed `ohmail/_meta` folder,
+ * and a stood-down install stops re-reading the claim — the stored reason is a snapshot, while
+ * the question is present-tense. So it is answered by looking: one short-lived connection under
+ * the same cap as every other IMAP dial. It cannot use the gate: `runLeaseGate` writes on every
+ * path — against an empty folder it would append a claim and stand every other install down for
+ * ten minutes. `leasePeekIo()` has one method and no way to write; `readLeasePeek` returns facts,
+ * no verdict.
  */
 
 /** One organizer, as the wire carries it. */

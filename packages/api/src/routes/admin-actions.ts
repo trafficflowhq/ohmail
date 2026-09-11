@@ -8,47 +8,14 @@ import type { ApiDeps } from "../deps.js";
 import type { Handler, Route } from "../router.js";
 
 /**
- * `POST /admin/accounts/{suspend,resume}` — THE ONE ADMIN WRITE.
- *
- * This is the file `admin.ts` §2 promised did not exist. Its ceiling paragraph — "the secret
- * buys read-only, cross-account metadata, and bounds it by construction, because no write route
- * exists to be reached with it" — is amended in that file to point here, because that sentence
- * stops being true the moment a POST lands. So this route is held to a STRICTER bar than the
- * reads, and the whole design is that bar:
- *
- * ══ TWO CREDENTIALS IN SERIES, AND THE SECOND ONE IS THE POINT ═════════════════════════════
- *
- *  1. The shared `TF_ADMIN_SECRET`, `Authorization: Bearer …`, constant-time compared exactly as
- *     the six reads compare it. It proves the request came through the console's server-side
- *     proxy and not from a browser — necessary, and NOT sufficient. Several people and two
- *     hosting dashboards hold it; it names nobody.
- *  2. A live STAFF SESSION, resolved from the `staff_sessions` row named by the token the proxy
- *     forwards in the body. This is what turns "somebody with the secret" into a PERSON an audit
- *     row can blame. Every `staff_sessions` row is minted only after the TOTP wall
- *     (`admin-staff.ts`), and an enrolment token is an HMAC and not a row, so `resolveStaffSession`
- *     cannot resolve one — the second factor is structural, not re-checked here.
- *
- * **The URL-key gate cookie, or the shared secret, ALONE authorises NOTHING here.** A request
- * carrying the secret but no live staff session is 401 `staff_session_required`. That is the
- * property `spend-gate`/`admin-actions` tests pin by mutation: drop the `resolveStaffSession`
- * check and the "secret alone is refused" test goes green-should-be-red.
- *
- * ══ WHY THIS RUNS ON `deps.db`, NEVER THE BLIND ROLE ══════════════════════════════════════
- *
- * The six reads run on `deps.adminDb`, the content-blind `ohmail_admin` handle whose boot
- * attestation REFUSES any capability outside its read allowlist — so a write grant there would
- * take the whole console down at boot. The write runs on the RUNTIME connection, exactly as the
- * staff sign-in routes do, and the blind role gains nothing but a two-column SELECT so the console
- * can render who is suspended. `suspendAccount`/`resumeAccount` (packages/db) do the cloud
- * suspension row and the mail `audit_log` row in ONE transaction, idempotently.
- *
- * ══ PURE DELEGATION AT THE HTTP EDGE, LIKE THE REST ═══════════════════════════════════════
- *
- * `accountId` comes from the BODY (contract §1.9 is about SESSION-derived ids; there is no
- * customer session here — the target account is the operator's chosen argument, and it is
- * validated, not trusted). Options mirror the reads: `public + anonymous + raw`, so
- * ANONYMOUS_PIPELINE resolves no customer session and there is no account whose verification
- * state could be confused with the target's.
+ * `POST /admin/accounts/{suspend,resume}` — the one admin write. Two credentials in series: the
+ * shared `TF_ADMIN_SECRET` (constant-time compared) proves the request came through the console's
+ * server-side proxy — necessary, not sufficient — and a live staff session, from the token the
+ * proxy forwards in the body, names a person an audit row can blame; every staff session is
+ * minted behind the TOTP wall. The secret alone is 401 `staff_session_required` — the
+ * mutation-watched property. The write runs on `deps.db`, never the blind role;
+ * `suspendAccount`/`resumeAccount` do the suspension row and the `audit_log` row in one
+ * transaction, idempotently. `accountId` comes from the body — the operator's validated argument.
  */
 
 /** The shared shape a suspend/resume handler returns; the wrapper turns it into a `Response`. */
@@ -116,26 +83,14 @@ function staffWriteRoute(name: string, run: WriteRun): Handler {
 }
 
 /**
- * ══ THE THIRD WRITE: RELEASING A QUARANTINED MAILBOX (mail 0039) ═══════════════════════════
- *
- * It goes through {@link staffWriteRoute}'s twin, {@link staffMailboxWriteRoute}, and the only
- * difference is the id it validates — `mailboxId` instead of `accountId`. Everything that makes
- * an admin write safe here is unchanged and deliberately not re-implemented: unarmed ⇒ 404,
- * shared secret ⇒ 401, live staff session ⇒ 401, an eight-character note, `no-store`, and
- * `deps.db` rather than the content-blind console role.
- *
- * WHY IT EXISTS. When a mailbox failed, the worker recorded its retry backoff in a `Map` in
- * process memory and nowhere else, so the only exits from quarantine were the exponential ladder
- * expiring and a redeploy. Nobody could release a mailbox: not this console, not a support
- * engineer, not the customer — and a redeploy is both a heavy hammer and unavailable to anyone
- * without deploy rights. Mail 0039 made the instant durable (`mailboxes.retry_after`), and this
- * route is the write that clears it. The leader re-dials on its next roster pass.
- *
- * WHAT IT DELIBERATELY IS NOT. It does not force a folder pass, does not re-read UIDVALIDITY,
- * does not touch `status` or `retry_count`, and does not claim a sync it has not observed — see
- * `resyncMailbox` in `packages/db` for each. The actions catalog's copy was narrowed in the same
- * change to say only this, because a control that reports more than it does is the thing the
- * `available: false` convention exists to prevent.
+ * The third write: releasing a quarantined mailbox (mail 0039), through {@link
+ * staffMailboxWriteRoute} — {@link staffWriteRoute}'s twin, differing only in the id it
+ * validates. Everything that makes an admin write safe is unchanged: unarmed ⇒ 404, shared secret
+ * ⇒ 401, live staff session ⇒ 401, an eight-character note, `no-store`, `deps.db`. Why it exists:
+ * `mailboxes.retry_after` (mail 0039) made the quarantine instant durable, and this route is the
+ * write that clears it — the leader re-dials on its next roster pass. What it deliberately is
+ * not: it does not force a folder pass, re-read UIDVALIDITY, touch `status` or `retry_count`, or
+ * claim a sync it has not observed (see `resyncMailbox` in packages/db).
  */
 type MailboxWriteRun = (
   input: { mailboxId: string; note: string },

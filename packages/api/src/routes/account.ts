@@ -7,67 +7,14 @@ import { accessFor, cookieSurface, entitlementsPort, json } from "./shared.js";
 import type { Route } from "../router.js";
 
 /**
- * `DELETE /account` — Art. 17 erasure, self-serve.
- *
- * The landing page says "Delete your account anytime". This route is the half of that
- * sentence that is code; the other half is the SCREEN, which for a while did not exist
- * anywhere in the product — the endpoint was reachable only by an operator with curl. It is
- * now `apps/webapp/app/(product)/mailbox/AccountSection.tsx`, in Settings.
- *
- * ## Why the options are what they are
- *
- * **`stepUp: true`.** This is the most destructive call in the API — every
- * message, every rule, every credential, unrecoverable. A stolen session must not
- * be enough. It is the same gate mailbox-credential writes and the Billing Portal
- * already carry, and this is strictly more serious than either.
- *
- * **NOT `idempotent`.** `deleteAccount` is idempotent *by construction* — the
- * second call deletes nothing and reports zero — so the `Idempotency-Key`
- * machinery would add a replay record for an operation that cannot be replayed
- * harmfully. Nothing is minted, so there is no response worth storing.
- *
- * The account itself is NOT deleted, and the response says so rather than
- * pretending otherwise: the `credit_ledger` FK forbids it and financial records
- * carry a statutory retention obligation GDPR Art. 17(3)(b) preserves. What
- * survives is a random uuid with a blank name — a billing subject, not a person.
- * See `account-deletion-service.ts`.
- *
- * The customer's MAIL is untouched, because it was never ours: it is in the
- * `ohmail/…` folders on their own IMAP server and stays exactly as organised as
- * it was. That is the whole "leave anytime" promise, discharged by doing nothing.
- *
- * ## THE ORDER: stop the money, THEN erase — never the other way round
- *
- * Erasure touched nothing at the payment processor, so before
- * `cancelForErasure` existed a customer who deleted their account kept being charged, and
- * had no session left to cancel with. That is not a retention obligation, it is a charge
- * nobody can stop.
- *
- * Three properties, each a decision rather than an accident of sequencing:
- *
- *  1. **Cancel FIRST, outside the erasure transaction.** No local transaction can contain a
- *     remote object — `createCheckout` is written under the same law. A rolled-back erasure
- *     would not un-cancel a subscription, and a Stripe round trip inside the transaction
- *     would hold row locks open across a network call.
- *  2. **A cancel failure does NOT block erasure.** Art. 17 is a right, not a favour, and it
- *     may not be withheld because a payment processor is unreachable. The outcome is
- *     REPORTED (`subscription: "cancel_failed"`) so the screen can say the one thing the
- *     customer can no longer find out for themselves.
- *  3. **The wreckage is queryable, not merely logged.** A LIVE `billing_subscriptions` row
- *     whose account has zero `users` rows is the operator's sweep, and `billing_customers`
- *     still holds the Stripe customer id.
- *
- * A host with no billing configuration (`deps.services.billingPlane`/`entitlements` absent —
- * a pre-launch deployment, and most of the suite) has no subscription to cancel and reports
- * `none`.
- *
- * ## The cookies go with the session
- *
- * `deleteAccount` deletes the `sessions` row and `resolveSession` INNER JOINs `users`, so the
- * caller's credential is dead the moment this returns. The BROWSER does not know that: it
- * would keep presenting an inert `tf_session`, and that cookie costs the edge gate an
- * invocation and a cross-host fetch on every visit to `/` until it expires. `HttpOnly` means
- * no client can clear it, so the response does — exactly as `POST /auth/logout` does.
+ * `DELETE /account` — Art. 17 erasure, self-serve; the screen is `AccountSection.tsx`. `stepUp:
+ * true`: the most destructive call in the API. Not `idempotent`: the second call deletes nothing.
+ * The account row survives as a random uuid with a blank name — the `credit_ledger` FK forbids
+ * deletion and financial records carry a retention obligation (Art. 17(3)(b)); see
+ * `account-deletion-service.ts`. The customer's mail is untouched because it was never ours.
+ * Cancel the subscription first, outside the erasure transaction; a cancel failure does not block
+ * erasure and is reported (`subscription: "cancel_failed"`). The response clears the cookies, as
+ * `POST /auth/logout` does.
  */
 export const accountRoutes: Route[] = [
   {
@@ -127,21 +74,13 @@ export const accountRoutes: Route[] = [
     },
   },
   /**
-   * `GET /account/access` — what the entitlements program says this account may do.
-   *
-   * The one CLIENT-FACING read of the port's verdict, and the reason it exists: the mailbox pane
-   * refuses a connect it knows will be refused BEFORE walking somebody through a step-up
-   * ceremony, and `accessFor` is server-side only, so a browser had no way to ask.
-   *
-   * It answers LIMITS, never a refusal. A refused account cannot reach a `read` route at all —
-   * `withSpendGate` answers 402 first and the client swaps to the lock screen — so `ok: false`
-   * is unreachable from this door by construction, and the shape says so: what comes back is
-   * "may you add another, and how many does the plan hold". `metered: false` is a host with no
-   * entitlements program, where the answer to both is "no limit".
-   *
-   * `canAddMailbox` is NOT derivable from the numbers and is carried separately for the reason
-   * {@link AccessLimits} gives: an account may keep the mailboxes it has and be forbidden
-   * another. Collapsing them is how a refusal ends up offering a plan the customer already holds.
+   * `GET /account/access` — what the entitlements program says this account may do. The one
+   * client-facing read of the port's verdict: the mailbox pane refuses a connect it knows will be
+   * refused before a step-up ceremony. It answers limits, never a refusal — a refused account
+   * cannot reach a `read` route at all (`withSpendGate` answers 402 first), so `ok: false` is
+   * unreachable by construction. `metered: false` is a host with no program. `canAddMailbox` is
+   * not derivable from the numbers: an account may keep the mailboxes it has and be forbidden
+   * another, and collapsing them is how a refusal offers a plan the customer already holds.
    */
   {
     method: "GET",
@@ -167,24 +106,14 @@ export const accountRoutes: Route[] = [
     },
   },
   /**
-   * `POST /account/manage-link` — the one door to the managed service's own page.
-   *
-   * Not only "manage": an account with no subscription gets a plan CHOICE there, so this is the
-   * route to a FIRST subscription as well as to an existing one. Both callers read it — the
-   * settings row and the onboarding step — and both render nothing when no URL comes back.
-   *
-   * `paid`, because the port's answer is a network hop to a third party on this account's behalf;
-   * and because a verified address is the right floor for a door that mints a link to a page
-   * holding payment details. It is also the ONE `paid` route a REFUSED account may still reach
-   * (`ACCESS_REFUSED_MAY_REACH_ROUTES`): the way back to paying cannot be behind the lock.
-   *
-   * The account comes from the SESSION, never the body. There is no body.
-   *
-   * 404 has TWO causes and they are not equally innocent: this host operates no such program (the
-   * ordinary state, and what a self-host answers for ever), or a program that does not know an
-   * account we have just authenticated — which is a real inconsistency rather than an absence. The
-   * status cannot tell them apart; the client's contract-fault report is where the second one is
-   * named, because only that path meets a body.
+   * `POST /account/manage-link` — the one door to the subscription page; an account with no
+   * subscription gets a plan choice there. `paid`: the port's answer is a network hop to a third
+   * party, and a verified address is the right floor for a door minting a link to a page holding
+   * payment details. Also the one `paid` route a refused account may reach
+   * (`ACCESS_REFUSED_MAY_REACH_ROUTES`): the way back to paying cannot be behind the lock. The
+   * account comes from the session; there is no body. 404 has two causes — no such program here
+   * (the ordinary self-host answer), or a program that does not know an account we just
+   * authenticated; the client's contract-fault report names the second.
    */
   {
     method: "POST",

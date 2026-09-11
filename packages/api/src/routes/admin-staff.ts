@@ -9,52 +9,14 @@ import type { ApiDeps } from "../deps.js";
 import type { Handler, Route } from "../router.js";
 
 /**
- * `POST /admin/staff/*` — THE LOGIN WALL BEHIND THE LOGIN WALL.
- *
- * The console has two credentials in series and they answer different questions.
- *
- *   1. `ADMIN_GATE_SECRET` — the URL knock in the console's middleware. It hides that the
- *      console EXISTS. It has no identity, so it can say who is allowed to look at the door
- *      and nothing at all about who walked through it. It stays.
- *   2. This — email, password, TOTP. It says WHO. It is what makes an audit row a fact about a
- *      person rather than a fact about a secret that several people and two hosting dashboards
- *      hold.
- *
- * The gate does not become redundant when this ships and must not be removed: a bare 404 for
- * anyone without the knock is what keeps the console un-probeable, and a login FORM is an
- * advertisement that there is something here worth logging in to.
- *
- * ══ WHY THIS IS NOT `AuthService` ══════════════════════════════════════════════════════════
- *
- * `AuthService` establishes CUSTOMER sessions against `users`. Pointing it at `staff_users`
- * would couple the two identities in the one place they must never be coupled — a session that
- * can read mail and a session that can suspend an account have to come from different tables,
- * verified by different code, or one bug is both. So this file re-uses the PRIMITIVES
- * (`scryptHasher`, the TOTP module, `generateToken`/`hashToken`, the `auth_throttle` table) and
- * none of the service. Every one of those primitives is imported, never re-implemented.
- *
- * ══ WHY IT RUNS ON `deps.db` AND WHAT THAT DOES NOT MEAN ═══════════════════════════════════
- *
- * The six admin READS run on `deps.adminDb` — the attested content-blind handle. This file
- * runs on the RUNTIME connection, because the blind role is read-only by construction and
- * holds nothing on `staff_users` (it is not on `STAFF_SELECT_GRANTS`, and the harden script
- * blanket-revokes what it does not grant). That is the design, not a workaround: **the role
- * that serves the console cannot read the credentials that protect it.**
- *
- * It also means this surface widens no grant and changes no attestation. Nothing here selects a
- * message, a subject, an address or a body — the only tables named in this file are
- * `staff_users`, `staff_sessions` and `auth_throttle`.
- *
- * ══ WHAT A FAILED SIGN-IN IS ALLOWED TO REVEAL: THE FACT, NEVER THE FACTOR ═════════════════
- *
- * Wrong email, wrong password and wrong TOTP code all answer 401 `invalid`. There is one
- * operator, so enumeration is close to meaningless here — but "which factor failed" is not an
- * enumeration question, it is a targeting question: it tells somebody holding a leaked password
- * that the password is good and only the second factor stands in the way, which is exactly the
- * moment to go after the phone instead. It costs nothing to not say.
- *
- * The unknown-email path still runs a full scrypt verify against a decoy hash. Without it the
- * response time answers the question the message refuses to.
+ * `POST /admin/staff/*` — the login wall behind the login wall. `ADMIN_GATE_SECRET` hides that
+ * the console exists (it stays — a login form is an advertisement); this — email, password, TOTP
+ * — says who. Not `AuthService`: a session that can read mail and one that can suspend an account
+ * must come from different tables verified by different code, or one bug is both; this reuses the
+ * primitives (`scryptHasher`, the TOTP module, `generateToken`/`hashToken`, `auth_throttle`) and
+ * none of the service. Runs on `deps.db`: the blind role holds nothing on `staff_users`. A failed
+ * sign-in reveals the fact, never the factor: all three failures answer 401 `invalid`, and the
+ * unknown-email path runs a full scrypt against a decoy hash.
  */
 
 /* ── the shapes the console reads ──────────────────────────────────────────────────────── */
@@ -119,24 +81,14 @@ async function decoy(): Promise<string> {
 interface ThrottleVerdict { locked: boolean; retryAfterSeconds: number }
 
 /**
- * COUNT ONE ATTEMPT AND DECIDE, in one statement — the admission gate.
- *
- * This replaces a `throttleCheck` that was a plain SELECT run BEFORE the scrypt and the TOTP
- * compare, with the increment landing only afterwards. That is a check-then-act pair, and making
- * one half atomic (which `throttleFail` already was, and says so) does not repair it: a hundred
- * simultaneous requests all read "unlocked", all spend a scrypt, and the five-guess window
- * becomes a hundred-guess one — plus a scrypt storm on the runtime connection the console shares
- * with mail operations. `AuthService.throttleReserve` is the same fix for the customer login and
- * carries the long-form argument.
- *
- * The arms, in order: a LIVE lock refuses without counting (counting would let an attacker slide
- * `locked_until` forward for ever and hold the operator out); a SERVED lock and a rolled window
- * both restart at 1; otherwise increment. The lock is installed here only by the attempt that
- * EXCEEDS the policy — reaching exactly `THROTTLE_MAX_FAILURES` is admitted, and the lock for
- * that is installed by {@link throttleFail} once the attempt has actually failed. That split is
- * what stops a CORRECT credential on the last permitted attempt from locking the account.
- *
- * ISO strings in every raw fragment; see {@link throttleFail} for what a `Date` costs here.
+ * Count one attempt and decide, in one statement — the admission gate, replacing a check-then-act
+ * pair under which simultaneous requests all read "unlocked" (`AuthService.throttleReserve` is
+ * the same fix for the customer login). The arms, in order: a live lock refuses without counting
+ * (counting lets an attacker slide `locked_until` forward forever); a served lock and a rolled
+ * window restart at 1; otherwise increment. The lock is installed only by the attempt that
+ * exceeds the policy — reaching exactly `THROTTLE_MAX_FAILURES` is admitted, and {@link
+ * throttleFail} installs the lock after the attempt failed, which stops a correct credential on
+ * the last permitted attempt from locking the account. ISO strings in every raw fragment.
  */
 async function throttleReserve(
   db: ApiDeps["db"], key: string, now: Date,
@@ -195,18 +147,12 @@ async function throttleReserve(
  * rather than extended.
  */
 async function throttleFail(db: ApiDeps["db"], key: string, now: Date): Promise<void> {
-  // ── ISO STRINGS IN THE RAW FRAGMENTS, NEVER `Date`s ──────────────────────────────────────
-  //
-  // This cost a production incident on the day it shipped, in the exact shape the repo already
-  // had written down twice (`ip-throttle.ts:40-43`, `auth-service.ts:throttleFailure`).
-  // postgres-js serializes a raw-template parameter against the type Postgres describes for
-  // `$n` in `$n::timestamptz` — TEXT — and hands a `Date` straight to `Buffer.byteLength`,
-  // which throws. Every failed sign-in therefore answered 503 `admin_staff_failed` instead of
-  // 401 `invalid`: the refusal was correct and the response was a server error, so the console
-  // reported an outage for a wrong password.
-  //
-  // It was GREEN on PGlite through all 18 tests and only appeared against the live database.
-  // The fix is the builder plus ISO strings, which is what `reserveIpSlot` already does.
+  // ISO strings in the raw fragments, never `Date`s: postgres-js serializes a raw-template
+  // parameter against the type Postgres describes for `$n` in `$n::timestamptz` — TEXT — and
+  // hands a `Date` to `Buffer.byteLength`, which throws. Every failed sign-in then answered 503
+  // `admin_staff_failed` instead of 401 `invalid`: the refusal was correct and the response was a
+  // server error. Green on PGlite through all 18 tests, red only against live Postgres. The fix
+  // is the builder plus ISO strings, as `reserveIpSlot` already does.
   const nowIso = now.toISOString();
   const lockIso = new Date(now.getTime() + THROTTLE_LOCK_SECONDS * 1000).toISOString();
 
@@ -267,19 +213,13 @@ const emailKey = (email: string): string => `staff:email:${email}`;
 /* ── enrolment tokens ──────────────────────────────────────────────────────────────────── */
 
 /**
- * The token that stands between "your password is right" and "your authenticator is set up".
- *
- * The obvious implementation is a short-lived `staff_sessions` row with a flag that keeps it
- * out of the authorised set. That was rejected: it puts a not-quite-session in the table every
- * authorised path queries, and it survives exactly as long as every one of those paths
- * remembers to filter on the flag.
- *
- * So an enrolment token is NOT a session and has no row at all. It is an HMAC over the staff id
- * and
- * an expiry, signed with the deployment's admin secret, and it authorises exactly two routes.
- * Nothing that reads `staff_sessions` can therefore be tricked into treating one as a login,
- * because there is no row for it to find — which is a stronger guarantee than a flag column
- * somebody has to remember to filter on.
+ * The token that stands between "your password is right" and "your authenticator is set up". The
+ * obvious implementation — a short-lived `staff_sessions` row with a flag keeping it out of the
+ * authorised set — was rejected: it puts a not-quite-session in the table every authorised path
+ * queries, surviving exactly as long as every path remembers the filter. An enrolment token is
+ * not a session and has no row: an HMAC over the staff id and an expiry, signed with the
+ * deployment's admin secret, authorising exactly two routes. Nothing that reads `staff_sessions`
+ * can be tricked into treating one as a login, because there is no row to find.
  */
 async function signEnrollToken(secret: string, staffId: string, expiresAt: number): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -340,15 +280,12 @@ async function mintSession(
 export interface StaffIdentity { staffId: string; email: string }
 
 /**
- * Resolve a presented session token to the person it names, or null.
- *
- * `expires_at` is checked HERE, in the query, against the request's clock — never against the
- * cookie's `Max-Age`, which is an attribute the client controls and can strip. `revoked_at`
- * likewise: a sign-out has to take effect on the next request, not at the next expiry.
- *
- * Exported because the write routes are required to call it, and requiring them to
- * call THIS one is what keeps "the URL-key cookie alone authorises no write" a property of one
- * function rather than of five handlers' discipline.
+ * Resolve a presented session token to the person it names, or null. `expires_at` is checked
+ * here, in the query, against the request's clock — never against the cookie's `Max-Age`, an
+ * attribute the client controls and can strip. `revoked_at` likewise: a sign-out takes effect on
+ * the next request, not the next expiry. Exported because the write routes are required to call
+ * it — requiring them to call this one is what keeps "the URL-key cookie alone authorises no
+ * write" a property of one function rather than of five handlers' discipline.
  */
 export async function resolveStaffSession(
   db: ApiDeps["db"], token: string | undefined, now: Date,
@@ -473,22 +410,14 @@ async function signIn(
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
 
-  // ADVANCE THE STEP CONDITIONALLY — the compare-and-swap that makes single-use-per-timestep
-  // survive CONCURRENCY. `verifyTotp` was handed `afterStep` from a row this call READ;
-  // an unconditional write means two submissions of the same six digits inside one 30-second
-  // window both read the old step, both verify, and both sign in.
-  //
-  // ── WHAT IS AND IS NOT COVERED, MEASURED ─────────────────────────────────────────────────
-  // The SEQUENTIAL replay is stopped upstream, by `afterStep` inside `verifyTotp`, and
-  // `test/admin-staff.test.ts` proves that: setting `afterStep: null` turns the second
-  // submission of one code green ("expected 200 to be 401").
-  //
-  // This `where` clause is the CONCURRENT case. Removing it — replacing the predicate with
-  // `eq(staffUsers.id, user.id)` — leaves every sequential test passing, because two truly
-  // interleaved sign-ins are not something the one-connection PGlite suite can produce.
-  // Concurrency claims need a real-Postgres test, and `test/admin-staff-concurrency.pg.test.ts`
-  // is that test: two physical connections, a barrier that holds both requests until each has
-  // done its READ, then release — one sign-in wins, the other is refused, same six digits.
+  // Advance the step conditionally — the compare-and-swap that makes single-use-per-timestep
+  // survive concurrency. `verifyTotp` was handed `afterStep` from a row this call read; an
+  // unconditional write means two submissions of the same six digits inside one 30-second window
+  // both read the old step, both verify, both sign in. The sequential replay is stopped upstream
+  // by `afterStep` inside `verifyTotp` (`test/admin-staff.test.ts` proves it). This `where`
+  // clause is the concurrent case: removing it leaves every sequential test passing, because a
+  // one-connection PGlite suite cannot interleave. `test/admin-staff-concurrency.pg.test.ts` is
+  // the real-Postgres test: two connections, a barrier, one sign-in wins.
   const advanced = await deps.db.update(staffUsers)
     .set({ totpLastConsumedStep: BigInt(v.timeStep!), lastLoginAt: now, updatedAt: now })
     .where(and(
@@ -514,30 +443,14 @@ async function signIn(
 }
 
 /**
- * WHO IS ASKING TO CHANGE THE AUTHENTICATOR, AND WHAT DID THEY HAVE TO PROVE?
- *
- * Both enrolment routes accept EITHER a live enrolment token (minted from a correct password
- * seconds earlier, and reachable only from `signIn`) or a live staff session. Only the second arm
- * needs anything more, and it needed something: a session ALONE authorised replacing the
- * authenticator, so a thief holding a stolen cookie could
- *
- *   1. call `totp/begin` and be HANDED a fresh TOTP secret in the response body,
- *   2. call `totp/confirm` with a code they can now generate,
- *   3. receive a brand-new session with a full 12-hour life, and
- *   4. repeat step 3 before every expiry, for ever —
- *
- * turning one stolen cookie into permanent staff access and locking the real operator out of
- * their own authenticator on the way. The 12-hour TTL exists because a stolen laptop is the named
- * threat; a route that re-mints it from the stolen credential itself gives that TTL away.
- *
- * So the session arm now costs a PASSWORD, verified here with the same scrypt and the same decoy
- * timing as `signIn`. That keeps the recovery this arm exists for — a lost phone is still not a
- * lost console — while making the cookie insufficient on its own. It also keeps the console
- * working unchanged: the console's sign-in screen only ever uses the ENROLMENT-TOKEN arm, so
- * nothing shipped calls this with a session today.
- *
- * `viaSession` travels back to the caller because it decides one more thing — see
- * {@link totpConfirm} on why a session-authorised confirmation must not mint a new session.
+ * Who is asking to change the authenticator, and what did they prove? Both enrolment routes
+ * accept a live enrolment token (minted from a correct password seconds earlier) or a live staff
+ * session — and the session arm needed more: a session alone authorised replacing the
+ * authenticator, so a stolen cookie could mint a fresh TOTP secret, confirm it, and re-mint
+ * sessions before every expiry — permanent access, the operator locked out. The session arm now
+ * costs a password, verified with the same scrypt and decoy timing as `signIn`. The console's
+ * sign-in screen only uses the enrolment-token arm. `viaSession` travels back because it decides
+ * one more thing — see {@link totpConfirm}.
  */
 async function authorizeEnrollment(
   body: Record<string, unknown>, deps: ApiDeps, now: Date,
@@ -559,17 +472,13 @@ async function authorizeEnrollment(
 }
 
 /**
- * `POST /admin/staff/totp/begin` — show the secret, once.
- *
- * Authorised by EITHER a live enrolment token (first sign-in) or a live staff session PLUS the
- * password (re-enrolment). The second arm is the whole reason this route takes a session at all:
- * the product's own Security page shipped enrol-once-with-no-way-back and had to be fixed, and
- * repeating that here would mean a lost phone is a lost console with no recovery but SQL. See
- * {@link authorizeEnrollment} for why the password is not optional on it.
- *
- * Beginning an enrolment REPLACES any pending secret and always leaves `totp_activated` alone.
- * An abandoned enrolment therefore cannot lock anybody out: the previously activated secret
- * keeps working until a code from the NEW one is confirmed.
+ * `POST /admin/staff/totp/begin` — show the secret, once. Authorised by either a live enrolment
+ * token (first sign-in) or a live staff session plus the password (re-enrolment); the second arm
+ * is the whole reason this route takes a session at all — without it a lost phone is a lost
+ * console with no recovery but SQL. See {@link authorizeEnrollment} for why the password is not
+ * optional. Beginning an enrolment replaces any pending secret and always leaves `totp_activated`
+ * alone, so an abandoned enrolment cannot lock anybody out: the previously activated secret keeps
+ * working until a code from the new one is confirmed.
  */
 async function totpBegin(
   body: Record<string, unknown>, deps: ApiDeps,
@@ -598,17 +507,13 @@ async function totpBegin(
 }
 
 /**
- * `POST /admin/staff/totp/confirm` — a code from the new secret, then it counts.
- *
- * Activation and the first consumed step are set together. A session is minted in the same call
- * ONLY on the enrolment-token arm: an operator who has just turned a password into a working
- * authenticator should not have to immediately prove both again, and they hold no session yet.
- *
- * A SESSION-authorised confirmation mints nothing, and that is the second half of the stolen-
- * cookie fix. The caller already has a session; re-minting one would reset its 12-hour clock from
- * the credential being presented, so a thief could keep a stolen cookie alive indefinitely by
- * re-enrolling before each expiry. Answering `reenrolled` leaves the presented session's own
- * expiry exactly where it was, so theft still runs out.
+ * `POST /admin/staff/totp/confirm` — a code from the new secret, then it counts. Activation and
+ * the first consumed step are set together. A session is minted in the same call only on the
+ * enrolment-token arm: an operator who just turned a password into a working authenticator holds
+ * no session yet. A session-authorised confirmation mints nothing — the second half of the
+ * stolen-cookie fix: re-minting would reset the 12-hour clock from the credential being
+ * presented, letting a thief keep a stolen cookie alive indefinitely by re-enrolling. Answering
+ * `reenrolled` leaves the presented session's expiry where it was, so theft still runs out.
  */
 async function totpConfirm(
   body: Record<string, unknown>, deps: ApiDeps, req: Request,

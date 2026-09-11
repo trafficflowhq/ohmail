@@ -10,50 +10,14 @@ import type { ApiDeps } from "../deps.js";
 import type { Handler, Route } from "../router.js";
 
 /**
- * `POST /admin/oauth/microsoft` (read) and `/save` (write) — THE ENTRA APPLICATION REGISTRATION,
- * managed from the console instead of only from an environment variable.
- *
- * ══ WHY IT IS AN ADMIN SURFACE AT ALL ══════════════════════════════════════════════════════
- *
- * An Entra client secret has an expiry Azure chooses (six months, a year, two). When it lapses,
- * EVERY oauth mailbox in the fleet stops refreshing — the worker's classifier is careful to call
- * that a `connect` failure and not an `auth` one, so nothing is quarantined, but nothing syncs
- * either. The remedy is to paste a new secret. Behind an environment variable that means a redeploy
- * of two applications, coordinated, by somebody with deploy rights; and a rotation that half landed
- * (the API redeployed, the worker not yet) is a deployment where onboarding works and refresh does
- * not. The registration is a fact about the deployment, not about a build, so it lives in a row.
- *
- * ENV REMAINS THE BOOTSTRAP — `resolveOAuthProviderConfig` prefers the row and falls back to
- * `MS_OAUTH_*` (accepting the `MICROSOFT_*` aliases) — which is what makes the first deploy work
- * with no row and what leaves a way in for an operator locked out of the console. The precedence
- * rule lives in ONE function and neither this file nor the worker re-derives it.
- *
- * ══ THE SAME TWO CREDENTIALS IN SERIES AS EVERY OTHER ADMIN WRITE ══════════════════════════
- *
- * `TF_ADMIN_SECRET` (constant-time compared) proves the request came through the console's
- * server-side proxy; a live `staff_sessions` row proves WHICH PERSON. The secret alone is 401, and
- * that refusal is the mutation-watched guard — exactly as `admin-actions.ts` documents. Every staff
- * session is minted only behind the TOTP wall, so the second factor is structural here rather than
- * re-checked. This applies to the READ as much as to the write: an application registration is a
- * credential's non-secret half, and it is not something the shared secret alone may enumerate.
- *
- * Both run on `deps.db`, the runtime connection, never on `deps.adminDb` — the content-blind console
- * role holds no write grant by construction and holds no SELECT on this table. That is deliberate
- * rather than an omission: adding one would mean the blind role could read a client id and a tenant,
- * and the boot attestation would have to be widened for a screen that gets its data through this
- * route anyway.
- *
- * ══ THE SECRET IS WRITE-ONLY. THERE IS NO CODE PATH THAT RETURNS IT ════════════════════════
- *
- * The read projects `secretSet: boolean`. Not a masked value, not a prefix, not a length — those all
- * leak, and a masked secret in a form field is also how a save that did not retype it ends up
- * writing the mask. `writeOAuthProviderConfig` treats an ABSENT secret as "leave it alone", so the
- * console's form can be saved repeatedly without touching it, and an explicit `clientSecret: null`
- * is the only way to clear it.
- *
- * A suite asserts the plaintext appears nowhere in either response body, over the SERIALIZED
- * JSON rather than by naming the fields — a field-by-field assertion only covers the fields
- * somebody remembered.
+ * `POST /admin/oauth/microsoft` (read) and `/save` (write) — the Entra application registration,
+ * managed from the console. A lapsed client secret stops every oauth mailbox refreshing (a
+ * `connect` failure: nothing quarantines, nothing syncs), so the registration lives in a row, env
+ * as bootstrap — `resolveOAuthProviderConfig` prefers the row, falls back to `MS_OAUTH_*` (with
+ * `MICROSOFT_*` aliases), the precedence in one function. The same two credentials as every admin
+ * write, the read included. Both run on `deps.db`. The secret is write-only: the read projects
+ * `secretSet: boolean`, absent means "leave it alone", `clientSecret: null` is the only clear; a
+ * suite asserts the plaintext appears in neither serialized response.
  */
 
 /** A note shorter than this is refused, the same floor `admin-actions.ts` enforces. */
@@ -259,16 +223,13 @@ async function saveConfig(
 }
 
 /**
- * `public + anonymous + raw` and `cost: "unauthenticated"`, exactly as the other admin routes and
- * for the same reason: ANONYMOUS_PIPELINE resolves no customer session, so there is no account whose
- * verification state could be confused with anything. The authority is the shared secret plus, inside
- * the handler, a live `staff_sessions` row.
- *
- * BOTH ARE POST, INCLUDING THE READ, and that is a transport fact rather than a REST opinion: the
- * staff session token rides in the BODY (the console's proxy forwards the HttpOnly cookie there,
- * the same transport `/admin/staff/totp/begin` and `POST /admin/staff/whoami` already use), and a
- * GET has no body to put it in. The alternative — the token in a header or a query parameter — puts
- * a live session credential into access logs.
+ * `public + anonymous + raw` and `cost: "unauthenticated"`, exactly as the other admin routes:
+ * ANONYMOUS_PIPELINE resolves no customer session, so there is no account whose verification
+ * state could be confused with anything — the authority is the shared secret plus a live
+ * `staff_sessions` row inside the handler. Both are POST, including the read, and that is a
+ * transport fact rather than a REST opinion: the staff session token rides in the body (the proxy
+ * forwards the HttpOnly cookie there, the transport the staff routes already use), a GET has no
+ * body, and a token in a header or query parameter puts a live credential into access logs.
  */
 const OPTIONS = { public: true, anonymous: true, raw: true } as const;
 const COST = "unauthenticated" as const;

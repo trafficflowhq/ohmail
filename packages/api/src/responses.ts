@@ -23,19 +23,13 @@ export function jsonResponse(body: unknown, init: JsonResponseInit = {}): Respon
 }
 
 /**
- * The `ApiError` envelope (contract §1.4): `{ error: { code, message, details?, retryable? } }`
- * at `status`.
- *
- * `retryable` is emitted ONLY when a service stated it, and that omission-by-default is the
- * point: the client already reads `wire.error.retryable ?? (status >= 500 || status === 429)`
- * (`packages/client-engine/src/adapters/http-adapter.ts`), so saying nothing preserves the
- * status heuristic for every response that has always relied on it, while a service that KNOWS
- * can now override it. The field has been declared on `ServiceError` and typed on the client's
- * `WireError` since both were written; this serializer was the missing half, so no existing
- * response changes shape (no construction site sets it except the ones added with it).
- *
- * It matters most where the heuristic is backwards: a 503 that an operator must fix would
- * otherwise tell a mutation queue to retry it forever.
+ * The `ApiError` envelope: `{ error: { code, message, details?, retryable? } }` at `status`.
+ * `retryable` is emitted only when a service stated it, and the omission-by-default is the point:
+ * the client reads `wire.error.retryable ?? (status >= 500 || status === 429)`
+ * (`packages/client-engine/src/adapters/http-adapter.ts`), so saying nothing preserves the status
+ * heuristic for every response that has relied on it, while a service that knows can override. It
+ * matters most where the heuristic is backwards: a 503 an operator must fix would otherwise tell
+ * a mutation queue to retry forever.
  */
 export function errorResponse(
   code: string, status: number, message: string, details?: unknown, retryable?: boolean,
