@@ -1,41 +1,14 @@
 "use client";
 
 /**
- * THE OBSERVATIONS the ladder in `mail-state.ts` judges, made ONCE.
- *
- * `mail-state.ts` is pure: numbers in, a state out. This file is the impure half — it samples
- * the mirror, holds the clock, and reads `GET /mailboxes` through an injected probe — and it
- * publishes ONE answer to every surface that has something to say about a sync.
- *
- * ── WHY IT RUNS ONCE AND ARRIVES BY CONTEXT ─────────────────────────────────────────────
- *
- * The growth sampler is STATEFUL. Two consumers each running their own would eventually
- * disagree about whether the mirror is growing, and a disagreement between two surfaces about
- * the same fact is the original bug with extra steps. So it is folded here, once.
- *
- * Three surfaces consume it: the shell's strip (`SyncBar`), the Ohbox's empty pane, and the
- * Settings → Mailboxes rows. The third is why it cannot be a prop: `MailboxSection` is
- * injected into `AppShell` as an opaque `ReactNode` by `(product)/mailbox/CloudShell.tsx` and
- * rendered two levels down inside `SettingsView`, so there is no prop path from the shell to
- * it at all. `useSyncStatus`'s header makes the same argument for the same reason.
- *
- * `useMailState()` THROWS without a provider rather than returning a resting value. A default
- * would make a forgotten provider render a permanently silent strip — which is exactly the
- * failure this strip was built for: the sentence exists, the wiring does not, and nothing
- * anywhere says so.
- *
- * ── WHY THE MAILBOX FACTS ARRIVE AS A FUNCTION ──────────────────────────────────────────
- *
- * Same seam as `resolveOwner`, and it has to be: `apps/webapp/app/shell/**` is published to
- * the Desktop mirror and `scripts/publish-desktop.mjs` DENYs `apps/webapp/app/api-client`, so
- * this shared shell may not import `GET /mailboxes`. The Cloud client supplies a probe; the
- * Desktop and the demo supply nothing.
- *
- * **A PROBE THAT REJECTS IS NOT AN EMPTY ACCOUNT.** `facts` starts `null` — "we cannot see" —
- * and a rejection LEAVES IT ALONE rather than writing `[]`. Mapping a 503 to `[]` would render
- * "No mailbox connected" to somebody who has five, which is a worse lie than the one this
- * slice is fixing. The probe is therefore contracted to REJECT on failure; it must not
- * helpfully return an empty array.
+ * The observations the ladder in `mail-state.ts` judges, made once — the impure half: it samples the mirror,
+ * holds the clock, reads `GET /mailboxes` through an injected probe, and publishes ONE answer. The growth
+ * sampler is stateful, so two consumers running their own would disagree; it is folded here. Context, not
+ * props: `MailboxSection` is injected as an opaque node with no prop path from the shell. `useMailState()`
+ * THROWS without a provider — a resting default would make a forgotten provider a permanently silent strip. The
+ * facts arrive as a FUNCTION (the publish script denies `api-client` to this shared shell); a probe that
+ * rejects is NOT an empty account: `facts` starts `null` ("we cannot see") and a rejection leaves it alone —
+ * mapping a 503 to `[]` would render "No mailbox connected" to somebody who has five.
  */
 
 import {
@@ -73,31 +46,26 @@ export type MailboxProbe = () => Promise<MailboxFacts[]>;
 export type FreshnessFacts = MailStateInputs["freshness"];
 
 /**
- * THE DESKTOP'S FRESHNESS SOURCE — `GET /mirror/freshness` over the bridge, narrowed.
- *
- * Supplied by the desktop client only, and it OVERRIDES the engine's own answer when present,
- * for the one reason the route exists: the desktop's window engine drains the SIDECAR's local
- * feed and is always "current" relative to it, so its own stamp can never say the desktop is
- * behind the hosted account. The sidecar's stamp can, and this is how it reaches the strip.
- *
- * MUST REJECT on failure (the `MailboxProbe` contract, for the freshness direction): the
- * provider keeps the LAST answer it saw, because a stale claim may only be withdrawn by
- * evidence of currency — a dead bridge mapped to "current" would silently unlabel a mirror
- * that is days old, which is the exact lie the label exists to end.
+ * The desktop's freshness source — `GET /mirror/freshness` over the bridge,
+ * narrowed. Supplied by the desktop client only, and it OVERRIDES the
+ * engine's own answer when present: the window engine drains the sidecar's
+ * local feed and is always "current" relative to it, so its own stamp can
+ * never say the desktop is behind the hosted account — the sidecar's stamp
+ * can. Must REJECT on failure: the provider keeps the last answer it saw,
+ * because a stale claim may only be withdrawn by evidence of currency — a
+ * dead bridge mapped to "current" silently unlabels a days-old mirror.
  */
 export type FreshnessProbe = () => Promise<FreshnessFacts>;
 
 /**
- * How often the strip's own clock beats, while a state's copy depends on elapsed time.
- *
- * A healthy tab publishes an IDENTICAL `SyncStatus` every eight seconds and `engine.tsx`
- * deliberately bails out of re-rendering for it — so without a clock of its own, "syncing"
- * would still be on screen an hour after the import finished, and the minutes in `awaiting`
- * would be frozen at whatever they were when the mirror last moved. Five seconds, so the
- * handover out of `importing` is not visibly late; no network, so it costs a render and
- * nothing else.
- *
- * Armed ONLY while `MailState.clock` is true. A quiet mailbox holds no timer.
+ * How often the strip's own clock beats, while a state's copy depends on
+ * elapsed time. A healthy tab publishes an identical `SyncStatus` every
+ * eight seconds and `engine.tsx` bails out of re-rendering for it — without
+ * a clock, "syncing" would stay on screen an hour after the import finished
+ * and `awaiting`'s minutes would freeze. Five seconds, so the handover out
+ * of `importing` is not visibly late; no network, so it costs a render and
+ * nothing else. Armed only while `MailState.clock` is true: a quiet mailbox
+ * holds no timer.
  */
 /**
  * `useLayoutEffect` in a browser; `useEffect` where there is nothing to commit — `older-mail.ts`'s
@@ -110,31 +78,14 @@ export type FreshnessProbe = () => Promise<FreshnessFacts>;
 const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 /**
- * ARE TWO ANSWERS THE SAME ANSWER? — the equality gate on both polls below.
- *
- * ## Why a poll that changed nothing must not publish
- *
- * `GET /mailboxes` is re-read every {@link FACTS_POLL_MS} and the freshness probe every five
- * seconds while stale. Both parse a fresh array or object out of the wire on every call, so
- * `setFacts(got)` published a NEW IDENTITY each time even when every field was byte-identical.
- * That identity is load-bearing downstream: it changes `binding`, which re-renders every
- * `useMailState()` consumer, and in `AppShell` it changes `ownAddresses`, which is a dependency of
- * `consentView` — so a poll that learned nothing rebuilt the whole-mirror consent partition and the
- * projection over every message in the mailbox. On a large mailbox that is measurable as memory:
- * the derivations are retained for as long as the render scope that produced them.
- *
- * ## Generic, and deliberately NOT a field list
- *
- * A hand-written comparator over the fields this strip happens to read today is the version of this
- * that fails silently: a field added to `MailboxDTO` later would be absent from the comparison, two
- * genuinely different answers would compare equal, and the strip would freeze on the older one with
- * nothing anywhere reporting it. So this walks whatever it is given. Both payloads are plain
- * JSON-shaped wire records — arrays, objects, primitives, `null` — which is what makes a structural
- * walk correct here rather than merely convenient; it is not a general-purpose deep-equal and does
- * not pretend to handle `Date`, `Map`, `Set` or cycles, none of which cross this wire.
- *
- * `Object.is` for the leaves, so `NaN` equals itself and `+0`/`-0` are told apart, which is the
- * behaviour React's own bail-out uses.
+ * Are two answers the same answer? — the equality gate on both polls. Both parse a fresh object per
+ * call, so `setFacts(got)` published a NEW IDENTITY even when byte-identical — and identity is
+ * load-bearing downstream: it re-renders every consumer, and in `AppShell` it changes
+ * `ownAddresses`, rebuilding the whole-mirror consent partition per poll (measurable as retained
+ * memory). Generic, deliberately NOT a field list: a hand-written comparator misses the field added
+ * later, two different answers compare equal, and the strip freezes silently. Both payloads are
+ * plain JSON-shaped wire records — no `Date`, `Map`, `Set` or cycles cross this wire. `Object.is`
+ * at the leaves, React's own bail-out behaviour.
  */
 function sameWire(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
@@ -155,69 +106,49 @@ function sameWire(a: unknown, b: unknown): boolean {
 export const MAIL_CLOCK_MS = 5_000;
 
 /**
- * How often the mailbox facts are re-read.
- *
- * Thirty seconds, visibility-gated, and it keeps running while everything looks healthy — that
- * is not an oversight. `blocked` and `mailboxError` are precisely the states that appear
- * UNDERNEATH a populated, healthy-looking mirror (`dto/types.ts` says so at the column), so a
- * poll that backed off once things looked fine would go quiet exactly when it was needed. It is
- * a read, and reads stay open deliberately — refusing one costs the same serverless invocation
- * as serving it, so gating reads takes nothing off a hostile poller; 120 requests an hour per
- * visible tab sits inside the ~450 `/sync` budget `sync-scheduler.ts` already argued for.
- *
- * A hidden tab reads nothing at all, the same rule `/sync` follows: nobody is looking, so there
- * is no revenue behind the cost.
+ * How often the mailbox facts are re-read: thirty seconds,
+ * visibility-gated, and it keeps running while everything looks healthy —
+ * `blocked` and `mailboxError` appear UNDERNEATH a populated mirror, so a
+ * poll that backed off when things looked fine would go quiet exactly when
+ * needed. Reads stay open deliberately: refusing one costs the same
+ * invocation as serving it, and 120 requests/hour per visible tab sits
+ * inside the ~450 `/sync` budget. A hidden tab reads nothing, the `/sync`
+ * rule: nobody is looking.
  */
 export const FACTS_POLL_MS = 30_000;
 
 interface MailStateBinding {
   state: MailState;
   /**
-   * THE FACTS THEMSELVES, not only the sentence derived from them.
-   *
-   * Compose's From selector and the reply's From line need the account's mailboxes — their
-   * ids, their addresses and whether each can still send — which is a different question from
-   * "what should the strip say", and one `MailState` deliberately cannot answer. They are
-   * published from here rather than polled a second time because this provider is already
-   * reading `GET /mailboxes` every 30 s, and two pollers is two answers.
-   *
-   * `null` keeps its meaning exactly: **we cannot see mailboxes**, which is the Desktop, the
-   * demo, and a Cloud tab whose first poll has not landed. It is NOT "there are none". The
-   * From surfaces render nothing rather than guess when it is null — see `compose-from.ts`.
+   * The facts themselves, not only the sentence derived from them.
+   * Compose's From selector and the reply's From line need the account's
+   * mailboxes — ids, addresses, can-send — a question `MailState`
+   * deliberately cannot answer. Published from here because this provider
+   * already reads `GET /mailboxes` every 30 s, and two pollers is two
+   * answers. `null` keeps its meaning exactly: we CANNOT SEE mailboxes (the
+   * desktop, the demo, a first poll not landed) — never "there are none".
+   * The From surfaces render nothing rather than guess (`compose-from.ts`).
    */
   mailboxes: MailboxFacts[] | null;
   /**
-   * IS THERE A ROSTER TO SEE AT ALL — the state `mailboxes: null` collapses, and the collapse
-   * cost a regression.
-   *
-   * `null` above means "we cannot see mailboxes", and it means it for TWO different reasons: a
-   * shell that was given no probe (the desktop, the demo — there is no roster here and there
-   * never will be), and a shell whose probe has not answered yet (a Cloud tab mid-first-poll, or
-   * an outage). For rendering they are the same and the collapse is right: both render nothing.
-   *
-   * For a WRITE GATE they are opposite. "The probe has not answered" is a reason to refuse a
-   * delete until it does; "this shell has no probe" is not, because on those doors the wire has
-   * always been the only authority and a press-time check that refuses everything is a new gate
-   * where none existed. A helper reading only `mailboxes` refused every delete on the desktop and
-   * in the demo with a sentence naming another install — false there — and nothing errored.
-   * Measured 2026-09-06.
-   *
-   * `false` here means NO PROBE. It is a property of how this provider was mounted, never of what
-   * a fetch has returned, so it is stable from the first render.
+   * Is there a roster to see at all — the state `mailboxes: null` collapses, and the collapse cost
+   * a regression. `null` means "we cannot see" for TWO reasons: no probe was given (the desktop,
+   * the demo — there is no roster and never will be), or the probe has not answered (a first poll,
+   * an outage). For rendering they are the same; for a WRITE GATE they are opposite — "not answered
+   * yet" is a reason to refuse a delete, "no probe" is not, because on those doors the wire has
+   * always been the only authority. A helper reading only `mailboxes` refused every delete on the
+   * desktop and demo, naming another install — false there (measured 2026-09-06). `false` here
+   * means NO PROBE: a property of the mount, stable from the first render.
    */
   rosterProbed: boolean;
   /**
-   * MESSAGES IN THE MIRROR — every folder, every mailbox — published as the fact it is.
-   *
-   * NOT `state.count`, and the difference is load-bearing rather than stylistic. `MailState.count`
-   * is carried by the states that have a use for it and left at `0` by the rest (`stopped`,
-   * `failing`, `blocked`, `mailboxError`, `noMailbox`, `awaiting`, `filing`), so a surface that
-   * read the mirror's size from the derived state would report an empty device for the whole of
-   * an outage. This is the input the provider was handed, unconditioned by which sentence the
-   * ladder chose.
-   *
-   * Its one consumer is the Mailboxes pane's holdings line, through {@link deviceHoldings} —
-   * which is also the strip's own denominator, so the two cannot disagree.
+   * Messages in the mirror — every folder, every mailbox — published as the fact it is. NOT
+   * `state.count`, and the difference is load-bearing: `MailState.count` is carried by the states
+   * that use it and left at `0` by the rest, so a surface reading the mirror's size from the
+   * derived state would report an empty device for the whole of an outage. This is the input the
+   * provider was handed, unconditioned by which sentence the ladder chose. Its one consumer is the
+   * Mailboxes pane's holdings line, through {@link deviceHoldings} — also the strip's denominator,
+   * so the two cannot disagree.
    */
   mirrored: number;
   /**
@@ -273,34 +204,14 @@ export function MailStateProvider({
     : engineFreshness;
 
   /**
-   * FOLD EVERY OBSERVATION OF THE MIRROR'S SIZE IN.
-   *
-   * In an effect rather than during render, so the reducer is called once per committed count
-   * rather than once per render attempt — `growthStep` records a TIME, and a double-invoked
-   * render (StrictMode) recording two rises for one arrival would let a single message satisfy
-   * the two-rise rule.
-   *
-   * ── WHILE THE FIRST DRAIN IS STILL LANDING, THE MIRROR IS BEING READ, NOT GROWING ────────
-   *
-   * `seedGrowth`'s own note assumes the sampler is seeded from the SETTLED count — "a tab that
-   * opens onto a settled mailbox starts at 495 rather than at 0". In production it was not: the
-   * live engine is constructed with an EMPTY in-memory mirror and the shell renders before the
-   * device's copy has been read out of IndexedDB, so the seed captured 0. Hydration then arrived
-   * as one jump from 0 to the whole persisted count — read by `growthStep` as the first rise of a
-   * first import (`runStartCount === 0`) — and a single ordinary message within the run window
-   * latched the "Syncing your mail. N messages" episode over a mailbox whose import finished long
-   * ago. The count shown was the size of the whole mirror, not import progress.
-   *
-   * So while `bootstrapping` is true — hydration, then this tab's first drain — every observation
-   * RE-BASELINES the sampler instead of folding a rise. The initial load establishes the baseline;
-   * it is not growth. A genuine first import is still announced: `deriveMailState`'s import FLOOR
-   * reads the server's own `initialImportCompletedAt`, which a growth-only reading cannot, and it
-   * speaks for as long as that stamp is null and the import is still plausible — absolutely for the
-   * first day after a connect, and past that only while this tab cannot show otherwise (see
-   * `importFloorSpeaks`; an unbounded floor held a permanent false "Syncing" over a finished
-   * mailbox whose worker never reported a drained cycle). Once the first drain settles, live arrivals are
-   * measured from the count actually on the device, so the hydration jump can no longer be mistaken
-   * for an import.
+   * Fold every observation of the mirror's size in. In an effect, not during render: `growthStep` records a TIME, and
+   * a StrictMode double-invoked render recording two rises for one arrival would let a single message satisfy the
+   * two-rise rule. While the first drain is still landing, the mirror is being READ, not growing: the live engine
+   * starts with an empty in-memory mirror, so the seed captured 0 and hydration arrived as one jump — read as the
+   * first rise of a first import, latching "Syncing your mail. N messages" over a finished mailbox, with N the size
+   * of the whole mirror. So while `bootstrapping` is true every observation RE-BASELINES the sampler; a genuine first
+   * import is still announced by the import FLOOR (`initialImportCompletedAt`, bounded by `importFloorSpeaks`). Once
+   * the first drain settles, arrivals are measured from the device's own count.
    */
   useEffect(() => {
     setGrowth((prev) =>
@@ -351,39 +262,25 @@ export function MailStateProvider({
   }, []);
 
   /**
-   * **WHOSE QUESTION IS THIS?** — the one identity both held answers belong to.
-   *
-   * Three things decide which mailbox the provider is describing, and a change in ANY of them
-   * makes every answer in flight and every answer already held a statement about something else:
-   *
-   *  · `probeEngine` — the engine on screen. `EngineProvider`'s adoption rule: a different engine
-   *    is a different mailbox.
-   *  · `probe` — the source of `GET /mailboxes`. `undefined` is its own case ("we cannot ask"),
-   *    which is why it is part of the identity and not merely a guard.
-   *  · `freshnessProbe` — the desktop's sidecar-truth override. It can change WITHOUT the engine:
-   *    a Cloud → local door switch drops the probe while the window's engine is replaced
-   *    separately, and a verdict about the door just left may not label the one now on screen.
-   *
-   * ONE OBJECT rather than three comparisons, because everything downstream needs to ask the same
-   * question — "is this still the thing I asked for?" — and three spellings of that question is
-   * how two of them end up disagreeing.
+   * Whose question is this? — the one identity both held answers belong to. Three things decide
+   * which mailbox the provider is describing, and a change in ANY makes every answer in flight a
+   * statement about something else: `probeEngine` (a different engine is a different mailbox),
+   * `probe` (the source of `GET /mailboxes`; `undefined` is its own case — "we cannot ask"), and
+   * `freshnessProbe` (the desktop's sidecar-truth override, which can change WITHOUT the engine on
+   * a door switch). One object rather than three comparisons: everything downstream asks "is this
+   * still the thing I asked for?", and three spellings of that question is how two end up
+   * disagreeing.
    */
   const identity = { engine: probeEngine, probe, freshnessProbe };
 
   /**
-   * **THE FRAME BEFORE THE EFFECT** — the clear, done during RENDER.
-   *
-   * An effect is passive: React COMMITS the render that first carried the new engine and runs the
-   * effect afterwards, so there is exactly one PAINTED frame in which the previous account's facts
-   * sit under the new mirror. One frame is enough to render a sentence pairing this device's new
-   * count with somebody else's total, and this provider's contract is that it publishes one answer
-   * nobody has to qualify.
-   *
-   * The state-adjustment-during-render pattern, which React documents for exactly this: the render
-   * output is discarded and the component re-run before anything is committed, so the stale frame
-   * never exists rather than being corrected afterwards. It terminates on the first re-run —
-   * `adopted` is then identical to the current identity and the branch is not taken again — and it
-   * is confined to this component's own state, which is the pattern's condition.
+   * The frame before the effect — the clear, done during RENDER. An effect is passive: React
+   * commits the render that first carried the new engine and runs the effect after, so there is
+   * exactly one painted frame in which the previous account's facts sit under the new mirror —
+   * enough to pair this device's new count with somebody else's total. The
+   * state-adjustment-during-render pattern, documented for exactly this: the render output is
+   * discarded and re-run before commit, so the stale frame never exists. Terminates on the first
+   * re-run (`adopted` then equals the identity) and touches only this component's own state.
    */
   const [adopted, setAdopted] = useState(identity);
   const changed =
@@ -399,25 +296,14 @@ export function MailStateProvider({
   const now = changed ? identity : adopted;
 
   /**
-   * **WHAT IS ON SCREEN**, for an answer coming back to compare itself against.
-   *
-   * Written in an EFFECT and never during render, which is the correction a review made (round 5).
-   * A ref is shared with the committed tree, so a render-phase write publishes a value from a
-   * render React may still discard or interleave: an in-flight reader for the OLD identity could
-   * capture the NEW one on its way back and be waved through. Post-commit, this ref means exactly
-   * "the identity currently rendered", which is the only thing an arriving answer needs to be
-   * measured against.
-   *
-   * And it is a COMMIT-PHASE effect, not a passive one — the second correction the same review
-   * asked for. A passive effect is scheduled AFTER the commit, so a promise resolving in the gap
-   * between the two would find the ref still naming the identity that has just been left and be
-   * waved through, undoing the render-phase clear. `useLayoutEffect` runs inside the commit, in
-   * the same synchronous block as the render that produced it, so no microtask — which is what a
-   * settled promise is — can observe the gap. There is nothing to lay out here; the phase is the
-   * whole reason. See {@link useCommitEffect} for the server-render fallback.
-   *
-   * Declared BEFORE the re-ask effect below so that within one commit it is updated first, and the
-   * read that adoption fires already sees its own identity here.
+   * What is on screen, for an answer coming back to compare itself against. Written in an EFFECT, never
+   * during render (review, round 5): a ref is shared with the committed tree, and a render-phase write
+   * publishes a value from a render React may discard — an in-flight reader for the OLD identity could
+   * capture the NEW one and be waved through. And a COMMIT-PHASE effect, not a passive one (the same
+   * review): a passive effect runs after the commit, so a promise settling in the gap would find the ref
+   * naming the identity just left. `useLayoutEffect` runs inside the commit, so no microtask can observe
+   * the gap — nothing to lay out; the phase is the reason ({@link useCommitEffect} for SSR). Declared
+   * before the re-ask effect so adoption's own read sees itself.
    */
   const answering = useRef(now);
   useCommitEffect(() => { answering.current = adopted; }, [adopted]);
@@ -425,30 +311,14 @@ export function MailStateProvider({
   const read = useCallback(async (): Promise<void> => {
     if (!now.probe) return;
     /**
-     * ── THE SECOND OWNERSHIP TEST, AND IT ASKS A DIFFERENT QUESTION ────────────────────────
-     *
-     * The one below compares REACT identities — this engine, this probe — and it is exactly
-     * right for the switch it was written for: the shell replaced the engine, so an answer for
-     * the old one may not be published over the new one.
-     *
-     * It cannot see the case that costs mail. When another tab of the same profile signs in as
-     * somebody else, the cookie jar is rewritten and NOTHING in this tree changes: the same
-     * engine, the same probe function, the same callbacks. The thirty-second poll then asks
-     * `GET /mailboxes` under the new session, `answering.current === now` is trivially true,
-     * and the strip and the From selector publish the other account's mailbox ids, addresses,
-     * sync state, errors and timestamps — automatically, with nobody pressing anything.
-     *
-     * So the identity that matters here is the SESSION's, and the mirror's sync gate already
-     * holds it (`syncIdentityOf`). Asked twice, before and after, because a request that left
-     * while the jar still agreed can answer after it has stopped agreeing — the same reason
-     * `answering.current` is read after the await rather than before it.
-     *
-     * {@link syncMayRead} and not a comparison written out here: it is the adapter's own read
-     * rule, exported so this door and the reach-past body door cannot drift from it — and they
-     * had, both still testing `contradicted` alone after the gate grew its fourth state, so a
-     * REVOKED gate went on publishing here while the adapter beside it refused. An UNCONFIRMED
-     * gate still reads, because that is the ordinary warm open: the facts are this account's own
-     * and refusing would blank the strip for a round trip on every load.
+     * The second ownership test, and it asks a different question. The one below compares REACT identities — right
+     * for an engine switch. It cannot see the case that costs mail: another tab signs in as somebody else, the jar is
+     * rewritten, and NOTHING in this tree changes — the poll then asks `GET /mailboxes` under the new session and
+     * publishes the other account's mailboxes automatically. The identity that matters is the SESSION's, held by the
+     * mirror's sync gate (`syncIdentityOf`), asked before AND after the await (a request that left while the jar
+     * agreed can answer after it stopped). {@link syncMayRead}, not a comparison written out here: the adapter's own
+     * read rule, exported so the doors cannot drift — both still tested `contradicted` alone after the gate grew
+     * `revoked`. An UNCONFIRMED gate still reads: the ordinary warm open.
      */
     if (!syncMayRead(probeEngine)) return;
     try {
@@ -537,22 +407,13 @@ export function MailStateProvider({
   }, [read]);
 
   /**
-   * ── `refresh` READS THROUGH A REF, AND THE IDENTITY IS THE POINT ──────────────────────────
-   *
-   * It used to be `refresh: () => void read()` inline in the memo below, so it took a NEW identity
-   * on every poll — the memo's deps include `facts`, which the poller replaces every 30 s.
-   *
-   * That was harmless while its only consumers passed it straight down as a prop. It stops being
-   * harmless the moment a memoized handler DEPENDS on it, which is what re-reading the facts after
-   * a filing decision requires: a `useCallback` listing an unstable `refresh` is rebuilt 120 times
-   * an hour and on every change to any mailbox field, and a memoized callback rebuilt per render
-   * pins the render that made it — the retained-scope chain this codebase has measured once
-   * already, at about a gigabyte an idle hour. `mail-state-identity.test.tsx` holds the property
-   * (a `pendingMoves`-only change must not rebuild the shell's partition) and now holds this too.
-   *
-   * The ref is the form CLAUDE.md names for exactly this — a callback that outlives its render
-   * reads through a ref — and the assignment is in an effect rather than in the render body so a
-   * concurrent render that is thrown away cannot leave the ref pointing at its `read`.
+   * `refresh` reads through a ref, and the identity is the point. It was `refresh: () => void
+   * read()` inline in the memo, taking a new identity every poll (the memo's deps include `facts`).
+   * Harmless while consumers passed it straight down; not once a memoized handler DEPENDS on it — a
+   * `useCallback` listing an unstable `refresh` is rebuilt 120 times an hour, and a memoized
+   * callback rebuilt per render pins the render that made it (the retained-scope chain measured at
+   * ~1 GB per idle hour). `mail-state-identity.test.tsx` holds the property. The assignment is in
+   * an effect so a discarded concurrent render cannot leave the ref pointing at its `read`.
    */
   const readRef = useRef(read);
   useEffect(() => { readRef.current = read; }, [read]);
@@ -582,23 +443,14 @@ export function useMailState(): MailStateBinding {
 }
 
 /**
- * The mailbox facts for a surface that can be mounted OUTSIDE the shell — and the ONE reason
- * this is allowed to be the non-throwing sibling of {@link useMailState}.
- *
- * `InlineReply` renders inside `MessagePane`, and `MessagePane` is mounted with no provider in
- * more than one harness (`test/mail-send-states.test.ts` renders the editor alone; `action-bar.
- * test.ts` says so at the assertion). It is also published to the Desktop mirror. A throw there
- * would take an editor down over a decoration.
- *
- * The objection to a non-throwing accessor is real and is answered structurally rather than by
- * promise: a missing provider must never let the app SUBSTITUTE a sender without saying so. It
- * cannot. `AppShell` renders `MailStateProvider` above `ShellInner` unconditionally, and it is
- * `ShellInner` — through the THROWING binding — that decides whether a reply carries a
- * substitute `mailboxId`. So there is no arrangement in which the wire substitutes and this
- * line stays quiet: either both see the facts, or neither does and nothing is substituted.
- *
- * `null` therefore keeps exactly one meaning at every call site: **we cannot see this account's
- * mailboxes**. The only thing a caller may do with it is render nothing.
+ * The mailbox facts for a surface that can be mounted OUTSIDE the shell — the one allowed non-throwing
+ * sibling of {@link useMailState}. `InlineReply` renders inside `MessagePane`, mounted with no provider
+ * in several harnesses and published to the Desktop mirror; a throw would take an editor down over a
+ * decoration. The objection to a non-throwing accessor is answered structurally: `AppShell` renders
+ * `MailStateProvider` above `ShellInner` unconditionally, and it is `ShellInner` — through the THROWING
+ * binding — that decides whether a reply carries a substitute `mailboxId`; there is no arrangement in
+ * which the wire substitutes and this line stays quiet. `null` keeps one meaning: we cannot see this
+ * account's mailboxes — the only thing a caller may do is render nothing.
  */
 export function useMailboxFacts(): MailboxFacts[] | null {
   return useContext(MailStateContext)?.mailboxes ?? null;
