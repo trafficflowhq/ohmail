@@ -865,20 +865,21 @@ export function clearsTriage(state: string | undefined): boolean {
 const BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 
 /**
- * Let the acknowledgement reach the screen before the work starts.
- * `setPhase(key, {phase:"sending"})` is a React state update inside a click handler, committed
- * when the handler RETURNS — and `engine.mutate` was called before that, with a prologue that is
- * not free: enrich, the durable outbox write, and on a send with files base64ing the attachment
- * bytes, all in the same task the commit was waiting on. On the slowest-starting sends the
- * button still said "Send" while the work was under way — the "nothing seems to be happening"
- * of the report, before a single byte reached the network. A TASK boundary, not a frame:
- * `setTimeout(…, 0)` puts the prologue in a later task than the handler and React's commit
- * share, which is the whole ordering guarantee needed. `requestAnimationFrame` was tried and is
- * deliberately not used — a hidden tab throttles the frame clock to nothing and a non-visual
- * host has none, so the one gesture that must never stall would wait on the least reliable
- * timer in the platform. A microtask would not do: microtasks drain before the task ends, so
- * the prologue would still be in front of the commit — which is why the suites' drain helpers
- * flush timers rather than only `Promise.resolve()`.
+ * Let the acknowledgement reach the screen before the work starts. `setPhase(key, {phase:"sending"})` is a React
+ * state update inside a click handler, committed when the handler RETURNS — and `engine.mutate` was called before
+ * that, with a prologue that is not free: enrich, the durable outbox write, and on a send with files base64ing the
+ * attachment bytes, all in the same task the commit was waiting on. On the slowest-starting sends the button still
+ * said "Send" while the work was under way — the "nothing seems to be happening" of the report, before a single byte
+ * reached the network.
+ */
+
+/**
+ * A TASK boundary, not a frame: `setTimeout(…, 0)` puts the prologue in a later task than the handler and React's
+ * commit share, which is the whole ordering guarantee needed. `requestAnimationFrame` was tried and is deliberately
+ * not used — a hidden tab throttles the frame clock to nothing and a non-visual host has none, so the one gesture
+ * that must never stall would wait on the least reliable timer in the platform. A microtask would not do: microtasks
+ * drain before the task ends, so the prologue would still be in front of the commit — which is why the suites' drain
+ * helpers flush timers rather than only `Promise.resolve()`.
  */
 function afterPaint(): Promise<void> {
   return new Promise<void>((resolve) => { setTimeout(resolve, 0); });
