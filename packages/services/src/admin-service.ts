@@ -26,119 +26,25 @@ import type {
 } from "./admin-dto.js";
 
 /**
- * THE ONLY CROSS-ACCOUNT READER IN THE REPO.
- *
- * Every other service in this package is account-scoped by construction: it takes a
- * `ServiceContext` whose `accountId` came from the session, and every query it writes carries
- * `where accountId = ctx.accountId`. That is the invariant the whole product's isolation rests
- * on, and the way it dies is not by someone deleting it — it is by someone relaxing ONE
- * existing service "just for admin" and leaving a method that can be called with any account
- * id from a route that forgot to check. So the cross-account reads live here, in a module that
- * takes a bare `Db` and no context at all, and the fact that it has no `ServiceContext` is what
- * makes "did this query have an account scope?" a question with an obvious answer everywhere
- * else.
- *
- * ── IT RUNS ON A DIFFERENT CONNECTION FROM THE REST OF THE API ────────────────────────────
- * Every function here takes an {@link AdminDb}, not a `Db`, and the difference is not
- * decorative: `AdminDb` is a NOMINAL BRAND that only `adminDbFor` in `@trafficflow/db` can
- * mint, and it only mints one after asking the database to refuse a mail-content read. So
- * handing this module the runtime handle — which is what every route once did — is a
- * COMPILE ERROR, and the handle it does get is connected as `ohmail_admin`, a Postgres role
- * with column grants that answer 42501 to the reads below that are forbidden.
- *
- * The boundary is staff-surface vs. user-serving runtime, NOT "the API must not read content":
- * the API must read a message's display fields to serve them to the account's own user — that
- * is the product working. Only THIS module's connection is blind.
- *
- * ── WHAT THIS MODULE MAY NOT SELECT ───────────────────────────────────────────────────────
- * Every select below names its columns explicitly. There is no `select()` without a projection
- * anywhere in this file, and that is a rule rather than a style. It is now the SECOND of two
- * mechanisms rather than the only one — the grant is the first — and it is still here because
- * a query that names a forbidden column now fails as a 503 rather than as a leak, and a 503
- * nobody predicted is a worse way to find out than a review comment.
- *
- *  · **No message content — and NO MESSAGE ROW EITHER.** `messages` is not touched at
- *    all, and the role holds no privilege on it — not `subject`, and not `id`. Nor on
- *    `change_log`, `folder_state` or `flag_state`. A review established that a two-column
- *    `messages(id, mailbox_id)` grant is minimal as a projection and still sufficient as a
- *    channel, because `count(*)` names no column and a row's EXISTENCE around a delivery the
- *    tester chose is a receipt fact — staff must never be able to confirm that a particular
- *    mail reached a particular account. See `pendingMoves` below for the three
- *    console fields that paid for it and the argument against replacing them.
- *    The published FAQ answer is a promise to customers, and it is enforced twice: an
- *    api-level test seeds real mail with distinctive markers and fails if one reaches a
- *    response, and a role-level test against real Postgres proves the role refuses the
- *    relations outright AND that a chosen delivery to one of two otherwise identical accounts
- *    changes nothing the role can select.
- *  · **No secrets.** `mailbox_credentials` is read for the PRESENCE of a row
- *    (`hasImapCredential`); the grant covers its composite primary key and nothing else, so
- *    the encrypted credential, its key version and its connection meta are not merely
- *    unprojected, they are unreadable. Nothing here touches `sessions`, `totp_secrets`,
- *    `recovery_codes`, `login_tokens` or `invites`, none of which the role holds a grant on.
- *  · **NO OPEN JSONB BAG AT ALL, and the un-granting is what changed here.** `audit_log.payload`
- *    and `audit_log.inverse` are columns whose CONTENTS no field name bounds. An earlier gate
- *    rendered them through a default-deny projection (`staffMeta`) after finding a producer
- *    writing a raw RFC822 Message-ID into one. The grant now denies both, so the projection is
- *    gone and so is the gate: the bags cannot be read, by this module or by the endpoint
- *    somebody adds next. `AuditEntry.payload` is therefore always empty. That is a real,
- *    accepted loss of operator detail, and the way back is the only one that is safe: **the
- *    producer promotes the value to a NAMED COLUMN**, which is then granted by name. The bag is
- *    never granted.
- *  · **No mail-derived DIGEST either, and this one was a live false claim for a while — a
- *    review caught it.** A retired table's `source` column read
- *    `classify:<mailbox>:<sha256(mid:<Message-ID>)>`, and this module's own comment called that
- *    "safe by construction". It is not: both inputs are guessable — a sender chooses the
- *    `Message-ID` of mail it sends to the account, a natural client uses the SUBJECT as its
- *    idempotency token — so a staff reader who could see the digest could confirm candidates
- *    offline. The lesson outlived the column: a hash of a foreign input is not a redaction, and
- *    nothing on a staff surface may carry one.
- *  · **Only `admin.*` audit rows, and the filter is in the DATABASE now.** `audit_log` is
- *    shared with the PRODUCT's own domain audit — `move`, `adopt_external`, `hey_migrate`,
- *    `workflow_step` — and a `workflow_step` row's `payload.effect` is whatever the tool
- *    returned, which for `draft_reply` can quote mail. `ohmail_admin` holds no grant on
- *    `public.audit_log`; it reads `admin.audit_log`, a `security_barrier` view that carries the
- *    `LIKE 'admin.%'` predicate and projects four named scalars. The unqualified name below
- *    resolves to that view for this role through its `search_path`, and to the table for every
- *    other role — so ONE query serves the staff surface and the PGlite harness, and a widened
- *    projection fails on the role rather than quietly reading the bag.
- *
- * ── AND IT READS. IT DOES NOT WRITE. ──────────────────────────────────────────────────────
- * There is no INSERT, UPDATE or DELETE in this file. The staff writes need `users.role`,
- * step-up, an actor identity and an `audit_log` row each; `adminActions()` reports the unbuilt
- * ones as unavailable so the console can say so out loud instead of offering a button that does
- * nothing.
- *
- * ── SCALE, STATED HONESTLY ────────────────────────────────────────────────────────────────
- * The roster is assembled by scanning `accounts` and five grouped aggregates, then filtered,
- * ordered and paged IN THIS PROCESS. That is right for a beta whose roster is tens of accounts
- * and wrong for tens of thousands: the ordering key (`attentionRank`) is derived from three
- * aggregates at once, so pushing it into SQL means materialising it, and materialising it is a
- * schema decision this slice deliberately does not take. `total` is a real `count(*)`, so the
- * number on screen is never a guess; the paging is honest, just not cheap. When the roster
- * outgrows this, the fix is a view or a summary table — not a `LIMIT` here, which would make
- * `matched` a lie.
- *
- * A LIST BEING CAPPED IS NOT A LICENCE TO COUNT OVER IT. `WorkerSnapshot.rosterCounts` exists
- * because the console's fault verdict counted mailboxes by filtering a 200-row roster, so a
- * deployment's 201st broken mailbox could not make the verdict worse. Counts come from
- * `count(*) filter (…)`; lists stay capped and say which cap they hit.
+ * The ONLY cross-account reader in the repo. Every other service takes a `ServiceContext` whose
+ * `accountId` came from the session; the cross-account reads live here, with no context at all,
+ * so account scoping has an obvious answer everywhere else. Every function takes an {@link
+ * AdminDb} — a nominal brand only `adminDbFor` mints — connected as `ohmail_admin`, whose column
+ * grants answer 42501. Every select names its columns; no grant exists on `messages`,
+ * `change_log`, `folder_state`, `flag_state`, secrets, or the `audit_log` jsonb bags. Staff must
+ * never confirm a particular mail reached a particular account — a row's EXISTENCE is a receipt
+ * fact. Reads only; counts come from `count(*) filter (…)`, never from a capped list.
  */
 
 /**
- * The handle every function in this module takes.
- *
- * `Db` widened by the nominal brand `@trafficflow/db` mints only after its boot attestation has
- * watched the connection be REFUSED a mail-content read AND compared the role's whole
- * effective capability set to `STAFF_SELECT_GRANTS` (a single denied column was the original
- * proof, and a review showed it proves almost nothing about the rest of the grant). `deps.db`
- * does not satisfy the brand, which is
- * what makes "the staff reads run on the staff connection" a fact the compiler checks for the
- * functions in THIS MODULE instead of a convention each of them has to remember.
- *
- * It brands `Db` (the PGlite ∪ postgres-js union) rather than the postgres-js handle alone,
- * because PGlite has no roles at all: the api-level tests brand a PGlite handle by an explicit
- * cast and prove the PROJECTION half, and a role-level test proves the
- * ROLE half against real Postgres. Neither substitutes for the other.
+ * The handle every function here takes: `Db` widened by the nominal brand `@trafficflow/db` mints
+ * only after its boot attestation watched the connection be REFUSED a mail-content read AND
+ * compared the role's whole capability set to `STAFF_SELECT_GRANTS` — one denied column proves
+ * little about the rest. `deps.db` does not satisfy the brand, so "staff reads run on the staff
+ * connection" is compiler-checked rather than remembered. It brands `Db` (the PGlite ∪
+ * postgres-js union) because PGlite has no roles: api-level tests brand a PGlite handle by cast
+ * and prove the PROJECTION half; a role-level test proves the ROLE half on real Postgres. Neither
+ * substitutes.
  */
 export type AdminDb = Db & ContentBlind;
 
@@ -195,33 +101,16 @@ function fold(value: string): string {
   return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
 
-/* ════════════════════════════════════════════════════════════════════════════════════════
-   THE STAFF META GATE — BUILT, THEN REMOVED, AND WHY THE REMOVAL IS THE STRONGER STATE
-   ════════════════════════════════════════════════════════════════════════════════════════
-
-   The gate rendered `audit_log.payload` and `audit_log.inverse` to staff
-   through `staffMeta`: default-deny by KEY (an allowlist naming each live producer) and then
-   by VALUE SHAPE (a character class that no address, Message-ID or free text survives). It
-   existed because the previous projection was a channel rather than a projection —
-   `packages/core/src/pipeline.ts` was charging one AI classification with the raw RFC822
-   Message-ID as `meta.dedupKey`, which put a sender, and sometimes a recipient, on the
-   console's ledger table. Staff must see neither.
-
-   Both columns are now UN-GRANTED to `ohmail_admin` (`scripts/harden-staff-role.sql`),
-   so there is nothing left to project and the gate has been deleted rather than left standing
-   as decoration. A gate nobody can forget beats a gate somebody has to remember, and a
-   two-stage allowlist that no query can reach is worse than nothing: it reads like a live
-   defence in review.
-
-   What that costs, stated rather than buried: `AuditEntry.payload` is now always `{}`, and the
-   operator detail it carried is gone with it. The way back is the only one that is safe by
-   construction: **the PRODUCER promotes the value to a named column**, and that column is added
-   to the grant by name. The bag is never granted.
-
-   The response-level guard stays and still bites: `admin-content-isolation.test.ts` taints
-   every column of the schema and asserts none of it reaches these responses. It is now
-   proving a property the database also enforces, which is the right number of independent
-   mechanisms for the product's first stated priority: staff never see an account's mail. */
+/**
+ * The staff meta gate — built, then removed; the removal is the stronger state. It rendered
+ * `audit_log.payload`/`inverse` through `staffMeta` (default-deny by key, then value shape) after
+ * a producer was found writing the raw RFC822 Message-ID into `meta.dedupKey`. Both columns are
+ * now UN-GRANTED to `ohmail_admin` (`scripts/harden-staff-role.sql`): nothing left to project, so
+ * the gate is deleted — an unreachable allowlist reads like a live defence. Cost:
+ * `AuditEntry.payload` is always `{}`. The way back: the PRODUCER promotes the value to a named
+ * column; the bag is never granted. `admin-content-isolation.test.ts` still taints every column
+ * and asserts none reaches these responses.
+ */
 
 
 /**
@@ -275,24 +164,15 @@ async function loadRoster(db: AdminDb, now: Date): Promise<AccountSummary[]> {
       accountId: mailboxes.accountId,
       total: sql<number>`count(*)::int`,
       inError: sql<number>`count(*) filter (where ${mailboxes.status} <> 'connected')::int`,
-      /* Mailboxes OUR infrastructure declined to serve (the block-reason columns of mail 0029).
-       *
-       * DISJOINT FROM `inError` BY CONSTRUCTION, not by coincidence: every writer that moves
-       * `status` clears both block columns in the same statement (`apps/worker/src/mailboxes.ts`
-       * :743, :768, :826 and `mailbox-service.ts:360-362`), so a row can carry a status other than
-       * `connected` or a block, never both. The two counts are additive on `attentionRank` for
-       * that reason.
-       *
-       * `is not null`, NOT `isMailboxSyncBlockReason` — deliberately, and it is the one place the
-       * roster count and the detail page disagree. The two predicates differ on `''`, which this
-       * counts and the detail page
-       * (which narrows) would not show: an account would read "1 blocked" with no blocked mailbox
-       * under it. That is unreachable ONLY WHILE `mailboxes_sync_blocked_reason_closed` exists —
-       * and that constraint is probed BY NAME (`health.ts:117` is a column-existence probe), never
-       * by membership. Accepted rather than
-       * hidden: membership narrowing here would make the roster count disagree with a NEWER
-       * worker's fourth reason, which is the far likelier failure and exactly the defect that was
-       * removed when the block predicate stopped being gated on the reason's membership. */
+      /**
+       * Mailboxes OUR infrastructure declined to serve (mail 0029). Disjoint from `inError` by
+       * construction: every writer that moves `status` clears both block columns in one
+       * statement, so the two counts are additive on `attentionRank`. `is not null`, NOT
+       * `isMailboxSyncBlockReason` — the one place the roster count and the detail page disagree
+       * (they differ on `''`, unreachable while `mailboxes_sync_blocked_reason_closed` exists).
+       * Accepted: membership narrowing here would make the roster count disagree with a NEWER
+       * worker's fourth reason, the far likelier failure.
+       */
       blocked: sql<number>`count(*) filter (where ${mailboxes.syncBlockedReason} is not null)::int`,
       // Worst lag across the mailboxes that are SUPPOSED to sync. A disabled mailbox is not
       // late — the downgrade path disables it on purpose — so it is excluded, exactly as
@@ -305,43 +185,16 @@ async function loadRoster(db: AdminDb, now: Date): Promise<AccountSummary[]> {
     .groupBy(mailboxes.accountId);
   const mailboxByAccount = new Map(mailboxRows.map((r) => [r.accountId, r]));
 
-  /* ── `lastActivityAt` USED TO BE READ HERE, AND IT WAS THE SHARPEST ORACLE ON THE SURFACE ──
-
-     The query was `select account_id, max(created_at) from change_log group by account_id` —
-     "is this account alive at all", one timestamp, no ids, and the narrowest possible read of a
-     table whose grant was already minus its jsonb bag. It is also a receipt oracle with nothing
-     left to narrow:
-
-       `packages/core/src/pipeline.ts:512` calls
-       `recordChange({ entityType: "message", entityId: stored.id, op: "create" })`
-       for EVERY ingested message.
-
-     So staff pick a target account, note its `lastActivityAt`, send mail carrying a chosen
-     Message-ID, poll, and watch that one account's stamp advance. Nothing about the query is
-     the problem — the ingest write is — and there is no version of this field that survives:
-
-      · Truncating the stamp to the hour does not help. A delivery at 10:07 makes the value
-        `10:00` immediately, so the delta is observable inside the same bucket. A bucket that a
-        single event can advance is not aggregation, it is rounding.
-      · Lagging it by a whole period only delays the observation. The test for a
-        bucket argument is whether it DEFEATS a chosen-delivery probe or merely slows it.
-      · A minimum-count threshold is a statement about a POPULATION, and this value's population
-        is one account. k events reach any threshold k, and the observer chooses the events.
-
-     So the grant on `change_log` is gone entirely — which is also what removes the
-     `entity_id → messages.id` join key the same review flagged — and the field is null. The
-     console renders null as "—", so the roster column degrades to a dash
-     rather than to a wrong timestamp.
-
-     WHAT AN OPERATOR STILL HAS for the same question: `syncLagSeconds` on this same row, from
-     `mailboxes.last_sync_at` — the worker's own stamp, which advances on every cycle whether or
-     not mail arrived and therefore carries no receipt information at all. "Is this account
-     alive" was always better answered by "is the worker reaching their mailbox" than by "did
-     anything change in their account", and the `sync_lag` alert rule pages on exactly that.
-
-     THE WAY BACK, if a console ever needs change VOLUME rather than change IDENTITY: a
-     deployment-wide count in an owner-side aggregate with no `account_id` column. Not a grant
-     on this table. */
+  /**
+   * `lastActivityAt` used to be read here — `max(created_at) from change_log` — the sharpest
+   * receipt oracle on the surface: ingest records a change for EVERY message, so staff could send
+   * mail with a chosen Message-ID and watch one account's stamp advance. No version survives:
+   * hourly truncation is rounding a single event can advance; a delay only slows the probe; a
+   * minimum count is a population argument and this population is one account. The `change_log`
+   * grant is gone and the field is null (rendered "—"). An operator still has `syncLagSeconds`
+   * from `mailboxes.last_sync_at` — advancing whether or not mail arrived, so carrying no receipt
+   * information. The way back for change VOLUME: a deployment-wide count with no `account_id`.
+   */
 
   return accountRows.map((account) => {
     const mb = mailboxByAccount.get(account.id);
@@ -401,98 +254,16 @@ export async function adminAccounts(db: AdminDb, now: Date, query: AccountQuery 
    One account
    ════════════════════════════════════════════════════════════════════════════════════════ */
 
-/* ════════════════════════════════════════════════════════════════════════════════════════
-   THE PER-MAILBOX PENDING-MOVE COUNT — REMOVED, AND WHY NO VIEW REPLACES IT
-   ════════════════════════════════════════════════════════════════════════════════════════
-
-   `pendingMovesByMailbox` used to live here. It was the ONE place in this file that touched
-   `messages`, it selected exactly one column of it (`mailbox_id`, a foreign key), and the
-   comment above it said so with some pride. A review rated it High:
-
-     > The staff role first resolves the target account's mailbox address and UUID from
-     > `mailboxes`, then reads the current `messages.id` set (or just `count(*)`) for that
-     > `mailbox_id`. It sends the chosen probe carrying the candidate RFC822 Message-ID, polls
-     > the same query, and observes a new message row in that mailbox.
-
-   The grant was minimal AS A PROJECTION and sufficient AS A CHANNEL. The information is in the
-   row's EXISTENCE, `count(*)` names no column, and no narrower column list reaches it. So
-   `public.messages`, `public.folder_state` and `public.flag_state` are un-granted outright and
-   this function is deleted; `MailboxHealth.pendingMoves` is 0 and `oldestPendingMoveSeconds`
-   null for every mailbox.
-
-   ── WHY THE OBVIOUS FIX — A BUCKETED admin VIEW — IS NOT BUILT ──────────────────────────────
-
-   The review proposed replacing row access with "purpose-built aggregates in schema `admin`, carrying
-   no stable per-message identifier, with timestamps bucketed or delayed and a minimum
-   aggregation threshold". That is the right shape for a cluster number and the wrong shape for
-   this one, and the reason is a single sentence:
-
-     **Aggregation is a statement about a population, and the population of a per-mailbox number
-     is one mailbox — which is one account.**
-
-   Every mechanism on that list is a population argument, so none of them applies here:
-
-    · A bucket ladder (report 0 below 10, then 10 / 25 / 50 …) is defeated by driving the
-      mailbox to the boundary. The observer cannot do that on a HEALTHY mailbox — the reconcile
-      pass drains it in seconds, so the standing count is 0 — but on a mailbox whose reconcile
-      path is broken the count climbs and the boundary arrives on its own.
-    · A delay (`updated_at < now() - interval '15 minutes'`) is the strongest single mechanism
-      available, because a healthy reconcile pass applies a chosen delivery's move and removes
-      the row long before it qualifies. It is still not enough alone: a target whose reconcile
-      path IS broken lets the observer wait the delay out.
-    · A minimum threshold of k rows is reached by k chosen deliveries. The observer picks the
-      recipient, so keylessness buys nothing either — a delivery addressed to the target is
-      self-attributing, and an aggregate with no key still answers "did MY message land" when
-      the observer is the one who sent it.
-
-   ── AND WHY THE CLUSTER-WIDE NUMBER IS NOT BUILT HERE EITHER ────────────────────────────────
-
-   A deployment-wide backlog IS a real population, and the shape that works is:
-
-       pending      = count(*)                      over folder_state ⋈ messages
-       mailboxes    = count(DISTINCT m.mailbox_id)     where reconcile_status = 'pending'
-       oldest       = min(f.updated_at)                  AND f.updated_at < now() - D
-       …all three suppressed entirely unless `mailboxes >= k`,
-       …`pending` and `mailboxes` reported as floors on a ladder of 5.
-
-     **D = 15 minutes**, argued: the reconcile pass runs on the worker's cycle, so a move still
-     pending after fifteen minutes has missed many cycles. Below D the surface is blind BY
-     CONSTRUCTION, so a chosen delivery to a healthy deployment can never register in it at all
-     — which is the property a bucket ladder cannot give, because a ladder always has a
-     boundary and a delay has no boundary to sit on.
-
-     **k = 5 distinct mailboxes**, argued — and the argument is not anonymity-set size, which
-     would be arbitrary. Every fault mode this panel exists to detect is SYSTEMIC: a stopped
-     worker, a lost shard lease, a provider throttling every connection. All of them put the
-     whole shard's mailbox set into the pending state at once and clear k=5 immediately. A
-     single mailbox that cannot apply its moves is not a reconciler fault — it is that mailbox's
-     fault, and it is already fully visible to staff through `mailboxes.status`, `error_code`,
-     `error_detail`, `failed_at`, `retry_count` and `last_sync_at`, all legitimately granted.
-     So k=5 separates the two populations the panel is meant to distinguish, rather than merely
-     making attribution statistically harder. Below it the aggregate would be a single account's
-     row wearing an aggregate's name.
-
-   That view is not created here, and the reason is mechanical rather than a judgement
-   about the design. `admin.audit_log` is readable by ONE query that
-   also serves the PGlite harness, because each is a column-subset of a `public` relation of the
-   same name and `search_path = admin, public` picks the right one per role. An AGGREGATE has no
-   `public` counterpart, so serving it needs either a migration creating `public.reconcile_backlog`
-   or a second copy of the view's SQL inside a test harness, which is the built-tested-unreachable
-   pattern this codebase has been burned by.
-
-   ── THE WAY BACK, WHICH IS THE ONE THIS FILE ALREADY NAMES ──────────────────────────────────
-
-   **The PRODUCER promotes the value to a named column.** The reconciler knows its own backlog;
-   `worker_heartbeats` is already granted, already keyless (one row per SHARD, never per
-   mailbox), already written once per cycle, and already the relation the review checked and
-   cleared as "aggregate-only". A `pending_moves` column there, carrying the bucketed value
-   computed worker-side with D and k above, is the same number with none of the joins — and it
-   needs a migration and a worker change, so it is filed as deferred work rather than done
-   here. Until then the panel reads zero, which is the same honest-nothing
-   this module already publishes for `LedgerEntry.meta`, `AuditEntry.payload`, `crons` and
-   `retryBackoffSeconds` — and a zero on an ops panel is a smaller lie than a live receipt
-   oracle is a breach.
-   ════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * The per-mailbox pending-move count — removed; no view replaces it. It selected one column
+ * (`messages.mailbox_id`): minimal AS A PROJECTION, sufficient AS A CHANNEL — the information is
+ * in the row's EXISTENCE, and staff must never confirm a chosen delivery landed. `messages`,
+ * `folder_state` and `flag_state` are un-granted; `MailboxHealth.pendingMoves` reads 0. A
+ * bucketed aggregate cannot fix it: aggregation is about a POPULATION, and this population is one
+ * account — every mechanism (ladder, delay, threshold) is defeated when the observer sends the
+ * deliveries. The cluster-wide number belongs to the PRODUCER — a keyless per-shard
+ * `pending_moves` column on `worker_heartbeats`, deferred. Until then the panel reads zero.
+ */
 
 async function loadMailboxes(db: AdminDb, now: Date, accountIds: string[] | null): Promise<MailboxHealth[]> {
   const base = db
@@ -541,18 +312,13 @@ async function loadMailboxes(db: AdminDb, now: Date, accountIds: string[] | null
       lastSyncAt: iso(row.lastSyncAt),
       syncLagSeconds:
         row.status === "disabled" ? null : secondsSince(now, row.lastSyncAt ?? row.createdAt),
-      // Mail 0023 closed the gap this comment used to apologise for: `mailboxes` records WHY.
-      //
-      // `lastError` is the taxonomy plus an ALLOWLISTED token — an IMAP response code, a Node
-      // errno, a TLS constant, an SQLSTATE — and NEVER the error's message. That is what makes
-      // the field safe to show an operator at all: a raw sync error can embed RFC822 header
-      // bytes, and staff never see an account's mail. The redaction is at the
-      // WRITE (`markMailboxFailed`), so this projection does not have to remember to be narrow.
-      //
-      // `retryBackoffSeconds` stays null, honestly: the backoff lives in the worker's in-memory
-      // quarantine map and is not persisted. `retryCount` (how big this outage is) and the
-      // backoff (when the next attempt lands) are different questions, and only the first is
-      // durable — see the 0023 migration header.
+      // Mail 0023 closed this gap: `mailboxes` records WHY. `lastError` is the taxonomy plus an
+      // ALLOWLISTED token — an IMAP response code, a Node errno, a TLS constant, an SQLSTATE —
+      // never the error's message: a raw sync error can embed RFC822 header bytes, and staff
+      // never see an account's mail. The redaction is at the WRITE (`markMailboxFailed`), so this
+      // projection does not have to remember to be narrow. `retryBackoffSeconds` stays null,
+      // honestly: the backoff lives in the worker's in-memory quarantine map and is not persisted
+      // — `retryCount` is the durable half.
       lastError: row.status === "error"
         ? (row.errorDetail ? `${row.errorCode ?? "unknown"}: ${row.errorDetail}` : row.errorCode ?? "unknown")
         : null,
@@ -603,23 +369,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 
 /**
- * `admin.*` audit rows only. Today there is no writer for that namespace, so the answer is
- * always `[]`, and the console renders that as the empty state it already has.
- *
- * ── THE UNQUALIFIED NAME IS DOING WORK ────────────────────────────────────────────────────
- *
- * drizzle emits `from "audit_log"` with no schema qualifier, and `ohmail_admin`'s `search_path`
- * is `admin, public`. So this ONE query reads:
- *
- *  · `admin.audit_log` — a `security_barrier` VIEW carrying the `LIKE 'admin.%'` predicate and
- *    projecting four named scalars — when the connection is the staff role;
- *  · `public.audit_log` — the table — under PGlite, where the harness has no roles at all.
- *
- * The role holds NO grant on `public.audit_log`, so widening this projection back to `payload`
- * or `inverse` raises 42501 in production instead of quietly reading a jsonb bag whose contents
- * no field name bounds. The `LIKE` below is therefore a duplicate of the view's own predicate,
- * and it stays: it is what keeps the PGlite path identical, and a filter stated in both places
- * cannot be widened in one.
+ * `admin.*` audit rows only. No writer exists for that namespace yet, so the answer is `[]`. The
+ * unqualified name is doing work: drizzle emits `from "audit_log"`, and `ohmail_admin`'s
+ * `search_path` is `admin, public` — so this ONE query reads `admin.audit_log` (a
+ * `security_barrier` view carrying the `LIKE 'admin.%'` predicate, projecting four named scalars)
+ * as the staff role, and `public.audit_log` under PGlite, which has no roles. The role holds no
+ * grant on `public.audit_log`, so widening the projection to `payload`/`inverse` raises 42501 in
+ * production. The `LIKE` below duplicates the view's predicate on purpose: it keeps the PGlite
+ * path identical, and a filter stated twice cannot be widened once.
  */
 async function loadAudit(db: AdminDb, accountId: string | null): Promise<AuditEntry[]> {
   const adminNamespace = sql`${auditLog.action} like 'admin.%'`;
@@ -652,21 +409,14 @@ async function loadAudit(db: AdminDb, accountId: string | null): Promise<AuditEn
 }
 
 /**
- * The account's SECURITY events — today exactly one kind, `refresh_reuse_revoked` (the rotation's
- * reuse branch writes it when a consumed refresh token is re-presented and the family is swept).
- * Surfaced on the account view because the sweep is silent on every user surface, and the Aug-21
- * incident was reconstructed from raw session rows for want of exactly this list.
- *
- * COLUMNS ARE THE STAFF ALLOWLIST'S (`staff-grants.ts`: auth_events id/account_id/user_id/
- * event/at) — never `device` (a client-chosen user-agent string, or the reuse row's family id:
- * both are investigation detail read over a privileged database connection, not console
- * material) and never `ip`. The filter is `event = 'refresh_reuse_revoked'`, not "all auth
- * events": login/logout traffic is activity, and this panel is for the rows that mean an
- * incident.
- *
- * ISOLATION POSTURE, same as the alert rules': a staff handle the provisioner's widened grant
- * has not reached yet answers 42501 — that must cost exactly this list (empty, and the page
- * renders), never the account view. Anything else propagates.
+ * The account's SECURITY events — today exactly one kind, `refresh_reuse_revoked`, written when a
+ * consumed refresh token is re-presented and the family is swept. Surfaced here because the sweep
+ * is silent on every user surface. Columns are the staff allowlist's (`staff-grants.ts`:
+ * id/account_id/user_id/event/at) — never `device` (a client-chosen user-agent string or the
+ * family id: investigation detail, not console material) and never `ip`. The filter is `event =
+ * 'refresh_reuse_revoked'`, not all auth events: login/logout is activity, this panel is for rows
+ * that mean an incident. Isolation posture: a staff handle the provisioner has not widened yet
+ * answers 42501 — that costs exactly this list (empty, page renders), never the account view.
  */
 async function loadSecurityEvents(db: AdminDb, accountId: string): Promise<SecurityEvent[]> {
   try {
@@ -712,17 +462,13 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
 }
 
 /**
- * THE SIGNUP FUNNEL, as counts.
- *
- * Every figure is a COUNT and nothing here is joined to a person. The top reads the DATE columns
- * granted for the funnel (`staff-grants.ts`: `invites` created/consumed/revoked, `waitlist`
- * created/invited — no address); the four stages read columns the role already held.
- *
- * The stages are monotonic subsets of the accounts set — signed up ⊇ verified ⊇ connected —
- * computed as `count(distinct account_id)` so an account with two verified users or three
- * mailboxes still counts once, and a drop-off between two stages is a true conversion.
- *
- * Sequential reads on the `max: 1` blind pool, like every other admin read group here.
+ * The signup funnel, as counts. Every figure is a COUNT and nothing is joined to a person: the
+ * top reads the DATE columns granted for the funnel (`staff-grants.ts`: `invites`
+ * created/consumed/revoked, `waitlist` created/invited — no address); the stages read columns the
+ * role already held. The stages are monotonic subsets — signed up ⊇ verified ⊇ connected —
+ * computed as `count(distinct account_id)`, so an account with two verified users still counts
+ * once and a drop-off is a true conversion. Sequential reads on the `max: 1` blind pool, like
+ * every other admin read group.
  */
 export async function adminFunnel(db: AdminDb, now: Date): Promise<FunnelSnapshot> {
   const [inviteRow] = await db
@@ -891,15 +637,12 @@ export async function adminAlertDrivers(db: AdminDb, now: Date): Promise<AdminAl
 }
 
 /**
- * What the platform served over the 5xx rule's own window.
- *
- * READ THROUGH THE SAME FUNCTION THE RULE USES (`platformSignalWindow`), which is the point: the
- * panel says "12 of 900 requests" and the rule pages on those two numbers, so the surface an
- * operator reads and the condition that wakes them cannot drift apart.
- *
- * AN EMPTY ARRAY IS THE UNCONFIGURED STATE and the console must render it as "not measured". It
- * is not a failure and it is not a zero: a deployment with no platform token writes no rows, so
- * there is no row here saying 0 to be mistaken for a measurement.
+ * What the platform served over the 5xx rule's own window. Read through the SAME function the
+ * rule uses (`platformSignalWindow`): the panel says "12 of 900 requests" and the rule pages on
+ * those two numbers, so the surface an operator reads and the condition that wakes them cannot
+ * drift. An empty array is the UNCONFIGURED state, rendered as "not measured" — not a failure and
+ * not a zero: a deployment with no platform token writes no rows, so there is no row saying 0 to
+ * be mistaken for a measurement.
  */
 export async function adminPlatformSignals(
   db: AdminDb, now: Date,
@@ -909,17 +652,12 @@ export async function adminPlatformSignals(
     DEFAULT_ALERT_THRESHOLDS.api5xxWindowMs / SIGNAL_BUCKET_MS,
   );
   return rows
-    // ── THE ROW CARRIES ITS COVERAGE; IT IS NOT FILTERED INTO SILENCE ──────────────────
-    //
-    // Two wrong answers were tried here before this one. Emitting a partial window's figures
-    // under a label reading "in the last 15m" reported ten minutes as fifteen. Dropping the row
-    // instead handed the console `[]` — which is what a deployment with NO PLATFORM TOKEN sends,
-    // so a failed poll became indistinguishable from an unconfigured one, and the panel's
-    // "sampled" branch became unreachable because every surviving row was complete by
-    // construction. One misstated a measurement; the other hid that a measurement was attempted.
-    //
-    // The figures and their coverage travel together and the panel says what was measured. An
-    // empty list now means exactly one thing: nothing has ever been read for this deployment.
+    // The row carries its coverage; it is not filtered into silence. Two wrong answers preceded
+    // this: emitting a partial window under "in the last 15m" reported ten minutes as fifteen;
+    // dropping the row handed the console `[]` — the same answer as no platform token — so a
+    // failed poll and an unconfigured one were indistinguishable and the "sampled" branch was
+    // unreachable. Figures and coverage travel together; an empty list now means exactly one
+    // thing: nothing has ever been read.
     .map((r) => ({
     provider: r.provider,
     project: r.project,
@@ -968,37 +706,16 @@ export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[
     } satisfies AlertSummary;
   });
 
-  // ── AND THE ROWS THIS READ STRUCTURALLY CANNOT EVALUATE ───────────────────────────────
-  //
-  // The console is not an alert DRIVER. It evaluates without one, deliberately — a read that
-  // named itself an arm would resolve a live driver's row and would report a scheduler dark that
-  // is running perfectly. But two rules are gated on exactly that name (`schema_behind`, keyed by
-  // the host whose journal is ahead, and `alert_driver_dark`, keyed by the arm being reported),
-  // and one more family is gated on `shards`. So the evaluated set NEVER contains them.
-  //
-  // The consequence was that `schema_behind` — an incident with `fixHref: "/reliability"` — was
-  // invisible on the one page its own deep link points at. An operator following the link from a
-  // page would arrive at a board that showed nothing wrong.
-  //
-  // These rows are therefore READ from `alert_state` rather than evaluated: the drivers wrote
-  // them, and what the drivers wrote is the only evidence this read can have. `openedAt` and
-  // `notifiedAt` come from the row for the same reason. This does not reintroduce the drift the
-  // comment above guards against — that argument is about a class the CURRENT pass just
-  // recomputed, and here there is no current computation to prefer.
-  // ── ONLY WHAT THIS READ GENUINELY COULD NOT EVALUATE ─────────────────────────────────
-  //
-  // "Scoped kind" is not the same claim as "this read could not evaluate it", and merging on the
-  // kind alone reintroduced cleared incidents. `evaluateAlerts` defaults to shard 0 when no
-  // shards are given, so THIS read does evaluate `worker_down:0`, `worker_degraded:0` and
-  // `ai_provider_down:0` — and when shard 0 has recovered but the driver has not yet deleted the
-  // row, their absence from `firing` is the correct answer, not a gap to fill. Merging them back
-  // put a cleared critical on the board until the next driver pass.
-  //
-  // What this read truly cannot answer is narrower and is enumerable:
-  //  · the DRIVER-keyed rules, because no driver is named here and both are gated on that;
-  //  · the ROLE-scoped one, because the counter lives in a table the content-blind handle this
-  //    console reads through is deliberately not granted — a property of the role, not a guess;
-  //  · any SHARD-keyed row for a shard outside the set this read used.
+  // The rows this read structurally cannot evaluate. The console is not an alert DRIVER — a read
+  // that named itself an arm would report a running scheduler dark — so rules gated on a driver
+  // name (`schema_behind`, `alert_driver_dark`) or on `shards` are never in the evaluated set;
+  // they are READ from `alert_state`: what the drivers wrote is the only evidence this read can
+  // have. But "scoped kind" is not "could not evaluate": `evaluateAlerts` defaults to shard 0, so
+  // this read DOES evaluate `worker_down:0`, `worker_degraded:0` and `ai_provider_down:0`, and
+  // their absence from `firing` after recovery is the correct answer — merging them back put a
+  // cleared critical on the board. What this read truly cannot answer: driver-keyed rules, the
+  // role-scoped one (its counter lives in a table the content-blind handle is not granted), and
+  // shard-keyed rows outside the shard set used here.
   const READ_SHARDS = [0];
   const evaluatedHere = new Set<string>();
   for (const shard of READ_SHARDS) {
@@ -1014,17 +731,13 @@ export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[
       key: r.alertKey,
       kind: r.kind as AlertSummary["kind"],
       severity: r.severity === "critical" ? "bad" : "warn",
-      // ── PROJECTED, NEVER RECONSTRUCTED ────────────────────────────────────────────────
-      //
-      // These two used to be invented here: the count was a hardcoded 1 and the title was the
-      // detail's FIRST SENTENCE. So a refusal burst of forty connections rendered as "1", under
-      // a heading that was really the opening clause of a paragraph — and this branch is not the
-      // exceptional path, it is the ONLY path for the two driver-keyed rules and the role-scoped
-      // one, because a console read names no driver and runs on the content-blind handle.
-      //
-      // `alert_state` now persists what the rule said, so both are read. A null means the row
-      // predates those columns — a driver mid-deploy — and the fallback SAYS that rather than
-      // fabricating a sentence, which is the whole difference between projecting and guessing.
+      // Projected, never reconstructed. The count was once a hardcoded 1 and the title the
+      // detail's first sentence — so a refusal burst of forty connections rendered as "1" under a
+      // heading that was an opening clause, on the ONLY path for the driver-keyed rules and the
+      // role-scoped one. `alert_state` now persists what the rule said, so both are read; a null
+      // means the row predates those columns (a driver mid-deploy) and the fallback SAYS so
+      // rather than fabricating a sentence — the whole difference between projecting and
+      // guessing.
       title: r.title ?? `${r.kind} — recorded by the other alert driver`,
       detail: r.detail ?? "Recorded by the other alert driver; this read cannot evaluate it.",
       count: r.count ?? 0,
@@ -1047,21 +760,14 @@ export async function adminWorker(db: AdminDb, now: Date): Promise<WorkerSnapsho
   const names = await accountNames(db, roster.map((m) => m.accountId));
 
   /**
-   * THE POPULATION, FROM SQL — because the roster above is capped at `ADMIN_ROSTER_LIMIT`.
-   *
-   * The console's customer-facing verdict counted faults by filtering that capped array. On a
-   * deployment with more than 200 mailboxes the 201st cannot contribute to a fault count however
-   * broken it is, so the verdict gets QUIETER as the deployment grows — the exact inversion of
-   * what it is for, and invisible from any test whose fixture is smaller than the cap.
-   *
-   * `blocked` gates on the TIMESTAMP and never on `sync_blocked_reason`. The service narrows that
-   * reason to this build's closed set, so a block this build cannot name still has a `since`, and
-   * gating on the reason would read that row as a healthy mailbox — a defect this projection has
-   * shipped once already, and the same rule the console's own `mailboxBlocked` helper carries.
-   * Written in SQL here, so the two spellings of one predicate have to agree.
-   *
-   * Three `count(*) filter (…)` over one scan of a table bounded by the mailbox population, not
-   * by the message volume — the same shape as every other count on this console.
+   * The population, from SQL — the roster above is capped at `ADMIN_ROSTER_LIMIT`. The verdict
+   * once counted faults by filtering that capped array, so a deployment's 201st broken mailbox
+   * could not contribute and the verdict got QUIETER as the deployment grew — invisible from any
+   * fixture smaller than the cap. `blocked` gates on the TIMESTAMP and never on
+   * `sync_blocked_reason`: the service narrows the reason to this build's closed set, so a block
+   * this build cannot name still has a `since`, and gating on the reason would read that row as
+   * healthy — a defect this projection has shipped once. Three `count(*) filter (…)` over one
+   * scan bounded by the mailbox population.
    */
   const [counts] = await db
     .select({
@@ -1087,24 +793,14 @@ export async function adminWorker(db: AdminDb, now: Date): Promise<WorkerSnapsho
       inError: int(counts?.inError),
       blocked: int(counts?.blocked),
     },
-    // EMPTY IS THE HONEST ANSWER, AND THE SENTENCE EXPLAINING IT NAMES ONLY WHAT RUNS.
-    //
-    // What the worker's `cycle()` actually runs on a timer, per poll interval: folder
-    // RECONCILE (`sync.ts`), the workflow TIME SCAN and DRAIN (`workflow-cron.ts`), and
-    // the BUBBLE-UP resurfacing pass (`bubble-up-cron.ts`, gated by `BUBBLE_UP_EVERY_MS`).
-    // Nothing writes a row when any of them do: there is no cron telemetry table anywhere in the
-    // schema. A row per pass reporting `never` would be a false statement about a job that
-    // finished two minutes ago, and a console caught lying once is a console whose other numbers
-    // stop being read.
-    //
-    // This comment and the console string it mirrors used to name "the reconcile, stale-send and
-    // proposal passes". Two of those three were false: `proposalGeneratePass` has no production
-    // caller (deliberately — no proposer model is configured, so it is deferred with the AI
-    // phase), and there is NO stale-send pass anywhere in the codebase — `staleSends` below is a
-    // read-only listing computed from `outbound_sends` on this request, not the output of a job.
-    // So the empty state explained a blank table by naming work that does not happen, to the one
-    // reader who is trying to decide whether the system is healthy. Keep the list of passes here
-    // in step with `SCHEDULE_MANIFEST` in `test/every-pass-has-a-producer.test.ts`.
+    // Empty is the honest answer, and the sentence explaining it names only what runs: folder
+    // RECONCILE (`sync.ts`), the workflow TIME SCAN and DRAIN (`workflow-cron.ts`), the BUBBLE-UP
+    // pass (`bubble-up-cron.ts`). Nothing writes a row when they run — there is no cron telemetry
+    // table — and a row saying `never` would be false about a job that finished two minutes ago.
+    // This copy once named "the reconcile, stale-send and proposal passes"; two of the three were
+    // false (`proposalGeneratePass` has no production caller; there is no stale-send pass —
+    // `staleSends` is a read-only listing computed on this request). Keep the pass list in step
+    // with `SCHEDULE_MANIFEST` in `test/every-pass-has-a-producer.test.ts`.
     crons: [],
     // ZERO, for the same reason `crons` is empty: the honest answer is nothing, and
     // the surface that produced this one was a receipt oracle. The full argument, the D=15min /
@@ -1201,18 +897,13 @@ export async function adminActions(db: AdminDb, now: Date): Promise<ActionCatalo
     {
       id: "resync_mailbox",
       title: "Release a quarantined mailbox",
-      // ── THE COPY WAS NARROWED IN THE SAME CHANGE THAT WIRED THE WRITE (mail 0039) ────────
-      //
-      // It used to promise "requeues a full folder pass — UIDVALIDITY is re-read, not assumed",
-      // and none of that ships. Clearing a column requeues nothing, and an attach
-      // is connect + lease + folders + kickstart + IDLE and syncs nothing at all — there is no
-      // forced folder pass on this path to trigger. The write clears `mailboxes.retry_after` and
-      // the leader re-dials on its next roster pass; the honest description of that is one line,
-      // so it is one line. A forced reconcile stays filed as its own thing.
-      //
-      // This matters more than tidiness here. `available` flipping to true is the console making
-      // a public claim, and a button whose card overstates what it does is the same defect as one
-      // that reports success it cannot achieve — the reason the other two cards say so out loud.
+      // The copy was narrowed in the same change that wired the write (mail 0039). It used to
+      // promise "requeues a full folder pass — UIDVALIDITY re-read, not assumed", and none of
+      // that ships: clearing a column requeues nothing, and an attach is connect + lease +
+      // folders + kickstart + IDLE. The write clears `mailboxes.retry_after` and the leader
+      // re-dials on its next roster pass; the honest description is one line, so it is one line.
+      // `available` flipping true is the console making a public claim — a card that overstates
+      // is the same defect as one reporting success it cannot achieve.
       summary:
         "Clears the retry backoff so the sync leader dials the mailbox again on its next roster pass.",
       effects: [
