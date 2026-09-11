@@ -870,27 +870,32 @@ async function releaseOwnClaim(
 }
 
 /**
- * WHY THE HOLDER OF THIS MAILBOX IS NOT US — the term of the lease's own-claim check that refused
- * the winning claim (`rawOurs` / `isOurs` in `organizer-lease.ts`: install id, then nonce).
+ * HOW THE HOLDER OF THIS MAILBOX RELATES TO THIS INSTALL — by install id, and by the nonce this
+ * install last armed. Read at the stand-down, where a reason of `organized_elsewhere:*` is all
+ * there is: a stranger, a restored copy of us, or a claim we wrote ourselves are the same value.
  *
- * A stand-down reports `organized_elsewhere:*` and says nothing about which of three states it
- * is, and they want opposite fixes: a stranger holds it, a restored copy of us holds it, or WE
- * hold it and failed to recognise ourselves. `ours` is the state that must be unreachable — the
- * holder carries this install's id and this install's nonce and the gate stood down anyway, which
- * is a composition with two identities rather than a contested mailbox.
+ * ── IT IS THIS SITE'S COMPARISON, NOT THE GATE'S, AND THE DIFFERENCE IS LOAD-BEARING ──────
+ *
+ * The gate WRITES a nonce and then decides against it (`runLeaseGate`'s confirm arms
+ * `lastNonce: nonce`), and that value never reaches this scope: `leaseNonce` is assigned only from
+ * an outcome that said organize, so during a renew it still holds the PREVIOUS nonce and after a
+ * restart it holds `null`. So `our_last_nonce` means "the holder carries the nonce we last armed",
+ * which is a true statement about this install — and not a claim that the gate compared the same
+ * two values. Naming it after the gate's term would be a false reading of the one line that says
+ * who holds a person's mailbox.
+ *
+ * What it does settle, which is what a stand-down cannot say on its own: `install_id` is somebody
+ * else's install, and every other member is this install looking at its own claim.
  */
 function ownClaimTerm(
   by: { installId: string; nonce: string } | null,
   installId: string,
   lastNonce: string | null,
-): "no_holder" | "install_id" | "nonce" | "ours" | "own_id_nonce_unarmed" {
+): "no_holder" | "install_id" | "other_nonce" | "our_last_nonce" | "no_armed_nonce" {
   if (by === null) return "no_holder";
   if (by.installId !== installId) return "install_id";
-  /* THE UNARMED CASE IS ITS OWN ANSWER, not folded into `ours`. This install's nonce is armed only
-     by a gate that SAID organize, so on the first gate of a launch it is null while the gate's own
-     freshly written nonce is not — collapsing the two would report a nonce match nobody made. */
-  if (lastNonce === null) return "own_id_nonce_unarmed";
-  return by.nonce === lastNonce ? "ours" : "nonce";
+  if (lastNonce === null) return "no_armed_nonce";
+  return by.nonce === lastNonce ? "our_last_nonce" : "other_nonce";
 }
 
 /**
@@ -4754,8 +4759,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // nothing about the state it exists to name. `reconcile-cron.ts:259` already carries the
           // same correction in the same words for the same value on the hosted door.
           state: outcome.state,
-          // WHICH TERM REFUSED THE HOLDER — see {@link ownClaimTerm}. `ours` on this line is an
-          // install that stood down against its own claim, which no contested mailbox can produce.
+          // HOW THE HOLDER RELATES TO THIS INSTALL — see {@link ownClaimTerm}. Anything but
+          // `install_id` on this line is an install standing down from a claim of its own.
           ownClaimTerm: ownClaimTerm(outcome.by, installId, leaseNonce),
           reason: "another organizer holds this mailbox; this install becomes a READER of it — it " +
             "keeps its login and its poll timer, its mirror goes on growing, it can mark mail read " +

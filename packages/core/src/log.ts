@@ -232,12 +232,13 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // credentials rotated mid-dial is left unstamped so it stays due.
   "considered", "learned", "silent", "skipped", "failed", "announcedBytes", "stamped",
   "disabledReason", "stoppedBy", "heldBy",
-  // ── `ownClaimTerm`: WHICH TERM OF THE LEASE'S OWN-CLAIM CHECK REFUSED THE HOLDER ──────────
+  // ── `ownClaimTerm`: HOW A MAILBOX'S HOLDER RELATES TO THE INSTALL THAT STOOD DOWN ─────────
   //
-  // A closed four-member literal the call site holds, `op`'s reason one shelf down. A stand-down
-  // says `organized_elsewhere:*` and nothing about whether the holder is a stranger, a restored
-  // copy of us, or US — and those want opposite fixes. `ours` is the state that must be
-  // unreachable: the install read its own claim, by id and by nonce, and stood down anyway.
+  // A closed five-member literal the call site holds, `op`'s reason one shelf down: install id,
+  // then the nonce that install last armed. A stand-down says `organized_elsewhere:*` and nothing
+  // about whether the holder is a stranger, a restored copy, or a claim the install wrote itself —
+  // and those want opposite answers. The comparison, never its operands: no install id and no
+  // nonce reaches the line.
   "ownClaimTerm",
   // `syncBlockedReason` is mail 0029's `MAILBOX_SYNC_BLOCK_REASONS` member — one of three literals
   // this repository wrote, beside `disabledReason` for the same reason.
