@@ -29,9 +29,9 @@
 //! what they are NOT shown twice — is something these drive directly.
 
 use super::{
-    classify, install_kind, menu_text, path_is_system, refusal_is_unverifiable, report,
-    should_install, should_offer, signed_release, Check, CheckResult, Facts, Flow, InstallKind, Os,
-    Press, Signal, Stage,
+    classify, error_class, install_kind, log_check, log_offer, log_verdict, menu_text,
+    path_is_system, refusal_is_unverifiable, report, should_install, should_offer, signed_release,
+    Check, CheckResult, Facts, Flow, InstallKind, Os, Press, Signal, Stage, Verdict, WROTE,
 };
 use base64::Engine as _;
 use std::fs;
@@ -1207,4 +1207,198 @@ fn the_reader_answers_one_stable_kind_for_this_process() {
     assert_eq!(first, install_kind());
     assert!(!first.as_str().is_empty());
     assert_eq!(first.self_applies(), first.menu_sentence().is_none());
+}
+
+/* ── WHAT THE UPDATER WRITES DOWN ─────────────────────────────────────────────────────────────
+ *
+ * `updater.rs` logged nothing at all, so identifying the feed an install reached meant reading
+ * the one compiled endpoint out of the binary and watching the process's sockets. Three lines
+ * close that, and the cases below read back what the SHIPPING code composed — `emit` keeps every
+ * line it wrote — so the field names under test are the ones a person greps for.
+ *
+ * What they cannot drive is `run`, which holds an `AppHandle`. The four call sites in it, and the
+ * two on the install, are held by `desktop-shell.test.ts` reading this crate's source. */
+
+/// One case at a time reads the buffer, and each one starts it empty.
+static LOG_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn captured(write: impl FnOnce()) -> Vec<String> {
+    let _serial = LOG_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    WROTE.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    write();
+    let lines = WROTE.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    WROTE.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    lines
+}
+
+fn as_json(line: &str) -> serde_json::Value {
+    serde_json::from_str(line).unwrap_or_else(|err| panic!("not one JSON object: {line} ({err})"))
+}
+
+#[test]
+fn a_check_names_the_feed_it_asked_and_the_version_it_asked_about() {
+    let lines = captured(|| log_check("https://example.invalid/latest.json", "0.16.2"));
+    assert_eq!(lines.len(), 1);
+    let seen = as_json(&lines[0]);
+    assert_eq!(seen["service"], serde_json::json!("updater"));
+    assert_eq!(seen["event"], serde_json::json!("updater_check"));
+    assert_eq!(seen["endpoint"], serde_json::json!("https://example.invalid/latest.json"));
+    assert_eq!(seen["version"], serde_json::json!("0.16.2"));
+    // `service` and `event` first, so these read as the engine's own lines beside them do.
+    assert!(
+        lines[0].starts_with(r#"{"service":"updater","event":"updater_check""#),
+        "{}",
+        lines[0]
+    );
+}
+
+/// What a check found, from what a feed answered — through the same two deciders `run` calls, so
+/// the class each case below produces is COMPUTED rather than typed in beside the line.
+fn found(installed: &str, answer: Option<(&str, String)>) -> (CheckResult, Option<String>) {
+    // No answer at all: the feed could not be reached, or the payload did not arrive.
+    let Some((advertised, sig)) = answer else {
+        return (CheckResult::Failed, None);
+    };
+    match should_install(installed, advertised, &sig, ASSET) {
+        Some(version) => (CheckResult::Offered, Some(version.to_string())),
+        None if refusal_is_unverifiable(advertised, &sig, ASSET) => (CheckResult::Refused, None),
+        None => (CheckResult::UpToDate, None),
+    }
+}
+
+#[test]
+fn every_end_of_a_check_writes_what_it_found() {
+    let cases: &[(&str, Option<(&str, String)>, &str, &str)] = &[
+        // installed, what the feed answered, the class, the version on the line
+        ("0.16.2", Some(("0.17.0", signed_as("0.17.0"))), "offered", "0.17.0"),
+        ("0.16.2", Some(("0.16.2", signed_as("0.16.2"))), "upToDate", "none"),
+        ("0.16.2", Some(("99.0.0", signed_as("0.9.0"))), "refused", "none"),
+        ("0.16.2", None, "failed", "none"),
+    ];
+    for (installed, answer, expected_found, expected_offered) in cases {
+        let (result, offered) = found(installed, answer.clone());
+        assert_eq!(
+            result.as_str(), *expected_found,
+            "the decider and the case disagree about what this feed answer is"
+        );
+        let lines = captured(|| log_offer(result.as_str(), offered.as_deref(), InstallKind::AppImage));
+        assert_eq!(lines.len(), 1);
+        let seen = as_json(&lines[0]);
+        assert_eq!(seen["event"], serde_json::json!("updater_offer"));
+        assert_eq!(seen["found"], serde_json::json!(*expected_found));
+        assert_eq!(seen["offered"], serde_json::json!(*expected_offered));
+        assert_eq!(seen["installKind"], serde_json::json!("appimage"));
+    }
+
+    // And the one end no check reaches: a copy that cannot replace its own files asks no feed, so
+    // the class IS the install kind and the line says which kind.
+    let lines = captured(|| log_offer("installKind", None, InstallKind::Deb));
+    assert_eq!(lines.len(), 1);
+    let seen = as_json(&lines[0]);
+    assert_eq!(seen["found"], serde_json::json!("installKind"));
+    assert_eq!(seen["offered"], serde_json::json!("none"));
+    assert_eq!(seen["installKind"], serde_json::json!("deb"));
+    // No address reaches this line. The endpoint is the check's to name, and a payload url is a
+    // release's own path rather than a fact about this install.
+    assert!(!lines[0].contains("http"), "{}", lines[0]);
+}
+
+#[test]
+fn a_verdict_names_the_class_of_a_failure_and_never_its_text() {
+    for (verdict, expected) in [(Verdict::Installed, "installed"), (Verdict::Deferred, "deferred")]
+    {
+        let lines = captured(|| log_verdict(verdict, None));
+        assert_eq!(lines.len(), 1);
+        let seen = as_json(&lines[0]);
+        assert_eq!(seen["event"], serde_json::json!("updater_verdict"));
+        assert_eq!(seen["verdict"], serde_json::json!(expected));
+        assert!(seen.get("errorClass").is_none(), "nothing failed: {}", lines[0]);
+    }
+
+    // The shape `tauri_plugin_updater::Error`'s `Debug` has when an install fails, which is the
+    // one place a path appears — the AppImage the plugin could not rewrite. The class is logged
+    // and the path is not: a log a person may hand over must not carry where their apps live.
+    let debug = r#"Io(Os { code: 13, kind: PermissionDenied, message: "/home/someone/Apps/ohmail.AppImage" })"#;
+    let lines = captured(|| log_verdict(Verdict::Failed, Some(error_class(debug))));
+    let seen = as_json(&lines[0]);
+    assert_eq!(seen["verdict"], serde_json::json!("failed"));
+    assert_eq!(seen["errorClass"], serde_json::json!("Io"));
+    assert!(!lines[0].contains("someone"), "a path must not reach the log: {}", lines[0]);
+    assert!(!lines[0].contains("PermissionDenied"), "{}", lines[0]);
+}
+
+#[test]
+fn an_error_class_is_the_leading_identifier_and_nothing_after_it() {
+    // The positive control first, and it is the one that matters: the ordinary shapes are
+    // admitted WHOLE. A reader that always answered "Unknown" would satisfy the refusals above
+    // and nothing here.
+    assert_eq!(error_class("Network"), "Network");
+    assert_eq!(error_class("UpToDate"), "UpToDate");
+    assert_eq!(error_class("Minisign(SignatureMismatch)"), "Minisign");
+    assert_eq!(error_class("Io(Os { code: 13 })"), "Io");
+    assert_eq!(error_class("Semver_2(\"x\")"), "Semver_2");
+    assert_eq!(
+        error_class("Http { status: 404, url: \"https://example.invalid/x\" }"),
+        "Http"
+    );
+    // A rendering with no identifier at the front names something rather than leaving the field
+    // empty, and a multi-byte one must not panic on a byte slice.
+    assert_eq!(error_class(""), "Unknown");
+    assert_eq!(error_class("  leading space"), "Unknown");
+    assert_eq!(error_class("Ünicode(x)"), "Ünicode");
+}
+
+#[test]
+fn every_line_is_one_json_object_in_the_engine_logs_own_shape() {
+    // One line per event, one object per line, `"service":"updater"` on each — the whole of what
+    // a grep over `engine.log` rests on. Values are escaped by `serde_json` rather than
+    // interpolated, so a quote arriving inside one cannot split the object in two.
+    let lines = captured(|| {
+        log_check("https://example.invalid/\"latest\".json", "0.16.2");
+        log_offer(CheckResult::Offered.as_str(), Some("0.17.0"), InstallKind::WindowsSetup);
+        log_verdict(Verdict::Installed, None);
+    });
+    assert_eq!(lines.len(), 3);
+    let events: Vec<String> = lines
+        .iter()
+        .map(|text| {
+            let seen = as_json(text);
+            assert_eq!(seen["service"], serde_json::json!("updater"));
+            assert!(!text.contains('\n'), "one line per event: {text}");
+            seen["event"].as_str().unwrap().to_string()
+        })
+        .collect();
+    assert_eq!(events, ["updater_check", "updater_offer", "updater_verdict"]);
+    assert_eq!(
+        as_json(&lines[0])["endpoint"],
+        serde_json::json!("https://example.invalid/\"latest\".json"),
+        "the quote survived as data rather than as syntax"
+    );
+}
+
+#[test]
+fn the_logged_endpoint_is_the_configs_and_never_a_second_copy_of_it() {
+    // `feed_endpoints` takes an `AppHandle` and cannot be driven here. What CAN be driven is the
+    // property that makes it the right shape: the config names the feed, and this file restates
+    // no address of its own. A literal here would be a second thing to keep true AND a second
+    // first-party URL in the binary, which is what the README's `strings` audit rests on.
+    let source = fs::read_to_string(manifest_dir().join("src/updater.rs")).unwrap();
+    let code = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    // By SCHEME, not by `://` — this module owns two `updater://` event names and those are not
+    // addresses.
+    assert!(
+        !code.contains("https://") && !code.contains("http://"),
+        "updater.rs must read the endpoint from the config, never restate one"
+    );
+
+    let conf: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(manifest_dir().join("tauri.conf.json")).unwrap())
+            .unwrap();
+    let endpoints = conf["plugins"]["updater"]["endpoints"].as_array().unwrap();
+    assert_eq!(endpoints.len(), 1, "one pinned feed, and the log names that one");
+    assert!(endpoints[0].as_str().unwrap().starts_with("https://"));
 }

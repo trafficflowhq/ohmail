@@ -116,6 +116,12 @@
 //!     signed, or that offers a payload with no signed version at all, is
 //!     treated as "nothing to offer" rather than reported: it is not a fact a
 //!     user can act on. `signed_release`'s own comment carries the mechanism.
+//!   * IT WRITES DOWN WHAT IT DID — three lines per cycle, in the engine log's own JSON shape:
+//!     the feed it asked and the version it asked about, what the check found, and what became
+//!     of a payload. It used to log nothing at all, so answering "which feed did this install
+//!     reach" meant reading the compiled endpoint out of the binary. The endpoint
+//!     comes from the config rather than a literal here, no payload url is logged, and a failure
+//!     is a CLASS rather than a library's error text.
 //!   * NO ERROR DEAD ENDS. A failed check or a failed download says one plain
 //!     sentence, and only when the user asked for the check; the dialog's other
 //!     button tries again. A check nobody asked for fails silently and leaves the
@@ -631,6 +637,159 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+// ── WHAT THE UPDATER WRITES DOWN ─────────────────────────────────────────────────────────────
+//
+// Three lines per cycle: `updater_check` names the feed and the running version, `updater_offer`
+// what the check found, `updater_verdict` what became of a payload. This module used to log
+// nothing at all, so answering "which feed did this install reach, and what did it decide"
+// meant reading the one compiled endpoint out of the binary and watching the process's sockets.
+//
+// Nothing identifying is in them. The endpoint is the pinned feed the config names and never a
+// payload url, and a failure is reported as a CLASS rather than as a library's error text.
+
+/// The `service` every line here carries. `engine.log` holds the engine's own JSON lines too, so
+/// one grep for `"service":"updater"` is the whole read.
+const LOG_SERVICE: &str = "updater";
+
+/// What became of a payload — the log's vocabulary for the end of a cycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// The payload was applied. The app restarts immediately after.
+    Installed,
+    /// "Later". The payload stays ready and nothing was applied.
+    Deferred,
+    Failed,
+}
+
+impl Verdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Verdict::Installed => "installed",
+            Verdict::Deferred => "deferred",
+            Verdict::Failed => "failed",
+        }
+    }
+}
+
+/// One line of JSON, `service` and `event` first and the fields in the order given.
+///
+/// Composed rather than serialized from a map so the key order is this file's and not a hash's,
+/// and every value goes through `serde_json`'s own escaping — a version or a class is not
+/// something to interpolate into JSON by hand.
+fn line(event: &str, fields: &[(&str, &str)]) -> String {
+    let mut out = format!("{{\"service\":\"{LOG_SERVICE}\",\"event\":\"{event}\"");
+    for (name, value) in fields {
+        out.push(',');
+        out.push_str(&serde_json::Value::from(*name).to_string());
+        out.push(':');
+        out.push_str(&serde_json::Value::from(*value).to_string());
+    }
+    out.push('}');
+    out
+}
+
+/// Where a line goes. The engine build tees it into `engine.log` beside the engine's own lines;
+/// the preview has no log file, so stderr is the whole of it — `frame::note`'s split, for
+/// `frame::note`'s reason.
+///
+/// NEITHER ARM IS A WRITER THIS MODULE OWNS, and that is deliberate rather than tidy: a verified
+/// payload lives in memory and must leave nothing on the machine, so the file that holds those
+/// bytes calls no write API at all. `desktop-shell.test.ts` asserts that absence as a closed list.
+#[cfg(feature = "local-engine")]
+fn write_line(line: &str) {
+    crate::engine::log_json_line(line);
+}
+
+#[cfg(not(feature = "local-engine"))]
+fn write_line(line: &str) {
+    crate::frame::note_line(line);
+}
+
+/// Every line [`emit`] wrote, so `updater_tests.rs` reads back what the shipping code composed
+/// rather than a copy of it. Test-only, and the sink still runs beside it.
+#[cfg(test)]
+pub(crate) static WROTE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Write one line. Every log site in this module goes through here.
+fn emit(text: String) {
+    #[cfg(test)]
+    lock(&WROTE).push(text.clone());
+    write_line(&text);
+}
+
+/// A check is starting: the feed it is about to ask, and the version it is asking about.
+fn log_check(endpoint: &str, installed: &str) {
+    emit(line("updater_check", &[("endpoint", endpoint), ("version", installed)]));
+}
+
+/// What a check found: the signed version it will fetch, or `none` and the class of the answer.
+///
+/// `found` is [`CheckResult`]'s own wire name — the vocabulary the settings pane already switches
+/// on, so the log and the pane cannot disagree about what happened — plus `installKind` for the
+/// one class no check reaches: a copy that cannot replace its own files asks no feed. The kind is
+/// on every line either way, because whether an offer could have been applied is the next thing
+/// anybody reading one wants to know.
+fn log_offer(found: &str, offered: Option<&str>, kind: InstallKind) {
+    emit(line(
+        "updater_offer",
+        &[
+            ("offered", offered.unwrap_or("none")),
+            ("found", found),
+            ("installKind", kind.as_str()),
+        ],
+    ));
+}
+
+/// What became of a payload, and — when it failed — the class of the failure.
+fn log_verdict(verdict: Verdict, error_class: Option<&str>) {
+    let mut fields = vec![("verdict", verdict.as_str())];
+    if let Some(class) = error_class {
+        fields.push(("errorClass", class));
+    }
+    emit(line("updater_verdict", &fields));
+}
+
+/// The CLASS of a failure, out of its `Debug` rendering, and nothing else from it.
+///
+/// `tauri_plugin_updater::Error`'s `Debug` is `Variant(…)`, and what is inside the brackets can
+/// be a path, a url or an OS message — none of which belongs in a log somebody may hand over. So
+/// the leading identifier is kept and the rest dropped, which is the same field the engine's own
+/// lines carry as `errorClass`. `find` over a char predicate answers a char boundary, so the
+/// slice is safe for any rendering.
+pub fn error_class(debug: &str) -> &str {
+    let end = debug
+        .find(|c: char| !c.is_alphanumeric() && c != '_')
+        .unwrap_or(debug.len());
+    match &debug[..end] {
+        "" => "Unknown",
+        class => class,
+    }
+}
+
+/// The feed this build asks, read from the config the plugin itself reads
+/// (`plugins.updater.endpoints` in `tauri.conf.json`).
+///
+/// READ rather than restated. A second copy of the endpoint in Rust would be a second thing to
+/// keep true, and the `strings` audit the README describes rests on the binary naming exactly one
+/// first-party address. Joined by a space if a config ever lists more than the one this project
+/// pins; empty when it names none, which is a build that cannot check at all.
+fn feed_endpoints<R: Runtime>(app: &AppHandle<R>) -> String {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|updater| updater.get("endpoints"))
+        .and_then(|endpoints| endpoints.as_array())
+        .map(|endpoints| {
+            endpoints
+                .iter()
+                .filter_map(|endpoint| endpoint.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
+}
+
 /// Register the updater, the dialog it prompts through, its state and the handler
 /// for its menu item. Called from `main.rs` in EVERY build — the updater ships in
 /// the published binary, unlike the feature-gated engine.
@@ -760,6 +919,10 @@ fn check<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
        the surfaces say what is true instead (`InstallKind::menu_sentence`, and the `installKind`
        the window reads). Nothing is suppressed on the three kinds that CAN install. */
     if !install_kind().self_applies() {
+        // Logged, and logged HERE rather than as a check that found nothing: no feed was asked,
+        // so an `updater_check` line naming an endpoint would be a line about a request this
+        // build never made.
+        log_offer("installKind", None, install_kind());
         return;
     }
     {
@@ -771,6 +934,7 @@ fn check<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
         flow.apply(Signal::CheckStarted);
     }
     relabel(&app);
+    log_check(&feed_endpoints(&app), env!("CARGO_PKG_VERSION"));
     tauri::async_runtime::spawn(async move { run(app, user_initiated).await });
 }
 
@@ -816,7 +980,7 @@ async fn run<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
     // They are equal here by construction — `should_install` refuses otherwise — so this
     // is a statement about which one is authoritative rather than a change of value.
     let version = offered.to_string();
-    record(&app, CheckResult::Offered);
+    record(&app, CheckResult::Offered, Some(&version));
     signal(&app, Signal::Offered(version.clone()));
 
     /* THE PROGRESS WINDOW, and only for a check the user asked for. A tiny, bundled, offline page
@@ -895,6 +1059,7 @@ fn prompt_ready<R: Runtime>(app: &AppHandle<R>, version: &str) {
             if now {
                 install_and_restart(&deferrer);
             } else {
+                log_verdict(Verdict::Deferred, None);
                 signal(&deferrer, Signal::Deferred);
             }
         });
@@ -913,11 +1078,15 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
     };
     match outcome {
         Ok(()) => {
+            // Before the restart, and it survives it: the log flushes per write, so the last
+            // line of the old build's log is the one saying why there is a new one.
+            log_verdict(Verdict::Installed, None);
             app.restart();
         }
-        Err(_) => {
+        Err(err) => {
             // The one failure that always speaks, whoever started the check: the user pressed a
             // button that promised a restart, and nothing at all happening is the worst answer.
+            log_verdict(Verdict::Failed, Some(error_class(&format!("{err:?}"))));
             signal(app, Signal::Failed);
             say_it_failed(app, "ohmail could not install the update. Try again in a moment.");
         }
@@ -951,7 +1120,7 @@ pub fn refusal_is_unverifiable(advertised: &str, signature_b64: &str, expected_a
 /// the same answer, so a "Try again" button here would be a button that cannot work. Silent
 /// unless the user asked, like every other outcome in this flow.
 fn unverifiable_offer<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
-    record(app, CheckResult::Refused);
+    record(app, CheckResult::Refused, None);
     signal(app, Signal::NothingOffered);
     if user_initiated {
         app.dialog()
@@ -966,7 +1135,7 @@ fn unverifiable_offer<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
 
 /// The feed answered and there is nothing to install.
 fn nothing_to_offer<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
-    record(app, CheckResult::UpToDate);
+    record(app, CheckResult::UpToDate, None);
     signal(app, Signal::NothingOffered);
     if user_initiated {
         // One button, and it is not a dead end: it is the answer to a question the user asked.
@@ -979,7 +1148,7 @@ fn nothing_to_offer<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
 
 /// Something did not work. Silent unless the user asked for the check.
 fn failed<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
-    record(app, CheckResult::Failed);
+    record(app, CheckResult::Failed, None);
     signal(app, Signal::Failed);
     if user_initiated {
         say_it_failed(
@@ -1061,9 +1230,14 @@ fn relabel<R: Runtime>(app: &AppHandle<R>) {
 /// It announces NOTHING itself, and every call site is immediately followed by the [`signal`]
 /// for the same moment: one transition, one emit, and no window that can catch the pair
 /// half-applied.
-fn record<R: Runtime>(app: &AppHandle<R>, result: CheckResult) {
+///
+/// It is also the one place the `updater_offer` line is written, for the same reason: these four
+/// call sites ARE the ends of a check, so a fifth end could not be added without passing through
+/// here. `offered` is the signed version at the one end that has one.
+fn record<R: Runtime>(app: &AppHandle<R>, result: CheckResult, offered: Option<&str>) {
     let state = app.state::<Updater<R>>();
     *lock(&state.last) = Some(Check { at_unix_ms: now_unix_ms(), result });
+    log_offer(result.as_str(), offered, install_kind());
 }
 
 /// Build the transient progress window that renders `PROGRESS_EVENT`.

@@ -214,6 +214,19 @@ pub fn note(line: &str) {
     let _ = std::io::stderr().write_all(format!("ohmail: {line}\n").as_bytes());
 }
 
+/// The same, for a line that is already shaped: the updater's JSON.
+///
+/// Two things differ from [`note`] and both are the reason this is its own function. There is no
+/// prefix — a prose one would stop those lines parsing — and it is not Linux-only, because the
+/// preview ships on three platforms and has no engine log on any of them. `updater.rs` calls this
+/// where the engine build calls `engine::log_json_line`, so the module that reaches the network
+/// holds no writer of its own.
+#[cfg(not(feature = "local-engine"))]
+pub fn note_line(line: &str) {
+    use std::io::Write;
+    let _ = std::io::stderr().write_all(format!("{line}\n").as_bytes());
+}
+
 #[cfg(test)]
 #[path = "frame_tests.rs"]
 mod tests;

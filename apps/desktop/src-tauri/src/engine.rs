@@ -2615,6 +2615,18 @@ pub(crate) fn log_line(args: fmt::Arguments<'_>) {
     tee_to_log(line.as_bytes());
 }
 
+/// Copy one already-shaped line to the same two places, verbatim.
+///
+/// [`log_line`] prefixes `ohmail engine: ` and is prose. `updater.rs` writes JSON objects in the
+/// shape the engine's own lines carry, so that one grep over this file answers what the updater
+/// checked and decided; a prefix would stop them parsing. Same writer, same rotation, same
+/// per-write flush — only the prefix differs.
+pub(crate) fn log_json_line(line: &str) {
+    let line = format!("{line}\n");
+    let _ = io::stderr().write_all(line.as_bytes());
+    tee_to_log(line.as_bytes());
+}
+
 fn log_state(state: &EngineState) {
     match state {
         EngineState::Absent { looked_for } => {

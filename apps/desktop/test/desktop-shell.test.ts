@@ -1649,26 +1649,32 @@ describe("the auto-updater", () => {
   it("records what each outcome of a check actually was", () => {
     // The two that share a stage, recorded as different facts.
     expect(updater).toMatch(
-      /fn unverifiable_offer<R: Runtime>\([^)]*\) \{\s*record\(app, CheckResult::Refused\);/,
+      /fn unverifiable_offer<R: Runtime>\([^)]*\) \{\s*record\(app, CheckResult::Refused, None\);/,
     );
     expect(updater).toMatch(
-      /fn nothing_to_offer<R: Runtime>\([^)]*\) \{\s*record\(app, CheckResult::UpToDate\);/,
+      /fn nothing_to_offer<R: Runtime>\([^)]*\) \{\s*record\(app, CheckResult::UpToDate, None\);/,
     );
     expect(updater).toMatch(
-      /fn failed<R: Runtime>\([^)]*\) \{\s*record\(app, CheckResult::Failed\);/,
+      /fn failed<R: Runtime>\([^)]*\) \{\s*record\(app, CheckResult::Failed, None\);/,
     );
     // …and the fourth, where a check ends by finding something.
-    expect(updater).toMatch(/record\(&app, CheckResult::Offered\);\s*signal\(&app, Signal::Offered/);
+    expect(updater).toMatch(/record\(&app, CheckResult::Offered, Some\(&version\)\);\s*signal\(&app, Signal::Offered/);
 
     /* ONE TRANSITION, ONE ANNOUNCEMENT. `record` deliberately does not emit — every call site is
        followed by the `signal` for the same moment, so no window can catch the pair half-applied
        and no transition emits twice. */
-    expect(updater).toMatch(/fn record<R: Runtime>\(app: &AppHandle<R>, result: CheckResult\) \{/);
+    expect(updater).toMatch(/fn record<R: Runtime>\(app: &AppHandle<R>, result: CheckResult, offered: Option<&str>\) \{/);
     const recordBody = /fn record<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
     expect(recordBody, "the record helper was not found — the assertion below would be vacuous")
       .toContain("state.last");
     expect(recordBody, "record announces on its own — the following signal then emits twice")
       .not.toContain("relabel");
+    /* IT DOES WRITE THE LINE, THOUGH, and here for the reason the four assertions above exist:
+       these call sites ARE the ends of a check, so a fifth end cannot be added without passing
+       through this one function. A log call at each of the four instead would be four places for
+       one of them to be forgotten. */
+    expect(recordBody, "a completed check leaves no line behind")
+      .toContain("log_offer(result.as_str(), offered, install_kind())");
 
     /* AND ONE PLACE THAT TELLS BOTH SURFACES. The bar and the pane are relabelled from the same
        call, because the failure mode of two calls is a pane saying "up to date" while the bar
@@ -1753,8 +1759,15 @@ describe("the auto-updater", () => {
     const body = /fn check<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
     expect(body, "the check helper was not found — every assertion below would be vacuous")
       .toContain("may_start_check");
-    expect(body, "the feed is reached on an install that cannot apply the payload")
-      .toMatch(/if !install_kind\(\)\.self_applies\(\) \{\s*return;\s*\}/);
+    const gate = /if !install_kind\(\)\.self_applies\(\) \{([\s\S]*?)\n    \}/.exec(body)?.[1] ?? "";
+    expect(gate, "the install-kind gate was not found — the assertions below would be vacuous")
+      .toBeTruthy();
+    expect(gate, "the feed is reached on an install that cannot apply the payload")
+      .toContain("return;");
+    /* …and it SAYS SO rather than returning silently. A `.deb` that never asked a feed and a
+       check that asked and found nothing are different facts, and both used to be invisible. */
+    expect(gate, "the refusal leaves no line behind")
+      .toContain('log_offer("installKind", None, install_kind())');
     /* …and it runs BEFORE the flow is moved. Asserted against the line that moves it
        (`Signal::CheckStarted`) rather than against the flow's own guard, because a gate placed
        between those two is still ahead of `may_start_check` and already wrong: the stage would go
@@ -1981,6 +1994,75 @@ describe("the auto-updater", () => {
     const viteConfig = read("vite.config.ts");
     expect(viteConfig).toMatch(/emitFile\(\{ type: "asset", fileName: "updater\.html"/);
     expect(viteConfig).toMatch(/emitFile\(\{ type: "asset", fileName: "updater\.js"/);
+  });
+
+  /**
+   * THE UPDATER WRITES DOWN WHAT IT CHECKED AND DECIDED — three lines, and the wiring for them.
+   *
+   * This module logged nothing at all, so answering "which feed did this install reach, and what
+   * did it do about it" meant reading the one compiled endpoint out of the binary and watching
+   * the process's sockets. `updater_tests.rs` drives the lines themselves; what it cannot reach
+   * is where the calls sit, because `run` and `install_and_restart` hold an `AppHandle`. Asserted
+   * here, at each site, by source — the arrangement the check-result wiring above already has.
+   */
+  it("writes what it checked and what it decided, and nothing that identifies anybody", () => {
+    // THE THREE EVENTS, spelled once each. A rename that reached only the test is a log nobody
+    // greps for, so the names are read out of the shell.
+    for (const event of ["updater_check", "updater_offer", "updater_verdict"]) {
+      expect([...updater.matchAll(new RegExp(`"${event}"`, "g"))], event).toHaveLength(1);
+    }
+
+    /* THE CHECK LINE NAMES THE FEED FROM THE CONFIG, never a literal of its own. A second copy of
+       the endpoint in Rust would be a second thing to keep true and a second first-party URL in
+       the binary, which is what the README's `strings` audit rests on. */
+    expect(updater).toMatch(/log_check\(&feed_endpoints\(&app\), env!\("CARGO_PKG_VERSION"\)\)/);
+    expect(updater).toMatch(/\.get\("updater"\)/);
+    expect(updater).toMatch(/\.get\("endpoints"\)/);
+    expect(updater, "the module restates an address instead of reading the config")
+      .not.toMatch(/"https?:\/\//);
+
+    /* THE VERDICT, AT BOTH ENDS OF THE ONE PLACE ANYTHING IS INSTALLED plus the deferral. A
+       verdict logged only on success would make a failed install look like an install that never
+       happened, which is the one reading a log must not leave open. */
+    const install = /fn install_and_restart<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
+    expect(install, "the install helper was not found").toContain("app.restart()");
+    expect(install).toContain("log_verdict(Verdict::Installed, None)");
+    expect(install).toMatch(/log_verdict\(Verdict::Failed, Some\(error_class\(&format!\("\{err:\?\}"\)\)\)\)/);
+    // …and the line is written BEFORE the restart, or the build that wrote it is already gone.
+    expect(install.indexOf("log_verdict(Verdict::Installed"))
+      .toBeLessThan(install.indexOf("app.restart()"));
+    expect(updater).toMatch(/log_verdict\(Verdict::Deferred, None\);\s*signal\(&deferrer, Signal::Deferred\)/);
+
+    /* NOTHING IDENTIFYING GOES IN. A failure is a CLASS — the leading identifier of the error's
+       `Debug` — because the rest of that rendering is a path, a url or an OS message, and this
+       log is a file a person may hand over. `error_class` is the whole of that rule and
+       `updater_tests.rs` drives it over the shape an install failure actually produces. */
+    const klass = /pub fn error_class[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
+    expect(klass, "the error-class reader was not found").toContain("is_alphanumeric");
+    expect(updater, "the error's own text reaches the log")
+      .not.toMatch(/log_verdict\([^)]*\{err\}/);
+
+    /* AND IT GOES WHERE THE ENGINE'S OWN LINES GO. The engine build tees into `engine.log`
+       beside them; the preview has no log file, so stderr is the whole of it — `frame::note`'s
+       split, for `frame::note`'s reason. */
+    expect(updater).toMatch(/#\[cfg\(feature = "local-engine"\)\]\nfn write_line/);
+    expect(updater).toMatch(/crate::engine::log_json_line\(line\)/);
+    expect(updater).toMatch(/#\[cfg\(not\(feature = "local-engine"\)\)\]\nfn write_line/);
+    expect(updater).toMatch(/crate::frame::note_line\(line\)/);
+    const engineSink = /pub\(crate\) fn log_json_line[^{]*\{([\s\S]*?)\n\}/.exec(
+      read("src-tauri/src/engine.rs"),
+    )?.[1] ?? "";
+    expect(engineSink, "the engine's verbatim sink was not found").toContain("tee_to_log");
+    expect(engineSink, "a prefix would stop the updater's JSON lines parsing")
+      .not.toContain("ohmail engine:");
+    /* BOTH SINKS ARE SOMEBODY ELSE'S, which is what keeps the never-written-down assertion above
+       a closed list: the file holding a verified payload in memory calls no write API at all. */
+    const previewSink = /pub fn note_line[^{]*\{([\s\S]*?)\n\}/.exec(
+      read("src-tauri/src/frame.rs"),
+    )?.[1] ?? "";
+    expect(previewSink, "the preview's verbatim sink was not found").toContain("write_all");
+    expect(previewSink, "a prefix would stop the updater's JSON lines parsing")
+      .not.toContain("ohmail:");
   });
 });
 
