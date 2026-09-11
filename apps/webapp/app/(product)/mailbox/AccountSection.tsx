@@ -1,59 +1,34 @@
 "use client";
 
 /**
- * DELETE YOUR ACCOUNT. The control behind the landing page's "Leave anytime".
- *
- * `DELETE /account` has existed and worked since the auth surface landed; what did not exist was any way for a
- * customer to reach it. The endpoint's own header quoted the marketing copy while the only
- * caller in the world was an operator with curl, which makes it a published claim with no
- * path — the one defect class this project treats as never acceptable, and under Art. 17
- * more than a copy problem.
- *
- * ── WHERE IT LIVES, AND WHY NOT ON A PAGE OF ITS OWN ────────────────────────────────────
- *
- * Settings → Account, inside the mail client. Not a new URL: the single-origin merge made
- * `ohmail.app/` the product's ONE address, and a `/account` route would have needed a link
- * from inside this same shared shell anyway — so it would have bought a second public URL, a
- * `OWN_PATHS` entry and a middleware matcher line to arrive exactly where this already is.
- * Settings is also where a person looks for it, which is what "anytime" has to mean.
- *
- * This file is Cloud-only: the desktop program builds without it. `SettingsView` takes it
- * as a NODE (`accountSection`) for that reason — the shared view knows nothing about
- * accounts, and Desktop, which is standalone and has none, grows no pane.
- *
- * ── THE CEREMONY IS RUN ALWAYS, NOT ON A 403 ────────────────────────────────────────────
- *
- * The route is `stepUp: true`, and NOTHING in this API refreshes `sessions.last_twofa_at`
- * except completing a login: the `/auth/2fa/…/verify` routes all require a single-use
- * `loginToken` that
- * only `POST /auth/login` mints. The window is five minutes. So a person sitting in their
- * mailbox is, essentially always, not step-up fresh — "try it and translate the 403" would
- * be a button that fails for everyone, and `JoinScreen`'s "sign in again and the setup
- * carries on" answer does not transfer, because signing in again lands you at `/` and this
- * pane is three clicks away.
- *
- * So the password and the second factor are asked for HERE, up front, every time. That is
- * not a second step-up pattern — it is the only mechanism the server has, performed in place
- * instead of by bouncing the user through `/login`.
- *
- * ── TWO GUARDS THAT ARE NOT OBVIOUS ─────────────────────────────────────────────────────
- *
- *  1. **The address is read-only.** A login mints a session for whatever account the
- *     credentials name, and `DELETE /account` then erases THAT account. An editable email
- *     field would be a delete-somebody-else's-account control.
- *  2. **The account id is re-checked after the factor verifies.** Belt to that brace: if the
- *     session that comes back is not the account this pane was opened for, nothing is sent.
- *
- * ── AFTER THE DELETE ────────────────────────────────────────────────────────────────────
- *
- * `signOut()` is deliberately NOT reused: the logout call inside it would 401 (the session row
- * is gone and `resolveSession` INNER JOINs `users`), and its `try/finally` rethrows past the
- * mirror wipe. (Written without the parentheses the sign-out guard greps for, on purpose — its
- * "only one caller" rule reads raw source and a mention in prose would trip it.) The API clears
- * the three cookies on the 200 instead. What is left is the IndexedDB mirror — every message
- * that ever came down `/sync`, still readable on this machine — so it is wiped for the same
- * reason `sign-out.ts` wipes it, with `owner` captured BEFORE the call because afterwards
- * there is nobody to ask.
+ * Delete your account — the control behind the landing page's "Leave anytime". `DELETE /account` has
+ * worked since the auth surface landed; what did not exist was a customer path to it, which made a
+ * published claim with no path — never acceptable here, and under Art. 17 more than a copy problem. It
+ * lives in Settings → Account inside the mail client, not on a URL of its own: the single-origin merge
+ * made `ohmail.app/` the one address, and a `/account` route would have bought a second public URL, an
+ * `OWN_PATHS` entry and a middleware matcher to arrive where this already is. Cloud-only: the desktop
+ * program builds without it — `SettingsView` takes it as a node (`accountSection`), so Desktop grows
+ * no pane.
+ */
+
+/**
+ * The ceremony runs always, not on a 403: the route is `stepUp: true` and nothing refreshes
+ * `sessions.last_twofa_at` except completing a login — the verify routes need a single-use
+ * `loginToken` only `POST /auth/login` mints, and the window is five minutes — so a person in their
+ * mailbox is essentially never step-up fresh. Password and second factor are asked here, up front; not
+ * a second step-up pattern but the server's only mechanism, performed in place instead of by bouncing
+ * through `/login`. Two guards: the address is read-only (an editable email field would be a
+ * delete-somebody-else's-account control), and the account id is re-checked after the factor
+ * verifies — if the session that comes back is not this pane's account, nothing is sent.
+ */
+
+/**
+ * After the delete, signOut is not reused — named without parentheses here because its one-caller
+ * census reads raw source. Its logout call would 401 (the session row is gone and `resolveSession`
+ * inner-joins `users`) and its `try/finally` rethrows past the mirror wipe; the API clears the three
+ * cookies on the 200 instead. What is left is the IndexedDB mirror — every message that ever came
+ * down `/sync`, still readable on this machine — wiped here for the reason `sign-out.ts` wipes it,
+ * with `owner` captured before the call because afterwards there is nobody to ask.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -132,19 +107,14 @@ export function AccountSection() {
   useEffect(() => () => { alive.current = false; }, []);
 
   /**
-   * Sign out of THIS browser. Not step-up gated, deliberately: it destroys nothing the user
-   * cannot get back by signing in again, and putting a password prompt in front of "get me off
-   * this machine" is exactly backwards on the shared computer this exists for.
-   *
-   * The failure path matters more than the happy one. `signOut` wipes the local mirror in a
-   * `finally`, so an unreachable server still clears the mail from this browser — and that is
-   * why this does not surface a network error and stay put. Either way the user asked to be
-   * signed out here, and either way they are, so it always leaves.
-   *
-   * `location.assign` rather than a router push: the session cookie is gone, so the shell must
-   * be re-decided by the server. A client-side navigation would keep the signed-in React tree
-   * alive on a dead session — the same class of mistake as the resume `location.replace` that
-   * never re-requested.
+   * Sign out of THIS browser. Not step-up gated, deliberately: it destroys nothing the user cannot
+   * get back by signing in again, and a password prompt in front of "get me off this machine" is
+   * exactly backwards on the shared computer this exists for. The failure path matters more:
+   * `signOut` wipes the local mirror in a `finally`, so an unreachable server still clears the mail
+   * from this browser — which is why this does not surface a network error and stay put; either way
+   * the user asked to be signed out here, and either way they are. `location.assign` rather than a
+   * router push: the cookie is gone, so the shell must be re-decided by the server — a client-side
+   * navigation would keep the signed-in React tree alive on a dead session.
    */
   const doSignOut = useCallback(async (owner: string) => {
     setSigningOut(true);
@@ -153,36 +123,23 @@ export function AccountSection() {
     setSignOutServerRefused(null);
     const outcome = await signOut(owner);
     /**
-     * ── AND IF THE MAIL IS STILL HERE, THIS DOES NOT LEAVE ─────────────────────────────────
-     *
-     * An IndexedDB delete is BLOCKED — not failed — while any other connection holds the
-     * database open, and our own page yields its handle but a SECOND TAB on the mailbox does
-     * not. `signOut` used to resolve as though the wipe had worked and this navigated away, so
-     * signing out of tab A with tab B open said "signed out" and left every message on disk on
-     * exactly the borrowed machine this control exists for.
-     *
-     * Staying put costs a dead shell behind an actionable sentence; leaving costs a silent
-     * false promise about somebody's mail. The session and cookie are already gone either way —
-     * so pressing again is safe and is the first thing the copy asks for.
-     *
-     * THE SENTENCE NAMES BOTH CAUSES, because this arm cannot tell them apart. A survivor here
-     * is either a blocked delete (another tab) or a refused one (the browser said no), and the
-     * verdict is a list of names, not a list of reasons. Saying only "another tab" would hand
-     * somebody with no second tab a remedy that cannot work, so it names both and ends with the
-     * one that always works.
+     * If the mail is still here, this does not leave. An IndexedDB delete is BLOCKED — not failed —
+     * while any other connection holds the database open; our own page yields its handle, but a
+     * second tab on the mailbox does not. `signOut` used to resolve as though the wipe had worked, so
+     * signing out of tab A with tab B open said "signed out" and left every message on disk on the
+     * borrowed machine this control exists for. Staying put costs a dead shell behind an actionable
+     * sentence; leaving costs a silent false promise about somebody's mail. The session and cookie
+     * are already gone, so pressing again is safe — the first thing the copy asks. The sentence names
+     * both causes (a blocked delete or a refused one): this arm cannot tell them apart.
      */
     /**
-     * ── THE UNVERIFIABLE CASE IS TESTED FIRST, BECAUSE IT IS A SUBSET OF THE OTHER ──────────
-     *
-     * `cleared` is false whenever the inventory is partial, so checking `!cleared` first made
-     * this branch unreachable: every browser that simply could not be asked what it holds was
-     * told another tab was holding its mail open, and the distinct remedy below was dead code.
-     * They are different facts with different remedies, and this one is the narrower.
-     *
-     * Nothing is holding a database open here — the browser will not say which local databases
-     * it has, and the registry it would otherwise fall back on has never been anchored on this
-     * origin. The deletes we could name went through; what cannot be claimed is that they were
-     * all of them.
+     * The unverifiable case is tested first because it is a subset of the other: `cleared` is false
+     * whenever the inventory is partial, so checking `!cleared` first made this branch unreachable —
+     * every browser that simply could not be asked what it holds was told another tab was holding its
+     * mail open, and this distinct remedy was dead code. Nothing is holding a database open here: the
+     * browser will not say which local databases it has, and the registry it would fall back on has
+     * never been anchored on this origin. The deletes we could name went through; what cannot be
+     * claimed is that they were all of them.
      */
     if (!outcome.inventoryComplete) {
       if (alive.current) {
@@ -192,23 +149,10 @@ export function AccountSection() {
       return;
     }
     /**
-     * ── AND IF THE MAIL IS STILL HERE, THIS DOES NOT LEAVE ─────────────────────────────────
-     *
-     * An IndexedDB delete is BLOCKED — not failed — while any other connection holds the
-     * database open, and our own page yields its handle but a SECOND TAB on the mailbox does
-     * not. `signOut` used to resolve as though the wipe had worked and this navigated away, so
-     * signing out of tab A with tab B open said "signed out" and left every message on disk on
-     * exactly the borrowed machine this control exists for.
-     *
-     * Staying put costs a dead shell behind an actionable sentence; leaving costs a silent
-     * false promise about somebody's mail. The session and cookie are already gone either way —
-     * so pressing again is safe and is the first thing the copy asks for.
-     *
-     * THE SENTENCE NAMES BOTH CAUSES, because this arm cannot tell them apart. A survivor here
-     * is either a blocked delete (another tab) or a refused one (the browser said no), and the
-     * verdict is a list of names, not a list of reasons. Saying only "another tab" would hand
-     * somebody with no second tab a remedy that cannot work, so it names both and ends with the
-     * one that always works.
+     * Same rule as the sign-out arm above: a blocked IndexedDB delete (a second tab holds the
+     * database open) or a refused one must not let this leave — leaving would be a silent false
+     * promise about mail still on disk. The session and cookie are already gone, so pressing again
+     * is safe, and the sentence names both causes because this arm cannot tell them apart.
      */
     if (!outcome.cleared) {
       if (alive.current) {
@@ -241,17 +185,13 @@ export function AccountSection() {
         }
       } catch (err) {
         /**
-         * ── A FAILED READ IS NOT AN EMPTY RESULT — "No session, OR the server is unreachable" ARE NOT ONE STATE ─────
-         *
-         * The comment named both and the code rendered only the first. `who` stayed `null`,
-         * the `finally` cleared `loading`, and `:288` told a tab that is signed in
-         * **"Deleting an account needs a live session on that account."** beside a **Sign
-         * in** link — on the pane whose whole subject is proving who you are.
-         *
-         * A 401 genuinely IS "no session" and must keep the signed-out card; anything else
-         * is our failure to answer, and `sessionFailed` is the difference. `codeOf`/`status`
-         * is the discriminator rather than the presence of an error, because "we could not
-         * ask" and "we asked and you are not signed in" have opposite remedies.
+         * A failed read is not an empty result — "no session" and "the server is unreachable" are
+         * not one state. The comment named both and the code rendered only the first: `who` stayed
+         * `null` and a signed-in tab was told "Deleting an account needs a live session on that
+         * account." beside a Sign in link. A 401 genuinely is "no session" and keeps the signed-out
+         * card; anything else is our failure to answer, and `sessionFailed` is the difference.
+         * `codeOf`/`status` discriminates rather than the presence of an error, because "we could
+         * not ask" and "you are not signed in" have opposite remedies.
          */
         if (alive.current && !(err instanceof ApiError && (err.status === 401 || err.status === 403))) {
           setSessionFailed(messageOf(err));
@@ -280,19 +220,13 @@ export function AccountSection() {
     try {
       const out = await account.erase();
       // `owner` was captured before the call on purpose: `GET /auth/session` cannot answer
-      // afterwards, and an un-wiped mirror is a readable copy of the mailbox left on this
-      // machine. Best-effort — a browser that refuses to enumerate its databases must not
-      // turn a completed erasure into an error message.
-      //
-      // The remembered account id goes with it, for the reason `sign-out.ts` pairs the two: the
-      // shell opens a mirror on that name before the server has confirmed anything, so a name
-      // left behind after an erasure would point the next load at a database that is gone and
-      // an account that no longer exists.
-      // DEFAULTS TO UNCLEAN, and only a wipe that returns proves otherwise. Initialising this
-      // to `false` made every exception before or during the wipe — a `tf_owner` clear throwing on
-      // a locked-down storage, the mirror wipe throwing at all — indistinguishable from a
-      // verified clean browser, on the one screen that can never be reached again: the account
-      // is gone, so there is no session left to route a retry through.
+      // afterwards, and an un-wiped mirror is a readable copy of the mailbox left on this machine.
+      // Best-effort — a browser that refuses to enumerate its databases must not turn a completed
+      // erasure into an error. The remembered account id goes with it (the `sign-out.ts` pairing): a
+      // name left behind would point the next load at a database that is gone. Defaults to unclean —
+      // only a wipe that returns proves otherwise; initialising to `false` made every exception
+      // during the wipe indistinguishable from a verified clean browser, on the one screen that can
+      // never be reached again: the account is gone, so no session is left to route a retry through.
       let unclean = true;
       try {
         // THE SAME LOCAL CLEANUP SIGN-OUT DOES, not a subset of it. This used to be
@@ -465,26 +399,14 @@ export function AccountSection() {
   return (
     <>
       {/*
-       * ═══ SIGN OUT IS ITS OWN CARD, AND THAT IS THE WHOLE POINT ═══════════════════════
-       *
-       * It used to sit INSIDE the delete card, directly under the words "This cannot be
-       * undone" — so the one reversible control on this screen was wrapped in the language
-       * and the frame of the irreversible one. A person looking for "get me off this
-       * machine" read a permanence warning first and had to work out that it was not about
-       * the button underneath it.
-       *
-       * Separating the CARDS is what fixes that, not separating the buttons: a rule inside
-       * one panel still reads as two parts of one ceremony. Two panels are two subjects.
-       *
-       * The identity line moved here with it. "Signed in as …" is a fact about the SESSION,
-       * which is what this card acts on; it was fused into the delete card's lead
-       * ("Signed in as x. This cannot be undone."), a sentence that answered two unrelated
-       * questions and attached the permanence of deletion to the fact of being signed in.
-       *
-       * `signOut` (app/sign-out.ts) is the only correct way out: it revokes server-side AND
-       * wipes the IndexedDB mirror, which is where the mail actually is on this machine.
-       * `owner` is passed explicitly and captured from state BEFORE the call, for the same
-       * reason erasure captures it — afterwards there is nobody to ask.
+       * Sign out is its own card, and that is the point: it used to sit inside the delete card under
+       * "This cannot be undone", so the one reversible control on this screen wore the frame of the
+       * irreversible one. Separating the cards fixes that, not separating the buttons — a rule inside
+       * one panel still reads as two parts of one ceremony; two panels are two subjects. The identity
+       * line moved here with it: "Signed in as …" is a fact about the session, which is what this
+       * card acts on. `signOut` (app/sign-out.ts) is the only correct way out — it revokes
+       * server-side and wipes the IndexedDB mirror — and `owner` is captured from state before the
+       * call, for the same reason erasure captures it: afterwards there is nobody to ask.
        */}
       <SettingsSection className="acct acct-session">
         <h2 className="acct-h">{t("signOutTitle")}</h2>

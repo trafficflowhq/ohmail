@@ -1,46 +1,22 @@
 "use client";
 
 /**
- * ═══ THE LAST TEN CENTIMETRES: A PRESS BECOMES A FILE ═════════════════════════════════════
- *
- * Pressing an attachment saves it, whatever it is, through {@link AttachmentsChrome.open}
- * below. Looking at it first is a SEPARATE, smaller control offered only on the types this
- * app can draw — the strip's own eye, wired one layer up in `MessagePane` to
- * `openAttachmentPreview`. That overlay fetches through {@link AttachmentsChrome.ensure} and
- * carries a Download of its own, so both directions cost one press from either surface.
- *
- * The engine holds every attachment's state, mints the Blob URL and RETAINS the typed bytes;
- * `AttachmentStrip` draws it. Neither of them puts a file on somebody's disk, and neither of
- * them can: saving is a DOM act, and the strip is a pure component that takes `onOpen` and asks
- * no questions. This module is that seam, and it exists as its own file for two reasons —
- * `AppShell` is 1 900 lines and does not need more callbacks in it, and every decision below is
- * testable in jsdom without mounting a shell.
- *
- * ── WHY `<a download>` AND NEVER `window.open` ────────────────────────────────────────────
- *
- * A `blob:` URL INHERITS THE APP'S ORIGIN. Navigating to one at top level therefore runs
- * whatever the document contains as `ohmail.app`, with the host-only session cookie in
- * scope — and an `image/svg+xml` attachment is a document that executes script. The route's
- * `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff` describe the
- * RESPONSE and do not survive into a Blob built from its body, so they do not help here.
- *
- * The engine already closes this at the point the Blob is minted (`RENDERABLE_MIME` — an SVG
- * comes back typed `application/octet-stream`). This is the second ring, and it is a
- * different mechanism rather than the same one twice: `download` makes the browser SAVE
- * whatever it is handed instead of rendering it, so the file never becomes a document in a
- * tab whatever its type says. Both rings are cheap; the attack this forecloses is a stranger
- * mailing you a file.
- *
- * ── WHY A SEPARATE SUBSCRIPTION AND NOT `useEngineVersion` ────────────────────────────────
- *
- * `useEngineVersion` reads `engine.read().version()`, which is `store.version()` composed
- * with the overlay revision. Attachment state is IN-MEMORY ONLY — the whole design is that
- * ohmail stores no attachment bytes, so nothing is written to the mirror and neither of those
- * two numbers moves. `notify()` fires, `useSyncExternalStore` compares the snapshot, finds it
- * identical and BAILS OUT: the strip would sit on `idle` for ever while the bytes arrived
- * behind it, and every test that drives the engine directly would still pass. That is this
- * slice's own failure mode, one layer up, so the subscription counts notifications rather
- * than reading a version that cannot change.
+ * A press becomes a file. Pressing an attachment saves it, whatever it is
+ * ({@link AttachmentsChrome.open}); looking first is a separate control offered only on drawable
+ * types, wired in `MessagePane` to `openAttachmentPreview`. The engine holds every attachment's
+ * state, mints the Blob URL and retains the typed bytes; this seam is where saving happens.
+ * `<a download>` and never `window.open`: a `blob:` URL inherits the app's origin — an
+ * `image/svg+xml` attachment executes script as `ohmail.app` with the session cookie in scope, and
+ * the route's response headers do not survive into a Blob. The engine already types an SVG
+ * `application/octet-stream` (`RENDERABLE_MIME`); `download` is the second ring — save, not render.
+ */
+
+/**
+ * A separate subscription rather than `useEngineVersion`, because attachment state is in-memory only —
+ * ohmail stores no attachment bytes, so nothing is written to the mirror and neither `store.version()`
+ * nor the overlay revision moves. `notify()` fires, `useSyncExternalStore` compares an identical
+ * snapshot and bails out: the strip would sit on `idle` for ever while the bytes arrived behind it. So
+ * the subscription counts notifications rather than reading a version that cannot change.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -58,28 +34,14 @@ import { probeSessionNow, subscribeSessionRevival } from "./session-truth";
  */
 export interface AttachmentsChrome {
   /**
-   * THE LIST AND WHAT IS KNOWN ABOUT IT — the engine's outcome, not a flattened array.
-   *
-   * ## THE DEFECT, AND THE ONE LINE IT WAS
-   *
-   * This used to read `held.state === "ready" ? held.items : []`. `unavailable`, `loading` and
-   * `failed` all became the same empty array, so a metadata read that FAILED drew exactly what
-   * an inline-only message draws — nothing, under a paperclip painted from `hasAttachments`.
-   * Two different sentences, one silence, and the failing one invisible.
-   *
-   * The engine had recorded the failure the whole time (`AttachmentsOutcome`, with the server's
-   * `code` and `retryable`), and it already refuses to re-ask automatically so that a
-   * React effect cannot loop against a server that refused. What was missing was here: the seam
-   * threw the answer away. It no longer does, and {@link AttachmentsView} is the strip's own
-   * type, so the wire `MessagePane` already passes carries the state without that file changing.
-   *
-   * ## `includeInlineImages` — WHAT THE READER CAN SEE DECIDES WHAT THE LIST HOLDS
-   *
-   * Files only, unless the caller says it is drawing the frameless rendering. The engine's own
-   * note on {@link OhmailEngine.attachmentsOf} carries the argument; the reason it is a PARAMETER
-   * here rather than a setting is that the answer changes per message and per press — a reader can
-   * put any prose message back into its sender's own rendering, and the moment they do, its
-   * pictures are on screen again and listing them would name each one twice.
+   * The list and what is known about it — the engine's outcome, not a flattened array. This used to
+   * read `held.state === "ready" ? held.items : []`: `unavailable`, `loading` and `failed` all became
+   * the same empty array, so a failed metadata read drew exactly what an inline-only message draws —
+   * nothing, under a paperclip painted from `hasAttachments`. The engine had recorded the failure all
+   * along (`AttachmentsOutcome`, with `code` and `retryable`); the seam threw it away, and no longer
+   * does. `includeInlineImages`: files only, unless the caller says it is drawing the frameless
+   * rendering — a parameter, not a setting, because the answer changes per message and per press
+   * (restored sender rendering puts pictures back on screen, and listing them would name each twice).
    */
   itemsOf(messageId: string, opts?: { includeInlineImages?: boolean }): AttachmentsView;
   /**
@@ -159,25 +121,14 @@ export function saveObjectUrl(url: string, filename: string, doc: Document): voi
 }
 
 /**
- * DELIVER ONE FILE, by whichever route this window actually has.
- *
- * ── WHY THIS IS NOT ONE LINE ────────────────────────────────────────────────────────────────
- *
- * In a browser tab {@link saveObjectUrl} is the whole answer. In the desktop window it is answered
- * "no": the `download` attribute asks the webview to turn the navigation into a download, and a
- * webview whose host registered no download handler CANCELS it — silently, with no error anywhere,
- * which is why every attachment press in the app did nothing. `open-attachment.ts` carries the
- * mechanism and the reasoning; this is the one place either route is chosen.
- *
- * The desktop arm NEVER falls back to the anchor. A fallback would be a second silent no-op behind
- * a fix for the first, and the two are not interchangeable: the anchor there is not a slower way to
- * the same file, it is nothing at all.
- *
- * `blob` is the engine's RETAINED typed Blob for the item — the same bytes the object URL points
- * at, minted together so the two cannot diverge ({@link OhmailEngine.attachmentBlobOf}). It is
- * optional because the object URL is the older half of that pair and a caller may hold one without
- * the other; without bytes there is nothing to hand a viewer, so the anchor is all that is left and
- * it is used even on the desktop, where it does what it has always done.
+ * Deliver one file, by whichever route this window actually has. In a browser tab
+ * {@link saveObjectUrl} is the whole answer; in the desktop window the `download` attribute asks the
+ * webview to turn the navigation into a download, and a webview whose host registered no handler
+ * cancels it silently — every attachment press did nothing. `open-attachment.ts` carries the
+ * mechanism; this is the one place either route is chosen, and the desktop arm never falls back to
+ * the anchor (there it is not a slower route, it is nothing at all). `blob` is the engine's retained
+ * typed Blob, minted with the object URL so the two cannot diverge
+ * ({@link OhmailEngine.attachmentBlobOf}); without bytes the anchor is all that is left.
  */
 export function deliverFile(
   blob: Blob | undefined,
@@ -265,20 +216,13 @@ const SIBLING_LIST_CONCURRENCY = 4;
 const EMPTY_IDS: ReadonlySet<string> = new Set();
 
 /**
- * Wire the selected message's attachments — and its whole CONVERSATION's — to the shell.
- *
- * Returns `undefined` when this client cannot open attachments at all — the demo (`?demo=1`
- * is fixtures and zero network) and any host whose adapter lacks the capability. `undefined`
- * is a REAL answer and the pane reads it as one: no strip, rather than a "Download all"
- * button over an archive nothing can build.
- *
- * ── THE CLEANUP IS NOT OPTIONAL ───────────────────────────────────────────────────────────
- *
- * `releaseAttachments` revokes every object URL held for a message. A `blob:` URL pins its
- * bytes until it is revoked or the document dies, so without this a session spent opening
- * PDFs in a long-lived tab accumulates every one of them — the exact cost "ohmail stores no
- * attachment bytes" exists to avoid, reintroduced in the browser instead of the database.
- * The release set is the selection's whole ask — focused message and thread siblings alike.
+ * Wire the selected message's attachments — and its whole conversation's — to the shell. Returns
+ * `undefined` when this client cannot open attachments at all (the demo, an adapter without the
+ * capability); the pane reads that as a real answer — no strip, rather than a "Download all" button
+ * over an archive nothing can build. The cleanup is not optional: `releaseAttachments` revokes every
+ * object URL held for a message, and a `blob:` URL pins its bytes until revoked or the document dies —
+ * without it a long-lived tab accumulates every opened PDF, the exact cost "ohmail stores no
+ * attachment bytes" exists to avoid. The release set is the selection's whole ask.
  */
 export function useMessageAttachments(
   engine: OhmailEngine,
@@ -336,15 +280,12 @@ export function useMessageAttachments(
       // puts the real re-auth prompt on screen. A no-op wherever no probe is registered.
       return engine.loadAttachments(id).then((outcome) => {
         /*
-         * A COMPLETION THAT OUTLIVED ITS SELECTION IS RE-RELEASED, NOT ACTED ON. The engine
-         * does not cancel a list read on release — the late outcome is written back to its
-         * held map regardless — so a reader who left the thread before a slow response landed
-         * would keep that list (and the calendar pass below would then fetch BYTES) with no
-         * cleanup left to sweep it: the release already ran. The release set is the truth
-         * about what the CURRENT selection wants; an id no longer in it answers to nobody.
-         * The within-thread move survives this exactly: its cleanup clears the set and the
-         * re-run re-adds the id before any completion can land, so the (single-flighted,
-         * shared) outcome finds the id wanted and stands (review finding).
+         * A completion that outlived its selection is re-released, not acted on: the engine does not
+         * cancel a list read on release, so a reader who left the thread before a slow response
+         * landed would keep that list (and the calendar pass would fetch bytes) with no cleanup left
+         * to sweep it. The release set is the truth about what the current selection wants; an id no
+         * longer in it answers to nobody. The within-thread move survives: its cleanup clears the set
+         * and the re-run re-adds the id before any completion can land (review finding).
          */
         /*
          * TWO ways a completion can be stale, and both answer with a release against the
@@ -381,26 +322,14 @@ export function useMessageAttachments(
   }, [engine, messageId, available, ask]);
 
   /**
-   * ── THE SIBLINGS' LISTS — a thread's panels all show their files, not only the focused one ──
-   *
-   * Every message on an open conversation renders as a full panel with its own attachment strip
-   * (`MessageCard` — a reader's own SENT reply inside a thread was the found case: ingested from
-   * the Sent folder with two files on the row, rendered as a sibling panel with no strip and no
-   * ask). The strip reads `itemsOf(id)`, which is engine STATE — so somebody has to ask, and the
-   * asker is here rather than in the card because the card is mounted twice while the reader is
-   * open (the mounted-twice rule the whole chrome exists for) and an unmount-time release from
-   * one mount would revoke URLs the other mount is still showing. One owner, this hook, mounted
-   * once in `AppShell`.
-   *
-   * Keyed on `messageId` AND the conversation's id list: the id list alone would skip the re-ask
-   * after a WITHIN-thread selection move (same conversation, so same key, while the cleanup above
-   * has already released everything), and `messageId` alone would miss a sibling ARRIVING on the
-   * open thread mid-read (a drain landing the counterpart of a reply). The `loaded` guard makes
-   * the overlap of those two triggers idempotent, and the engine's own single-flight makes even a
-   * double ask one request.
-   *
-   * `threadOf` is read per render against the live mirror — fresh by the same argument as
-   * `conversationOf` in `AppShell` — and joined to a primitive so the effect compares by value.
+   * The siblings' lists — a thread's panels all show their files, not only the focused one
+   * (`MessageCard`; the found case was a reader's own sent reply rendered with no strip). The strip
+   * reads `itemsOf(id)`, engine state, so somebody has to ask — and the asker is here, not the card,
+   * because the card is mounted twice while the reader is open and an unmount-time release from one
+   * mount would revoke URLs the other is showing. One owner, this hook, mounted once in `AppShell`.
+   * Keyed on `messageId` AND the conversation's id list: the list alone skips the re-ask after a
+   * within-thread move, `messageId` alone misses a sibling arriving mid-read; the `loaded` guard and
+   * the engine's single-flight make the overlap one request. `threadOf` joins to a primitive.
    */
   const conversationKey =
     available && messageId
@@ -495,21 +424,14 @@ export function useMessageAttachments(
   }, [engine, messageId, available, conversationKey, pump]);
 
   /**
-   * ── A SESSION FAILURE MUST NOT OUTLIVE THE SESSION IT FAILED IN ──────────────────────────
-   *
-   * The engine holds a `failed` list for the life of the engine and deliberately refuses the
-   * automatic re-ask (`loadAttachments` — the render-loop argument). Right for a server that
-   * REFUSED the content; wrong for one that refused the SESSION, because that refusal expires
-   * the moment a refresh mints a new one — and it did not: one 401'd metadata read during an
-   * auth outage kept "Couldn't load this message's files." on the message for the whole
-   * session, with the same endpoint answering 200 beside it. Observed in live use.
-   *
-   * So the seam listens for revivals — each one a real 204 from `/auth/refresh`, a
-   * server-confirmed new session — and re-asks THEN, exactly when the held failure's cause is
-   * known to be gone. Bounded twice over: revivals are at most one per successful refresh, and
-   * the re-ask fires only while the held state is a failure whose `code` names the session.
-   * The release first is what makes the re-ask a fresh question rather than the refused
-   * answer served from memory.
+   * A session failure must not outlive the session it failed in. The engine holds a `failed` list for
+   * the engine's life and refuses the automatic re-ask (`loadAttachments`, the render-loop argument) —
+   * right for a server that refused the content, wrong for one that refused the session: one 401'd
+   * metadata read during an auth outage kept "Couldn't load this message's files." on the message for
+   * the whole session while the endpoint answered 200 beside it. So the seam listens for revivals —
+   * each a real 204 from `/auth/refresh` — and re-asks then. Bounded twice: at most one revival per
+   * successful refresh, and only while the held failure's `code` names the session. The release first
+   * makes the re-ask a fresh question rather than the refused answer served from memory.
    */
   useEffect(() => {
     if (!available || !messageId) return;
@@ -631,40 +553,14 @@ export function useMessageAttachments(
   );
 
   /**
-   * ── DOWNLOAD ALL — N FILES, NOT ONE ARCHIVE ──────────────────────────────────────────────
-   *
-   * This used to fetch the server-assembled zip and save it under the server's own name. The
-   * route still exists and `engine.downloadAllAttachments` still calls it; what changed is that
-   * the webapp no longer uses it, and the reason is what the reader is left holding.
-   *
-   * A zip is a container somebody now has to deal with. Pressing "Download all" on three PDFs
-   * and getting `attachments-<uuid>.zip` means finding it, expanding it, and then dealing with
-   * three PDFs anyway — plus a folder named after a message id that means nothing to anybody.
-   * What the press asked for was the FILES, so that is what it produces: three downloads, under
-   * their own names, in the same place every other download goes.
-   *
-   * It also removes the archive's one dishonesty. The zip may legitimately be missing parts —
-   * the server skips what it cannot fetch and names them in an `_errors.txt` INSIDE the archive
-   * — so the saved file looked complete and the explanation was hidden in it. Per file, a part
-   * that could not be fetched is a `failed` tile in the strip, in front of the reader, with the
-   * server's own sentence on it.
-   *
-   * ── THE COST, STATED RATHER THAN DISCOVERED ────────────────────────────────────────────
-   *
-   * One IMAP fetch per file instead of one for the set. `engine.downloadAllAttachments`'s own
-   * comment is right that N files can mean N conversations with the user's mail server, and
-   * providers throttle exactly that pattern. Two things make it affordable here: the prefetch is
-   * SEQUENTIAL, so the server sees one request at a time rather than a burst; and a message
-   * carries a handful of attachments, not hundreds. An attachment already fetched is skipped
-   * entirely — `openAttachment` returns early on a `ready` item — so pressing this after opening
-   * two of three files costs one request.
-   *
-   * ── THE SAVES ARE ONE SYNCHRONOUS LOOP, AND THAT IS NOT A STYLE CHOICE ─────────────────
-   *
-   * Every anchor click happens in the same task, with no `await` between them. Browsers treat a
-   * run of programmatic downloads as one act and ask about it once; spacing them across tasks
-   * turns one "Download multiple files?" prompt into several, or gets the later ones dropped
-   * silently. So all the waiting happens first, and then nothing waits.
+   * Download all — N files, not one archive. The server-assembled zip route still exists
+   * (`engine.downloadAllAttachments`); the webapp no longer uses it. A zip is a container somebody now
+   * has to deal with, named after a message id, and it hid the archive's one dishonesty: parts the
+   * server could not fetch were named in an `_errors.txt` inside it, so the saved file looked complete
+   * — per file, a failed part is a `failed` tile in the strip with the server's own sentence. The cost
+   * is one IMAP fetch per file, affordable because the prefetch is sequential and an already-`ready`
+   * item is skipped. The saves are one synchronous loop, no `await` between anchor clicks: browsers
+   * treat the run as one act and ask once — spacing it across tasks drops the later downloads.
    */
   const downloadAll = useCallback(
     (id: string, opts: { includeInlineImages?: boolean } = {}): void => {
