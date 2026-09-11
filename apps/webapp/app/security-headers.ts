@@ -16,7 +16,7 @@
  */
 
 /**
- * The one directive that is not strict: `script-src` keeps `'unsafe-inline'` in the BASELINE policy. The App Router
+ * THE ONE DIRECTIVE THAT IS NOT STRICT: `script-src` keeps `'unsafe-inline'` in the BASELINE policy. The App Router
  * inlines its RSC payload per page and per build, so it cannot be hashed from a config; a nonce is per-request, and
  * anonymous `/` is deliberately a static prerender — a CDN would cache ONE nonce and serve it to everyone, a nonce
  * that authorises nothing. So the split is by surface: the pages that render mail are dynamic already and get {@link
