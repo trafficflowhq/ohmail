@@ -113,38 +113,26 @@ export function localeFromCookieHeader(header: string | null | undefined): AppLo
   return null;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE NON-HOOK TRANSLATOR — for the surfaces that are not components.
+/*
+ * THE NON-HOOK TRANSLATOR — for the surfaces that are not components. `format.ts` is a function
+ * library: `screener-state.ts` calls `PLACE_LABEL[dest]` from a reducer and `AppShell` calls
+ * `resurfaceLabel(when)` inside a callback; neither can call `useTranslations`, and the words
+ * they produce — "Ohbox", "Reads", "Fri 09:00" — are on screen. A module register and not a
+ * prop because threading a catalogue into `placeLabel` means changing ten call sites across
+ * eight files, three not components at all, plus a reducer with no React context; the register
+ * is one seam, and the one the hosts already own — whoever builds the intl provider calls
+ * {@link setActiveCatalog} in the same place, with the same messages.
+ */
 
-   `format.ts` is a function library: `screener-state.ts` calls `PLACE_LABEL[dest]` from a reducer
-   and `AppShell` calls `resurfaceLabel(when)` inside a callback. Neither can call
-   `useTranslations`, and the words they produce — "Ohbox", "Reads", "Fri 09:00", "Tue 5 Aug 2026"
-   — are on screen. So they need a translator that is a plain function.
-
-   ── WHY A MODULE REGISTER AND NOT A PROP ────────────────────────────────────────────────────
-
-   Threading a catalogue into `placeLabel` means changing the signature of ten call sites across
-   eight files, three of which are not components at all, plus the reducer in `screener-state.ts`
-   that has no React context to read from. The register is one seam instead of ten, and it is the
-   seam the hosts already own: whoever builds the intl provider calls {@link setActiveCatalog} in
-   the same place, with the same messages.
-
-   ── WHAT THE REGISTER MUST NOT BECOME ───────────────────────────────────────────────────────
-
-   A SECOND i18n system. It reads the SAME `messages/<locale>.json` the hooks read, through the
-   same ICU implementation, resolved for the same locale — `createTranslator` is what
-   `useTranslations` is built on. Nothing may be declared here that is not a key in that
-   catalogue, and `test/locale-shim-parity.test.ts` asserts every English constant that falls back
-   through this path has an identical key set in the catalogue.
-
-   ── AND WHY `null` IS THE RESTING ANSWER ────────────────────────────────────────────────────
-
-   Absent means "no host has set a catalogue", which is exactly the state of a unit test that
-   renders one component with no provider — 40-odd of them in `apps/webapp/test`. Those tests
-   assert English, and they must keep passing without a provider bolted onto each one. So the
-   resting answer is `null` and every caller falls back to its own English constant, which is the
-   same string the catalogue holds (asserted, see above). It is never a raw key and never empty.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * What the register must not become: a SECOND i18n system. It reads the SAME `messages/<locale>.json` the hooks read,
+ * through the same ICU implementation, for the same locale — `createTranslator` is what `useTranslations` is built
+ * on. Nothing may be declared here that is not a key in that catalogue; `test/locale-shim-parity.test.ts` asserts
+ * every English constant falling back through this path has an identical key set in the catalogue. And `null` is the
+ * resting answer: absent means "no host has set a catalogue", exactly the state of the forty-odd unit tests that
+ * render one component with no provider and assert English. Every caller falls back to its own English constant — the
+ * same string the catalogue holds (asserted, above) — never a raw key and never empty.
+ */
 
 /** The shape a caller gets back: ICU-formatting, namespace-scoped, values by name. */
 export type NamespaceTranslator = (key: string, values?: Record<string, unknown>) => string;
@@ -176,39 +164,27 @@ export function activeFormatLocale(): AppLocale {
   return activeLocale;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE ZONE DIMENSION — one seam, beside the locale one, for the same reason.
+/**
+ * THE ZONE DIMENSION — one seam, beside the locale one, for the same reason. The product showed two clocks at once:
+ * `AboutSection` and `MailboxSection` render account dates through `toLocaleDateString` (the reader's own zone) while
+ * every MAIL stamp was formatted with `timeZone: "UTC"` — a reader in Zurich saw a message that arrived at 16:32
+ * stamped "14:32", two hours behind the account dates on the same screen. Storage does not move: every instant on the
+ * wire and in the mirror is UTC, and `bubbleUpAt` is still a UTC instant the worker compares against `now`. This seam
+ * decides only the zone an instant is READ in — the reader's, everywhere, once. Module-level rather than a hook for
+ * exactly {@link activeFormatLocale}'s argument: `format.ts` is called from a reducer, a toast callback, and once per
+ * visible row from a selector in another package — a prop is ten signatures, this is one.
+ */
 
-   The product showed TWO clocks at once. `AboutSection` and `MailboxSection` render account
-   dates through `toLocaleDateString`, which reads the reader's own zone; every MAIL
-   stamp — the row time, the hover title, the resurface label, the Screener's derived rows — was
-   formatted with `timeZone: "UTC"`. A reader in Zurich saw a message that arrived at 16:32 stamped
-   "14:32", two hours behind the account dates on the same screen.
-
-   Storage does not move: every instant on the wire and in the mirror is UTC, and `bubbleUpAt` is
-   still a UTC instant the worker compares against `now`. What this seam decides is only the zone an
-   instant is READ in — and the answer is the reader's, everywhere, once.
-
-   ── WHY A MODULE-LEVEL RESOLUTION AND NOT A HOOK ────────────────────────────────────────────
-
-   Exactly the argument {@link activeFormatLocale} is here for: `format.ts` is a function library
-   that `screener-state.ts` calls from inside a reducer and `AppShell` from inside a toast callback,
-   and `messageDisplayTime` is called once per visible row from a selector in another package.
-   Threading a zone through all of that as a prop is ten signatures; this is one.
-
-   ── AND WHY IT RESOLVES ITSELF RATHER THAN WAITING TO BE TOLD ───────────────────────────────
-
-   The locale register rests at `null` and each host injects, because a locale is a CHOICE. A zone
-   is not: it is a property of the machine the reader is looking at, and `Intl.DateTimeFormat()
-   .resolvedOptions().timeZone` already knows it in the browser, in the desktop webview and in Node.
-   Resting on a host injection would mean a host that forgets silently renders UTC again — which is
-   the bug. So the resting answer is the platform's own zone, resolved once (constructing a
-   `DateTimeFormat` is the expensive part) and cached until something injects.
-
-   {@link setActiveFormatZone} is that injection. It exists for tests — a stamp assertion must not
-   depend on the TZ of the machine running the suite, and the DST guards need a zone that HAS a DST
-   rule — and it is the hook a future "show times in the mailbox's zone" preference would use.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * And it resolves itself rather than waiting to be told. The locale register rests at `null` because a locale is a
+ * CHOICE; a zone is a property of the machine the reader is looking at, and
+ * `Intl.DateTimeFormat().resolvedOptions().timeZone` already knows it in the browser, the desktop webview and Node.
+ * Resting on a host injection would mean a host that forgets silently renders UTC again — the bug. So the resting
+ * answer is the platform's own zone, resolved once (constructing a `DateTimeFormat` is the expensive part) and cached
+ * until something injects. {@link setActiveFormatZone} is that injection: for tests — a stamp assertion must not
+ * depend on the suite machine's TZ, and the DST guards need a zone that HAS a DST rule — and the hook a future "show
+ * times in the mailbox's zone" preference would use.
+ */
 
 /** What a platform that cannot name its own zone falls back to. Never reached in a browser. */
 export const FALLBACK_FORMAT_ZONE = "UTC";
@@ -308,34 +284,25 @@ export function activeTranslator(namespace: string): NamespaceTranslator | null 
 }
 
 /**
- * TURN A TABLE OF ENGLISH SENTENCES INTO A LIVE VIEW OF ONE CATALOGUE NAMESPACE.
- *
- * The three reading-pane components each hold their copy as one object and read it from forty-odd
- * places, including from module-level helper functions that are not components at all (`Tile`,
- * `ListState`, `renderContent`). This returns an object of the SAME SHAPE whose string members are
- * GETTERS over the active catalogue and whose function members format the same ICU message — so
- * every one of those call sites is unchanged and every one of them is now translated.
- *
- * ── GETTERS, WHICH IS THE ONE UNUSUAL THING HERE AND THE REASON THE MIGRATION IS SAFE ──────────
- *
- * A property that is read on every access cannot go stale. Build this once at module scope and the
- * same object answers English before a host has set a catalogue, German after, and English again
- * for a key German has not filled — with no dependency on when it was constructed relative to the
- * provider, and no memo to invalidate. That matters because these modules are imported at the top
- * of the graph, long before any host renders.
- *
- * ── THE ARGUMENT NAMES HAVE TO BE DECLARED, AND THAT IS NOT AVOIDABLE ─────────────────────────
- *
- * An English fallback like `(n) => \`${n} attachments\`` is positional; its ICU message
- * (`{count, plural, …}`) is named. Nothing can infer one from the other, so `params` maps each
- * function key to the argument names in order. A missing entry means the message takes no values,
- * which for a function key would render it without its number — so the parity guard asserts every
- * function key in the fallback has a `params` entry.
- *
- * ── AND WHY THE FALLBACK IS STILL EVALUATED WHEN THE CATALOGUE ANSWERS ────────────────────────
- *
- * It is not: the fallback function runs only when the translator is absent or answered empty. The
- * ternary is written so the common path formats exactly one message.
+ * Turn a table of English sentences into a live view of one catalogue namespace. The three reading-pane components
+ * each hold their copy as one object read from forty-odd places, including module-level helpers that are not
+ * components (`Tile`, `ListState`, `renderContent`). This returns an object of the SAME SHAPE whose string members
+ * are GETTERS over the active catalogue and whose function members format the same ICU message — every call site
+ * unchanged, every one translated. Getters are the one unusual thing and the reason the migration is safe: a property
+ * read on every access cannot go stale, so the same module-scope object answers English before a host sets a
+ * catalogue, German after, and English again for a key German has not filled — no dependency on construction order,
+ * no memo to invalidate.
+ */
+
+/**
+ * The argument names have to be declared: an English fallback like `(n) => \`${n} attachments\``
+ * is positional, its ICU message (`{count, plural, …}`) is named, and nothing can infer one from
+ * the other — so `params` maps each function key to the argument names in order. A missing
+ * entry means the message takes no values, which for a function key would render it without its
+ * number; the parity guard asserts every function key in the fallback has a `params` entry. The
+ * fallback is not evaluated when the catalogue answers: it runs only when the translator is
+ * absent or answered empty, and the ternary is written so the common path formats exactly one
+ * message.
  */
 export function liveCopy<T extends Record<string, unknown>>(
   namespace: string,
