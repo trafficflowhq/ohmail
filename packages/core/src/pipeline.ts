@@ -71,39 +71,14 @@ export interface ReconcileApplyDeps extends Omit<PipelineDeps, "repo"> {
 }
 
 /**
- * The "Organization Writer": perform the port writes for a computed reconcile
- * action. Idempotent — `none` re-asserts convergence, and re-running `move`
- * after a crash simply re-issues the (idempotent) adapter move.
- *
- * This is the OUTSIDE-transaction move path: the worker's
- * reconcile runner calls it after the short persist transaction has committed,
- * so the IMAP `adapter.move` network call never sits inside the seq/change_log tx.
- *
- * ── A GONE SOURCE LOCATOR IS DEFERRED HERE, NEVER THROWN ────────────────────────────────────
- *
- * Four call sites reach this function and every one of them is a USER'S DECISION that has already
- * committed: the Screener's verdict (`screener-service.ts`), an approval (`approval-service.ts`),
- * an opt-in HEY reroute (`hey-migration.ts`), and the worker's own runner. `adapter.move` refusing
- * with a gone locator says the source UID moved or its folder was recycled — see `gone.ts` for the
- * three readings — and it says NOTHING about whether the decision can be carried out. Throwing it
- * therefore reported a committed decision as a server error, and, at the two call sites that loop,
- * abandoned every row behind the one that refused.
- *
- * So the arm below returns instead of throwing, and **writes no folder state at all** — the caller
- * has already committed the intent, and a post-I/O write of a pre-I/O value is how a newer
- * decision gets overwritten by an older one. The row is then exactly what a decision taken with no
- * adapter injected produces — `desired ≠ observed`, which is the reconciler's queue — and the
- * organizer applies it on its next cycle, against the locator adoption has by then repointed.
- *
- * **It deliberately does NOT re-resolve the locator and move again.** A read may do that; a
- * MUTATION may not. Re-resolving a UID and then moving what is found under it is the precise
- * defect `ImapAdapter#assertLocatorEpoch` exists to refuse — the identity of the message now
- * wearing that UID has not been proved. Re-resolution belongs where identity IS proved: the scan,
- * which adopts by Message-ID and fingerprint.
- *
- * `deferred` is on the return so a caller that COUNTS moves does not count this one. The two
- * loops need that — reporting a deferred row as rerouted would tell the user mail moved that has
- * not moved yet.
+ * The "Organization Writer": perform the port writes for a computed reconcile action. Idempotent,
+ * and the OUTSIDE-transaction move path: `adapter.move` never sits inside the seq/change_log tx.
+ * A gone source locator is DEFERRED, never thrown: all four call sites are a committed user
+ * decision, and a gone locator says nothing about whether it can be carried out — throwing
+ * reported a committed decision as a server error and abandoned the rows behind it. The deferral
+ * writes no folder state — a post-I/O write of a pre-I/O value overwrites newer decisions —
+ * leaving the row in the reconciler's queue. It does NOT re-resolve and move again: a MUTATION
+ * may not. `deferred` rides the return so a counting caller does not over-report.
  */
 export async function applyReconcileAction(
   deps: ReconcileApplyDeps,
@@ -129,27 +104,15 @@ export async function applyReconcileAction(
         newLocator = await adapter.move(locator, action.to);
       } catch (err) {
         if (!isMessageGone(err)) throw err;
-        // ── DEFERRED, AND IT WRITES NOTHING. THAT IS THE POINT, NOT AN OMISSION ────────────────
-        //
-        // This arm used to `upsertFolderState` the desire it had been called with. Review found
-        // the hazard and it is the one this repository has paid for before: the value being
-        // written was computed BEFORE the IMAP round trip, so a newer decision committed by
-        // another device while the move was in flight was overwritten by the older one — and the
-        // reconciler would then carry the mail to the folder the person had already changed their
-        // mind about. A post-I/O write of a pre-I/O value is the shape; it does not stop being
-        // that shape because the write is on a failure path.
-        //
-        // Guarding it with a compare would have worked and is the wrong fix, because the write is
-        // not needed. **The intent belongs to the caller, and three of the four already persist
-        // it inside the transaction that took the decision** — the Screener's verdict and an
-        // approval both write `desired_folder` with `reconcile_status: 'pending'` before they ever
-        // reach this function, and the worker's runner has its own. The fourth (the rules-import
-        // re-route) now does the same, which is where it belonged: a pass that computes an intent
-        // owns recording it, and it can then record it BEFORE the network call rather than trying
-        // to reconstruct it afterwards.
-        //
-        // So a deferral leaves the row exactly as the caller committed it — `desired ≠ observed`,
-        // which is the reconciler's queue — and this function only reports what happened.
+        // Deferred, and it writes NOTHING — the point, not an omission. This arm used to
+        // `upsertFolderState` the desire it was called with, and the value was computed BEFORE
+        // the IMAP round trip, so a newer decision committed mid-flight was overwritten by the
+        // older one — a post-I/O write of a pre-I/O value, no less that shape for being on a
+        // failure path. Guarding with a compare would work and is the wrong fix, because the
+        // write is not needed: the intent belongs to the CALLER, and all four callers persist it
+        // inside the transaction that took the decision. A deferral leaves the row exactly as
+        // committed — `desired ≠ observed`, the reconciler's queue — and this function only
+        // reports what happened.
         const pending: FolderStateRow = {
           desiredFolder: action.to,
           observedFolder: state.observedFolder,
@@ -174,17 +137,14 @@ export async function applyReconcileAction(
         observedFolder: action.to,
         lastSetBy: "us",
       };
-      // ── THE COMPLETION IS CONDITIONAL, AND `desired_folder` IS NOT IN ITS `SET` LIST ────────
-      //
-      // `action.to` is the desire this move was computed against, read before a network round
-      // trip that takes minutes on a slow host — and `desired_folder` has six other writers that
-      // take no mailbox row (the API's move, the Screener's apply, `rule-retro`, `ohbox-tidy`,
-      // `screener-auto`, the sensitive re-screen). Writing the pair back through
-      // `upsertFolderState` therefore REVERTED any decision that committed meanwhile: a lost
-      // update, nothing erroring, the mail ending where the older decision said. So the desire
-      // travels as the WITNESS and the landed folder as the fact. On a miss the newer desire
-      // stands, the row goes pending against it, and the locator this call just repointed is
-      // where the next cycle files from.
+      // The completion is conditional, and `desired_folder` is not in its SET list. `action.to`
+      // is the desire this move was computed against, read before a round trip that takes minutes
+      // on a slow host — and `desired_folder` has six other writers that take no mailbox row.
+      // Writing the pair back through `upsertFolderState` REVERTED any decision that committed
+      // meanwhile: a lost update, nothing erroring, the mail ending where the older decision
+      // said. So the desire travels as the WITNESS and the landed folder as the fact; on a miss
+      // the newer desire stands, the row goes pending against it, and the locator this call just
+      // repointed is where the next cycle files from.
       const matched = await repo.completeFolderState(messageId, {
         expectDesiredFolder: action.to,
         observedFolder: action.to,
@@ -286,38 +246,24 @@ export interface NewPlan {
    */
   seen: boolean;
   /**
-   * What this message's OWN PROVIDER said about its claimed author, as
-   * {@link authVerdictFromHeaders} read it — persisted to `messages.auth_verdict` by
-   * {@link commitChange}.
-   *
-   * REQUIRED, and computed exactly once per ingest, for the reason {@link AuthVerdict} gives
-   * for the evaluator's field being required: a default would let a later edit select a branch
-   * without naming it in a diff. It is carried on the plan rather than recomputed at commit so
-   * the value that DECIDED the routing is the value that lands on the row — recomputing under a
-   * trusted set that had changed between the two phases would store a verdict that never
-   * routed anything.
+   * What this message's own provider said about its claimed author, as {@link
+   * authVerdictFromHeaders} read it — persisted to `messages.auth_verdict` by {@link
+   * commitChange}. REQUIRED and computed exactly once per ingest: a default would let a later
+   * edit select a branch without naming it in a diff. Carried on the plan rather than recomputed
+   * at commit, so the value that DECIDED the routing is the value that lands on the row —
+   * recomputing under a trusted set that changed between the phases would store a verdict that
+   * never routed anything.
    */
   authVerdict: AuthVerdict;
   /**
-   * THIS PLACEMENT WAS MADE BY SOMEBODY OTHER THAN THIS ORGANIZER — the customer's own hand, or the
-   * previous organizer whose folders an import hold has not yet asked about.
-   *
-   * It decides ONE thing at commit, and it is the third of the three structural gates listed on
-   * `imap-types.ts#PASSIVE_EXCLUDED_SPECIAL_USE`: the `folder_state` row is written
-   * `last_set_by: 'external'` instead of `'us'`.
-   *
-   * That is not a cosmetic label. `'external'` is defined as *"a placement the USER made in their own
-   * mail client"*, which is exactly what an archive folder is, and **every pass that moves mail
-   * requires `'us'`** — `reconcileFolders` skips a non-`'us'` row outright, and `rule-retro`,
-   * `ohbox-tidy`, `screener-auto` and `read-retro` all carry `eq(folderState.lastSetBy, "us")` in
-   * their candidate predicates — `rule-retro` the widest, at `["us", "peer"]`. So a passive row is
-   * out of every UNPRESSED mover's reach by DATA, not only by the early return in `planChange` that
-   * put it there. Two independent gates, either sufficient.
-   *
-   * **WHAT IT NO LONGER DECIDES IS *WHICH* NON-`us` VALUE.** `passive` says only "this install did
-   * not decide this placement". {@link NewPlan.adoption} says whose it was, and the commit reads
-   * `p.passive ? (p.adoption ?? "external") : "us"`. A reader in a folder ohmail ORGANIZES is the
-   * one case where `'external'` would be a false claim — see {@link readerAdoption}.
+   * This placement was made by somebody other than this organizer — the customer's own hand, or
+   * the previous organizer an import hold has not yet asked about. It decides ONE thing at
+   * commit, the third of the three structural gates: the `folder_state` row is written
+   * `last_set_by: 'external'` instead of `'us'` — and every pass that moves mail requires `'us'`
+   * (`rule-retro` the widest, at `["us", "peer"]`), so a passive row is out of every unpressed
+   * mover's reach by DATA, not only by the early return that put it there. What it no longer
+   * decides is WHICH non-`us` value: {@link NewPlan.adoption} says whose it was, and the commit
+   * reads `p.passive ? (p.adoption ?? "external") : "us"` — see {@link readerAdoption}.
    */
   passive?: boolean;
   /**
@@ -370,34 +316,14 @@ export interface ExistingPlan {
    */
   body?: MessageBodyInput;
   /**
-   * THE SOURCE COPY WHOSE EXPUNGE IS STILL OWED, WHEN NOTHING PROVED IT WENT AWAY.
-   *
-   * Present only for an `own_move` reached on `appearance_only` evidence — our move's destination
-   * copy showed up while the source was never observed to disappear. That is the COPY-succeeded /
-   * EXPUNGE-failed split: `imap.ts#move` is probe → pre-check → COPY → verify → expunge on a server
-   * without RFC 6851 MOVE, those are separate network operations, and no isolation level can join
-   * them because the split is across the IMAP boundary.
-   *
-   * **This locator STAYS the primary instance, and that is the point of the field.** The obvious
-   * move is to repoint at the copy and call the move done, and it is wrong twice over: it declares
-   * a completion nothing witnessed, and it strands the surviving source, because the only thing
-   * that ever expunges it is a retry of the very move being marked complete. So the primary stays
-   * here, the destination copy is recorded as a SECOND instance — known, therefore never
-   * re-downloaded — and `folder_state` is left pending. The next reconcile pass then calls
-   * `move(source, desired)` again, and the adapter's destination pre-check recognises the copy it
-   * already made, writes nothing, and expunges this locator. That is the only sequence that
-   * converges on exactly one surviving message.
-   *
-   * It is safe to keep reading through this locator in the meantime: the message is still there —
-   * a failed expunge is precisely why — and it is byte-identical to the copy, so on-demand
-   * attachment fetches and reply quoting see what they always saw.
-   *
-   * **Absent for the two adoptable evidence shapes, and that is the whole discrimination.** A
-   * `correlated_move` (the adapter paired a vanished UID with a re-appeared one) and a
-   * `verified_absence` (the primary instance is gone, written by `sync.ts` from `batch.deletes`)
-   * are both genuine completions: the source really did disappear, so there is no second copy,
-   * nothing to record, and the move converges normally. `ports.ts#MoveEvidence` states the rule
-   * this implements — "completion is source absence".
+   * The source copy whose expunge is still owed, when nothing proved it went away. Present only
+   * for an `own_move` on `appearance_only` evidence — the COPY-succeeded/EXPUNGE-failed split of
+   * a no-MOVE server. This locator STAYS the primary: repointing at the copy would declare a
+   * completion nothing witnessed and strand the surviving source, whose only remover is a retry
+   * of this very move. The copy is recorded as a second instance and `folder_state` stays
+   * pending; the next reconcile retries, the adapter's pre-check recognises its own copy, writes
+   * nothing, and expunges this locator — the only converging sequence. Absent for
+   * `correlated_move` and `verified_absence`: genuine completions — completion is source absence.
    */
   unexpungedSource?: NativeLocator;
 }
@@ -460,58 +386,14 @@ export interface PlanDeps {
   accountId: string;
   mailboxId: string;
   /**
-   * THIS INSTALL IS A READER OF THIS MAILBOX — another mail client, not its organizer.
-   *
-   * **REQUIRED, and it is the first field on this interface for the same reason it is required:
-   * for this input the absent-config default IS the dangerous branch.** An omitted `readerMode`
-   * routes as an ORGANIZER, and an organizer that is not the organizer means two installs moving
-   * one person's mail — the single invariant the lease exists to hold. `trustedAuthservIds` states
-   * the same rule for its own gate and shipped inert at all five production sites while it was
-   * optional; this one cannot be allowed to.
-   *
-   * The type is what a compiler can enforce, and almost no test file here is typechecked, so the
-   * REAL guard is a census over product source that asserts the EXACT SET of compositions passing
-   * the field — a new one goes red until it is named on purpose. And there is exactly ONE place in
-   * the tree that decides this value — `sync.ts#syncCycleWithin`, from `SyncDeps.role` — so `role`
-   * and `readerMode` cannot drift into disagreeing about the same cycle.
-   *
-   * ── WHAT THE MODE DOES ────────────────────────────────────────────────────────────────────
-   *
-   * A reader adopts the mailbox instead of deciding about it. Concretely, and each clause is
-   * pinned by a test:
-   *
-   *  · a NEW message keeps `change.locator.folder` — where the server already had it — and is
-   *    committed with {@link NewPlan.passive}. WHICH non-`us` value that becomes depends on the
-   *    FOLDER, not on this mode: `'external'` in one of the customer's own folders, where the
-   *    placement really is theirs, and `'peer'` in a folder ohmail ORGANIZES (`INBOX` and the
-   *    `ohmail/*` destinations), where it was made by another install of this account. See
-   *    {@link readerAdoption} for why calling the second one `'external'` froze the message past
-   *    the reach of every mover. A reader never writes `'us'`. Either way it ADOPTS: `desired` is
-   *    the arrival folder and no move is ever issued.
-   *  · an EXISTING message the reader finds somewhere new is adopted too, and as `'external'` —
-   *    the person's hand — whatever folder it moved into. It is NOT the same question as the
-   *    arrival above: a message we already hold carries a placement of ours, and a move away from
-   *    it is the shape of somebody overriding that placement. Calling it `'peer'` read a drag from
-   *    `ohmail/Reads` back into `INBOX` as another install's filing, which let a pressed rule undo
-   *    it; the argument, and what evidence reinstating `'peer'` would need, is written where
-   *    `readerAttribution` used to be.
-   *  · NO rules are read, NO known-sender set is read, NO classifier is constructed, NO credit is
-   *    debited, NO `routing_decisions` row is written and NO learning signal is recorded. Not
-   *    "the classifier happens to be undefined" — the branch is never entered, which is why the
-   *    proof for this is a test that INJECTS a classifier double and asserts silence. A reader's
-   *    `classifier: undefined` would otherwise be byte-identical to "AI is off".
-   *  · an EXISTING message never yields a `move`. The reconciler's answer is forced to
-   *    `adopt_external` (or `none`), which is exactly a reader following the organizer's hand.
-   *
-   * `passive` is not new machinery invented for this: every retro pass already required
-   * `last_set_by = 'us'`, so a reader's rows are out of every mover's reach by DATA as well as by
-   * the branch that put them there. Two independent gates, either sufficient.
-   *
-   * `'peer'` narrows the first gate by exactly one pass and no more. `rule-retro` admits it,
-   * because that pass only ever runs for a rule whose owner asked for it to reach mail already on
-   * disk; `ohbox-tidy`, `screener-auto`, `sensitive-rescreen` and `reconcileFolders` do not, so
-   * being promoted back to organizer still moves nothing on its own. That is the property to
-   * preserve if a fifth pass is ever written: a reader's rows wait for a press, they do not queue.
+   * This install is a READER of this mailbox, not its organizer. REQUIRED: an omitted
+   * `readerMode` routes as an ORGANIZER — two installs moving one person's mail. A census pins
+   * the compositions passing the field; one place decides the value. What the mode does: a NEW
+   * message keeps its arrival folder, committed {@link NewPlan.passive} (`'external'` in the
+   * customer's folders, `'peer'` in one ohmail organizes); an EXISTING message found somewhere
+   * new is adopted `'external'`; NO rules, classifier, credit or learning signal — the branch is
+   * never entered, proved by an injected double asserting silence; never a `move`. `'peer'`
+   * narrows the `'us'` gate by one pass, `rule-retro`, on a press.
    */
   readerMode: boolean;
   classifier?: ClassifierPort;
@@ -519,51 +401,24 @@ export interface PlanDeps {
   /** The AI spend gate. Absent ⇒ unmetered; see {@link CreditGate}. */
   credits?: CreditGate;
   /**
-   * The authserv-ids the ACCOUNT'S OWN provider signs `Authentication-Results` with, lowercased.
-   *
-   * ── WHY CONFIGURATION AND NOT A `mailboxes` COLUMN ──────────────────────────────────────
-   *
-   * It is a statement about WHOM THIS DEPLOYMENT BELIEVES, not about the user's mailbox. The
-   * value is a property of the provider on the other end of the IMAP connection (`mx.google.com`
-   * for Gmail, `hotmail.com` for Outlook), it is set by whoever operates the host, and a user
-   * must not be able to name their own trusted position — that would let a sender-controlled
-   * `Authentication-Results` be believed, which is precisely what `authVerdictFromHeaders`'s
-   * authserv-id scan exists to refuse. A column would put it one `UPDATE` away from the
-   * account. `packages/api/src/routes/shared.ts#unsubscribes` already states the same thing for
-   * `UnsubscribeDeps.trustedAuthservIds`, the one pre-existing consumer, and a SECOND home for
-   * one decision is how two paths come to disagree about the same message.
-   *
-   * So there is no migration 0032 and no `/health` marker move: this is injected, exactly like
-   * the classifier, the credit gate and the routing port beside it.
-   *
-   * ── HOW PRODUCTION POPULATES IT ─────────────────────────────────────────────────────────
-   *
-   * `authserv-ids.ts#providerAuthservIds(<the IMAP host the connection dials>)` — the static
-   * provider table (Gmail, Microsoft), resolved where the adapter is built and threaded here.
-   * Every seam that builds sync deps REQUIRES the field (`SyncDeps.trustedAuthservIds`), because
-   * for this input the absent default is the dangerous branch: this field sat optional-and-empty
-   * at all five production sites, and the demote-only branch below protected nothing.
-   *
-   * ── ABSENT IS STILL A FIRST-CLASS STATE HERE ────────────────────────────────────────────
-   *
-   * Absent ⇒ {@link NO_TRUSTED_AUTHSERV_IDS} ⇒ `"unavailable"` for every message ⇒ byte-identical
-   * routing to the `auth: "unauthenticated"` literal this replaced — which is also what an
-   * unknown provider's mailbox resolves to. It stays optional HERE (and required one level up)
-   * because a plan with no trust decision must route like the day-one engine: see
-   * {@link AuthVerdict} on the large backlog.
+   * The authserv-ids the account's own provider signs `Authentication-Results` with, lowercased.
+   * Configuration, not a `mailboxes` column: a statement about WHOM THIS DEPLOYMENT BELIEVES — a
+   * user must not name their own trusted position, or a sender-controlled header could be
+   * believed; a column would put it one UPDATE away. Production populates it via
+   * `providerAuthservIds(<the IMAP host dialled>)`; every sync-deps seam REQUIRES the field,
+   * because it sat optional-and-empty at all five production sites and the demote-only branch
+   * protected nothing. Absent stays first-class HERE: it resolves to `"unavailable"` for every
+   * message — byte-identical routing to the literal it replaced.
    */
   trustedAuthservIds?: ReadonlySet<string>;
   /**
    * The account's Ohbox posture, resolved per-account from `account_settings.ohbox_policy` by the
-   * worker. Injected configuration, exactly like `trustedAuthservIds` above — it is a property of
-   * how THIS account has asked its mail to be organised, resolved once per cycle, and threaded here
-   * rather than read inside the engine.
-   *
-   * Absent ⇒ {@link DEFAULT_OHBOX_POLICY} (`people_and_replied`) ⇒ the demotion branch never fires
-   * ⇒ byte-identical routing to the pre-slice engine. NULL `ohbox_policy` resolves the same way, so
-   * shipping this demotes no existing account until it opts in. This is the required day-one
-   * behaviour, on the same discipline as `trustedAuthservIds`, and {@link evaluateRules} takes the
-   * resolved value as REQUIRED so no call site can forget it.
+   * worker — injected configuration, like `trustedAuthservIds` above: a property of how THIS
+   * account asked its mail to be organised, resolved once per cycle and threaded here. Absent
+   * resolves to {@link DEFAULT_OHBOX_POLICY} (`people_and_replied`), so the demotion branch never
+   * fires and routing is byte-identical to the pre-slice engine; a NULL `ohbox_policy` resolves
+   * the same way, so shipping this demotes no existing account until it opts in. {@link
+   * evaluateRules} takes the resolved value as REQUIRED so no call site can forget it.
    */
   ohboxPolicy?: OhboxPolicy;
   /**
@@ -574,117 +429,37 @@ export interface PlanDeps {
    */
   ohboxBar?: string;
   /**
-   * THE SCREENING CUTOFF — mail that arrived before this instant keeps its arrival folder instead
-   * of being held at the gate. ABSENT ⇒ no cutoff ⇒ byte-identical routing to before mail 0056.
-   *
-   * ── THE DEFECT ────────────────────────────────────────────────────────────────────────────
-   *
-   * The router has no notion of age. `evaluateRules` answers `ohmail/Screener` for ANY sender with
-   * no rule, and this function applies it, so every message from an unruled sender is physically
-   * moved to the Screener folder whatever its date. On a fresh mailbox that is exactly right — it
-   * IS the consent gate. On a backfill it is not: a pass reaching further into the mailbox delivers
-   * years-old mail from senders the reader has long since stopped hearing from, and each one is
-   * moved to the gate and queued for a decision nobody is going to make. On a mailbox with years of
-   * history that is not a trickle: the backfill walks newest-first, so after the first pass
-   * essentially everything it delivers predates the window, and the gate files all of it — one
-   * physical IMAP move per message, into a queue the reader is expected to empty by hand.
-   *
-   * ── WHAT THE CUTOFF DOES, AND THE THREE THINGS IT MUST NOT ────────────────────────────────
-   *
-   * Only `source === "screener"` verdicts are subordinated — the gate's own fall-through for a
-   * sender nobody has ruled on. Specifically NOT:
-   *
-   *  · `source === "rule"`. A rule is the USER's decision and outranks everything here, in both
-   *    directions: an old message from a sender they screened OUT still goes to Screened, and an
-   *    old message from a sender they admitted still goes to the Ohbox. Subordinating a rule
-   *    verdict would let a date decide something a person already decided.
-   *  · the auth-fail demotion, which also produces `source === "screener"` — and this is the one
-   *    place the source test is not sufficient on its own. That branch fires on a message whose
-   *    `Authentication-Results` FAILED, which is a statement about the message and not about the
-   *    sender being unknown, so it is checked separately below and never subordinated.
-   *  · sensitivity and the corroborated-bounce arm, both of which resolve BEFORE this and both of
-   *    which promote INTO the Ohbox. Nothing here re-demotes them.
-   *
-   * The message keeps `change.locator.folder` — where the mail server already had it. Not the
-   * Ohbox, not a heuristic destination: the whole claim is "leave the backlog alone", and picking
-   * a folder for it would be a placement nobody asked for. On the ordinary path that is the INBOX
-   * for INBOX mail and the user's own folder for filed mail.
-   *
-   * ── HOW THE AGE IS MEASURED ───────────────────────────────────────────────────────────────
-   *
-   * `change.internalDate` — the server's own receive clock — and NOTHING else. ABSENT ⇒ NOT old
-   * ⇒ the gate's verdict stands: a message whose receive time the server did not vouch for is
-   * unknown, not ancient, and the safe answer for an unknown is the consent gate. The parsed
-   * `Date:` header used to be the fallback, and a security review flagged it — the header
-   * is written by the SENDER, so on an INTERNALDATE-less server it let a backdated `Date:` keep
-   * a stranger's fresh delivery in the INBOX. The header still orders and displays
-   * (`messages.date`); it has no say here. See {@link Change.internalDate}.
-   *
-   * ── WHY A RESOLVED INSTANT AND NOT `{ baselineAt, dormancyDays }` ─────────────────────────
-   *
-   * The same discipline as `trustedAuthservIds` and `ohboxPolicy` above: the account's settings
-   * are resolved ONCE per cycle by the worker (`index.ts#screeningFor`) and threaded in. Passing
-   * the two components would put the arithmetic — and therefore a second chance to get it wrong —
-   * inside the engine, where it would drift from the cutline's copy. ABSENT is the only state that
-   * means "no cutoff", and it is what a NULL `screening_baseline_at`, a settings read that failed,
-   * and every existing caller and test all produce.
+   * The screening cutoff — mail arrived before this instant keeps its arrival folder instead of
+   * being held at the gate; ABSENT means no cutoff. The router has no notion of age, so a
+   * backfill moved years-old mail into the Screener, into a queue nobody will empty. Only `source
+   * === "screener"` verdicts are subordinated — NOT a `rule` verdict, NOT the auth-fail demotion
+   * (checked separately), NOT sensitivity or the bounce arm. The message keeps
+   * `change.locator.folder`. Age is `change.internalDate` ONLY: the `Date:` header is
+   * sender-written, and the old fallback let a backdated header keep a stranger's fresh delivery
+   * in the INBOX; absent INTERNALDATE means NOT old — the gate.
    */
   screeningCutoff?: Date;
   /**
-   * A FOREIGN ORGANIZER PROFILE'S IMPORT DECISION IS OPEN FOR THIS MAILBOX — the routing half of
-   * the write-behind HOLD (TAKEOVER-RESCREEN). ABSENT ⇒ inert ⇒ byte-identical routing for every
-   * existing caller and test.
-   *
-   * ── THE DEFECT (measured live, the 2026-08-29 self-host takeover drill) ──────────────────
-   *
-   * A mailbox organized elsewhere arrives carrying its decisions: the travelling profile in
-   * `ohmail/_meta` answers for every sender its outgoing organizer screened. The write-behind
-   * detects that document, HOLDS it, and asks the user whether to import — but the sync loop ran
-   * at full authority while that question was open, and an incoming organizer whose own store is
-   * COLD has no `contacts` row for anyone. So the drill's takeover physically moved all 31 INBOX
-   * messages of already-screened-in senders into `ohmail/Screener`, on the real server, while the
-   * document answering for every one of them sat FOUND in the same mailbox. The decisions existed,
-   * were detected, and were not consulted. The user's inbox was emptied into the consent gate by
-   * the act of leaving.
-   *
-   * ── WHAT THIS FLAG DOES ───────────────────────────────────────────────────────────────────
-   *
-   * While the decision is open, the GATE's own verdicts adopt the arrival folder — the same
-   * subordination as {@link screeningCutoff}, with the same three refusals: a `rule` verdict is
-   * the user's and stands; the auth-fail demotion is a statement about the MESSAGE and is never
-   * subordinated; sensitivity and the bounce arm resolve before this and are not re-demoted. The
-   * adopted row is committed with {@link NewPlan.passive} attribution (`last_set_by: 'external'`),
-   * because that is what the placement IS — the standing state of the user's own mailbox, made
-   * under its previous organizer — and it is what keeps every retro pass from re-deciding it
-   * after the import lands. The mailbox is the master; the incoming organizer must not undo what
-   * the outgoing one's decisions already placed.
-   *
-   * The hold ends the way the write-behind's own hold ends — the user answers (import applied or
-   * declined), or the found document turns out to already equal local state — and ordinary
-   * screening resumes for mail ingested from then on. Mail adopted during the window stays where
-   * the master had it: placement on the master is user intent, and un-adopting it would be the
-   * defect again, one import later. The window's honest cost is that a genuinely new stranger
-   * arriving mid-window lands wherever the server delivered it instead of at the gate — bounded
-   * by the user answering the import question the product is already asking them; the virgin
-   * connect (no travelling document at all) never arms this and screens exactly as before.
-   *
-   * Resolved once per cycle by the worker from the profile hold's own state
-   * (`profile.ts#OrganizerProfileSync.importDecisionOpen`), on `screeningCutoff`'s discipline.
+   * A foreign organizer profile's import decision is open — the routing half of the write-behind
+   * HOLD; ABSENT means inert. Measured in a takeover drill: the profile answered for every
+   * screened sender, the write-behind held it and asked — and the sync loop ran at full authority
+   * meanwhile, moving all 31 INBOX messages of screened senders into the Screener. While open,
+   * the GATE's own verdicts adopt the arrival folder — {@link screeningCutoff}'s subordination —
+   * committed {@link NewPlan.passive}, keeping every retro pass from re-deciding after the
+   * import. The hold ends when the user answers or the document equals local state. The cost: a
+   * new stranger mid-window lands where the server delivered it.
    */
   importDecisionOpen?: boolean;
 }
 
 /**
- * THE TYPED "NO CAP" — the value a composition root writes to say its deployment meters no
- * storage: the desktop engine and the self-host server (a self-hoster's limit is their own
- * disk), and every test that is not about the cap.
- *
- * A symbol and not `null`/`undefined`, because for the storage cap the absent-config default IS
- * the dangerous branch (a wiring refactor that drops the field must be a compile error, not a
- * silently unmetered cap) — the same declaration-not-inference rule `trustedAuthservIds` and
- * `mailbox-allowance-registry` each state for their own gates. The hosted worker never types
- * this name; its composition threads `storageCapOf`'s per-account number, and a test pins that
- * wiring by flipping it here and watching the decline path go dark.
+ * The typed "no cap" — the value a composition root writes to say its deployment meters no
+ * storage: the desktop engine, the self-host server (a self-hoster's limit is their own disk),
+ * and every test not about the cap. A symbol and not `null`/`undefined`, because for the storage
+ * cap the absent-config default IS the dangerous branch — a wiring refactor that drops the field
+ * must be a compile error, not a silently unmetered cap. The hosted worker never types this name;
+ * its composition threads `storageCapOf`'s per-account number, and a test pins that wiring by
+ * flipping it here and watching the decline path go dark.
  */
 export const UNMETERED_STORAGE_CAP: unique symbol = Symbol("ohmail: unmetered storage");
 
@@ -708,36 +483,14 @@ export interface CommitDeps {
 }
 
 /**
- * THE DUAL-KEY LOOKUP — how the key format changes with **no backfill**.
- *
- * Backfilling fingerprints is prohibited outright, and the reason is worth keeping next to
- * the code that exists because of it: a batch job would compute a DIFFERENT value than ingest
- * does. `message_bodies.text` is redacted for sensitive mail, `html` has been through
- * `prepareHtmlForStorage` and a 256 KiB cap, `attachments` had no content digest before this
- * change, and `messages.to_addresses` — written at ingest only since the recipients slice — holds
- * its `'[]'` default on every row that predates it. So every backfilled row would carry a key
- * that ingest cannot reproduce, and the first re-observation of that mail would insert a SECOND
- * `messages` row — which no delta removes, and which mints a second `threads` row too
- * because `commitChange`'s re-entry guard is `stored.threadId` and a new row has none.
- *
- * So the migration happens at READ time, one message at a time, on the path that has the raw
- * bytes:
- *
- *  1. `fp1:<fingerprint>` — a hit is the same logical message, done.
- *  2. the legacy `mid:`/`body:` key — a hit is a CANDIDATE and nothing more. It is VERIFIED
- *     against four stored columns (`identity.ts#verifiesLegacyIdentity`) and, only if all four
- *     agree, accepted and its key rewritten to `fp1:` in the commit transaction.
- *  3. for an `ownAuthored` create only: the same mailbox's row under this Message-ID — the
- *     own-sent twin arm, written out at its own comment below.
- *  4. none of these — a new message.
- *
- * **Any mismatch in step 2 ⇒ NEW message. Never a partial collapse.** That is what makes the
- * fallback safe rather than a re-introduction of the very defect the new key fixes: the legacy key
- * is forgeable (the Message-ID is chosen by the sender) and the verification tuple is what refuses
- * the forgery — `body_hash` kills the body-only collision, `subject` + `from_address` kill the message-id forgery.
- *
- * The cost is one extra indexed `SELECT` per genuinely-new message, and none at all once a
- * mailbox has been fully re-observed.
+ * The dual-key lookup — how the key format changes with NO backfill. Backfilling fingerprints is
+ * prohibited: a batch job computes a DIFFERENT value than ingest (redacted text, capped html,
+ * missing digests), so a backfilled row's first re-observation would insert a SECOND `messages`
+ * row — which no delta removes, and which mints a second `threads` row too. The migration happens
+ * at read time: (1) `fp1:` — the same message; (2) the legacy key — a CANDIDATE only, verified
+ * against four stored columns, then rewritten; (3) the own-sent twin arm, `ownAuthored` only; (4)
+ * new. Any mismatch in step 2 means NEW — the legacy key is forgeable, and the verification tuple
+ * refuses the forgery. Cost: one indexed SELECT per genuinely-new message.
  */
 async function resolveExisting(
   repo: RepoPort, accountId: string, mailboxId: string, normalized: NormalizedMessage,
@@ -757,26 +510,16 @@ async function resolveExisting(
     };
   }
 
-  //  3. THE OWN-SENT TWIN — by Message-ID alone, and ONLY for an `ownAuthored` create.
-  //
-  // Exchange Online files its own re-rendered copy of every SMTP submission into the Sent folder
-  // beside the byte-exact copy the send path APPENDs: new `Received:` chain, re-encoded MIME,
-  // re-wrapped body. Different bytes ⇒ a different fingerprint ⇒ both lookups above miss, and the
-  // twin used to ingest as a SECOND `messages` row — the user's just-sent message, twice in its
-  // own conversation. The same rewrite breaks the self-CC twin (`own_copy`) whenever the inbound
-  // and Sent copies were rendered by different transports.
-  //
-  // Message-ID alone is exactly the forgeable key the fingerprint replaced, and it stays banned
-  // for inbound mail: this arm is gated on `Change.ownAuthored`, which the ADAPTER stamps only on
-  // pure creates read out of the mailbox's own Sent folder (`ports.ts#Change.ownAuthored`) — a
-  // folder strangers cannot write into. Within that gate, matching the id is matching the user's
-  // own submission against the user's own submission; classifyDedup then answers `duplicate`
-  // (same folder) or `own_copy` (twin of a row elsewhere), and neither writes a placement.
-  //
-  // The key returned is still `fpKey`: it names THESE bytes, and no row is written under it on
-  // the non-`new` outcomes this arm produces. NO `upgrade` rides along, deliberately — rewriting
-  // the stored row's key to this observation's fingerprint would repoint the row's identity at
-  // whichever copy was seen last, and the stored key still names the copy the row was born from.
+  // Step 3: the own-sent twin — by Message-ID alone, and ONLY for an `ownAuthored` create.
+  // Exchange Online files its own re-rendered copy of every SMTP submission into Sent beside the
+  // byte-exact copy the send path APPENDs: different bytes, different fingerprint, both lookups
+  // miss, and the twin used to ingest as a SECOND row — the user's just-sent message, twice in
+  // its own conversation. Message-ID alone is exactly the forgeable key the fingerprint replaced,
+  // and it stays banned for inbound mail: this arm is gated on `Change.ownAuthored`, which the
+  // ADAPTER stamps only on pure creates read out of the mailbox's own Sent folder — a folder
+  // strangers cannot write into. The key returned is still `fpKey`, and NO `upgrade` rides along:
+  // rewriting the stored key to this observation's fingerprint would repoint the row's identity
+  // at whichever copy was seen last.
   if (ownAuthored && normalized.canonical.messageIdHeader !== null) {
     const twin = await repo.findByMessageIdHeader(accountId, mailboxId, normalized.canonical.messageIdHeader);
     if (twin) return { key: fpKey, existing: twin };
@@ -798,85 +541,28 @@ function bodySnippet(normalized: NormalizedMessage): string {
 }
 
 /**
- * WHOSE PLACEMENT IS THIS — for a READER, which is the one install that can meet all three answers.
- *
- * `folder_state.last_set_by` answers "who put this message where it is", and the answer decides
- * which passes may ever move it again. It has three values, and a reader is the only writer that
- * has to choose between the last two:
- *
- *  · `'us'` — THIS install decided. Every unpressed mover requires it, and it is also the durable
- *    record of which install was the organizer, which is how a demoted organizer that got one
- *    organizing cycle in is told apart from an install that only ever mirrored. A reader must
- *    never write it: it would be a false claim in that record, and it would hand the row to
- *    `ohbox-tidy` and `screener-auto`, so a promotion would become a bulk re-filing of somebody
- *    else's placements — which is exactly what the import hold above exists to refuse.
- *  · `'external'` — the USER placed it, by hand, in a folder of their own. True of `Archive` and
- *    `Private/Editor`; false of the folders ohmail itself files into, because nobody hand-files
- *    mail into ohmail's own consent queue.
- *  · `'peer'` — ANOTHER install of this account placed it, in a folder ohmail organizes. This is
- *    what a reader actually observes, and before it existed the reader wrote `'external'` for it:
- *    a message first seen at the gate while this install held no lease was recorded as the
- *    person's own filing, and `'external'` means "hands off, for ever" to `rule-retro`,
- *    `ohbox-tidy`, `screener-auto` and `reconcileFolders` alike. So mail behind a decision the
- *    person had already made stayed at the gate and nothing could reach it again.
- *
- * `peer` is out of every UNPRESSED mover's reach, exactly as `external` was — only
- * `rule-retro.ts` admits it, and only for a rule whose owner asked for it to be applied to mail
- * already on disk. Promotion therefore moves nothing on its own.
- *
- * ── WHY THE WRITER AND NOT THE READERS ──────────────────────────────────────────────────────
- *
- * The four movers cannot tell a reader's adoption from a person dragging a message into `INBOX`
- * in Apple Mail: both arrive as an observation in a folder we did not choose. Only the code that
- * knows it is running as a reader can say which happened, so the distinction is made once, here,
- * and recorded.
- *
- * ── WHO DOES NOT CALL THIS ──────────────────────────────────────────────────────────────────
- *
- * `change.passive` keeps `'external'` unconditionally: its premise is guaranteed upstream by
- * `imap-types.ts#passiveFolderExclusion`, which refuses any path inside the ohmail namespace, so
- * the folder really is one the customer made. The import hold keeps `'external'` too, and there
- * it is the point — read its docblock: *"without this one word the hold would only postpone the
- * re-screen it exists to prevent."*
- *
- * The `?? "external"` default at the commit is therefore the branch BOTH of those take. It is the
- * untested-by-default direction, so it is pinned by a control of its own: a plan with `passive`
- * and no `adoption` must still write `'external'`.
+ * Whose placement is this — for a READER. `'us'`: THIS install decided; every unpressed mover
+ * requires it, and it is the durable record of which install organized — a reader writing it
+ * would turn a promotion into a bulk re-filing. `'external'`: the USER placed it, in a folder of
+ * their own. `'peer'`: another install of this account placed it, in a folder ohmail organizes —
+ * before it existed a reader wrote `'external'` here, and mail behind a decision already made
+ * stayed frozen at the gate. `'peer'` is out of every unpressed mover's reach; only `rule-retro`
+ * admits it, on a press. Decided by the WRITER: only the code that knows it is a reader can tell
+ * adoption from a person's drag. The `?? "external"` default is pinned by its own control.
  */
 function readerAdoption(arrivalFolder: string): { adoption?: "peer" } {
   return isOrganizedFolder(arrivalFolder) ? { adoption: "peer" } : {};
 }
 
-/* ── AND THE SAME QUESTION FOR AN EXISTING MESSAGE, WHICH HAS A DIFFERENT ANSWER ─────────────
- *
- * `readerAttribution(arrivalFolder)` used to stand here, returning `{ attribution: 'peer' }` for
- * the same six folders, on the argument that both reader seams must agree or the row a demoted
- * organizer leaves behind would depend on whether the message was first seen at the gate or moved
- * there afterwards. The two seams are not the same question, and reading them as one cost a
- * person's own filing:
- *
- *   they drag a message out of `ohmail/Reads` back into `INBOX` in Apple Mail. `INBOX` is one of
- *   the six organized folders, so the folder test answered true, the reader recorded the placement
- *   as another install's (`'peer'`), and `rule-retro` — the one pass that admits `'peer'` — moved
- *   it back out of the inbox the next time a rule of theirs was pressed. Their hand, undone by
- *   their own rule, and nothing anywhere says so.
- *
- * `'peer'` is a CLAIM about who acted, and for a message we already hold there is no evidence for
- * it: the adapter reports that a folder changed and nothing about who changed it, the destination
- * folder cannot answer it (`INBOX` is precisely where a person drags mail), and the organizer lease
- * says another install EXISTS, never that it moved THIS message. So an existing message a reader
- * finds somewhere new is adopted as `'external'` — the person's hand — which is the direction that
- * fails safe: their filing is kept and no pass moves it again.
- *
- * ONE NAMED CONSEQUENCE, so it is not rediscovered as a bug: a genuine peer move of a message we
- * already hold — the new organizer files it from `INBOX` into `ohmail/Reads` while we watch — is
- * also recorded `'external'`, and a pressed retro rule will not reach it afterwards. That is the
- * import hold's bargain, taken deliberately: a placement made on the master is kept as it stands.
- * Recovering the distinction needs a per-message fact on the wire, not a better inference.
- *
- * {@link readerAdoption} above is untouched: a message this install has NEVER held carries no
- * placement of ours for a `'peer'` record to override, and that seam is what unfroze the mail
- * waiting at the gate.
+/**
+ * The same question for an EXISTING message has a different answer. `readerAttribution` used to
+ * answer `'peer'` for the six organized folders, and reading the two seams as one cost a person's
+ * own filing: dragging a message out of `ohmail/Reads` back into `INBOX` was recorded as another
+ * install's placement, and `rule-retro` moved it back out on the next press — their hand, undone
+ * by their own rule. `'peer'` is a CLAIM about who acted, and for held mail there is no evidence
+ * — so it is adopted `'external'`, failing safe. Named consequence: a genuine peer move of held
+ * mail is also `'external'` and a pressed retro rule will not reach it. {@link readerAdoption} is
+ * untouched: a never-held message carries no placement of ours.
  */
 
 /** A tiny, sensitivity-safe digest of routing-relevant headers (never the body). */
@@ -928,22 +614,14 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     }
   }
 
-  // ── THE EVIDENCE, DERIVED ONCE, FROM THE ONLY TWO THINGS THAT CAN WITNESS A DISAPPEARANCE ──
-  //
-  // See {@link MoveEvidence}. A sender can make a locator APPEAR; only the user can make a stored
-  // locator DISAPPEAR. So:
-  //
-  //  · `change.type === "move"` is the adapter's `correlateMoves` having paired a vanished known
-  //    UID with a re-appeared one. It was already being computed and `classifyDedup` never read it
-  //    — this line is that gap closed.
-  //  · a vanished PRIMARY instance is the other half, and it is what keeps this from breaking
-  //    user-always-wins in the opposite direction: a real user move that `correlateMoves` cannot
-  //    pair (no Message-ID at all, or a delete and a create in different batches) still adopts.
-  //    The absence is recorded by `apps/worker/src/sync.ts` from the adapter's `deletes`, and only
-  //    when the folder's epoch matches — on a UIDVALIDITY change all evidence is void.
-  //
-  // The read is skipped entirely for a correlated move and for a message we have never seen: one
-  // indexed EXISTS per re-observation of a known message, and none at all on the hot path.
+  // The evidence, derived once, from the only two things that can witness a disappearance ({@link
+  // MoveEvidence}): a sender can make a locator APPEAR; only the user can make a stored locator
+  // DISAPPEAR. `change.type === "move"` is the adapter's `correlateMoves` having paired a
+  // vanished known UID with a re-appeared one — computed all along, and `classifyDedup` never
+  // read it; this line closes that gap. A vanished PRIMARY instance is the other half, and it is
+  // what keeps user-always-wins in the opposite direction: a real user move `correlateMoves`
+  // cannot pair still adopts. The read is skipped for a correlated move and for a never-seen
+  // message: one indexed EXISTS per re-observation, none on the hot path.
   let evidence: MoveEvidence = { kind: "appearance_only" };
   if (change.type === "move") {
     evidence = { kind: "correlated_move" };
@@ -957,80 +635,30 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     const sensitivity = classifySensitivity(normalized);
     const arrivalLocator = change.locator;
 
-    // ── THE PROVIDER'S OWN REPORT ABOUT THE CLAIMED AUTHOR, READ ONCE, HERE ────────────────────
-    //
-    // This line is the whole point: the parser is invoked ON THE PATH THAT ROUTES.
-    // It used to be a `"unauthenticated"` literal at the `evaluateRules` call below, which meant
-    // a forged `From` naming a sender the account already allows was promoted normally even when
-    // the provider's own `Authentication-Results` said `dkim=fail` — the demote-only branch
-    // existed and protected nothing.
-    //
-    // ── THE ASYMMETRY, RESTATED WHERE IT CAN BE BROKEN ────────────────────────────────────
-    //
-    // `evaluateRules` reads exactly one member of the returned union — `"fail"` — and only ever
-    // to send a message DOWN to the Screener. There is no `auth !== "pass"` anywhere and there
-    // must never be one: `rules.ts#AuthVerdict` records that gating the known-sender match on a
-    // positive verdict answers Screener for every row of a large backlog. **Reading
-    // this value may DEMOTE. It may never be REQUIRED before an identity the user has already
-    // consented to is honoured.**
-    //
-    // With `trustedAuthservIds` empty — the default, and the state of every deployment on the
-    // day this shipped — this returns `"unavailable"` on its first line for every message, which
-    // routes identically to the literal it replaced. So this change is observable only once a
-    // host names a position it believes.
-    //
-    // ── ABOVE THE `ownAuthored` RETURN, DELIBERATELY ──────────────────────────────────────
-    //
-    // Both {@link NewPlan} constructions need it, because the column is a record of what the
-    // provider said and the user's own Sent mail has an answer too. The cost objection that
-    // keeps `listRules`/`knownSenders` below that return does not apply: this is a pure header
-    // read with no round trip, and it returns on its first line when the set is empty.
-    //
-    // `normalized.headers` and not `change.raw`: the map `mime.ts` built is the same map
-    // `message_bodies.headers` stores, so the re-evaluation passes that read the row back from
-    // disk (`kickstart.ts`, `sensitive-rescreen.ts`) parse the SAME input and cannot disagree
-    // with this decision by reading a different source.
+    // The provider's own report about the claimed author, read once, HERE — invoked on the path
+    // that ROUTES. It used to be an `"unauthenticated"` literal, so a forged `From` naming an
+    // allowed sender was promoted normally even when `Authentication-Results` said `dkim=fail`.
+    // The asymmetry, restated where it can be broken: `evaluateRules` reads exactly one member —
+    // `"fail"` — and only to send a message DOWN; there is no `auth !== "pass"` anywhere and
+    // there must never be one. Reading this may DEMOTE; it may never be REQUIRED before a
+    // consented identity is honoured. With the trusted set empty this returns `"unavailable"` on
+    // its first line. Above the `ownAuthored` return: both plans need it, and it is a pure header
+    // read. `normalized.headers`, not `change.raw`: the same map the row stores, so re-evaluation
+    // passes parse the SAME input.
     const authVerdict = authVerdictFromHeaders(
       normalized.headers, normalized.from.address, trustedAuthservIds,
     );
 
-    // ── MAIL THE USER WROTE LEAVES THE PIPELINE HERE ───────────────────────────────────────
-    //
-    // `Change.ownAuthored` means the adapter read this out of the mailbox's own Sent folder.
-    // Everything below this block is written for INBOUND mail and gives the wrong answer for
-    // outbound mail — not a slightly worse answer, an actively destructive one:
-    //
-    //  · **The Screener.** `evaluateRules` files any message whose FROM is not a known contact
-    //    into `ohmail/Screener`. On sent mail the FROM is the account owner, who is not in
-    //    their own `contacts` — so every message the user has ever written would be moved out
-    //    of their Sent folder and queued for consent. The consent gate exists to decide whether
-    //    a STRANGER may reach the user; a message the user typed has nothing to consent to.
-    //  · **Reads / Receipts.** The header heuristic keys on `Precedence: bulk` and
-    //    `List-Unsubscribe`, which a reply to a newsletter carries by quotation and by some
-    //    clients' habit of echoing headers. Filing your reply under newsletters is wrong, and
-    //    it is a MOVE inside the customer's real mailbox.
-    //  · **The sensitive short-circuit.** Below, `sensitivity.sensitive` forces `INBOX`. Doing
-    //    that here would lift a message out of Sent and drop it in the user's inbox because
-    //    they once forwarded a login code. Redaction still applies — `classifySensitivity` ran
-    //    above this line and the commit path stores the redacted body — only the
-    //    ROUTING override is skipped.
-    //  · **The money gate.** With `desired` already decided there is no `unclear` residue, so
-    //    the AI branch cannot fire and `credits.tryDebit` is unreachable. That is a property of
-    //    this early return, not of a condition further down: a message the user wrote must not
-    //    cost them an AI action, and re-reading their own Sent backlog must not bill anyone.
-    //    Move this return below the AI block and the sent-mail test's throwing gate,
-    //    which stands in for the classifier, fires twice.
-    //
-    // It is above the `listRules` / `knownSenders` reads deliberately: two database round trips
-    // per sent message whose result is discarded is not free at a couple of thousand messages of backlog.
-    //
-    // `desired === arrival` is the whole organize-in-place statement for outbound mail: the
-    // reconciler computes `none`, `folder_state` lands `reconciled` (`reconcileStatusFor`), and
-    // the worker never issues an IMAP move. ohmail does not file your Sent folder for you.
-    //
-    // `seen: true` regardless of what the server reported. Nothing the user wrote is new to
-    // them, and a client that appends to Sent without `\Seen` (some do) would otherwise put
-    // the user's own outbox into the unread count.
+    // Mail the user WROTE leaves the pipeline here. Everything below is written for INBOUND mail
+    // and answers destructively for outbound: the Screener would queue every message the user
+    // ever wrote for consent (their FROM is not in `contacts`); the Reads/Receipts heuristics key
+    // on headers a reply echoes; the sensitive short-circuit would lift a message out of Sent
+    // over a forwarded login code; and with `desired` already decided the AI branch cannot fire —
+    // a message the user wrote must not cost an AI action. Above the `listRules`/`knownSenders`
+    // reads on cost: two round trips per sent message, discarded. `desired === arrival` is
+    // organize-in-place for outbound — ohmail does not file your Sent folder. `seen: true`
+    // regardless of the server: nothing the user wrote is new to them, and a client that appends
+    // to Sent without `\Seen` would put their own outbox into the unread count.
     if (change.ownAuthored) {
       return {
         outcome: "new",
@@ -1050,58 +678,25 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       };
     }
 
-    // ── MAIL THE CUSTOMER FILED THEMSELVES LEAVES THE PIPELINE HERE TOO ────────────────────
-    //
-    // `Change.passive` means the adapter read this out of a folder the CUSTOMER made — `Archive`,
-    // `Private/Editor`, `_archive/Clients/…`. See `imap-types.ts#passiveFolderExclusion` for
-    // which folders those are and which are held out.
-    //
-    // The reasoning is the `ownAuthored` block above, with one word changed: everything below is
-    // written for mail ohmail is asked to ORGANIZE, and this mail has already been organized, by
-    // the person whose mailbox it is.
-    //
-    //  · **The Screener.** `evaluateRules` files any message whose FROM is not a known contact into
-    //    `ohmail/Screener`. Applied to a folder somebody spent fifteen years filing, that is a bulk
-    //    MOVE of their archive into a consent queue — and the consent question is already answered:
-    //    they kept the mail and gave it a name.
-    //  · **Reads / Receipts.** A newsletter the customer deliberately archived under `News` would be
-    //    lifted out of `News` and filed under ohmail's own newsletter folder. Their filing is theirs.
-    //  · **The sensitive short-circuit.** Below, `sensitivity.sensitive` forces `INBOX`. An eight
-    //    year old password reset filed under `Private/Family` would surface in today's Ohbox.
-    //  · **The money gate.** With `desired` already decided there is no `unclear` residue, so the AI
-    //    branch cannot fire and `credits.tryDebit` is unreachable. Backfilling a customer's archive
-    //    must not spend one AI action — an archive is the largest thing in a mailbox and reading it
-    //    for the first time would otherwise be the largest bill the account ever saw.
-    //
-    // ABOVE the `listRules` / `knownSenders` reads, on the same cost argument: two database round
-    // trips per archived message whose result is discarded is not free at six thousand of them.
-    //
-    // `seen` is the SERVER's flag here, unlike the `ownAuthored` branch which forces true. Nothing
-    // the user wrote is new to them; mail they filed away may well be unread, and claiming otherwise
-    // would silently mark a whole archive read in their other mail clients on the first reconcile.
-    //
-    // `desired === arrival` is the whole never-reorganized statement: `reconcile` computes `none`,
-    // `folder_state` lands `reconciled`, and no IMAP move is ever issued. `commitChange` writes the
-    // row `last_set_by: 'external'` — see {@link NewPlan.passive} — which is what keeps every retro
-    // pass out as well, since all of them require `'us'`.
-    /* ── A READER ADOPTS. IT DOES NOT DECIDE ──────────────────────────────────────────────
-     *
-     * See {@link PlanDeps.readerMode}. This arm sits with `change.passive` above because it is
-     * the SAME plan — arrival folder kept, `last_set_by: 'external'`, no decision recorded — and
-     * it sits ABOVE the `listRules` / `knownSenders` reads for the same cost reason plus a
-     * stronger one: a reader must not merely discard the gate's verdict, it must never compute
-     * one. Everything below this line is the organizer's judgement about somebody's mail —
-     * rules, the known-sender set, the AI residue, the money gate, `routing_decisions`, the
-     * graduation lookup — and a reader is entitled to none of it.
-     *
-     * `sensitivity` IS still computed, and that is deliberate. It is pure, local, buys nothing
-     * and reads nothing; it lands on the message row, where `no_ai` is a standing property of
-     * the mail rather than a routing decision; and a reader that stored it as "not sensitive"
-     * would hand its own AI-draft door a wrong answer about mail it must never send to a model.
-     * What it may NOT do here is what it does below — force `INBOX` — because that is a MOVE.
-     *
-     * `seen` is the SERVER's flag, like the passive arm's: the mailbox is the master, and a
-     * reader claiming mail is unread would mark somebody's archive unread in every other client.
+    // Mail the customer FILED THEMSELVES leaves the pipeline here too. `Change.passive` means the
+    // adapter read this out of a folder the customer made; the reasoning is the `ownAuthored`
+    // block with one word changed — this mail has already been organized, by the person whose
+    // mailbox it is. The Screener applied to fifteen years of filing is a bulk move of an archive
+    // into a consent queue whose question is answered; an archived newsletter must not be lifted
+    // into ohmail's folder; an old password reset must not surface in today's Ohbox; and the AI
+    // branch cannot fire — backfilling an archive must not spend an AI action. `seen` is the
+    // SERVER's flag: filed mail may well be unread, and claiming otherwise would mark a whole
+    // archive read in their other clients. `desired === arrival` is the never-reorganized
+    // statement; the row lands `'external'`, keeping every retro pass out.
+    /**
+     * A reader ADOPTS. It does not decide. This arm sits with `change.passive` because it is the
+     * SAME plan — arrival folder kept, `'external'`, no decision recorded — and above the
+     * `listRules`/`knownSenders` reads for a stronger reason than cost: a reader must not merely
+     * discard the gate's verdict, it must never COMPUTE one. `sensitivity` IS still computed,
+     * deliberately: pure, local, landing on the message row where `no_ai` is a standing property
+     * — a reader storing "not sensitive" would hand its own AI-draft door a wrong answer. What it
+     * may NOT do is force `INBOX`: that is a MOVE. `seen` is the SERVER's flag: a reader claiming
+     * mail unread would mark somebody's archive unread in every other client.
      */
     if (deps.readerMode === true) {
       return {
@@ -1144,98 +739,27 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       msg: normalized, rules, knownSenders: known, auth: authVerdict, ohboxPolicy,
     });
 
-    // ── SENSITIVITY REFINES PLACEMENT. IT NEVER ESTABLISHES CONSENT. ────────────────────────
-    //
-    // This line used to read `sensitivity.sensitive ? "INBOX" : …`, and that ternary is the
-    // SAME defect a review found one file over. `rules.ts#headerHeuristic` carries the
-    // rule in its own header — a signal the SENDER chooses may refine where consented mail
-    // lands, and may never carry a stranger past the gate — and `classifySensitivity` is
-    // exactly such a signal: it reads the subject and body, both of which the sender writes.
-    // So `Subject: your verification code` was a remote, unauthenticated, one-message defeat of
-    // the consent boundary, needing no knowledge of the user's contacts and no action by them.
-    //
-    // This is not a corner case, and the shape is worth stating because it is what makes the
-    // subordination below load-bearing rather than tidy: on a mailbox with few `contacts` rows,
-    // sensitivity promoted enough mail to dominate the Ohbox — most of it OTP, security,
-    // verification and password-reset mail from senders nobody had consented to, which is
-    // precisely the mail the Screener exists to hold.
-    //
-    // The subordination is expressed through `effectForDestination` rather than by testing for
-    // `source === "screener"`, and that difference is the second half of the finding: a
-    // `deny` verdict also covers an explicit user rule sending a sender to `ohmail/Screened` or
-    // `ohmail/Quarantine`. Under the old ternary a QUARANTINED sender was freed by writing an
-    // OTP-shaped body — the user's own explicit "no", overridden by the spammer. `deny` is
-    // already modelled (`rules.ts#RuleEffect`) precisely so consent questions are not re-derived
-    // from folder names at the point of use.
-    //
-    // What is deliberately UNCHANGED: an `allow` destination and the `unclear` residue both
-    // still yield INBOX for sensitive mail, so a code from a sender the user already knows still
-    // goes straight to them and never sits behind the gate. And NOTHING here touches the
-    // sensitive-mail guarantees — `no_ai`, no-forward, no-KB and the redacted body are properties of
-    // `p.sensitivity`, applied at persist below, and are independent of the folder.
-    // ── A BOUNCE OF THE READER'S OWN MAIL IS ACTIONABLE, AND ONLY IF IT IS THEIRS ─────────
-    //
-    // `rules.ts#dsnVerdict` answers the pure half — is this DSN-shaped, and what does it claim
-    // about the original — and refuses to answer the half that decides, because that half is a
-    // lookup against OUR data and shape alone is a string a stranger types. Read that docblock
-    // before touching anything here: the whole design is that a delivery report reaches the
-    // Ohbox on evidence the sender cannot manufacture, and never on the report looking right.
-    //
-    // Two corroborations, either of which is enough, and both of which are facts about this
-    // account rather than about the message:
-    //
-    //  · the report quotes a Message-ID this account HOLDS. `findThreadParent` is the existing
-    //    account-scoped probe over `messages_account_message_id_header_idx` (mail 0026) — the
-    //    same index, the same isolation argument, and no new column or migration. Backscatter
-    //    quotes the spammer's Message-ID, which we have never held, so it misses;
-    //  · `X-Failed-Recipients` names somebody this account already corresponds with. `known` is
-    //    already in hand two lines above, so this costs nothing, and the point is that it is
-    //    OUR contact list: a stranger can write any address into that header and cannot make it
-    //    be one of the reader's correspondents.
-    //
-    // Neither ⇒ nothing happens here at all and the message takes the ordinary path, which for
-    // an unknown daemon is the Screener. Not deleted, not quarantined — held, like any other
-    // first-contact sender, one press from being admitted.
-    //
-    // ── IT MAY PASS THE GATE, AND IT MAY NOT OVERRULE THE USER — WHICH ARE DIFFERENT TESTS ──
-    //
-    // This is the one place the bounce arm differs from `sensitive`, and getting it wrong in
-    // either direction is a real defect, so both are written out.
-    //
-    // `sensitive` is subordinate to `deniedByConsent`, which covers all three deny folders and
-    // therefore includes the GATE's own `ohmail/Screener`. That is exactly right there: nothing
-    // about the shape of a stranger's mail may admit the stranger. Reusing it here would make
-    // this whole arm dead code, because a bounce from an unknown daemon IS a first-contact
-    // sender and the gate's verdict is precisely what has to be overridden.
-    //
-    // The distinction that does the work is WHO decided. A gate fall-through carries
-    // `matchedRuleId === null`: the account has never said anything about this daemon, and the
-    // corroboration above is a fact about our own data that answers the gate's question. A
-    // decision carrying a rule id is the USER's, and it stands — a sender they screened out or
-    // quarantined must not be able to free themselves by sending a well-formed report, even one
-    // that quotes a Message-ID we really do hold. `deniedByConsent` stays as the second half of
-    // the test so an unmatched deny (there is no such source today, and this is what keeps a
-    // future one from being a bypass) also refuses.
-    //
-    // `await` only when the shape matched, so ordinary mail costs no extra round trip.
-    // `change.raw` as well as the parsed form: the quoted original lives in a
-    // `message/rfc822-headers` part, which the parser does not flatten into `textBody`.
+    // Sensitivity refines placement. It never establishes consent. The old `sensitivity.sensitive
+    // ? "INBOX"` ternary is the defect `rules.ts#headerHeuristic` names: a sender-chosen signal
+    // may refine where consented mail lands, never carry a stranger past the gate — `Subject:
+    // your verification code` was a remote defeat of the consent boundary. The subordination is
+    // `effectForDestination`: a `deny` verdict also covers an explicit user rule, so a
+    // QUARANTINED sender cannot free themselves with an OTP-shaped body. `allow` and `unclear`
+    // still yield INBOX for sensitive mail. The bounce arm: two corroborations, either sufficient
+    // — a quoted Message-ID this account HOLDS, or `X-Failed-Recipients` naming an existing
+    // correspondent. It may pass the GATE, never overrule the USER: a gate fall-through carries
+    // `matchedRuleId === null`; a rule id stands.
     const dsn = dsnVerdict(normalized, change.raw);
     let ownBounce = false;
-    /* ── AND A BOUNCE FOR AN AWAY REPLY IS NOT THE READER'S MAIL AT ALL ───────────────────
-     *
-     * The arm above is right that this is our own bounce and wrong about whose business it is.
-     * Nobody composed the message that failed: the responder did, and it already records the
-     * dead address on `away_sender_state.undeliverable_at` and writes there no more. So the one
-     * delivery report the product acts on by itself was the one it put in somebody's Ohbox,
-     * once per throttle interval for the length of a trip.
-     *
-     * `isOwnAwayReply` and not the quoted `Auto-Submitted: auto-replied`, which sits in the
-     * report's own bytes and is therefore a string its sender writes — routing on it would let a
-     * stranger lift their mail out of `ohmail/Screener` into a real pile, which is the consent
-     * bypass this whole block exists to refuse, merely pointing the other way. The minted id is
-     * a uuid THIS account generated, and it is the same join `markUndeliverableFromBounces`
-     * uses, so "is this our away reply" has one encoding rather than two that can drift.
+    /**
+     * A bounce for an away reply is not the reader's mail at all. This is our own bounce, and
+     * nobody composed the failed message — the responder did, and it already records the dead
+     * address on `away_sender_state.undeliverable_at`. So the one delivery report the product
+     * acted on by itself was the one it put in somebody's Ohbox, once per throttle interval for a
+     * whole trip. `isOwnAwayReply` and not the quoted `Auto-Submitted` header, which is a string
+     * its sender writes — routing on it would let a stranger lift their mail out of the Screener.
+     * The minted id is a uuid THIS account generated, the same join
+     * `markUndeliverableFromBounces` uses.
      */
     let awayReplyBounce = false;
     if (dsn) {
@@ -1261,36 +785,15 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     const fileBounceAsReceipt = awayReplyBounce && decision.matchedRuleId === null
       && (!deniedByConsent || decision.source === "screener");
 
-    /* ── THE GATE DOES NOT REACH BACK PAST THE SCREENING BASELINE ────────────────────────────
-     *
-     * See {@link PlanDeps.screeningCutoff} for the defect and the boundaries. Three conditions,
-     * each of which is a refusal to over-reach, and the third is the one that is easy to get
-     * wrong:
-     *
-     *  1. a cutoff was resolved at all. Absent ⇒ this whole block is inert and routing is
-     *     byte-identical to before mail 0056, which is what every existing caller and test gets;
-     *  2. the verdict is the GATE's own — `source === "screener"`. A `rule` verdict is the user's
-     *     decision and is never subordinated, in either direction;
-     *  3. the message did not FAIL authentication. `evaluateRules` returns the same `screener`
-     *     verdict for two different reasons — "nobody has ruled on this sender" and "this
-     *     message's `Authentication-Results` said fail" — and only the first is a backlog
-     *     question. The second is a statement about THIS message that an old date must not
-     *     excuse; without this term, `Date: 2019` plus a failed DKIM would be a way past the gate.
-     *     Read off `authVerdict`, which is the input that branch is computed from, rather than
-     *     re-derived from the decision — the decision cannot tell the two apart.
-     *
-     * The `\Seen` state is deliberately NOT consulted. Whether the backlog has been read is a fact
-     * about the user's habits, not about whether ohmail should re-file it, and the unread half of
-     * exactly that conflation is the churn the cutline exists to remove.
-     *
-     * THE SERVER CLOCK ONLY — `?? normalized.date` stood here, and a security review flagged
-     * it. The header `Date:` is written by the SENDER, so with the fallback in place any
-     * server that omits or mangles INTERNALDATE handed the gate's clock to the sender: a
-     * freshly-delivered `Date: 2019` kept a stranger's mail in the INBOX with no rule, no
-     * contact and no user action. The header still orders and displays (`messages.date`); it
-     * never again says "backlog". No INTERNALDATE ⇒ `null` ⇒ NOT old ⇒ the gate — so on a
-     * server that never supplies INTERNALDATE the backlog suppression simply never engages and
-     * a backfill screens like fresh mail. That is fail-closed, and it is the accepted cost.
+    /**
+     * The gate does not reach back past the screening baseline. Three refusals to over-reach: a
+     * cutoff was resolved at all; the verdict is the GATE's own — a `rule` verdict is never
+     * subordinated; and the message did not FAIL authentication — `evaluateRules` returns the
+     * same `screener` verdict for "nobody ruled" and "failed auth", and only the first is a
+     * backlog question: without this term, `Date: 2019` plus a failed DKIM would be a way past
+     * the gate; read off `authVerdict`. `\Seen` is not consulted. THE SERVER CLOCK ONLY — `??
+     * normalized.date` stood here and a security review flagged it: the header is sender-written.
+     * No INTERNALDATE means NOT old means the gate — fail-closed, the accepted cost.
      */
     const arrivedAt = change.internalDate ?? null;
     /* Read off `screenerAdmits` rather than spelled here: `sensitive-rescreen.ts` writes holds
@@ -1332,37 +835,28 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     // refused there rather than doubled (see `sourceFor`). Computing it writes nothing — only the
     // spend below can move money — so it is safe to build before the gate runs.
     const attemptKey = classifyAttemptKey(mailboxId, key);
-    // AI GATE: classify only on the unclear residue, NEVER for
-    // sensitive/no_ai mail, and only when the account may spend. The classifier is not even
-    // constructed here for sensitive messages, so the raw secret never leaves the process.
-    //
-    // THE ORDER OF THIS CONDITION IS THE INVARIANT. `&&` short-circuits, so the money question
-    // is asked LAST and a `no_ai` message can never reach `tryDebit` — which is why "a
-    // sensitive message produces no metering row at all" is a property of the control flow
-    // rather than of anyone remembering to check. Move `tryDebit` earlier in this chain and the
-    // AI-metering ledger test fails.
-    //
-    // `credits` ABSENT means unmetered, not refused: the free desktop tier and every test that
-    // predates the gate run this exact branch with no gate, and the plan they produce must be identical.
+    // AI gate: classify only on the unclear residue, never for sensitive/no_ai mail, and only
+    // when the account may spend. The classifier is not even constructed for sensitive messages,
+    // so the raw secret never leaves the process. THE ORDER OF THIS CONDITION IS THE INVARIANT:
+    // `&&` short-circuits, so the money question is asked LAST and a `no_ai` message can never
+    // reach `tryDebit` — "a sensitive message produces no metering row" is a property of the
+    // control flow, not of anyone remembering. Move `tryDebit` earlier and the AI-metering ledger
+    // test fails. `credits` ABSENT means unmetered, not refused: the free desktop tier and every
+    // pre-gate test run this branch with no gate, and the plan must be identical.
     if (
       !sensitivity.flags.no_ai &&
       classifier &&
       routing &&
       decision.destination == null &&
       // `{ mailboxId }` ONLY. This used to pass `dedupKey: key`, and `key` is
-      // `mid:${messageIdHeader}`: the raw RFC822 Message-ID, chosen by the SENDING server,
-      // carrying the sender's domain and — routinely, for ESPs — the recipient's address.
-      // The metering ledger is APPEND-ONLY with no delete path, so every classification wrote a
-      // correspondent into a table that cannot be rewritten, and closing the admin console's
-      // render path did not remove one byte of it from disk or from backups.
-      //
-      // Nothing needed it. The spend identity is `attemptKey`, which sha256s the key already
-      // (`classifyAttemptKey`), so `meta.dedupKey` was redundant as well as unsafe — the same
-      // finding as `mailboxes.error_detail`, one column over: the projection asked what TYPE the
-      // value was and never asked WHO WROTE IT.
-      // `aiSpendPermitted` reads the six-verdict answer for THIS path: proceed on `ok` and on
-      // `duplicate` (already paid for), skip on everything else — including `inflight`, where
-      // another caller is running the model for this exact mail right now.
+      // `mid:${messageIdHeader}` — the raw Message-ID, chosen by the sending server, carrying the
+      // sender's domain and, routinely for ESPs, the recipient's address. The metering ledger is
+      // APPEND-ONLY with no delete path, so every classification wrote a correspondent into a
+      // table that cannot be rewritten, and closing the admin render path removed nothing from
+      // disk or backups. Nothing needed it: the spend identity is `attemptKey`, which sha256s the
+      // key already. `aiSpendPermitted` reads the six-verdict answer for this path: proceed on
+      // `ok` and `duplicate` (already paid), skip on everything else — including `inflight`,
+      // where another caller is running the model for this exact mail right now.
       (credits == null || aiSpendPermitted(
         await credits.spend(accountId, "classify_ingest", attemptKey, { mailboxId })))
     ) {
@@ -1379,26 +873,15 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
           ohboxBar: deps.ohboxBar,
         });
       } catch (err) {
-        // RETHROW, deliberately, and do NOT refund. Two separate decisions, and the second one
-        // is a later correction to the first.
-        //
-        // The rethrow: this is a classifier FAULT, not an out-of-credits state. Degrading here
-        // would file the message by rules and never look again, turning a transient model
-        // outage into permanent mis-routing. Aborting leaves the message un-ingested and the
-        // sync cursor unadvanced — the existing crash-safe behaviour — so `runSyncCycle`
-        // re-plans this exact mail on its next pass.
-        //
-        // The absent refund: that retry is FREE, because `attemptKey` is already on record
-        // and the gate answers `duplicate → proceed` for an open attempt. The charge is
-        // therefore honoured by the retry, and refunding as well would hand the work over for
-        // nothing — a model outage would have re-classified the entire backlog free (the
-        // giveaway the gate's "THE ATTEMPT, NOT THE SOURCE" note describes). Compensation here
-        // is the retry, and it is guaranteed by construction rather than by a catch block.
-        //
-        // The call sites where the retry is NOT guaranteed — the drafting request path, whose
-        // retry belongs to a human who may give up, and the proposal cron, whose next pass
-        // falls in a new period bucket — do refund, and a refund there re-opens the work for a
-        // fresh charge rather than making it free.
+        // Rethrow, deliberately, and do NOT refund — two decisions. The rethrow: a classifier
+        // FAULT, not out-of-credits. Degrading would file by rules and never look again, making a
+        // transient outage permanent mis-routing; aborting leaves the message un-ingested and the
+        // cursor unadvanced, so the next pass re-plans this mail. The absent refund: that retry
+        // is FREE — `attemptKey` is on record and the gate answers `duplicate → proceed` for an
+        // open attempt — so the charge is honoured by the retry, and refunding as well would
+        // re-classify an entire backlog free through an outage. The call sites where the retry is
+        // NOT guaranteed — the drafting request (a human may give up) and the proposal cron (a
+        // new period bucket) — do refund, re-opening the work for a fresh charge.
         throw err;
       }
       const patternKey = `sender:${normalized.from.address}→${result.destination}`;
@@ -1426,23 +909,16 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
         // at commit is what makes "the verdict on the row is the verdict that routed" a
         // property of the code and not of two call sites staying in step.
         authVerdict,
-        // A placement ADOPTED under the import hold is the standing state of the user's own
-        // mailbox, not this organizer's decision — `passive` commits it `last_set_by:
-        // 'external'`, which is what keeps every retro pass (`rule-retro`, `screener-auto`,
-        // `ohbox-tidy`, `read-retro`) from re-deciding it after the import lands. Without this
-        // one word the hold would only postpone the re-screen it exists to prevent.
-        //
-        // ONLY when the hold's arm actually decided. Two exclusions, each a review finding:
-        //  · `desired` must equal the arrival folder (round 3) — the sensitive and bounce lifts
-        //    pick INBOX, a REAL move when the mail sits elsewhere, and `reconcileFolders` skips
-        //    `external` rows, so stamping a lift passive would leave the server where it was
-        //    while the database and every client claim INBOX;
-        //  · and not `admitBounce` even when no move is needed (rounds 9 and 13) — a
-        //    corroborated DSN that ARRIVED in the INBOX was still placed by THIS organizer's
-        //    own decision, and an `external` stamp would hide it from the retro passes that are
-        //    entitled to revisit decisions we made. (The sensitive lift needs no third term: it
-        //    cannot co-fire with a gate verdict — `deniedByConsent` covers the gate's own
-        //    folders — and `heldForImport` requires the gate's verdict.)
+        // A placement adopted under the import hold is the standing state of the user's mailbox,
+        // not this organizer's decision — `passive` commits `'external'`, keeping every retro
+        // pass from re-deciding after the import lands; without this one word the hold would only
+        // postpone the re-screen it prevents. ONLY when the hold's arm actually decided, two
+        // exclusions: `desired` must equal the arrival folder — the sensitive and bounce lifts
+        // pick INBOX, a REAL move when the mail sits elsewhere, and `reconcileFolders` skips
+        // `external` rows, so a passive-stamped lift would leave the server behind while every
+        // client claims INBOX; and not `admitBounce` even when no move is needed — a corroborated
+        // DSN arriving in the INBOX was still THIS organizer's decision, and an `external` stamp
+        // would hide it from the retro passes entitled to revisit our decisions.
         ...(heldForImport && !admitBounce && desired === change.locator.folder ? { passive: true } : {}),
         ai,
       },
@@ -1487,45 +963,16 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     };
   }
 
-  // ── OUR MOVE'S COPY APPEARED. THAT IS NOT THE SAME AS OUR MOVE HAVING LANDED ────────────────
-  //
-  // `classifyDedup` answers `own_move` from `pendingMoveFolders` alone — from the FOLDER — and it
-  // is right to: whatever else is true, an observation in the folder we have an outstanding move
-  // to is our own doing and must never be re-ingested. What it cannot tell from the folder is
-  // whether the SOURCE went, and `ports.ts#MoveEvidence` says why that is the only question that
-  // settles completion: "our own pending-operation record ... says nothing about COMPLETION —
-  // completion is source absence."
-  //
-  // So the two `own_move` shapes are separated here rather than in `classifyDedup`, which has no
-  // locator to hand back:
-  //
-  //  · `correlated_move` / `verified_absence` — the source is gone. A real completion. Nothing to
-  //    record, and this field stays absent.
-  //  · `appearance_only` — a copy is at the destination and the source was never seen to leave.
-  //    Both exist on the server right now, and `updateLocator` is about to point us at the copy.
-  //
-  // ── WHY THE MOVE IS KEPT PENDING RATHER THAN DECLARED COMPLETE ──────────────────────────────
-  //
-  // The copy is sitting in the folder we wanted it in, so a decision made from this one
-  // observation says "done". It is not done: the source is still on the server, and the ONLY
-  // thing that ever removes it is a retry of this very move. Converge here and the retry is never
-  // queued, so the duplicate becomes permanent — bookkept, never repaired.
-  //
-  // This is safe to do now, and it was not before, because it depends entirely on the move being
-  // IDEMPOTENT. `imap.ts#move` reads the destination before it writes: finding the copy it already
-  // made, it writes nothing and goes straight to the expunge it still owes. Without that pre-check
-  // a retry copies again — the destination gains an identical message every cycle, and the verify,
-  // which requires exactly one fingerprint match, then finds several and refuses for ever. That is
-  // why these two changes are one change, and why keeping this pending on its own would have been
-  // strictly worse than the duplicate it was trying to fix.
-  //
-  // NEVER FOR A READER, and this is not the same statement as the action override below. A
-  // demoted organizer's rows survive demotion — that is the design, the mirror is kept — so a
-  // reader really can meet a message whose row still says "a move of ours is outstanding", and
-  // `own_move` really is reachable on its first cycles. What it must not do is inherit the
-  // OBLIGATION: this field is "a source expunge is still owed by us", and a reader owes no IMAP
-  // write but `setFlags`. Leaving it set would carry a conflict flag and a withheld-move locator
-  // across the demotion, for an expunge nothing may ever perform.
+  // Our move's copy appeared. That is not the same as our move having LANDED. `classifyDedup`
+  // answers `own_move` from the folder alone, rightly; what the folder cannot say is whether the
+  // SOURCE went — completion is source absence. The two shapes separate here:
+  // `correlated_move`/`verified_absence` — real completions, the field stays absent;
+  // `appearance_only` — both copies exist on the server right now. The move stays PENDING: the
+  // source's only remover is a retry of this very move, so converging here makes the duplicate
+  // permanent. Safe now because the move is idempotent (the destination pre-check); without it a
+  // retry copies again every cycle. NEVER for a reader: a demoted organizer's rows survive, so
+  // `own_move` is reachable — and this field is "a source expunge is owed by US"; a reader owes
+  // no IMAP write but `setFlags`, and leaving it set would queue an expunge nothing may perform.
   const unexpungedSource =
     deps.readerMode !== true && outcome.kind === "own_move" && evidence.kind === "appearance_only"
       ? existingMsg.nativeLocator
@@ -1535,27 +982,15 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
   // alone desired and observed agree — and that answer is exactly the premature completion above.
   // Re-asserting the pending `move` is what puts the retry, and with it the source expunge, back
   // into the reconcile pass's queue.
-  /* ── A READER'S RECONCILER NEVER ANSWERS `move` ────────────────────────────────────────────
-   *
-   * See {@link PlanDeps.readerMode}. The organizer's reconciler exists to carry OUR intent to the
-   * server; a reader has no intent to carry, so the only truthful answer about a message that has
-   * moved is "it moved" — `adopt_external`, which writes `desired = observed = where it is` with
-   * `last_set_by: 'external'` and records the audit row. That is precisely a mail client noticing
-   * its user's folders changed, and it is why the reader mode needed no new commit path.
-   *
-   * Two arms of the organizer's version are refused here rather than merely not taken:
-   *
-   *  · `unexpungedSource` re-asserts a pending move so the source expunge is retried. A reader
-   *    issues no moves, so it has no source to expunge, and re-asserting one would put a `move`
-   *    into `folder_state` for the reconcile pass to execute the moment this install were ever
-   *    promoted — a mail move nobody decided, executed by an organizer that was a reader when the
-   *    decision was made.
-   *  · `reconcile`'s own `move` fall-through, which fires when the message is somewhere other
-   *    than `desired_folder` and adoption is not evidenced. For a reader that is not a divergence
-   *    to repair — it is the mailbox, which is the master.
-   *
-   * `none` when the message is where the row already says it is, so a reader's steady state
-   * writes nothing at all.
+  /**
+   * A reader's reconciler never answers `move`. The organizer's reconciler carries OUR intent; a
+   * reader has none, so the only truthful answer about a moved message is "it moved" —
+   * `adopt_external`, writing `desired = observed = where it is` with `'external'` and the audit
+   * row. Two organizer arms are refused rather than merely not taken: `unexpungedSource`
+   * re-asserts a pending move — a reader issues no moves, and re-asserting one would queue a mail
+   * move nobody decided for the moment this install is promoted; and the `move` fall-through —
+   * for a reader a divergence is the mailbox, the master. `none` when the message is where the
+   * row says: a reader's steady state writes nothing.
    */
   const action: ReconcileAction = deps.readerMode === true
     ? (change.locator.folder === state.desiredFolder
@@ -1641,19 +1076,14 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     return { outcome: "own_copy", messageId: c.messageId, action: { type: "none" } };
   }
 
-  // ── A SECOND DELIVERY OF A MESSAGE WE ALREADY HOLD ─────────────────────────────────────────
-  //
-  // The complete observable effect, and every omission below is deliberate:
-  //
-  //  · `recordInstance` — the copy's locator becomes KNOWN, so its body is never fetched again.
-  //    Without it the same bytes are pulled from the server on every cycle for ever, because
-  //    nothing else in the system remembers a locator we declined to make primary.
-  //  · `setFolderConflict` — the record that two instances exist. It touches `desired_folder`,
-  //    `observed_folder` and `last_set_by` NOT AT ALL.
-  //  · NO `updateLocator`: the primary instance stays where the user's own decision left it.
-  //  · NO `recordChange`: no client is told anything moved, because nothing did.
-  //  · NO `recordAudit` `adopt_external`: nothing was adopted. The acceptance criterion for this
-  //    behaviour is literally "no `adopt_external` audit row" after the forgery is run twice.
+  // A second delivery of a message we already hold — the complete observable effect, every
+  // omission deliberate: `recordInstance` — the copy's locator becomes KNOWN, its body never
+  // fetched again (nothing else remembers a locator we declined to make primary);
+  // `setFolderConflict` — the record that two instances exist, touching `desired_folder`,
+  // `observed_folder` and `last_set_by` NOT AT ALL; no `updateLocator` — the primary stays where
+  // the user's decision left it; no `recordChange` — no client is told anything moved, because
+  // nothing did; no `adopt_external` audit row — nothing was adopted, and the acceptance
+  // criterion is literally that absence after the forgery is run twice.
   if (plan.outcome === "external_copy") {
     const c = plan.externalCopy!;
     await repo.recordInstance(c.messageId, c.arrivalLocator);
@@ -1678,18 +1108,14 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       // because a name the sender never set and a name ingest dropped are the same `null` on
       // the wire. Same parse, not a second reading, on the recipients' argument verbatim.
       fromName: p.normalized.from.name,
-      // ── THE RECIPIENTS, WHICH THIS LINE IS THE FIRST TO PERSIST ──────────────────────────
-      //
-      // `messages.to_addresses` / `cc_addresses` have existed since the mail schema landed and
-      // `materialize.ts#messageRowToDTO` has always projected them, but no Cloud ingest ever wrote
-      // them. Every Cloud-ingested message therefore reached the reader as `to: []` and rendered
-      // no "To" line — and nothing failed, because an unwritten column and a message addressed to
-      // nobody are the same `[]` on the wire. The values were right here in `p.normalized` the
-      // whole time; `parseMessage` has populated them since the parser was written, and
-      // `messageFingerprint` already consumes both.
-      //
-      // Same parse, not a second reading — which is what keeps the row and the fingerprint that
-      // decides its identity from being able to disagree about who a message was sent to.
+      // The recipients, which this line is the first to persist.
+      // `messages.to_addresses`/`cc_addresses` have existed since the schema landed and the DTO
+      // has always projected them, but no Cloud ingest ever wrote them — every Cloud message
+      // reached the reader as `to: []` with no "To" line, and nothing failed, because an
+      // unwritten column and a message addressed to nobody are the same `[]` on the wire. The
+      // values were in `p.normalized` the whole time. Same parse, not a second reading — which
+      // keeps the row and the fingerprint that decides its identity from disagreeing about who a
+      // message was sent to.
       to: p.normalized.to,
       cc: p.normalized.cc,
       date: p.normalized.date,
@@ -1707,44 +1133,27 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       // line the default `unread = true` wins and every message the user has ever read comes
       // back as "New" on the first sync of a real mailbox.
       unread: !p.seen,
-      // ── THE VERDICT THAT ROUTED THIS MESSAGE, WRITTEN IN THE INGEST TRANSACTION ──────────
-      //
-      // `planChange` computed it once and `evaluateRules` already consumed it; this is the same
-      // value, not a second reading. Persisting it here rather than leaving it to a later pass
-      // is what stops the row and the routing from being able to disagree — a NULL column
-      // resolves to `"unauthenticated"` (`rules.ts#AuthVerdict`), and a NULL on a message that
-      // was in fact demoted would leave the reason for its demotion nowhere on disk.
-      //
-      // The column is `messages.auth_verdict`, added by mail 0028 and written by nothing on the
-      // ingest path until this line — `unsubscribe-service.ts` writes it too, from the same
-      // parser and the same stored headers, and an unsubscribe attempt is the only other writer.
+      // The verdict that routed this message, written in the ingest transaction. `planChange`
+      // computed it once and `evaluateRules` already consumed it; this is the same value, not a
+      // second reading. Persisting here rather than in a later pass stops the row and the routing
+      // from disagreeing — a NULL column resolves to `"unauthenticated"`, and a NULL on a message
+      // that was in fact demoted would leave the reason for its demotion nowhere on disk. The
+      // column is `messages.auth_verdict` (mail 0028), written by nothing on the ingest path
+      // until this line; the unsubscribe service is the only other writer, from the same parser
+      // and the same stored headers.
       authVerdict: p.authVerdict,
     });
 
-    // ── THE WINNER OWNS THE TAIL. A LOSER WRITES NOTHING (measured on real Postgres) ───────────
-    //
-    // `insertMessage` is an upsert, so two ingests that both planned `new` — two cycles observing
-    // one message before either commits — BOTH arrive here, and the loser holds the WINNER'S row.
-    // The `messages` row converges correctly, which is what `UNIQUE (mailbox_id, dedup_key)` is
-    // for. Everything below this line did not, because the loser used to be unable to tell that it
-    // had lost:
-    //
-    //  · `insertAttachments` has no conflict target and `attachments` has no natural key, so one
-    //    attachment became TWO rows. Measured: `expected [ … ] to have a length of 1 but got 2`.
-    //  · `recordChange` emitted a SECOND `message`/`create` delta for one id — a convergence
-    //    break, the client told to create the same message twice, with no delta that
-    //    removes either.
-    //  · `upsertFolderState` overwrote the winner's row, and it writes `conflict` FALSE, silently
-    //    erasing the stale-source record written at the bottom of this function.
-    //
-    // A `duplicate` outcome is the honest name for it: this observation added no message. Returning
-    // here is also why no DDL was needed — the constraint that decides the winner already exists,
-    // and this line stops throwing its verdict away.
-    //
-    // If the loser observed a DIFFERENT locator (the same mail delivered to two folders at once),
-    // nothing is written here either: that locator is simply not yet recorded, so the next cycle
-    // re-presents it and the ordinary `external_copy` path handles it with the evidence machinery
-    // intact — which is the branch that knows how to record a second instance without adopting it.
+    // The winner owns the tail. A loser writes NOTHING (measured on real Postgres).
+    // `insertMessage` is an upsert, so two ingests that both planned `new` both arrive here, and
+    // the loser holds the WINNER'S row — the `messages` row converges. Everything below did not:
+    // `insertAttachments` has no conflict target, so one attachment became two rows (measured);
+    // `recordChange` emitted a second `create` delta for one id — a convergence break;
+    // `upsertFolderState` overwrote the winner's row and silently cleared the stale-source
+    // `conflict`. A `duplicate` outcome is the honest name: this observation added no message. No
+    // DDL was needed — the deciding constraint already exists; this line stops throwing its
+    // verdict away. A loser that observed a DIFFERENT locator writes nothing either: the next
+    // cycle re-presents it and `external_copy` records it with the evidence machinery intact.
     if (!stored.created) {
       return { outcome: "duplicate", messageId: stored.id, action: { type: "none" } };
     }
@@ -1753,24 +1162,16 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // message — atomic ingest, no orphan attachment without its message.
     await repo.insertAttachments(stored.id, accountId, p.normalized.attachments);
 
-    // THE FULL ORIGINAL BODY, ALWAYS — text AND html, sensitive or not. Body redaction is removed:
-    // the mailbox on the IMAP server (the master) already holds this mail unredacted, so storing a
-    // redacted display copy only hid it from the one person entitled to read it, and it over-fired.
-    // The disclosure gate to a MODEL is elsewhere and unchanged — `no_ai`/`no_kb` keep this mail out
-    // of automatic AI, and `redactForModel` strips the credential from any user-pressed AI payload.
-    //
-    // `prepareHtmlForStorage` is the ONLY route html takes into the database — this is the sole
-    // writer of `message_bodies.html` (`privacy-service.ts` flips `loadedRemoteContent` and
-    // nothing else; `message-service.ts` only reads). It strips oversized inline base64 payloads
-    // and enforces the 256 KiB cap that the `message_bodies_html_cap` CHECK constraint asserts.
-    //
-    // THE STORAGE-CAP SEAM is inside this one call and reaches nothing else in this
-    // function: the adapter reserves the body's bytes against `deps.storageCap` in this same
-    // transaction, and at cap it stores the withheld husk (headers kept, content empty,
-    // `withheld_reason='storage_cap'`) instead. Everything below — threading, deltas,
-    // folder_state, routing, the IMAP move — is deliberately upstream or downstream of the
-    // body's CONTENT and proceeds identically; the acceptance that matters is a rule-matched
-    // sender still moving on IMAP while its body is withheld.
+    // The full original body, always — text AND html, sensitive or not. Body redaction is
+    // removed: the mailbox on the IMAP server already holds this mail unredacted, so a redacted
+    // display copy only hid it from the one person entitled to read it, and it over-fired. The
+    // disclosure gate to a MODEL is elsewhere and unchanged — `no_ai`/`no_kb` keep this mail out
+    // of automatic AI, and `redactForModel` strips the credential from any user-pressed payload.
+    // `prepareHtmlForStorage` is the ONLY route html takes into the database — the sole writer of
+    // `message_bodies.html`. The storage-cap seam is inside this one call: the adapter reserves
+    // the bytes against `deps.storageCap` in this transaction, and at cap stores the withheld
+    // husk instead; everything below proceeds identically — the acceptance that matters is a
+    // rule-matched sender still moving on IMAP while its body is withheld.
     await repo.insertMessageBody(stored.id, {
       text: p.normalized.textBody,
       html: prepareHtmlForStorage(p.normalized.htmlBody),
@@ -1780,24 +1181,16 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       capBytes: deps.storageCap === UNMETERED_STORAGE_CAP ? null : deps.storageCap,
     });
 
-    // ── THREADING, HERE AND NOT ANYWHERE ELSE ──────────────────────────────────────────────
-    //
-    // In the persist phase because it is a pure DB read/write with no network in it — the header
-    // chain is already in `p.normalized.headers` and the parent lookup is one indexed statement — so it
-    // belongs in the persist transaction with every other entity write and its `change_log`
-    // rows. The plan phase would put a read outside the transaction that commits its consequence, and
-    // a cron would leave every message unthreaded until it next ran.
-    //
-    // BEFORE the `message` create, deliberately. The `thread` create is then the lower seq, so
-    // a client applying the delta in order never sees a message referencing a thread it has not
-    // been told about. It is also why the message needs no `update` of its own: the create is
-    // recorded after `setMessageThread`, and a client materializing it reads the committed row.
-    //
-    // `stored.threadId` is the re-entry guard. `insertMessage` is an upsert, so a concurrent
-    // second ingest of the same mail gets the existing row back; resolving again would be
-    // harmless for anchored mail (`ON CONFLICT` returns the same thread) but would mint a
-    // second `threads` row for a message with no Message-ID at all, whose NULL anchor nothing
-    // can dedup.
+    // Threading, here and not anywhere else. In the persist phase because it is a pure DB
+    // read/write with no network — the header chain is in `p.normalized.headers` and the parent
+    // lookup is one indexed statement — so it belongs in the persist transaction with every other
+    // entity write; the plan phase would put a read outside the transaction that commits its
+    // consequence, and a cron would leave every message unthreaded until it ran. BEFORE the
+    // `message` create, deliberately: the `thread` create takes the lower seq, so a client
+    // applying deltas in order never sees a message referencing a thread it has not been told
+    // about. `stored.threadId` is the re-entry guard: `insertMessage` is an upsert, and resolving
+    // again would mint a second `threads` row for a message with no Message-ID, whose NULL anchor
+    // nothing can dedup.
     if (!stored.threadId) {
       const resolution = await resolveThread(repo, {
         accountId,
@@ -1886,122 +1279,32 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   // reconcile runner; `adopt_external` records the user-wins outcome + a corrective
   // move change; `none` converges.
   const e = plan.existing!;
-  // ── A WITHHELD MOVE DOES NOT REPOINT ────────────────────────────────────────────────────────
-  //
-  // See `ExistingPlan.unexpungedSource`. Our move's copy is at the destination and the source is
-  // still on the server, so there are two physical messages and only one of them may be called
-  // the message's location. It has to be the SOURCE: that is the locator the retry must be handed
-  // to, and repointing at the copy would leave the surviving source addressable by nothing.
-  //
-  // The copy is recorded as a second instance instead, which is what stops it being rediscovered
-  // next cycle as a stranger and paying a full RFC822 re-fetch. No tuple conflict is possible —
-  // the primary is at the source, the copy is a different folder/uid — so unlike the repointing
-  // path this write has no ordering constraint against the primary.
-  // ── A SECOND PHYSICAL COPY IS RECORDED, NEVER REPOINTED TO ─────────────────────────────────────
-  //
-  // `updateLocator` MOVES the message's one primary instance (`drizzle-repo.ts#setPrimaryInstance`
-  // is an UPDATE of the primary row, not an insert). So when two physical copies of one logical
-  // message sit in the SAME folder — a re-imported mailbox, a client that appended twice — only one
-  // of them can ever be in the known-set, and repointing hands the other one back to the next
-  // cycle as an unknown UID:
-  //
-  //     cycle 1: uid 400 known, uid 900 unknown → fetch 900 → duplicate → primary moves to 900
-  //     cycle 2: uid 900 known, uid 400 unknown → fetch 400 → duplicate → primary moves to 400
-  //     …for ever, one full RFC822 body per copy per cycle, and `fetchCapped` truncated on every
-  //     pass because the unknown set never shrinks — so `hasBacklog` is pinned true and
-  //     `initial_import_completed_at` is unreachable.
-  //
-  // MEASURED, not hypothesised. On a live mailbox in this state the observable signature is exact
-  // and worth recognising: the folder's `exists` far exceeds the instance rows recorded for it, the
-  // folder cursor's `uidnext` has been held at 0 since the mailbox was created, and the stored
-  // message count does not move across an hour of continuous cycling. It is a mailbox working hard
-  // and importing nothing.
-  //
-  // The rule below is stated in terms of what each answer MEANS, not of the outcome kinds:
-  //
-  // `external_copy` is NOT in the condition and needs no place there: it takes its own return above
-  // and already calls `recordInstance` without repointing. `duplicate` is the same observation in the
-  // same folder, and it was the one that repointed.
-  //
-  // ── THE SENT FOLDER IS NO LONGER EXCLUDED — ITS EXCLUSION ARGUMENT WAS FALSIFIED LIVE ─────────
-  //
-  // The exclusion (`!e.ownAuthored`, removed 2026-08-30) rested on one claim: *"a second copy in
-  // Sent cannot become a permanently-unknown UID, because the watermark is that folder's floor"*.
-  // That claim is TRUE only once a watermark has been PUBLISHED, and the watermark is published only
-  // by a non-truncated first scan — so on a Sent folder whose first scan keeps truncating, every
-  // own-authored second copy is exactly the permanently-unknown UID the claim said could not exist.
-  // Measured on a production mailbox: one message APPENDed to Sent three times (three UIDs, one
-  // 4.6 MB body), the two non-primary copies re-fetched on EVERY cycle for weeks — 9.4 MB of IMAP
-  // traffic per ~2-minute cycle on a quiet mailbox — each fetch repointing the primary and dropping
-  // the known-set memo, and the truncation their re-fetch guaranteed holding the watermark at 0,
-  // which is the very state that made them unknown. A defect that maintains its own precondition.
-  //
-  // The own-authored arm is NOT plain recording, though — it records AND repoints (see the
-  // `sameFolderSameEpochCopy` branch below for the two-halves argument). A first draft here
-  // recorded only, and this is the regression that costs: Exchange's replace shape
-  // expunges the copy the send path appended, often BELOW the watermark where the expunge is
-  // never observed, and a primary left there is a dead locator no promotion can ever repair.
-  // The old repoint-on-arrival converged the primary onto the newest observed copy — the one the
-  // provider kept — and that behaviour is preserved; the recording of the superseded locator is
-  // what breaks the re-fetch loop, because both UIDs stay in the known-set either way.
-  //
-  //  · a different UID in the SAME epoch is a genuine second copy on the server right now. Record it
-  //    (non-primary): it becomes known, its body is never fetched again, and the message keeps the
-  //    locator it already had. Repointing on the strength of a second copy is the same class of
-  //    mistake `external_copy` exists to refuse — a delivery deciding something.
-  //  · a different EPOCH is a RENUMBERING. The stored locator is meaningless, so repoint.
-  //  · the same locator is a replay. Repoint (a touch).
-  //  · `own_move` / `external_move` repoint by definition — the message really is at the arrival
-  //    locator, and the source is gone or being adopted.
-  //
-  // The residual this creates is closed in `forgetInstanceAt`: if the copy the primary points at is
-  // later expunged, that call PROMOTES a surviving instance, so `messages.native_locator` never
-  // names a UID the server does not hold. Before this change the same repair happened by accident —
-  // the survivor came back as "unknown" and repointed the primary — which is the oscillation itself.
+  // A withheld move does not repoint; a second physical copy is recorded, never repointed to.
+  // `updateLocator` MOVES the one primary instance, so with two copies in the SAME folder only
+  // one can be in the known-set — repointing hands the other back as an unknown UID: fetch and
+  // repoint, alternating for ever, one full body per copy per cycle, so the first-import stamp is
+  // unreachable. MEASURED live: `exists` far above the instance rows, `uidnext` held at 0, the
+  // stored count motionless. Sent is no longer excluded — its claim holds only once a watermark
+  // is PUBLISHED, and on a truncating first scan every own-authored second copy is exactly the
+  // permanently-unknown UID the claim denied: 9.4 MB per two-minute cycle for weeks. The
+  // own-authored arm records AND repoints; a different epoch — repoint; a replay — repoint. The
+  // residual is closed in `forgetInstanceAt`, which promotes a survivor.
   const sameFolderSameEpochCopy =
     e.kind === "duplicate"
     && e.storedLocator.folder === e.arrivalLocator.folder
     && epochOfRef(e.storedLocator.ref) === epochOfRef(e.arrivalLocator.ref)
     && e.storedLocator.ref !== e.arrivalLocator.ref;
   const secondCopyInSameEpoch = sameFolderSameEpochCopy && !e.ownAuthored;
-  // ── AN OWN-AUTHORED (SENT) COPY: RECORD *AND* REPOINT — both halves are load-bearing ─────────
-  //
-  // Sent is the one folder read from a UID watermark, and a delete BELOW the watermark is never
-  // reported — so whichever copy the row names can silently die there with no promotion to move
-  // it. The two halves answer the two failure shapes that fact creates, and dropping either one
-  // re-opens a measured defect:
-  //
-  //  · RECORD the stored locator as a non-primary instance, so BOTH UIDs are in the known-set.
-  //    Without it, the not-primary copy is re-enumerated as unknown on every pass of a
-  //    still-unpublished first scan — the repoint ping-pong measured in production (one 4.6 MB
-  //    message APPENDed three times; 9.4 MB re-fetched per ~2-minute cycle, for weeks), the loop
-  //    that keeps the watermark at 0 and thereby maintains its own precondition.
-  //  · REPOINT the primary to the newest observed copy, the convergence Sent has always had.
-  //    Without it, the provider-replace shape (Exchange expunging the copy the send path
-  //    appended, BELOW the watermark, where the expunge is never observed) leaves
-  //    `messages.native_locator` naming a dead UID for ever. The
-  //    newest observed copy is the one the provider kept; converging onto it is the repair.
-  //
-  // A stale non-primary row for a below-watermark expunge is the accepted residual: it is never
-  // enumerated again (the watermark is the floor), so it costs nothing, and a UIDVALIDITY reset
-  // voids it with everything else.
-  //
-  // AND THE PRIMARY ITSELF can go stale the same way, under EITHER policy — uid order proves
-  // allocation time, not which duplicate a provider will later expunge (a review pressed this
-  // with the mirror-image shape: a provider filing its own copy BEFORE our append, then
-  // expunging the append). No locator rule can know the survivor of an unobservable delete, so
-  // the choice is made by the measured provider pattern (Exchange replaces the OLDER copy, and
-  // its replace was observed above the watermark where the promotion repairs it) — and the
-  // stale-primary state is DEGRADED, not lost: a move through a dead locator raises
-  // `MessageGoneError`, `voidGoneFiling` clears the filing, and the next `changesSince` adopts
-  // what the server actually holds. That repair is the floor both policies stand on.
-  // ── "NEWEST" IS A UID COMPARISON, NOT AN ARRIVAL ORDER ────────────────────────────────────
-  //
-  // A cold Sent scan hands creates over newest-FIRST, so with three copies the arrivals reach
-  // this branch in DESCENDING uid order — an unconditional repoint would walk the primary
-  // BACKWARD onto the oldest copy, which is precisely the copy the
-  // provider-replace pattern expunges. Within one epoch the uid ordering is the server's own
-  // allocation order, so `arrival > stored` is exactly "the copy the server kept most recently".
+  // An own-authored (Sent) copy: record AND repoint — both halves load-bearing. Sent is read from
+  // a UID watermark, and a delete BELOW it is never reported, so whichever copy the row names can
+  // silently die with no promotion. RECORD the stored locator as a non-primary instance so both
+  // UIDs are in the known-set — without it, the measured repoint ping-pong. REPOINT the primary
+  // to the newest observed copy — without it, Exchange's replace shape leaves `native_locator`
+  // naming a dead UID for ever. A stale non-primary row is the accepted residual: never
+  // enumerated again. The primary can go stale under EITHER policy, and that state is DEGRADED,
+  // not lost: `MessageGoneError`, `voidGoneFiling`, then adoption. "Newest" is a UID comparison,
+  // not arrival order: a cold Sent scan hands creates over newest-first, and an unconditional
+  // repoint would walk the primary BACKWARD onto the copy the provider expunges.
   const arrivalIsNewer = sameFolderSameEpochCopy
     && Number(e.arrivalLocator.ref.split(":")[1]) > Number(e.storedLocator.ref.split(":")[1]);
   if (!e.unexpungedSource && sameFolderSameEpochCopy && await repo.primaryInstanceVanished(e.messageId)) {
@@ -2026,17 +1329,14 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     await repo.updateLocator(e.messageId, e.arrivalLocator);
   }
 
-  // ── A RE-APPEARANCE UN-DELETES, WHOEVER AUTHORED IT (mail 0065) ────────────────────────────
-  //
-  // The server demonstrably holds this message in a watched folder — that is what an existing-
-  // message arrival IS — so a standing tombstone is the mirror describing a mailbox that does
-  // not exist. Cleared here, BEFORE the switch, and not only in the adopt arm: the case the
-  // adopt arm alone would miss is our own completed move whose bookkeeping crashed — the next
-  // cycle's reaper tombstones the instanceless row, and the arrival then classifies as
-  // `own_move`/`none`, which adopts nothing. The resurrection delta is emitted after the
-  // switch (the adopt arm's own `move` change already carries the live entity; every other arm
-  // owes an `update`), and the seq allocation stays behind the counter lock the body restore
-  // below may take — the lock-order rule.
+  // A re-appearance un-deletes, whoever authored it (mail 0065). The server demonstrably holds
+  // this message in a watched folder — that is what an existing-message arrival IS — so a
+  // standing tombstone is the mirror describing a mailbox that does not exist. Cleared here,
+  // BEFORE the switch, not only in the adopt arm: the case the adopt arm alone would miss is our
+  // own completed move whose bookkeeping crashed — the reaper tombstones the instanceless row,
+  // and the arrival then classifies as `own_move`/`none`, which adopts nothing. The resurrection
+  // delta is emitted after the switch, and the seq allocation stays behind the counter lock the
+  // body restore may take — the lock-order rule.
   const resurrected = (await repo.clearDeletedOnAdopt?.(e.messageId)) === true;
   // The husk restore: a `junk_filed`/`expunged` body whose bytes just arrived is refilled under
   // the normal storage-cap accounting; a `storage_cap` husk is standing policy and is refused
@@ -2117,34 +1417,16 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     });
   }
 
-  // ── THE TWO COPIES ARE BOTH ON RECORD, AND THE MOVE IS STILL OWED ──────────────────────────
-  //
-  // See `ExistingPlan.unexpungedSource`. The instance write happened above, before the switch,
-  // because it no longer competes for a tuple with anything: the primary stays at the source, so
-  // recording the destination copy is an ordinary insert.
-  //
-  // The conflict flag is raised HERE, after the switch, and that position is load-bearing.
-  // `upsertFolderState` writes `conflict` false on every call (`RepoPort.upsertFolderState`), so
-  // raising it before the switch sets a column that is silently cleared microseconds later — a
-  // test asserting the flag would pass against a row that no longer carries it. Swap these and
-  // the test covering this ordering goes red on exactly that.
-  //
-  // The state passed here is the PENDING one — observed is the source, not the destination — but
-  // be clear about how little that does: `setFolderConflict`'s update branch writes `conflict` and
-  // `updated_at` and NOTHING else, so on this path the fields are inert. They are supplied
-  // correctly because its INSERT branch (a message with no `folder_state` row yet) does use them,
-  // and a converged pair there would be a completion nobody witnessed. That branch is not
-  // reachable from a withheld move, which always has a pending row already — so this is stated
-  // rather than tested, and mutating these two values leaves every test of this path green.
-  // The pending row that actually matters is written by the `move` arm of the switch above.
-  //
-  // THE DURABLE RECORD IS THE INSTANCE ROW, NOT THE FLAG — measured, not assumed. A non-primary
-  // `message_instances` row whose folder is not the message's `desired_folder` is the queryable
-  // "a source expunge is still owed", it needs no new table because the schema already spells it,
-  // and it self-heals: if the source does vanish later, `sync.ts`'s `forgetInstanceAt` deletes it
-  // by locator. `folder_state.conflict` is POINT-IN-TIME by comparison: `upsertFolderState` writes
-  // `conflict: false` unconditionally, so the next ordinary re-observation clears it. Anything
-  // that needs to find these must read the instance table.
+  // The two copies are both on record, and the move is still owed — see
+  // `ExistingPlan.unexpungedSource`. The instance write happened above the switch: the primary
+  // stays at the source, so recording the copy competes for no tuple. The conflict flag is raised
+  // HERE, after the switch: `upsertFolderState` writes `conflict` false on every call, so raising
+  // it earlier sets a column silently cleared microseconds later — swap these and the ordering
+  // test goes red. The state passed is the PENDING one, its fields inert on this path; the
+  // unreachable INSERT branch is why they are supplied correctly. THE DURABLE RECORD IS THE
+  // INSTANCE ROW, NOT THE FLAG: a non-primary row whose folder is not `desired_folder` is the
+  // queryable "an expunge is owed", self-healing via `forgetInstanceAt`; the flag is
+  // point-in-time — the next re-observation clears it.
   if (e.unexpungedSource) {
     await repo.setFolderConflict(e.messageId, {
       desiredFolder: e.state.desiredFolder,

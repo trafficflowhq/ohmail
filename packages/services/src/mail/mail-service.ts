@@ -22,23 +22,14 @@ export interface MailContext {
 }
 
 /**
- * THE ONE DATABASE CAPABILITY THE OPERATOR-ALERT PATH NEEDS.
- *
- * `sendOperatorAlert` reads nothing and writes nothing except one row in `auth_throttle`: the
- * per-recipient limiter's slot. Everything else it touches is configuration and a clock. So
- * that is what it gets — a function that claims a slot — instead of a `Db`.
- *
- * The reason is not tidiness. The mail sink is constructed inside the ALERT path, which is a
- * staff-triggered graph, and it used to hold `makePooledDb(cfg.databaseUrlPooled) as never` —
- * the unrestricted runtime handle, silenced by a double assertion, one `.select()` away from
- * every account's mail. A review recorded it as the reason "all three alert routes run wholly
- * on the blind connection" was false. It is the same defect that was removed from the
- * `/admin/*` callbacks and the same fix: the composition root keeps the capability, the callee
- * gets a value that cannot express a row.
- *
- * `auth_throttle` is deliberately NOT reachable from the blind `ohmail_admin` role, so this
- * cannot simply move onto the staff handle: the claim is a genuine runtime-connection write.
- * What changes is who holds the connection.
+ * The ONE database capability the operator-alert path needs. `sendOperatorAlert` writes nothing
+ * except one `auth_throttle` row — the per-recipient limiter's slot — so that is what it gets: a
+ * function that claims a slot, not a `Db`. The mail sink is constructed inside the ALERT path, a
+ * staff-triggered graph, and it used to hold the unrestricted runtime handle silenced by a double
+ * assertion, one `.select()` away from every account's mail. The same defect removed from the
+ * `/admin/*` callbacks, the same fix: the composition root keeps the capability, the callee gets
+ * a value that cannot express a row. `auth_throttle` is NOT reachable from the blind role, so
+ * this cannot move onto the staff handle — what changes is who holds the connection.
  */
 export interface RecipientLimiter {
   /**
@@ -67,14 +58,11 @@ const asTx = (ctx: MailContext): Tx => ctx.db as unknown as Tx;
 
 /**
  * The `auth_throttle` implementation of {@link RecipientLimiter}, for a caller that legitimately
- * holds the runtime connection — a composition root, or any of the five customer templates,
- * which need `ctx.db` for their own writes anyway.
- *
- * ISO STRINGS, not `Date`s, inside the raw `sql` templates — the rule
- * `auth-service.ts:throttleFailure` states at length: postgres-js serialises a raw template
- * parameter against the type Postgres describes for `$n` in `$n::timestamptz`, which is TEXT,
- * and handed a `Date` it throws. PGlite binds a `Date` happily, so the suite would never see it
- * and production would 500.
+ * holds the runtime connection — a composition root, or the customer templates, which need
+ * `ctx.db` for their own writes anyway. ISO strings, not `Date`s, inside the raw `sql` templates:
+ * postgres-js serialises a raw template parameter against the type Postgres describes for `$n` in
+ * `$n::timestamptz`, which is TEXT, and handed a `Date` it throws. PGlite binds a `Date` happily,
+ * so the suite would never see it and production would 500.
  */
 export function dbRecipientLimiter(db: Db): RecipientLimiter {
   return {
@@ -106,52 +94,14 @@ const limiterOf = (ctx: MailContext | OperatorAlertContext): RecipientLimiter =>
   "limiter" in ctx ? ctx.limiter : dbRecipientLimiter(ctx.db);
 
 /**
- * WHICH BUDGET a send spends. Two, and the split is a security boundary, not tidiness.
- *
- * The per-recipient limiter used to be ONE budget shared by every template, and that made
- * two things true that must not be:
- *
- *  1. **Suppression.** `POST /waitlist` is public and takes any address a stranger types.
- *     Five anonymous submissions naming a victim exhausted the victim's whole hourly
- *     budget, so the operator's next `pnpm invite mint --email victim` came back
- *     `{"status":"skipped","reason":"rate_limited"}` — an invite burned into the table and
- *     never delivered — and a security notice for that address would have been dropped the
- *     same way. A stranger could silence our mail to anyone they could name.
- *  2. **A cross-template oracle.** Anything reporting the limiter's state on a public
- *     endpoint reports how much OTHER mail we recently sent that address, i.e. "was this
- *     person invited". (The reporting itself is gone — see `WaitlistService.join` — but the
- *     shared counter is what gave it something to report.)
- *
- * So the budgets are separated by who can SPEND them:
- *
- *  · `unsolicited` — a send an unauthenticated caller can cause by naming an address they
- *    do not control. The waitlist confirmation, and BOTH mails the public
- *    register path can produce (see below).
- *  · `transactional` — everything the product owes someone: the invite an operator minted,
- *    a security notice, an operator alert. Nothing anonymous can reach these, so nothing
- *    anonymous can starve them.
- *
- * ── EMAIL VERIFICATION MOVED FROM `transactional` TO `unsolicited` ────────────────────
- *
- * It was `transactional` while the template was unwired, on the reading that a verification
- * is something the product owes an account holder. Wiring it to `POST /auth/register`
- * falsified that: the caller is anonymous and the address is whatever they typed, which is
- * the definition of `unsolicited` two paragraphs up. Left on the transactional budget, a
- * prober naming a victim's address five times would have drained the victim's INVITE and
- * security-notice budget — reintroducing suppression (1) through the new endpoint.
- *
- * It is a property of the template rather than a parameter of the send, deliberately: every
- * verification mail goes to an address that is by definition not yet proven, including the
- * authenticated resend (a caller holding a re-entry session on an address they registered
- * but do not own must not be able to starve the real owner's mail either) and any future
- * email-CHANGE flow. A quota argument would be a decision each call site could get wrong.
- *
- * `account_exists` is `unsolicited` for the same reason and for one more: it MUST spend the
- * same budget as the verification mail it is indistinguishable from, or the limiter's
- * behaviour over repeated attempts becomes the very oracle the constant response closed.
- *
- * The key namespace is `mail:<quota>:<sha256(recipient)>`, so the two counters cannot
- * touch, and `pruneRateLimitWindows`'s `like('mail:%')` still sweeps both.
+ * Which budget a send spends — two, and the split is a security boundary. One shared budget made
+ * two things true that must not be: SUPPRESSION — five anonymous waitlist submissions naming a
+ * victim exhausted their hourly budget, so the operator's invite came back `rate_limited`: a
+ * stranger could silence our mail to anyone they could name; and a CROSS-TEMPLATE ORACLE — a
+ * limiter's state on a public endpoint reports what other mail we sent that address. Split by who
+ * can SPEND: `unsolicited` — a send an anonymous caller can cause; `transactional` — what the
+ * product owes someone. Verification is `unsolicited`, and `account_exists` MUST spend the same
+ * budget, or the limiter becomes the oracle. The key is `mail:<quota>:<sha256(recipient)>`.
  */
 export type MailQuota = "unsolicited" | "transactional";
 
@@ -192,14 +142,12 @@ export interface MailServiceConfig {
 }
 
 /**
- * Where ohmail's own mail is permitted to send a reader. Loopback is included so the
- * dev harness works; everything else is the product's real origins and nothing more.
- *
- * This exists because the URL scheme check in `safeUrl` accepts *any* https host, and
- * the "first-party only" template test only ever fed it hard-coded fixtures — so a
- * deployment with `MAIL_APP_URL=https://evil.example` would have rendered a perfectly
- * valid-looking ohmail invite pointing at somebody else's site, with a green suite. The
- * check belongs at BOOT, where a misconfiguration is a crash an operator sees, not at
+ * Where ohmail's own mail is permitted to send a reader. Loopback is included so the dev harness
+ * works; everything else is the product's real origins and nothing more. This exists because
+ * `safeUrl` accepts ANY https host, and the "first-party only" template test only ever fed it
+ * hard-coded fixtures — so a deployment with `MAIL_APP_URL=https://evil.example` would have
+ * rendered a perfectly valid-looking ohmail invite pointing at somebody else's site, with a green
+ * suite. The check belongs at BOOT, where a misconfiguration is a crash an operator sees, not at
  * render time, where it is a dropped mail nobody reads.
  */
 export const DEFAULT_LINK_ORIGINS = [
@@ -289,57 +237,14 @@ export interface MailServiceDeps {
 }
 
 /**
- * MailService — the POLICY layer above `MailerPort`.
- *
- * The port is a transport: hand it a recipient and a template and it puts a message
- * on the wire. This class decides *whether* to, builds every URL from deployment
- * config so no caller can compose one, and owns the verification-token lifecycle.
- *
- * ── Rate limiting: per RECIPIENT, before the send, atomically ────────────────────
- *
- * A retry loop — a client re-POSTing the waitlist form, a serverless invocation the
- * platform re-drives, an operator's script — must not be able to mail-bomb a person
- * who never asked for any of it. So every send passes through
- * `reserveRecipientSlot`, which is ONE `INSERT … ON CONFLICT DO UPDATE … RETURNING`
- * against `auth_throttle`, the same store and the same atomic idiom as the auth
- * lockout (a read-modify-write here would let
- * concurrent attempts collapse into a single increment, which is precisely the
- * scenario the limit exists for).
- *
- * The key is `mail:<sha256(recipient)>` — HASHED, unlike the auth namespaces, because
- * these recipients include people with no account. A waitlist signer's address should
- * not accumulate in plaintext in a throttle table whose whole retention story is "it
- * gets overwritten eventually".
- *
- * The counter is shared across all four templates. Onboarding's worst legitimate hour
- * is waitlist → invite → verification → new-device notice = four; the limit is five,
- * so a real user never sees it and a loop stops at five.
- *
- * The window does not slide forward on refusals: `window_started_at` only moves when
- * the window has genuinely rolled, so a caller hammering the endpoint cannot extend
- * its own cooldown, and the bucket reopens exactly one window after the FIRST send.
- *
- * ── Failure mode: DROP. No queue, no retry. ──────────────────────────────────────
- *
- * A failed send returns `{status:"failed"}` and that is the end of it. This is a
- * decision, not an omission:
- *
- *  · There is nowhere to queue. The API is serverless and the worker may not
- *    import `packages/services` at all (pinned by the worker's dependency test),
- *    so "retry later" would mean a new table, a new cron and a new failure surface for
- *    four emails.
- *  · Every one of the four is re-triggerable by a human: submit the form again, ask
- *    for another invite, request a new verification link. The user has a retry; it is
- *    just not automatic.
- *  · An automatic retry is the mail-bomb vector we just spent a limiter preventing.
- *    A provider that 500s for ten minutes plus a retry loop is a stranger's inbox full
- *    of duplicate invites.
- *
- * `failed.retryable` is therefore CLASSIFICATION, not behaviour: it is there so a log
- * line distinguishes "Resend was down" from "our API key is wrong", and so a future
- * queue has a signal to key on. Nothing in beta reads it. The one exception to
- * drop-on-failure is the sign-in notice, which is not re-triggerable by the user — and
- * that is exactly why its failure must be logged loudly by the caller.
+ * MailService — the POLICY layer above `MailerPort`. The port is a transport; this class decides
+ * WHETHER to send, builds every URL from deployment config, and owns the verification-token
+ * lifecycle. Rate limiting is per RECIPIENT, before the send, atomically: one `INSERT … ON
+ * CONFLICT DO UPDATE … RETURNING` (a read-modify-write lets concurrent attempts collapse into one
+ * increment). The key is `mail:<sha256(recipient)>` — hashed, because recipients include people
+ * with no account. The window does not slide on refusals. Failure mode: DROP — no queue, no
+ * retry: nowhere to queue, every template is human-re-triggerable, and an automatic retry is the
+ * mail-bomb vector the limiter prevents. `failed.retryable` is classification, not behaviour.
  */
 export class MailService {
   private readonly cfg: Required<MailServiceConfig>;
@@ -366,23 +271,14 @@ export class MailService {
   // ── 5. Operator alert — NOT customer mail ────────────────────────────────────
 
   /**
-   * Mail the configured operator about firing alerts.
-   *
-   * **The recipient is configuration, never an argument.** Every other method on this class
-   * takes a `to`, because every other mail is addressed to the person who caused it. This one
-   * is triggered by a machine on a timer, so a `to` parameter would be an unattended
-   * mail-bomb primitive; the address comes from `operatorEmail` and there is no override.
-   *
-   * It still goes through {@link guarded}, so the per-recipient limiter applies: five per
-   * hour, shared with every other template. That is deliberately a BACKSTOP and not the
-   * dedup mechanism — `alert_state` in `packages/db/src/alerts.ts` already collapses a
-   * standing fault into one mail per hour. If the limiter ever fires here it means the
-   * dedup has a bug, and being rate-limited is the right outcome of that bug.
-   *
-   * **It takes an {@link OperatorAlertContext} and not a {@link MailContext}.** That
-   * limiter claim is the whole of its database use, so a `Db` is a capability this path does
-   * not need — and it runs inside the alert graph, behind a staff credential, where an unneeded
-   * runtime handle is exactly the hazard the capability split exists to remove.
+   * Mail the configured operator about firing alerts. The recipient is CONFIGURATION, never an
+   * argument: this mail is triggered by a machine on a timer, so a `to` parameter would be an
+   * unattended mail-bomb primitive. It still goes through {@link guarded} — deliberately a
+   * BACKSTOP, not the dedup: `alert_state` already collapses a standing fault into one mail per
+   * hour, and if the limiter fires here the dedup has a bug, and being rate-limited is the right
+   * outcome. It takes an {@link OperatorAlertContext}, not a {@link MailContext}: the limiter
+   * claim is the whole of its database use, and an unneeded runtime handle behind a staff
+   * credential is exactly the hazard the capability split removes.
    */
   async sendOperatorAlert(
     ctx: OperatorAlertContext,
@@ -476,31 +372,14 @@ export class MailService {
   // ── 4. Email verification ─────────────────────────────────────────────────────
 
   /**
-   * Mint a single-use verification token and mail the link.
-   *
-   * It was built unwired, while registration was invite-gated: an invite mail delivered
-   * to an address already proves that address receives mail, so a verification step on
-   * top of it would be ceremony. Open registration wired it — the public register path
-   * and the authenticated resend both issue through here.
-   *
-   * The token reuses `login_tokens` with `purpose='email_verify'` and `hashToken(raw)`
-   * at rest (mirroring how the first-factor token is stored).
-   * `peekLoginToken` in `auth-service.ts` is scoped to `purpose='login'` for exactly
-   * this reason: a link mailed to an inbox must not be presentable as a first-factor
-   * login token.
-   *
-   * If the send fails the token still exists and is simply never used; the user asks
-   * for another one. We do not roll it back, because the send is outside the DB
-   * transaction by design (a mail outage must not fail a database write).
-   *
-   * **`to` must be the user's own address.** The token is bound to `userId` and nothing
-   * else, and `to` arrives independently — so without this check a caller (a route,
-   * a future admin action, a bug in either) could mail a target user's live verification
-   * token to an attacker-supplied inbox, and the attacker could then present it and have
-   * the target's address marked verified. Rather than adding a column to `login_tokens`
-   * for a path that is not wired, the binding is enforced where the mismatch can be
-   * seen: at issue time, against `users.email`. When email-CHANGE verification is built,
-   * that is the slice that adds the pending-address column and moves this check onto it.
+   * Mint a single-use verification token and mail the link. Built unwired while registration was
+   * invite-gated; open registration wired it — the public register path and the authenticated
+   * resend both issue here. The token reuses `login_tokens` with `purpose='email_verify'`, hashed
+   * at rest; `peekLoginToken` is scoped to `purpose='login'` so a mailed link is never a first
+   * factor. A failed send leaves the token unused (the send is outside the DB transaction by
+   * design). `to` MUST be the user's own address: the token is bound to `userId` and `to` arrives
+   * independently, so without this check a caller could mail a target's live verification token
+   * to an attacker-supplied inbox. Enforced at issue time against `users.email`.
    */
   async issueEmailVerification(
     ctx: MailContext, input: { userId: string; to: string },
@@ -537,28 +416,14 @@ export class MailService {
   // ── 6. "You already have an account" — the other half of the constant 202 ────────
 
   /**
-   * Tell an address that a signup was attempted for it and an account already exists.
-   *
-   * **This method is why the enumeration oracle could be closed.** `POST /auth/register`'s
-   * public path answers a byte-identical 202 for a fresh address and a taken one; the
-   * "sign in instead" news therefore cannot be in the response, and this is where it went.
-   * Only the address owner can read it, which is the entire point.
-   *
-   * It mints NOTHING. No token, no row, no credential — the account already exists and the
-   * caller proved nothing, so there is nothing to issue. That makes this the one mail in the
-   * set whose delivery to the wrong person costs nothing at all: the link is the public
-   * sign-in page.
-   *
-   * `unsolicited`, and it MUST match {@link issueEmailVerification}'s quota exactly. If the two
-   * branches of the register path spent different budgets, a prober who exhausted one and not
-   * the other would have recovered the oracle from the limiter's behaviour — a constant
-   * response with a branch-dependent side effect is not a constant response.
-   *
-   * Idempotency-keyed on the RECIPIENT and the hour. A serverless invocation the platform
-   * re-drives is one mail; a genuine second attempt an hour later is a second mail, because
-   * repeated attempts on somebody's address are exactly what they should be told about. The
-   * key deliberately does not include anything about the account — the mail is a function of
-   * the address and the moment, and nothing else.
+   * Tell an address that a signup was attempted and an account already exists — why the
+   * enumeration oracle could be closed: the register path answers a byte-identical 202 either
+   * way, so the "sign in instead" news goes here, where only the address owner can read it. It
+   * mints NOTHING, so this is the one mail whose delivery to the wrong person costs nothing.
+   * `unsolicited`, matching {@link issueEmailVerification}'s quota exactly: different budgets on
+   * the two branches would recover the oracle from the limiter. Idempotency-keyed on RECIPIENT
+   * and hour: a re-driven invocation is one mail; a genuine second attempt an hour later is a
+   * second mail — repeated attempts are what the account should be told about.
    */
   async sendAccountExists(ctx: MailContext, input: { to: string }): Promise<MailSendResult> {
     return this.guarded(ctx, input.to, "unsolicited", (to) =>
@@ -571,23 +436,14 @@ export class MailService {
   }
 
   /**
-   * Consume a verification token. Returns the user it belonged to, or null for
-   * anything that is not a live `email_verify` token — expired, already used, the
-   * wrong purpose, or unknown.
-   *
-   * **Single-use is enforced by the database, not by this process.** This was
-   * SELECT → check `consumed_at` → unconditional UPDATE, which is a read-modify-write:
-   * two concurrent requests carrying the same link both read `consumed_at IS NULL`, both
-   * pass the check and both succeed, and the sequential test could never see it. It is
-   * now ONE statement — `UPDATE … WHERE token_hash = … AND purpose = … AND consumed_at
-   * IS NULL AND expires_at > now RETURNING user_id` — so the row lock decides the race
-   * and exactly one caller gets a row back. `mail-concurrency.pg.test.ts` runs it against
-   * real Postgres with `Promise.all` — 12 simultaneous presentations, exactly one winner —
-   * because PGlite is single-connection and structurally cannot fail this test.
-   *
-   * The caller decides what "verified" means; this method records no user state.
-   * Stamping `users.email_verified_at` is the caller's job (`verifyEmail` in
-   * `auth-service.ts` does it inside the same transaction as the consumption).
+   * Consume a verification token. Returns the user it belonged to, or null for anything not a
+   * live `email_verify` token. Single-use is enforced by the DATABASE: this was SELECT → check →
+   * unconditional UPDATE — a read-modify-write two concurrent requests both pass, invisible to
+   * sequential tests. Now ONE statement — `UPDATE … WHERE token_hash AND purpose AND consumed_at
+   * IS NULL AND expires_at > now RETURNING user_id`; `mail-concurrency.pg.test.ts` runs 12
+   * simultaneous presentations and asserts exactly one winner (PGlite is single-connection and
+   * cannot fail it). The caller decides what "verified" means: stamping `users.email_verified_at`
+   * is `verifyEmail`'s job, in the same transaction as the consumption.
    */
   async consumeEmailVerification(
     ctx: MailContext, token: string,
@@ -608,33 +464,14 @@ export class MailService {
   }
 
   /**
-   * Delete `mail:` throttle rows whose window has long since closed.
-   *
-   * The limiter's own correctness does not need this — a stale row is rolled forward on
-   * the next send — but nothing else ever deletes these, and `AuthService.throttleReset`
-   * only touches `email:` keys. Left alone the table grows by one row per distinct
-   * recipient, forever. The keys are `sha256(address)`, so this is a housekeeping
-   * concern rather than a privacy one; call it from whatever maintenance path exists.
-   *
-   * `like('mail:%')` matches BOTH quota namespaces (`mail:unsolicited:…` and
-   * `mail:transactional:…`), so the split cost this nothing.
-   *
-   * THE PER-IP NAMESPACES ARE SWEPT TOO, and there are now three of them. Each writes one row
-   * per distinct client address, and that set is unbounded in a way the recipient keys are not
-   * — every visitor to the landing page is a new one. A limiter that quietly accumulates a row
-   * per visitor forever is the same housekeeping bug as the one above, arriving faster.
-   *
-   *  · `waitlist:ip:%` — the landing-form limiter, swept from the start.
-   *  · `register:ip:%` — the signup limiter. **This was NOT swept and that was a real gap,
-   *    not a decision:** `reserveJoinSlot` was lifted into `reserveIpSlot` and given a second
-   *    caller, but only the waitlist's key prefix was ever listed here. `POST /auth/register`
-   *    is on the public landing funnel, so it accumulated exactly as fast as the waitlist did.
-   *    Fixed in the same one-line `or(...)` as the addition below, because leaving it would
-   *    have meant adding a third namespace next to a second one that was already leaking.
-   *  · `verify:ip:%` — the verification-resend limiter.
-   *
-   * All are sequential scans by design: this runs on a schedule, over a table whose row
-   * count is bounded by distinct recipients and callers, not by traffic.
+   * Delete `mail:` throttle rows whose window has long since closed. The limiter's correctness
+   * does not need this, but nothing else deletes these rows, and the table otherwise grows by one
+   * per distinct recipient for ever (keys are `sha256(address)` — housekeeping, not privacy).
+   * `like('mail:%')` matches BOTH quota namespaces. The per-IP namespaces are swept too, all
+   * three: `waitlist:ip:%`; `register:ip:%` — not swept at first, a real gap: only the waitlist's
+   * prefix was listed while `POST /auth/register` sat on the same public funnel; `verify:ip:%`.
+   * Sequential scans by design: this runs on a schedule over a table bounded by distinct
+   * recipients and callers, not traffic.
    */
   async pruneRateLimitWindows(ctx: MailContext, olderThanMs?: number): Promise<number> {
     const cutoff = new Date(ctx.now().getTime() - (olderThanMs ?? this.cfg.rateWindowMs));

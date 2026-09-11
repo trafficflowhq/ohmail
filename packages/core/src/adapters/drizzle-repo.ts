@@ -187,15 +187,11 @@ export interface FolderOpRow {
 }
 
 /**
- * What a landed IMAP move is allowed to write back — {@link WorkerRepo.completeFolderState}'s
- * argument, and deliberately NOT a {@link FolderStateRow}.
- *
- * A `FolderStateRow` states an INTENT (desired + observed together), which is the right shape for
- * every writer that has just been told where a message belongs. A completion is the opposite kind
- * of fact: the intent was decided minutes ago and possibly by someone else, and all the mover
- * knows is where the message physically IS now. So the desired folder appears here only as
- * `expectDesiredFolder` — the WITNESS the physical move was computed against, read back live and
- * compared, but never itself written.
+ * What a landed IMAP move may write back — {@link WorkerRepo.completeFolderState}'s argument,
+ * deliberately not a {@link FolderStateRow}. A FolderStateRow states an intent; a completion
+ * records where the message physically IS after a move that was decided earlier, possibly by
+ * another writer. The desired folder appears only as `expectDesiredFolder` — the witness the move
+ * was computed against, read back live and compared, never itself written.
  */
 export interface FolderCompletion {
   /**
@@ -219,26 +215,13 @@ export interface FolderCompletion {
    */
   satisfiedBy?: string | null;
   /**
-   * Does {@link observedFolder} carry a FRESH PHYSICAL FACT — a location the server just
-   * confirmed, from a landed `adapter.move`/`moveMany` — or is it a value this call happens to be
-   * carrying that was NOT learned from any new network activity about THIS row (an
-   * already-converged status repair re-deriving `reconcile_status` from what the pass read
-   * before doing any I/O for this row; a gone-message void, which learned the message vanished
-   * and nothing about where it is)?
-   *
-   * `true` (junk-filing.ts's `settle`, the only caller with a genuine landed move) makes a MISS
-   * still write `observed_folder`/`reconcile_status`/`conflict` — see `completeFolderState`'s own
-   * doc for the class this closes: a superseded completion whose physical fact goes unrecorded
-   * can leave a stale-but-coincidentally-converged row that nothing ever looks at again.
-   *
-   * `false` (the default — every caller EXCEPT `settle`) keeps a miss writing NOTHING, because
-   * there is no fresh fact here to protect from a slower, equally-informed writer. Found by
-   * review, round 3: with `true` as the unconditional default, the status-repair call in
-   * `reconcileFolders` (`sync.ts`) and {@link voidGoneFiling} both pass a STALE echo of
-   * `PendingFolderState` as `observedFolder` — not a physical observation — and a miss on either
-   * would have overwritten whatever a genuinely fresher writer (ingest's `adopt_external`, an
-   * interleaved external move) had just committed for the SAME row, with a value that was already
-   * out of date when this call started.
+   * Whether {@link observedFolder} carries a fresh physical fact — a location the server just
+   * confirmed from a landed `adapter.move`/`moveMany`. `true` (junk-filing.ts's `settle`, the
+   * only caller with a landed move) makes a miss still write
+   * `observed_folder`/`reconcile_status`/`conflict`, so a superseded completion's physical fact
+   * is not lost. `false` (the default) keeps a miss writing nothing: the status repair in
+   * `reconcileFolders` and {@link voidGoneFiling} pass a stale echo of `PendingFolderState`, and
+   * writing it on a miss would overwrite what a fresher writer had just committed.
    */
   physicalObservation?: boolean;
 }
@@ -246,47 +229,14 @@ export interface FolderCompletion {
 /** Worker-facing repo: everything the pipeline needs (RepoPort + RoutingPort) plus enumeration for sync/reconcile. */
 export interface WorkerRepo extends RepoPort, RoutingPort {
   /**
-   * ── THE COMPLETION WRITE, AND WHY IT IS NOT {@link RepoPort.upsertFolderState} ─────────────
-   *
-   * Every filing the reconciler performs reads a pending row, goes to the network, and comes back
-   * to write down what happened. The read and the write are minutes apart on a slow host, and the
-   * value read in between — `desired_folder` — has SIX other writers that take no mailbox row and
-   * are therefore serialized against nothing: the API's move, the Screener's apply, `rule-retro`,
-   * `ohbox-tidy`, `screener-auto`, and the one-time sensitive re-screen. Completing through
-   * `upsertFolderState` writes the desire back as part of the completion, so a decision that
-   * committed during the move is REVERTED — a lost update, not a stale read: both writers behaved
-   * exactly as designed, nothing errors, and the message ends up where the older decision said.
-   *
-   * This method is the fix for the class rather than for one caller. `desired_folder` is not in
-   * its `SET` list at all — it is structurally unable to clobber an intent, which is a stronger
-   * statement than "a predicate happens to be right".
-   *
-   * IT IS NOT (ALWAYS) A CONDITIONAL WRITE THAT DOES NOTHING ON A MISS, and an earlier version of
-   * this method was — a `WHERE` on the witness, writing nothing when it failed to match. That
-   * reopened a narrower defect: the mail had already physically moved (`updateLocator` runs
-   * before this is ever called), so a declined completion left the database describing a location
-   * that was no longer true, and a competing writer whose own new desire happened to equal the
-   * PRE-move location produced a `reconciled` row that would never be looked at again — on the
-   * spam path, feeding the instanceless reaper a message with no watched copy and no exemption.
-   * So a caller carrying a FRESH PHYSICAL FACT (`c.physicalObservation: true` — junk-filing.ts's
-   * `settle`, the only one) gets `observed_folder` written on EVERY call, self-heal included; see
-   * {@link FolderCompletion.physicalObservation}'s own doc for the round that added the flag: two
-   * OTHER callers (`sync.ts`'s already-converged status repair, its gone-message void) carry no
-   * such fact — their `observedFolder` is a stale echo of a row read before any I/O — and for
-   * them a miss must still write NOTHING, exactly as the original design, or it would overwrite
-   * whatever a genuinely fresher writer had just committed for the same row.
-   *
-   * `reconcile_status` is derived inside the same statement from the row's LIVE `desired_folder`,
-   * never assumed to be the witness, whenever a write happens at all. A physical-observation miss
-   * therefore still records the truth and, when that truth diverges from what the mailbox
-   * currently wants, leaves the row PENDING — which re-enters {@link listPendingFolderStates} on
-   * the very next read and self-heals from the locator this call already repointed.
-   *
-   * Returns TRUE when the desire still matched — the caller's OWN intent (a park, a husk, the
-   * backoff reset, and the physical fact when the caller is not a physical-observation writer) may
-   * proceed — FALSE when a newer intent (or an account erasure) owns the row. Callers that can
-   * observe it owe the fact to the audit log — silence here is how the class stayed invisible in
-   * the first place.
+   * The completion write, and why it is not {@link RepoPort.upsertFolderState}: a filing reads a
+   * pending row, dials the network, and writes back minutes later, while `desired_folder` has six
+   * other writers — completing through `upsertFolderState` would write the stale desire back, a
+   * lost update. `desired_folder` is not in this SET list at all. A caller with a fresh physical
+   * fact (`c.physicalObservation`) gets `observed_folder` written on every call; others write
+   * nothing on a miss. `reconcile_status` is derived from the row's live desire; a divergent row
+   * stays pending and re-enters {@link listPendingFolderStates}. Returns true when the desire
+   * still matched, false when a newer intent owns the row.
    */
   completeFolderState(messageId: string, c: FolderCompletion): Promise<boolean>;
   getMailbox(mailboxId: string): Promise<
@@ -300,25 +250,13 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   upsertContacts(accountId: string, addresses: readonly string[]): Promise<number>;
   /**
-   * One page of the Screener backlog the re-route pass may reconsider, LOCKED FOR UPDATE.
-   *
-   * Two predicates carry the whole "never override a user decision" rule, and both are in the
-   * statement rather than in the caller:
-   *
-   *  · the sender (or its domain) has NO enabled, UN-NARROWED rule. `rules` is the record of the
-   *    user's screener decisions (`screener-service.ts` writes one per decide), so a sender with a
-   *    rule has been ruled on and is not ours to re-route — but a rule carrying
-   *    `subject_contains`/`body_contains` is a CONJUNCTION about a subset of that sender's mail
-   *    (mail 0050, 0052), so it rules on nothing else. See the statement itself.
-   *  · `last_set_by = 'us'`. A row set `external` is a placement the user performed in their own
-   *    mail client, and the folder reconciler already refuses to revert those. `'peer'` — another
-   *    install of this account's placement, recorded by a reader — is excluded here as well; see
-   *    `pipeline.ts#readerAdoption` for why only `rule-retro` admits it.
-   *
-   * `FOR UPDATE OF folder_state` is the concurrency half: two workers mid-leader-handover both
-   * running this pass block on the same rows, and the loser re-evaluates the predicate against
-   * the committed row and finds it no longer desired into the Screener — so a message is
-   * re-routed once, not twice, and `change_log` gains one `move` and not two.
+   * One page of the Screener backlog the re-route pass may reconsider, locked FOR UPDATE. Both
+   * halves of the never-override-a-user-decision rule live in the statement: the sender (or
+   * domain) has no enabled, un-narrowed rule — a rule carrying `subject_contains`/`body_contains`
+   * (mail 0050, 0052) is a conjunction about a subset of that sender's mail and rules on nothing
+   * else — and `last_set_by = 'us'`, so placements the user or a peer install made are never
+   * reconsidered. `FOR UPDATE OF folder_state` serializes two workers mid-leader-handover: the
+   * loser re-evaluates against the committed row, so a message is re-routed once.
    */
   listScreenerBacklog(
     mailboxId: string, opts: { limit: number; afterId?: string },
@@ -351,16 +289,13 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   completeFolderCreate(op: Pick<FolderOpRow, "id" | "accountId" | "mailboxId" | "folder" | "folderId">, landed: string): Promise<void>;
   /**
-   * THE RENAME SWAP — everything that spells the old path, re-spelt under the new one, in ONE
-   * transaction beside the IMAP RENAME it mirrors: the inventory subtree (cursors intact —
-   * RENAME preserves UIDVALIDITY on the servers that matter, and the epoch machinery absorbs
-   * the ones where it does not), `folder_state` desired AND observed, `messages.native_locator`,
-   * `message_instances.folder`, `message_failures.folder` — plus the change rows that carry the
-   * swap to every mirror (`folder` updates for the subtree, one `message` update per message
-   * whose rendered folder string moved, batched through `recordChanges`). All-or-nothing is the
-   * contract the pg test kills a transaction to prove: a crash mid-swap leaves the OLD spelling
-   * everywhere and the command still pending, and the pass's idempotent-completion arm
-   * (old gone AND new present on the server ⇒ the IMAP half already happened) re-enters.
+   * The rename swap: everything that spells the old path, re-spelt under the new one, in one
+   * transaction beside the IMAP RENAME — the inventory subtree with cursors intact,
+   * `folder_state` desired and observed, `messages.native_locator`, `message_instances.folder`,
+   * `message_failures.folder`, plus the change rows that carry the swap to every mirror through
+   * `recordChanges`. All-or-nothing is the contract the pg test kills a transaction to prove: a
+   * crash mid-swap leaves the old spelling everywhere and the command still pending, and the
+   * pass's idempotent-completion arm re-enters.
    */
   applyFolderRename(op: Pick<FolderOpRow, "id" | "accountId" | "mailboxId" | "folder"> & { toFolder: string }): Promise<{ folders: number; messages: number }>;
   /** The subtree (subject included) of one canonical path, leaf-deepest FIRST — delete order. */
@@ -383,18 +318,12 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   deferFolderOp(opId: string, attempts: number): Promise<void>;
   listKnownLocators(mailboxId: string): Promise<KnownLocator[]>;
   /**
-   * Record that a locator DISAPPEARED — the worker's half of the move-evidence rule.
-   *
-   * On `WorkerRepo` and not `RepoPort` because only the sync loop can observe it: a disappearance
-   * arrives as the adapter's `deletes`, which the API tier never sees. See
-   * {@link MoveEvidence} for why it is the only thing that authorises an adoption.
-   *
-   * ANSWERS THE PROMOTED SURVIVOR'S LOCATOR when removing the PRIMARY instance promoted a
-   * surviving watched copy, `null` otherwise (nothing at the locator, a non-primary removal, or
-   * no survivor). The delete filing's completion is why the answer exists: a promoted survivor
-   * means the message is still in watched space on the server, so the delete is not done — see
-   * `junk-filing.ts#completeFiling`. The sync loop's caller ignores it, correctly: an observed
-   * expunge with a survivor changes nothing about what any pending row still owes.
+   * Record that a locator disappeared — the worker's half of the move-evidence rule. On
+   * `WorkerRepo` and not `RepoPort` because only the sync loop can observe it: a disappearance
+   * arrives as the adapter's `deletes`. See {@link MoveEvidence} for why it alone authorises an
+   * adoption. Answers the promoted survivor's locator when removing the primary instance promoted
+   * a surviving watched copy, `null` otherwise — a promoted survivor means the message is still
+   * in watched space, so a delete filing is not done (`junk-filing.ts#completeFiling`).
    */
   forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<NativeLocator | null>;
   /**
@@ -417,16 +346,13 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   huskBody?(accountId: string, messageId: string, reason: "junk_filed" | "expunged"): Promise<boolean>;
   /**
-   * THE REAPER the `forgetInstanceAt` doc promised: tombstone messages whose every watched
-   * instance is gone (mail 0065). Bounded by `limit`; each victim gets `deleted_at`, the
-   * `'expunged'` husk, and a `change_log` `delete` in the caller's transaction — so every
-   * client tombstones the row and the mirror stops describing mail the server no longer holds.
-   *
-   * SKIPPED, deliberately: rows already tombstoned; rows that never had an instance
-   * (`native_locator IS NULL` — a fixture, a seeded backlog); and rows whose `folder_state` is
-   * RECONCILED-WHILE-DIVERGENT — the junk-parked signature only the `satisfiedBy` completion
-   * writes, where "no watched instance" is the design and not a disappearance.
-   * OPTIONAL, as above. Returns how many rows were tombstoned.
+   * The reaper: tombstone messages whose every watched instance is gone (mail 0065), bounded by
+   * `limit`. Each victim gets `deleted_at`, the `'expunged'` husk and a `change_log` `delete` in
+   * the caller's transaction, so every client tombstones the row. Skipped deliberately: rows
+   * already tombstoned; rows that never had an instance (`native_locator IS NULL`); and rows
+   * whose `folder_state` is reconciled-while-divergent — the junk-parked signature only the
+   * `satisfiedBy` completion writes, where no watched instance is the design. Optional; returns
+   * how many rows were tombstoned.
    */
   tombstoneInstanceless?(accountId: string, mailboxId: string, limit: number): Promise<number>;
   /**
@@ -439,18 +365,13 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   listAiAutoAppliedQuarantine?(accountId: string, messageIds: readonly string[]): Promise<string[]>;
   /**
-   * `junk_filed` husks whose message the scan can SEE ALIVE IN WATCHED SPACE — a live primary
-   * instance row, `deleted_at` clear — which is exactly the population the rescue verb never
-   * touched: the user moved the message out of Junk in another client, or the provider un-junked
-   * it, and the adoption-time refill (`pipeline.ts` → `restoreWithheldBody`) either predated the
-   * husk, carried no body, or was declined at cap. The instance witness is structural: instances
-   * exist only for enumerated folders and the filing completion `forgetInstanceAt`s the parked
-   * junk locator, so "has a primary instance" IS "alive outside Junk" — no junk-path comparison
-   * to drift. Ordered by message id, bounded, and keyset-paged on `afterId` — a refused row (an
-   * at-cap decline, an identity mismatch) keeps its husk and stays a candidate, so a cursorless
-   * page would re-offer the same refusals for ever (`redacted-restore.ts#selectCandidates`'s
-   * argument, verbatim). OPTIONAL so every fake keeps compiling; absence reads as "no
-   * candidates", never a wrong restore.
+   * `junk_filed` husks whose message is alive in watched space — a live primary instance row,
+   * `deleted_at` clear — the population the rescue verb never touched. Instances exist only for
+   * enumerated folders and the filing completion forgets the parked junk locator, so having a
+   * primary instance IS being alive outside Junk; no junk-path comparison to drift. Ordered by
+   * message id, bounded, keyset-paged on `afterId`: a refused row keeps its husk and stays a
+   * candidate, so a cursorless page would re-offer the same refusals for ever. Optional; absence
+   * reads as no candidates, never a wrong restore.
    */
   listJunkFiledHusks?(
     accountId: string, mailboxId: string, opts: { limit: number; afterId?: string },
@@ -479,22 +400,14 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   recordMessageFailure(mailboxId: string, input: MessageFailureInput): Promise<number>;
   /**
-   * CLAIM the failures this cycle may retry, atomically, and say what was claimed.
-   *
-   * One conditional UPDATE, because two workers mid-leader-handover both run this: the claim IS the
-   * decision, exactly as `runAlertPass` claims a notification. The winner gets rows back; the loser
-   * blocks on the row lock, re-reads the committed `attempted_version` and matches nothing.
-   *
-   * Due is `resolved_at IS NULL AND (next_attempt_at <= now() OR attempted_version IS DISTINCT FROM
-   * version)`. The version arm is self-disarming — this statement stamps `attempted_version` — so a
-   * deploy carrying a parser fix wakes every owed UID exactly once.
-   *
-   * `holdScheduleForCodes` names the codes whose claim must write `next_attempt_at = NULL`
-   * regardless of `nextAttemptAt` — the deterministic failures, whose next look is a new build
-   * and never a later hour. The list is the CALLER's (`DETERMINISTIC_MESSAGE_FAILURE_CODES` in
-   * the worker); this package cannot import it, and a claim that stamped the clock schedule onto
-   * a deterministic row put an hourly size-probe on the same unchanged bytes for ever (a
-   * production row reached 297 attempts).
+   * Claim the failures this cycle may retry, atomically, and say what was claimed. One
+   * conditional UPDATE: two workers mid-leader-handover both run this, the claim is the decision,
+   * the loser blocks on the row lock and matches nothing. Due is `resolved_at IS NULL AND
+   * (next_attempt_at <= now() OR attempted_version IS DISTINCT FROM version)`; the version arm
+   * self-disarms, so a deploy carrying a parser fix wakes every owed UID once.
+   * `holdScheduleForCodes` names codes whose claim writes `next_attempt_at = NULL` —
+   * deterministic failures, due again only on a new build, never a later hour (one production row
+   * reached 297 hourly attempts).
    */
   claimMessageFailures(
     mailboxId: string,
@@ -514,59 +427,24 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
     mailboxId: string, site: { folder: string; uidValidity: string; uid: number },
   ): Promise<void>;
   /**
-   * Desired-state rows still owed an IMAP move.
-   *
-   * `limit` is the reconciler's per-cycle budget and it comes with an ORDER BY, because the two
-   * are one feature: an unordered LIMIT reads PostgreSQL's PHYSICAL row order, which moves under
-   * UPDATE and VACUUM, so the same rows could be handed over pass after pass while others waited
-   * for ever. Oldest desired-state first is both fair and the order a person expects — the mail
-   * they filed first reaches their server first. Absent ⇒ unbounded, which is what every caller
-   * outside the reconciler wants.
-   *
-   * DUE ROWS ONLY (mail 0058): a row whose `next_attempt_at` is still in the future is a mutation
-   * the server refused and the reconciler has deferred, and it is omitted here. That omission is
-   * the whole point of the column — the budget above is a FIXED per-cycle allowance ordered
-   * oldest-first, so a stuck row is by construction one of the oldest and would otherwise sit at
-   * the head of it every cycle for ever, eventually consuming the entire allowance and starving
-   * mail the user filed a minute ago. Skipping it in the QUERY is the only place that can be
-   * fixed; no per-item error handling in the worker reaches it.
-   *
-   * The row is NOT retired, and this method is not the count anybody reads: it stays `pending` and
-   * `MailboxDTO.pendingMoves` still counts it, because we still owe it. See
-   * {@link deferFolderReconcile}.
+   * Desired-state rows still owed an IMAP move. `limit` is the reconciler's per-cycle budget and
+   * comes with an ORDER BY: an unordered LIMIT reads physical row order, which moves under UPDATE
+   * and VACUUM, so the same rows could be handed over pass after pass. Oldest first — the mail
+   * filed first reaches the server first; absent means unbounded. Due rows only (mail 0058): a
+   * deferred row is omitted, or the fixed oldest-first allowance would spend every cycle on the
+   * same stuck row and starve fresh mail. The row is not retired — it stays `pending` and
+   * `MailboxDTO.pendingMoves` still counts it. See {@link deferFolderReconcile}.
    */
   listPendingFolderStates(mailboxId: string, limit?: number): Promise<PendingFolderState[]>;
   /**
-   * DEFER one refused move: record the refusal and when it may be attempted again (mail 0058).
-   *
-   * Writes `attempts` and `next_attempt_at` and NOTHING ELSE — not `desired_folder`, not
-   * `observed_folder`, not `last_set_by`, not `reconcile_status`, and deliberately not
-   * `updated_at`. Every one of those omissions is load-bearing:
-   *
-   *  · touching the intent columns would let a server's refusal edit what the USER asked for;
-   *  · touching `reconcile_status` would invent a terminal state this design does not have — the
-   *    row is still owed, so it is still `pending`, and the client's "Filing N messages…" count
-   *    stays honest;
-   *  · touching `updated_at` would move the row's place in the oldest-first queue, so a mutation
-   *    that keeps failing would keep jumping the mail behind it. Its position is when it was
-   *    FILED, and a refusal is not a re-filing.
-   *
-   * `attempts` is passed absolutely rather than incremented in SQL because one organizer writes
-   * one mailbox (the lease is the product's central invariant), so the caller's read-then-write is
-   * not a race — and an absolute value is a value a test can assert instead of infer.
-   *
-   * ── AND `errorClass`, WHICH RIDES WITH THEM AND NOT SEPARATELY (mail 0097) ──────────────────
-   *
-   * A member of `FILING_REFUSAL_CLASSES` — four words this codebase chose, mapped from the
-   * server's structured response code by the caller. It is in this method's argument and not in
-   * a method of its own for the same reason the two schedule columns share one: a class without
-   * its schedule is a reason for nothing, and a schedule without its class is the sentence a
-   * client could not write. `folder_state`'s schema comment forbids storing the server's OWN
-   * WORDS, and that rule is untouched — the free text stays in the `reconcile.move.failed` audit
-   * row this call is grouped with, and only a value we picked reaches a screen.
-   *
-   * `flag_state` has NO equivalent and {@link deferFlagReconcile} is unchanged: nothing renders a
-   * per-message reason for a `\Seen` push, and a column nobody reads is a column that goes stale.
+   * Defer one refused move: record the refusal and when it may be attempted again (mail 0058).
+   * Writes `attempts`, `next_attempt_at` and `error_class`, nothing else: touching the intent
+   * columns would let a server's refusal edit what the user asked for; touching
+   * `reconcile_status` would invent a terminal state — the row is still owed; touching
+   * `updated_at` would move its place in the oldest-first queue. `attempts` is absolute because
+   * one organizer writes one mailbox, so the caller's read-then-write is not a race. `errorClass`
+   * (mail 0097) is a `FILING_REFUSAL_CLASSES` member the caller mapped — never the server's own
+   * words, which stay in the `reconcile.move.failed` audit row.
    */
   deferFolderReconcile(
     messageId: string,
@@ -670,29 +548,13 @@ function flagStatusFor(s: FlagStateRow): "pending" | "reconciled" {
 }
 
 /**
- * "This deferred mutation may be attempted again" — the due predicate both pending queries share
- * (mail 0058).
- *
- * ── THE DEFINITION MOVED TO `@trafficflow/db` AND THIS IS NOW ONE LINE OVER IT (mail 0097) ───
- *
- * It used to be spelled out here, and the DTO builder that reports the same rows to a client
- * spelled its own predicates out separately — under a comment claiming the two were "one set",
- * which they were not: this queue filters `pending` ∧ due, and the strip's count filters
- * `pending` ∧ `last_set_by = 'us'` ∧ `desired <> observed`. A DEFERRED row was therefore counted
- * on somebody's screen and absent from this queue, which is how "Filing 1 message on your mail
- * server…" came to describe a row nothing was going to touch.
- *
- * `packages/db/src/folder-state-pending.ts` now owns every predicate over this table's pending
- * set, and its header states which site composes which and WHY THE QUEUE MUST STAY WIDER: this
- * one has to keep carrying the status-repair rows (`desired = observed` with a stale status —
- * `reconcileFolders` reads exactly those to re-derive it) and the external rows the user-wins rule
- * skips. Narrowing this to the strip's three predicates would strand every status repair
- * `pending` for ever, and invisibly, because the strip is the thing that does not count them.
- *
- * The instant comes from the APPLICATION clock rather than SQL `now()`, matching the write side
- * (`deferFolderReconcile` is handed a `Date` the worker computed). One clock decides both when a
- * mutation becomes due and when it was deferred to, so a skew between the database's clock and the
- * worker's cannot make a deferral shorter or longer than the policy says.
+ * The shared due predicate for deferred mutations (mail 0058), now defined in
+ * `packages/db/src/folder-state-pending.ts` — this is one line over it. That module owns every
+ * predicate over the table's pending set and states why this queue stays wider than the strip's
+ * count: it must keep carrying the status-repair rows and the external rows the user-wins rule
+ * skips, or every status repair would strand pending for ever, invisibly. The instant comes from
+ * the application clock, matching `deferFolderReconcile`'s write side, so database/worker clock
+ * skew cannot stretch or shrink a deferral.
  */
 function dueNow(col: AnyPgColumn): SQL | undefined {
   return sharedDueNow(col, new Date());
@@ -721,26 +583,13 @@ function inSubtree(col: unknown, path: string) {
 
 export class DrizzleRepo implements WorkerRepo, RoutingPort {
   /**
-   * THE DIALECT IS RESOLVED ON FIRST USE, AND THAT IS A DELIBERATE CHOICE RATHER THAN AN OVERSIGHT.
-   *
-   * Resolving in the CONSTRUCTOR is the stronger rule and was tried: it turns a repository built
-   * around an unbranded handle from an object that throws later, deep inside a locking statement on
-   * some background pass, into one that cannot be built at all. It closes shapes the census over
-   * transaction sites cannot see — a callback factored out of the `.transaction(` call, a carry
-   * written after the construction — and it immediately found two real latent sites.
-   *
-   * It was measured against the whole worker and services suites and reverted on the result: 149
-   * test files build a handle with a bare `drizzle(sql, { schema })` and never brand it, so 156
-   * cases failed at construction. Every one was a harness, not a caller — the production factories
-   * (`makeDb`, `makeOwnedDb`, `makePooledDb`) all brand — and branding 149 files to satisfy a
-   * check is a large, mechanical diff whose only beneficiary is the check.
-   *
-   * So the rule stays where the evidence puts it: the seam refuses an unbranded handle at the first
-   * statement that actually needs a dialect, the census refuses the common mistake in production
-   * source, and the two latent sites this experiment found are fixed on their merits.
-   *
-   * `carried` is how a transaction inherits its parent's dialect: the transaction object has no
-   * brand of its own, and the value is known to be right because the parent resolved it.
+   * The dialect is resolved on first use, deliberately. Resolving in the constructor was tried
+   * and found two real latent sites — but 149 test files build handles with a bare `drizzle(sql,
+   * { schema })` and never brand them, so 156 cases failed at construction while every production
+   * factory (`makeDb`, `makeOwnedDb`, `makePooledDb`) brands correctly. So the seam refuses an
+   * unbranded handle at the first statement that actually needs a dialect instead. `carried` is
+   * how a transaction inherits its parent's dialect: the transaction object has no brand of its
+   * own, and the parent's value is known right.
    */
   private carriedDialect: Dialect | null;
 
@@ -749,23 +598,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * The spelling of every construct below that the two stores disagree about.
-   *
-   * Read from the handle rather than chosen here, because this class is constructed once per
-   * request against whichever store this program has. Row locks are the case that matters: on the
-   * store a device carries they are the identity, and the reason is not that locking is optional
-   * there — it is that the store is reached through one serialized connection, so there is no
-   * second writer for a lock to exclude. The comments below say what each lock is FOR, and every
-   * one of those reasons is about ordering two writers.
-   *
-   * ── WHY IT IS CARRIED AND NOT LOOKED UP EVERY TIME ────────────────────────────────────────
-   *
-   * The brand is stamped on the handle a connection factory returns. A TRANSACTION is a different
-   * object, built by the query builder, and it inherits nothing — so the repository {@link
-   * transaction} makes has no brand to read, and every construct below would throw inside a block
-   * that is exactly where the locks matter. {@link transaction} therefore hands the child its
-   * parent's dialect rather than letting it look one up, which is also the only reading that is
-   * CORRECT: a transaction cannot be on a different store from the handle that opened it.
+   * The spelling of every construct the two stores disagree about, read from the handle because
+   * this class is constructed once per request against whichever store the program has. Row locks
+   * are the case that matters: on the device store they are the identity, since one serialized
+   * connection leaves no second writer to exclude. Carried rather than looked up every time
+   * because a transaction is a different object with no brand of its own — {@link transaction}
+   * hands the child its parent's dialect, the only correct reading: a transaction cannot be on a
+   * different store from the handle that opened it.
    */
   private get d(): Dialect {
     return (this.carriedDialect ??= dialect(this.db));
@@ -836,18 +675,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       authVerdict: input.authVerdict ?? null,
     }).onConflictDoNothing({ target: [messages.mailboxId, messages.dedupKey] }).returning();
     if (inserted[0]) {
-      // ── EVERY MESSAGE ROW GETS ITS PRIMARY INSTANCE HERE, AND ONLY HERE ────────────────────
-      //
-      // `messages.native_locator` is now a MIRROR of the primary `message_instances` row, so the
-      // two are born together in one statement pair inside the caller's transaction. Doing it in
-      // `commitChange` instead would leave every other caller of `insertMessage` — and every
-      // future one — able to create a message with no instance, and a message with no instance is
-      // invisible to `listKnownLocators`: its body would be re-fetched on every cycle for ever.
-      //
-      // Only on a GENUINE insert. `onConflictDoNothing` returning nothing means the row was
-      // already there, and its primary instance is wherever the user's own history left it —
-      // re-asserting it from a re-ingest would drag the row back to an arrival locator that may
-      // no longer exist.
+      // Every message row gets its primary instance here, and only here:
+      // `messages.native_locator` is a mirror of the primary `message_instances` row, so the two
+      // are born together inside the caller's transaction. Doing it in `commitChange` instead
+      // would let other callers create a message with no instance — invisible to
+      // `listKnownLocators`, its body re-fetched every cycle for ever. Only on a genuine insert:
+      // `onConflictDoNothing` returning nothing means the row already existed, and re-asserting
+      // its primary instance would drag it back to an arrival locator that may no longer exist.
       await this.setPrimaryInstance(inserted[0].id, input.nativeLocator);
       return { ...rowToStored(inserted[0]), created: true };
     }
@@ -870,18 +704,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   // every read here is by message.
 
   /**
-   * Point the message's PRIMARY instance at `locator`, creating it if there is none.
-   *
-   * Three statements and the ORDER is the correctness. The destination tuple is vacated first,
-   * because a NON-primary instance of this same message can already be sitting there — that is
-   * exactly what an `external_copy` recorded, and it is the shape a user's own move into a folder
-   * we already saw a copy in produces. Without the vacate, the UPDATE raises 23505 on
-   * `message_instances_locator_uq` and takes the ingest transaction with it.
-   *
-   * The vacate is scoped to THIS message. A tuple claimed by a DIFFERENT message is an anomaly —
-   * UIDs are not reused inside an epoch — and deleting another message's instance to make room
-   * would be a write an attacker could aim by choosing when to deliver. It is left alone, the
-   * UPDATE then fails loudly, and the cycle retries.
+   * Point the message's primary instance at `locator`, creating it if none. Three statements, and
+   * the order is the correctness: the destination tuple is vacated first because a non-primary
+   * instance of this same message can already sit there (exactly what an `external_copy`
+   * recorded); without the vacate the UPDATE raises 23505 on `message_instances_locator_uq` and
+   * takes the ingest transaction with it. The vacate is scoped to this message: a tuple claimed
+   * by a different message is an anomaly, and deleting it would be a write an attacker could aim
+   * — it is left alone, the UPDATE fails loudly, the cycle retries.
    */
   private async setPrimaryInstance(messageId: string, locator: NativeLocator): Promise<void> {
     const uid = parseUid(locator.ref);
@@ -956,17 +785,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * See {@link WorkerRepo.recordMessageFailure}.
-   *
-   * `attempts` starts at 1 and the conflict path does NOT touch it, which is the one thing worth
-   * saying here: a repeated failure of the same UID inside one build is the same attempt observed
-   * twice (the ingest loop offers it once per cycle and the in-memory ledger's attempt budget
-   * already governs that), while `claimMessageFailures` is what counts a genuine RETRY. Letting
-   * this statement increment would make an ordinary cycle look like exhausted patience and escalate
-   * a message nobody has retried yet.
-   *
-   * `resolved_at` is cleared on conflict: a UID that failed again after being closed is owed again,
-   * and the alternative is a resolved row silently shadowing a live failure.
+   * See {@link WorkerRepo.recordMessageFailure}. `attempts` starts at 1 and the conflict path
+   * does not touch it: a repeated failure of the same UID inside one build is the same attempt
+   * observed twice — `claimMessageFailures` is what counts a genuine retry, and letting this
+   * statement increment would make an ordinary cycle look like exhausted patience. `resolved_at`
+   * is cleared on conflict: a UID that failed again after being closed is owed again, and the
+   * alternative is a resolved row silently shadowing a live failure.
    */
   async recordMessageFailure(mailboxId: string, input: MessageFailureInput): Promise<number> {
     const now = new Date();
@@ -1007,16 +831,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   ): Promise<MessageFailureRow[]> {
     if (opts.limit <= 0) return [];
     /**
-     * DUE = not closed, and either the clock has come round or the code has changed under it.
-     *
-     * `lte(column, date)` and never a `sql` fragment holding a `Date`, which is the rule
-     * `runAlertPass` states at length and which this statement learned the same way: postgres.js
-     * describes a bare parameter as TEXT, and `Bind` then throws
-     * *"The 'string' argument must be of type string … Received an instance of Date"*. The column on
-     * the left is what makes drizzle bind it as `timestamptz`.
-     *
-     * `IS DISTINCT FROM` rather than `<>`, because `attempted_version` is nullable and `NULL <> 'x'`
-     * is NULL — a row nobody has stamped would never be due.
+     * Due = not closed, and either the clock has come round or the code changed under it.
+     * `lte(column, date)` and never a raw `sql` fragment holding a `Date`: postgres.js describes
+     * a bare parameter as TEXT and `Bind` throws; the column on the left makes drizzle bind
+     * `timestamptz`. `IS DISTINCT FROM` rather than `<>` because `attempted_version` is nullable
+     * and `NULL <> 'x'` is NULL — a row nobody stamped would never be due.
      */
     const isDue = or(
       lte(messageFailures.nextAttemptAt, opts.now),
@@ -1030,24 +849,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .orderBy(sql`${messageFailures.nextAttemptAt} nulls first`)
       .limit(opts.limit);
 
-    // ONE statement, and THE DUE PREDICATE IS REPEATED IN THE UPDATE'S OWN `WHERE` — which is the
-    // part that makes the handover safe rather than merely likely to be safe.
-    //
-    // Two workers mid-leader-handover run this at the same time. Both sub-selects can return the
-    // same id; the second UPDATE then blocks on the winner's row lock, and under READ COMMITTED
-    // Postgres re-evaluates the UPDATE's qual against the COMMITTED new row. With the predicate
-    // present, the loser reads its own `version` in `attempted_version` and a `next_attempt_at` the
-    // winner has already pushed forward (or nulled), matches nothing, and claims nothing. Relying on
-    // the sub-select alone would make the outcome depend on whether the planner re-executes that
-    // subplan — which is precisely the kind of question an in-memory Postgres answers differently.
-    //
-    // `attempts + 1` is written by the CLAIM and not by the retry's outcome, deliberately: a process
-    // that dies mid-fetch must still have spent an attempt, or a poison message that reliably kills
-    // the worker is retried for ever and never escalates.
-    // The schedule is PER CODE, decided inside the claim statement itself so it is exactly as
-    // atomic as the claim: a deterministic row keeps `NULL` (due again only via the version arm),
-    // everything else gets the caller's clock instant. The instant travels as ISO text + a cast —
-    // the same postgres-js Date-parameter trap the due-predicate's comment documents.
+    // One statement, with the due predicate repeated in the UPDATE's own WHERE — that repetition
+    // makes the handover safe. Two workers can select the same id; the loser blocks on the
+    // winner's row lock, and under READ COMMITTED the UPDATE's qual is re-evaluated against the
+    // committed row, so the loser matches nothing. `attempts + 1` is written by the claim, not
+    // the retry's outcome: a process that dies mid-fetch must still have spent an attempt, or a
+    // poison message retries for ever and never escalates. The schedule is per code inside the
+    // claim statement: deterministic rows keep NULL, everything else gets the caller's clock
+    // instant as ISO text plus a cast.
     const holds = opts.holdScheduleForCodes ?? [];
     const nextAttemptAt = holds.length === 0
       ? opts.nextAttemptAt
@@ -1094,21 +903,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * See {@link RepoPort.primaryInstanceVanished}. ONE statement, so it cannot answer half.
-   *
-   * ── THE SUBQUERY IS PARAMETERISED, NOT CORRELATED, AND THAT IS A BUG FIX ─────────────────────
-   *
-   * It was first written as `... where mi.message_id = ${messages.id} and mi.is_primary` against an
-   * aliased `message_instances mi`. `message_instances` has an `id` column of its OWN, so the
-   * reference resolved inside the subquery instead of to the outer `messages` row: the predicate
-   * became `mi.message_id = mi.id`, which is never true, so `NOT EXISTS` was ALWAYS true and every
-   * message read as VANISHED. That is the adoption branch — `external_copy` became `external_move`
-   * and the adoption attack was back, through a column name rather than through the logic.
-   *
-   * Binding `messageId` as a parameter removes the possibility: there is no unqualified name left
-   * for the planner to resolve, and no alias for one to hide behind. **PGlite never saw this** — it
-   * was found by a message-identity test running against real Postgres, which is the fourth time
-   * that has happened in this repository.
+   * See {@link RepoPort.primaryInstanceVanished}. One statement, so it cannot answer half. The
+   * subquery is parameterised, not correlated: written against an aliased `message_instances mi`,
+   * the outer reference resolved to `mi`'s own `id` column, the predicate became `mi.message_id =
+   * mi.id` — never true — so every message read as vanished and the adoption attack was back
+   * through a column name. Binding `messageId` as a parameter leaves no unqualified name to
+   * resolve wrongly. PGlite never saw this; a message-identity test against real Postgres did.
    */
   async primaryInstanceVanished(messageId: string): Promise<boolean> {
     const [row] = await this.db.select({
@@ -1124,38 +924,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * Forget the instance at `locator` — the ONLY place a DISAPPEARANCE is written.
-   *
-   * Called from `apps/worker/src/sync.ts` for each of the adapter's `deletes`, and only when the
-   * folder's epoch matches the one the server just reported. That guard is the "on a UIDVALIDITY
-   * change all evidence is void" rule: a new epoch renumbers, so an absence at the old epoch is
-   * silence rather than a fact.
-   *
-   * A DELETE and not a flag, because the table has no absent column and does not need one: the
-   * row's existence IS the claim that the locator exists. Removing it also takes the locator out
-   * of `listKnownLocators`, which is correct — the server no longer has it to enumerate.
-   *
-   * ── AND IF THE VANISHED INSTANCE WAS THE PRIMARY, A SURVIVOR IS PROMOTED ───────────────────
-   *
-   * The invariant this restores: **`messages.native_locator` names an instance that exists.** It is
-   * what every read through a locator depends on — on-demand attachment fetch, reply quoting, the
-   * reconciler's move — and until a message could legitimately have MORE THAN ONE instance in one
-   * folder it held by accident. It stopped holding when `commitChange` began recording a second
-   * physical copy instead of repointing at it (see `secondCopyInSameEpoch` there): the primary can
-   * now be expunged while a copy of the same message is still on the server, and the old accidental
-   * repair — the survivor coming back as an unknown UID and dragging the primary to itself — is
-   * exactly the per-cycle re-download loop that change removed.
-   *
-   * OLDEST survivor (`first_seen_at`), so the choice is stable: two passes that both need to promote
-   * pick the same row, and the message settles on the copy that has been on the server longest rather
-   * than on whichever one a scan happened to reach first.
-   *
-   * NO-OP when the deleted row was not primary, or when nothing survives — a message whose every
-   * instance is gone is a message the server no longer holds, and inventing a locator for it would be
-   * worse than leaving the last known one on the row for the reaper to find.
-   *
-   * Returns the promoted survivor's locator, or `null` when no promotion happened — the interface
-   * doc says who reads it and why.
+   * Forget the instance at `locator` — the only place a disappearance is written. Called from the
+   * sync loop for each adapter delete, only when the folder's epoch matches the server's: a new
+   * epoch renumbers, so an absence at the old epoch is silence, not a fact. A DELETE, because the
+   * row's existence IS the claim the locator exists; removing it also leaves `listKnownLocators`.
+   * If the vanished instance was primary, the oldest survivor (`first_seen_at`) is promoted — a
+   * stable choice — restoring the invariant that `messages.native_locator` names an instance that
+   * exists. No-op when the deleted row was not primary or nothing survives; returns the promoted
+   * survivor's locator, else `null`.
    */
   async forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<NativeLocator | null> {
     const removed = await this.db.delete(messageInstances).where(and(
@@ -1240,19 +1016,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * Mail 0065 — see the WorkerRepo doc: the AI-auto-applied Quarantine placements to exclude.
-   *
-   * Account-scoped, because the only index is `(account_id, message_id)` and a bare
-   * `message_id IN (…)` cannot seek through its leading key — the lookup would degrade into a
-   * scan of every account's routing history on every pass that carries a spam move.
-   *
-   * AND SUPERSEDED BY ANY LATER USER MOVE: the AI decision row is history, not the current
-   * placement's author. A message the AI once quarantined, that the user restored and then
-   * explicitly pressed spam on, has a `change_log` `move` row whose `meta.to` is the pile and
-   * whose timestamp POSTDATES the decision — every user path that files to the pile records
-   * one (the decide re-route, the API move, a rule's retro move), while the auto-apply arm
-   * records only the message `create`. Such a decision no longer authors the placement, and the
-   * verdict files to native Junk as the user commanded.
+   * Mail 0065: the AI-auto-applied Quarantine placements to exclude. Account-scoped because the
+   * only index is `(account_id, message_id)` — a bare `message_id IN (…)` cannot seek its leading
+   * key and would scan every account's routing history. Superseded by any later user move: a
+   * `change_log` `move` row whose `meta.to` is the pile and whose timestamp postdates the
+   * decision means the user authored the placement — every user path to the pile records one, the
+   * auto-apply arm records only the message `create` — and the verdict then files to native Junk
+   * as the user commanded.
    */
   async listAiAutoAppliedQuarantine(accountId: string, messageIds: readonly string[]): Promise<string[]> {
     if (messageIds.length === 0) return [];
@@ -1410,23 +1180,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   /**
    * Persist the body — or, at the storage cap, its honest husk — and keep the account's byte
-   * counter true, all in the ambient transaction.
-   *
-   * ── ORDER, AND WHY EACH STEP IS WHERE IT IS ────────────────────────────────────────────────
-   *
-   *  1. `reserveBodyBytes` — the atomic conditional increment on `account_storage` (its header
-   *     carries the race argument). FIRST, and before any `recordChange` this transaction will
-   *     make: the lock-order rule, so ingest and the repair passes always take the counter row
-   *     and the seq row in the same order. `capBytes: null` (typed unmetered) still counts —
-   *     accounting is not billing.
-   *  2. ONE values-builder for both outcomes. A declined body keeps its REAL headers (the
-   *     organizing passes read stored headers) with `text=''`/`html=null` and the marker;
-   *     forking the insert would fork the header spread below, whose exact shape is the fix.
-   *  3. The compensation: a reserve whose insert then hit the 1:1 conflict (`ON CONFLICT DO
-   *     NOTHING` returned no row) reserved bytes it will not store, so it gives them back —
-   *     `GREATEST(0, …)`-clamped, on the row lock the reserve already holds. Unreachable from
-   *     `commitChange` today (`stored.created` guards the tail), kept because this method's
-   *     contract — counter moves ⇔ content stored — must not depend on who calls it.
+   * counter true, in the ambient transaction. Order: (1) `reserveBodyBytes` first, before any
+   * `recordChange`, so ingest and the repair passes take the counter row and the seq row in the
+   * same order (`capBytes: null` still counts — accounting is not billing); (2) one
+   * values-builder for both outcomes — a declined body keeps its real headers with
+   * `text=''`/`html=null` and the marker; (3) the compensation: a reserve whose insert hit the
+   * 1:1 conflict gives the bytes back, clamped, on the lock the reserve holds — counter moves
+   * only with content stored, whoever calls.
    */
   async insertMessageBody(
     messageId: string, body: MessageBodyInput, storage: BodyStorageContext,
@@ -1453,25 +1213,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       html: reserved ? body.html : null,
       withheldReason: reserved ? null : ("storage_cap" as const),
       /**
-       * `{ ...body.headers }` — the spread is LOAD-BEARING and this is the database boundary
-       * `packages/core/src/mime.ts` names when it says the null-prototype guarantee "does not
-       * survive a database round trip".
-       *
-       * The header parser builds that map with `Object.create(null)` so a `__proto__:` header cannot make
-       * `(headers[name] ??= []).push(value)` throw — a two-byte email that wedged a mailbox
-       * forever, because the folder cursor only advances after a whole batch. Correct fix, wrong
-       * blast radius: **drizzle 0.36.4's `is()` calls `Object.getPrototypeOf(value).constructor`
-       * on every insert value**, and on a null-prototype object that is `TypeError: Cannot read
-       * properties of null`. So the map that stops one hostile message from breaking ingest broke
-       * ALL ingest — the end-to-end sync test and every real-adapter path threw identically.
-       *
-       * Spreading here keeps both properties: the map is prototype-less for the whole of its
-       * construction, where the attack lives, and an ordinary object by the time an ORM reflects
-       * on it. Spread and not `Object.assign({}, …)` because spread uses CreateDataProperty, so
-       * an own `__proto__` key is copied as a plain own property rather than invoking the setter.
-       *
-       * Do not "simplify" this to `body.headers`. The failure is not in this file and the test
-       * that catches it is an e2e, so a unit run stays green.
+       * `{ ...body.headers }` — the spread is load-bearing; this is the database boundary
+       * `mime.ts` names when it says the null-prototype guarantee does not survive a round trip.
+       * The parser builds the map with `Object.create(null)` so a `__proto__:` header cannot
+       * throw, but drizzle 0.36.4's `is()` reflects on every insert value's prototype — TypeError
+       * on null, so the map that stopped one hostile message broke all ingest. Spread copies an
+       * own `__proto__` key as a plain property instead of invoking the setter. Do not simplify
+       * to `body.headers`: the failure is elsewhere and only an e2e catches it.
        */
       headers: { ...body.headers },
     }).onConflictDoNothing({ target: messageBodies.messageId })
@@ -1513,23 +1261,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * ── THE BACKOFF RESET IS PART OF THIS WRITE (mail 0058) ───────────────────────────────────
-   *
-   * `attempts: 0, nextAttemptAt: null` on every call, for the same reason `conflict: false` is
-   * written unconditionally: this method is how INTENT is expressed, and a deferral schedule
-   * belongs to the intent it was earned against, never to the row.
-   *
-   * The case that makes it necessary is the user's. A message whose move the server refused four
-   * times is deferred for an hour; the user then moves it somewhere else in the client. That is a
-   * NEW mutation — a different destination, quite possibly one the server is perfectly happy to
-   * accept — and it must be attempted on the next cycle rather than inheriting an hour of silence
-   * from the intent it just replaced. Without this reset the product would appear to ignore a
-   * user's action for an hour with nothing on screen to explain it.
-   *
-   * It is equally right on the COMPLETION write (`observed := desired`), where the row leaves the
-   * pending set anyway: a row that later goes pending again is a fresh mutation and starts its
-   * schedule clean. The one write that must NOT reset is the refusal itself, which is why
-   * {@link deferFolderReconcile} exists as a separate statement instead of a flag on this one.
+   * The backoff reset is part of this write (mail 0058): `attempts: 0, nextAttemptAt: null` on
+   * every call, like `conflict: false` — this method expresses intent, and a deferral schedule
+   * belongs to the intent it was earned against. The case that requires it: a move refused four
+   * times is deferred an hour; the user then moves the message elsewhere — a new mutation the
+   * server may happily accept, which must not inherit an hour of silence. Equally right on the
+   * completion write, where the row leaves the pending set anyway. The one write that must not
+   * reset is the refusal itself — {@link deferFolderReconcile} is a separate statement for that
+   * reason.
    */
   async upsertFolderState(messageId: string, s: FolderStateRow): Promise<void> {
     const reconcileStatus = reconcileStatusFor(s);
@@ -1547,79 +1286,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * {@link WorkerRepo.completeFolderState} — the physical-observation half of
-   * {@link upsertFolderState}, and NOT a conditional write that does nothing on a miss.
-   *
-   * ── THE FIRST VERSION OF THIS METHOD WAS WRONG, AND A REVIEW ROUND FOUND WHY ────────────────
-   *
-   * It had a `WHERE` carrying the witness — `desired_folder = expectDesiredFolder` — and wrote
-   * NOTHING at all when that failed to match. That closed the lost-update defect this method
-   * exists for (a completion may never write back a desire it read before the network round
-   * trip), but it opened a narrower, worse one: `updateLocator` runs unconditionally, before this
-   * method is ever called, because the server HAS physically moved the mail by the time a
-   * completion is attempted. So a declined completion left `messages.native_locator` correctly
-   * pointing at the new physical folder while `folder_state.observed_folder` kept whatever value
-   * the COMPETING writer had left — which, when that writer's own new desire happened to equal
-   * what it believed the current location already was (the ordinary shape of "the user restores a
-   * message while its move is still in flight"), is a CONVERGED pair: `reconcile_status` reads
-   * `reconciled` for a row whose physical location the database is now simply wrong about, and
-   * nothing will ever look at it again — `reconciled` rows do not re-enter
-   * {@link WorkerRepo.listPendingFolderStates}. On the spam path specifically this could feed the
-   * instanceless reaper a message with no watched copy and no reconciled-while-divergent
-   * exemption, which is the row that gets silently deleted from the mirror while it still sits on
-   * the server.
-   *
-   * ── THE FIX: THE PHYSICAL FACT IS ALWAYS RECORDED; THE DESIRE NEVER IS ──────────────────────
-   *
-   * `desired_folder` is STILL absent from the `SET` — that half of the original guarantee is
-   * unchanged and is what makes this safe to widen. What changes is `observed_folder`: it is now
-   * written on EVERY call, because it is a fact about the SERVER and not about anyone's intent,
-   * and the row's `reconcile_status` is derived inside the same statement from the LIVE
-   * `desired_folder` — read as part of the `UPDATE`, never assumed to be the witness — against
-   * this fresh observation:
-   *
-   *  · `desired_folder = observed_folder` (the value THIS call is writing) ⇒ reconciled, by plain
-   *    literal equality — covers every ordinary move and the coincidental-convergence case above,
-   *    which now self-heals instead of lying.
-   *  · the spam pile's own fulfilment shape — `satisfiedBy` non-null, `desired_folder` STILL equal
-   *    to the witness this call was computed against, and `satisfiedBy` equal to what is being
-   *    written — reconciled. Narrower than the first clause on purpose: crediting a stale witness
-   *    with satisfaction of a desire that has since changed would be the lost update again, one
-   *    layer down.
-   *  · anything else ⇒ pending. The row re-enters `listPendingFolderStates` on the very next read,
-   *    and the native locator this call already repointed is exactly where the next attempt reads
-   *    FROM — so a superseded spam park is not stranded, it is one more reconcile cycle away from
-   *    landing wherever the CURRENT desire actually points.
-   *
-   * ── ROUND THREE: "ALWAYS RECORDED" WAS TOO WIDE, AND A SECOND REVIEW FOUND THE COST ────────
-   *
-   * The paragraph above still describes junk-filing.ts's `settle` correctly — its `observedFolder`
-   * IS a fresh physical fact, every time, because it only ever calls this method after
-   * `adapter.move`/`moveMany` returned a locator that landed. It does NOT describe `sync.ts`'s
-   * other two callers: the already-converged status repair in `reconcileFolders` (`p.desiredFolder
-   * === p.observedFolder`, re-deriving `reconcile_status` for a row it read before doing any I/O)
-   * and {@link voidGoneFiling} (recording "this message is gone", which is not a location). Both
-   * pass `observedFolder` values that are STALE ECHOES, not observations — and "always recorded"
-   * applied to a stale echo means a miss can overwrite whatever a genuinely fresher writer (an
-   * ingest-side `adopt_external`, an interleaved external move) had JUST committed for the same
-   * row, with a value that was already out of date before this call even started.
-   *
-   * So the unconditional write is now opt-in: {@link FolderCompletion.physicalObservation}, true
-   * ONLY from `settle`. Every other caller gets the ORIGINAL behaviour back — a miss writes
-   * nothing at all — which is exactly right for them, because they have no fresh fact to protect
-   * in the first place. See that flag's own doc for the full reasoning; the two designs are not in
-   * tension, they answer different questions ("do I know something new about where the mail is"),
-   * and the caller is the only one who can answer that.
-   *
-   * The returned boolean answers a narrower question than "was anything written" — it is ALWAYS
-   * true that something was written to the row (an UPDATE ran), even when every SET clause's `ELSE`
-   * fired and no column actually changed. It answers "did this call's OWN witness match the row's
-   * live desire", which is what callers use to decide whether THEIR intent (the park, the husk, the
-   * backoff reset, and — for a non-physical-observation caller — the observation itself) may
-   * proceed: `last_set_by`, `attempts` and `next_attempt_at` are touched ONLY on that match, for
-   * {@link upsertFolderState}'s stated reason — a declined call's caller does not own this row's
-   * schedule or its authorship, only the fact of where the mail now is, and only when it actually
-   * has that fact to give.
+   * {@link WorkerRepo.completeFolderState}. `desired_folder` is never in the SET, so a completion
+   * cannot write back a desire read before the network round trip. A caller with a fresh physical
+   * fact (`c.physicalObservation`, junk-filing's `settle`) gets `observed_folder` written on
+   * every call: a declined completion after `updateLocator` once left a converged `reconciled`
+   * row lying about the location. Stale-echo callers (the status repair, `voidGoneFiling`) write
+   * nothing on a miss. `reconcile_status` derives from the live desire; a divergent row stays
+   * pending and self-heals. Returns whether the witness matched — the caller's own intent
+   * proceeds only then.
    */
   async completeFolderState(messageId: string, c: FolderCompletion): Promise<boolean> {
     // `physical` gates whether a MISS may still touch `observed_folder`/`reconcile_status`/
@@ -1632,16 +1306,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // an observation write, physical or not.
     const physical = c.physicalObservation === true;
     /**
-     * THE PHYSICAL GATE IS DECIDED HERE, NOT BY THE DATABASE — and that is a simplification the
-     * port made available rather than a change of meaning.
-     *
-     * It used to be `desired_folder = $x OR $physical::boolean`, with a JavaScript boolean bound
-     * as a parameter and cast so the server would accept it. `A OR true` is `true` and
-     * `A OR false` is `A`, and `physical` is a constant by the time this statement is composed —
-     * so the same two branches are expressible without binding a boolean at all. That matters
-     * beyond tidiness: the device store has no boolean type and its driver does not take a
-     * JavaScript boolean as a parameter, so the cast was not portable and neither was the bind.
-     * Four occurrences, one fragment.
+     * The physical gate is decided here, not by the database. It used to be `desired_folder = $x
+     * OR $physical::boolean`; `physical` is a constant by the time the statement is composed, so
+     * both branches are expressible without binding a boolean — which matters because the device
+     * store's driver takes no JavaScript boolean parameter and the cast was not portable. Four
+     * occurrences, one fragment.
      */
     const matched = sql`desired_folder = ${c.expectDesiredFolder}`;
     const gate = physical ? sql`TRUE` : matched;
@@ -1678,20 +1347,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       WHERE message_id = ${this.d.castUuid(messageId)}
       RETURNING desired_folder AS "desiredFolder"
     `);
-    // THE TWO DRIVERS BEHIND `Db` DISAGREE ABOUT WHAT `execute` RETURNS — `consent-cutline.ts`
-    // already documents this and this method repeats its exact fix rather than a new one: the
-    // Postgres driver (postgres.js, real :5433) hands back an array subclass, PGlite an object
-    // with a `rows` property. Neither is iterable in a way that covers the other. Found the hard
-    // way here too: `RETURNING (desired_folder = $x) AS matched` read as a real JS `boolean`
-    // against real Postgres and every pg-guard test passed, but `junk-sweep.test.ts` — the one
-    // worker suite that drives this method through the REAL repo against PGlite rather than a
-    // hand-rolled fake — turned up `rows[0]` as `undefined` on PGlite, because `rows` was never
-    // an array to begin with. Comparing `desired_folder` itself (a string this module already
-    // owns) rather than a computed boolean removes one variable; reading the row shape correctly
-    // removes the other.
-    // The driver split above is GONE, and the comment stays because the reasoning is why the seam
-    // returns one shape: `d.exec` hands back rows positionally on both stores, so there is no
-    // array-or-`{rows}` question left to get wrong. One column is selected, so position 0 is it.
+    // The two drivers behind `Db` disagreed about what `execute` returns (array subclass vs
+    // `{rows}`), and `junk-sweep.test.ts` — the one worker suite driving this method through the
+    // real repo on PGlite — read `rows[0]` as `undefined`. The split is gone: `d.exec` hands back
+    // rows positionally on both stores, one column is selected, so position 0 is it. Comparing
+    // `desired_folder` itself (a string this module owns) rather than a computed boolean removes
+    // the other variable.
     return String(result[0]?.[0] ?? "") === c.expectDesiredFolder;
   }
 
@@ -1712,18 +1373,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * Set `folder_state.conflict` and NOTHING else — the whole observable effect of an
-   * `external_copy`.
-   *
-   * A separate method rather than a field on `FolderStateRow`, because {@link upsertFolderState}
-   * writes `conflict: false` unconditionally on every call: expressing the conflict through it
-   * would mean the next reconcile pass silently cleared the record. The `set` here names
-   * `conflict` and `updated_at` only, so `desired_folder`, `observed_folder` and `last_set_by`
-   * cannot move — which is the entire point, since a second delivery must not be able to change
-   * where the user's message belongs.
-   *
-   * The insert branch exists for a message with no `folder_state` row yet; `s` seeds it with what
-   * the plan read, so the flag always has somewhere to live.
+   * Set `folder_state.conflict` and nothing else — the whole observable effect of an
+   * `external_copy`. A separate method rather than a field on `FolderStateRow` because {@link
+   * upsertFolderState} writes `conflict: false` unconditionally, so expressing the conflict
+   * through it would let the next reconcile pass silently clear the record. The `set` names
+   * `conflict` and `updated_at` only, so a second delivery cannot change where the user's message
+   * belongs. The insert branch seeds a message with no `folder_state` row yet from what the plan
+   * read, so the flag always has somewhere to live.
    */
   async setFolderConflict(messageId: string, s: FolderStateRow): Promise<void> {
     await this.db.insert(folderState).values({
@@ -1736,15 +1392,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * Repoint the message: `messages.native_locator` AND its primary instance, together.
-   *
-   * `native_locator` is the primary instance's MIRROR — the change that introduced instances
-   * deliberately touched no read path — so every read path keeps working off the jsonb column while
-   * `listKnownLocators` — the one read that decides what gets re-fetched — works off the table.
-   * Two writes, one method, because the three call sites (`commitChange`,
-   * `applyReconcileAction`, `reconcileFolders`) already funnel through here and a fourth that
-   * forgot the instance would fail silently: a stale primary makes the adapter treat a dead UID as
-   * known and never fetch the live one.
+   * Repoint the message: `messages.native_locator` and its primary instance, together.
+   * `native_locator` is the primary instance's mirror — every read path keeps working off the
+   * jsonb column while `listKnownLocators`, the one read that decides what gets re-fetched, works
+   * off the table. Two writes in one method because a call site that forgot the instance would
+   * fail silently: a stale primary makes the adapter treat a dead UID as known and never fetch
+   * the live one.
    */
   async updateLocator(messageId: string, locator: NativeLocator): Promise<void> {
     await this.db.update(messages).set({ nativeLocator: locator }).where(eq(messages.id, messageId));
@@ -1752,21 +1405,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * ── THE `ORDER BY` IS THE AUDIT TRAIL, NOT THE CORRECTNESS ────────────────────────────────
-   *
-   * `evaluateRules` resolves conflicts by a total order in TypeScript (`rules.ts#compareRules`),
-   * so it is correct whatever order this returns. It was not AUDITABLE: this query had no
-   * `ORDER BY` at all, so the array `evaluateRules` received was in PostgreSQL's **physical row
-   * order**, which moves under UPDATE and VACUUM. Nobody could run one `SELECT` in `psql` and see
-   * which rule the router would pick, and — before the total order landed — the same message
-   * routed differently on different days with no rule change. PGlite returns stable insertion
-   * order, so the whole class was invisible to every test that did not run against real Postgres.
-   *
-   * The clauses MIRROR `compareRules` step for step, deny-over-allow included, via the same
-   * destination→effect mapping `effectForDestination` applies. A test against real Postgres
-   * asserts the two agree by sorting this output with the exported comparator and requiring that
-   * nothing moves — a `CASE` arm that drifts from the TypeScript is caught there, not in
-   * production.
+   * The ORDER BY is the audit trail, not the correctness: `evaluateRules` resolves conflicts by a
+   * total order in TypeScript (`rules.ts#compareRules`), but without an ORDER BY this query
+   * returned physical row order, so nobody could run one SELECT in psql and see which rule the
+   * router would pick — and PGlite's stable insertion order hid the class from every test not on
+   * real Postgres. The clauses mirror `compareRules` step for step, deny-over-allow included; a
+   * pg test sorts this output with the exported comparator and requires that nothing moves.
    */
   async listRules(accountId: string): Promise<Rule[]> {
     const rows = await this.db.select().from(rulesTbl).where(eq(rulesTbl.accountId, accountId))
@@ -1774,27 +1418,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         desc(rulesTbl.priority),
         sql`case when ${rulesTbl.destination} in ('ohmail/Screener', 'ohmail/Screened', 'ohmail/Quarantine') then 0 else 1 end`,
         sql`case ${rulesTbl.kind} when 'sender' then 0 when 'domain' then 1 else 2 end`,
-        // A SUBJECT TERM OUTRANKS ITS ABSENCE, within one kind — `subjectRank` in `rules.ts`, in
-        // the same position.
-        //
-        // The predicate is a REGEX and not `IS NOT NULL`, because the TypeScript side reads `''` and
-        // a blank string as ABSENT (a CHECK constrains rows the migration reached, not a value some
-        // other producer wrote), and the two statements of this order are required to agree
-        // literally: a row storing `'  '` must rank as bare in BOTH, or the narrow rule wins the tie
-        // in SQL and then declines to fire in the evaluator — a rule matching everything.
-        //
-        // It is not `btrim` either, and that is a measurement rather than a preference. One-argument
-        // `btrim` trims SPACES ONLY, so `btrim(E'\t') <> ''` is TRUE while `subjectTermOf` reads a
-        // tab-only term as absent — the exact disagreement, inside the guard against it. This
-        // character class is `SUBJECT_TERM_TRIM` in `rules.ts` spelled in SQL, and the pg test
-        // checks the two agree over every one of the six characters.
-        //
-        // The backslashes are DOUBLED so that the text Postgres receives is byte-identical to the
-        // text in the migration's CHECK — a tagged template cooks `\t` into a literal tab, which
-        // happens to mean the same thing to the regex engine but makes the two definitions of one
-        // predicate impossible to diff. Both forms were measured equal against real Postgres over all
-        // eleven shapes before this was written; `standard_conforming_strings` is `on`, so the escape
-        // reaches the regex engine rather than the string parser.
+        // A subject term outranks its absence within one kind — `subjectRank` in `rules.ts`, in
+        // the same position. A regex and not `IS NOT NULL` or `btrim`: the TypeScript side reads
+        // `''` and blank as absent, and one-argument `btrim` trims spaces only, so a tab-only
+        // term would rank as narrow in SQL and as bare in the evaluator — a rule matching
+        // everything. The class is `SUBJECT_TERM_TRIM` spelled in SQL, backslashes doubled so the
+        // text Postgres receives is byte-identical to the migration's CHECK; the pg test checks
+        // agreement over all six characters.
         sql`case when ${this.d.hasNonBlank(rulesTbl.subjectContains)} then 0 else 1 end`,
         // THE BODY TERM'S CLAUSE (mail 0052), directly below the subject one — `bodyRank` in
         // `rules.ts`, in the same position. Everything the comment above establishes applies
@@ -1858,19 +1488,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * Append a delta-log row in the AMBIENT transaction: allocateSeq + insert.
-   *
-   * THE CAST IS THE ONE PLACE THE TYPE CANNOT HELP, and it is deliberate rather than lazy.
-   * `recordChange` takes `LedgerTx` precisely so that no caller can hand it an autocommit handle
-   * — on one, the seq allocation commits and releases the counter row lock BEFORE the log row is
-   * inserted, and a client polling in that window advances past a seq that is not there yet.
-   * This class, though, holds ONE `db` field that is legitimately either scope: a top-level
-   * handle for every read, and a transaction handle inside `transaction(...)`. Narrowing the
-   * field would break every read-only construction site.
-   *
-   * So the guarantee moves to runtime for this seam only: `assertLedgerTx` inside
-   * `allocateSeqRange` throws `NotInTransactionError` if this repo was NOT built from a
-   * transaction. Calling it on a top-level repo is a loud failure, never a silent reordering.
+   * Append a delta-log row in the ambient transaction: allocateSeq + insert. The cast is
+   * deliberate: `recordChange` takes `LedgerTx` so no caller can hand it an autocommit handle —
+   * on one, the seq allocation commits and releases the counter lock before the log row lands,
+   * and a poller in that window advances past a seq that is not there yet. This class holds one
+   * `db` field that is legitimately either scope, so the guarantee moves to runtime for this seam
+   * only: `assertLedgerTx` inside `allocateSeqRange` throws `NotInTransactionError` when the repo
+   * was not built from a transaction — loud, never a silent reordering.
    */
   async recordChange(input: RepoChangeInput): Promise<bigint> {
     return recordChangeTx(this.db as LedgerTx, {
@@ -1885,24 +1509,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   // ── Threading (mail 0026) ──
 
   /**
-   * The closest already-ingested ancestor named by `candidates`, in CANDIDATE ORDER.
-   *
-   * ONE statement for the whole chain, not one per candidate: a 4-deep `References` walk would
-   * otherwise be four round trips per message, and the backfill does this once per row over
-   * 8 792 of them. The candidate PRIORITY is then applied in TypeScript, because SQL's `IN`
-   * has no order and the order is the ruling — `In-Reply-To` first, then `References`
-   * right-to-left, nearest ancestor wins.
-   *
-   * `eq(messages.accountId, …)` is not a tidiness predicate. A Message-ID is chosen by whoever
-   * sends the mail, so without it a stranger could name a header belonging to another account
-   * and have their message adopt that account's conversation — which `materializeThread` then
-   * renders as one thread — the account-isolation boundary. It is also the leading column of
-   * `messages_account_message_id_header_idx`, so the index cannot even be probed cross-account.
-   *
-   * Several rows can share one header inside an account: the same mail delivered to two of the
-   * user's mailboxes dedups per MAILBOX, not per account. They are the same message, so any of
-   * them answers the question — the tie is broken towards a row that already HAS a thread, so
-   * a duplicate that has not been backfilled yet cannot hide the copy that has.
+   * The closest already-ingested ancestor named by `candidates`, in candidate order. One
+   * statement for the whole chain — a 4-deep `References` walk would otherwise be four round
+   * trips per message — with priority applied in TypeScript, because SQL's `IN` has no order:
+   * `In-Reply-To` first, then `References` right-to-left. `eq(messages.accountId, …)` is the
+   * account-isolation boundary: a Message-ID is chosen by the sender, so without it a stranger
+   * could adopt another account's conversation; it is also the leading column of
+   * `messages_account_message_id_header_idx`. Ties break towards a row that already has a thread,
+   * so an un-backfilled duplicate cannot hide the copy that has one.
    */
   async findThreadParent(accountId: string, candidates: readonly string[]): Promise<ThreadParent | null> {
     if (candidates.length === 0) return null;
@@ -1928,18 +1542,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * ONE indexed-by-account probe over the away ledger, `LIMIT 1`, and it only ever runs when a
-   * message was already DSN-shaped — so ordinary mail pays nothing for it.
-   *
-   * `lower()` on BOTH sides and not an exact match on the column. The ledger stores what
-   * `mintMessageId` produced, whose domain comes from `mailboxes.address` unnormalised, so a
-   * mailbox whose address was stored with capitals mints a mixed-case id, while the candidates
-   * were lower-cased by `parseMessageIds`. An exact comparison agrees with that right up to the
-   * first such mailbox and then misses in silence, which on this path reads as "no responder ever
-   * wrote to them". `lower()` is in both dialects, so this needs no branch.
-   *
-   * `mintedMessageId` is NULL for a row that never dialled (`throttled` cleared it on purpose), so
-   * those rows cannot match and no outcome filter is needed to exclude them.
+   * One indexed-by-account probe over the away ledger, `LIMIT 1`, run only for a message already
+   * DSN-shaped, so ordinary mail pays nothing. `lower()` on both sides: the ledger stores what
+   * `mintMessageId` produced, whose domain comes from `mailboxes.address` unnormalised, while the
+   * candidates were lower-cased by `parseMessageIds` — an exact match misses in silence for a
+   * mixed-case mailbox and reads as no responder ever wrote to them. `lower()` is in both
+   * dialects. `mintedMessageId` is NULL for a row that never dialled, so those cannot match and
+   * no outcome filter is needed.
    */
   async isOwnAwayReply(accountId: string, candidates: readonly string[]): Promise<boolean> {
     if (candidates.length === 0) return false;
@@ -1954,47 +1563,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * Find-or-create the conversation anchored at `(account_id, root_message_id_header)`.
-   *
-   * ONE statement, `ON CONFLICT DO UPDATE`, and both halves of that matter:
-   *
-   *  · `DO UPDATE` and not `DO NOTHING`, because `DO NOTHING` returns no row on conflict and
-   *    the follow-up `SELECT` would not see a concurrent INSERT that has not committed —
-   *    under READ COMMITTED the loser gets neither the row nor an error and has to retry.
-   *    `DO UPDATE` blocks on the conflicting row, then returns it.
-   *  · the SET is deliberately a no-op (`updated_at = threads.updated_at`). Its job is to take
-   *    the row lock and make `RETURNING` fire, not to merge — the merge is
-   *    {@link mergeThreadMessage}, so ingest and adoption fold a message in through ONE code
-   *    path instead of two that must be kept identical. In particular `subject` is never
-   *    written here: `POST /threads/:id/rename` is a user write and ingest may not undo one.
-   *
-   * `created` comes from `xmax = 0` — the DATABASE's answer to "did I insert this", not this
-   * process's guess — cast to int because a boolean's wire representation differs between
-   * drivers and `Boolean("f")` is `true`.
-   *
-   * ── AND `xmax` IS A POSTGRES SYSTEM COLUMN, SO THE DEVICE STORE NEEDS ITS OWN ARM ────────
-   *
-   * This is the ingest's FIRST write, and on the device store the statement above does not fail
-   * subtly — it fails at once, with `no such column: xmax`, before a single message can land. So
-   * this is a BRANCH rather than a seam member: `xmax` is not a construct with two spellings, it
-   * is a fact about one store's row visibility that the other does not have and cannot emulate.
-   * A member pretending otherwise would have to answer the question wrongly somewhere.
-   *
-   * The device arm is a SELECT and then one of two writes, inside the caller's transaction, and
-   * two statements are correct here for a reason that does not hold on the server: that store is
-   * reached through ONE serialized connection, so there is no second writer between them. On the
-   * server the same pair would be a lost race, which is exactly why the server keeps its single
-   * statement.
-   *
-   * Three shapes were rejected. `created_at = updated_at` reads TRUE for every row nobody has
-   * touched since insert, so a second call would report a creation. `changes()` is not scoped to
-   * a statement through this driver's proxy. And a bare `INSERT … ON CONFLICT DO NOTHING` with a
-   * follow-up read cannot tell "I inserted it" from "somebody else did" — which is the whole
-   * question.
-   *
-   * A NULL header is a singleton on both stores: NULLs are distinct in the unique index, so it
-   * anchors nothing and always creates. The device arm says that as its own branch rather than
-   * leaning on `= NULL` never matching, because the two look identical and only one is a rule.
+   * Find-or-create the conversation anchored at `(account_id, root_message_id_header)`. On the
+   * server: one `ON CONFLICT DO UPDATE` whose SET is a deliberate no-op — its job is the row lock
+   * and `RETURNING`, since `DO NOTHING` returns no row on conflict; `subject` is never written
+   * here, because a rename is a user write ingest may not undo. `created` comes from `xmax = 0`,
+   * cast to int because a boolean's wire shape differs between drivers. `xmax` does not exist on
+   * the device store, so that arm is a branch: a SELECT then one of two writes, safe there
+   * because one serialized connection leaves no second writer. A NULL header anchors nothing and
+   * always creates, on both stores.
    */
   async upsertThread(input: ThreadUpsertInput): Promise<ThreadUpsertResult> {
     // THROUGH `this.d`, never `dialectOf(this.db)`. A transaction is a different object built by
@@ -2052,15 +1628,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * Fold a joining message into an existing thread: union its sender into `participants`,
-   * advance `last_message_at` if it is newer. Returns whether anything actually moved, so the
-   * caller does not record a `change_log` row for a write that did not happen.
-   *
-   * `FOR UPDATE` and a read-modify-write rather than a jsonb aggregate in SQL, because the
-   * union is BY ADDRESS and two rows for one address with different display names must collapse
-   * to one — `jsonb_agg(DISTINCT …)` compares whole objects and would keep both. The lock is
-   * held to COMMIT, so two mailboxes of one account folding into the same thread serialize
-   * instead of losing one another's participant.
+   * Fold a joining message into an existing thread: union its sender into `participants`, advance
+   * `last_message_at` if newer. Returns whether anything moved, so the caller does not record a
+   * `change_log` row for a write that did not happen. `FOR UPDATE` plus read-modify-write rather
+   * than a jsonb aggregate because the union is by address — `jsonb_agg(DISTINCT …)` compares
+   * whole objects and would keep two display names for one address. The lock holds to commit, so
+   * two mailboxes of one account folding into the same thread serialize.
    */
   async mergeThreadMessage(threadId: string, input: ThreadMergeInput): Promise<boolean> {
     const rows = await this.d.forUpdate(
@@ -2109,23 +1682,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * ONE page of the threading backlog for an account, LOCKED FOR UPDATE — messages that have
-   * no thread yet, oldest first.
-   *
-   * `ORDER BY date ASC NULLS FIRST, id` is the ruling's date-ascending order, and it is what
-   * makes the pass mostly-single-pass: a parent is resolved before its replies, so each reply
-   * hits the fast path (`parent.threadId` is already set) instead of the anchor path.
-   *
-   * No cursor, unlike `listScreenerBacklog`. Every row this pass examines LEAVES the candidate
-   * set (it gains a `thread_id`), so paging from the start each time is correct and an empty
-   * page is a genuine end condition. `FOR UPDATE OF messages` gives the concurrency half: a
-   * second pass blocks on the locked rows and, when it re-reads, they no longer satisfy
-   * `thread_id IS NULL` and drop out — one thread per conversation, one change per message.
-   *
-   * `of: messages` and not the whole join, because `message_bodies` is on the NULLABLE side of
-   * a LEFT JOIN and Postgres refuses to lock that. The LEFT JOIN itself is deliberate: a
-   * message whose body row is missing still deserves a thread (its own), and an INNER JOIN
-   * would silently leave it out of the backlog for ever.
+   * One page of the threading backlog — messages with no thread yet, oldest first, locked FOR
+   * UPDATE. `ORDER BY date ASC NULLS FIRST, id` makes the pass mostly single-pass: a parent
+   * resolves before its replies. No cursor, unlike `listScreenerBacklog`: every examined row
+   * leaves the candidate set by gaining a `thread_id`, so an empty page is a genuine end. `of:
+   * messages` and not the whole join, because `message_bodies` sits on the nullable side of a
+   * LEFT JOIN and Postgres refuses to lock that; the LEFT JOIN itself is deliberate — a message
+   * with no body row still deserves a thread.
    */
   async lockAccountThreadStructure(accountId: string): Promise<void> {
     await this.d.advisoryLock(this.db, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, accountId);
@@ -2281,30 +1844,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       eq(messages.mailboxId, mailboxId),
       eq(folderState.desiredFolder, "ohmail/Screener"),
       eq(folderState.lastSetBy, "us"),
-      // THE USER'S DECISIONS ARE OFF LIMITS. A `rules` row for this sender (or its domain) is
-      // exactly what `POST /screener/:id` writes when somebody screens them in or out.
-      //
-      // UN-NARROWED RULES ONLY, and the schema is what settles that rather than a preference:
-      // `subject_contains`/`body_contains` (mail 0050, 0052) are CONJUNCTIONS — *from this address
-      // AND with this in the subject/text* — and their column comments state the invariant that a
-      // present term "can only make a rule fire LESS often than it did". Matching on `kind`/
-      // `match` alone therefore let one narrow rule remove every OTHER message from that sender
-      // from this backlog, which is a rule changing an outcome for mail it does not match. Those
-      // messages now reach `evaluateRules`, the one implementation of what a rule matches; if the
-      // rule fires it wins there exactly as before — which is a claim about THIS method's
-      // CALLERS, and it is the whole licence for narrowing here: the backlog is handed to a pass
-      // that runs the evaluator. `apps/worker/src/screener-auto.ts` carries the identical
-      // predicate and is deliberately NOT narrowed, because it has no evaluator downstream; see
-      // its own comment. Found by sweeping every `kind = 'sender'` predicate in the tree after the
-      // defect was fixed in `packages/services/src/sensitive-rescreen.ts`.
-      //
-      // AND IT MOVES NO MAIL TODAY, which is stated rather than left to be assumed from the fix's
-      // presence: this method's one caller was the connect-time Screener re-route, and that pass
-      // was RETIRED — attaching a mailbox now decides nothing and moves nothing. Nothing in
-      // `apps/` or `packages/` calls this method. It is corrected anyway, because a wrong
-      // predicate on a live interface is a trap for its next caller, and it has a test of its own
-      // so the correction is not decorative — but whether the method should exist at all is a
-      // separate question, and this change did not answer it.
+      // The user's decisions are off limits: a `rules` row for this sender (or domain) is what
+      // `POST /screener/:id` writes. Un-narrowed rules only — `subject_contains`/`body_contains`
+      // (mail 0050, 0052) are conjunctions that can only make a rule fire less often, so matching
+      // on `kind`/`match` alone let one narrow rule remove every other message from that sender
+      // from this backlog. Those messages now reach `evaluateRules`, which is the licence for
+      // narrowing here: this backlog is handed to a pass that runs the evaluator.
+      // `apps/worker/src/screener-auto.ts` keeps the identical predicate un-narrowed because it
+      // has no evaluator downstream. This method's one caller, the connect-time re-route, was
+      // retired — corrected anyway, because a wrong predicate on a live interface traps its next
+      // caller.
       sql`not exists (
         select 1 from ${rulesTbl} r
          where r.account_id = ${messages.accountId}
@@ -2361,17 +1910,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async upsertMailboxFolder(mailboxId: string, folder: string, cursor: PersistedFolderCursor): Promise<void> {
-    /* -- `server_exists` IS SPREAD, NOT ASSIGNED (mail 0083) ---------------------------------
-     *
-     * Absent means "this pass did not open the folder" — the passive fast path skips the SELECT
-     * on a provably unchanged folder, and every fake adapter omits it. Assigning `?? null` there
-     * would ERASE the last count somebody actually observed, once per cycle, for every folder the
-     * optimisation covers: the strip's denominator would collapse to the folders that happened to
-     * change, and the progress it reports would jump around for no reason a user could see.
-     *
-     * So an absent value writes nothing at all, on both arms of the upsert. That is also why the
-     * column is nullable rather than defaulted: NULL means "never opened under this build", which
-     * is a different fact from zero.
+    /**
+     * `server_exists` is spread, not assigned (mail 0083). Absent means this pass did not open
+     * the folder — the passive fast path skips the SELECT on a provably unchanged folder, and
+     * every fake adapter omits it. Assigning `?? null` would erase the last count somebody
+     * actually observed, once per cycle, collapsing the strip's denominator to folders that
+     * happened to change. An absent value writes nothing on both arms of the upsert; the column
+     * is nullable because NULL means never opened under this build, a different fact from zero.
      */
     const exists = cursor.serverExists;
     await this.db.insert(mailboxFolders).values({
@@ -2388,16 +1933,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     });
   }
 
-  /* ══ USER-COMMANDED FOLDER OPERATIONS (`folder_ops`, mail 0074) — the folder-op pass's repo half ══
-   *
-   * Driven by `apps/worker/src/folder-ops.ts` inside the mailbox's serial cycle, fenced. Two
-   * string-prefix idioms recur below and both are deliberate:
-   *
-   *  · SUBTREE membership is `col = path OR substr(col, 1, len+1) = path || '/'` — exact string
-   *    functions, never LIKE: a folder name may contain `_` (the validator only refuses the
-   *    LIST wildcards `%`/`*`), and an unescaped LIKE pattern would let `a_b` claim `axb/...`.
-   *  · The SWAP is `to || substr(col, len(from)+1)` — the subject maps to `to` exactly
-   *    (substr past the end is ''), a descendant keeps its relative path.
+  /**
+   * User-commanded folder operations (`folder_ops`, mail 0074) — the folder-op pass's repo half,
+   * driven by `apps/worker/src/folder-ops.ts` inside the mailbox's serial cycle, fenced. Two
+   * string-prefix idioms recur below, both deliberate: subtree membership is `col = path OR
+   * substr(col, 1, len+1) = path || '/'` — exact string functions, never LIKE, since a folder
+   * name may contain `_` and an unescaped pattern would let `a_b` claim `axb/...`; the swap is
+   * `to || substr(col, len(from)+1)` — the subject maps to `to` exactly, a descendant keeps its
+   * relative path.
    */
 
   async listFolderOps(mailboxId: string): Promise<FolderOpRow[]> {
@@ -2739,28 +2282,15 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         const [pending] = await this.db.select({ desiredFolder: folderState.desiredFolder })
           .from(folderState).where(eq(folderState.messageId, st.messageId)).limit(1);
         if (pending && pending.desiredFolder !== folder) {
-          // A pending move OUT whose IMAP half may already have SUCCEEDED, its completion
-          // transaction lost (this pass runs before changesSince, so the destination's create
-          // is not yet ingested and no survivor row exists to find). Tombstoning here would
-          // hide real server mail for ever. DEFER instead, preserving the exact adoption
-          // evidence `primaryInstanceVanished` reads — locator kept, primary instance rows
-          // gone: if the move landed, the destination copy is adopted as the move's own
-          // completion on ingest; if the sweep truly trashed the copy first, the pending row
-          // parks under the reconciler's bounded retry — a message shown at its destination
-          // while its copy sits in Trash, stated here as the residual this deferral accepts
-          // (the opposite error, hiding real mail, does not heal).
-          //
-          // KNOWN-STALE residue goes first: a dead-epoch instance row — the exact candidate
-          // the survivor tiers reject — would otherwise keep this message out of every
-          // terminal check for ever (`tombstoneInstanceless` skips messages with any instance
-          // row), turning the bounded-retry residual into a permanent phantom.
-          //
-          // EXCEPT the Sent folder's rows. Sent is scanned by UID WATERMARK, never enumerated
-          // end to end, so after a UIDVALIDITY reset the renumbered copy of a message older
-          // than the watermark window is never re-learned: a "stale" Sent row is the LAST
-          // evidence that copy exists, and deleting it would let the phantom reaper tombstone
-          // real mail no scan will ever re-emit. Every other folder is enumerated whole and
-          // re-teaches its epoch, which is what makes its stale rows safely removable.
+          // A pending move out whose IMAP half may already have succeeded, its completion lost
+          // (this pass runs before changesSince, so no survivor row exists yet). Tombstoning
+          // would hide real server mail for ever, so defer instead, preserving the adoption
+          // evidence `primaryInstanceVanished` reads: if the move landed, the destination copy is
+          // adopted on ingest; if not, the row parks under the reconciler's bounded retry.
+          // Known-stale residue goes first: a dead-epoch instance row would keep the message out
+          // of every terminal check for ever. Except Sent: it is scanned by UID watermark, never
+          // enumerated whole, so after a UIDVALIDITY reset a stale Sent row is the last evidence
+          // its copy exists — deleting it would let the phantom reaper tombstone real mail.
           const staleRows = await this.db.select({
             id: messageInstances.id, folder: messageInstances.folder,
           }).from(messageInstances)
@@ -2816,27 +2346,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * ── THIS READS `message_instances`, AND THAT IS WHAT TERMINATES THE RE-FETCH LOOP ───────────
-   *
-   * The known-set is the adapter's answer to "which UIDs do I not need to fetch again". It used to
-   * be built from `messages.native_locator`, which names ONE locator per logical message — so
-   * every locator the pipeline declined to make primary was, cycle after cycle, an unknown UID:
-   * enumerated, its RFC822 source pulled, parsed, classified, declined, forgotten. For ever.
-   *
-   * `own_copy` was the only declined outcome before this change and it escaped by ACCIDENT: the
-   * Sent folder is read behind a UID watermark (`DEFAULT_SENT_HISTORY_MESSAGES`), so a Sent UID is
-   * behind the mark whether or not it produced a row. **INBOX has no watermark.** `external_copy`
-   * declines in INBOX, so without this change the second delivery of a forged message would have
-   * its body re-fetched on every single poll of that mailbox — turning a consent fix into an
-   * unbounded cost, which is the shape of bug that has taken production down before.
-   *
-   * The epoch is a COLUMN now instead of a parse of the ref's left half. Same value, but a
-   * `bigint` the database can index and compare, and no `"0"` sentinel for a ref nobody could
-   * parse — the migration wrote 0 for those, and `buildCursor` drops epoch-0 entries exactly as it
-   * did before.
-   *
-   * `messages.message_id_header` still comes from the message: it is a property of the logical
-   * message, and `correlateMoves` pairs on it.
+   * This reads `message_instances`, and that terminates the re-fetch loop. Built from
+   * `messages.native_locator` it named one locator per logical message, so every locator the
+   * pipeline declined to make primary was re-enumerated, re-fetched and re-classified every cycle
+   * for ever. `own_copy` escaped by accident behind the Sent UID watermark; INBOX has no
+   * watermark, and `external_copy` declines there — the second delivery of a forged message would
+   * have its body re-fetched on every poll. The epoch is a column now, an indexable `bigint`;
+   * `buildCursor` still drops epoch-0 entries. `messages.message_id_header` stays a property of
+   * the logical message — `correlateMoves` pairs on it.
    */
   async listKnownLocators(mailboxId: string): Promise<KnownLocator[]> {
     const rows = await this.db.select({
@@ -2931,17 +2448,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * Locate the message at `locator` inside THIS mailbox and adopt the server's `\Seen`.
-   *
-   * The lookup is on the jsonb locator rather than a UID column because there is no UID column
-   * — `messages.native_locator` is the only record of where a message physically sits, and
-   * `listKnownLocators` already reads it the same way. Flag changes only arrive on the
-   * CONDSTORE fast path, in `changedSince` batches, so this is a bounded per-cycle cost and not
-   * a hot query.
-   *
-   * The mailbox scoping is the account-isolation boundary: a locator is a `(folder, uid)` pair
-   * that repeats across every mailbox on the planet, so a lookup without `mailbox_id` would let
-   * one account's IMAP server dictate another account's read state.
+   * Locate the message at `locator` inside this mailbox and adopt the server's `\Seen`. The
+   * lookup is on the jsonb locator because there is no UID column — `messages.native_locator` is
+   * the only record of where a message sits, and `listKnownLocators` reads it the same way; flag
+   * changes arrive only on the CONDSTORE fast path, so this is a bounded per-cycle cost. The
+   * mailbox scoping is the account-isolation boundary: a `(folder, uid)` pair repeats across
+   * every mailbox on the planet, and without `mailbox_id` one account's IMAP server could dictate
+   * another account's read state.
    */
   async applyExternalFlag(
     mailboxId: string, locator: NativeLocator, seen: boolean,
@@ -2970,19 +2483,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     const changed = row.unread !== !seen;
     if (changed) {
       /**
-       * THE READ ORDER GETS THE OBSERVATION TIME, AND THAT IS THE HONEST ANSWER AVAILABLE.
-       *
-       * This branch adopts a `\Seen` the mail server reports — someone read the message in
-       * another client. The instant they read it is not on the wire: IMAP carries the flag, not
-       * when it was set. So what is stamped is when WE first saw it, which is the reconcile pass
-       * that noticed, and which can lag the real reading by up to a sync cycle.
-       *
-       * That is accepted rather than worked around, because the alternative is worse in the
-       * direction that matters. Leaving the column NULL would file mail read minutes ago in
-       * another client BELOW everything read here — under the rule that unstamped rows sort last
-       * — which is a bigger error than a stamp that is a few minutes late. Within one sync cycle
-       * the two orderings agree; across one, a message read elsewhere appears at the moment this
-       * client learned about it, which is also the moment it stopped being bold on screen.
+       * This branch adopts a `\Seen` the server reports — someone read the message in another
+       * client. IMAP carries the flag, not when it was set, so the stamp is when we first saw it,
+       * which can lag the real reading by a sync cycle. Accepted, because the alternative errs
+       * worse: leaving the column NULL files mail read minutes ago in another client below
+       * everything read here, under the rule that unstamped rows sort last. Within one sync cycle
+       * the two orderings agree.
        */
       await this.db.update(messages)
         .set({ unread: !seen, lastReadAt: seen ? new Date() : null, updatedAt: new Date() })
@@ -3000,21 +2506,13 @@ export function makeDrizzleRepo(db: Db): DrizzleRepo {
 }
 
 /**
- * The authserv-ids a MAILBOX's own provider signs `Authentication-Results` with, resolved from
- * the IMAP host on that mailbox's own credential row.
- *
- * This is the ONE sanctioned bridge from a mailbox id to `authserv-ids.ts#providerAuthservIds`
- * for every consumer that holds a database handle but not the live connection config — the
- * unsubscribe service and the three re-derivation passes (`rule-retro`, `ohbox-tidy`,
- * `sensitive-rescreen`). The seams that DO hold the config (the worker's attach, the sidecar,
- * the reconcile cron) call `providerAuthservIds(host)` directly on the same host string they
- * dial, so the two paths cannot disagree about which server serves the mailbox.
- *
- * `meta` is the credential row's NON-SECRET half (host/port/user/secure — see
- * `schema-mail.ts#mailboxCredentials`); `secret_enc` is not selected and never leaves the
- * database here. A mailbox with no `imap` credential row yet (awaiting credentials) or a meta
- * with no host resolves to the empty set: verdicts stay `"unavailable"` and nothing is demoted,
- * the same fail-open-for-demote-only answer an unknown provider gets.
+ * The authserv-ids a mailbox's own provider signs `Authentication-Results` with, resolved from
+ * the IMAP host on its credential row. The one sanctioned bridge from a mailbox id to
+ * `authserv-ids.ts#providerAuthservIds` for consumers holding a database handle but not the live
+ * config — the unsubscribe service and the three re-derivation passes; seams that hold the config
+ * call `providerAuthservIds(host)` on the host they dial, so the two paths cannot disagree.
+ * `meta` is the credential row's non-secret half; `secret_enc` is never selected. No `imap` row
+ * or no host resolves to the empty set: verdicts stay `"unavailable"` and nothing is demoted.
  */
 export async function mailboxProviderAuthservIds(
   db: Db, mailboxId: string,

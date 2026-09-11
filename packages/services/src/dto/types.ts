@@ -24,26 +24,14 @@ export interface Page<T> {
 }
 
 /**
- * Every state a `message_states` row can hold.
- *
- * `none` plus the four bottom piles, and then `resurfaced` — which is the odd one, in a way
- * worth stating: it is not a pile at all, it is a PIN AT THE TOP OF THE OHBOX
- * (`selectors.ts#ohboxView`), cleared back to `none` the moment the row is marked read
- * (`MessageService.markSeen`).
- *
- * It was on this wire before it was in this union — `bubbleUpPass` has written it since the
- * resurface pin first shipped, and
- * `materialize.ts` has cast the column to this type the whole time, so every resurfaced row the
- * API has ever served carried a `state` the type said was impossible. Naming it here is the
- * smaller half of that correction; the larger half is that a client may now ASK for it.
- *
- * ── WHY A CLIENT MAY SET IT DIRECTLY ──────────────────────────────────────────────────────
- *
- * "Resurface this now" has no honest spelling in `bubbled_up`. A past `bubbleUpAt` pins nothing
- * until a bubble-up pass runs; that pass is gated at 60s in the worker's cycle and a standalone
- * desktop install never runs it at all — so "now" would mean "in a minute, or never". The state
- * the schedule EXISTS TO REACH is reachable in one transaction, so that is what the client asks
- * for. `bubbleUpAt` is null on it in both directions: there is no schedule to spend.
+ * Every state a `message_states` row can hold. `none` plus the four bottom piles, then
+ * `resurfaced` — not a pile but a PIN at the top of the Ohbox (`selectors.ts#ohboxView`), cleared
+ * back to `none` when the row is marked read. It was on this wire before it was in this union —
+ * `bubbleUpPass` has written it since the pin shipped, so every resurfaced row the API ever
+ * served carried a `state` the type said was impossible. A client may set it directly: "resurface
+ * this now" has no honest spelling in `bubbled_up` — a past `bubbleUpAt` pins nothing until a
+ * pass runs, gated at 60s in the worker and never run on a standalone desktop. `bubbleUpAt` is
+ * null on it in both directions: there is no schedule to spend.
  */
 export type TriageState =
   | "none" | "reply_later" | "set_aside" | "bubbled_up" | "muted" | "resurfaced";
@@ -74,15 +62,12 @@ export interface ScreenerItem {
     // so widening it would have widened what "Apply all" may do in one step.
     decision: "yes" | "no" | "hold";
     /**
-     * WHICH PILE the model actually named — the answer `decision` collapses.
-     *
-     * Added because the collapse was lossy in a way the user could see: on a live account 63
-     * `ohmail/Receipts`, 43 `ohmail/Reads` and 5 `ohmail/Quarantine` answers all rendered as the
-     * single word "Screened out", so the Screener appeared never to suggest Receipts, never Reads
-     * and never spam. It suggested all three; `decision` had no room to say so.
-     *
-     * A surface shows this; nothing acts on it. `decision` remains the only field a control may
-     * consult, so a client that ignores this field behaves exactly as it did before.
+     * WHICH pile the model actually named — the answer `decision` collapses. The collapse was
+     * lossy in a way the user could see: on a live account 63 `ohmail/Receipts`, 43
+     * `ohmail/Reads` and 5 `ohmail/Quarantine` answers all rendered as the single word "Screened
+     * out", so the Screener appeared never to suggest Receipts, Reads or spam. A surface shows
+     * this; nothing acts on it. `decision` remains the only field a control may consult, so a
+     * client that ignores this field behaves exactly as before.
      */
     destination: Destination;
     /** The model's own hard "no". Separated from `ohmail/Screened` so junk can be named as junk. */
@@ -108,17 +93,14 @@ export interface MessageDTO {
   snippet: string;
   unread: boolean;
   /**
-   * WHEN THIS MESSAGE STOPPED BEING UNREAD, or `null` if that is not known.
-   *
-   * The order the client's "Earlier" group is sorted by — reading history, ordered by reading,
-   * rather than by the order the senders happened to send. `null` covers two rows that cannot be
-   * told apart and do not need to be: never read, and read before the field existed. Both sort
-   * below every stamped row.
-   *
-   * Projected on EVERY message the API emits — list, single, delta and snapshot alike — because
-   * there is one projection and the sort has to work on a mirror built from any of them. A client
-   * that predates the field ignores it; a client newer than the server reads `undefined` and
-   * treats it exactly like `null`, so neither side has to deploy first.
+   * When this message stopped being unread, or `null` if that is not known. The order the
+   * client's "Earlier" group is sorted by — reading history, ordered by reading, rather than by
+   * when senders happened to send. `null` covers two rows that cannot be told apart and do not
+   * need to be: never read, and read before the field existed; both sort below every stamped row.
+   * Projected on EVERY message the API emits — list, single, delta and snapshot — because there
+   * is one projection and the sort must work on a mirror built from any of them. A client newer
+   * than the server reads `undefined` and treats it like `null`, so neither side has to deploy
+   * first.
    */
   lastReadAt: ISODateTime | null;
   hasAttachments: boolean;
@@ -133,80 +115,38 @@ export interface MessageDTO {
   remoteContent: "blocked" | "loaded" | "none";
   updatedAt: ISODateTime;
   /**
-   * TRUE ⇒ THIS ROW IS A REPLY THE AWAY RESPONDER SENT, NOT ONE THE PERSON WROTE.
-   *
-   * Server-computed, because the client cannot compute it: raw `headers` cross the wire in
-   * NEITHER body mode (see `MessageBodyDTO` below), and the `away_replies` ledger is not mirrored
-   * at all. `packages/db/src/auto-reply-by-us.ts` is the one definition; the batch
-   * (`materialize.ts`) evaluates it once per page.
-   *
-   * ── WHAT IT IS FOR, AND WHAT IT IS NOT ────────────────────────────────────────────────────
-   *
-   * `ohboxView` unions the account's own sent mail into "Earlier", which is right for mail the
-   * person wrote and wrong for a reply a machine sent on their behalf: every automatic answer to
-   * a Reads or Receipts message became a row in the Ohbox wearing that message's subject as
-   * "Re: …". This field is how the client tells the two apart. The rows are not hidden — they
-   * remain in the Sent folder view, where sent mail lives.
-   *
-   * It is NOT "was this message automated". An inbound out-of-office from a stranger carries the
-   * same RFC 3834 marker and is `false` here, because the predicate asks whether WE sent it.
-   *
-   * OPTIONAL, and additive: `undefined` from a server older than this field means "not known",
-   * which every consumer must read as "treat it as the person's" — the behaviour before the
-   * field existed. That is why the client's test is `!== true` and never `=== false`.
+   * TRUE means this row is a reply the away responder sent, not one the person wrote.
+   * Server-computed: raw `headers` cross the wire in neither body mode, and the `away_replies`
+   * ledger is not mirrored; `packages/db/src/auto-reply-by-us.ts` is the one definition,
+   * evaluated once per page. `ohboxView` unions the account's own sent mail into "Earlier" —
+   * right for mail the person wrote, wrong for a machine's reply wearing "Re: …"; this field
+   * tells them apart. It is NOT "was this automated": an inbound out-of-office from a stranger is
+   * `false` — the predicate asks whether WE sent it. OPTIONAL, additive: `undefined` means "not
+   * known", read as the person's own — the client's test is `!== true`, never `=== false`.
    */
   autoReplyByUs?: boolean;
   /**
-   * WHEN THE AWAY RESPONDER ANSWERED **THIS** MESSAGE — an instant, or `null` if it never did.
-   *
-   * The mirror image of {@link autoReplyByUs}, and deliberately a DIFFERENT row: that flag marks
-   * the REPLY (the Sent copy the responder produced), this stamp marks the ORIGINAL the reply
-   * answers. A reader looking at the mail somebody sent them wants to know that a machine has
-   * already answered on their behalf, and when — the reply itself sits in Sent, where a reader
-   * has no reason to be looking.
-   *
-   * Server-computed for {@link autoReplyByUs}'s reason and then one more: the `away_replies`
-   * ledger is not mirrored at all, so no client can join to it. `materialize.ts` reads it once
-   * per PAGE, keyed on `(account_id, message_id)` — the ledger's own UNIQUE, so at most one row
-   * per message and no aggregation.
-   *
-   * ── WHICH LEDGER ROWS COUNT, AND WHY `sent_at` AND NOT `decided_at` ───────────────────────
-   *
-   * `outcome in ('sent', 'unverified')` AND a non-null `sent_at`. The outcome set is "the claim
-   * is kept and no second reply will ever be offered" — `sent` is an accepted delivery, and
-   * `unverified` is an SMTP throw the responder deliberately does NOT retry, so from the
-   * correspondent's side it may well have arrived. `throttled`, `suppressed` and `pending` are
-   * decisions NOT to answer (or not yet), and a mark for one of them would be a false statement
-   * on screen.
-   *
-   * `sent_at` is the only instant this may honestly print: `decided_at` is when the responder
-   * looked at the message, which for a backfilled candidate can be days before anything was
-   * sent. And `away-responder-pass.ts#finalize` writes `sent_at` ONLY on `sent`, in as many
-   * words — *"an `unverified` row has no send instant it can honestly claim"* — so today the two
-   * terms coincide on `sent` and an `unverified` row yields `null`, i.e. NO MARK. The
-   * `unverified` member is not decorative for that: it is what makes the field correct the day
-   * that finalizer learns to stamp an ambiguous send, and the truth table asserts it over such a
-   * row rather than leaving it a term nobody has watched matter.
-   *
-   * OPTIONAL and additive for {@link autoReplyByUs}'s reason: absent from a server older than
-   * the field, and every consumer must read absent exactly like `null` — no mark.
+   * When the away responder answered THIS message — an instant, or `null`. The mirror of {@link
+   * autoReplyByUs}, deliberately a different row: that flag marks the REPLY, this stamp marks the
+   * ORIGINAL — a reader wants to know a machine already answered, and the reply sits in Sent
+   * where they are not looking. Which rows count: `outcome in ('sent','unverified')` AND non-null
+   * `sent_at` — that set means "the claim is kept, no second reply will be offered". `sent_at`,
+   * never `decided_at`: the finalizer writes `sent_at` only on `sent`, so an `unverified` row
+   * yields no mark today — the member keeps the field correct the day an ambiguous send learns a
+   * stamp. Absent reads like `null`.
    */
   awayRepliedAt?: ISODateTime | null;
 }
 
 /**
- * ONE ROW OF THE TRASH LIST — a message plus the two things only Trash needs to say about it.
- *
- * `MessageDTO` unchanged, with two additions rather than a second projection: the list renders
- * the same row component every folder view renders, and a separate shape would fork the
- * projection every other surface shares (the reading pane opens these rows through the ordinary
+ * One row of the Trash list — a message plus the two things only Trash needs to say. `MessageDTO`
+ * unchanged, with two additions rather than a second projection: the list renders the same row
+ * component every folder view renders, and the reading pane opens these rows through the ordinary
  * body route, so a row that was not a `MessageDTO` would need a conversion at the one seam where
- * a conversion is a bug).
- *
- * NOTE WHAT `folder` STILL SAYS on these rows: the mailbox's Trash path, because that is where
- * the message is. It is deliberately not rewritten to the origin — the mirror's rule is that
- * `folder` is where the server has the message, and a row that lied about it would move wrongly
- * if anything ever filed it.
+ * a conversion is a bug. Note what `folder` still says on these rows: the mailbox's Trash path,
+ * because that is where the message is — deliberately not rewritten to the origin: the mirror's
+ * rule is that `folder` is where the server has the message, and a row that lied about it would
+ * move wrongly if anything ever filed it.
  */
 export interface TrashRowDTO extends MessageDTO {
   /**
@@ -250,17 +190,14 @@ export interface TagDTO {
 }
 
 /**
- * ONE OF THE MAILBOX'S OWN FOLDERS — the `folder` entity `/sync` reserves and the folders
+ * One of the mailbox's own folders — the `folder` entity `/sync` reserves and the folders
  * foundation fills (FOLDERS-SPEC.md §4). Materialized from the worker's `mailbox_folders`
- * inventory (post-exclusion: never the organized six, the Sent folder or the `ohmail`
- * namespace), and emitted ONLY while the account's "Use folders" flag is on — a flag-off
- * account's wire is byte-identical to the pre-feature wire.
- *
- * `name` is the CANONICAL `/`-joined path, exactly the spelling `MessageDTO.folder` carries for
- * mail living there — the natural key, and the join the client renders with. `mailboxId` and
- * `mailbox` (the address) extend the spec's minimal `{ id, name }` deliberately: the rail
- * sections folders by mailbox when an account has more than one (spec §14), and a live client
- * has no other mirror source for the owning address.
+ * inventory (post-exclusion: never the organized six, the Sent folder or the `ohmail` namespace),
+ * and emitted ONLY while "Use folders" is on — a flag-off account's wire is byte-identical to the
+ * pre-feature wire. `name` is the CANONICAL `/`-joined path, the spelling `MessageDTO.folder`
+ * carries for mail living there — the natural key. `mailboxId` and `mailbox` extend the spec's
+ * minimal shape: the rail sections folders by mailbox, and a live client has no other mirror
+ * source for the owning address.
  */
 export interface FolderDTO {
   id: string;
@@ -279,16 +216,14 @@ export interface FolderDTO {
 }
 
 /**
- * THE ACCOUNT'S SETTINGS ROW ON THE DELTA FEED — the `"settings"` entity (`change-log.ts`).
- *
- * One row per account (`entity_id` = the account id, op always `"update"`). It exists so a
- * settings write travels the sync channel and rings the wake like any other change; the AUTHORITY
- * for what a surface renders stays `GET /consent` — a client reads this as "the settings moved,
- * re-ask", never as a second consent read, so the wire here carries only the row's own scalars:
- * the flags surfaces gate chrome on, and the stamp that says they moved. Deliberately absent:
- * the consent read's counts (they change with every drain and are not settings), and anything
- * that authorises spending on its own — `autoSuggestAt` is here as a FACT about the row, and the
- * spend gate still reads its own answer through `GET /consent`'s echo discipline.
+ * The account's settings row on the delta feed — the `"settings"` entity. One row per account
+ * (`entity_id` = the account id, op always `"update"`). It exists so a settings write travels the
+ * sync channel and rings the wake like any other change; the AUTHORITY for what a surface renders
+ * stays `GET /consent` — a client reads this as "the settings moved, re-ask", never as a second
+ * consent read. The wire carries only the row's own scalars: the flags surfaces gate chrome on,
+ * and the stamp that says they moved. Deliberately absent: the consent read's counts (they change
+ * with every drain and are not settings), and anything that authorises spending on its own —
+ * `autoSuggestAt` is here as a FACT; the spend gate still reads `GET /consent`.
  */
 export interface SettingsDTO {
   /** The account id — the entity's own id on the wire, one row per account. */
@@ -308,18 +243,14 @@ export interface SettingsDTO {
 }
 
 /**
- * WHY a stored body holds no content, when that is POLICY rather than an empty message — the
- * client-facing projection of `message_bodies.withheld_reason`, verbatim, closed set:
- *
- *  · `"storage_cap"` — the account's managed storage cap (mail 0062): declined at ingest or
- *    evicted by the rolling window. The mail is untouched on the user's own server.
- *  · `"junk_filed"` — the spam verdict filed this message to the provider's native \Junk
- *    (mail 0065): the durable artifact of the verdict is the sender rule, and the bytes live
- *    on in the Junk folder, which is the master.
- *  · `"expunged"` — every watched copy of this message is gone from the server (mail 0065):
- *    the row is tombstoned and the husk exists so the account stops paying for its bytes.
- *
- * Absent for every ordinarily stored body, including a genuinely empty one.
+ * Why a stored body holds no content, when that is POLICY rather than an empty message — the
+ * projection of `message_bodies.withheld_reason`, verbatim, closed set. `"storage_cap"` — the
+ * account's managed storage cap (mail 0062): declined at ingest or evicted by the rolling window;
+ * the mail is untouched on the user's own server. `"junk_filed"` — the spam verdict filed this
+ * message to the provider's native \Junk (mail 0065): the durable artifact is the sender rule,
+ * and the bytes live on in the Junk folder, the master. `"expunged"` — every watched copy is gone
+ * from the server (mail 0065): the row is tombstoned and the husk exists so the account stops
+ * paying for its bytes. Absent for every ordinarily stored body, including a genuinely empty one.
  */
 export type WithheldMarker = "storage_cap" | "junk_filed" | "expunged";
 
@@ -348,16 +279,13 @@ export interface MessageBodyDTO {
    */
   unsubscribeUrl: string | null;
   /**
-   * WHY `text` is empty, when it is empty by POLICY: `"storage_cap"` means ingest declined to
-   * store this body because the account was at its managed storage cap — the mail itself is
-   * untouched in the mailbox on the user's own server. Absent for every ordinarily stored body,
-   * including a genuinely empty one, so the client can finally tell "this message says nothing"
-   * from "we are not holding what it says" — the two used to collapse into one blank pane
-   * claiming to be complete. Served AS STORED, on the same no-rehydrate contract as everything
-   * else here: nothing on this surface re-fetches a body on demand.
-   *
-   * Mail 0065 widens the closed set — see {@link WithheldMarker} for the two new members and
-   * the sentence each one owes the reader.
+   * Why `text` is empty, when it is empty by POLICY: `"storage_cap"` means ingest declined to
+   * store this body because the account was at its cap — the mail itself is untouched on the
+   * user's own server. Absent for every ordinarily stored body, including a genuinely empty one,
+   * so the client can tell "this message says nothing" from "we are not holding what it says" —
+   * the two used to collapse into one blank pane claiming to be complete. Served AS STORED, on
+   * the same no-rehydrate contract as everything else here. Mail 0065 widens the closed set — see
+   * {@link WithheldMarker} for the two new members.
    */
   withheld?: WithheldMarker;
 }
@@ -378,19 +306,13 @@ export interface MessageBodyBatchItem {
   html: string | null;
   loadedRemoteContent: boolean;
   /**
-   * The sender's unsubscribe posture — `?ids=` MODE ONLY, and absent in the keyset mode.
-   *
-   * The two modes of `GET /messages/bodies` serve two different consumers and the difference is
-   * the point. The keyset page feeds the macOS local text mirror and joins the body row and
-   * NOTHING else; that absence is its no-rehydrate guarantee, and it is pinned structurally by a
-   * test that asserts the item's exact key set. The `?ids=` page feeds a READER opening a thread
-   * — the same surface {@link MessageBodyDTO} feeds — so its rows carry the same derived posture
-   * the single-message route carries, or a conversation's siblings would silently offer no way
-   * out where the message above them does.
-   *
-   * Optional rather than a second interface because it is one row shape with one field the
-   * mirror mode does not populate; two types would mean two places for the redaction contract
-   * above to be restated. Raw headers cross the wire in NEITHER mode.
+   * The sender's unsubscribe posture — `?ids=` MODE ONLY, absent in the keyset mode. The two
+   * modes serve two consumers: the keyset page feeds the macOS local text mirror and joins the
+   * body row and NOTHING else — that absence is its no-rehydrate guarantee, pinned by a test
+   * asserting the item's exact key set. The `?ids=` page feeds a READER opening a thread, so its
+   * rows carry the same derived posture the single-message route carries, or a conversation's
+   * siblings would offer no way out. Optional rather than a second interface: one row shape, one
+   * field the mirror mode does not populate. Raw headers cross the wire in NEITHER mode.
    */
   unsubscribe?: UnsubscribeHeaderState;
   /** The sender's own https unsubscribe page, `?ids=` mode and `not_one_click` only; else null. */
@@ -478,30 +400,25 @@ export type { MailboxDisabledReason, MailboxErrorCode, MailboxSyncBlockReason, O
 
 export interface MailboxDTO {
   /**
-   * ORGANIZER OR READER — what THIS install is to this mailbox (mail 0083).
-   *
-   * `'reader'` means another install organizes it, or nobody has asked this one to. Either way
-   * the mailbox is CONNECTED and its mirror is growing; what a reader does not do is move, file
-   * or delete mail. It is the field every client's banner and the "Organize here instead" button
-   * read, and it rides the POLLED `GET /mailboxes` row rather than a live IMAP dial — so it is at
-   * most one worker pass behind, which the copy states ("on its next pass") rather than hides.
-   *
-   * The three organizer fields are UNCONDITIONAL, on `syncBlockedReason`'s rule: every state they
-   * describe happens while `status` IS `connected`, and gating them on a status would reproduce
-   * the invisibility they exist to end.
+   * Organizer or reader — what THIS install is to this mailbox (mail 0083). `'reader'` means
+   * another install organizes it, or nobody has asked this one to: the mailbox is CONNECTED and
+   * its mirror is growing; what a reader does not do is move, file or delete mail. It is the
+   * field every client's banner and the "Organize here instead" button read, and it rides the
+   * POLLED `GET /mailboxes` row rather than a live IMAP dial — at most one worker pass behind,
+   * which the copy states rather than hides. The three organizer fields are UNCONDITIONAL, on
+   * `syncBlockedReason`'s rule: every state they describe happens while `status` IS `connected`,
+   * and gating them on a status would reproduce the invisibility they exist to end.
    */
   organizerRole: "organizer" | "reader";
   /**
-   * WHO ORGANIZES IT, when this install does not — `null` when this install does, or when nobody
-   * has ever claimed it (a mailbox connected and not yet consented to).
-   *
-   * `kind` is `ORGANIZER_KINDS` ITSELF rather than a second spelling of it, with a CHECK behind the
-   * column — the three literals written here instead went a whole release without `mobile`, so a
-   * phone's claim reached this field as a value the wire could not name. `name` is the holder's own machine name, which
-   * is why it is on the ADMIN DTO's deny-list: an account's own user may see what named their
-   * laptop, staff may not. `since` is when that install BECAME the organizer, not when it was
-   * last seen — a banner says "since Tuesday", never "last seen 40 seconds ago", because a
-   * heartbeat on a screen invites a person to watch it.
+   * Who organizes it, when this install does not — `null` when this install does, or when nobody
+   * has ever claimed it. `kind` is `ORGANIZER_KINDS` ITSELF rather than a second spelling, with a
+   * CHECK behind the column — three literals written here instead went a whole release without
+   * `mobile`, so a phone's claim reached this field as a value the wire could not name. `name` is
+   * the holder's own machine name, which is why it is on the ADMIN DTO's deny-list: the account's
+   * own user may see what named their laptop, staff may not. `since` is when that install BECAME
+   * the organizer, not when it was last seen — a banner says "since Tuesday", never "last seen 40
+   * seconds ago", because a heartbeat on a screen invites a person to watch it.
    */
   organizedBy: { kind: OrganizerKind | null; name: string | null; since: string | null } | null;
   /**
@@ -515,117 +432,68 @@ export interface MailboxDTO {
    */
   organizerState: "held" | "stopped" | null;
   /**
-   * IS THE CLAIM ON THIS MAILBOX THIS INSTALL'S OWN — answered by the server, not inferred here.
-   *
-   * A client asking it from `organizedBy.kind` gets `cloud`, which is what a SECOND Cloud
+   * Is the claim on this mailbox this install's OWN — answered by the server, not inferred. A
+   * client asking it from `organizedBy.kind` gets `cloud`, which is what a SECOND Cloud
    * deployment is too; their ids differ by design, so the category cannot answer an identity
-   * question. The id itself is deliberately NOT on the wire — it is an internal deployment name
-   * that every viewer would receive for no purpose — so the server compares and sends the answer.
-   *
-   * `false` where nobody holds the mailbox, where another install does, and where this deployment
-   * cannot say. Every one of those means "do not offer to give up this claim".
+   * question. The id itself is deliberately NOT on the wire — an internal deployment name every
+   * viewer would receive for no purpose — so the server compares and sends the answer. `false`
+   * where nobody holds the mailbox, where another install does, and where this deployment cannot
+   * say: every one of those means "do not offer to give up this claim".
    */
   organizedByThisInstall: boolean;
   /**
-   * WHEN somebody agreed to let ohmail organize THIS mailbox, or `null` for "nobody has".
-   *
-   * ── WHY IT IS ON THE WIRE AT ALL, given `organizerRole` is right above it ─────────────────
-   *
-   * Because they answer different questions and the pair is not derivable from either half.
-   * `organizerRole` says who is organizing it NOW; this says whether the permission to organize
-   * it has ever been given. A mailbox freshly connected on the web is `reader` with a null here
-   * ("connected, nothing has moved"); a mailbox whose organizer was displaced by another install
-   * is `reader` with a stamp ("consented, someone else holds it"). The first needs the consent
-   * screen, the second must NEVER be shown it again — re-asking for a permission already granted
-   * is how a flow teaches people to click through consent.
-   *
-   * That distinction is the whole of the onboarding derivation's consent step (`onboarding.ts`,
-   * `first unmet condition`), and `organizeHere` already treats the two as independent — its
-   * precondition is `role = 'reader' OR consent IS NULL`, which cannot be written with one field.
-   *
-   * UNCONDITIONAL, on the three fields above it: a mailbox awaiting consent is `connected`, so a
-   * status gate would blank the field on exactly the rows it describes.
+   * When somebody agreed to let ohmail organize THIS mailbox, or `null`. A different question
+   * from `organizerRole`, and the pair is not derivable from either half: the role says who
+   * organizes it NOW; this says whether permission was ever given. Freshly connected is `reader`
+   * with a null; an organizer displaced by another install is `reader` with a stamp. The first
+   * needs the consent screen; the second must NEVER be shown it again — re-asking for a granted
+   * permission teaches people to click through consent. `organizeHere`'s precondition is `role =
+   * 'reader' OR consent IS NULL`, unwritable with one field. UNCONDITIONAL: a mailbox awaiting
+   * consent is `connected`.
    */
   organizeConsentedAt: ISODateTime | null;
   /**
-   * WHEN THE ORGANIZING SITUATION LAST CHANGED, AND WHEN THE PERSON LAST ACKNOWLEDGED IT (0.14.1).
-   *
-   * The notice a client shows is derived — `organizerEventAt > organizerEventSeenAt`, with a null
-   * `seenAt` meaning "never acknowledged" — rather than sent as a flag. Two instants rather than a
-   * boolean is what makes three properties hold at once, and none of them would hold otherwise:
-   *
-   *  · ONCE PER EVENT, ON EVERY DOOR. A phone, a browser and a desktop reading one row agree about
-   *    whether this has been seen. A per-client flag shows the same sentence once per client.
-   *  · TWO CHANGES BETWEEN TWO READS COLLAPSE TO THE LATER ONE. A mailbox that changed hands twice
-   *    while nobody looked produces one notice describing where it ended up — the only statement
-   *    still true — because there is no queue to drain.
-   *  · A DISMISSAL CANNOT SUPPRESS A LATER CHANGE. Stamping `seenAt` answers the event that stood
-   *    when the press happened and nothing after it.
-   *
-   * THE SENTENCE IS NOT ON THE WIRE, deliberately: it is derived at read time from
-   * {@link organizerRole}, {@link organizerState} and {@link organizedBy}, which are the same
-   * facts a stored sentence would copy. A copy is a thing that drifts the first time one writer
-   * updates one and not the other, and it would also be a server-rendered string a client cannot
-   * translate.
-   *
-   * UNCONDITIONAL, on the four organizer fields above them: every state they describe happens
-   * while `status` IS `connected`, so a status gate would blank them on exactly the rows they are
-   * about.
+   * When the organizing situation last changed, and when the person last acknowledged it
+   * (0.14.1). The notice is DERIVED — `organizerEventAt > organizerEventSeenAt`, null `seenAt` =
+   * never — not sent as a flag. Two instants make three properties hold: once per event on EVERY
+   * door (a per-client flag shows the sentence once per client); two changes between two reads
+   * COLLAPSE to the later one — the only statement still true; a dismissal cannot suppress a
+   * LATER change. The sentence is NOT on the wire: derived at read time from the same facts a
+   * stored sentence would copy — a copy drifts, and a server-rendered string cannot be
+   * translated. UNCONDITIONAL, on the organizer fields' rule.
    */
   organizerEventAt: ISODateTime | null;
   organizerEventSeenAt: ISODateTime | null;
   /**
-   * CAN THE HOLDER OF THIS MAILBOX ACCEPT A DECISION FROM A READER? (0.14.1)
-   *
-   * `true` only where a reader's press has somewhere to go: the holder is still renewing its
-   * claim AND that claim advertises the request capability. `false` everywhere else, including
-   * on a mailbox this install organizes — an organizer needs no request, so the honest answer to
-   * "would a request be accepted here" is that the question does not arise.
-   *
-   * ── WHY THIS IS ON THE WIRE AT ALL ────────────────────────────────────────────────────────
-   *
-   * Because the client has to withhold a control BEFORE the press, not explain a refusal after
-   * it. A reader whose holder is an older build has no path for a decision, and a decision bar
-   * wired to a refusal is worse than an absent one: it is the shape that let a released build
-   * say "filed" and take it back forty-five seconds later. The two reader states want opposite
-   * screens — one says presses work with a delay, the other says presses do nothing here — and
-   * nothing else on this DTO can tell them apart.
-   *
-   * ── AND WHY IT IS A DERIVED BOOLEAN AND NOT THE CAPABILITY SET ────────────────────────────
-   *
-   * The set is a holder's self-description, written from a header another install produced. It is
-   * bounded and validated, but it is still somebody else's vocabulary, and putting it on a
-   * customer-facing DTO would invite a client to branch on tokens this build has never heard of.
-   * One question is asked here and one answer is given, computed by the same rule the door itself
-   * applies, so a client cannot arrive at a different verdict than the request door would.
+   * Can the holder of this mailbox accept a decision from a reader? (0.14.1) `true` only where a
+   * reader's press has somewhere to go: the holder is still renewing AND its claim advertises the
+   * request capability; `false` everywhere else. On the wire because the client must withhold a
+   * control BEFORE the press: a decision bar wired to a refusal is the shape that let a released
+   * build say "filed" and take it back forty-five seconds later. A derived boolean, not the
+   * capability set: the set is a holder's self-description in somebody else's vocabulary, and a
+   * customer DTO must not invite branching on unknown tokens. One question, one answer, computed
+   * by the door's own rule.
    */
   organizerAcceptsRequests: boolean;
   /**
-   * WHEN THIS INSTALL LAST GAVE THIS MAILBOX UP DELIBERATELY, or `null`.
-   *
-   * Written by the release path and cleared by the next claim, so it is a statement about the
-   * CURRENT tenure rather than a history: a mailbox that was released and then taken back reports
-   * null again, because "released" is no longer what it is.
-   *
-   * It exists on the wire so the mailbox pane can date its own permanent line. The three reader
-   * shapes are otherwise indistinguishable from the outside — a mailbox nobody has ever organized,
-   * one whose holder vanished, and one this install let go on purpose all read as a reader with no
-   * holder — and only the third is something the person here did.
+   * When this install last gave this mailbox up DELIBERATELY, or `null`. Written by the release
+   * path and cleared by the next claim, so it is a statement about the CURRENT tenure rather than
+   * a history: a mailbox released and then taken back reports null again, because "released" is
+   * no longer what it is. On the wire so the mailbox pane can date its own permanent line: the
+   * three reader shapes are otherwise indistinguishable from the outside — never organized,
+   * holder vanished, and let go on purpose all read as a reader with no holder — and only the
+   * third is something the person here did.
    */
   organizerReleasedAt: ISODateTime | null;
   /**
-   * THE STANDING ASK TO STOP ORGANIZING THIS MAILBOX HERE, or `null`.
-   *
-   * Written by the release route the instant the person presses "Stop organizing here, keep the
-   * mail", and honoured by the organizer's own next pass — so there is always a window, and on a
-   * server that will not confirm the removal there can be many passes, in which the ask is real
-   * and nothing else on this row says so. A pane reading only the role rendered an ordinary
-   * organized mailbox for that whole window: the person pressed a button and the screen showed
-   * no trace of it, which on a slow server reads as the button not working.
-   *
-   * Cleared by the pass that completes the release (confirmed, or ended by the lapse) and by the
-   * countermanding "Organize here" press. Projected raw: PENDING is the row's own state, not a
-   * rendering decision.
+   * The standing ask to stop organizing this mailbox here, or `null`. Written the instant the
+   * person presses "Stop organizing here, keep the mail", honoured by the organizer's own next
+   * pass — so there is always a window, and on a server that will not confirm the removal there
+   * can be many passes, in which the ask is real and nothing else on this row says so. A pane
+   * reading only the role rendered an ordinary organized mailbox for that whole window: the
+   * person pressed a button and the screen showed no trace, which on a slow server reads as the
+   * button not working. Cleared by the pass that completes the release and by the countermanding
+   * "Organize here" press. Projected raw: PENDING is the row's own state.
    */
   releaseRequestedAt: ISODateTime | null;
   /**
@@ -657,34 +525,15 @@ export interface MailboxDTO {
   failedAt: ISODateTime | null;
   /** Attempts within the CURRENT outage. Not the worker's backoff counter — see the column. */
   retryCount: number;
-  // ── WHY A `connected` MAILBOX IS NOT BEING SYNCED (mail 0029) ──
-  //
-  //    PROJECTED UNCONDITIONALLY, and the asymmetry with the four fields above IS THE POINT.
-  //    Do not "fix" it into consistency: gating these on `status === 'error'` would restore the
-  //    exact invisibility these fields exist to end, because in every scenario they describe the
-  //    status is `connected`. That is not an oversight of the worker's — it is the design. An
-  //    infrastructure fault (an unreadable organizer lease, credentials not yet provisioned, this
-  //    deployment's mailbox cap) must never be rendered as "your mailbox is broken", must never
-  //    earn a retry backoff, and must never quarantine anything. So the row keeps saying
-  //    `connected` and says WHY IT IS NOT SYNCING in these two fields instead.
-  //
-  //    `syncBlockedReason` is a closed set of three (`MAILBOX_SYNC_BLOCK_REASONS`,
-  //    `@trafficflow/db`) with a CHECK constraint behind it, so — unlike `errorCode` — no value a
-  //    mail server chose can ever reach it. A stable key, not a sentence: the client owns the
-  //    wording.
-  //
-  //    NULL/NULL is the normal case and means "nothing is blocking this mailbox". They are cleared
-  //    in the same statement by every writer that makes that true.
-  //
-  //    ── AND `null` HERE DOES NOT MEAN "NOT BLOCKED" ──
-  //    `mailbox-service.ts:526` narrows this field to the closed set on read and forwards
-  //    `syncBlockedSince` on the next line UNCONDITIONALLY. A server that grows a fourth member
-  //    therefore emits `{syncBlockedReason: null, syncBlockedSince: <ts>}` to a client whose build
-  //    predates the widening — "blocked, reason unrecognised", which is a state the client must
-  //    render, not a healthy mailbox. **This field is COPY; `syncBlockedSince` is the predicate,**
-  //    and `apps/webapp/app/shell/mail-state.ts` gates on it. Widening this type to `string` to
-  //    forward the raw token was considered and REJECTED: it destroys the only type-level statement
-  //    this wire makes, and a timestamp cannot carry a server-chosen value at all.
+  // Why a `connected` mailbox is not being synced (mail 0029). PROJECTED UNCONDITIONALLY, and the
+  // asymmetry with the four fields above IS the point: in every scenario these describe, the
+  // status is `connected`. An infrastructure fault must never render as "your mailbox is broken",
+  // earn a backoff, or quarantine anything — the row keeps saying `connected` and says WHY here.
+  // `syncBlockedReason` is a closed set of three with a CHECK; a stable key, not a sentence.
+  // NULL/NULL is the normal case. And `null` here does NOT mean "not blocked": the service
+  // narrows an unrecognised member to `null` and forwards `syncBlockedSince` unconditionally —
+  // "blocked, reason unrecognised" is a state the client must render. This field is COPY;
+  // `syncBlockedSince` is the predicate. Widening to `string` was rejected.
   syncBlockedReason: MailboxSyncBlockReason | null;
   /**
    * When the CURRENT block began — `coalesce`d on write, so it does not restart every pass — **and
@@ -696,169 +545,59 @@ export interface MailboxDTO {
    */
   syncBlockedSince: ISODateTime | null;
   /**
-   * WHY a `disabled` mailbox is disabled, when the reason is the organizer lease and not a
-   * person (mail 0027) — **and for a time it was the one column on this row that no client could
-   * ever see.**
-   *
-   * ── THE FAILURE THAT PUT IT ON THE WIRE ─────────────────────────────────────────────────
-   *
-   * The failure this closes: a connect is accepted end to end, then loses the organizer claim to
-   * a LOCAL install whose heartbeat is hours stale (`decideLease` arm 8 — a stale foreign claim
-   * is `available`, never `organize`, without an authorized takeover). `markMailboxStoodDown`
-   * wrote `status='disabled'` +
-   * `disabled_reason='organized_elsewhere:local'` and cleared the four `error*` columns AND the
-   * two `sync_blocked_*` columns in the same statement, because **a stand-down is neither a
-   * failure nor an infrastructure block**. Both of those are correct. The consequence was not:
-   * with `errorCode` null, `syncBlockedSince` null and this column absent from the DTO, the
-   * client had NO field that carried the fact. It rendered "disconnected" beside "No mail yet —
-   * added 3 minutes ago", under a strip that said "No mailbox connected, so nothing can arrive".
-   *
-   * ── GATED ON `status === 'disabled'`, WHICH IS THE OPPOSITE OF THE TWO FIELDS ABOVE ────
-   *
-   * And the asymmetry is not an inconsistency — it is the SAME rule pointing the other way.
-   * mail 0029's fields must be ungated because every state they describe happens while `status`
-   * IS `connected`; a gate would make them permanently NULL, which is the invisibility the
-   * migration exists to end. This column is the inverse: `markMailboxStoodDown` writes it in the
-   * same statement as `status='disabled'` and it is meaningful under no other status.
-   *
-   * Ungated projection was drafted first and is WRONG, for a reason worth recording.
-   * `MailboxService.update` deliberately does not clear the column on a re-enable —
-   * `clearOrganizerStandDown` in the worker owns that clear and performs it
-   * only once the gate has actually WON the mailbox back. So an ungated projection would ship
-   * `{status: 'connected', disabledReason: 'organized_elsewhere:local'}` for the whole re-enable
-   * window: a mailbox telling its owner it is connected AND that somebody else holds it. That is
-   * a NEW instance of the exact contradiction this field was added to remove.
-   *
-   * ── AND `null` HERE MEANS "NOT STOOD DOWN", SO A NON-NULL COLUMN MAY NEVER BECOME ONE ──
-   *
-   * The same invariant, transposed. `syncBlockedReason` can afford to narrow an unrecognised member to `null`
-   * because `syncBlockedSince` carries the predicate beside it. This field has no such partner:
-   * `status` is the predicate, and under `disabled` a `null` reason is the ORDINARY DISCONNECT —
-   * a real, common and completely different state. So a server that grows a fourth member must
-   * not narrow it to `null` on the way out, or a newer worker's stand-down reads on an older API
-   * as "the user disconnected this", which is the original defect wearing a different hat. The
-   * closed set ships its own catch-all for exactly this, and `toDTO` uses it.
-   *
-   * A CLOSED set (`MAILBOX_DISABLED_REASONS`, `@trafficflow/db`) with a CHECK
-   * constraint behind it, so — like `syncBlockedReason` and unlike `errorDetail` — no value a
-   * mail server chose can reach it. A stable key, never a sentence: the client owns the wording.
+   * Why a `disabled` mailbox is disabled, when the reason is the organizer lease and not a person
+   * (mail 0027). A connect succeeded, then lost the claim to a LOCAL install with a stale
+   * heartbeat; the stand-down cleared the error and block columns, and with nothing carrying the
+   * fact the client rendered "disconnected". GATED on `status === 'disabled'` — the same rule as
+   * the ungated pair, pointing the other way: meaningful under no other status, and ungated it
+   * would ship `{connected, organized_elsewhere}` for the whole re-enable window. `null` here
+   * means "not stood down": under `disabled` a null reason is the ORDINARY DISCONNECT, so an
+   * unrecognised member must NOT narrow to `null` — the closed set ships its own catch-all.
    */
   disabledReason: MailboxDisabledReason | null;
   /**
-   * WHEN this mailbox's FIRST import actually finished (mail 0038) — stamped by the worker the
-   * first time a cycle completes with no backlog remaining, and NULL until then.
-   *
-   * It is here because it is the one honest end-of-import signal, and `lastSyncAt` is not: that
-   * column is shared across every mailbox a cycle served and lands after the FIRST cycle whether
-   * or not a backlog remains, so a mailbox thirty seconds into a long import already carries one.
-   * This column is per-mailbox and late — `apps/webapp/app/shell/mail-state.ts` reads it as a
-   * FLOOR (`null ⇒ still importing`) so a partial mailbox cannot present itself as complete just
-   * because a client's own mirror has stopped growing. Projected UNCONDITIONALLY: unlike the
-   * `error*` fields it is meaningful in every lifecycle state, and gating it would hide exactly
-   * the partial-import case it exists to disclose.
+   * When this mailbox's FIRST import actually finished (mail 0038) — stamped by the worker the
+   * first time a cycle completes with no backlog remaining, NULL until then. The one honest
+   * end-of-import signal: `lastSyncAt` is shared across every mailbox a cycle served and lands
+   * after the FIRST cycle whether or not a backlog remains, so a mailbox thirty seconds into a
+   * long import already carries one. Per-mailbox and late — `mail-state.ts` reads it as a FLOOR
+   * (`null` = still importing), so a partial mailbox cannot present as complete just because a
+   * client's mirror stopped growing. Projected UNCONDITIONALLY: meaningful in every lifecycle
+   * state, and gating it would hide exactly the partial-import case it discloses.
    */
   initialImportCompletedAt: ISODateTime | null;
   /**
-   * THE FORWARDING-DETECTION NOTICE's evidence pair (mail 0078) — a quiet, dismissible fact
-   * about a HEALTHY mailbox, born from a real incident: a provider-level forward (no "keep a
-   * copy") diverted every inbound mail before IMAP storage while the mailbox synced perfectly,
-   * and nothing anywhere said so.
-   *
-   * `inboundQuietSince` non-null means the worker's inbound-quiet pass
-   * (`apps/worker/src/inbound-quiet.ts`, the predicate's single owner) recognised a quiet
-   * episode: a connected, healthily-syncing, fully-imported mailbox whose genuine inbound
-   * (From ≠ its own address) has been zero for the pass's generous window while evidence says
-   * mail should be arriving. The value is the newest genuine inbound date the mailbox holds
-   * (its creation when it never held one) — "almost nothing since {this}" is the client's
-   * sentence. NULL is no episode, which is every healthy mailbox.
-   *
-   * `inboundQuietDismissedAt` is the user's per-mailbox dismissal
-   * (`POST /mailboxes/:id/inbound-quiet/dismiss`). THE CLIENT owns the comparison: show the
-   * notice iff `since` is set, the mailbox's health claims hold on screen (`connected`, no
-   * `syncBlockedSince`, a `lastSyncAt`), and `dismissedAt` is null or predates `since`. That
-   * inequality is the renotify discipline: an undisturbed episode never re-shows (sameness
-   * holds), and a NEW episode's `since` — newer inbound, which only exists because mail flowed
-   * after the dismissal — re-shows (a state change).
-   *
-   * PROJECTED UNCONDITIONALLY, the sync-block pair's rule: every state this pair describes
-   * happens while `status` IS `connected`, so a status gate would make it permanently NULL on
-   * the wire — the exact invisibility the incident was. A client older than these fields reads
-   * `undefined`, renders nothing, and loses only the notice.
+   * The forwarding-detection notice's evidence pair (mail 0078) — a quiet, dismissible fact about
+   * a HEALTHY mailbox: a provider-level forward once diverted every inbound mail before IMAP
+   * storage while the mailbox synced perfectly. `inboundQuietSince` non-null means the worker's
+   * inbound-quiet pass recognised an episode — a connected, fully-imported mailbox whose genuine
+   * inbound has been zero for the pass's window; the value is the newest genuine inbound date.
+   * `inboundQuietDismissedAt` is the dismissal; the CLIENT owns the comparison: show iff `since`
+   * is set, the health claims hold, and `dismissedAt` predates `since`. PROJECTED
+   * UNCONDITIONALLY: every state here happens while `status` IS `connected`.
    */
   inboundQuietSince: ISODateTime | null;
   inboundQuietDismissedAt: ISODateTime | null;
   /**
-   * HOW MANY OF OUR OWN FILINGS THIS MAILBOX HAS NOT YET APPLIED.
-   *
-   * ── THE SILENCE THIS ENDS ────────────────────────────────────────────────────────────
-   *
-   * Invariant #3: the serverless API never opens IMAP. A Screener decision, a bulk apply, a
-   * move — every one of them writes `folder_state` and returns, and the WORKER performs the
-   * actual IMAP move on its next cycle. That is correct and it is what keeps a request path
-   * from holding a mail connection. What the wire never carried is the consequence: between
-   * the press and the worker's cycle the user's mail has been filed in ohmail and NOT on their
-   * server, and if the mail host is refusing connections that gap does not close.
-   *
-   * From the client's side that state was indistinguishable from a finished job. The mirror
-   * shows the mail where the user put it, `status` says `connected` (a host that refuses one
-   * cycle has not yet earned `error`), `syncBlockedSince` is null because this is not one of
-   * our own infrastructure blocks, and the strip is `quiet`. So the product looked complete
-   * while a growing backlog of the user's own decisions sat unapplied — and the one screen
-   * that could have said so said nothing.
-   *
-   * ── WHAT IT COUNTS, AND WHY EACH CLAUSE IS THERE ─────────────────────────────────────
-   *
-   * `folder_state` rows for this mailbox where `reconcile_status = 'pending'` AND
-   * `last_set_by = 'us'` AND `desired_folder <> observed_folder`. All three:
-   *
-   *  · `last_set_by = 'us'` — an EXTERNAL pending row is the user moving mail in their own
-   *    client, which we adopt rather than apply. Counting it would report the user's own
-   *    tidying as our backlog.
-   *  · `desired <> observed` — a pending row whose two folders already agree is a no-op the
-   *    reconciler will retire without touching IMAP. It is not work.
-   *  · `pending` — `reconciled` and `failed` are both terminal for this purpose; a failed row
-   *    is a different sentence (and a different column) from "not applied yet".
-   *
-   * ── PROJECTED UNCONDITIONALLY, LIKE THE SYNC-BLOCK PAIR AND UNLIKE THE `error*` FOUR ──
-   *
-   * Every state it describes happens while `status` IS `connected` — that is the point. A gate
-   * on `status` would make it permanently 0 on the wire, which is the invisibility being
-   * removed. And 0 is the ordinary case and means exactly "nothing of ours is outstanding".
-   *
-   * A client must read it with a `typeof === "number"` guard, never `> 0` on a possibly-absent
-   * field: a bundle older than this column omits it, and `undefined > 0` is false, so a naive
-   * read degrades correctly — but `Filing 0 messages` is the failure in the other direction and
-   * `apps/webapp/app/shell/mail-state.ts` states the rule it applies.
+   * How many of OUR OWN filings this mailbox has not yet applied. The API never opens IMAP — a
+   * decision writes `folder_state` and the WORKER moves the mail next cycle — and between press
+   * and cycle the mail is filed in ohmail, not on the server; that state was indistinguishable
+   * from a finished job. What it counts: `pending` AND `last_set_by = 'us'` AND `desired <>
+   * observed` — an EXTERNAL row is the user's own tidying; agreeing folders are a no-op; `failed`
+   * is a different sentence. Projected UNCONDITIONALLY: a status gate would zero it on exactly
+   * the rows it describes. Read with `typeof === "number"`, never `> 0` on a possibly-absent
+   * field — and never render "Filing 0 messages".
    */
   pendingMoves: number;
   /**
-   * THE SAME OUTSTANDING FILINGS, SPLIT BY THE OPERAND THAT DECIDES (mail 0097).
-   *
-   * ── ONE NUMBER FOR FOUR SITUATIONS ────────────────────────────────────────────────────────
-   *
-   * Reported from real use: the shell's rail read "Filing 1 message on your mail server… · your
-   * decisions are already applied here; the server is catching up." for ten minutes while nothing
-   * changed on the mailbox, then cleared. The COUNT was right — one `folder_state` row really was
-   * outstanding — and the sentence was the only one the field above can produce, so it covered
-   * every reason a row can be outstanding. Three of the four are not "the server is catching up":
-   *
-   *  · the organizer has not reached this mailbox in its rotation yet (true, and the honest
-   *    version says when the last pass finished, which is the difference between a turn and a
-   *    stall);
-   *  · the server REFUSED the move and the retry is scheduled minutes or hours out — the row is
-   *    DEFERRED, absent from `listPendingFolderStates` until then, so nothing is catching up;
-   *  · it has been refused repeatedly, or has been outstanding far longer than a rotation can
-   *    account for;
-   *  · a READER install made the decision. `reconcileFolders` is skipped for a reader, so the
-   *    install that HOLDS the mailbox applies it on its own schedule. "The server is catching up"
-   *    is false by construction there: the server is not the organizer.
-   *
-   * ── PRESENT WITH ZEROS, NEVER ABSENT ─────────────────────────────────────────────────────
-   *
-   * On {@link pendingMoves}' rule, from the other side: ABSENT means "this server predates the
-   * field" and a client then renders the legacy count alone, so a conditional projection would
-   * make a deployment that CAN tell indistinguishable from one that cannot. The nullable MEMBERS
-   * carry the "no row supplies this" cases, which is a different statement.
+   * The same outstanding filings, split by the operand that decides (mail 0097). One number
+   * covered four situations: the shell read "Filing 1 message… the server is catching up" for ten
+   * minutes — the COUNT was right, the sentence was the only one the single field could produce.
+   * Three of the four are not "catching up": the rotation has not reached this mailbox (a turn
+   * versus a stall); the server REFUSED and the retry is deferred; or a READER install decided,
+   * and the holder applies it on its own schedule. Present WITH ZEROS, never absent: absent means
+   * "this server predates the field", so a conditional projection would make a deployment that
+   * CAN tell indistinguishable from one that cannot.
    */
   filing: {
     /** Outstanding filings the next reconcile turn will pick up (`next_attempt_at` null or past). */
@@ -872,14 +611,12 @@ export interface MailboxDTO {
     deferred: number;
     /**
      * When the OLDEST outstanding filing was written, ISO-8601 UTC, or null when none is.
-     *
-     * `folder_state.updated_at`, which is the reconciler's own queue order
-     * (`listPendingFolderStates` orders by it) and the honest "waiting since": the intent writers
-     * stamp it and `deferFolderReconcile` deliberately does not — "a refusal is not a re-filing".
-     *
-     * NOT a creation stamp, and that was considered and rejected: `folder_state` is keyed by
-     * message and upserted, so a `created_at` dates the message's FIRST filing and would report
-     * weeks of waiting over a decision made a second ago.
+     * `folder_state.updated_at` — the reconciler's own queue order (`listPendingFolderStates`
+     * orders by it) and the honest "waiting since": the intent writers stamp it and
+     * `deferFolderReconcile` deliberately does not — a refusal is not a re-filing. NOT a creation
+     * stamp, considered and rejected: `folder_state` is keyed by message and upserted, so a
+     * `created_at` dates the message's FIRST filing and would report weeks of waiting over a
+     * decision made a second ago.
      */
     oldestPendingAt: string | null;
     /**
@@ -912,158 +649,57 @@ export interface MailboxDTO {
      */
     asOf: string;
     /**
-     * WHEN THE ORGANIZER'S LAST PASS FINISHED, ISO-8601 UTC, or null when this deployment cannot
-     * say.
-     *
-     * The fact that separates a TURN from a STALL: a pending filing waits for the rotation, so one
-     * outstanding move is unremarkable while passes are landing and alarming while none are.
-     *
-     * `null` on every local tier — there is no heartbeat to read — and a client must render
-     * SILENCE on that clause rather than "no pass has ever run". A desktop install organizes its
+     * When the organizer's last pass finished, ISO-8601 UTC, or null when this deployment cannot
+     * say. The fact that separates a TURN from a STALL: a pending filing waits for the rotation,
+     * so one outstanding move is unremarkable while passes are landing and alarming while none
+     * are. `null` on every local tier — there is no heartbeat to read — and a client must render
+     * SILENCE on that clause rather than "no pass has ever run": a desktop install organizes its
      * own mailbox in-process and must never be told its organizer is dead.
      */
     lastCycleAt: string | null;
   };
   /**
-   * THE BIGGEST MESSAGE THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT, in bytes — the
-   * server's own RFC 1870 `SIZE` announcement, recorded by the connect-time SMTP probe (mail 0055).
-   *
-   * ── WHY A CLIENT IS TOLD THIS AT ALL ─────────────────────────────────────────────────────
-   *
-   * The compose surface states an attachment ceiling before the user picks a file, and until this
-   * field it stated a CONSTANT: 3 MB, mirrored from the server. That number is the hosted API's
-   * serverless request-body limit expressed in raw bytes — a true fact about one deployment and
-   * about nothing else. It is simultaneously too small for a local install (same code, same
-   * process, no request body anywhere in the path) and too LARGE for anyone whose provider caps
-   * submission below it, where the product accepted the send, spent the user's wait on it, and let
-   * their own server bounce it. Both are the same defect: a claim on screen that the code cannot
-   * keep.
-   *
-   * ── `null` MEANS "NOT KNOWN", AND ABSENT MEANS "THIS SERVER CANNOT SAY" ──────────────────
-   *
-   * `null` is a mailbox whose server announced no ceiling — it never advertised `SIZE`, or
-   * advertised the bare keyword, or advertised `SIZE 0`, which RFC 1870 §6 defines as "no fixed
-   * maximum". All three are one answer to the only question the compose surface asks, and the
-   * client resolves it the same way the server does: fall back to the product constant. ABSENT is
-   * an API older than the column.
-   *
-   * **It is not the cap on its own, and a client must not render it as one.** The ceiling that
-   * applies is the SMALLER of this and whatever the host carrying the request can take —
-   * `effectiveAttachmentCap` in `send-service.ts` is the authority and it runs on every send. A
-   * client that showed this number raw would promise 35 MB to somebody whose browser has to push
-   * those bytes through the hosted API's body limit.
+   * The biggest message this mailbox's submission server said it will accept, in bytes — its own
+   * RFC 1870 `SIZE` announcement, recorded by the connect-time SMTP probe (mail 0055). The
+   * compose surface used to state a CONSTANT ceiling — the hosted API's body limit — too small
+   * for a local install and too LARGE for a provider capping submission below it, where the
+   * product accepted the send and let the server bounce it. `null` means no announced ceiling (no
+   * `SIZE`, the bare keyword, or `SIZE 0` — RFC 1870 §6); ABSENT is an API older than the column.
+   * NOT the cap on its own: the applying ceiling is the SMALLER of this and what the host can
+   * take — `effectiveAttachmentCap` in `send-service.ts` is the authority.
    */
   smtpMaxSizeBytes?: number | null;
   /**
-   * WHY SENDING IS NOT SET UP for this mailbox — a reason code, or `null` when it is.
-   *
-   * ── AN OUTGOING SERVER IS NOT A REASON TO STOP RECEIVING ──────────────────────────────────
-   *
-   * The standalone door proves both transports before it stores anything, and a refused
-   * submission dial used to abort the whole write — so a mailbox whose incoming server worked
-   * could not be connected at all because its outgoing one was blocked, guessed wrong by a preset,
-   * or wanted a different login. The connect succeeds now: the incoming credential is stored, no
-   * `smtp` row is written (an unproven submission credential is exactly what the service refuses
-   * to store), and this carries the probe's own reason so every surface can say the same sentence.
-   *
-   * THE VALUES ARE THE PROBE TAXONOMY — `auth` · `connect` · `tls` · `timeout` · `unknown` — the
-   * same set the connect form already renders, so no surface needs a second vocabulary.
-   *
-   * `null` MEANS SENDING IS SETTLED, and it is what every mailbox connected before this existed
-   * reports: absent marker, nothing to say. It is NOT a promise that a send will succeed — a
-   * server can start refusing tomorrow — it is a statement that the submission server was proved
-   * when the password was stored.
-   *
-   * WHAT READS IT: the send path refuses with it rather than guessing at `imap host:587`; the
-   * desktop's mailbox pane and the setup flow's summary state it in one sentence; and the repair
-   * is a normal credential patch, which re-probes and settles it.
+   * Why sending is not set up for this mailbox — a reason code, or `null` when it is. An outgoing
+   * server is not a reason to stop receiving: a refused submission dial used to abort the whole
+   * connect, so a mailbox whose incoming server worked could not be connected at all. The connect
+   * succeeds now: the incoming credential is stored, no `smtp` row is written (an unproven
+   * submission credential is what the service refuses to store), and this carries the probe's own
+   * reason — `auth` · `connect` · `tls` · `timeout` · `unknown`, the set the connect form already
+   * renders. `null` means sending is settled — proved when the password was stored, not a
+   * promise. The repair is a normal credential patch, which re-probes.
    */
   sendingUnsettledReason?: string | null;
   /**
-   * HOW MUCH MAIL IS IN THIS MAILBOX — and the only OPT-IN field on this DTO.
-   *
-   * ── WHY IT IS OPTIONAL WHEN EVERY OTHER NUMBER HERE IS NOT ──────────────────────────
-   *
-   * `pendingMoves` one field up is unconditional because it is a filtered aggregate over one
-   * mailbox's outstanding filings — a small, bounded set. This is an aggregate over the
-   * account's ENTIRE `messages` table, and `GET /mailboxes` is a polled route:
-   * `apps/webapp/app/shell/MailStateProvider.tsx` reads it every 30 s in every open tab to
-   * derive the status strip, and the Settings pane reads it every 10 s while it is on screen.
-   * Neither poller wants this number. Shipping it unconditionally would put a full scan of a
-   * mailbox's history behind a heartbeat.
-   *
-   * So the server computes it only for `GET /mailboxes?counts=1`, in ONE statement grouped by
-   * mailbox and scoped to the account in that same statement, and this field is ABSENT
-   * otherwise. `messages_account_mailbox_unread_idx` is `(account_id, mailbox_id, unread)`, so
-   * its leading column serves the scope predicate and the grouping key is the second.
-   *
-   * ── ABSENT AND `0` ARE DIFFERENT ANSWERS, AND A CLIENT MUST NOT CONFLATE THEM ────────
-   *
-   * `0` means the mailbox holds no mail — a real state, and the one a freshly connected
-   * mailbox is in for its whole first import. ABSENT means nobody asked, which is every
-   * response the two pollers above receive and every response from a server older than this
-   * field. A renderer therefore reads it with `typeof === "number"` and shows NOTHING when it
-   * is absent — never "0 messages", which would tell somebody their mail had vanished
-   * because a status poll happened to be the last read to land.
-   *
-   * Whole mail, unread or not: the question is how much is in there. The index's third column
-   * is not filtered on.
+   * How much mail is in this mailbox — the only OPT-IN field on this DTO. An aggregate over the
+   * account's ENTIRE `messages` table on a POLLED route (the shell reads it every 30 s per tab);
+   * unconditional would put a full history scan behind a heartbeat. Computed only for `GET
+   * /mailboxes?counts=1`, in ONE account-scoped statement grouped by mailbox. ABSENT and `0` are
+   * different answers: `0` is a real state — a freshly connected mailbox during its first import;
+   * ABSENT means nobody asked. A renderer reads `typeof === "number"` and shows NOTHING when
+   * absent — never "0 messages", which would tell somebody their mail vanished because a status
+   * poll happened to land last. Whole mail, unread or not.
    */
   messageCount?: number;
   /**
-   * HOW MUCH MAIL THE SERVER SAYS IS IN THERE — the first pull's DENOMINATOR.
-   *
-   * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────────────────
-   *
-   * {@link messageCount} is the numerator: how much of the mailbox this install has mirrored.
-   * Until this field there was no denominator anywhere in the product. `mailbox_folders` held
-   * cursors only and the IMAP adapter read `EXISTS` off every SELECT and threw it away, so the
-   * import strip could say how much had arrived and never how much was coming — and the one
-   * "how long" number the product ever showed was a literal somebody guessed. Mail 0083 added
-   * `mailbox_folders.server_exists`, written by every cycle that opens a folder. This is that
-   * column, summed, reaching a client for the first time.
-   *
-   * Remaining is `serverMessageCount − messageCount`, and the rate is the CLIENT's own rolling
-   * `MirrorGrowth` — never a literal, and never a rate derived here, because the server does not
-   * know how fast this particular client is draining its feed.
-   *
-   * ── UNCONDITIONAL, UNLIKE {@link messageCount}, AND THE DIFFERENCE IS WHAT IT COSTS ──────
-   *
-   * That field is opt-in because it is an aggregate over the account's whole `messages` table
-   * and this route is polled. This one costs NOTHING extra: the projection already reads this
-   * mailbox's `mailbox_folders` rows to build {@link folders}, so the sum is taken over rows
-   * that are in hand. Putting it behind `?counts=1` would have added a flag with no saving
-   * behind it, and would have kept the number off the one read that matters — the shell's own
-   * 30 s poll, which is what carries the first pull's counters while the flow is on screen.
-   *
-   * ── IT IS A SUM OVER THE FOLDERS THAT HAVE BEEN OPENED, WHICH IS WHY IT CAN GO UP ───────
-   *
-   * A row exists in `mailbox_folders` only for a folder some cycle has opened, and
-   * `server_exists` is NULL on a row no cycle has opened under a build that writes it. So early
-   * in a first pull the sum covers INBOX and little else, and it GROWS as the cycle reaches the
-   * rest of the tree. That is honest — every message it counts really is on the server — but it
-   * means a caller must treat this as a floor that moves, not as a fixed total: a progress bar
-   * driven by it can lose ground, and a remaining count can arrive at a number LARGER than the
-   * one before it.
-   *
-   * It can also be smaller than {@link messageCount}, which is the same fact from the other
-   * side: the mirror holds mail from folders whose `server_exists` no cycle has recorded yet.
-   * **A caller therefore clamps `remaining` at zero and shows nothing at zero** — a negative
-   * "still to read", or a "0 left" over a pull that is still running, are both worse than
-   * silence.
-   *
-   * ── ABSENT, AND WHY THERE IS NO `null` AND NO `0` FLOOR ─────────────────────────────────
-   *
-   * Absent covers both "no number" cases and they are one answer to the only question a caller
-   * asks: no folder row carries a count yet — every row's `server_exists` is NULL, which is
-   * exactly the state of a mailbox whose first cycle has not landed, and of every mailbox on an
-   * install that has not yet run a build that writes the column — or the API predates this
-   * field. Both render as NOTHING.
-   *
-   * A `0` floor would be the claim that the server holds no mail, which is a different and much
-   * louder sentence. That is the opposite of {@link messageCount}'s `?? 0` and it is the same
-   * rule applied to a different question: an empty MIRROR has an answer and it is zero, an
-   * *uncounted* server does not have an answer at all.
+   * How much mail the SERVER says is in there — the first pull's DENOMINATOR. {@link
+   * messageCount} is the numerator; until this there was no denominator: the adapter read
+   * `EXISTS` off every SELECT and threw it away. Mail 0083 added `mailbox_folders.server_exists`;
+   * this is that column, summed. UNCONDITIONAL: the projection already reads these rows, so the
+   * sum costs nothing. A sum over OPENED folders, so it can go UP — a floor that moves — and it
+   * can be smaller than {@link messageCount}; a caller clamps `remaining` at zero and shows
+   * nothing at zero. ABSENT covers both no-number cases; a `0` floor would claim the server holds
+   * no mail — an uncounted server has no answer at all.
    */
   serverMessageCount?: number;
   folders?: MailboxFolderSummary[];
@@ -1179,23 +815,14 @@ export interface AwayResponderDTO {
    */
   audience: "screened_in" | "everyone";
   /**
-   * WHICH PILES GET A REPLY (mail 0096, widened to four members by mail 0101) — folder names,
-   * `['INBOX']` when omitted by a client and what the default-disabled shape reports.
-   *
-   * The second dimension beside `audience`, and they answer different questions: `audience` is a
-   * fact about a SENDER (past the Screener, decided once, true for ever), this is a fact about
-   * WHERE their mail landed. A sender let in once whose later mail files to Reads is still
-   * "somebody I've let in", which is why the audience alone could not express the scope somebody
-   * setting it is thinking of.
-   *
-   * FOLDERS and not pile words: the Ohbox pile's folder is `INBOX`. The surface translates for
-   * display (`AWAY_PILE_VIEW` / `awayEffectivePiles` in `@trafficflow/core/away-scope`, which the
-   * settings control and the Ohbox banner both import so the offered set cannot drift from the
-   * refused one). Never null — see the column's note in `schema-mail.ts`. An EMPTY array is a
-   * responder that answers nobody, which is a state and not an absence.
-   *
-   * `ohmail/Screener` is only ever stored beside `audience: 'everyone'` — both write doors refuse
-   * the other pair — so a reader of this field needs no rule of its own to interpret it.
+   * Which piles get a reply (mail 0096; four members by mail 0101) — folder names, `['INBOX']`
+   * when omitted. The second dimension beside `audience`: `audience` is a fact about a SENDER
+   * (past the Screener, decided once); this is a fact about WHERE their mail landed. FOLDERS, not
+   * pile words: the Ohbox pile's folder is `INBOX`, and the surface translates for display
+   * (`AWAY_PILE_VIEW`/`awayEffectivePiles` in `@trafficflow/core/away-scope`, imported by both
+   * the settings control and the banner so the offered set cannot drift from the refused one).
+   * Never null; an EMPTY array is a responder that answers nobody — a state, not an absence.
+   * `ohmail/Screener` is only ever stored beside `audience: 'everyone'`.
    */
   piles: ("INBOX" | "ohmail/Reads" | "ohmail/Receipts" | "ohmail/Screener")[];
   /**
@@ -1351,17 +978,13 @@ export interface SyncResponse {
 }
 
 /**
- * How far back the snapshot reaches, SERVED rather than agreed.
- *
- * The client needs the numbers to say "this is everything since March" and to decide when to
- * fall back to the delta replay, and a constant compiled into the client is a constant that
- * disagrees with the server the first time either moves. So the server states its own window in
- * every response and the client reads it.
- *
- * `days` is the recency floor; `minRows` is the volume floor. A snapshot serves whichever is
- * LARGER — every message of the last `days`, and never fewer than `minRows` of them when the
- * mailbox has that many. A quiet mailbox therefore still bootstraps into something usable, and a
- * busy one is not truncated at ninety days minus one message.
+ * How far back the snapshot reaches, SERVED rather than agreed. The client needs the numbers to
+ * say "this is everything since March" and to decide when to fall back to the delta replay, and a
+ * constant compiled into the client disagrees with the server the first time either moves — so
+ * the server states its own window in every response. `days` is the recency floor; `minRows` the
+ * volume floor. A snapshot serves whichever is LARGER: every message of the last `days`, and
+ * never fewer than `minRows` when the mailbox has that many — a quiet mailbox still bootstraps
+ * into something usable, and a busy one is not truncated at ninety days minus one message.
  */
 export interface SnapshotWindow {
   days: number;
@@ -1369,24 +992,14 @@ export interface SnapshotWindow {
 }
 
 /**
- * `GET /sync/snapshot` — the bootstrap reader.
- *
- * ── WHY THIS REUSES `SyncChange` INSTEAD OF HAVING A SHAPE OF ITS OWN ─────────────────────────
- *
- * The client's apply path is the thing worth protecting. It already takes `SyncChange[]`, sorts
- * by seq, upserts on (type,id) and refuses an older-or-equal seq; a bespoke snapshot shape would
- * need a second apply path, and two apply paths over one store is how a mirror ends up holding a
- * state neither path can explain. So a snapshot row is a `SyncChange` with `op: "create"` and the
- * full DTO — a create is exactly what a bootstrap means — and the client changes nothing.
- *
- * EVERY row carries `seq = asOfSeq`, and that is what makes the older-or-equal guard correct for
- * free: a delta change that comes later has `seq > asOfSeq` and therefore wins, while a re-read
- * of the same snapshot page has `seq == asOfSeq` and is ignored. There is no per-row seq to
- * invent, and inventing one would be a claim about ordering the snapshot does not make.
- *
- * `nextCursor` is `null` when the snapshot is complete. It is opaque and encodes `asOfSeq`
- * alongside the keyset position, so every page of one snapshot reads the same consistent point
- * and the client's post-bootstrap delta cursor is that same `asOfSeq` whichever page it stopped on.
+ * `GET /sync/snapshot` — the bootstrap reader. It reuses `SyncChange` because the client's apply
+ * path is the thing worth protecting: it already sorts by seq, upserts on (type,id) and refuses
+ * an older-or-equal seq — a bespoke snapshot shape would need a second apply path, and two apply
+ * paths over one store is how a mirror holds a state neither can explain. A snapshot row is a
+ * `SyncChange` with `op: "create"` and the full DTO. EVERY row carries `seq = asOfSeq`, making
+ * the older-or-equal guard correct for free: a later delta wins, a re-read of the same page is
+ * ignored. `nextCursor` is `null` when complete, opaque, encoding `asOfSeq` beside the keyset
+ * position — every page reads one consistent point.
  */
 export interface SnapshotResponse {
   asOfSeq: number;

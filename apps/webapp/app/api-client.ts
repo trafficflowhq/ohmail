@@ -1,37 +1,12 @@
 /**
- * The webapp's HTTP client for everything that is NOT delta-sync.
- *
- * The sync path has its own client (`@ohmail/client-engine`'s `HttpAdapter`, contract-tested
- * against the real in-process API). This is the rest of the wire: auth + 2FA enrollment,
- * mailboxes, billing. Onboarding needs all three and had none of them — `LoginScreen.tsx`
- * was a visual with a toast.
- *
- * ── THE THREE FACTS THAT MAKE THIS SMALL ────────────────────────────────────────────────
- *
- * **1. Same-origin.** The topology put the API behind this app's own `/api` rewrite, so there is no
- * CORS, no preflight, and no `credentials: "include"` (the default `same-origin` already
- * sends first-party cookies). If `NEXT_PUBLIC_API_BASE` is ever an absolute origin, that is
- * a build failure in `next.config.mjs` — not something this file has to defend against.
- *
- * **2. The session lives in cookies.** `tf_session` and `tf_refresh` are `HttpOnly`; nothing
- * here can read or store them, which is the point. The one cookie JS *can* read is
- * `tf_csrf`, and that is its whole job: the double-submit token every cookie-authenticated
- * mutation must echo in `X-CSRF-Token`. So this client holds NO credential state at all —
- * "am I signed in?" is answered by `GET /auth/session`, never by a variable.
- *
- * **3. `Content-Type: application/json` on every body.** Not a convention: `withRequestGuard`
- * rejects any bodied unsafe request that is not JSON with 415, because
- * that is what kills the cross-site `<form enctype="text/plain">`.
- *
- * ── ERRORS ARE VALUES, AND THEY CARRY THE SERVER'S SENTENCE ─────────────────────────────
- *
- * Every refusal in this flow — a bad invite, a used invite, a mailbox limit, an inactive
- * subscription — already has a true, actionable message written by the service that made
- * the decision (`invites.ts`, `mailbox-allowance.ts`). {@link ApiError} carries it through
- * verbatim, along with `code` and `details`. The UI's job is to display it, not to
- * re-derive it: a second copy of the taxonomy in the client is how a user ends up being
- * told they are out of mailbox slots when the real problem is an unpaid subscription.
- * `test/onboarding.test.ts` forbids those sentences appearing in webapp source at all.
+ * The webapp's HTTP client for everything that is NOT delta-sync (that is `@ohmail/client-engine`'s HttpAdapter): auth + 2FA
+ * enrollment, mailboxes, billing. Three facts keep it small. Same-origin: the API sits behind this app's own `/api` rewrite —
+ * no CORS, no preflight, default `same-origin` credentials; an absolute `NEXT_PUBLIC_API_BASE` is a build failure in
+ * `next.config.mjs`. The session lives in HttpOnly cookies this client cannot read; the one readable cookie is `tf_csrf`,
+ * echoed in `X-CSRF-Token` on every cookie-authenticated mutation — "am I signed in?" is answered by `GET /auth/session`,
+ * never a variable. And `Content-Type: application/json` on every body (`withRequestGuard` 415s anything else). Errors are
+ * values: {@link ApiError} carries the server's own sentence, code and details verbatim — the UI displays, never re-derives
+ * (`test/onboarding.test.ts` forbids the sentences in source).
  */
 
 import { csrfToken as readCsrfToken } from "./csrf";
@@ -73,28 +48,14 @@ export class ApiError extends Error {
 }
 
 /**
- * ═══ FACTS ABOUT THE RESPONSE ITSELF, WHICH `status` AND `code` CANNOT CARRY ═══════════════
- *
- * `code` is the server's word. The problem is that a response with no server word gets one
- * anyway: `attempt()` below fills `code: "internal"` when there is no envelope to read, so
- * **a platform 502 with an HTML body and our own `internal` 500 arrive at every caller
- * looking identical**. They are not the same thing. One means a route faulted; the other
- * means nothing of ours ran — deployment protection, an alias mid-roll, a gateway. The
- * session classifier has to tell them apart, and `session-refresh.ts` already records the
- * same distinction for the refresh endpoint ("a 401 with no parseable `error.code` is a
- * platform interposing itself").
- *
- * So `coded` is the one fact that was being thrown away: did this refusal come from OUR
- * envelope?
- *
- * `retryable` and `retryAfterMs` come along because they are on the wire and were also being
- * dropped. `db_busy` sends both — `retryable: true` and `Retry-After: 5` — and the shell used
- * to answer that by declaring the session over.
- *
- * **`retryable` is carried, NOT used as a verdict predicate.** `sync-scheduler.ts` records
- * what that costs: `HttpAdapter.rejectionOf` defaults the field to `status >= 500 ||
- * status === 429`, so `retryable === false` is TRUE of almost every clean refusal and latching
- * on it caught far more than a revoked session. It is here for backoff and for reporting.
+ * Facts about the response itself, which `status` and `code` cannot carry. `attempt()` fills `code:
+ * "internal"` when there is no envelope, so a platform 502 with an HTML body and our own 500 arrived
+ * identically — one means a route faulted, the other means nothing of ours ran. `coded` is the fact
+ * that was being thrown away: did this refusal come from OUR envelope? `retryable` and
+ * `retryAfterMs` come along because they were on the wire and dropped (`db_busy` sends both).
+ * `retryable` is carried, NOT a verdict predicate: `rejectionOf` defaults it from the status, so
+ * `retryable === false` is true of almost every clean refusal — it is here for backoff and reporting
+ * (`sync-scheduler.ts` records the cost).
  */
 export interface ApiWire {
   /** Did this come from our `{error:{code}}` envelope, rather than from a platform? */
@@ -106,19 +67,14 @@ export interface ApiWire {
 }
 
 /**
- * `Retry-After` → milliseconds, or `undefined`.
- *
- * INTEGER SECONDS ONLY. RFC 9110 allows an HTTP-date as well, and parsing one here would mean
- * trusting the client clock to subtract it — on a machine whose clock is minutes out (this
- * repository's own build host is ~two minutes slow) that yields a negative or absurd delay
- * from a header that was perfectly correct. Every `Retry-After` this API sends is a
- * delta-seconds integer (`packages/api/src/middleware.ts`), so the date form is refused rather
- * than guessed at, and the caller falls back to its own backoff.
- *
- * `0` and negatives are `undefined` too: "retry immediately" from a server that just refused
- * is not advice a client should take literally, and a caller seeding a backoff with 0 would
- * spin. NO upper clamp here — the ceiling belongs to the consumer, which is the one that knows
- * how long a person is willing to look at a blank screen (`confirm-schedule.ts`).
+ * `Retry-After` → milliseconds, or `undefined`. Integer seconds only: RFC
+ * 9110 also allows an HTTP-date, and parsing one means trusting the client
+ * clock to subtract it — a machine minutes out yields a negative or absurd
+ * delay from a correct header. Every `Retry-After` this API sends is
+ * delta-seconds (`packages/api/src/middleware.ts`), so the date form is
+ * refused and the caller falls back to its own backoff. `0` and negatives
+ * are `undefined` too — "retry immediately" from a server that just refused
+ * would spin a backoff seeded with 0. No upper clamp: the ceiling belongs to the consumer (`confirm-schedule.ts`).
  */
 function retryAfterMsOf(res: Response): number | undefined {
   const raw = res.headers.get("retry-after");
@@ -142,41 +98,27 @@ interface RequestOptions {
   headers?: Record<string, string>;
   signal?: AbortSignal;
   /**
-   * THE FRONT DOOR ASKED FOR THIS, and nobody else may. See {@link apiOwnerHolds}: a request
-   * marked `ceremony` is exempt from the account boundary because it is how an identity is
-   * ESTABLISHED — it necessarily runs before anybody could be bound.
-   *
-   * On the request rather than on the path, deliberately. `/auth/session` is two different
-   * requests wearing one path: the confirmation that finds out whether this browser holds a
-   * session, and six ordinary shell reads that want the signed-in person's email, account id
-   * and enrolled factors. A path-wide exemption handed all six the other account's answer
-   * whenever the browser had become somebody else. A flag is something a caller asks for by
-   * name and a reviewer can grep for.
+   * The front door asked for this, and nobody else may (see
+   * {@link apiOwnerHolds}): a request marked `ceremony` is exempt from the
+   * account boundary because it is how an identity is ESTABLISHED — it
+   * necessarily runs before anybody could be bound. On the request, not the
+   * path: `/auth/session` is two requests wearing one path — the front
+   * door's confirmation, and six ordinary shell reads that want the
+   * signed-in person's details. A path-wide exemption handed all six the
+   * other account's answer. A flag is something a caller asks for by name and a reviewer can grep for.
    */
   ceremony?: boolean;
 }
 
 /**
- * The token reader, kept on this module's public surface — one line of forwarding, not a
- * re-export, and the difference is load-bearing for the DESKTOP build.
- *
- * The implementation is in `app/csrf.ts` because `session-refresh.ts` needs the same reader and
- * this module already imports that one, so defining it here would close a cycle (the reasoning is
- * written out in `csrf.ts`). The obvious way to keep the surface unchanged is `export { csrfToken }`
- * — and that is what this was, until the generated desktop stand-in showed why it cannot be.
- *
- * `apps/desktop/src/no-api-client.ts` mirrors this module's exported surface, and every Cloud
- * symbol in it becomes a refusal, because the desktop tier has no server and no cookies. (It was
- * once generated from this module's emitted declarations; it is hand-kept now, pinned by the
- * desktop suite.) A bare `export { csrfToken }` emits, in the `.d.ts`, an
- * `import { csrfToken } from "./csrf"` alongside it — so the stand-in faithfully reproduced an
- * import of `./csrf` RELATIVE TO `apps/desktop/src`, where no such module exists. The stub stopped
- * compiling, and the pre-push payload gate caught it.
- *
- * A `function` declaration cannot do that: its `.d.ts` form is
- * `export declare function csrfToken(): string | null`, which names no other module, and turns
- * into the refusal it should be. So the forwarding is explicit and this comment is the reason it
- * is not written the shorter way.
+ * The token reader, kept on this module's public surface — one line of forwarding, not a re-export,
+ * and the difference is load-bearing for the desktop build. The implementation is in `app/csrf.ts`
+ * (`session-refresh.ts` needs the same reader; defining it here closes a cycle).
+ * `apps/desktop/src/no-api-client.ts` mirrors this module's exported surface as refusals; a bare
+ * `export { csrfToken }` emits an `import { csrfToken } from "./csrf"` in the `.d.ts`, which the
+ * stand-in reproduced relative to `apps/desktop/src` — where no such module exists; the stub
+ * stopped compiling and the pre-push gate caught it. A `function` declaration's `.d.ts` form names
+ * no other module, so the forwarding is explicit.
  */
 export function csrfToken(): string | null {
   return readCsrfToken();
@@ -184,48 +126,14 @@ export function csrfToken(): string | null {
 
 
 /**
- * ═══ WHOSE ACCOUNT IS THIS CLIENT SPEAKING FOR? — the one boundary every Cloud call crosses ══
- *
- * ── THE HOLE THIS CLOSES, AND WHY IT COULD NOT BE CLOSED ANYWHERE ELSE ─────────────────────
- *
- * The mail mirror has an owner-aware gate: a scheduled engine may not merge, read or act unless
- * the browser's session still belongs to the account the mirror is named for. That gate wraps the
- * ENGINE'S ADAPTER, which is exactly the wrong shape for the rest of the product, because most of
- * the signed-in surface never goes near an adapter. Settings talks to this module directly.
- *
- * So when a browser signed into A held a shell for B — a sign-in in another tab, a sign-out the
- * server refused — the mailbox correctly stopped, said so, and stayed MOUNTED. Everything beside
- * it kept working against the new session: Security would show, and could REGENERATE, the other
- * account's recovery codes and TOTP secret; Devices would list their devices and mint a fresh
- * pairing token for their account; billing, profile, mailboxes and invitations the same. Those
- * are credentials, not mail, and no amount of gating inside the sync scheduler reaches them.
- *
- * A per-pane check would close today's panes and not tomorrow's — the census is the point, and a
- * census that lives in twelve files is a census with a hole in it the day somebody adds a
- * thirteenth. This is the seam every one of them already goes through.
- *
- * ── WHAT IS ALLOWED THROUGH, AND WHY IT IS NOT "EVERYTHING UNDER /auth" ────────────────────
- *
- * The obvious allow-list is the auth prefix, and it is wrong in a way worth stating: half of
- * `/auth` is the ceremony that ESTABLISHES an identity, and half is credential management for an
- * identity that already exists. `/auth/2fa/recovery-codes` and `/auth/2fa/totp/enroll` are the
- * second kind, and they are two of the exact disclosures this exists to stop. So the list names
- * the ceremony paths one by one:
- *
- *   · learning what the server is, and whether this browser holds a session at all;
- *   · signing in, including the second factor's VERIFY steps — a person completing a sign-in has
- *     no confirmed owner yet by definition, and refusing them would lock the front door;
- *   · signing out, and the refresh that keeps a session alive.
- *
- * Everything else needs the bound account to still hold. That includes enrolment, step-up,
- * device pairing, and every non-auth route in the product.
- *
- * ── AND IT IS OFF UNTIL SOMETHING BINDS IT ────────────────────────────────────────────────
- *
- * `expectedOwner` is `null` on the marketing pages, on `/login`, and in every test that does not
- * ask for it — so this costs nothing until a shell has been confirmed for an account. That is
- * also what makes the failure mode safe: a surface that forgets to bind is exactly as permissive
- * as it was before this existed, rather than mysteriously refusing.
+ * Whose account is this client speaking for — the one boundary every Cloud
+ * call crosses. The mirror's owner gate wraps the engine's ADAPTER, and most
+ * of the signed-in surface never goes near one: a browser signed into A
+ * holding a shell for B could regenerate B's recovery codes and TOTP secret,
+ * mint pairing tokens, read billing. A per-pane check closes today's panes,
+ * not tomorrow's; this is the seam every one goes through. The allow-list is
+ * NOT "/auth" (half of /auth manages credentials for an existing identity);
+ * it names the ceremony paths one by one. Off until bound: a forgetting surface stays permissive.
  */
 /**
  * EXACT MATCHES. One route each, and nothing beneath them.
@@ -262,46 +170,25 @@ const OWNER_FREE_PREFIXES = [
 ] as const;
 
 /*
- * `/auth/session` IS NOT ON THAT LIST ANY MORE, and its removal is the point rather than an
- * omission. It is two different requests wearing one path. The FRONT DOOR asks it to find out
- * whether this browser holds a session at all, which by definition happens before anybody could
- * be bound — that call passes `ceremony: true` and is exempt. Six ORDINARY SHELL READS ask it
- * for the signed-in person's email, account id and which factors they have enrolled
- * (`MailboxSection`, `AccountSection`, `LinkDesktopScreen`, `StepUpPrompt`, `SecuritySection`,
- * and the subscription pane that has since left), and a path-wide exemption handed all six
- * the OTHER account's answer
- * whenever the browser had become somebody else. Those are gated like every other account read.
- *
- * The flag is on the REQUEST rather than the path, so the exemption is something a caller has to
- * ask for by name and a reviewer can grep for, instead of a property the route quietly confers on
- * everybody who happens to use it.
+ * `/auth/session` is NOT on that list any more; the removal is the point:
+ * it is two requests wearing one path. The front door asks it whether this
+ * browser holds a session at all — before anybody could be bound; that call
+ * passes `ceremony: true`. Six ordinary shell reads ask it for the
+ * signed-in person's details, and a path-wide exemption handed all six the
+ * other account's answer — they are gated like every other account read.
+ * The flag is on the REQUEST so the exemption is asked for by name and
+ * greppable, not a property the route confers on everybody.
  */
 
 /**
- * ═══ WHAT THIS CLIENT IS SPEAKING FOR ═════════════════════════════════════════════════════
- *
- * A single nullable `expectedOwner` conflated two states that need opposite defaults, and review
- * walked through both:
- *
- *  · `public`  — the marketing pages, `/login`, a test that never asked. There is no account
- *                here, nothing to be wrong about, and every request goes.
- *  · `pending` — A SHELL IS UP AND THE SERVER HAS NOT ANSWERED YET. `null` used to say this too,
- *                so a deep-linked settings pane over a warm mirror for A — mounted, rendering,
- *                issuing requests, confirmation still in flight — passed every check while
- *                another tab established B. Security, Devices, Billing and Mailboxes all mount
- *                in that window, and a freshly signed-in B is exactly when a step-up window is
- *                open, which is what puts recovery codes and TOTP enrolment inside it.
- *  · `bound`   — the server named the account. The ordinary signed-in state.
- *  · `blocked` — a sign-out this browser asked for and the server did not confirm. `null` used
- *                to say this as well: sign-out wrote the safe marker and then unbound the
- *                client, so the very sequence the marker exists to stop was waved through one
- *                line later.
- *
- * The distinction that makes it safe is that a NAMED SHELL IS NEVER `public`. `pending` fails
- * closed on an absent or signed-out marker exactly as `bound` does; what it cannot yet do is say
- * WHICH account, so where the shell knows (a warm open reads the marker to pick its mirror) it
- * says, and where it does not (a cold load) it requires only that some account is named and lets
- * the confirm settle it. The window is one round trip either way.
+ * What this client is speaking for — a single nullable `expectedOwner`
+ * conflated states needing opposite defaults. `public`: marketing pages,
+ * /login, unasking tests — every request goes. `pending`: a shell is up and
+ * the server has not answered; `null` said this too, so a deep-linked pane
+ * over a warm mirror for A passed every check while another tab established
+ * B. `bound`: the server named the account. `blocked`: a sign-out the
+ * server did not confirm. A named shell is never `public` — `pending` fails
+ * closed like `bound`; the window is one round trip.
  */
 type OwnerBinding =
   | { kind: "public" }
@@ -375,76 +262,26 @@ export function apiOwnerHolds(path: string, opts: { ceremony?: boolean } = {}): 
 }
 
 /**
- * ═══ THE ANSWER NAMES THE ACCOUNT IT WAS FOR ══════════════════════════════════════════════
- *
- * `AF-RESPONSE-NOT-OWNER-BOUND` was the one cross-account sequence no client-side check could
- * see: a switch that begins and ends inside a single request's flight leaves every observation
- * this browser can make reading exactly as it did before. The marker says what it said, the
- * gate's confirmation was never seen to lapse, and a response selected under the other account
- * is applied. The client cannot observe a state it was never asked about, which is why the
- * warm-identity ruling filed the remainder rather than leaving a weaker guard in place.
- *
- * The server answers the question directly, where it speaks this contract — and since the release
- * stack it does: `packages/api/src/app.ts` sets the header and `GET /hello` advertises
- * `features.accountHeader`. The negotiation below still exists for every OTHER server, which is
- * the point of it. `X-Ohmail-Account` names the account a response was produced for — the session's, or on the sign-in and token routes the account the CREDENTIAL
- * resolved to — and the value is always server-derived: the session row or the resolved
- * credential, never a query parameter, a body field, or an inbound header of the same name, which
- * is ignored.
- *
- * ── ABSENCE IS A REFUSAL, NOT SILENCE ────────────────────────────────────────────────────────
- *
- * On an ordinary authenticated read, a missing header is the same answer as a wrong one: this
- * client has been told which account it speaks for and the response cannot say it agrees. That is
- * the whole difference between this and the marker checks either side of it — those ask the
- * BROWSER, which is exactly the thing an in-flight switch leaves unchanged.
- *
- * The header is absent by design where there is no account subject: an anonymous endpoint, a
- * public one reached without a credential, a 401, a 400/404/405 answered before authentication.
- * Those are the paths this file already treats as owner-free, plus the error paths, and
- * neither reaches the comparison.
- *
- * ── AND ON THE SIGN-IN ROUTES A DISAGREEMENT IS THE NEW OWNER ────────────────────────────────
- *
- * The same header on {@link credentialRoutes} names whoever the credential resolved to, which
- * during a sign-in is precisely NOT the account the cookie still names. Refusing there would
- * refuse every sign-in that follows a different account's session. It is safe to adopt because
- * the server has already refused — `409 session_conflict` — any request whose live session and
- * credential disagree, so a disagreement that came back 2xx is a sign-in that succeeded.
- *
- * Absence on those routes means THIS ESTABLISHED NOTHING — a refused sign-in, a `twofa_required`
- * challenge — and never "still you". Nothing is adopted and nothing is rewritten.
+ * The answer names the account it was for. `AF-RESPONSE-NOT-OWNER-BOUND`:
+ * a switch inside a single request's flight leaves every browser
+ * observation unchanged, so the server answers directly —
+ * `X-Ohmail-Account`, always server-derived, never a query parameter, body
+ * field or inbound header. Absence is a refusal on an authenticated read;
+ * absent by design where there is no account subject. On
+ * {@link credentialRoutes} a disagreement is the NEW owner (the server 409s
+ * succeeded); absence there means nothing was established.
  */
 const OWNER_HEADER = "X-Ohmail-Account";
 
 /**
- * ═══ THE REQUIREMENT IS NEGOTIATED, NEVER ASSUMED AND NEVER INFERRED ══════════════════════
- *
- * Requiring the header unconditionally is right for the hosted product — the webapp and its API
- * deploy together — and wrong for every other install. A self-host on an older server, or a proxy
- * that strips unknown headers, would have every authenticated read refused: not degraded, unusable.
- * That is the fail-closed-on-a-state-the-shell-cannot-produce shape this lane has now made twice.
- *
- * So the server SAYS whether it names its answers, `/hello` carries the word, and this client
- * requires the header only where it has been advertised.
- *
- * **NEVER INFERRED FROM HAVING SEEN ONE.** "We got a header once, so require it from now on"
- * looks equivalent and is not: it makes the requirement depend on the order requests happen to
- * arrive in, and it can be turned off for the rest of a session by a single answer that legitimately
- * carries no account. This value is written from `/hello`'s answer and from nothing else — the
- * setter says so and the guard proves nothing else calls it.
- *
- * THREE STATES, and the third is why this is not a boolean:
- *
- *  · `true`   the server advertises it. Absence on an authenticated read is a refusal.
- *  · `false`  the server has answered and does NOT advertise it. Absence is admitted, and the
- *             residual is DISCLOSED on screen — see `AboutSection`. Never silent.
- *  · `null`   nobody has asked yet, or `/hello` did not answer. Admits, and says nothing, because
- *             a failed probe is not evidence about the server. A network blip must not be able to
- *             switch the requirement off, which is why a failed `serverHello` leaves this alone.
- *
- * A WRONG NAME IS WRONG IN ALL THREE. The negotiation governs ABSENCE only: a header that names
- * another account is a refusal whether or not the server promised to send one.
+ * The requirement is negotiated, never assumed and never inferred. Requiring the header unconditionally is right for the
+ * hosted product and wrong for every other install — a self-host on an older server or a header-stripping proxy would have
+ * every authenticated read refused. So the server SAYS whether it names its answers (`/hello`), and this client requires the
+ * header only where advertised. Never inferred from having seen one: that makes the requirement depend on request order and
+ * lets one legitimately account-free answer switch it off. Three states: `true` — advertised, absence refuses; `false` —
+ * answered and not advertised, absence admitted and the residual disclosed on screen (`AboutSection`), never silent; `null` —
+ * nobody asked or `/hello` failed, admits and says nothing (a network blip must not switch the requirement off). A WRONG name
+ * is wrong in all three: negotiation governs absence only.
  */
 let accountHeaderAdvertised: boolean | null = null;
 
@@ -477,19 +314,13 @@ export function accountHeaderCapability(): boolean | null {
 const CLEARS_ONLY = ["/auth/logout", "/account"] as const;
 
 /**
- * DERIVED FROM THE CENSUS, not remembered — and the derivation is the correction.
- *
- * The first version of this list was the set of routes that RESOLVE A CREDENTIAL, taken as given.
- * Review measured it against the server and three of them write no browser cookie at all:
- * `/auth/desktop-claim` and `/oauth/token` answer with native tokens, and `/pair/redeem` returns
- * none by design. A header adopted from one of those rewrites the browser's marker to name an
- * account whose session this browser does not hold — after which every ordinary request passes
- * the boundary and goes out under whatever session IS there.
- *
- * So the question is not "did this route resolve a credential" but "did this response ESTABLISH
- * a session in this browser", and the client already derives exactly that set: the cookie-writer
- * census, minus the two paths that only clear. `cookie-writer-census.test.ts` holds both halves
- * to the server's own routes, so a route that stops writing cookies leaves this list by itself.
+ * Derived from the census, not remembered — and the derivation is the correction. The first
+ * version was the set of routes that RESOLVE A CREDENTIAL, and three of them write no browser
+ * cookie at all (`/auth/desktop-claim` and `/oauth/token` answer native tokens; `/pair/redeem`
+ * returns none by design) — a header adopted from one of those rewrites the marker to name an
+ * account whose session this browser does not hold. The question is "did this response
+ * ESTABLISH a session in this browser": the cookie-writer census minus the two clear-only
+ * paths, held to the server's own routes by `cookie-writer-census.test.ts`.
  */
 const credentialRouteSet = (): readonly string[] =>
   COOKIE_WRITING_PATHS.filter((p) => !(CLEARS_ONLY as readonly string[]).includes(p));
@@ -599,26 +430,14 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   if (!holds()) throw ownerMismatch(path);
 
   /*
-   * ── A COOKIE-WRITING REQUEST TAKES THE LOCK, AND DOES NOT RECOVER UNDER IT ──────────────
-   *
-   * The lock is HERE and no longer on the individual `auth` methods, for two reasons that turned
-   * out to be the same reason. It puts the census beside the other path lists in this file, where
-   * a reviewer reads them together — the hand-written one wrapped two step-up routes that write
-   * no cookie and missed `DELETE /account`, which clears the entire jar. And it puts the lock in
-   * the function that owns the RECOVERY path, which is what makes the next paragraph possible.
-   *
-   * NO REFRESH-AND-RETRY WHILE HOLDING IT. Web Locks are not reentrant: `resumeSession()` asks
-   * for this same exclusive name, so a recoverable failure inside a ceremony queued the tab
-   * behind its own grant and never woke. The outer deadline does not help — that bounds the wait
-   * FOR a grant, and this caller was granted long ago. It hung `auth.logout` before its local
-   * cleanup could run, which is where the marker is written and the client blocked: every remedy
-   * in this slice sits behind that await.
-   *
-   * Refusing to recover here is not a loss. Every path on the census either already forbids a
-   * refresh (`NEVER_REFRESH` covers login, register, verify-email and all of `/auth/2fa/`) or is
-   * one where a silent second attempt is wrong on its own terms: a 401 on logout is the server
-   * saying the session is already gone, and a retried `DELETE /account` is irreversible. The
-   * caller sees the refusal and decides.
+   * A cookie-writing request takes the lock, and does not recover under it.
+   * The lock is here, not on the `auth` methods: the census sits beside the
+   * other path lists, and the lock lives in the function that owns the
+   * recovery path. No refresh-and-retry while holding it: Web Locks are not
+   * reentrant — `resumeSession()` asks for this same name, so a recoverable
+   * failure inside a ceremony queued the tab behind its own grant and hung
+   * `auth.logout` before its cleanup ran. Refusing to recover loses nothing:
+   * every census path forbids refresh or a second attempt is wrong on its own terms.
    */
   /*
    * WHO THE SERVER SAYS IT ANSWERED FOR, per call. An out-parameter rather than module state,
@@ -650,16 +469,14 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
     if (!(err instanceof ApiError)) throw err;
     if (!isRecoverable(err.status, err.code) || !mayRefreshFor(path)) throw err;
     /*
-     * ── ASKED BEFORE THE REFRESH, NOT ONLY AFTER IT ────────────────────────────────────────
-     *
-     * `resumeSession()` ROTATES whatever session the jar currently holds. The recheck used to
-     * sit only after it, so a request that left under A and came back recoverable while another
-     * tab established B went on to refresh — and therefore rotate and extend — B's session from
-     * a stale A tab. No byte was returned, and that is not the whole cost: the rotation consumes
-     * B's refresh token, so B's own tab can present a consumed one and be read as reuse.
-     *
-     * Cheap, because the answer is already wrong by then: a request this client may no longer
-     * make does not get a recovery attempt on somebody else's credential.
+     * Asked BEFORE the refresh, not only after it. `resumeSession()`
+     * rotates whatever session the jar currently holds; with the recheck
+     * only after it, a request that left under A and came back recoverable
+     * while another tab established B went on to rotate and extend B's
+     * session from a stale A tab. No byte returned, and worse: the rotation
+     * consumes B's refresh token, so B's own tab can present a consumed one
+     * and be read as reuse. Cheap, because the answer is already wrong by
+     * then: a request this client may no longer make gets no recovery attempt on somebody else's credential.
      */
     if (!holds()) throw ownerMismatch(path);
     if (!(await resumeSession())) throw err;
@@ -679,43 +496,14 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 }
 
 /**
- * ═══ A CEREMONY THAT WRITES SESSION COOKIES TAKES THE ORIGIN-WIDE LOCK ════════════════════
- *
- * A refresh rewrites the whole cookie jar and so does every one of these, and until now only the
- * refresh asked for the lock. `refreshSettled` ordered the sign-in behind a refresh IN THIS TAB —
- * `inFlight` is module state, so a refresh in another tab of the same profile was invisible to
- * it, and its reply could land after a completed ceremony and restore the previous account or
- * clear the new session.
- *
- * ── WHY IT IS HERE AND NOT ON THE SCREENS ─────────────────────────────────────────────────
- *
- * It WAS on a screen: `LoginScreen` took the lock around each of its three factor calls, which
- * fixed the sign-in and nothing else. Review listed the rest — `JoinScreen`'s registration and
- * enrolment, `SetupScreen`'s first account, and the in-shell reauthentications in
- * `MailboxSection`, `AccountSection` and `LinkDesktopScreen` — every one of
- * them a cookie writer, none of them wrapped, and nothing anywhere that could notice. A rule
- * every screen has to remember is a rule the next screen forgets.
- *
- * So the methods carry it. A surface calls `auth.login(...)` exactly as before and is ordered
- * against every other tab whether or not its author knew this existed, and the census below is
- * the list a reviewer checks rather than a habit.
- *
- * ── WHAT IS ON THE LIST ───────────────────────────────────────────────────────────────────
- *
- * ── THE CENSUS IS THE SERVER'S, AND THE FIRST HAND-WRITTEN ONE WAS WRONG BOTH WAYS ────────
- *
- * The list is the calls whose ROUTE reaches `sessionCookies`, `enrollmentCookies` or
- * `clearSessionCookies`. Establishing an enrolment session, completing a first factor, completing
- * a second factor, promoting an enrolment to a full session, the logout that clears the jar — and
- * `account.erase`, which clears it hardest of all.
- *
- * Written from memory the first time, it wrapped two step-up verdicts that write NO cookie —
- * `packages/api/src/routes/step-up.ts` says so in as many words, "No Set-Cookie, no tokens" — and
- * omitted the erase, which does. Wrapping a non-writer is not free: both step-up routes are
- * refresh-recoverable, so under a non-reentrant lock they hung the prompt outright.
- *
- * NOT on it: reads, the two OPTIONS calls (they mint no session and would hold an origin-wide
- * lock across a ceremony a person is physically performing), and the step-up verdicts.
+ * A ceremony that writes session cookies takes the origin-wide lock. A refresh rewrites the whole cookie jar and so does
+ * every one of these; until now only the refresh asked — `inFlight` is module state, so a refresh in another tab was
+ * invisible and its reply could land after a completed ceremony and restore the previous account. On the METHODS, not the
+ * screens: `LoginScreen` once took the lock around its three factor calls, fixing the sign-in and nothing else — a rule
+ * every screen has to remember is a rule the next screen forgets. The census is the calls whose route reaches
+ * `sessionCookies`, `enrollmentCookies` or `clearSessionCookies` — the first hand-written list was wrong both ways (it
+ * wrapped two step-up verdicts that write NO cookie, hanging the prompt under the non-reentrant lock, and omitted
+ * `account.erase`). Not on it: reads, the two OPTIONS calls, and the step-up verdicts.
  */
 const COOKIE_WRITING_PATHS = [
   "/auth/register",              // enrollmentCookies
@@ -841,15 +629,12 @@ async function attempt<T>(
 }
 
 /**
- * ═══ THE ACCESS REFUSAL, RAISED ONCE FOR THE WHOLE CLIENT ═════════════════════════════════
- *
- * The server answers `402 subscription_required` at every door an inactive account may not
- * reach, so every one of this module's ~200 callers could meet it. Handling it at the call sites
- * would mean two hundred chances to render mail beside a refusal; the shell needs to know instead,
- * once, and swap the whole surface for the lock screen.
- *
- * A NOTIFIER and not a thrown state: the `ApiError` still propagates unchanged, so nothing that
- * already handles a refusal changes behaviour. This is a side channel the shell subscribes to.
+ * THE ACCESS REFUSAL, RAISED ONCE FOR THE WHOLE CLIENT: The server answers `402 subscription_required` at every door
+ * an inactive account may not reach, so every one of this module's ~200 callers could meet it. Handling it at the
+ * call sites would mean two hundred chances to render mail beside a refusal; the shell needs to know instead, once,
+ * and swap the whole surface for the lock screen. A NOTIFIER and not a thrown state: the `ApiError` still propagates
+ * unchanged, so nothing that already handles a refusal changes behaviour. This is a side channel the shell subscribes
+ * to.
  */
 export const ACCESS_REFUSED_STATUS = 402;
 export const ACCESS_REFUSED_CODE = "subscription_required";
@@ -953,30 +738,24 @@ export interface MailboxDTO {
    */
   lastSyncAt: string | null;
   /**
-   * HOW THIS MAILBOX SIGNS IN — `"password"` or `"oauth"` (cloud 0009).
-   *
-   * The server has always projected it (`MailboxService.toDTO`); this client did not declare it, and
-   * without it the reconnect control for an oauth mailbox is unrepresentable. That matters more than
-   * a missing field usually does: an oauth mailbox's only credential is a refresh token, so the
-   * password/host form is meaningless for it, and offering "Edit" would let somebody store a typed
-   * password beside an `authType: "oauth2"` credential that the dialler then refuses to use.
-   *
-   * OPTIONAL, because a client build may be talking to an older API. Absent is read as `"password"`
-   * — the historical behaviour, and the one that offers the form rather than withholding it.
+   * HOW THIS MAILBOX SIGNS IN — `"password"` or `"oauth"` (cloud 0009). The server has always projected it
+   * (`MailboxService.toDTO`); this client did not declare it, and without it the reconnect control for an oauth
+   * mailbox is unrepresentable. That matters more than a missing field usually does: an oauth mailbox's only
+   * credential is a refresh token, so the password/host form is meaningless for it, and offering "Edit" would let
+   * somebody store a typed password beside an `authType: "oauth2"` credential that the dialler then refuses to use.
+   * OPTIONAL, because a client build may be talking to an older API. Absent is read as `"password"` — the historical
+   * behaviour, and the one that offers the form rather than withholding it.
    */
   authKind?: "password" | "oauth";
   /**
-   * ── WHO ORGANIZES THIS MAILBOX, AND WHETHER IT WAS EVER AGREED TO (mail 0083) ────────────
-   *
-   * `organizer` is this install; `reader` is somebody else's, or nobody's. A reader is CONNECTED
-   * and its mirror is growing — what it does not do is move, file or delete mail. The server has
-   * projected these since mail 0083 and this client did not declare them, which is why the web
-   * pane's claim control was still gated on `status === "disabled"`: the one set the server
-   * refuses, since a `disabled` row is a tombstone and a stood-down row is `connected`.
-   *
-   * OPTIONAL, and absent reads as `organizer` at every site. Every install was one before the
-   * column existed, so a server that cannot say has not demoted anybody; the dangerous default is
-   * the other one, which would put a claim banner over a mailbox this install already organizes.
+   * WHO ORGANIZES THIS MAILBOX, AND WHETHER IT WAS EVER AGREED TO (mail 0083): `organizer` is this install; `reader`
+   * is somebody else's, or nobody's. A reader is CONNECTED and its mirror is growing — what it does not do is move,
+   * file or delete mail. The server has projected these since mail 0083 and this client did not declare them, which
+   * is why the web pane's claim control was still gated on `status === "disabled"`: the one set the server refuses,
+   * since a `disabled` row is a tombstone and a stood-down row is `connected`. OPTIONAL, and absent reads as
+   * `organizer` at every site. Every install was one before the column existed, so a server that cannot say has not
+   * demoted anybody; the dangerous default is the other one, which would put a claim banner over a mailbox this
+   * install already organizes.
    */
   organizerRole?: "organizer" | "reader";
   /**
@@ -1005,31 +784,22 @@ export interface MailboxDTO {
    */
   organizedByThisInstall?: boolean;
   /**
-   * WHEN somebody agreed to let ohmail organize this mailbox, or `null` for "nobody has".
-   *
-   * ── ABSENT AND `null` ARE DIFFERENT HERE, AND THE DIFFERENCE IS A CONTROL ────────────────
-   *
-   * The claim offer's server-side rule is `status <> 'disabled' AND (organizer_role = 'reader' OR
-   * organize_consented_at IS NULL)`. Read `== null`, an ABSENT field — an API deployed before
-   * mail 0083 — satisfies the second disjunct on every row, and the pane sprouts an "Organize
-   * here instead" button on every mailbox of every older deployment, each of which would be
-   * refused. So every reader of this field tests `=== null`, and the seam that maps it
-   * (`CloudShell`) forwards it UNTOUCHED rather than with a `?? null`.
-   *
-   * This is the same absent-versus-null rule {@link initialImportCompletedAt} carries, with the
-   * sign chosen for the same reason: collapse the unknown toward the state that offers LESS.
+   * WHEN somebody agreed to let ohmail organize this mailbox, or `null` for "nobody has". ABSENT AND `null` ARE
+   * DIFFERENT HERE, AND THE DIFFERENCE IS A CONTROL: The claim offer's server-side rule is `status <> 'disabled' AND
+   * (organizer_role = 'reader' OR organize_consented_at IS NULL)`. Read `== null`, an ABSENT field — an API deployed
+   * before mail 0083 — satisfies the second disjunct on every row, and the pane sprouts an "Organize here instead"
+   * button on every mailbox of every older deployment, each of which would be refused. So every reader of this field
+   * tests `=== null`, and the seam that maps it (`CloudShell`) forwards it UNTOUCHED rather than with a `?? null`.
+   * This is the same absent-versus-null rule {@link initialImportCompletedAt} carries, with the sign chosen for the
+   * same reason: collapse the unknown toward the state that offers LESS.
    */
   organizeConsentedAt?: string | null;
   /**
-   * WHEN THE ORGANIZING SITUATION LAST CHANGED, AND WHEN IT WAS LAST ACKNOWLEDGED.
-   *
-   * The pair the once-only notice is derived from — `organizerEventAt > organizerEventSeenAt`,
-   * with an unset `seenAt` meaning "never acknowledged". Two instants and not a flag, so every
-   * door computes the same answer from the same facts and an acknowledgement made on one of them
-   * reaches the others on their next poll.
-   *
-   * OPTIONAL, and absent withholds the line. A build that cannot tell must not announce that a
-   * mailbox changed hands.
+   * WHEN THE ORGANIZING SITUATION LAST CHANGED, AND WHEN IT WAS LAST ACKNOWLEDGED. The pair the once-only notice is
+   * derived from — `organizerEventAt > organizerEventSeenAt`, with an unset `seenAt` meaning "never acknowledged".
+   * Two instants and not a flag, so every door computes the same answer from the same facts and an acknowledgement
+   * made on one of them reaches the others on their next poll. OPTIONAL, and absent withholds the line. A build that
+   * cannot tell must not announce that a mailbox changed hands.
    */
   organizerEventAt?: string | null;
   organizerEventSeenAt?: string | null;
@@ -1067,56 +837,37 @@ export interface MailboxDTO {
   failedAt?: string | null;
   retryCount?: number;
   /**
-   * WHY a `connected` mailbox is not being synced (mail 0029) — and this is the SECOND time
-   * this exact gap has bitten.
-   *
-   * `lastSyncAt`'s comment above records the first: the server had always sent it and this
-   * client simply did not declare it, so the one fact that answers "is my mail coming down?"
-   * was on the wire and unreachable. A later repair then migrated, wrote and unconditionally PROJECTED
-   * these two (the server's mailbox DTO, whose own comment explains the asymmetry
-   * with the four `error*` fields above is the whole design), and they were undeclared here
-   * for the same reason: nothing makes a client declare a field it is not yet reading.
-   *
-   * `syncBlockedReason` is a CLOSED set of three with a CHECK constraint behind it, so unlike
-   * `errorCode` no value a mail server chose can reach it. It is typed as `string` rather than
-   * as the union because the union's owner is `app/shell/mail-state.ts`, which the Desktop
-   * mirror publishes and which may not import this file — one declaration of the set, in the
-   * place that renders it.
+   * Why a `connected` mailbox is not being synced (mail 0029) — the second
+   * time this exact gap has bitten: `lastSyncAt` was on the wire and
+   * undeclared, and these two repeated it, because nothing makes a client
+   * declare a field it is not yet reading. `syncBlockedReason` is a closed
+   * set of three with a CHECK behind it, so unlike `errorCode` no value a
+   * mail server chose can reach it. Typed `string` rather than the union:
+   * the union's owner is `app/shell/mail-state.ts`, which the Desktop
+   * mirror publishes and which may not import this file — one declaration, in the place that renders it.
    */
   syncBlockedReason?: string | null;
   syncBlockedSince?: string | null;
   /**
-   * HOW MANY OF THE USER'S OWN FILINGS THIS MAILBOX HAS NOT APPLIED YET.
-   *
-   * The API never opens IMAP — a decision writes `folder_state` and the worker performs the
-   * move on its next cycle — so between the press and that cycle the mail is filed in ohmail
-   * and not on the server. With the mail host refusing connections the gap simply does not
-   * close, and every other field on this row says the mailbox is fine: `status` is
-   * `connected`, `errorCode` is null, `syncBlockedSince` is null. This is the only field that
-   * carries the fact, which is the FOURTH time that sentence has had to be written on this
-   * type — see the three above it.
-   *
-   * OPTIONAL, and the optionality is the contract: a server that predates the column omits it
-   * entirely, and `app/shell/mail-state.ts` gates on `typeof === "number"` so an absent field
-   * says nothing rather than saying zero. A `?? 0` at any seam between here and there would
-   * turn "we do not know" into "nothing is outstanding", which is the wrong answer in exactly
-   * the case the field exists for.
+   * How many of the user's own filings this mailbox has not applied yet. The API never opens
+   * IMAP — a decision writes `folder_state` and the worker moves on its next cycle — so between
+   * press and cycle the mail is filed in ohmail and not on the server, and with the host
+   * refusing connections the gap does not close while every other field says the mailbox is
+   * fine. Optional, and the optionality is the contract: an older server omits it, and
+   * `mail-state.ts` gates on `typeof === "number"` so absent says nothing rather than zero — a
+   * `?? 0` anywhere between turns "we do not know" into "nothing is outstanding", wrong in
+   * exactly the case the field exists for.
    */
   pendingMoves?: number;
   /**
-   * WHY those filings are outstanding — the same rows split by the operand that decides
-   * (mail 0097).
-   *
-   * The field above is a COUNT, and it was the only thing on this wire, so the strip rendered one
-   * sentence for every reason a filing can be outstanding — including two in which the sentence's
-   * own second clause ("the server is catching up") is FALSE: a deferred row is not being caught
-   * up with, and on a reader install the server is not the organizer at all.
-   *
-   * OPTIONAL on {@link pendingMoves}' rule and for the same reason: absent is a server that
-   * predates the field, and the client then renders exactly what it always rendered. `app/shell/
-   * mail-state.ts` owns the arm and the closed set of refusal classes; the members are typed
-   * loosely here for the reason `syncBlockedReason` is — the set's client-side owner is that
-   * module, which may not import this file.
+   * Why those filings are outstanding — the same rows split by the operand
+   * that decides (mail 0097). The count above was the only thing on the
+   * wire, so one sentence covered every reason — including two where "the
+   * server is catching up" is FALSE: a deferred row is not being caught up
+   * with, and on a reader install the server is not the organizer.
+   * Optional on {@link pendingMoves}' rule: absent is an older server, and
+   * the client renders what it always rendered. `mail-state.ts` owns the
+   * arm and the closed set; members are typed loosely here for `syncBlockedReason`'s reason.
    */
   filing?: {
     due: number;
@@ -1129,18 +880,14 @@ export interface MailboxDTO {
     lastCycleAt: string | null;
   };
   /**
-   * WHY a `disabled` mailbox is disabled, when the lease decided it and not a person (mail
-   * 0027) — the THIRD time this gap has bitten, and the most expensive of the three.
-   *
-   * `lastSyncAt` was on the wire and undeclared; so were `syncBlockedReason`/`syncBlockedSince`.
-   * This one was worse: the field did not exist on the server DTO either, so a mailbox the
-   * organizer gate stood down had `errorCode` null, `syncBlockedSince` null and NOTHING at all
-   * to say why — observed live as a card calling a minutes-old mailbox "disconnected" under a
-   * headline saying no mailbox was connected at all.
-   *
-   * `string` rather than the union, exactly as `syncBlockedReason` above: the set's client-side
-   * owner is `app/shell/mail-state.ts`, which the Desktop mirror publishes and which may not
-   * import this file. One declaration, in the place that renders it.
+   * Why a `disabled` mailbox is disabled, when the LEASE decided it (mail
+   * 0027) — the third time this gap has bitten and the most expensive: this
+   * field did not exist on the server DTO either, so a stood-down mailbox
+   * had `errorCode` null, `syncBlockedSince` null and nothing to say why —
+   * observed live as a card calling a minutes-old mailbox "disconnected"
+   * under a headline saying none was connected. `string` rather than the
+   * union, exactly as `syncBlockedReason`: the set's client-side owner is
+   * `mail-state.ts`, which the Desktop mirror publishes.
    */
   disabledReason?: string | null;
   /**
@@ -1154,84 +901,59 @@ export interface MailboxDTO {
    */
   createdAt?: string;
   /**
-   * WHEN this mailbox's FIRST import actually finished (mail 0038). NULL until a worker cycle
-   * completes with no backlog remaining.
-   *
-   * The end-of-import signal `lastSyncAt` cannot be: that column is shared across the pass and
-   * lands after the first cycle whatever the backlog, so it says nothing about whether the import
-   * is DONE. This one is per-mailbox and late, and `app/shell/mail-state.ts` reads it as a FLOOR —
-   * a NULL keeps the strip saying "still importing" even when this client's own mirror has stopped
-   * growing, which is what stops a partial mailbox reading as complete. Optional here so a stale
-   * bundle that predates it degrades to the prior growth-only behaviour rather than crashing.
+   * When this mailbox's FIRST import actually finished (mail 0038) — NULL
+   * until a worker cycle completes with no backlog. The end-of-import
+   * signal `lastSyncAt` cannot be: that column is shared across the pass
+   * and lands after the first cycle whatever the backlog. This one is
+   * per-mailbox and late, and `mail-state.ts` reads it as a FLOOR — a NULL
+   * keeps the strip saying "still importing" even when this client's mirror
+   * has stopped growing, which stops a partial mailbox reading as complete.
+   * Optional so a stale bundle degrades to growth-only rather than crashing.
    */
   initialImportCompletedAt?: string | null;
   /**
-   * THE FORWARDING-DETECTION NOTICE's evidence pair (mail 0078). `inboundQuietSince` non-null
-   * is a standing quiet episode: the worker judged this connected, healthily-syncing mailbox to
-   * have received essentially no genuine inbound for a generous window while evidence says mail
-   * should be arriving — the shape a provider-level forward without "keep a copy" leaves, which
-   * once cost two days of debugging pointed at ohmail when the answer was upstream. The value
-   * is the newest genuine inbound date the mailbox holds ("almost nothing since {this}").
-   * `inboundQuietDismissedAt` is this mailbox's dismissal
-   * (`POST /mailboxes/:id/inbound-quiet/dismiss`).
-   *
-   * THE CLIENT OWNS THE COMPARISON — `showInboundQuiet` in the Mailboxes pane: show iff `since`
-   * is set, the health claims hold on screen (`connected`, no `syncBlockedSince`, a
-   * `lastSyncAt`), and `dismissedAt` is null or predates `since`. An undisturbed episode never
-   * re-shows after dismissal; a NEW episode's `since` is newer inbound, which only exists
-   * because mail flowed after the dismissal, and re-shows. Optional so a bundle talking to an
-   * older API reads `undefined`, renders nothing, and loses only the notice.
+   * The forwarding-detection notice's evidence pair (mail 0078). `inboundQuietSince` non-null is a
+   * standing quiet episode: the worker judged this connected, healthy mailbox to have received
+   * essentially no genuine inbound for a generous window — the shape a provider-level forward
+   * without "keep a copy" leaves, once two days of debugging pointed at ohmail. The value is the
+   * newest genuine inbound date; `inboundQuietDismissedAt` is the dismissal. The CLIENT owns the
+   * comparison (`showInboundQuiet`): show iff `since` is set, health holds on screen, and
+   * `dismissedAt` is null or predates `since` — a new episode's newer `since` re-shows. Optional:
+   * an older API reads `undefined` and loses only the notice.
    */
   inboundQuietSince?: string | null;
   inboundQuietDismissedAt?: string | null;
   /**
-   * THE BIGGEST MESSAGE THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT, in bytes (mail
-   * 0055) — the server's own `SIZE` announcement, read out of the EHLO the connect-time SMTP
-   * probe already ran, or `null` when it announced none.
-   *
-   * The compose surface states an attachment ceiling before the user picks a file, and it used to
-   * state a CONSTANT — the hosted API's request-body limit, which is a true fact about one
-   * deployment and about no mail server anywhere. This is the number that lets that promise be
-   * kept: `composeAttachCap` takes the SMALLER of the two, so a provider capping submission below
-   * the request pipeline's limit binds the form to the provider's number instead of ending in a
-   * bounce after the user has waited for the send.
-   *
-   * Optional so an API that predates the column degrades to the constant, and nullable because
-   * "the server announced nothing" is a real, common answer that resolves the same way.
+   * The biggest message this mailbox's submission server said it will accept, in bytes (mail
+   * 0055) — its own `SIZE` announcement, read from the EHLO the connect-time SMTP probe already
+   * ran, or `null` when none. The compose surface used to state a CONSTANT ceiling — the hosted
+   * API's request-body limit, a fact about one deployment and no mail server anywhere.
+   * `composeAttachCap` takes the smaller of the two, so a provider capping submission below the
+   * pipeline binds the form to the provider's number instead of a bounce after the wait.
+   * Optional (an older API degrades to the constant); nullable ("announced nothing" is real and
+   * resolves the same way).
    */
   smtpMaxSizeBytes?: number | null;
   /**
-   * HOW MUCH MAIL IS IN THIS MAILBOX — present only on a response to `?counts=1`.
-   *
-   * OPTIONAL FOR A DIFFERENT REASON FROM EVERY OTHER OPTIONAL FIELD ON THIS TYPE. The ones
-   * above are optional because an older server might not send them; this one is optional
-   * because THIS client decides, per request, whether to ask. `mailboxes.list()` omits it,
-   * `mailboxes.list({ counts: true })` gets it, and both are correct answers about the same
-   * mailbox at the same moment.
-   *
-   * So absent means "nobody asked" and `0` means "this mailbox is empty" — two different
-   * facts, and a renderer that collapses them shows "0 messages" about a full mailbox every
-   * time a countless poll lands. Read it with `typeof === "number"`; never `?? 0`.
+   * How much mail is in this mailbox — present only on a response to
+   * `?counts=1`. Optional for a DIFFERENT reason from every other field on
+   * this type: not server age, but that THIS client decides per request
+   * whether to ask — `mailboxes.list()` omits it, `list({ counts: true })`
+   * gets it, both correct about the same mailbox at the same moment. Absent
+   * means "nobody asked" and `0` means "empty" — two facts a renderer that
+   * collapses them turns into "0 messages" about a full mailbox every time
+   * a countless poll lands. `typeof === "number"`; never `?? 0`.
    */
   messageCount?: number;
   /**
-   * HOW MUCH MAIL THE SERVER SAYS IS IN THERE — the first pull's denominator (mail 0083).
-   *
-   * Σ `mailbox_folders.server_exists` over the folders some cycle has opened. Unlike
-   * {@link messageCount} it rides EVERY response, including the shell's 30 s poll, because the
-   * server takes the sum over folder rows it was already reading — there is no aggregate to opt
-   * out of.
-   *
-   * Three rules for a reader, and all three are the difference between a true number and a
-   * confident wrong one:
-   *
-   *  · `typeof === "number"`, never `?? 0`. ABSENT is "no folder of this mailbox carries a
-   *    count yet" (a first cycle that has not landed) or an API older than the field; `0` would
-   *    be the claim that the mail server holds nothing.
-   *  · It GROWS as the first cycle walks the folder tree, so it is a floor that moves and not a
-   *    fixed total. A remaining count derived from it can rise.
-   *  · It can be SMALLER than {@link messageCount} — the mirror holds mail from folders whose
-   *    count no cycle has recorded — so `remaining` is clamped at zero and shows nothing there.
+   * How much mail the server says is in there — the first pull's denominator (mail 0083): Σ
+   * `mailbox_folders.server_exists` over opened folders. Unlike {@link messageCount} it rides
+   * EVERY response, including the 30 s poll — the server sums folder rows it was already
+   * reading. Three reader rules: `typeof === "number"`, never `?? 0` (absent is "no folder
+   * carries a count yet" or an older API; `0` claims the mail server holds nothing); it GROWS
+   * as the first cycle walks the tree, a moving floor, so a derived remaining count can rise;
+   * and it can be SMALLER than {@link messageCount}, so `remaining` clamps at zero and shows
+   * nothing there.
    */
   serverMessageCount?: number;
 }
@@ -1370,21 +1092,13 @@ export const auth = {
 
   /**
    * Mint the one-use code the desktop app exchanges for a session of its own (`/link-desktop`).
-   *
-   * Step-up gated at the route, and this client does nothing about that beyond letting the
-   * refusal through: `403 step_up_required` is a fact the page has to say out loud, exactly as
-   * `SecuritySection` says it for recovery codes. Swallowing it would turn "your step-up expired"
-   * into "linking the desktop app does not work".
-   *
-   * `expiresIn` is SECONDS, and the page counts down with it rather than hard-coding two minutes:
-   * the TTL is the server's decision (`desktopLinkTtlMs`) and a second copy of it here would
-   * drift silently the first time it changed.
-   *
-   * `challenge` is the public half of a PKCE pair the desktop install invented before it opened
-   * this page, and it arrives in the page's own URL. Sending it binds the minted code to whoever
-   * holds the verifier, which is what makes it safe to hand the code back over a URL scheme.
-   * OMITTING it is not a lesser call — it is the browser flow, where nobody is holding a verifier
-   * and the code is meant to be retyped.
+   * Step-up gated at the route; this client only lets the refusal through — swallowing `403
+   * step_up_required` would turn "your step-up expired" into "linking does not work". `expiresIn`
+   * is SECONDS and the page counts down with it (the TTL is the server's `desktopLinkTtlMs`; a
+   * copy here would drift silently). `challenge` is the public half of a PKCE pair the desktop
+   * invented before opening this page; sending it binds the code to whoever holds the verifier,
+   * which is what makes handing the code back over a URL scheme safe. Omitting it is the browser
+   * flow, where the code is meant to be retyped.
    */
   desktopLink: (b: { challenge?: string } = {}) =>
     api<{ code: string; expiresIn: number }>("/auth/desktop-link", {
@@ -1475,16 +1189,13 @@ export const pair = {
   revoke: (id: string) => api<void>(`/pair/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   /**
-   * `POST /pair/redeem` with the `invite` grant: a pairing token in, an email-bound invite code
-   * out — the client's next move is `auth.register` with that code, which is the existing invite
-   * path unchanged. Anonymous by design (the redeemer has no session yet; the token IS the
-   * credential), so there is no cookie and no CSRF pair on this call — `api()` sends the CSRF
-   * header only when the cookie exists, which it does not at first-run.
-   *
-   * The one caller today is the self-host FIRST-RUN page, redeeming the setup token the server
-   * printed at boot. Whether the resulting account starts email-verified is decided by the
-   * SERVER from the consumed token's own record (ownerless first-boot token: yes), never by
-   * anything sent here — see `redeemInviteGrant` in packages/services.
+   * `POST /pair/redeem` with the `invite` grant: a pairing token in, an email-bound invite code out — the client's
+   * next move is `auth.register` with that code, which is the existing invite path unchanged. Anonymous by design
+   * (the redeemer has no session yet; the token IS the credential), so there is no cookie and no CSRF pair on this
+   * call — `api()` sends the CSRF header only when the cookie exists, which it does not at first-run. The one caller
+   * today is the self-host FIRST-RUN page, redeeming the setup token the server printed at boot. Whether the
+   * resulting account starts email-verified is decided by the SERVER from the consumed token's own record (ownerless
+   * first-boot token: yes), never by anything sent here — see `redeemInviteGrant` in packages/services.
    */
   redeemInvite: (b: { token: string; email: string }) =>
     api<{ grant: "invite"; invite: { code: string; email: string; expiresAt: string } }>(
@@ -1495,17 +1206,14 @@ export const pair = {
 // ── Devices — the sessions signed into this account, and the take-back ────────────────────
 
 /**
- * One row of `GET /devices` — a live session. `id` is the DEVICE id for a NAMED device and
- * the session's own id for a plain browser sign-in (both are what `DELETE /devices/:id`
- * takes); `label` is the pairing mint's own word for the device ("kitchen iPad") and empty
- * for a plain sign-in. `current` marks the session making the request, which is the one row
- * the pane must not offer to revoke — that verb already exists and is called signing out.
- *
- * `named` is the server's own discriminator (does a device row back this session?): `false`
- * is a plain browser sign-in, which the pane may collapse into one group; `true` is a paired
- * device or the desktop app, listed individually. OPTIONAL because an older server does not
- * send it — absent means "treat as named", i.e. the pre-grouping rendering, which degrades to
- * exactly what that server's list looked like.
+ * One row of `GET /devices` — a live session. `id` is the DEVICE id for a NAMED device and the session's own id for a
+ * plain browser sign-in (both are what `DELETE /devices/:id` takes); `label` is the pairing mint's own word for the
+ * device ("kitchen iPad") and empty for a plain sign-in. `current` marks the session making the request, which is the
+ * one row the pane must not offer to revoke — that verb already exists and is called signing out. `named` is the
+ * server's own discriminator (does a device row back this session?): `false` is a plain browser sign-in, which the
+ * pane may collapse into one group; `true` is a paired device or the desktop app, listed individually. OPTIONAL
+ * because an older server does not send it — absent means "treat as named", i.e. the pre-grouping rendering, which
+ * degrades to exactly what that server's list looked like.
  */
 export interface DeviceDTO {
   id: string;
@@ -1568,17 +1276,13 @@ export interface CreateMailboxBody {
 }
 
 /**
- * A PATCH of an existing mailbox. Partial by design — the server MERGES a transport block over
- * the stored connection params, so `{ imap: { pass } }` rotates only the password and keeps the
- * host/port/user that are already stored.
- *
- * `pass` is required whenever an `imap` block is present: it is the presence of a secret that
- * makes the server re-try the login before storing anything. A block with a corrected host and no
- * password would rewrite nothing and prove nothing, so the type forbids it — to change a host you
- * re-enter the password, which is the credential that gets tried and re-encrypted.
- *
- * The connection params (host/port/user) are never echoed by `GET /mailboxes`, so a form cannot
- * pre-fill them; an omitted field means "keep what is stored", not "clear it".
+ * A PATCH of an existing mailbox. Partial by design — the server MERGES a transport block over the stored connection
+ * params, so `{ imap: { pass } }` rotates only the password and keeps the host/port/user that are already stored.
+ * `pass` is required whenever an `imap` block is present: it is the presence of a secret that makes the server re-try
+ * the login before storing anything. A block with a corrected host and no password would rewrite nothing and prove
+ * nothing, so the type forbids it — to change a host you re-enter the password, which is the credential that gets
+ * tried and re-encrypted. The connection params (host/port/user) are never echoed by `GET /mailboxes`, so a form
+ * cannot pre-fill them; an omitted field means "keep what is stored", not "clear it".
  */
 export interface UpdateMailboxBody {
   displayName?: string | null;
@@ -1590,17 +1294,13 @@ export interface UpdateMailboxBody {
 
 export const mailboxes = {
   /**
-   * The account's mailboxes.
-   *
-   * `counts` asks the server to add `MailboxDTO.messageCount` to every row — one grouped
-   * aggregate over the account's mail. It is OFF by default and every polled caller leaves it
-   * off: `MailStateProvider` reads this route every 30 s in every open tab for the status
-   * strip, and the Settings pane reads it every 10 s while it is on screen. Ask for the count
-   * when a screen that shows it opens, not on a heartbeat.
-   *
-   * An older server ignores the parameter and answers the bare list, which is why the field is
-   * optional on the DTO and why a renderer must read it with a `typeof === "number"` guard
-   * rather than treating an absent field as zero.
+   * The account's mailboxes. `counts` asks the server to add `MailboxDTO.messageCount` to every row — one grouped
+   * aggregate over the account's mail. It is OFF by default and every polled caller leaves it off:
+   * `MailStateProvider` reads this route every 30 s in every open tab for the status strip, and the Settings pane
+   * reads it every 10 s while it is on screen. Ask for the count when a screen that shows it opens, not on a
+   * heartbeat. An older server ignores the parameter and answers the bare list, which is why the field is optional on
+   * the DTO and why a renderer must read it with a `typeof === "number"` guard rather than treating an absent field
+   * as zero.
    */
   list: (opts: { counts?: boolean } = {}) =>
     api<{ items: MailboxDTO[] }>(opts.counts ? "/mailboxes?counts=1" : "/mailboxes"),
@@ -1627,27 +1327,18 @@ export const mailboxes = {
   create: (b: CreateMailboxBody) => api<MailboxDTO>("/mailboxes", { method: "POST", body: b }),
 
   /**
-   * TEST A CONNECTION WITHOUT CREATING ANYTHING — `POST /mailboxes/probe`.
-   *
-   * `connection`-classed and `stepUp`-gated with {@link create}, because the body carries a
-   * mailbox password; it has no `:id` because the whole point is that no row exists yet. It
-   * writes nothing at all — no mailbox, no credential, no folder.
-   *
-   * ── THE FAILURE SHAPE IS `create`'s, BY CONSTRUCTION ────────────────────────────────────
-   *
-   * The server throws the SAME `mailbox_probe_failed` refusal with the same seven-member
-   * `details.reason` taxonomy, so `probeReasonOf` classifies both and every surface that renders
-   * a connect failure renders a test failure with no new copy. Only SUCCESS is new: nothing in
-   * this product could previously produce one.
-   *
-   * ── AND SUCCESS CARRIES A FOLDER COUNT, WHICH IS THE CHECKABLE PART ────────────────────
-   *
-   * A greeting and an accepted LOGIN prove the host, the port, the TLS mode and the password.
-   * They do not prove the account can READ anything, and "Connected" is a claim nobody can check.
-   * The LIST runs inside the connection that proved the password — a second dial would be a
-   * second login, outside the admission slot and charged again by providers that rate-limit auth.
-   * `folders` is `null` where no count was taken; a renderer shows a verdict with no number
-   * rather than "0 folders".
+   * Test a connection without creating anything — `POST /mailboxes/probe`. `connection`-classed and `stepUp`-gated
+   * with {@link create}, because the body carries a mailbox password; no `:id` because no row exists yet, and it
+   * writes nothing at all. The failure shape is `create`'s by construction: the server throws the same
+   * `mailbox_probe_failed` refusal with the same seven-member `details.reason` taxonomy, so `probeReasonOf`
+   * classifies both and every connect-failure surface renders a test failure with no new copy. Only SUCCESS is new,
+   * and it carries a folder count — the checkable part: a greeting and an accepted LOGIN prove host, port, TLS and
+   * password but not that the account can READ anything. The LIST runs inside the connection that proved the password
+   * (a second dial would be a second login, charged again by providers that rate-limit auth).
+   */
+
+  /**
+   * `folders` is `null` where no count was taken; a renderer shows a verdict with no number rather than "0 folders".
    */
   probe: (b: {
     address: string;
@@ -1670,53 +1361,40 @@ export const mailboxes = {
     api<MailboxDTO>(`/mailboxes/${id}`, { method: "PATCH", body: b }),
 
   /**
-   * REMOVE A MAILBOX — stop organizing it, and forget the login stored for it.
-   *
-   * `stepUp`-gated with `create` and `update`, and for the mirror image of their reason: those
-   * two STORE a mailbox password, this one DESTROYS the stored credential and ends the mail
-   * flowing into an account. The route has existed since the mailbox surface was built and until
-   * now nothing in any client called it — the only way to disconnect a mailbox was to ask
-   * somebody with database access.
-   *
-   * 204, and it is a SOFT delete on the server: the row stays because `messages.mailbox_id`
-   * references it, the credential rows go, the lease columns are cleared, and the pending
-   * scheduled sends are closed with a sentence. Nothing reaches the IMAP mailbox — no folder is
-   * touched and no message is deleted there — which is the load-bearing claim the confirmation
-   * makes and the reason it can be made at all.
+   * REMOVE A MAILBOX — stop organizing it, and forget the login stored for it. `stepUp`-gated with `create` and
+   * `update`, and for the mirror image of their reason: those two STORE a mailbox password, this one DESTROYS the
+   * stored credential and ends the mail flowing into an account. The route has existed since the mailbox surface was
+   * built and until now nothing in any client called it — the only way to disconnect a mailbox was to ask somebody
+   * with database access. 204, and it is a SOFT delete on the server: the row stays because `messages.mailbox_id`
+   * references it, the credential rows go, the lease columns are cleared, and the pending scheduled sends are closed
+   * with a sentence. Nothing reaches the IMAP mailbox — no folder is touched and no message is deleted there — which
+   * is the load-bearing claim the confirmation makes and the reason it can be made at all.
    */
   remove: (id: string) => api<void>(`/mailboxes/${id}`, { method: "DELETE" }),
 
   /**
-   * WHO IS ORGANIZING THIS MAILBOX RIGHT NOW, read from the mailbox itself.
-   *
-   * Exactly one ohmail organizes a mailbox at a time, and the claim lives in an unsubscribed
-   * `ohmail/_meta` folder because that is the only thing a desktop install and Cloud both see. When
-   * Cloud loses a mailbox it records why and stops — and from then on nothing re-reads the claim,
-   * so the stored reason is a snapshot of the moment it stood down and not an answer to "is that
-   * install still running?". This asks the mailbox.
-   *
-   * A short-lived IMAP connection, so it is not free and is not polled. It is read once, when
-   * somebody is about to decide something.
+   * WHO IS ORGANIZING THIS MAILBOX RIGHT NOW, read from the mailbox itself. Exactly one ohmail organizes a mailbox at
+   * a time, and the claim lives in an unsubscribed `ohmail/_meta` folder because that is the only thing a desktop
+   * install and Cloud both see. When Cloud loses a mailbox it records why and stops — and from then on nothing
+   * re-reads the claim, so the stored reason is a snapshot of the moment it stood down and not an answer to "is that
+   * install still running?". This asks the mailbox. A short-lived IMAP connection, so it is not free and is not
+   * polled. It is read once, when somebody is about to decide something.
    */
   organizer: (id: string) => api<OrganizerPeek>(`/mailboxes/${id}/organizer`),
 
   /**
-   * Ask Cloud to organize a mailbox it stood down from.
-   *
-   * It authorizes ONE attempt and does not win anything: the worker reads the claim on its next
-   * pass and decides. If another install is still renewing and outranks us, this side stays a
-   * reader and the authorization is spent with it. Step-up-gated — it decides who moves somebody's
-   * mail, and the body may carry a mailbox password.
-   *
-   * RENAMED from `takeover`. The old name was true of the only case that existed — wresting a
-   * mailbox back from another install — and false of the case that is now the common one: the
-   * FIRST consent, where there is nobody to take it over from. Both halves are one ceremony and
-   * one route.
-   *
-   * `imap.pass` re-proves the login before anything is written, for the claim-back whose stored
-   * password the provider has since invalidated; `screening` carries the onboarding window, which
-   * must ride the same transaction as the consent because the window is measured from a baseline
-   * the consent is what writes.
+   * Ask Cloud to organize a mailbox it stood down from. It authorizes ONE attempt and does not win anything: the
+   * worker reads the claim on its next pass and decides. If another install is still renewing and outranks us, this
+   * side stays a reader and the authorization is spent with it. Step-up-gated — it decides who moves somebody's mail,
+   * and the body may carry a mailbox password. RENAMED from `takeover`. The old name was true of the only case that
+   * existed — wresting a mailbox back from another install — and false of the case that is now the common one: the
+   * FIRST consent, where there is nobody to take it over from. Both halves are one ceremony and one route.
+   */
+
+  /**
+   * `imap.pass` re-proves the login before anything is written, for the claim-back whose stored password the provider
+   * has since invalidated; `screening` carries the onboarding window, which must ride the same transaction as the
+   * consent because the window is measured from a baseline the consent is what writes.
    */
   organize: (id: string, body: {
     imap?: { pass: string };
@@ -1725,17 +1403,13 @@ export const mailboxes = {
     api<MailboxTakeover>(`/mailboxes/${id}/organize`, { method: "POST", body }),
 
   /**
-   * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP THE MAIL.
-   *
-   * The mirror of {@link organize}, and NOT step-up-gated, which is the asymmetry worth stating
-   * rather than smoothing over. A second factor guards the direction that TAKES CONTROL of
-   * somebody's mail; this direction gives it up, keeps every credential and every message, and is
-   * reversible with one press of the button beside it. Gating it would mean a person who has lost
-   * their second factor cannot stop a machine from filing their mail.
-   *
-   * It records the request and does not perform it: the claim lives in the mailbox itself, so only
-   * the process holding that connection can give it up. `requested` is answered 202 for that
-   * reason — the ceasing happens on the organizer's next pass, within a minute.
+   * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP THE MAIL. The mirror of {@link organize}, and NOT step-up-gated,
+   * which is the asymmetry worth stating rather than smoothing over. A second factor guards the direction that TAKES
+   * CONTROL of somebody's mail; this direction gives it up, keeps every credential and every message, and is
+   * reversible with one press of the button beside it. Gating it would mean a person who has lost their second factor
+   * cannot stop a machine from filing their mail. It records the request and does not perform it: the claim lives in
+   * the mailbox itself, so only the process holding that connection can give it up. `requested` is answered 202 for
+   * that reason — the ceasing happens on the organizer's next pass, within a minute.
    */
   release: (id: string) =>
     api<MailboxRelease>(`/mailboxes/${id}/release`, { method: "POST", body: {} }),
@@ -1754,20 +1428,19 @@ export const mailboxes = {
     api<MailboxDTO>(`/mailboxes/${id}/organizer-notice/dismiss`, { method: "POST", body: {} }),
 
   /**
-   * BEGIN the Microsoft consent ceremony. Returns the URL to navigate to at TOP LEVEL.
-   *
-   * It is a URL and not a redirect this call follows, and that is not a style choice: a `fetch`
-   * cannot follow a cross-origin redirect AND change the document, and Microsoft's consent screen
-   * sets `X-Frame-Options`, so an iframe is impossible and a popup is blocked in the common case.
-   * The caller does `window.location.assign(authorizeUrl)`.
-   *
-   * `mailboxId` is optional and buys ONE thing: a `login_hint`, so somebody reconnecting an expired
-   * mailbox is offered the right Microsoft account first. It does NOT decide which mailbox row the
-   * ceremony writes — the address in Microsoft's `id_token` does — so a person who ignores the hint
-   * and signs in as somebody else gets that other mailbox rather than this row repointed.
-   *
-   * 503 `oauth_unconfigured` is a first-class answer: the deployment has not finished setting the
-   * Entra application up. The caller renders the server's sentence, as everywhere else.
+   * BEGIN the Microsoft consent ceremony. Returns the URL to navigate to at TOP LEVEL. It is a URL and not a redirect
+   * this call follows, and that is not a style choice: a `fetch` cannot follow a cross-origin redirect AND change the
+   * document, and Microsoft's consent screen sets `X-Frame-Options`, so an iframe is impossible and a popup is
+   * blocked in the common case. The caller does `window.location.assign(authorizeUrl)`. `mailboxId` is optional and
+   * buys ONE thing: a `login_hint`, so somebody reconnecting an expired mailbox is offered the right Microsoft
+   * account first.
+   */
+
+  /**
+   * It does NOT decide which mailbox row the ceremony writes — the address in Microsoft's `id_token` does — so a
+   * person who ignores the hint and signs in as somebody else gets that other mailbox rather than this row repointed.
+   * 503 `oauth_unconfigured` is a first-class answer: the deployment has not finished setting the Entra application
+   * up. The caller renders the server's sentence, as everywhere else.
    */
   oauthStart: (b: { mailboxId?: string; returnTo?: string } = {}) =>
     api<{ authorizeUrl: string; state: string }>("/mailboxes/oauth/microsoft/start", { method: "POST", body: b }),
@@ -1786,17 +1459,14 @@ export const mailboxes = {
     api<{ available: boolean; device?: boolean }>("/mailboxes/oauth/microsoft/availability"),
 
   /**
-   * BEGIN THE DEVICE-CODE CEREMONY — the door an install that is not ohmail.app connects Outlook
-   * through, and the only one available to a server whose operator has no Entra registration.
-   *
-   * There is no URL to navigate to and no redirect anywhere in this flow. The answer is a short code
-   * and a URL the person opens themselves, on whatever device they like; the tokens are issued
-   * straight to their own server. The caller renders the code and then drives {@link deviceOAuthPoll}.
-   *
-   * `device` from {@link oauthAvailability} is the gate — offered only where a public client is
-   * configured, so this is never a call that returns 503. 503 `oauth_device_unconfigured` is still a
-   * first-class answer for the race where an operator unsets the variable mid-ceremony, and its
-   * sentence names the variable, as the server's sentences always do.
+   * BEGIN THE DEVICE-CODE CEREMONY — the door an install that is not ohmail.app connects Outlook through, and the
+   * only one available to a server whose operator has no Entra registration. There is no URL to navigate to and no
+   * redirect anywhere in this flow. The answer is a short code and a URL the person opens themselves, on whatever
+   * device they like; the tokens are issued straight to their own server. The caller renders the code and then drives
+   * {@link deviceOAuthPoll}. `device` from {@link oauthAvailability} is the gate — offered only where a public client
+   * is configured, so this is never a call that returns 503. 503 `oauth_device_unconfigured` is still a first-class
+   * answer for the race where an operator unsets the variable mid-ceremony, and its sentence names the variable, as
+   * the server's sentences always do.
    */
   deviceOAuthStart: () =>
     api<{
@@ -1805,17 +1475,14 @@ export const mailboxes = {
     }>("/mailboxes/oauth/microsoft/device/start", { method: "POST", body: {} }),
 
   /**
-   * ONE POLL. Called repeatedly at the cadence the SERVER states, never at one this client picks.
-   *
-   * `retryAfterMs` is authoritative: the interval belongs to Microsoft (RFC 8628 §3.5 — `slow_down`
-   * widens it cumulatively) and the client id being throttled is shared by every install using the
-   * public registration, so a client that polled faster would degrade the flow for other people's
-   * servers. The server refuses an early poll outright without spending a request on Microsoft, so
-   * ignoring this value buys nothing anyway — it is stated so the honest client and the enforced
-   * behaviour are the same thing.
-   *
-   * `status` is the whole state machine. `pending` re-arms; `declined` and `expired` are terminal
-   * and not errors — somebody said no, or ran out of time; `granted` carries the stored mailbox.
+   * ONE POLL. Called repeatedly at the cadence the SERVER states, never at one this client picks. `retryAfterMs` is
+   * authoritative: the interval belongs to Microsoft (RFC 8628 §3.5 — `slow_down` widens it cumulatively) and the
+   * client id being throttled is shared by every install using the public registration, so a client that polled
+   * faster would degrade the flow for other people's servers. The server refuses an early poll outright without
+   * spending a request on Microsoft, so ignoring this value buys nothing anyway — it is stated so the honest client
+   * and the enforced behaviour are the same thing. `status` is the whole state machine. `pending` re-arms; `declined`
+   * and `expired` are terminal and not errors — somebody said no, or ran out of time; `granted` carries the stored
+   * mailbox.
    */
   deviceOAuthPoll: (b: { state: string }) =>
     api<{
@@ -1829,16 +1496,13 @@ export const mailboxes = {
     }>("/mailboxes/oauth/microsoft/device/poll", { method: "POST", body: b }),
 
   /**
-   * FINISH it — the SAME-SITE half, and the reason the ceremony is three steps rather than two.
-   *
-   * `tf_session` is `SameSite=Strict`, so the browser withholds it on the cross-site top-level
-   * navigation back from Microsoft: the API's `GET …/callback` cannot see a session and does not try
-   * to. It bounces the browser here instead, and THIS call — same-origin, cookie and CSRF header
-   * both present — is where the ceremony is spent, the session's account is checked against the one
-   * that started it, and the mailbox is stored.
-   *
-   * Single-use: a second call with the same `state` is 400, which is what makes a replayed redirect
-   * (a refresh, a shared link) harmless rather than a second mailbox.
+   * FINISH it — the SAME-SITE half, and the reason the ceremony is three steps rather than two. `tf_session` is
+   * `SameSite=Strict`, so the browser withholds it on the cross-site top-level navigation back from Microsoft: the
+   * API's `GET …/callback` cannot see a session and does not try to. It bounces the browser here instead, and THIS
+   * call — same-origin, cookie and CSRF header both present — is where the ceremony is spent, the session's account
+   * is checked against the one that started it, and the mailbox is stored. Single-use: a second call with the same
+   * `state` is 400, which is what makes a replayed redirect (a refresh, a shared link) harmless rather than a second
+   * mailbox.
    */
   oauthComplete: (b: { state: string; code: string }) =>
     api<{ mailbox: MailboxDTO; created: boolean; returnTo: string | null }>(
@@ -2026,18 +1690,14 @@ export interface ConsentStateWire {
    */
   dormancyDays: number;
   /**
-   * WHEN this account finished screening its backlog — the instant the dormancy window is
-   * measured back from — or null for "never decided anything, measure from now" (mail 0056).
-   *
-   * Optional in the type, and the three states collapse the way {@link autoSuggestAt}'s do rather
-   * than the way `blockRemoteImagesAt`'s do NOT: `null` (a server that read the row and found no
-   * baseline) and `undefined` (an API deployed before mail 0056) both mean the client partitions
-   * with the sliding window, which is what it did before this field existed. Nothing here is a
-   * safety branch — the worst case of not knowing is the old churn, not somebody's mail being
-   * hidden. The one thing a reader must not do is invent a baseline for either state.
-   *
-   * It is the SECOND half of the cutline arithmetic and must be read together with
-   * {@link dormancyDays}: cutoff = `(screeningBaselineAt ?? now) - dormancyDays`.
+   * WHEN this account finished screening its backlog — the instant the dormancy window is measured back from — or
+   * null for "never decided anything, measure from now" (mail 0056). Optional in the type, and the three states
+   * collapse the way {@link autoSuggestAt}'s do rather than the way `blockRemoteImagesAt`'s do NOT: `null` (a server
+   * that read the row and found no baseline) and `undefined` (an API deployed before mail 0056) both mean the client
+   * partitions with the sliding window, which is what it did before this field existed. Nothing here is a safety
+   * branch — the worst case of not knowing is the old churn, not somebody's mail being hidden. The one thing a reader
+   * must not do is invent a baseline for either state. It is the SECOND half of the cutline arithmetic and must be
+   * read together with {@link dormancyDays}: cutoff = `(screeningBaselineAt ?? now) - dormancyDays`.
    */
   screeningBaselineAt?: string | null;
   /**
@@ -2098,33 +1758,25 @@ export interface ConsentStateWire {
    */
   signaturesHtml?: Record<string, string>;
   /**
-   * WHEN this account turned OFF auto-unsubscribe on screen-out, or null for the product default —
-   * which is that screening a sender out, or marking them spam, also sends the sender's one-click
-   * unsubscribe request.
-   *
-   * Optional, and here `null` and `undefined` ARE the same answer, unlike
-   * {@link blockRemoteImagesAt} one field up. Both mean "no stored opt-out has reached this
-   * build", and both must resolve to the SAME branch — ON — because what the client does with
-   * this value is decide whether to TELL somebody, before they click, that a screen-out will also
-   * leave the sender's list. The server has its own copy and will act on it regardless, so a
-   * client that resolved "I do not know" to OFF would drop the disclosure of an irreversible
-   * request that is still going out. Collapsing them is the correct direction, not the convenient
-   * one.
+   * WHEN this account turned OFF auto-unsubscribe on screen-out, or null for the product default — which is that
+   * screening a sender out, or marking them spam, also sends the sender's one-click unsubscribe request. Optional,
+   * and here `null` and `undefined` ARE the same answer, unlike {@link blockRemoteImagesAt} one field up. Both mean
+   * "no stored opt-out has reached this build", and both must resolve to the SAME branch — ON — because what the
+   * client does with this value is decide whether to TELL somebody, before they click, that a screen-out will also
+   * leave the sender's list. The server has its own copy and will act on it regardless, so a client that resolved "I
+   * do not know" to OFF would drop the disclosure of an irreversible request that is still going out. Collapsing them
+   * is the correct direction, not the convenient one.
    */
   blockAutoUnsubscribeAt?: string | null;
   /**
-   * THE ACCOUNT'S INTERFACE LANGUAGE — `'de'`, or `null` for "this account has no preference".
-   *
-   * Optional, and here `null` and `undefined` genuinely ARE the same answer, unlike
-   * {@link blockRemoteImagesAt} one field up: both mean "nothing from the account, so keep whatever
-   * language this device remembered". An API too old to carry the field and an account that never
-   * opened the selector leave the reader in exactly the same place, and neither may override a
-   * device — so collapsing them is correct rather than convenient.
-   *
-   * A string that is not a supported locale cannot arrive: the column's CHECK closes the set and
-   * `consentSettings` refuses an unsupported value on the read side as well. The client normalises
-   * anyway (`normalizeLocale`), because a boot path that trusts a wire string is one deploy skew
-   * away from asking for a catalogue that does not exist.
+   * THE ACCOUNT'S INTERFACE LANGUAGE — `'de'`, or `null` for "this account has no preference". Optional, and here
+   * `null` and `undefined` genuinely ARE the same answer, unlike {@link blockRemoteImagesAt} one field up: both mean
+   * "nothing from the account, so keep whatever language this device remembered". An API too old to carry the field
+   * and an account that never opened the selector leave the reader in exactly the same place, and neither may
+   * override a device — so collapsing them is correct rather than convenient. A string that is not a supported locale
+   * cannot arrive: the column's CHECK closes the set and `consentSettings` refuses an unsupported value on the read
+   * side as well. The client normalises anyway (`normalizeLocale`), because a boot path that trusts a wire string is
+   * one deploy skew away from asking for a catalogue that does not exist.
    */
   locale?: string | null;
   /**
@@ -2137,16 +1789,13 @@ export interface ConsentStateWire {
    */
   themeFace?: string | null;
   /**
-   * WHEN THE FIRST-RUN FLOW WAS LAST LEFT — finished or cancelled — or `null` for "never"
-   * (mail 0083). The last of the onboarding truth-conditions, and the only one about the flow
-   * itself rather than about the mailbox.
-   *
-   * Optional, and `null` and `undefined` collapse to the SAME branch — open the flow — which is
-   * the correct direction rather than the convenient one. An API too old to carry the column and
-   * an account that has never been through the flow leave the reader in the same place, and the
-   * cost of being wrong that way is an overlay with a Cancel on it. Resolving an unknown to
-   * "completed" would be the expensive mistake: it hides first-run setup from an account that has
-   * never seen it, and there is no other route into consent on the standalone door.
+   * WHEN THE FIRST-RUN FLOW WAS LAST LEFT — finished or cancelled — or `null` for "never" (mail 0083). The last of
+   * the onboarding truth-conditions, and the only one about the flow itself rather than about the mailbox. Optional,
+   * and `null` and `undefined` collapse to the SAME branch — open the flow — which is the correct direction rather
+   * than the convenient one. An API too old to carry the column and an account that has never been through the flow
+   * leave the reader in the same place, and the cost of being wrong that way is an overlay with a Cancel on it.
+   * Resolving an unknown to "completed" would be the expensive mistake: it hides first-run setup from an account that
+   * has never seen it, and there is no other route into consent on the standalone door.
    */
   onboardingCompletedAt?: string | null;
   /**
@@ -2183,33 +1832,29 @@ export interface SeedReviewWire {
 }
 
 /**
- * Onboarding consent — the sent-mail seed, the dormancy dial and the screening reset.
- *
- * `dormancyDays` reaches the client HERE rather than through the sync feed, and deliberately:
- * it is one integer per account that moves about as often as somebody changes their mind
- * about what "recent" means. Growing the delta vocabulary for it would mean a new entity type
- * in every change-log writer, in the wire union and in the mirror, for a value with no
- * history worth replaying and no delete to represent. The precedent is the one the schema
- * already documents for per-account settings tables: served over REST, refetched.
- *
- * The dial IS writable, through {@link consent.setDormancyDays} → `PATCH /consent/settings`, which
- * shares one route with {@link consent.setAutoSuggest}: two independent knobs, field-present ⇒
- * acted-on. The write echoes the EFFECTIVE window back (always a number), and the caller sets its
- * hook state from that echo so the open tab re-partitions with the value the server actually stored.
- * It is a settings write only — the dial changes what the Screener SHOWS, never where mail lives.
+ * Onboarding consent — the sent-mail seed, the dormancy dial and the screening reset. `dormancyDays` reaches the
+ * client HERE rather than through the sync feed, and deliberately: it is one integer per account that moves about as
+ * often as somebody changes their mind about what "recent" means. Growing the delta vocabulary for it would mean a
+ * new entity type in every change-log writer, in the wire union and in the mirror, for a value with no history worth
+ * replaying and no delete to represent. The precedent is the one the schema already documents for per-account
+ * settings tables: served over REST, refetched. The dial IS writable, through {@link consent.setDormancyDays} →
+ * `PATCH /consent/settings`, which shares one route with {@link consent.setAutoSuggest}: two independent knobs,
+ * field-present ⇒ acted-on.
+ */
+
+/**
+ * The write echoes the EFFECTIVE window back (always a number), and the caller sets its hook state from that echo so
+ * the open tab re-partitions with the value the server actually stored. It is a settings write only — the dial
+ * changes what the Screener SHOWS, never where mail lives.
  */
 /**
- * WAKE REGISTRATIONS — the three calls that let this browser be woken while it is closed.
- *
- * `vapidKey` comes FIRST and is not optional: a browser subscribes by handing its push service a
- * server's public key, and from then on renders only wakes signed by the matching private half.
- * The key is per-deployment — the hosted service, an operator's own install — so it has to be
- * asked for rather than compiled in. A deployment with no keypair answers `null`, which is a
- * supported state and not a failure: the app says so and does not subscribe.
- *
- * `subscribe` sends the three values a `PushSubscription` yields and nothing else. No device
- * name, no locale, no account field — the row is keyed by the endpoint, and the session is what
- * says whose it is.
+ * WAKE REGISTRATIONS — the three calls that let this browser be woken while it is closed. `vapidKey` comes FIRST and
+ * is not optional: a browser subscribes by handing its push service a server's public key, and from then on renders
+ * only wakes signed by the matching private half. The key is per-deployment — the hosted service, an operator's own
+ * install — so it has to be asked for rather than compiled in. A deployment with no keypair answers `null`, which is
+ * a supported state and not a failure: the app says so and does not subscribe. `subscribe` sends the three values a
+ * `PushSubscription` yields and nothing else. No device name, no locale, no account field — the row is keyed by the
+ * endpoint, and the session is what says whose it is.
  */
 export const push = {
   vapidKey: () => api<{ publicKey: string | null }>("/push/vapid-key"),
@@ -2226,15 +1871,11 @@ export const push = {
 export const consent = {
   state: () => api<ConsentStateWire>("/consent"),
   /**
-   * TURN AUTO-SUGGEST ON OR OFF. The only account setting this client can write.
-   *
-   * `enabled` is sent as a real boolean because the route refuses anything else — an absent or
-   * non-boolean field is a 400 rather than a silent opt-out, so a bug here surfaces as a refusal
-   * instead of as suggestions that quietly stopped.
-   *
-   * No `Idempotency-Key`: setting a flag to the same value twice is the same state, and the only
-   * thing a replay moves is the recorded instant. The response echoes what the DATABASE holds,
-   * so the caller updates from that rather than from what it asked for.
+   * TURN AUTO-SUGGEST ON OR OFF. The only account setting this client can write. `enabled` is sent as a real boolean
+   * because the route refuses anything else — an absent or non-boolean field is a 400 rather than a silent opt-out,
+   * so a bug here surfaces as a refusal instead of as suggestions that quietly stopped. No `Idempotency-Key`: setting
+   * a flag to the same value twice is the same state, and the only thing a replay moves is the recorded instant. The
+   * response echoes what the DATABASE holds, so the caller updates from that rather than from what it asked for.
    */
   setAutoSuggest: (enabled: boolean) =>
     api<{ autoSuggestAt: string | null }>("/consent/settings", {
@@ -2242,23 +1883,20 @@ export const consent = {
       body: { autoSuggest: enabled },
     }),
   /**
-   * SET THE DORMANCY WINDOW — the cutline dial, on the SAME route as {@link consent.setAutoSuggest}
-   * with `dormancyDays` in the body instead of `autoSuggest` (field-present ⇒ acted-on, so the two
-   * never touch each other's column).
-   *
-   * ── AND "ALL TIME", WHICH IS THIS SAME DIAL'S OTHER ANSWER ─────────────────────────────
- *
- * `scope` is `'window'` (the cutline is `screeningBaselineAt − dormancyDays`) or `'all_time'`
- * (no cutline at all). It rides THIS call rather than one of its own because the two are one
- * answer to one question, and the server writes them in one upsert for the same reason. Either
- * argument may be omitted and omitted means UNTOUCHED, in both directions; the echo carries back
- * only the halves that were named.
- *
- * `days` is an integer 1–365, or `null` to revert to the product default. The server refuses
-   * anything outside the band with a 400 rather than storing a value that would later crash the
-   * `GET /consent` read, and it NEVER stores the default itself — so the response's `dormancyDays`
-   * is the EFFECTIVE window (a null store reads back as the default). The caller updates its hook
-   * from that echo, which is what re-partitions the open tab.
+   * SET THE DORMANCY WINDOW — the cutline dial, on the SAME route as {@link consent.setAutoSuggest} with
+   * `dormancyDays` in the body instead of `autoSuggest` (field-present ⇒ acted-on, so the two never touch each
+   * other's column). AND "ALL TIME", WHICH IS THIS SAME DIAL'S OTHER ANSWER: `scope` is `'window'` (the cutline is
+   * `screeningBaselineAt − dormancyDays`) or `'all_time'` (no cutline at all). It rides THIS call rather than one of
+   * its own because the two are one answer to one question, and the server writes them in one upsert for the same
+   * reason. Either argument may be omitted and omitted means UNTOUCHED, in both directions; the echo carries back
+   * only the halves that were named. `days` is an integer 1–365, or `null` to revert to the product default.
+   */
+
+  /**
+   * The server refuses anything outside the band with a 400 rather than storing a value that would later crash the
+   * `GET /consent` read, and it NEVER stores the default itself — so the response's `dormancyDays` is the EFFECTIVE
+   * window (a null store reads back as the default). The caller updates its hook from that echo, which is what
+   * re-partitions the open tab.
    */
   setDormancyDays: (days: number | null | undefined, scope?: "window" | "all_time") =>
     api<{ dormancyDays?: number; screeningScope?: "window" | "all_time" }>("/consent/settings", {
@@ -2272,16 +1910,12 @@ export const consent = {
       },
     }),
   /**
-   * KEEP THE PER-MESSAGE "SHOW IMAGES" FLOW, OR LET IMAGES LOAD — the third knob on the same
-   * route (field-present ⇒ acted-on, so it never touches the other two columns).
-   *
-   * `blocked: true` stores the OPT-OUT; `false` clears it and returns the account to the product
-   * default. The response echoes the stored instant (`null` when images load), and the caller sets
-   * its state from that echo — a refused write must not be drawn as a move, and here a write drawn
-   * as a move in the wrong direction would start loading remote content.
-   *
-   * The route refuses anything that is not a real boolean, so a malformed body is a 400 rather
-   * than a silently cleared opt-out.
+   * KEEP THE PER-MESSAGE "SHOW IMAGES" FLOW, OR LET IMAGES LOAD — the third knob on the same route (field-present ⇒
+   * acted-on, so it never touches the other two columns). `blocked: true` stores the OPT-OUT; `false` clears it and
+   * returns the account to the product default. The response echoes the stored instant (`null` when images load), and
+   * the caller sets its state from that echo — a refused write must not be drawn as a move, and here a write drawn as
+   * a move in the wrong direction would start loading remote content. The route refuses anything that is not a real
+   * boolean, so a malformed body is a 400 rather than a silently cleared opt-out.
    */
   /**
    * TURN "USE FOLDERS" ON OR OFF — the folders feature's master toggle (FOLDERS-SPEC.md §6), on
@@ -2328,16 +1962,12 @@ export const consent = {
     }),
   /**
    * THE FIRST-RUN FLOW HAS BEEN LEFT — finished or cancelled (mail 0083), on the same route with
-   * `onboardingCompleted` in the body (field-present ⇒ acted-on).
-   *
-   * It takes NO argument because the wire accepts only `true`: there is no un-complete
-   * instruction, so a boolean parameter would be a control with an unreachable position. Both
-   * endings call it, which is the ruling — the stamp answers "should this open by itself again",
-   * and both answers to that are no.
-   *
-   * It is deliberately NOT the consent write. Consent, the baseline, the window and the scope
-   * land together inside `POST /mailboxes/:id/organize`'s transaction; this is the flow's own
-   * bookkeeping, so a cancel BEFORE consent records the cancel and authorises nothing.
+   * `onboardingCompleted` in the body (field-present ⇒ acted-on). It takes NO argument because the wire accepts only
+   * `true`: there is no un-complete instruction, so a boolean parameter would be a control with an unreachable
+   * position. Both endings call it, which is the ruling — the stamp answers "should this open by itself again", and
+   * both answers to that are no. It is deliberately NOT the consent write. Consent, the baseline, the window and the
+   * scope land together inside `POST /mailboxes/:id/organize`'s transaction; this is the flow's own bookkeeping, so a
+   * cancel BEFORE consent records the cancel and authorises nothing.
    */
   completeOnboarding: () =>
     api<{ onboardingCompletedAt: string }>("/consent/settings", {
@@ -2355,17 +1985,13 @@ export const consent = {
       body: { blockTrackingPixels: blocked },
     }),
   /**
-   * KEEP AUTO-UNSUBSCRIBE ON SCREEN-OUT, OR STOP IT — the fifth knob on the same route
-   * (field-present ⇒ acted-on, so it never touches the other four columns).
-   *
-   * `blocked: true` stores the OPT-OUT; `false` clears it and returns the account to the product
-   * default. The response echoes the stored instant (`null` when the pass runs), and the caller
-   * sets its state from that echo: a refused write drawn as a move would tell somebody their lists
-   * are being left alone while the server goes on leaving them, which is the one direction of this
-   * control that matters.
-   *
-   * The route refuses anything that is not a real boolean, so a malformed body is a 400 rather
-   * than a silently cleared opt-out.
+   * KEEP AUTO-UNSUBSCRIBE ON SCREEN-OUT, OR STOP IT — the fifth knob on the same route (field-present ⇒ acted-on, so
+   * it never touches the other four columns). `blocked: true` stores the OPT-OUT; `false` clears it and returns the
+   * account to the product default. The response echoes the stored instant (`null` when the pass runs), and the
+   * caller sets its state from that echo: a refused write drawn as a move would tell somebody their lists are being
+   * left alone while the server goes on leaving them, which is the one direction of this control that matters. The
+   * route refuses anything that is not a real boolean, so a malformed body is a 400 rather than a silently cleared
+   * opt-out.
    */
   setBlockAutoUnsubscribe: (blocked: boolean) =>
     api<{ blockAutoUnsubscribeAt: string | null }>("/consent/settings", {
@@ -2373,16 +1999,13 @@ export const consent = {
       body: { blockAutoUnsubscribe: blocked },
     }),
   /**
-   * SET THE INTERFACE LANGUAGE — the fourth knob on the same route (field-present ⇒ acted-on).
-   *
-   * Resolves to the STORED value, which is not always the one that was asked for: the service never
-   * stores the default, so `setLocale("en")` answers `null`. The caller must apply the ECHO —
-   * `AccountLocale` does — because `null` is what tells this and every other device that the account
-   * has stopped overriding their remembered language. Applying the argument instead would leave one
-   * tab believing the account still says English while the row says nothing.
-   *
-   * `null` is a legal argument and means "back to the default"; it is NOT the same as omitting the
-   * field, which would leave the stored value untouched.
+   * SET THE INTERFACE LANGUAGE — the fourth knob on the same route (field-present ⇒ acted-on). Resolves to the STORED
+   * value, which is not always the one that was asked for: the service never stores the default, so `setLocale("en")`
+   * answers `null`. The caller must apply the ECHO — `AccountLocale` does — because `null` is what tells this and
+   * every other device that the account has stopped overriding their remembered language. Applying the argument
+   * instead would leave one tab believing the account still says English while the row says nothing. `null` is a
+   * legal argument and means "back to the default"; it is NOT the same as omitting the field, which would leave the
+   * stored value untouched.
    */
   setLocale: (locale: string | null) =>
     api<{ locale: string | null }>("/consent/settings", {
@@ -2458,41 +2081,37 @@ export interface AwayResponderWire {
    */
   throttle: "always" | "per_message" | "per_day" | "per_week";
   /**
-   * WHICH PILES GET A REPLY — folder names, `['INBOX']` for a responder nobody has widened.
-   *
-   * The second dimension beside `audience`, answering a different question: `audience` is about a
-   * SENDER (past the Screener, decided once), this is about WHERE their mail landed. A sender let
-   * in once whose later mail files to Reads is still "somebody I've let in", which is how eight
-   * automatic replies reached shop and notification senders.
-   *
-   * FOLDERS, not pile words — the Ohbox pile's folder is `INBOX`. `AWAY_PILE_VIEW` and
-   * `awayEffectivePiles` (`@trafficflow/core/away-scope`) translate for display, and the settings
-   * control imports the offered set from there so it cannot offer a pile the server refuses.
-   *
-   * PUT IS A FULL REPLACE, so this field is not optional for a caller: omitting it resets the
-   * scope to the Ohbox. An EMPTY array is "answer nobody" and is stored as asked.
-   *
-   * `ohmail/Screener` is only storable beside `audience: "everyone"` — the server answers 400 for
-   * the other pair, and the control disables that box.
+   * WHICH PILES GET A REPLY — folder names, `['INBOX']` for a responder nobody has widened. The second dimension
+   * beside `audience`, answering a different question: `audience` is about a SENDER (past the Screener, decided
+   * once), this is about WHERE their mail landed. A sender let in once whose later mail files to Reads is still
+   * "somebody I've let in", which is how eight automatic replies reached shop and notification senders. FOLDERS, not
+   * pile words — the Ohbox pile's folder is `INBOX`. `AWAY_PILE_VIEW` and `awayEffectivePiles`
+   * (`@trafficflow/core/away-scope`) translate for display, and the settings control imports the offered set from
+   * there so it cannot offer a pile the server refuses. PUT IS A FULL REPLACE, so this field is not optional for a
+   * caller: omitting it resets the scope to the Ohbox. An EMPTY array is "answer nobody" and is stored as asked.
+   */
+
+  /**
+   * `ohmail/Screener` is only storable beside `audience: "everyone"` — the server answers 400 for the other pair, and
+   * the control disables that box.
    */
   piles: ("INBOX" | "ohmail/Reads" | "ohmail/Receipts" | "ohmail/Screener")[];
   updatedAt: string | null;
 }
 
 /**
- * The away responder. REST-only, like the consent settings above and for the same reason:
- * one row per account that changes when somebody goes on holiday.
- *
- * `PUT` IS A FULL REPLACE, and every caller has to treat it as one. The route stores exactly the
- * fields in the body and defaults the ones that are absent — an omitted `audience` becomes
- * `screened_in`, the narrow member — so a partial write is a silent reset of whatever it left out,
- * never a merge. `AwayResponderRow` therefore sends the whole row back and never a single field.
- *
- * No `Idempotency-Key`: the upsert is keyed on the account, so a replay stores the same row twice
- * and the only thing that moves is `updatedAt`. That is not free — `updatedAt` is the away
- * responder's ENABLEMENT EPISODE, so a replay lets each correspondent be answered once more — which
- * is why this client never retries the call automatically and why the row's control is a deliberate
- * press rather than a debounced autosave.
+ * The away responder. REST-only, like the consent settings above and for the same reason: one row per account that
+ * changes when somebody goes on holiday. `PUT` IS A FULL REPLACE, and every caller has to treat it as one. The route
+ * stores exactly the fields in the body and defaults the ones that are absent — an omitted `audience` becomes
+ * `screened_in`, the narrow member — so a partial write is a silent reset of whatever it left out, never a merge.
+ * `AwayResponderRow` therefore sends the whole row back and never a single field. No `Idempotency-Key`: the upsert is
+ * keyed on the account, so a replay stores the same row twice and the only thing that moves is `updatedAt`.
+ */
+
+/**
+ * That is not free — `updatedAt` is the away responder's ENABLEMENT EPISODE, so a replay lets each correspondent be
+ * answered once more — which is why this client never retries the call automatically and why the row's control is a
+ * deliberate press rather than a debounced autosave.
  */
 /**
  * WHAT A SAVE ANSWERS — the row, plus the one discriminator a 202 carries.
@@ -2516,15 +2135,11 @@ export const away = {
 
 export const account = {
   /**
-   * `DELETE /account` — Art. 17 erasure.
-   *
-   * `stepUp`-gated, and unlike `POST /mailboxes` there is no window in which a caller is
-   * already fresh: nothing but a completed second factor sets `sessions.last_twofa_at`, and
-   * the window is five minutes. So `AccountSection` runs the sign-in ceremony immediately
-   * before calling this, rather than calling it optimistically and translating the 403.
-   *
-   * No body: `withRequestGuard` only demands `application/json` of a request that HAS one, and
-   * this call's whole payload is the session it is authenticated by.
+   * `DELETE /account` — Art. 17 erasure. `stepUp`-gated, and unlike `POST /mailboxes` there is no window in which a
+   * caller is already fresh: nothing but a completed second factor sets `sessions.last_twofa_at`, and the window is
+   * five minutes. So `AccountSection` runs the sign-in ceremony immediately before calling this, rather than calling
+   * it optimistically and translating the 403. No body: `withRequestGuard` only demands `application/json` of a
+   * request that HAS one, and this call's whole payload is the session it is authenticated by.
    */
   /*
    * ON THE CEREMONY LIST, and it was the one real writer the hand-written census missed.
@@ -2591,18 +2206,13 @@ export const privacy = {
 // ── Screener suggestions ─────────────────────────────────────────────────────────────────
 
 /**
- * WHY THE SCREENER HAS A CLIENT HERE AT ALL, WHEN ITS ROWS COME FROM `/sync`.
- *
- * The waiting queue this app renders is DERIVED from the message mirror
- * (`@ohmail/client-engine`'s `screenerSegments`), not from `GET /screener`, and the delta
- * stream carries no suggestion — a suggestion is advice about mail, not a change to it, so
- * nothing puts one in `/sync`. That is the whole reason every waiting row used to show
- * "no suggestion": there was no path by which one could arrive.
- *
- * These two calls are that path, and they are deliberately the only ones. `GET /screener`
- * reads what has already been bought (it spends nothing) and `POST /screener/suggest` buys
- * more, for a sender set the client names explicitly. Neither replaces the mirror as the
- * source of the rows; both are joined onto it by sender address.
+ * WHY THE SCREENER HAS A CLIENT HERE AT ALL, WHEN ITS ROWS COME FROM `/sync`. The waiting queue this app renders is
+ * DERIVED from the message mirror (`@ohmail/client-engine`'s `screenerSegments`), not from `GET /screener`, and the
+ * delta stream carries no suggestion — a suggestion is advice about mail, not a change to it, so nothing puts one in
+ * `/sync`. That is the whole reason every waiting row used to show "no suggestion": there was no path by which one
+ * could arrive. These two calls are that path, and they are deliberately the only ones. `GET /screener` reads what
+ * has already been bought (it spends nothing) and `POST /screener/suggest` buys more, for a sender set the client
+ * names explicitly. Neither replaces the mirror as the source of the rows; both are joined onto it by sender address.
  */
 export interface ScreenerWireItem {
   id: string;
@@ -2628,18 +2238,13 @@ export interface ScreenerWirePage {
    */
   suggestable: { senders: string[]; credits: number; maxPerRequest: number };
   /**
-   * SENDERS THIS INSTALL HAS DECIDED ON THAT ITS ORGANIZER HAS NOT CARRIED OUT YET.
-   *
-   * They are ALREADY EXCLUDED from {@link items}, which is what makes this field load-bearing
-   * rather than informational: without it the exclusion is a disappearance, and a sender who left
-   * the queue on a press a person made yesterday has nothing on screen accounting for them.
-   *
-   * OPTIONAL, and absent means "none known" — a server deployed before the field, and every
-   * install that organizes its own mailboxes. Both want the same thing, which is nothing shown.
-   *
-   * `state` and `reason` are read structurally rather than switched on: an organizer that starts
-   * answering with an outcome this build has never heard of should render the generic sentence,
-   * not a raw token.
+   * SENDERS THIS INSTALL HAS DECIDED ON THAT ITS ORGANIZER HAS NOT CARRIED OUT YET. They are ALREADY EXCLUDED from
+   * {@link items}, which is what makes this field load-bearing rather than informational: without it the exclusion is
+   * a disappearance, and a sender who left the queue on a press a person made yesterday has nothing on screen
+   * accounting for them. OPTIONAL, and absent means "none known" — a server deployed before the field, and every
+   * install that organizes its own mailboxes. Both want the same thing, which is nothing shown. `state` and `reason`
+   * are read structurally rather than switched on: an organizer that starts answering with an outcome this build has
+   * never heard of should render the generic sentence, not a raw token.
    */
   pendingDecisions?: Array<{
     subject: string;
@@ -2680,17 +2285,13 @@ export interface ScreenerSuggestWire {
   /** Set when the spend gate stopped the run PART-WAY; absent on a run that served everything. */
   stopped?: "out_of_credits" | "spend_unavailable";
   /**
-   * WHAT IS LEFT ON THE ACCOUNT after this request — the server's ledger read, never ours.
-   *
-   * The one number a person wants after being told what a run cost, and the one this client is
-   * categorically not allowed to compute. Subtracting `charged` from a remembered figure is a
-   * shadow ledger: wrong after a renewal, a refund, an expiry or a second tab, and wrong in the
-   * direction that tells somebody they have credits they do not. Invariant #10 — the side that
-   * moves the money is the side that names it.
-   *
-   * OPTIONAL, and absent means NO ANSWER, never zero: an unmetered deployment has no ledger to
-   * read and a courtesy read that failed is not a balance of nothing. `summarize` omits the
-   * clause entirely rather than rendering a number it had to invent.
+   * WHAT IS LEFT ON THE ACCOUNT after this request — the server's ledger read, never ours. The one number a person
+   * wants after being told what a run cost, and the one this client is categorically not allowed to compute.
+   * Subtracting `charged` from a remembered figure is a shadow ledger: wrong after a renewal, a refund, an expiry or
+   * a second tab, and wrong in the direction that tells somebody they have credits they do not. Invariant #10 — the
+   * side that moves the money is the side that names it. OPTIONAL, and absent means NO ANSWER, never zero: an
+   * unmetered deployment has no ledger to read and a courtesy read that failed is not a balance of nothing.
+   * `summarize` omits the clause entirely rather than rendering a number it had to invent.
    */
   remainingCredits?: number;
   suggestions: Array<{
@@ -2843,6 +2444,73 @@ export interface JunkPageWire {
   nextCursor: string | null;
 }
 
+// ── The Trash window — a LIVE, un-mirrored read of the provider's own \Trash ──────────────
+// The Trash VIEW's own list is the mirror (`engine.listTrash`): what ohmail deleted, with its
+// origin folder and its restore. These two answer the other population — mail deleted in
+// another mail client, which the sync never reads. Both are GET; neither writes anything, here
+// or on the server (`packages/api/src/trash-window.ts` carries the argument and its own test
+// counts the mirror tables around every read). There is no third verb and there is no POST:
+// "put it back" has no destination for a message the mirror has never held.
+
+export const trashWindow = {
+  /** One merged newest-first page across the account's Trash folders. `cursor` pages older. */
+  list: (opts: { cursor?: string } = {}) =>
+    api<TrashWindowPageWire>(
+      `/trash/window${opts.cursor ? `?cursor=${encodeURIComponent(opts.cursor)}` : ""}`,
+    ),
+
+  /**
+   * One live row's body, fetched live and parsed to TEXT — never HTML, never stored. Trash
+   * holds whatever was deleted, spam included, so it renders on the Junk window's terms.
+   * Epoch-bound: `uidValidity` is the row's own, and a folder emptied since answers 410 rather
+   * than the body of whatever message now wears the UID.
+   */
+  body: (mailboxId: string, uid: number, uidValidity: string) =>
+    api<{ subject: string; text: string }>(
+      `/trash/window/body?mailboxId=${encodeURIComponent(mailboxId)}&uid=${uid}`
+        + `&uidValidity=${encodeURIComponent(uidValidity)}`,
+    ),
+};
+
+/** One row of the live Trash window — a header fact read off the folder, never a mirror entity. */
+export interface TrashWindowItemWire {
+  mailboxId: string;
+  uid: number;
+  uidValidity: string;
+  subject: string;
+  from: { name: string | null; address: string };
+  date: string | null;
+  messageIdHeader: string | null;
+  seen: boolean;
+  /**
+   * WHO PUT IT THERE. `"ohmail"` — the message matches a mirror row this account deleted here,
+   * so the mirrored section already lists it with its deletion time and its restore; the client
+   * drops those from the live population rather than showing one message twice. `"provider"` —
+   * the person's own delete in another mail client, or the mail server's own filing.
+   */
+  origin: "ohmail" | "provider";
+}
+
+export interface TrashWindowMailboxWire {
+  id: string;
+  address: string;
+  /**
+   * This mailbox's own outcome, stated instead of thrown: `"ok"` — the folder was read;
+   * `"no_trash_folder"` — it has no native \Trash, so there is nothing to show;
+   * `"unreachable"` — the read failed or ran past the server's budget just now. An empty list is
+   * never substituted for the last of those.
+   */
+  window: "ok" | "no_trash_folder" | "unreachable";
+  /** This mailbox's cursor was discarded (UIDVALIDITY changed) — its rows are a fresh TOP page. */
+  reset?: boolean;
+}
+
+export interface TrashWindowPageWire {
+  mailboxes: TrashWindowMailboxWire[];
+  items: TrashWindowItemWire[];
+  nextCursor: string | null;
+}
+
 // ── WebAuthn browser glue ────────────────────────────────────────────────────────────────
 
 /**
@@ -2985,18 +2653,14 @@ function isSessionBusy(err: unknown): boolean {
 
 export function messageOf(err: unknown): string {
   if (err instanceof ApiError) return err.message;
-  /*
-   * ── THE ONE REFUSAL THIS CLIENT RAISES THAT IS NOT AN `ApiError` ──────────────────────────
-   *
-   * `SessionBusyError` is thrown when another tab has held the origin-wide session lock past the
-   * deadline. Its own message says what happened and what to do — "another tab is finishing a
-   * sign-in or sign-out, try that again in a moment" — and every surface renders refusals through
-   * this function, which dropped it to "Something went wrong. Please try again."
-   *
-   * That is worse than losing detail. The person is looking at a form that refused for a reason
-   * that clears by itself in seconds, and the generic sentence gives them no way to know that;
-   * the published note for the lock change promised them this sentence, so the claim was false as
-   * well as unhelpful. Matched by CODE rather than by class, because importing the class here
+  /**
+   * THE ONE REFUSAL THIS CLIENT RAISES THAT IS NOT AN `ApiError`: `SessionBusyError` is thrown when another tab has
+   * held the origin-wide session lock past the deadline. Its own message says what happened and what to do — "another
+   * tab is finishing a sign-in or sign-out, try that again in a moment" — and every surface renders refusals through
+   * this function, which dropped it to "Something went wrong. Please try again." That is worse than losing detail.
+   * The person is looking at a form that refused for a reason that clears by itself in seconds, and the generic
+   * sentence gives them no way to know that; the published note for the lock change promised them this sentence, so
+   * the claim was false as well as unhelpful. Matched by CODE rather than by class, because importing the class here
    * would make `api-client` depend on `session-refresh`, which depends on it.
    */
   if (isSessionBusy(err)) return (err as Error).message;

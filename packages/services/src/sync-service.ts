@@ -25,15 +25,13 @@ export const SYNC_CURSOR_MAX_CHARS = 32;
 export const SNAPSHOT_CURSOR_MAX_CHARS = 512;
 
 /**
- * THE RANGE THE COLUMN ACCEPTS, not the range `Date` can hold — see the same note in
- * `pagination.ts`, where this was found first and then found again here.
- *
- * `Date#getTime()` spans ±8.64e15 ms; `timestamptz` spans 4713 BC to 294276 AD. The upper end of
- * `Date`'s range is inside the column's, so the maximum is safe as written; the LOWER end is not,
- * and a snapshot cursor carrying `"d": -8640000000000000` reached PostgreSQL as a timestamp
- * before 4713 BC — a 500 for a caller-supplied cursor, on a route that otherwise answers 410 for
- * exactly this. Two decoders repeated the same substitution of the producer's range for the
- * sink's, independently, which is why both now name the sink.
+ * THE RANGE THE COLUMN ACCEPTS, not the range `Date` can hold — the same note as `pagination.ts`,
+ * found there first and again here. `Date#getTime()` spans ±8.64e15 ms; `timestamptz` spans 4713
+ * BC to 294276 AD. The upper end of `Date`'s range is inside the column's, so the maximum is
+ * safe; the LOWER end is not — a snapshot cursor carrying `"d": -8640000000000000` reached
+ * PostgreSQL as a pre-4713 BC timestamp, a 500 for a caller-supplied cursor on a route that
+ * otherwise answers 410. Two decoders substituted the producer's range for the sink's
+ * independently, which is why both now name the sink.
  */
 const MAX_EPOCH_MS = 8_640_000_000_000_000;
 /** PostgreSQL's `timestamptz` floor, 4713-01-01 BC, in milliseconds from the epoch. */
@@ -73,28 +71,14 @@ const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 2000;
 
 /**
- * ── THE BACKLOG DIET'S ENGAGEMENT THRESHOLD (INSTANT-ARCH §6.3 / §8 stage 3) ─────────────────
- *
- * A resuming cursor whose span behind the horizon (`max(seq) − since`, exact — the per-account
- * seq is gap-free) exceeds this many changes is served COALESCED pages: the latest change per
- * entity within a bounded scan window, materialized at CURRENT state exactly as every delta row
- * already is. A span at or below it takes the plain page path, byte-identical to the deployed
- * shape.
- *
- * WHY 500 — one DEFAULT page. Below one page's worth of rows, coalescing cannot save a round
- * trip (the whole span fits the page either way) and the dedup gain is a few duplicate upserts
- * the client's seq guard absorbs for free; keeping the steady-state poll on the long-proven
- * path bounds this optimization's blast radius to exactly the backlog case it was measured
- * for. Above one page, every deduped row is wire and apply saved, and every dropped PAGE is a
- * whole serverless invocation saved — measured p50 1,084 ms per page on the live path
- * (2026-08-29, a live account), of which ~0.4 s is fixed per-request cost that no per-row work
- * can reduce.
- *
- * WHY COALESCING IS EQUIVALENCE-PRESERVING, in one sentence: `getChanges` re-materializes the
- * CURRENT entity for every row it returns (it never replays history), so N changes to one
- * entity are N copies of the SAME final upsert and delivering only the newest one converges the
- * mirror to the identical state — deletions included, because the latest change of a dead
- * entity materializes null and tombstones exactly as the plain path does.
+ * THE BACKLOG DIET'S ENGAGEMENT THRESHOLD. A resuming cursor whose span behind the horizon
+ * (`max(seq) − since`, exact — the seq is gap-free) exceeds this is served COALESCED pages: the
+ * latest change per entity in a bounded scan window, materialized at CURRENT state. At or below
+ * it, the plain page path — byte-identical to the deployed shape. WHY 500 — one DEFAULT page:
+ * below that, coalescing saves no round trip; above it every dropped PAGE is a whole invocation
+ * saved (measured p50 1,084 ms per page). EQUIVALENCE-PRESERVING because `getChanges`
+ * re-materializes the CURRENT entity per row — N changes are N copies of the SAME final upsert; a
+ * dead entity's latest change materializes null and tombstones.
  */
 export const STALE_COALESCE_SPAN = 500;
 
@@ -132,14 +116,12 @@ export interface GetSnapshotOptions {
 
 /**
  * The decoded snapshot cursor: the point in time the whole snapshot reads at, plus where in the
- * newest-first message stream this page resumes.
- *
- * `date`/`id` are the keyset — the LAST row of the previous page, not an offset. An OFFSET would
- * make every page a different consistent point in the presence of concurrent ingest, which is
- * the one thing a bootstrap cannot afford: a row inserted at the front shifts every subsequent
- * offset by one and a message is skipped for ever. A keyset walks a fixed ordering, so an insert
- * at the front (which is where new mail lands, being the newest) is simply not in the window —
- * and the delta from `asOfSeq` delivers it, which is exactly right.
+ * newest-first message stream this page resumes. `date`/`id` are the keyset — the LAST row of the
+ * previous page, not an offset: an OFFSET makes every page a different consistent point under
+ * concurrent ingest, the one thing a bootstrap cannot afford — a row inserted at the front shifts
+ * every later offset and a message is skipped for ever. A keyset walks a fixed ordering, so an
+ * insert at the front (where new mail lands) is simply not in the window — and the delta from
+ * `asOfSeq` delivers it, which is exactly right.
  */
 interface SnapshotCursor {
   asOfSeq: bigint;
@@ -159,16 +141,12 @@ interface SnapshotCursor {
 }
 
 /**
- * The delta `/sync` reader. Reads `change_log` ascending by seq,
- * re-materializes the CURRENT DTO per row, tombstones rows whose live entity is
- * gone, and never advances the cursor past a change it dropped.
- *
- * A steady-state cursor (span ≤ {@link STALE_COALESCE_SPAN}) is served one change per log row,
- * no compaction — the deployed shape, byte for byte. A STALE cursor is served COALESCED pages
- * (the latest change per entity within a bounded window — see the constants above and the mode
- * comment in {@link SyncService.getChanges}), which is sound precisely BECAUSE this reader
- * projects current state rather than history: the skipped rows are superseded copies of the
- * same upsert.
+ * The delta `/sync` reader. Reads `change_log` ascending by seq, re-materializes the CURRENT DTO
+ * per row, tombstones rows whose live entity is gone, and never advances the cursor past a change
+ * it dropped. A steady-state cursor (span ≤ `STALE_COALESCE_SPAN`) is served one change per log
+ * row — the deployed shape, byte for byte. A STALE cursor is served COALESCED pages (the latest
+ * change per entity within a bounded window), sound precisely BECAUSE this reader projects
+ * current state rather than history: the skipped rows are superseded copies of the same upsert.
  */
 export class SyncService {
   /** Opaque base64 of the per-account high-water seq. */
@@ -177,21 +155,14 @@ export class SyncService {
   }
 
   /**
-   * Inverse of {@link encodeCursor}. A cursor we cannot parse is treated as expired (410) — the
-   * client re-bootstraps with `since="0"`, which heals it.
-   *
-   * ── AND IT IS BOUNDED, BEFORE THE DECODE ────────────────────────────────────────────────
-   *
-   * `?since=` is caller-chosen and was bounded by nothing: an arbitrarily long base64 string was
-   * fully decoded, regex-scanned end to end and handed to `BigInt`, which is superlinear in its
-   * digit count. The census recorded it as an `identifier`, a disposition whose whole content is
-   * that the shape test is the bound — and the shape test ran after the work.
-   *
-   * {@link SYNC_CURSOR_MAX_CHARS} is generous against what this ever emits: a `change_log` seq is
-   * a `bigserial`, so nineteen digits covers everything it can reach and 32 base64url characters
-   * covers that with room. `.length` is O(1), so an absurd cursor costs nothing. Nineteen DIGITS
-   * is not the range, though — `9999999999999999999` has nineteen of them and is larger than the
-   * column holds — so the value is checked against {@link MAX_BIGSERIAL} as well.
+   * Inverse of `encodeCursor`. A cursor we cannot parse is treated as expired (410) — the client
+   * re-bootstraps with `since="0"`. BOUNDED BEFORE THE DECODE: `?since=` was bounded by nothing —
+   * an arbitrarily long base64 string was fully decoded, regex-scanned and handed to `BigInt`,
+   * superlinear in digit count; the census's `identifier` disposition assumed the shape test was
+   * the bound, and the shape test ran after the work. `SYNC_CURSOR_MAX_CHARS` is generous: a
+   * `bigserial` seq is nineteen digits, 32 base64url characters covers that. Nineteen DIGITS is
+   * not the range — `9999999999999999999` exceeds the column — so the value is checked against
+   * `MAX_BIGSERIAL` too.
    */
   decodeCursor(cursor: string): bigint {
     try {
@@ -270,49 +241,14 @@ export class SyncService {
   }
 
   /**
-   * THE ACCOUNT'S HIGH-WATER **COMMITTED** SEQ — and the whole of the gap-free delta contract
-   * lives here.
-   *
-   * ── WHAT MUST BE TRUE ────────────────────────────────────────────────────────────────────
-   *
-   * A snapshot that reports `asOfSeq = N` must have seen every change up to and including N,
-   * because the client sets its delta cursor to N and will therefore never be told about
-   * anything ≤ N again. Report a seq the projection did not actually cover and that row is
-   * permanently missing from the mirror — silently, and only for the account that was being
-   * written to at that instant.
-   *
-   * ── WHY `max(change_log.seq)` IS THAT VALUE, AND `account_sync_state.next_seq` IS NOT ─────
-   *
-   * `allocateSeqRange` takes the account's `account_sync_state` ROW LOCK and holds it to COMMIT
-   * (`packages/db/src/change-log.ts`). So seq N's transaction commits strictly BEFORE N+1 is
-   * even allocated, and `change_log` rows therefore become visible in seq order. Under READ
-   * COMMITTED that gives the property this whole endpoint rests on: **if a reader can see seq N,
-   * every seq below N is already committed and visible to it too.** No gap can be open beneath a
-   * seq we can observe. That is the same discipline `getChanges` relies on when it takes the max
-   * seq of the page it returned as the client's next cursor — this is not a second mechanism,
-   * it is the same one read from the same table.
-   *
-   * The counter is deliberately NOT the source. `next_seq` names the last seq ALLOCATED, and
-   * `greatest(next_seq, max(seq))` can leave it above the log after a restore. A snapshot that
-   * took its `asOfSeq` from the counter would hand the client a cursor pointing past changes the
-   * projection never saw and the delta will never resend, which is exactly the hole described
-   * above. Reading the log instead can only ever be CONSERVATIVE — a seq is re-delivered, the
-   * client's older-or-equal guard absorbs it — and conservative is the safe direction.
-   *
-   * ── AND WHY NO LOCK IS TAKEN HERE ────────────────────────────────────────────────────────
-   *
-   * Taking the counter row lock for a read would serialize every snapshot request against every
-   * writer on the account, for no gain: the ordering guarantee above is already established by
-   * the writers' lock. A read that adds its own lock buys nothing and blocks ingest.
-   *
-   * ── THE ORDERING CONSTRAINT ON THE CALLER ────────────────────────────────────────────────
-   *
-   * This must run BEFORE any entity is read. Read it first and every row projected afterwards is
-   * at least as new as `asOfSeq`, so anything newer arrives again through the delta and the
-   * client's seq guard lets it win. Read it AFTER, and the projection can be OLDER than the
-   * cursor it ships with — the stale row is never re-sent and the mirror is wrong for ever.
-   * `sync-snapshot-seq.pg.test.ts` drives exactly that race on real Postgres; PGlite is single
-   * connection and cannot see it.
+   * THE ACCOUNT'S HIGH-WATER **COMMITTED** SEQ — the whole gap-free delta contract. A snapshot
+   * reporting `asOfSeq = N` must have seen everything ≤ N: the client never asks again, so a
+   * missed row is missing for ever. `max(change_log.seq)` IS that value: `allocateSeqRange` holds
+   * the counter row lock to COMMIT, so rows become visible in seq order. The counter (`next_seq`)
+   * is NOT the source: it names the last seq ALLOCATED and can sit above the log after a restore;
+   * the log read is only ever CONSERVATIVE. NO LOCK HERE: the writers' lock establishes the
+   * ordering. MUST RUN BEFORE ANY ENTITY IS READ — after, the projection can be older than its
+   * cursor (`sync-snapshot-seq.pg.test.ts` drives the race on real Postgres).
    */
   private async highWaterSeq(db: Db, accountId: string): Promise<bigint> {
     const rows = await db
@@ -330,38 +266,15 @@ export class SyncService {
     // since omitted / "0" ⇒ bootstrap (full replay from seq 0).
     const sinceSeq = opts.since && opts.since !== "0" ? this.decodeCursor(opts.since) : 0n;
 
-    // ── BOTH ENDS OF THE CURSOR WINDOW, FROM ONE READ ────────────────────────────────────────
-    //
-    // A resuming cursor is only serviceable when it names a point INSIDE this account's log.
-    // There are two ways out of it, and only the first used to be checked:
-    //
-    //  · BELOW the floor — the changes between the cursor and the oldest retained row are gone
-    //    and cannot be reconstructed;
-    //  · ABOVE the ceiling — the cursor names a seq the account never issued, so `seq > since`
-    //    matches nothing NOW AND FOREVER. That answered 200 with an empty delta on every poll,
-    //    for the life of the mirror: the client kept its cursor (an empty page returns `since`
-    //    unchanged), never learned another change, and every optimistic edit appeared to revert
-    //    as its overlay drained onto a mirror that could no longer be updated. Nothing errored,
-    //    nothing logged, and no surface in the product could show it — measured live on an
-    //    account whose mirror held seq 2173 against a log whose max was 1684.
-    //
-    // Both are unrecoverable in the same way and get the same answer, which is the one the
-    // client already knows how to act on: 410 `cursor_expired` → discard, re-snapshot, adopt a
-    // fresh cursor. See `OhmailEngine.drain` (browser and desktop share it) and the sidecar
-    // mirror's `drainSync`.
-    //
-    // THE RACE POSTURE IS "TOLERATE IT IN THE SAFE DIRECTION". These bounds are read in one
-    // statement of their own, not in a transaction with the page read below. A change that
-    // commits in between only RAISES `max`, so the worst it can do is let a cursor that was
-    // momentarily above the ceiling through — a single extra empty 200, self-healing on the
-    // next poll. The failure this replaces is empty-FOREVER; a transient empty-200 is not the
-    // same class of thing, and serializing the reader against every writer on the account to
-    // remove it would cost far more than it buys. A FALSE 410 would need `max(seq)` to move
-    // BACKWARDS, which nothing but account erasure does — and that takes the account with it.
-    //
-    // `sinceSeq === 0n` is the bootstrap and skips all of it, which is what keeps a brand-new
-    // account's first poll a plain empty 200 rather than a 410: an empty log has no ceiling to
-    // be above, and the cursor an empty account is handed decodes back to 0.
+    // BOTH ENDS OF THE CURSOR WINDOW, FROM ONE READ. A resuming cursor must name a point INSIDE
+    // this account's log; two ways out, and only the first used to be checked. BELOW the floor —
+    // the changes are pruned. ABOVE the ceiling — a seq the account never issued: `seq > since`
+    // matches nothing FOREVER, a 200 with an empty delta on every poll, every optimistic edit
+    // appearing to revert (measured live: a mirror at seq 2173 against a log max of 1684). Both
+    // answer 410 `cursor_expired` → re-snapshot. RACE POSTURE: tolerate in the safe direction — a
+    // change committing in between only RAISES `max`, so the worst case is one extra empty 200; a
+    // FALSE 410 needs `max(seq)` to move backwards, which only account erasure does. `sinceSeq
+    // === 0n` skips all of it — an empty log has no ceiling.
     let horizonSeq: bigint | null = null;
     if (sinceSeq > 0n) {
       const { min: minSeq, max: maxSeq } = await seqBounds(db, accountId);
@@ -385,52 +298,16 @@ export class SyncService {
       filters.push(inArray(changeLog.entityType, opts.types));
     }
 
-    // ── THE BACKLOG DIET (INSTANT-ARCH §6.3): a stale cursor is served COALESCED pages ──────
-    //
-    // The span is exact, not estimated — the per-account seq is gap-free by construction
-    // (`allocateSeqRange` holds the counter row lock to commit), so `max − since` IS the number
-    // of change rows behind this cursor, read from the bounds the 410 checks already fetched.
-    // Zero added queries decide the mode.
-    //
-    // The coalesced page: scan the next {@link COALESCE_SCAN_WINDOW} span rows in seq order,
-    // keep the LATEST change per (entity_type, entity_id), emit those in FIRST-APPEARANCE
-    // order (each entity's lowest in-window seq), cut at `limit`. Every emitted row then flows
-    // through the SAME prefetch/materialize/bucket pipeline the plain page uses — the diet
-    // changes which log rows are read, never what is said about them.
-    //
-    // ── WHY FIRST-APPEARANCE ORDER, NOT LATEST-SEQ ORDER ───────────────
-    //
-    // The desktop's relational mirror FK-guards its applies: a `message_state` whose message
-    // is absent is SKIPPED, on the standing assumption that the parent's change carries a
-    // lower seq and lands first — true of the plain path by construction (a child row can only
-    // be written after its parent exists, so the parent's create commits at a lower seq).
-    // Latest-seq ordering broke exactly that: a message created in-window, its state written
-    // next, then the message updated hundreds of changes later would emit STATE-then-MESSAGE,
-    // and a page cut between them commits the cursor past the state's only change — skipped by
-    // the FK guard, never re-delivered, missing for ever. First-appearance order restores the
-    // plain path's property across page cuts: a parent created in-window has
-    // `min(parent) ≤ its create < child's create ≤ min(child)`, so the parent is always
-    // emitted first (at its CURRENT content); a parent created below the window is below the
-    // resuming cursor and therefore already mirrored, exactly the plain path's own posture.
-    //
-    // ── WHY THE PER-PAGE CURSOR STAYS HONEST (the delta contract obligation) ────────────────
-    //
-    // The cursor promises "nothing at or below me will be re-sent". The entity page is fetched
-    // with ONE LOOKAHEAD entity beyond the cut, and a CUT page's cursor is that unemitted
-    // entity's first-seq MINUS ONE: every entity with any change at or below the cursor has a
-    // min at or below it and was therefore emitted (at CURRENT state, which supersedes
-    // everything the skipped intermediate rows said — deletions included, since a dead
-    // entity's latest change materializes null → tombstone); every unemitted in-window entity
-    // has its min — hence ALL its changes — above the cursor, and everything beyond the window
-    // is above every window seq, so a crash between pages re-delivers all of it from the new
-    // cursor. An emitted entity whose newest changes sit above the cut is simply re-emitted by
-    // a later window — a duplicate upsert of current state, absorbed by the client's
-    // older-or-equal seq guard, the same property that makes re-reading any page free
-    // (entities straddling the scan window ride the same rule). The lookahead is what keeps a
-    // cut page's cursor MOVING: anchoring it to the last EMITTED entity's first-seq instead
-    // would crawl one seq per page whenever an emitted entity's churn tail spans the window.
-    // A page with NO lookahead entity consumed its whole window, so the cursor advances to the
-    // window's own max seq and the drain converges without re-scanning superseded rows.
+    // THE BACKLOG DIET: a stale cursor is served COALESCED pages. The span is exact, read from
+    // the bounds the 410 checks fetched — zero added queries decide the mode. The page: scan
+    // `COALESCE_SCAN_WINDOW` rows in seq order, keep the LATEST change per entity, emit in
+    // FIRST-APPEARANCE order, cut at `limit`; every emitted row flows through the SAME
+    // materialize pipeline. FIRST-APPEARANCE, NOT LATEST-SEQ: the desktop mirror FK-guards its
+    // applies assuming a parent's create carries a lower seq; latest-seq order could emit
+    // STATE-then-MESSAGE and a page cut between them skips the state for ever. THE CURSOR STAYS
+    // HONEST: the page is fetched with ONE LOOKAHEAD entity, and a CUT page's cursor is that
+    // entity's first-seq MINUS ONE — the lookahead keeps a cut page's cursor MOVING. No lookahead
+    // ⇒ the window was consumed and the cursor advances to its max seq.
     const span = horizonSeq !== null ? horizonSeq - sinceSeq : 0n;
     const coalesced = span > BigInt(STALE_COALESCE_SPAN);
 
@@ -493,27 +370,14 @@ export class SyncService {
     const deletes: SyncChange[] = [];
 
     /**
-     * PREFETCH THE PAGE'S MESSAGES IN THREE QUERIES, before the loop.
-     *
-     * The loop below used to call `materialize()` per row, and for a message that is three
-     * sequential round-trips. At the 500-row default that is 1 500 of them, enough to run past
-     * the function timeout on a large mailbox — so `/sync` returned nothing and every view in the
-     * client rendered empty. Bootstrapping such a mailbox would have taken minutes of wall clock
-     * spread over dozens of pages.
-     *
-     * `message` AND `thread` are prefetched because they are the two types that appear in
-     * volume — ingest records a thread create or update beside nearly every message create, so a
-     * catch-up page is dominated by the pair of them. `thread` learned this the way `message`
-     * did, measured rather than assumed: `materializeThread` is three sequential round-trips,
-     * so a 500-change page carrying a couple hundred thread changes pays hundreds of serial
-     * round-trips — measured in the tens of seconds against a remote database, which is the
-     * difference between a resume that converges and one that visibly hangs.
-     * `materializeThreads` (three queries whatever the count) already served the
-     * snapshot reader; a page of hundreds now costs what a page of one costs on both paths.
-     *
-     * The other six types stay on the per-row path, which is correct and rare. Both batch
-     * readers apply the same `accountId` predicate the per-row calls did, so this changes cost
-     * and nothing else.
+     * PREFETCH THE PAGE'S MESSAGES IN THREE QUERIES, before the loop. The loop used to call
+     * `materialize()` per row — three sequential round trips per message, 1,500 at the 500-row
+     * default, enough to run past the function timeout: `/sync` returned nothing and every view
+     * rendered empty. `message` AND `thread` are prefetched because they appear in volume (ingest
+     * records a thread change beside nearly every message create); `materializeThread` measured
+     * in the tens of seconds for a page of hundreds against a remote database. The other six
+     * types stay per-row, which is correct and rare. Both batch readers apply the same
+     * `accountId` predicate the per-row calls did — this changes cost and nothing else.
      */
     const messageIds = rows.filter((r) => r.entityType === "message" && r.op !== "delete").map((r) => r.entityId);
     const prefetched = await materializeMessages(db, accountId, messageIds);
@@ -521,18 +385,14 @@ export class SyncService {
     const prefetchedThreads = await materializeThreads(db, accountId, threadIds);
 
     /**
-     * `folder` JOINS THE PREFETCH — measured, like the two above, not assumed. Folder change
-     * rows arrive in ACCOUNT-WIDE BURSTS by construction: the "Use folders" toggle writes one
-     * create (or delete tombstone) per user folder in a single transaction, so the very first
-     * page an enabling account drains is nothing but folder creates — 527 of them on the first
-     * production mailbox this shipped to. The per-row path (`materializeFolder`: a fresh
-     * `foldersEnabled` plus a `userFolderById`, two sequential round trips each) priced that
-     * page at ~1 000 serial round trips — measured at 30.7 s on the deployed API for a 400-row
-     * page, against a 60 s function budget — so the rail stayed empty while the account
-     * watched its own switch appear to do nothing. Batched, the page costs TWO queries flat:
-     * one flag read, one `userFoldersByIds`. Same account scoping, same exclusions, same
-     * participation filter, same null-means-tombstone semantics as the per-row read, which
-     * stays for the callers that genuinely have one row.
+     * `folder` JOINS THE PREFETCH — measured, like the two above. Folder changes arrive in
+     * ACCOUNT-WIDE BURSTS: the "Use folders" toggle writes one create per user folder in one
+     * transaction, so the first page an enabling account drains is nothing but folder creates —
+     * 527 on the first production mailbox this shipped to. The per-row path priced that at ~1,000
+     * serial round trips — measured 30.7 s for a 400-row page against a 60 s budget — so the rail
+     * stayed empty while the account watched its own switch do nothing. Batched, the page costs
+     * TWO queries flat: one flag read, one `userFoldersByIds`. Same scoping, same
+     * null-means-tombstone semantics.
      */
     const folderIds = rows.filter((r) => r.entityType === "folder" && r.op !== "delete").map((r) => r.entityId);
     const prefetchedFolders = folderIds.length > 0 && await foldersEnabled(db, accountId)
@@ -540,17 +400,14 @@ export class SyncService {
       : new Map<string, UserFolderRow>();
 
     /**
-     * THE REMAINING SMALL-STATE TYPES JOIN THE PREFETCH — measured, like the three above.
-     * A backlog page is not only mail: triage done on another device is `message_state` rows,
-     * composing is `draft` rows, screening is `rule` rows — and each one cost a sequential
-     * round trip in the loop below. On the live serverless path (~18 ms per round trip,
-     * production probe 2026-08-29) a 500-row page carrying 38 such rows spent ~680 ms of its
-     * 1,084 ms p50 in that loop; a page carrying hundreds — precisely the stale-resume pages
-     * the diet exists for — was the measured p90 at 1,939 ms. One `inArray` per type PRESENT
-     * on the page, absent types cost nothing, and the projection functions are shared with the
-     * per-id readers so the two paths cannot drift. `settings` is memoized rather than
-     * batched: its entity is one row per account and every change row names the same id, so
-     * one read serves however many doorbell rows the page carries.
+     * THE REMAINING SMALL-STATE TYPES JOIN THE PREFETCH — measured, like the three above. A
+     * backlog page is not only mail: triage from another device is `message_state` rows,
+     * composing is `draft` rows, screening is `rule` rows — each cost a sequential round trip
+     * (~18 ms on the live serverless path; a 500-row page carrying 38 such rows spent ~680 ms of
+     * its 1,084 ms p50 in the loop, and a page carrying hundreds was the measured p90 at 1,939
+     * ms). One `inArray` per type PRESENT on the page; absent types cost nothing; the projection
+     * functions are shared with the per-id readers so the paths cannot drift. `settings` is
+     * memoized rather than batched: one row per account, every change row names the same id.
      */
     const idsOf = (t: EntityType): string[] =>
       rows.filter((r) => r.entityType === t && r.op !== "delete").map((r) => r.entityId);
@@ -619,23 +476,15 @@ export class SyncService {
       }
     }
 
-    // ── cursor and hasMore, per mode ─────────────────────────────────────────────────────────
-    //
-    // Plain page: cursor = max seq actually returned (unchanged when the page is empty), and a
-    // full page means "maybe more", exactly as ever.
-    //
-    // Coalesced page, CUT (a lookahead entity exists beyond `limit`): cursor = that unemitted
-    // entity's first-seq − 1 (the honesty argument at the mode comment above), and there is
-    // trivially more. Coalesced page, WINDOW CONSUMED (no lookahead): every entity the window
-    // scanned was emitted, so the cursor advances to the window's own max seq — the max of the
-    // emitted rows' latest-seqs, which for a consumed window IS the max scanned seq — and the
-    // honest "more?" signal is that cursor against the horizon this very request read for its
-    // 410 checks (fullness says nothing here: a window can dedup to fewer than `limit` rows
-    // while thousands of span rows remain beyond it). A change committed after that bounds
-    // read is picked up by the next poll, the same window every short plain page has always
-    // had. The `rows.length > 0` guard keeps a types-filtered window that matched nothing from
-    // answering an unchanged cursor with `hasMore: true`, which a drain loop would spin on for
-    // ever.
+    // cursor and hasMore, per mode. Plain page: cursor = max seq actually returned (unchanged
+    // when empty); a full page means "maybe more". Coalesced, CUT (a lookahead entity exists):
+    // cursor = that unemitted entity's first-seq − 1, and there is trivially more. Coalesced,
+    // WINDOW CONSUMED: every scanned entity was emitted, so the cursor advances to the window's
+    // own max seq, and "more?" is that cursor against the horizon this request read for its 410
+    // checks — fullness says nothing here, since a window can dedup to fewer than `limit` rows
+    // while thousands remain beyond it. The `rows.length > 0` guard keeps a types-filtered window
+    // that matched nothing from answering an unchanged cursor with `hasMore: true`, which a drain
+    // loop would spin on for ever.
     let cursorSeq: bigint;
     let hasMore: boolean;
     if (!coalesced) {
@@ -661,63 +510,14 @@ export class SyncService {
   }
 
   /**
-   * `GET /sync/snapshot` — THE BOOTSTRAP READER.
-   *
-   * A first-run client used to reach its mirror by replaying `change_log` from seq 0, which is
-   * every change that ever happened to the account rather than the state it is in: a message
-   * created, updated, moved and re-triaged is four pages' worth of wire to arrive at one row.
-   * This reads the LIVE TABLES instead, so the cost is the size of the mailbox and not the size
-   * of its history.
-   *
-   * ── WHAT EACH PAGE CARRIES ───────────────────────────────────────────────────────────────
-   *
-   * Page 1 carries the account's live small state — every rule, every draft, every tag — plus
-   * the newest page of messages. That state is not paged because paging it would mean a client
-   * that stopped after page 1 holds a partial rule set, and a partial rule set is worse than
-   * none: the UI would show routing that does not match what the server does. Tags are there for
-   * the same reason read one step further on — messages carry tag ids, so a late tag list is a
-   * rail that boots empty beside mail already pointing into it. Each of these is bounded by what
-   * a person typed.
-   *
-   * EVERY page — page 1 included — additionally carries the THREADS its own messages name, and
-   * the `message_state`, pending `routing_decision` and `approval` rows that describe them. That
-   * is a different rule from the one above and deliberately so: all four are keyed to the message
-   * window rather than to the account, so page 1 cannot exceed its row limit on them and the
-   * client is never handed child state for a message it was not sent. See the emit sites for the
-   * argument and for why cross-page duplicates are accepted rather than tracked.
-   *
-   * `folder` joined the reads with the folders foundation (FOLDERS-SPEC.md §4): while the
-   * account's "Use folders" flag is on, page 1 carries the mailbox's own folders — small state
-   * for the tags' reason one step further out, because an EMPTY folder (just discovered,
-   * nothing in it) is visible in no message and a rail derived from messages alone could never
-   * show one. With the flag off the read is skipped entirely, so a flag-off account's snapshot
-   * is byte-identical to the pre-feature snapshot (the parity claim, spec §10).
-   *
-   * ── THE WINDOW, THEN THE LABELED TAIL ────────────────────────────────────────────────────
-   *
-   * Messages are bounded by {@link SNAPSHOT_WINDOW}: paging continues while the last row read is
-   * inside the recency floor, and keeps going past it until the volume floor is met. Both
-   * numbers are returned in every response so the client states the truth about what it has
-   * without carrying a copy of them.
-   *
-   * The window is not the end of the message stream. A tag is cross-cutting and a person tags old
-   * mail, so a windowed bootstrap that stopped at the volume/recency floor dropped every tagged
-   * message below it — and the delta could never recover them, because their `message_tags`
-   * changes sit below the cursor the client adopts after bootstrap. So once the window is met the
-   * drain opens a TAIL: the same keyset walk, continued past the window, restricted to messages
-   * that own a `message_tags` row. Its cost is bounded by how much mail carries a tag, not by the
-   * mailbox — an untagged row below the window is never read. The client needs no new code: tail
-   * pages are `op:"create"` at `seq = asOfSeq` like every other page, so a re-read is idempotent
-   * on the older-or-equal seq guard, and the drain simply follows `nextCursor` until it is null.
-   *
-   * ── WHY EVERY ROW IS `op: "create"` AT `seq = asOfSeq` ───────────────────────────────────
-   *
-   * See {@link SnapshotResponse}: it makes the client's existing apply path — and specifically
-   * its older-or-equal seq guard — correct for a snapshot with no new code on that side.
-   *
-   * Account scoping is `ctx.accountId` on every predicate, exactly as `getChanges` does it, and
-   * the message projection is `materializeMessages` — the same batched three-table read the
-   * delta uses — so redaction and sensitivity cannot fork between bootstrap and tail.
+   * `GET /sync/snapshot` — THE BOOTSTRAP READER. A first-run client used to replay `change_log`
+   * from seq 0 — history rather than state; this reads the LIVE TABLES, so the cost is the size
+   * of the mailbox. Page 1 carries the live small state — every rule, draft and tag, unpaged —
+   * plus the newest page of messages. EVERY page carries the THREADS its own messages name and
+   * their child rows, keyed to the message window. `folder` rides page 1 only while the flag is
+   * on (byte parity off). Messages are bounded by `SNAPSHOT_WINDOW`; then a TAIL restricted to
+   * messages owning a `message_tags` row — tagged mail below the window is otherwise unreachable.
+   * Every row is `op:"create"` at `seq = asOfSeq`.
    */
   async getSnapshot(ctx: ServiceContext, opts: GetSnapshotOptions = {}): Promise<SnapshotResponse> {
     const { db, accountId } = ctx;
@@ -845,23 +645,15 @@ export class SyncService {
     const pageMessages = await materializeMessagesInOrder(db, accountId, rows.map((r) => r.id));
     for (const dto of pageMessages) emit("message", dto.id, dto, dto.updatedAt);
 
-    // ── THREADS RIDE WITH THE PAGE THAT REFERENCES THEM ──────────────────────────────────────
-    //
-    // Not the thread table: a thread whose every message is outside the window would be a header
-    // over messages the client does not have, and the full table is unbounded exactly where the
-    // message window is bounded. So each page carries the threads ITS OWN messages name, which
-    // keeps the two window-coherent by construction — a client that stops paging holds threads
-    // for precisely the mail it holds.
-    //
-    // DUPLICATES ACROSS PAGES ARE ACCEPTED AND ARE NOT A DEFECT. A thread straddling a page
-    // boundary is named by both pages, and the cursor cannot carry the emitted thread ids to
-    // prevent it — that set grows without bound and the cursor is a URL. It costs nothing to
-    // allow: both copies are `op:"create"` at the SAME `seq = asOfSeq`, so the client's
-    // older-or-equal guard makes the second one a no-op on a store that already has the first.
-    // This is the same property that makes re-reading a whole page free, used deliberately.
-    //
-    // Within ONE page they ARE deduped, because that is free — `materializeThreads` takes a
-    // unique id set, so twenty messages of one thread cost one thread DTO and not twenty.
+    // THREADS RIDE WITH THE PAGE THAT REFERENCES THEM — not the thread table: a thread whose
+    // every message is outside the window would be a header over mail the client does not have,
+    // and the full table is unbounded exactly where the message window is bounded. Each page
+    // carries the threads ITS OWN messages name, so a client that stops paging holds threads for
+    // precisely the mail it holds. DUPLICATES ACROSS PAGES ARE ACCEPTED: a straddling thread is
+    // named by both pages, and the cursor cannot carry the emitted set (it grows without bound
+    // and the cursor is a URL). It costs nothing: both copies are `op:"create"` at the SAME `seq
+    // = asOfSeq`, so the older-or-equal guard makes the second a no-op. Within ONE page they ARE
+    // deduped, because that is free.
     const threadIds = [...new Set(
       pageMessages.map((m) => m.threadId).filter((id): id is string => id != null),
     )];
@@ -869,23 +661,15 @@ export class SyncService {
       emit("thread", dto.id, dto, dto.updatedAt);
     }
 
-    // ── A MESSAGE'S CHILD STATE RIDES WITH THE MESSAGE, NEVER WITH THE ACCOUNT ───────────────
-    //
-    // `message_state`, a pending `routing_decision` and an `approval` are each keyed to a message,
-    // and reading them per ACCOUNT made page 1 two things it must not be. Unbounded: one
-    // `message_state` per triaged message and one `approval` per held sender, with the page limit
-    // applied to neither. And window-INCOHERENT: a windowed snapshot handed the client actionable
-    // state for a message it never sent, then moved the cursor past that change for ever, so the
-    // row sat in the mirror unreachable — a pile entry titled with a bare id.
-    //
-    // Keyed to the page instead, both close at once: at most `limit` parents is at most `limit`
-    // children, and a child cannot arrive without the row it describes. Same rule the threads
-    // above follow, and for the same reason.
-    //
-    // On `pageMessages` and NOT on the keyset `rows`: `materializeMessagesInOrder` drops an id
-    // whose row no longer matches — it re-applies the living-view filter — so a message
-    // tombstoned between the two reads is in `rows` and absent from the page. Keying on `rows`
-    // would emit that message's children with no parent, which is the case this exists to close.
+    // A MESSAGE'S CHILD STATE RIDES WITH THE MESSAGE, NEVER WITH THE ACCOUNT. `message_state`, a
+    // pending `routing_decision` and an `approval` are keyed to a message, and reading them per
+    // ACCOUNT made page 1 unbounded AND window-incoherent: the client was handed actionable state
+    // for a message it never received, the cursor moved past that change for ever, and the row
+    // sat unreachable — a pile entry titled with a bare id. Keyed to the page, both close: at
+    // most `limit` parents is at most `limit` children, and a child cannot arrive without its
+    // row. On `pageMessages` and NOT the keyset `rows`: `materializeMessagesInOrder` re-applies
+    // the living-view filter, so a message tombstoned between the reads is in `rows` and absent
+    // from the page — keying on `rows` would emit its children with no parent.
     for (const c of await materializeMessageChildren(db, accountId, pageMessages.map((m) => m.id))) {
       emit(c.type, c.id, c.entity, c.updatedAt);
     }

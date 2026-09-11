@@ -1,88 +1,12 @@
 /**
- * WHAT IS HAPPENING TO MY MAIL, SAID IN SIX WAYS INSTEAD OF ONE WRONG WAY.
- *
- * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
- *
- * The product had exactly ONE sentence for every state a first sync can be in:
- * `mailboxes.syncPending`, "Waiting for first sync", rendered by a spinner in Settings →
- * Mailboxes whenever `lastSyncAt` was null. Observed on a real first import: it stayed on
- * screen for half an hour while hundreds of messages arrived, and was still climbing when it
- * was checked. It is not merely unhelpful — it is the only
- * thing the product says during the period in which it is working hardest, and it kept
- * saying it after mail WAS flowing.
- *
- * ── WHY `lastSyncAt` CANNOT BE THE PROGRESS SIGNAL, IN EITHER DIRECTION ─────────────────
- *
- * Two things were read out of the worker rather than assumed, and each one on its own
- * disqualifies the column:
- *
- *  · **It is shared.** The server stamps it in ONE `UPDATE … WHERE id IN (…)` covering every
- *    mailbox the cycle served. Two mailboxes on one account were measured reporting an
- *    IDENTICAL 207 seconds of age, so the column cannot distinguish one mailbox's progress
- *    from another's.
- *  · **It lands EARLY.** The server moves a mailbox into `synced` after each successful cycle
- *    *whether or not* it still has a backlog. So a mailbox thirty seconds into a thirty-minute
- *    import already carries a stamp.
- *
- * And separately it lands LATE: the first attach has been measured at around six minutes,
- * twice, on a mailbox of a few thousand messages, and attaches are serial — so a second
- * mailbox legitimately waits behind the first with a null stamp the whole time.
- *
- * **Therefore the growing state keys on THE MIRROR GROWING — the client's own message count
- * rising across syncs.** It does NOT read `lastSyncAt` as a progress signal, in either direction:
- * that column is consulted in exactly one place ({@link deriveMailState}'s `awaiting` arm) and only
- * as `=== null`, the one reading the two defects above leave intact — only ids in `synced` are ever
- * stamped, so a null really does mean "not one cycle has completed for this mailbox yet". The
- * POSITIVE reading — "this mailbox synced 207 seconds ago" — is the worthless one, and it is
- * never taken.
- *
- * ── THE ONE STAMP THAT IS SOUND TO READ, AND WHY ────────────────────────────────────────
- *
- * The mirror-growth signal is BLIND at the edges of an import: a first import is drained
- * newest-first in bounded batches, so the server holds a PARTIAL mailbox for minutes, and a tab
- * that catches up to that partial state — or opens onto it after the growth run has lapsed — sees
- * a settled mirror and cannot tell "finished" from "not finished, but this client has stopped
- * observing progress". No client fact distinguishes them; only the server knows.
- *
- * So there is a SECOND stamp, `initial_import_completed_at`, and it is read as a FLOOR: while a
- * connected mailbox has not been stamped, `importing` speaks regardless of the mirror. It is the
- * stamp `lastSyncAt` could not be — PER-MAILBOX rather than shared, and LATE (written only once a
- * cycle drains with `hasBacklog === false`) rather than early — so the two defects that make
- * `lastSyncAt` worthless do not touch it. It is still read only as `=== null` ("not known to be
- * finished"), never positively, and a MISSING field (a server that predates the column) reads as
- * `undefined`, not `=== null`, so a deploy skew degrades to growth-only rather than a false import.
- * The line "reads no server timestamp" that used to stand here was true of the growth signal and
- * is why the floor is a SEPARATE arm from {@link isImporting} rather than a third case inside it.
- *
- * ── AND THE FLOOR IS BOUNDED, BECAUSE "NOT KNOWN TO BE FINISHED" IS NOT "IN PROGRESS" ───
- *
- * That floor was unconditional as first written, and the sentence above — "speaks regardless of the
- * mirror" — was true without limit. It cost a permanent falsehood. Nothing obliges the worker ever
- * to reach a no-backlog cycle, and a mailbox was observed going four days without one while
- * `connected` and syncing normally, so the strip reported an import in progress for ever over a
- * mirror that was complete, current and readable — and because the arm uses `some`, that one
- * mailbox spoke for a second, properly stamped one beside it.
- *
- * A null stamp is an UNKNOWN, and this module's founding argument — that a column which cannot bear
- * a positive reading must not be given one — applies to this stamp exactly as it applies to
- * `lastSyncAt`. So the floor is obeyed absolutely for {@link IMPORT_FLOOR_MAX_MS} after a mailbox is
- * connected, which covers every import anyone has measured, and past that it must be CORROBORATED
- * by facts this client owns: a completed drain, a loop with no failures, and a mirror that has not
- * moved. {@link importFloorSpeaks} is the whole of it, and it is deliberately not a third case
- * inside {@link isImporting}: the growth arm still reads no server timestamp at all.
- *
- * ── WHY THE DERIVATION IS HERE AND NOT IN A VIEW ────────────────────────────────────────
- *
- * `SyncBar.tsx` records that the failure sentence was found three times, because each fix
- * was written as another branch inside a view and a view can only speak about itself. This
- * module is the same lesson applied to the progress sentence: ONE pure function, no React, no
- * DOM, no network, run ONCE per shell. Three surfaces render its answer — the shell's strip,
- * the Ohbox's empty pane and the Settings → Mailboxes rows — and not one of them decides
- * anything. A fourth surface added later gets the same answer for free.
- *
- * The growth sampler is STATEFUL, which is the other half of "run once": two consumers each
- * running their own sampler could disagree about whether the mirror is growing, which is this
- * bug again with extra steps.
+ * What is happening to my mail — one derivation for every surface (the old
+ * "Waiting for first sync" stayed up half an hour while mail arrived).
+ * `lastSyncAt` cannot be a progress signal: SHARED (one UPDATE stamps every
+ * mailbox a cycle served) and EARLY (stamped per cycle whatever the
+ * backlog) — read exactly once, as `=== null`. The growing state keys on
+ * the MIRROR GROWING; the one sound server stamp, `initial_import_completed_at`, is read as a bounded floor
+ * ({@link importFloorSpeaks}). Pure, run once per shell: three surfaces
+ * render its answer, none decides; the growth sampler is stateful.
  */
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -90,19 +14,14 @@
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * The ways OUR OWN infrastructure declines to serve a mailbox (mail 0029).
- *
- * A CLOSED set with a CHECK constraint behind it, owned server-side as
- * `MAILBOX_SYNC_BLOCK_REASONS`. It is re-declared here rather than imported for the same reason
- * `api-client.ts` re-declares `errorCode`: this module ships in the Desktop app, which is built
- * without the server packages, so an import would break a build that has no server in it at all.
- *
- * Re-declaring a closed set is how the two drift, and it has produced a failure once already: a fourth `status` value would have rendered the literal key path
- * `status_xxx` in the product. Two things stop that here. `test/mail-state.test.ts` asserts, FROM
- * `@trafficflow/db`, that this array and that one are the same array and that `en.json`
- * carries a sentence for every member — so drift is a red test. And at RUNTIME an unrecognised
- * reason still produces the `blocked` state with generic copy (see {@link deriveMailState}),
- * because a server that grows a fourth reason must not be answered with silence.
+ * The ways our own infrastructure declines to serve a mailbox (mail 0029).
+ * A closed set with a CHECK behind it, owned server-side as
+ * `MAILBOX_SYNC_BLOCK_REASONS`; re-declared here because this module ships
+ * in the Desktop app, which is built without the server packages.
+ * `test/mail-state.test.ts` asserts, from `@trafficflow/db`, that the two
+ * arrays are the same and that `en.json` carries a sentence for every
+ * member — drift is a red test. At runtime an unrecognised reason still
+ * produces `blocked` with generic copy: a server that grows a fourth reason must not be answered with silence.
  */
 /* The ONE mailbox-address grouping rule, shared with the Mailboxes pane. This module had no
    imports at all before it; it has this one because the alternative is a second copy of a rule
@@ -122,24 +41,13 @@ export function isSyncBlockReason(v: unknown): v is SyncBlockReason {
 }
 
 /**
- * THE ORGANIZER LEASE'S VERDICT, AS COPY TOKENS.
- *
- * `mailboxes.disabled_reason` is the other closed set on this row: `MAILBOX_DISABLED_REASONS`,
- * one member per organizer kind, its own CHECK constraint, owned server-side. It says why a
- * mailbox is `disabled` when the LEASE decided it rather than a person — and it used to be on
- * no wire at all, which is how a mailbox could read "disconnected", "No mail yet — added 3
- * minutes ago" and "No mailbox connected, so nothing can arrive" at the same moment.
- *
- * ── THE VALUES HERE ARE NOT THE WIRE'S VALUES, AND THAT IS DELIBERATE ───────────────────
- *
- * The wire tokens carry a colon (`organized_elsewhere:local`). {@link MailState.reason} is
- * documented as COPY — `SyncBar` interpolates it straight into `t(\`blocked_${reason}\`)` — so
- * whatever lands in that field becomes an i18n key. Mapping here keeps a SERVER-OWNED string out
- * of the message namespace entirely, which is a stronger guarantee than "a colon happens to
- * resolve" (it does; that was measured before this map replaced it). {@link standDownToken} is
- * the only place the two vocabularies meet, and `test/mailbox-stand-down.test.tsx` reconciles this
- * table against `MAILBOX_DISABLED_REASONS` read out of the owning module — the same guard
- * `SYNC_BLOCK_REASONS` already carries, for the same drift.
+ * The organizer lease's verdict, as copy tokens. `mailboxes.disabled_reason`
+ * (`MAILBOX_DISABLED_REASONS`, its own CHECK, server-owned) says why a mailbox is `disabled`
+ * when the LEASE decided it. These values are NOT the wire's values, deliberately: the wire
+ * tokens carry a colon (`organized_elsewhere:local`) and {@link MailState.reason} is copy —
+ * `SyncBar` interpolates it into an i18n key — so mapping here keeps a server-owned string out
+ * of the message namespace. {@link standDownToken} is the only place the vocabularies meet;
+ * `test/mailbox-stand-down.test.tsx` reconciles the table with the source.
  */
 export const STAND_DOWN_REASONS = [
   "organized_elsewhere_cloud",
@@ -150,17 +58,14 @@ export const STAND_DOWN_REASONS = [
 export type StandDownReason = (typeof STAND_DOWN_REASONS)[number];
 
 /**
- * A `disabled_reason` off the wire, as the copy token for it.
- *
- * `null` in, `null` out — that is the ORDINARY DISCONNECT and it must stay distinguishable, or
- * a mailbox the user removed on purpose gets told another install has claimed it.
- *
- * Anything else in, `organized_elsewhere_unknown` out. The server already narrows an
- * unrecognised member to `:unknown` on the way out (`mailbox-service.ts`), so this is the second
- * line rather than the first — but it is the line that matters during a deploy, and answering a
- * member this build has never heard of with `null` would file a newer worker's stand-down as
- * "the user disconnected this" — a mistake this codebase has made once already, transposed onto
- * a column with no timestamp beside it. That is why this function never returns `null` for a non-null input.
+ * A `disabled_reason` off the wire, as the copy token for it. `null` in,
+ * `null` out — the ordinary disconnect, which must stay distinguishable or
+ * a mailbox the user removed on purpose is told another install claimed
+ * it. Anything else in, `organized_elsewhere_unknown` out: the server
+ * narrows unrecognised members to `:unknown` already, but during a deploy
+ * this is the line that matters — answering an unknown member with `null`
+ * would file a newer worker's stand-down as "the user disconnected this".
+ * This function never returns `null` for a non-null input.
  */
 export function standDownToken(wire: string | null): StandDownReason | null {
   if (wire === null) return null;
@@ -171,45 +76,14 @@ export function standDownToken(wire: string | null): StandDownReason | null {
 }
 
 /**
- * IS THIS INSTALL STOOD DOWN FROM ORGANIZING THIS MAILBOX — and if so, in whose favour?
- *
- * ── WHY THIS EXISTS, AND WHY IT IS NOT `status === 'disabled'` ────────────────────────────────
- *
- * The pane asked `status === 'disabled' && disabledReason`, which was the whole of a stand-down
- * until mail 0083 moved it onto the ROLE. Since then a demoted install is `connected` with
- * `organizer_role = 'reader'` and NO reason, so that predicate matches nothing this build writes:
- * a 0083-era reader got no explanation on its row and — worse — no way back, because the check
- * and the claim button hang off the same branch. `legacyStandDown` was added to the facts for
- * exactly this and had no consumer.
- *
- * ── THE RULE IS THE SERVER'S, MIRRORED RATHER THAN REINVENTED ─────────────────────────────────
- *
- * `standDownMemory` (`packages/db/src/organizer-role.ts`) answers the same question on the other
- * side, and the correction that matters here is that a role of `reader` is ALSO the pre-consent
- * state, so the role alone would report a freshly connected mailbox as taken back from an
- * organizer it never had. The test is **a named holder OR a consent stamp**. A reader with neither is an ordinary mailbox
- * nobody has agreed to organize yet, which is the consent screen's business and not this one's.
- *
- * `status === 'disabled'` is asked FIRST, because a tombstone keeps whatever role it had.
- *
- * ── AND WHY THE SYNC RAIL DOES NOT CALL THIS ──────────────────────────────────────────────────
- *
- * Ruled 2026-09-02: it does not, and must not. The rail reports SYNC HEALTH, and a reader's
- * mirror is growing — it reads, searches, marks read and sends. `blocked` there would be a false
- * sentence about a mailbox that is working. The fact that somebody else organizes it belongs to
- * the mailbox pane's own row, which is what this serves, and to the phone's banner
- * (`apps/mobile/src/state/live.ts#phoneOrganizer`), which is the same call one client over.
- * `deriveMailState`'s `disabled`+reason arm stays as the LEGACY path it now is.
- *
- * ── AND WHY `released` IS A FOURTH ANSWER RATHER THAN A FOURTH `STAND_DOWN_REASONS` ───────────
- *
- * {@link STAND_DOWN_REASONS} is the WIRE vocabulary: one member per organizer kind, reconciled
- * against the server-owned `disabled_reason` set by the suite, one copy key each. `released` is on no wire
- * and never will be — it is DERIVED here from the role row (a reader with nobody holding it and
- * a release marker on it), which is a fact no `disabled_reason` can carry because those rows
- * predate the role entirely. Adding it to the array would break the reconciliation for a token
- * the server cannot send, so the union widens at the return type and the array stays exactly
- * what it says it is.
+ * Is this install stood down from organizing this mailbox — and in whose favour? Not `status === 'disabled'`: since mail
+ * 0083 a demoted install is `connected` with `organizer_role = 'reader'` and no reason, so that predicate matched
+ * nothing this build writes. The rule mirrors the server's `standDownMemory`: a reader is also the pre-consent state, so
+ * the test is a named holder OR a consent stamp — a reader with neither is a mailbox nobody has agreed to organize yet.
+ * `status === 'disabled'` is asked first (a tombstone keeps its role). The sync rail must NOT call this (ruled
+ * 2026-09-02): a reader's mirror is working, and `blocked` there would be false — the fact belongs to the mailbox pane's
+ * row. `released` is a derived fourth answer, not a wire member: adding it to {@link STAND_DOWN_REASONS} would break the
+ * reconciliation for a token the server cannot send.
  */
 export type ReaderStandDown = StandDownReason | "released";
 
@@ -247,30 +121,16 @@ export function readerStandDown(m: {
      Losing an explanation costs a sentence; inventing one costs a false claim. */
   const consented = m.organizeConsentedAt !== null && m.organizeConsentedAt !== undefined;
   if (!holder && !consented) return null;
-  /* ── THE RELEASE IS ITS OWN ANSWER, AND THE MARKER IS WHAT NAMES IT ───────────────────────
-   *
-   * A reader that consented and has nobody holding it used to report `organized_elsewhere_unknown`
-   * — "another ohmail organizer has claimed this mailbox … it will not start again on its own",
-   * over a mailbox nobody held, above a check that then answered "no other ohmail install is
-   * organizing this mailbox". A row arguing with its own button, and the wrong remedy under it:
-   * the check-then-confirm ceremony exists to displace a LIVE competing holder, and there is none
-   * to displace.
-   *
-   * THE DISCRIMINATOR IS THE MARKER, NOT THE ABSENT HOLDER, and that correction is the whole of
-   * why this arm is three lines instead of one. The holder columns are not written once at the
-   * stand-down: the per-cycle peek rewrites all of them, and it writes them ALL NULL whenever it
-   * finds an empty claim folder — which is exactly what a stood-down reader sees the moment the
-   * install that beat it is removed. So a genuine stand-down DECAYS into the holder-less shape on
-   * its own, with nothing having released anything, and keying on the absence would put "you
-   * stopped organizing this here" over a handover this account never made. `organizer_released_at`
-   * is written by the release and by nothing else, and every promotion clears it.
-   *
-   * `standDownMemory` (`packages/db/src/organizer-role.ts`) reached the same conclusion on the
-   * server, through a review round, for the same reason — this is that rule, one client over.
-   *
-   * A HOST TOO OLD TO SEND THE MARKER keeps the stand-down sentence. That is the cheaper error of
-   * the two: an explanation that is out of date costs a sentence, and a release announced for a
-   * handover that never happened costs a false claim about something the person did. */
+  /* The release is its own answer, and the MARKER names it. A consented
+   * reader with nobody holding it used to report
+   * `organized_elsewhere_unknown` — a row arguing with its own claim
+   * button. The discriminator is the marker, not the absent holder: the
+   * per-cycle peek rewrites the holder columns all-null on an empty claim
+   * folder, so a genuine stand-down decays into the holder-less shape;
+   * `organizer_released_at` is written by the release alone and every
+   * promotion clears it (`standDownMemory`, server-side). A host too old to
+   * send the marker keeps the stand-down sentence — the cheaper error: a
+   * stale explanation costs a sentence, a false release costs a claim. */
   if (!holder && m.organizerReleasedAt !== null && m.organizerReleasedAt !== undefined) {
     return "released";
   }
@@ -280,36 +140,25 @@ export function readerStandDown(m: {
 }
 
 /**
- * THIS INSTALL'S OWN CLAIM IS STILL ON THE MAILBOX WHILE THIS INSTALL IS NOT ORGANIZING IT.
- *
- * The two-sided belief, and a real state rather than a theoretical one: an install that stood down
- * without its claim being taken out of the mailbox leaves a record every OTHER install reads as
- * "somebody holds this", so they stand down too — and this one reads their absence the same way.
- * Nothing organizes the mailbox, and each side's row says the other one does. A claim seen this way
- * had been sitting for three days.
- *
- * ── "OURS" IS AN IDENTITY, AND `kind` CANNOT ANSWER IT ──────────────────────────────────────
- *
- * This asked `organizedBy.kind === "cloud"`, on the premise that a mailbox has one hosted
- * organizer. It does not: the hosted organizer's id is SCOPED BY ENVIRONMENT precisely so that a
- * staging deployment pointed at a production mailbox is a different organizer, and the claim
- * removal matches on that id. So `cloud` is what a SECOND Cloud deployment is too, and the
- * predicate answered "ours" over a claim this install could not remove — the hand-back was offered,
- * the row was cleared, and the claim stayed in the folder.
- *
- * A mailbox has one organizer AT A TIME; another Cloud install is a foreign one, exactly like a
- * foreign desktop. So the server compares the ids and sends the answer, and this reads it. The id
- * itself is not on the wire — it is an internal deployment name with no use on a screen — and
- * re-deriving the comparison here would be the same rule in two vocabularies, which is what went
- * wrong the first time.
- *
- * The verb this unlocks is the ordinary release — the only thing that takes a claim off a mailbox is
- * the process holding it — so the mechanism is unchanged and only its REACHABILITY moves. The rule
- * is that the release is reachable whenever this install's claim is on the mailbox, whatever the
- * local stand-down state says, because the stand-down state is exactly what is wrong here.
- *
- * Consent is asked for the reason {@link readerStandDown} asks it: a reader that never agreed to be
- * organized is a fresh mailbox, whose next screen is the consent statement and not a release.
+ * This install's own claim is still on the mailbox while this install is not organizing it. A real state: an install
+ * that stood down without its claim being removed leaves a record every OTHER install reads as "somebody holds this",
+ * so they stand down too — and this one reads their absence the same way. Nothing organizes the mailbox, each side's
+ * row says the other does; a claim seen this way had been sitting for three days. "Ours" is an identity `kind` cannot
+ * answer: this asked `organizedBy.kind === "cloud"`, but the hosted organizer's id is SCOPED BY ENVIRONMENT (a
+ * staging deployment pointed at a production mailbox is a different organizer) and the claim removal matches on that
+ * id — so `cloud` is also what a SECOND Cloud deployment is, and the predicate answered "ours" over a claim this
+ * install could not remove.
+ */
+
+/**
+ * A mailbox has one organizer AT A TIME; another Cloud install is foreign, exactly like a foreign desktop. So the
+ * server compares the ids and sends the answer, and this reads it — the id itself is not on the wire (an internal
+ * deployment name with no use on a screen), and re-deriving the comparison here would be the same rule in two
+ * vocabularies, which is what went wrong the first time. The verb this unlocks is the ordinary release — the only
+ * thing that takes a claim off a mailbox is the process holding it — so only REACHABILITY moves: the release is
+ * reachable whenever this install's claim is on the mailbox, whatever the local stand-down state says, because that
+ * state is exactly what is wrong here. Consent is asked for {@link readerStandDown}'s reason: a reader that never
+ * agreed to be organized is a fresh mailbox, whose next screen is the consent statement and not a release.
  */
 export function claimLeftBehind(m: {
   status?: string;
@@ -345,57 +194,44 @@ type OrganizerRow = Parameters<typeof readerStandDown>[0] & {
 };
 
 /**
- * WHAT THE SCREENER CAN DO ON THIS INSTALL — three answers, and they are not two.
- *
- *  · `organizer` — this install organizes at least one live mailbox. Every verb works exactly as
- *    it always has, and nothing on the pane changes.
- *  · `pending` — every live mailbox belongs to somebody else, AND that somebody can take a
- *    decision made here and apply it on their own next pass. The decision bar stays: a press is
- *    real, it just does not land immediately, and the pane says who is going to land it.
- *  · `blocked` — every live mailbox belongs to somebody else and no decision made here has
- *    anywhere to go. The bar is WITHHELD and the pane names the way out.
- *
- * ── WHY THE THIRD STATE IS NOT A DISABLED VERSION OF THE SECOND ───────────────────────────────
- *
- * Because a control wired to a refusal is worse than an absent one, and this product has the
- * receipt. A released build drew the full decision bar on a mailbox it did not organize: the press
- * said "filed", the sender left the list and the count dropped — while nothing had happened on the
- * server. Forty-five seconds later the sender was back, marked "Not saved", with no sentence
- * saying why. The refusal has to be visible BEFORE the press, or it is not a refusal but a
- * rollback with an explanation nobody reads.
- *
- * ── WHY THE WHOLE ROSTER RATHER THAN ONE MAILBOX ──────────────────────────────────────────────
- *
- * The Screener's queue does not say which mailbox each sender belongs to, so a per-mailbox answer
- * has nothing to key on. Account-scoped configuration is permitted where the account holds at
- * least one organized mailbox, and a Screener decision writes a rule, so it is inside that set.
- * That is also the SAFE direction: with an organizer present nothing is refused, so a decision
- * that could have succeeded never is.
- *
- * The aggregation FLIPS for `pending`, and deliberately: every live reader must accept decisions
- * before the bar is offered, because one that does not is a sender whose press would be refused.
- * Permissive where refusing would cost a decision that works; conservative where offering would
- * cost a decision that does not.
- *
- * ── AND `live` FIRST, WHICH IS NOT COSMETIC ───────────────────────────────────────────────────
- *
- * A `disabled` row is a tombstone and KEEPS whatever role it had ({@link readerStandDown}'s own
- * first line). Counting it would let a mailbox somebody removed last week decide whether the
- * Screener works today. An empty roster answers `organizer` for the same reason a missing field
- * does everywhere on this surface: "we cannot see" is not "somebody else has it".
+ * What the Screener can do on this install — three answers, and they are not two. `organizer`: this install organizes
+ * at least one live mailbox; every verb works as it always has. `pending`: every live mailbox belongs to somebody
+ * else AND that somebody can take a decision made here and apply it on their next pass — the bar stays, a press is
+ * real, it just does not land immediately, and the pane says who lands it. `blocked`: every live mailbox belongs to
+ * somebody else and no decision has anywhere to go — the bar is WITHHELD and the pane names the way out. The third
+ * state is not a disabled second, because a control wired to a refusal is worse than an absent one, with a receipt: a
+ * released build drew the full bar on a mailbox it did not organize — the press said "filed", the sender left the
+ * list, and forty-five seconds later was back marked "Not saved" with no sentence why.
+ */
+
+/**
+ * The refusal has to be visible BEFORE the press.
+ */
+
+/**
+ * The whole roster rather than one mailbox, because the Screener's queue does not say which mailbox each sender
+ * belongs to. Account-scoped configuration is permitted where the account holds at least one organized mailbox, and a
+ * Screener decision writes a rule, so it is inside that set — also the SAFE direction: with an organizer present
+ * nothing is refused, so a decision that could have succeeded never is. The aggregation FLIPS for `pending`: every
+ * live reader must accept decisions before the bar is offered, because one that does not is a sender whose press
+ * would be refused. Permissive where refusing costs a decision that works; conservative where offering costs one that
+ * does not. And `live` first, not cosmetic: a `disabled` row is a tombstone that KEEPS its role ({@link
+ * readerStandDown}), and a mailbox removed last week must not decide whether the Screener works today.
+ */
+
+/**
+ * An empty roster answers `organizer`: "we cannot see" is not "somebody else has it".
  */
 export type ScreenerMode = "organizer" | "pending" | "blocked";
 
 /**
  * WHY A DECISION HAS NOWHERE TO GO — the finer answer under {@link ScreenerMode} `blocked`.
- *
- *  · `organizer_outdated` — somebody holds the mailbox and their build cannot take a decision
- *    from a reader. The way out is to take the mailbox over, or to update that install.
- *  · `no_organizer` — nobody holds it at all. Nothing is filing this mailbox, which is a
- *    different sentence and a different remedy.
- *
- * The same two words the decision door answers with, so the pane and the refusal cannot come to
- * describe one state differently.
+ * · `organizer_outdated` — somebody holds the mailbox and their build cannot take a decision from a reader. The way
+ *   out is to take the mailbox over, or to update that install.
+ * · `no_organizer` — nobody holds it at all. Nothing is filing this mailbox, which is a different sentence and a
+ *   different remedy.
+ * The same two words the decision door answers with, so the pane and the refusal cannot come to describe one state
+ * differently.
  */
 export type ScreenerBlockReason = "organizer_outdated" | "no_organizer";
 
@@ -449,67 +285,43 @@ export function screenerMode(facts: ReadonlyArray<OrganizerRow> | null): Screene
 }
 
 /**
- * THE HOLDER, FOR A SURFACE THAT ASKS A TWO-WAY QUESTION — `null` where this install organizes.
- *
- * Several panes ask only "does this install organize these mailboxes, or read them?": the
- * install's own About and Desktop rows, and the screening preferences, whose stored values take
- * effect on a takeover and take effect on nothing before one. Both reader modes answer that
- * question identically — a `pending` reader still moves no mail here — so narrowing at the read
- * is the honest shape rather than a lossy one.
- *
- * It exists so the narrowing is written ONCE. A surface that wrote `role.mode !== "organizer"`
- * inline would be one edit away from accidentally treating `pending` as organizing on the day
- * somebody adds a fourth mode.
+ * THE HOLDER, FOR A SURFACE THAT ASKS A TWO-WAY QUESTION — `null` where this install organizes. Several panes ask
+ * only "does this install organize these mailboxes, or read them?": the install's own About and Desktop rows, and the
+ * screening preferences, whose stored values take effect on a takeover and take effect on nothing before one. Both
+ * reader modes answer that question identically — a `pending` reader still moves no mail here — so narrowing at the
+ * read is the honest shape rather than a lossy one. It exists so the narrowing is written ONCE. A surface that wrote
+ * `role.mode !== "organizer"` inline would be one edit away from accidentally treating `pending` as organizing on the
+ * day somebody adds a fourth mode.
  */
 export function readerHolder(role: ScreenerRole): { name: string | null } | null {
   return role.mode === "organizer" ? null : { name: role.name };
 }
 
 /**
- * MAY THESE MAILBOXES BE WRITTEN TO FROM HERE — the sentence to say, or `null` for yes.
- *
- * ══ ONE PREDICATE, TWO LANES ══════════════════════════════════════════════════════════════
- *
- * The single-message verbs (Backspace/Delete) and the bulk verbs over a selection ask the same
- * question about different numbers of mailboxes, so they ask it here. The single-message arm
- * passes `[m.mailboxId]` rather than a scalar, deliberately: one code path, and a selection
- * spanning two mailboxes cannot take a route the single press has never been down.
- *
- * ══ WHY IT TAKES THE RAW ROSTER AND NOT A RESOLVED ROLE ═══════════════════════════════════
- *
- * Because the only resolved role on this surface is `screenerMode`'s, and it is the WRONG one.
- * That derivation aggregates the whole roster and is deliberately permissive — "with an organizer
- * present nothing is refused, so a decision that could have succeeded never is" — which is correct
- * for the Screener, whose queue does not say which mailbox a sender belongs to and whose decision
- * writes an ACCOUNT-scoped rule. Handing it a message verb produced a concrete defect: an account
- * organizing mailbox A and reading mailbox B answered `organizer`, so Delete on B's mail was
- * offered, held, hidden and dispatched, and only the server's own per-mailbox
- * `assertOrganizerRole` rolled it back — the control-wired-to-a-refusal shape `ScreenerMode`'s
- * third state was invented to end, reintroduced one verb over. Found by review, 2026-09-06.
- *
- * So nothing is aggregated. Each named mailbox is looked up in the roster and judged on its own
- * row, and the FIRST one that refuses supplies the sentence — list order, so the answer is stable
- * across repeated calls and a caller can put the mailbox it cares about first.
- *
- * ══ AND AN UNKNOWN ROSTER REFUSES, BECAUSE THESE VERBS FAIL CLOSED ════════════════════════
- *
- * Everywhere else on this surface an absent fact reads as `organizer` — "a host that does not send
- * the column has not demoted anybody", and the dangerous default there is the other one, which
- * would hang a claim banner over a mailbox this machine already organizes. A WRITE inverts that
- * calculus: refusing an organizer for the second it takes the roster to arrive costs a sentence;
- * permitting a reader moves mail on somebody else's server. The roster is `null` before the first
- * probe answers and stays `null` through an outage, so the window is real, not theoretical.
- *
- * Four things therefore refuse: a roster still PENDING, an empty `mailboxIds`, an id no live row
- * carries, and a row this install reads rather than organizes. The first three have no holder to
- * name and take `say.unknown()`, which claims no particular install — the honest sentence when the
- * answer is "not from here" and nothing more is known.
- *
- * A shell with NO PROBE AT ALL permits, and that is not a hole: see the `absent` arm below.
- *
- * A `disabled` row is skipped as unknown rather than read: it is a tombstone that KEEPS whatever
- * role it had ({@link readerStandDown}'s own first line), and nothing should be written to a
- * mailbox that has been removed.
+ * May these mailboxes be written to from here — the sentence to say, or `null` for yes. One predicate, two lanes: the
+ * single-message verbs (Backspace/Delete) and the bulk verbs over a selection ask the same question about different
+ * numbers of mailboxes; the single-message arm passes `[m.mailboxId]` deliberately, so a selection spanning two
+ * mailboxes cannot take a route the single press has never been down. It takes the RAW roster because the only
+ * resolved role here is `screenerMode`'s, and that is the wrong one: deliberately permissive account-wide, right for
+ * the Screener, wrong for a message verb — an account organizing mailbox A and reading mailbox B answered
+ * `organizer`, so Delete on B's mail was offered, held, hidden and dispatched, rolled back only by the server's
+ * per-mailbox `assertOrganizerRole` (review, 2026-09-06).
+ */
+
+/**
+ * So nothing is aggregated: each named mailbox is judged on its own row, and the FIRST refusal supplies the sentence
+ * — list order, stable across calls.
+ */
+
+/**
+ * An unknown roster refuses, because these verbs fail closed. Everywhere else an absent fact reads as `organizer` ("a
+ * host that does not send the column has not demoted anybody"); a WRITE inverts that calculus — refusing an organizer
+ * for the second the roster takes costs a sentence, permitting a reader moves mail on somebody else's server, and the
+ * roster is `null` before the first probe and through an outage, so the window is real. Four things refuse: a PENDING
+ * roster, an empty `mailboxIds`, an id no live row carries, and a row this install reads rather than organizes — the
+ * first three take `say.unknown()`, which claims no particular install. A shell with NO PROBE permits (see the
+ * `absent` arm below), and a `disabled` row is skipped as unknown: a tombstone KEEPS whatever role it had ({@link
+ * readerStandDown}), and nothing should be written to a removed mailbox.
  */
 export type RosterState =
   /** This shell was given no probe: the desktop, the demo. There is no roster and never will be. */
@@ -555,29 +367,19 @@ export function readerMoveRefusal(
 }
 
 /**
- * WHAT CHANGED ABOUT WHO ORGANIZES THESE MAILBOXES, AND HAS NOT BEEN ACKNOWLEDGED YET.
- *
- * One entry per mailbox whose `organizerEventAt` is newer than its `organizerEventSeenAt`. The
- * comparison is the whole mechanism, and it is deliberately two instants rather than a flag:
- *
- *  · ONCE PER CHANGE, ON EVERY DOOR. Every client computes the same predicate from the same two
- *    instants, so an acknowledgement on the phone removes the line in the browser on its next
- *    poll. A per-client flag shows one change once per client, which is the same sentence three
- *    times.
- *  · TWO CHANGES BETWEEN TWO READS COLLAPSE TO ONE LINE. There is no queue to drain, so a mailbox
- *    that changed hands twice while nobody looked produces one line describing where it ended up
- *    — the only statement still true.
- *  · AN ACKNOWLEDGEMENT CANNOT SUPPRESS A LATER CHANGE. It answers the change that stood when the
- *    press happened, and nothing after it.
- *
- * ── WHAT IS WITHHELD, AND WHY EACH ────────────────────────────────────────────────────────────
- *
- * A tombstone: a mailbox somebody removed is not news about organizing. An absent or unparseable
- * instant: "this build cannot tell" must not become a sentence about a machine that never changed
- * hands. And a reader with no holder that nobody has ever agreed to organize — that is an ordinary
- * freshly connected mailbox, and its next screen is the agreement, not a notice.
- *
- * Ordered newest change first, so a slot with room for one line carries the most recent.
+ * What changed about who organizes these mailboxes, and has not been acknowledged yet. One entry per mailbox whose
+ * `organizerEventAt` is newer than its `organizerEventSeenAt`. Two instants rather than a flag is the whole
+ * mechanism: once per change on every door (every client computes the same predicate, so an acknowledgement on the
+ * phone removes the line in the browser); two changes between two reads collapse to one line describing where it
+ * ended up (no queue to drain — the only statement still true); and an acknowledgement cannot suppress a later change
+ * — it answers the change that stood when the press happened.
+ */
+
+/**
+ * Withheld: a tombstone (a removed mailbox is not news about organizing); an absent or unparseable instant ("this
+ * build cannot tell" must not become a sentence about a machine that never changed hands); and a reader with no
+ * holder nobody ever agreed to organize — a freshly connected mailbox, whose next screen is the agreement. Newest
+ * change first, so a one-line slot carries the most recent.
  */
 export type OrganizerNoticeKind = "elsewhere" | "stopped" | "here" | "released";
 
@@ -637,23 +439,23 @@ function noticeKind(m: OrganizerRow): OrganizerNoticeKind | null {
      is the agreement rather than a notice about a handover that never happened. `=== null` and
      not `== null`, so an absent stamp (a build that cannot tell) says nothing. */
   if (m.organizeConsentedAt === null || m.organizeConsentedAt === undefined) return null;
-  /* ── NO HOLDER, CONSENTED: TWO STATES, AND ONLY THE MARKER TELLS THEM APART ────────────────
-   *
-   * This line answered `released` for both of them, and one of the two is not a release. The
-   * per-cycle peek rewrites all four holder columns and writes them ALL NULL when it finds an
-   * empty claim folder — so a stand-down whose winner was removed DECAYS into this exact shape,
-   * with nobody having released anything. Worse, the same write stamps `organizer_event_at` on a
-   * flip in either direction INCLUDING to and from NULL, so the decayed row arrives here with a
-   * fresh unacknowledged event and the line fires on it: "You stopped organizing … here", about
-   * something the person never did.
-   *
-   * So `released` needs the marker `readerStandDown` keys on, and the decayed row gets the
-   * sentence that is true of it — organizing here has stopped and nobody known holds it, which is
-   * `stopped` with no name. That is the ONE open condition of the four: nothing files this
-   * mailbox, and mail accumulates unsorted while it is true, which is precisely the decayed row's
-   * situation and worth the emphasis the sentence carries. `organizerNotices` withholds the name
-   * for a row with no named holder already, so the unknown-holder wording is reached by the same
-   * rule that serves a stopped holder whose claim recorded no name. */
+  /**
+   * NO HOLDER, CONSENTED: TWO STATES, AND ONLY THE MARKER TELLS THEM APART: This line answered `released` for both of
+   * them, and one of the two is not a release. The per-cycle peek rewrites all four holder columns and writes them
+   * ALL NULL when it finds an empty claim folder — so a stand-down whose winner was removed DECAYS into this exact
+   * shape, with nobody having released anything. Worse, the same write stamps `organizer_event_at` on a flip in
+   * either direction INCLUDING to and from NULL, so the decayed row arrives here with a fresh unacknowledged event
+   * and the line fires on it: "You stopped organizing … here", about something the person never did. So `released`
+   * needs the marker `readerStandDown` keys on, and the decayed row gets the sentence that is true of it — organizing
+   * here has stopped and nobody known holds it, which is `stopped` with no name.
+   */
+
+  /**
+   * That is the ONE open condition of the four: nothing files this mailbox, and mail accumulates unsorted while it is
+   * true, which is precisely the decayed row's situation and worth the emphasis the sentence carries.
+   * `organizerNotices` withholds the name for a row with no named holder already, so the unknown-holder wording is
+   * reached by the same rule that serves a stopped holder whose claim recorded no name.
+   */
   return m.organizerReleasedAt !== null && m.organizerReleasedAt !== undefined
     ? "released"
     : "stopped";
@@ -707,87 +509,59 @@ export interface MailboxFacts {
   /** End of a completed worker cycle. Read ONLY as `=== null`. See the header. */
   lastSyncAt: string | null;
   /**
-   * When this mailbox's FIRST import finished, or null while it has not (mail 0038).
-   *
-   * The ONE server stamp this module reads, and it is sound where `lastSyncAt` is not: it is
-   * per-mailbox (not shared across the pass) and late (stamped only once a cycle drains with no
-   * backlog), so its two failure modes do not apply. {@link deriveMailState} reads it as a FLOOR,
-   * and ONLY as `=== null`: a null means the import is not known to be finished, which keeps
-   * `importing` speaking whatever the mirror is doing — for {@link IMPORT_FLOOR_MAX_MS} after the
-   * mailbox is connected, and past that only while this client cannot corroborate otherwise. It has
-   * a THIRD failure mode the other two do not, and the bound is the answer to it: the write depends
-   * on the worker reaching a cycle with no backlog, which is not guaranteed to happen at all, and a
-   * mailbox that never gets there was measured holding a permanent "Syncing your mail" over a
-   * finished mirror. See {@link importFloorSpeaks}. A missing field — an older server that has
-   * not deployed the column — reads as `undefined`, which is not `=== null`, so a deploy skew
-   * degrades to the prior growth-only behaviour rather than a false "still importing". See the
-   * header.
-   *
-   * OPTIONAL, and that is the whole of the distinction: a server that omits the column must reach
-   * the ladder as `undefined`, never as `null`. A seam that collapsed the absent field to `null`
-   * (a `?? null` at the probe) would read every non-empty mirror as "still importing" for ever —
-   * the floor arm fires on `=== null`, and a deploy skew has no null to offer it. `CloudShell`
-   * therefore forwards the field untouched.
+   * When this mailbox's FIRST import finished, or null while it has not (mail 0038). The one
+   * server stamp this module reads — per-mailbox, not shared; late, not early — read as a floor
+   * and only as `=== null`. Its third failure mode is the bound's reason: the write needs a
+   * no-backlog cycle, which is not guaranteed, and a mailbox that never got one held a
+   * permanent "Syncing your mail" ({@link importFloorSpeaks}). OPTIONAL is the whole
+   * distinction: an older server omits the field, which must reach the ladder as `undefined`,
+   * never `null` — a `?? null` at the probe would read every non-empty mirror as "still
+   * importing" for ever. `CloudShell` forwards the field untouched.
    */
   initialImportCompletedAt?: string | null;
   /**
-   * WHO ORGANIZES THIS MAILBOX — `organizer` is this install, `reader` is somebody else's.
-   *
-   * OPTIONAL, and absent reads as `organizer` at every site: every install was one before the
-   * column existed, and a host that does not send it cannot have demoted anybody. The dangerous
-   * default is the other one, which would put a claim banner over a mailbox this machine is
-   * already organizing.
-   *
-   * `organizedBy.since` is when that install BECAME the organizer, not when it was last seen —
-   * a banner says "since Tuesday", never "last seen 40 seconds ago", because a heartbeat on a
-   * screen invites somebody to watch it. `organizerState` is whether the holder is still
-   * renewing; `stopped` is what turns the banner from a fact into a problem.
+   * Who organizes this mailbox — `organizer` is this install, `reader` is
+   * somebody else's. Optional; absent reads as `organizer` everywhere:
+   * every install was one before the column existed, and a host that does
+   * not send it cannot have demoted anybody — the dangerous default is the
+   * other one, a claim banner over a mailbox this machine already
+   * organizes. `organizedBy.since` is when that install BECAME organizer,
+   * not last-seen — a banner says "since Tuesday", never a heartbeat.
+   * `organizerState` is whether the holder still renews; `stopped` turns the banner from a fact into a problem.
    */
   organizerRole?: "organizer" | "reader";
   organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
   organizerState?: "held" | "stopped" | null;
   /**
-   * A STAND-DOWN AS AN ENGINE THAT PREDATES THE ROLE COLUMN REPORTS ONE — `disabled` with a
-   * reason, and no `organizerRole` at all.
-   *
-   * Computed at the seam that reads the wire, because that is the only place the ABSENCE of the
-   * role is still visible: the mapper coerces an absent role to `organizer` (the safe default),
-   * which is right for every other consumer and erases exactly the signal this flag carries.
-   *
-   * It exists so a window newer than its engine does not silently withdraw the only exit from a
-   * stand-down. The claim predicate is written against the new vocabulary, and a legacy row
-   * satisfies none of it — so without this the pane would offer nothing on precisely the rows the
-   * old pane offered it on, which is the defect that surface was built to close.
+   * A stand-down as a pre-role engine reports one — `disabled` with a
+   * reason and no `organizerRole` at all. Computed at the wire seam because
+   * only there is the ABSENCE of the role still visible: the mapper coerces
+   * an absent role to `organizer` (the safe default), which erases exactly
+   * this signal. It exists so a window newer than its engine does not
+   * silently withdraw the only exit from a stand-down: the claim predicate
+   * is written against the new vocabulary, and a legacy row satisfies none
+   * of it.
    */
   legacyStandDown?: boolean;
   /**
-   * WHEN somebody agreed to let ohmail organize this mailbox, `null` for "nobody has", and
-   * ABSENT for "this build cannot tell" — three states, and the third is not the second.
-   *
-   * It sits beside `organizerRole` because the pair cannot be collapsed: a mailbox connected in
-   * the browser is a reader that has never been agreed to, and a mailbox whose organizer was
-   * displaced is a reader that HAS. The first needs the agreement screen; the second must never
-   * be shown it again, and `organizedBy` cannot tell them apart because its own `null` means
-   * "this install organizes it" OR "nobody ever has".
-   *
-   * `deriveMailState` must never read it and does not — it says nothing about whether mail is
-   * arriving. It is here because this is the narrowed shape `GET /mailboxes` arrives as, and the
-   * claim offer and the first-run flow both read it. Every reader tests `=== null`: read `== null`
-   * an absent field would offer a claim on every mailbox of every older deployment.
+   * When somebody agreed to let ohmail organize this mailbox, `null` for "nobody has", ABSENT
+   * for "this build cannot tell" — three states, and the third is not the second. It sits
+   * beside `organizerRole` because the pair cannot collapse: a browser-connected mailbox is a
+   * reader never agreed to (needs the agreement screen); a displaced organizer is a reader that
+   * HAS been (must never see it again) — and `organizedBy` cannot tell them apart.
+   * `deriveMailState` never reads it. Every reader tests `=== null`: read `== null`, an absent
+   * field would offer a claim on every mailbox of every older deployment.
    */
   organizeConsentedAt?: string | null;
   /**
-   * WHEN THE ORGANIZING SITUATION LAST CHANGED, AND WHEN SOMEBODY LAST ACKNOWLEDGED IT.
-   *
-   * Two instants rather than a flag, and the notice is `eventAt > seenAt` computed here. That is
-   * what makes the line appear ONCE for a change rather than once per client: a phone, a browser
-   * and a desktop window reading one row agree about whether it has been seen, and a dismissal on
-   * any of them travels to the others on their next poll. Two changes between two reads collapse
-   * to the later one, which is the only statement still true.
-   *
-   * ABSENT is "this build cannot tell", and it withholds the notice. That is the safe direction:
-   * the cost of missing one is a line nobody reads, and the cost of inventing one is a claim about
-   * a machine that never changed hands.
+   * When the organizing situation last changed, and when somebody last
+   * acknowledged it. Two instants rather than a flag; the notice is
+   * `eventAt > seenAt`, computed here — which makes the line appear once
+   * per change rather than once per client: a phone, a browser and a
+   * desktop reading one row agree, and a dismissal on any travels to the
+   * others on their next poll. Two changes between reads collapse to the
+   * later one, the only statement still true. Absent is "this build cannot
+   * tell" and withholds the notice — the safe direction.
    */
   organizerEventAt?: string | null;
   organizerEventSeenAt?: string | null;
@@ -817,48 +591,34 @@ export interface MailboxFacts {
    */
   takeoverAuthorizedAt?: string | null;
   /**
-   * WOULD A DECISION MADE HERE BE ACCEPTED BY WHOEVER ORGANIZES THIS MAILBOX?
-   *
-   * `true` only where a press has somewhere to go. ABSENT and `false` both mean it has not, and
-   * they are deliberately not distinguished: an older server that cannot answer and a holder that
-   * cannot accept produce the same screen, because in both cases the honest thing to do is to
-   * withhold the controls and name the way out.
-   *
-   * The dangerous default is the other one. A `true` here draws a decision bar whose every press
-   * ends in a refusal, which is the shape that once let this product say "filed" and take it back
-   * a minute later.
+   * Would a decision made here be accepted by whoever organizes this
+   * mailbox? `true` only where a press has somewhere to go. Absent and
+   * `false` both mean it has not, deliberately undistinguished: an older
+   * server that cannot answer and a holder that cannot accept produce the
+   * same screen — withhold the controls and name the way out. The dangerous
+   * default is the other one: a `true` draws a decision bar whose every
+   * press ends in a refusal, the shape that once let this product say
+   * "filed" and take it back a minute later.
    */
   organizerAcceptsRequests?: boolean;
   /**
-   * HOW THIS MAILBOX IS SIGNED IN — and it decides one sentence rather than one control.
-   *
-   * A password mailbox lets both installs derive the same signing key from the credential they
-   * already share, so an organizer can tell a reader's decision from a stranger's. An OAuth
-   * mailbox has no such shared secret: there is no key, the organizer advertises no capability,
-   * and a decision made on a reader is refused however new both installs are. That is a property
-   * of the sign-in, not a version skew, so the pane says it plainly instead of implying a wait.
-   *
-   * ABSENT says nothing, which is right for a build that cannot tell: the refusal is already
-   * explained by who holds the mailbox, and this only adds why it will not change.
+   * How this mailbox is signed in — and it decides one sentence, not one
+   * control. A password mailbox lets both installs derive the same signing
+   * key, so an organizer can tell a reader's decision from a stranger's;
+   * an OAuth mailbox has no shared secret, so a reader's decision is
+   * refused however new both installs are — a property of the sign-in, not
+   * version skew, and the pane says it plainly instead of implying a wait.
+   * Absent says nothing, which is right for a build that cannot tell.
    */
   authKind?: "password" | "oauth";
   /**
-   * HOW MANY OF THE USER'S OWN FILINGS THIS MAILBOX HAS NOT APPLIED YET.
-   *
-   * The API never opens IMAP: a Screener decision writes `folder_state` and the WORKER moves the
-   * mail on its next cycle. So there is always a window in which ohmail shows the mail filed and
-   * the user's server does not — and when the mail host is refusing connections, that window
-   * does not close. Nothing else on this row notices: the mailbox is still `connected` (one
-   * refused cycle does not earn `error`), `syncBlockedSince` is null because this is not one of
-   * OUR infrastructure blocks, and the strip therefore said nothing at all while a backlog of
-   * the user's own decisions built up on the server.
-   *
-   * OPTIONAL, and read with a `typeof === "number"` guard — the same rule, and for the same
-   * measured reason, as {@link initialImportCompletedAt} above: a bundle or a server that
-   * predates the column omits the field, and `undefined` must mean "this build cannot tell",
-   * never `0`. Absent ⇒ the arm is skipped and the ladder behaves exactly as it did before the
-   * column existed. The inverse mistake has its own cost: `Filing 0 messages on your mail
-   * server…` is a sentence about nothing, which is why the arm tests `> 0` as well.
+   * How many of the user's own filings this mailbox has not applied yet. The API never opens
+   * IMAP: a decision writes `folder_state` and the worker moves the mail — a window that does
+   * not close when the mail host refuses connections, and nothing else on the row notices
+   * (still `connected`, `syncBlockedSince` null), so the strip said nothing while a backlog of
+   * the user's own decisions grew. Optional, read with `typeof === "number"` ({@link
+   * initialImportCompletedAt}'s rule): `undefined` means "this build cannot tell", never `0`.
+   * The arm also tests `> 0` — "Filing 0 messages" is a sentence about nothing.
    */
   pendingMoves?: number;
   /**
@@ -871,96 +631,55 @@ export interface MailboxFacts {
    */
   filing?: FilingFacts;
   /**
-   * HOW MUCH MAIL THE SERVER SAYS IS IN THIS MAILBOX — the first pull's denominator (mail 0083),
-   * Σ `mailbox_folders.server_exists` over the folders a cycle has opened.
-   *
-   * `deriveMailState` must never read it, and does not. The strip's ladder is about whether mail
-   * is ARRIVING; this is about how much is still to come, which is a question only the first-run
-   * flow's pull screen asks. It is here for {@link MailboxFacts.smtpMaxSizeBytes}'s reason — this
-   * is the narrowed shape `GET /mailboxes` arrives as, and the flow reads its facts from it.
-   *
-   * OPTIONAL, `typeof === "number"`, never `?? 0`, on {@link pendingMoves}' rule with a louder
-   * consequence: absent is "no folder carries a count yet", and a `0` in its place is the claim
-   * that the person's mail server holds nothing. It also GROWS while the first cycle walks the
-   * folder tree and may sit BELOW the mirror's own count, so every consumer clamps the remainder
-   * at zero and renders nothing there.
+   * How much mail the server says is in this mailbox — the first pull's denominator (mail
+   * 0083), Σ `mailbox_folders.server_exists` over opened folders. `deriveMailState` never reads
+   * it: the strip is about whether mail is arriving; this is how much is still to come, asked
+   * only by the first-run pull screen. Optional, `typeof === "number"`, never `?? 0`: absent is
+   * "no folder carries a count yet", and a `0` in its place claims the person's mail server
+   * holds nothing. It grows while the first cycle walks the tree and may sit below the mirror's
+   * own count, so every consumer clamps the remainder at zero.
    */
   serverMessageCount?: number;
   /**
-   * THE BIGGEST MESSAGE THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT, in bytes — the
-   * server's own `SIZE` announcement, recorded when the mailbox was connected.
-   *
-   * `deriveMailState` must never read it, and does not: it says nothing about whether mail is
-   * arriving. It is here for the same reason {@link MailboxFacts.id} is — `compose-from.ts` needs
-   * it, and this is the narrowed shape `GET /mailboxes` arrives as.
-   *
-   * OPTIONAL and nullable, and the two mean different things by the rule
-   * {@link MailboxFacts.initialImportCompletedAt} states: absent is an API that predates the
-   * column, `null` is a server that announced no ceiling. Both resolve the same way at the compose
-   * surface — fall back to the product constant — so nothing here has to tell them apart; the
-   * distinction is kept because collapsing it is how the import floor was once broken.
+   * The biggest message this mailbox's submission server said it will accept, in bytes — its
+   * own `SIZE` announcement, recorded at connect. `deriveMailState` never reads it; it is here
+   * because `compose-from.ts` needs it and this is the narrowed shape `GET /mailboxes` arrives
+   * as. Optional AND nullable, two different things ({@link
+   * MailboxFacts.initialImportCompletedAt}'s rule): absent is an API predating the column,
+   * `null` is a server that announced no ceiling. Both fall back to the product constant at the
+   * compose surface; the distinction is kept because collapsing it once broke the import floor.
    */
   smtpMaxSizeBytes?: number | null;
   /**
-   * WHY SENDING IS NOT SET UP for this mailbox — the probe's own reason, or `null`/absent when it
-   * is set up.
-   *
-   * An outgoing server is not a reason to stop receiving: the local door stores the incoming
-   * credential when only the submission dial is refused, records the reason here, and the send
-   * path refuses with it rather than guessing. Every surface that mentions it reads THIS field, so
-   * the pane, the setup summary and the send refusal cannot say three different things.
-   *
-   * `null` is "settled" and is what every mailbox connected before this existed reports. It is not
-   * a promise that a send will succeed — a server can start refusing tomorrow — only that the
-   * submission server was proved when the password was stored.
+   * Why sending is not set up for this mailbox — the probe's own reason, or
+   * `null`/absent when it is. An outgoing server is not a reason to stop
+   * receiving: the local door stores the incoming credential when only the
+   * submission dial is refused, records the reason here, and the send path
+   * refuses with it rather than guessing. Every surface that mentions it
+   * reads THIS field, so the pane, the setup summary and the send refusal
+   * cannot say three different things. `null` is "settled" — proof the
+   * submission server answered when the password was stored, not a promise about tomorrow.
    */
   sendingUnsettledReason?: string | null;
   /**
-   * HOW MANY MESSAGES THE ACCOUNT HOLDS FOR THIS MAILBOX — the SERVER's count, not this
-   * device's.
-   *
-   * The one fact on this row that is deliberately about somewhere else, and it exists because
-   * the reader's question is a COMPARISON: how much of my mail is on this device? The numerator
-   * is {@link MailStateInputs.mirrored} (the local mirror) and this is the denominator.
-   *
-   * TWO CONSUMERS, AND NEITHER OF THEM IS AN ALARM. The `importing` arm quotes the pair as
-   * progress while the mirror MOVES, and the Mailboxes pane states it at rest as a quiet fact
-   * about a windowed copy ({@link deviceHoldings}). It had a third — the `behind` strip state,
-   * a standing warning triangle — which was removed on 2026-08-30; `deviceHoldings` carries why.
-   *
-   * ── IT IS NOT `messageCount`, AND THE NAME IS THE WHOLE POINT ───────────────────────────
-   *
-   * `MailboxDTO.messageCount` means "how much mail is in this mailbox" as answered by whichever
-   * server was asked — so on a local engine it is the MIRROR's own count, and a comparison of a
-   * number against itself is always "N of N". Two facts wearing one name is the mistake
-   * `cloud-mirror.ts` already refuses when it declines to copy the hosted `lastSyncAt` onto a
-   * mirrored row; this is the same rule pointed the other way. A field that says HOSTED in its
-   * name cannot be filled from the local aggregate by accident.
-   *
-   * OPTIONAL, and read with a `typeof === "number"` guard on the rule
-   * {@link MailboxFacts.pendingMoves} states: absent means "this build cannot tell", never `0`.
-   * A `?? 0` at any seam would make an unknowable denominator look like an emptied account. The
-   * hosted Cloud client never sends it — asking `GET /mailboxes` for counts on a 30 s heartbeat
-   * is the full-table aggregate that route's own doc-block refuses — so on a browser tab every
-   * consumer of it is simply unreachable, which is the intended shape rather than a gap.
+   * How many messages the ACCOUNT holds for this mailbox — the server's count, not this device's.
+   * The reader's question is a comparison: the numerator is {@link MailStateInputs.mirrored}, this
+   * is the denominator. Two consumers, neither an alarm: the `importing` arm quotes the pair as
+   * progress; the Mailboxes pane states it at rest ({@link deviceHoldings} — the `behind` strip
+   * state was removed 2026-08-30). Not `messageCount`, which on a local engine is the MIRROR's own
+   * count — a comparison of a number against itself. Optional, `typeof === "number"`: absent means
+   * "cannot tell", never `0` — a `?? 0` would make an unknowable denominator look like an emptied
+   * account. The hosted client never sends it.
    */
   hostedMessageCount?: number;
   /**
-   * THE FORWARDING-DETECTION NOTICE's evidence pair (mail 0078). `inboundQuietSince` non-null is
-   * a standing quiet episode: the worker judged this connected, healthily-syncing mailbox to
-   * have received essentially no genuine inbound for a generous window while evidence says mail
-   * should be arriving — the newest genuine inbound date the mailbox holds ("almost nothing
-   * since {this}"). `inboundQuietDismissedAt` is the mailbox's dismissal.
-   *
-   * `deriveMailState` must never read them, and does not: the whole feature is a QUIET note on
-   * the Mailboxes pane about a healthy mailbox, and a strip state would be the alarm the copy
-   * exists to not be. The pane's show rule (health on screen, and `dismissedAt < since`) lives
-   * with the pane that renders it.
-   *
-   * OPTIONAL, and absent means "this engine or API predates the columns" —
-   * {@link MailboxFacts.initialImportCompletedAt}'s rule: forwarded untouched, no `?? null`,
-   * because an absent pair must render nothing rather than a false "no episode" claim a later
-   * consumer might learn to distinguish.
+   * The forwarding-detection notice's evidence pair (mail 0078). `inboundQuietSince` non-null
+   * is a standing quiet episode: the worker judged this connected, healthily-syncing mailbox to
+   * have received essentially no genuine inbound for a generous window ("almost nothing since
+   * {this}"); `inboundQuietDismissedAt` is the mailbox's dismissal. `deriveMailState` never
+   * reads them: the feature is a quiet note on the Mailboxes pane, and a strip state would be
+   * the alarm the copy exists not to be. Optional; absent means the engine or API predates the
+   * columns — forwarded untouched, no `?? null`.
    */
   inboundQuietSince?: string | null;
   inboundQuietDismissedAt?: string | null;
@@ -969,40 +688,14 @@ export interface MailboxFacts {
 }
 
 /**
- * WHETHER THE FORWARDING-DETECTION NOTICE SHOWS on a mailbox row (mail 0078). Exported pure so
- * the suite can bite each clause, and IN THE SHARED SHELL because two panes render the same
- * notice — the Cloud client's `(product)/mailbox/MailboxSection` and the desktop's
- * `DesktopMailboxes` — and `(product)` is denied from the Desktop mirror. One rule, or the two
- * surfaces tell one mailbox's owner two different stories.
- *
- * Structural `Pick`-shaped parameter so both callers' row types fit (`MailboxDTO` declares the
- * pair optional, {@link MailboxFacts} too — an absent pair is an older server and renders
- * nothing, which is what NULL means anyway).
- *
- * Three claims, each one a sentence in the notice, each one a gate:
- *
- *  · `inboundQuietSince` set — the worker recognised a quiet episode; the server's pass
- *    (`apps/worker/src/inbound-quiet.ts`) is the predicate's single owner and this function
- *    re-derives none of it.
- *  · the mailbox is HEALTHY ON SCREEN — `connected`, no `syncBlockedSince`, a `lastSyncAt`.
- *    The copy opens with "syncing works"; on an errored, blocked or never-synced row that claim
- *    is false, the error/block copy owns the row, and a second explanation would contradict it.
- *    The episode itself survives an outage server-side (the pass never clears on unhealthy), so
- *    this gate HIDES rather than resets — health back, notice back, dismissal intact.
- *  · not dismissed, or dismissed BEFORE this episode's evidence: `dismissedAt < since` re-shows
- *    only when newer inbound exists than the press knew about — which requires mail to have
- *    actually flowed after the dismissal (the pass clears an episode only on real flow, and a
- *    new episode stamps the newer date). Sameness holds; a state change re-notifies.
- *
- * Timestamp comparison via `Date.parse`, not string order: both are ISO-8601 from one server,
- * but a lexicographic compare would silently invert on any future format drift.
- *
- * `now` is a PARAMETER, not `Date.now()` read inside, for the same reason the worker's pass
- * takes a clock: the health claim includes FRESHNESS — a `connected` row whose last completed
- * cycle is a day old is a mailbox whose syncing story belongs to the outage surfaces, not to
- * copy that opens with "syncing works" (review finding, round 1: non-nullness alone kept the
- * claim on screen through an arbitrarily long outage). The threshold mirrors the worker's own
- * trip gate, declared here because the worker's module is not importable from the shell.
+ * Whether the forwarding-detection notice shows on a mailbox row (mail
+ * 0078). Exported pure so the suite can bite each clause; in the shared
+ * shell because two panes render it — one rule, or two surfaces tell one
+ * owner two stories. Three gates: `inboundQuietSince` set (the worker's
+ * pass is the predicate's single owner); the mailbox healthy ON SCREEN
+ * (connected, unblocked, synced, FRESH — `now` is a parameter; health gates
+ * hide, never reset); and not dismissed, or dismissed before this
+ * episode's evidence (`dismissedAt < since`, via `Date.parse`, never string order).
  */
 export const INBOUND_QUIET_SHOW_FRESH_MS = 24 * 60 * 60 * 1000;
 
@@ -1021,26 +714,14 @@ export function showInboundQuiet(m: {
 }
 
 /**
- * THE ACCOUNT'S OWN MESSAGE TOTAL, summed over the mailboxes that can be behind — or `null`.
- *
- * EVERY-OR-NOTHING, and that is the load-bearing half. A partial sum is not a smaller total, it
- * is a WRONG total: two mailboxes of which one reports 20,000 and the other reports nothing
- * would put "1,114 of 20,000" on screen while the true denominator is 34,000, and the same
- * arithmetic with the absent field read as `0` understates it in exactly the situation the
- * feature exists for. One missing answer therefore withdraws the whole claim, which is the
- * behaviour every other optional field on {@link MailboxFacts} already has.
- *
- * SUMMED OVER EVERY MAILBOX THE FACTS CARRY, connected or not, because the NUMERATOR is the whole
- * mirror — `MailStateInputs.mirrored` is every message in the local store, and a disconnected
- * mailbox's mail stays there (nothing is deleted for a disconnect). Summing only the connected
- * rows against that numerator compares two different populations: with mail retained for a
- * disabled mailbox the pair on screen is wrong in the reader's favour (it counts messages the
- * denominator does not) and a real shortfall on the connected mailbox is masked or hidden
- * entirely. An earlier version of this function did exactly that.
- *
- * A mailbox the hosted account no longer names has no entry in the map at all — a local tombstone
- * keeps its mail but reports no count — so that case withdraws the denominator through the rule
- * below rather than through a filter here, which is the same fail-safe by a shorter path.
+ * The account's own message total, summed over the mailboxes that can be behind — or `null`.
+ * Every-or-nothing is the load-bearing half: a partial sum is not a smaller total, it is a
+ * WRONG one ("1,114 of 20,000" while the truth is 34,000), so one missing answer withdraws the
+ * whole claim. Summed over every mailbox the facts carry, connected or not, because the
+ * numerator is the whole mirror and a disconnected mailbox's mail stays in it — summing only
+ * connected rows compares two different populations (an earlier version did exactly that). A
+ * mailbox the account no longer names reports no count, which withdraws the denominator by the
+ * same rule.
  */
 export function hostedTotal(mailboxes: readonly MailboxFacts[]): number | null {
   if (mailboxes.length === 0) return null;
@@ -1053,50 +734,14 @@ export function hostedTotal(mailboxes: readonly MailboxFacts[]): number | null {
 }
 
 /**
- * **WHAT THIS DEVICE HOLDS, AGAINST WHAT THE ACCOUNT HOLDS** — the pair, or `null` when no
- * sentence may quote one.
- *
- * ── THIS IS NOT AN ALARM, AND IT USED TO BE ─────────────────────────────────────────────────
- *
- * There was a strip state for this pair — `behind`, a warning triangle at the foot of the rail
- * reading "This device holds N of the account's M messages", standing for as long as the two
- * numbers differed. It was removed after a field report that it reads as a constant warning
- * rather than as information, and the reason it went is not taste:
- *
- *  · A DIFFERENCE BETWEEN THE TWO NUMBERS IS THE NORMAL SHAPE OF THIS PRODUCT. The desktop's
- *    Cloud mirror is a window over the hosted account — `apps/sidecar/src/cloud-read.ts` says
- *    so at the `GET /messages` hole in its read table — and the mail outside the window is
- *    reachable on demand through the reach-past doors: the LIST door (`useOlderMail` →
- *    `HttpAdapter.listMessages`, which that read table deliberately does NOT answer locally, so
- *    it falls through to the hosted account) and the BODY door (`older-body.ts`, and
- *    `cloud-engine.ts`'s body fall-through for a row the mirror never held). Nothing is missing.
- *  · THE ARM COULD NOT TELL A HEALTHY WINDOW FROM A STALLED ONE. Its whole evidence was "the
- *    numbers differ and the mirror has not moved for 90 s", which is equally true of a mirror
- *    that has converged as far as this install will take it, one resting between the sidecar's
- *    20-second pulls, and one that has genuinely stopped. An alarm that fires for all three is
- *    an alarm about none of them. The signal that WOULD separate them — the sidecar's own "my
- *    last hosted drain reached the horizon and I am still short" — is not on any wire the shell
- *    can read; it is filed as a candidate rather than guessed at here.
- *  · AND THE BANNER CONTRADICTED ITS OWN DESTINATION. It linked to Settings → Mailboxes, where
- *    every row said "Up to date". One of the two was wrong, and it was the banner.
- *
- * The FACT is still worth stating, so it moved to where a question about it is asked: a quiet
- * line in the Mailboxes pane (`DesktopMailboxes.tsx`, `mailboxes.desktopHoldsCount`), beside the
- * sentence about whose copy this is. This function is that line's one derivation — and the same
- * arithmetic the `importing` arm quotes — so the pane cannot re-derive it into a different
- * answer.
- *
- * `null` in three cases, all of them "say nothing":
- *
- *  · `mailboxes === null` — the facts are not visible yet (the Desktop before its first read,
- *    the demo, a Cloud tab whose first poll has not landed). Not "there are none".
- *  · {@link hostedTotal} withheld the denominator — one silent mailbox withdraws the whole
- *    claim, because a partial sum is a WRONG total rather than a small one.
- *  · the total is not STRICTLY above `mirrored`. A denominator the numerator has reached or
- *    passed is a stale reading (a mailbox removed on the account keeps its mail locally, so the
- *    numerator can legitimately exceed a correct denominator), and the honest answer to a stale
- *    reading is to stop quoting it — never to clamp the two into an even fraction, which would
- *    read as though they had been measured together.
+ * What this device holds, against what the account holds — the pair, or `null` when no sentence may quote
+ * one. Not an alarm, and it used to be: the `behind` strip state was removed because a difference between the
+ * two numbers is the NORMAL shape of a windowed mirror in front of working reach-past doors, the arm could
+ * not tell a healthy window from a stalled one, and the banner contradicted its own destination ("Up to
+ * date"). The fact moved to a quiet line in the Mailboxes pane, and this is that line's one derivation — also
+ * what the `importing` arm quotes. `null` in three say-nothing cases: facts not visible yet; {@link
+ * hostedTotal} withheld the denominator; or the total is not STRICTLY above `mirrored` (a passed denominator
+ * is a stale reading — stop quoting, never clamp).
  */
 export interface DeviceHoldings {
   /** Messages in the local mirror — every folder, every mailbox. */
@@ -1116,48 +761,14 @@ export function deviceHoldings(
 }
 
 /**
- * **MAY THE HOLDINGS SENTENCE BE SAID AT ALL RIGHT NOW?** — the gate in front of
- * {@link deviceHoldings}, and a SEPARATE question from the arithmetic.
- *
- * `deviceHoldings` answers "are these two numbers comparable"; this answers "is this device in a
- * position to make a statement about its own copy, and to promise what the sentence promises".
- * Two review findings, both real, both about a claim that is arithmetically fine and factually
- * wrong at the moment it is made:
- *
- *  · **A MIRROR NOBODY HAS READ YET.** The window's engine starts with an EMPTY in-memory mirror
- *    and fills it page by page, while the mailbox probe is an independent 30-second poll that can
- *    answer on the first tick. A Settings pane open across a cold launch would therefore read
- *    "This computer holds 0 of your N messages", then a few hundred, then a few thousand — while
- *    the store on this machine already held them the whole time; only this client's own count was
- *    still climbing. `bootstrapping` is exactly "this client's first drain
- *    has not completed", and the scheduler hydrates from the device BEFORE it drains, so its
- *    clearing is the moment `mirrored` stops being a number in motion and starts being a fact.
- *  · **A LOOP THAT CANNOT KEEP THE PROMISE.** The sentence says the rest of the mail loads when
- *    it is reached, and BOTH reach-past doors are network reads — on the desktop's Cloud door they
- *    are forwarded by the sidecar's write-through proxy to the hosted account, which answers
- *    `503 offline_read_only` when it cannot reach it. So {@link HOLDINGS_SILENT_KEYS} is four
- *    keys, not two, and each is a different way of already knowing the promise is not good:
- *
- *      · `stopped`    — the session was refused and the loop has halted.
- *      · `failing`    — a sustained run of failed drains.
- *      · `stale`      — the mirror's last completed pull is older than the freshness threshold,
- *                       which on the desktop is the SIDECAR's own stamp against the hosted
- *                       account (`GET /mirror/freshness`). That is exactly the offline case: a
- *                       sidecar that cannot reach Cloud keeps serving its local feed happily —
- *                       the window's own loop looks perfect — while every reach-past would 503.
- *                       Review finding, round 3; without this the pane promised on-demand
- *                       loading over a door that was answering nothing.
- *      · `catchingUp` — an unconfirmed refusal is being re-tried. Brief, and the strip is already
- *                       saying so; a promise made inside it is a coin flip.
- *
- *    This is where the gate DIFFERS from {@link MailState.settled}, which admits `stopped` and
- *    `failing` on purpose: "the list really is empty" stays true on a dead loop, and "the rest
- *    will load" does not. It is written against the ladder's VERDICT rather than against `sync`
- *    or the freshness input so the pane needs no second copy of a precedence rule that lives in
- *    this file.
- *
- * Exported and pure so the suite can bite each clause, and used by the pane rather than re-derived
- * there — the rule this module's header states: one derivation, not one DOM node.
+ * May the holdings sentence be said at all right now? — the gate in front of {@link deviceHoldings}, a separate
+ * question from the arithmetic. Two findings: a mirror nobody has read yet (`bootstrapping` — the engine fills page
+ * by page while the probe answers on the first tick, so a cold launch read "holds 0 of N" over a full store), and a
+ * loop that cannot keep the promise — the sentence says the rest loads when reached, and both reach-past doors are
+ * network reads. {@link HOLDINGS_SILENT_KEYS} is four keys: `stopped`, `failing`, `stale` (on the desktop the
+ * SIDECAR's own stamp — the offline case), `catchingUp`. This differs from {@link MailState.settled}, which admits
+ * stopped/failing on purpose: "the list is empty" stays true on a dead loop, "the rest will load" does not. Written
+ * against the ladder's VERDICT; exported pure.
  */
 export const HOLDINGS_SILENT_KEYS: readonly MailStateKey[] = [
   "stopped", "failing", "stale", "catchingUp",
@@ -1166,17 +777,14 @@ export const HOLDINGS_SILENT_KEYS: readonly MailStateKey[] = [
 export function holdingsSpeak(
   state: MailState,
   /**
-   * The SAME freshness verdict the ladder judged — the desktop's probed one, which is the
-   * sidecar's stamp against the hosted account.
-   *
-   * A THIRD gate, and the one the key list cannot express (review finding, round 4). `stale` is a
-   * KEY and is refused above; `unknown` is NOT a key — the ladder's stale arm simply does not fire
-   * for it — so a door whose freshness has never been established falls through to `quiet`, and
-   * `settled` can be true on nothing more than "this client's first drain finished". That is
-   * exactly the shape of a desktop whose `/mirror/freshness` is hanging or refusing while the
-   * local feed serves perfectly: nothing on screen is wrong, and nothing on screen knows whether
-   * the hosted account is reachable either. A promise about on-demand loading may only be made
-   * from evidence, so `unknown` is silence, the same direction every other clause here points.
+   * The same freshness verdict the ladder judged — the desktop's probed
+   * one, the sidecar's stamp against the hosted account. A third gate, and
+   * the one the key list cannot express: `unknown` is not a key — the
+   * stale arm does not fire for it — so a door whose freshness was never
+   * established falls through to `quiet` and `settled` can be true on
+   * nothing more than "this client's first drain finished"; exactly a
+   * desktop whose `/mirror/freshness` hangs while the local feed serves
+   * perfectly. A promise about on-demand loading is made from evidence only, so `unknown` is silence.
    */
   freshness: { state: "unknown" | "stale" | "current" },
 ): boolean {
@@ -1190,73 +798,38 @@ export function holdingsSpeak(
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * How long a rise keeps counting, and how close two rises must be to belong to one run.
- *
- * Thirty seconds. It has to survive ONE missed 8 s poll plus its backoff jitter plus the
- * lumpiness of a worker writing an import in batches — a window of one or two poll periods
- * would flap between "syncing" and silence every time a large message took a moment, which is
- * worse than either sentence alone. It also has to be orders of magnitude below "this mailbox
- * finished importing three hours ago", which it is.
- *
- * A DURATION and not a count of polls, for the reason `syncBlockGraceMs` is one: a count
- * is a proxy for time that silently retunes the moment `POLL_MS` changes.
- *
- * ── IT BOUNDS THE RUN, NOT THE EPISODE ──────────────────────────────────────────────────
- *
- * The paragraph above predicted a flap if this window were one or two poll periods. It was the
- * right argument aimed at the wrong clock, and the flap happened anyway at thirty seconds: the
- * gap that governs mid-import is not the CLIENT's 8 s poll, it is the SERVER's cycle — a poll
- * interval of 60 s by default. No 30 s window can span one of those, so every server cycle tore
- * the run down and the strip had to start again.
- *
- * This constant still decides what counts as ONE RUN of rises, which is the evidence that an
- * import has BEGUN. What outlives it is the episode — see {@link IMPORT_END_IDLE_MS}.
+ * How long a rise keeps counting, and how close two rises must be to be
+ * one run. Thirty seconds: it must survive one missed 8 s poll plus
+ * backoff jitter plus a worker writing in batches — a one-poll window
+ * would flap between "syncing" and silence — and stay far below "finished
+ * three hours ago". A duration, not a poll count (a count silently retunes
+ * when `POLL_MS` changes). It bounds the RUN, not the episode: the gap
+ * that governs mid-import is the SERVER's ~60 s cycle, which no 30 s
+ * window can span — that is {@link IMPORT_END_IDLE_MS}'s job.
  */
 export const GROWTH_WINDOW_MS = 30_000;
 
 /**
- * How long an import EPISODE survives a mirror that is not moving.
- *
- * ── THE DEFECT THIS NUMBER EXISTS FOR ───────────────────────────────────────────────────
- *
- * Observed in a real import: three worker drains with 45 s of idle between them showed
- * the strip FIVE times, with 31-second quiet gaps inside a single import. Every one of those
- * gaps is longer than {@link GROWTH_WINDOW_MS}, so each one ended the run — and with the run
- * gone the strip had to re-earn two rises AND the delta before it could speak again.
- *
- * ── WHY NINETY SECONDS ──────────────────────────────────────────────────────────────────
- *
- * The quiet gap mid-import is ONE SERVER CYCLE. The server kicks that cycle on a poll interval
- * that defaults to 60 s, and the client then needs up to one 8 s `POLL_MS` to see what the cycle
- * wrote — a floor of 68 s. The largest gap actually measured was 45 s. Ninety clears both with
- * room for a cycle that overruns, and `test/mail-state.test.ts` asserts the relation against the
- * server's own constant rather than against this sentence.
- *
- * ── AND WHAT IT COSTS, SAID OUT LOUD ────────────────────────────────────────────────────
- *
- * The strip now lingers up to 90 s after the last message instead of 30 s, over a count that has
- * stopped moving — and `SyncBar.tsx`'s spinner keeps turning for all of it. That is a real cost,
- * accepted, because there is NO end-of-import signal to replace it with: `lastSyncAt` cannot be
- * read positively (see the file header, both defects), and `/sync` answers `hasMore` about one
- * DRAIN, never about the import. A tail of stale-but-true beats a strip that appears five times,
- * which is the defect that was actually filed.
+ * How long an import EPISODE survives a mirror that is not moving. Observed: three worker drains with
+ * 45 s idle between them showed the strip five times in one import — every gap outlived {@link
+ * GROWTH_WINDOW_MS} and ended the run. Ninety seconds: the mid-import gap is one server cycle (default
+ * 60 s) plus up to one 8 s client poll (~68 s floor; largest measured gap 45 s), and
+ * `test/mail-state.test.ts` asserts the relation against the server's own constant. The cost, said out
+ * loud: the strip lingers up to 90 s after the last message — accepted, because there is no
+ * end-of-import signal to replace it (`lastSyncAt` cannot be read positively; `/sync` answers per
+ * drain). A stale-but-true tail beats a strip appearing five times.
  */
 export const IMPORT_END_IDLE_MS = 90_000;
 
 /**
- * How much a run of rises must add before it is called an IMPORT rather than the post.
- *
- * Without this the strip appears for one decay window every time any mail arrives, on every
- * busy morning, for ever — which is precisely the "permanent chrome nobody reads" that
- * `SyncBar.tsx` was built to avoid. Twenty-five messages is crossed in ~19 s at the measured
- * import rate (27 messages / 20 s) and is not crossed by a thread burst.
- *
- * It is measured against {@link MirrorGrowth.added} — what the run ADDED — and no longer against
- * `count - runStartCount`, which was a NET delta a single delete could walk back. That was the
- * first defect; the field's own doc has the mechanism.
- *
- * The first import of a mailbox does not have to reach it, because a run that starts from an
- * EMPTY mirror is unambiguous. See {@link isImporting}.
+ * How much a run of rises must add before it is called an import rather
+ * than the post. Without it the strip appears for one decay window every
+ * busy morning, for ever — the permanent chrome `SyncBar.tsx` was built to
+ * avoid. Twenty-five messages is crossed in ~19 s at the measured import
+ * rate and is not crossed by a thread burst. Measured against
+ * {@link MirrorGrowth.added} — what the run ADDED — not `count -
+ * runStartCount`, a net delta a single delete could walk back. A first
+ * import from an EMPTY mirror does not have to reach it ({@link isImporting}).
  */
 export const IMPORT_MIN_DELTA = 25;
 
@@ -1274,50 +847,36 @@ export interface MirrorGrowth {
   /** The count this run started from. Zero means "this mirror was empty", i.e. a first import. */
   runStartCount: number;
   /**
-   * Messages the current run has ADDED. Cumulative, and never reduced — the first defect.
-   *
-   * The qualifier used to be `count - runStartCount`, a NET delta, and a fall moves `count` while
-   * deliberately leaving `runStartCount` alone ({@link growthStep} says why). So every delete, and
-   * every message a Screener backfill moved out of the mirror, SHRANK the evidence that an import
-   * was under way: the net delta walked back and forth across {@link IMPORT_MIN_DELTA} and the
-   * strip followed it, on and off, for as long as the backfill ran.
-   *
-   * `added === count - runStartCount` exactly when no fall has happened in the run — which is the
-   * whole "and nothing else changed" claim, and is asserted rather than asserted-in-a-comment.
+   * Messages the current run has ADDED. Cumulative, never reduced: the
+   * qualifier used to be `count - runStartCount`, a net delta, and a fall
+   * moves `count` while leaving `runStartCount` alone — so every delete and
+   * every Screener-backfill move SHRANK the evidence, and the strip
+   * followed the delta back and forth across {@link IMPORT_MIN_DELTA} for
+   * as long as the backfill ran. `added === count - runStartCount` exactly
+   * when no fall happened in the run — asserted, not asserted-in-a-comment.
    */
   added: number;
   /**
-   * THE EPISODE LATCH — the second and third defects, which are the same defect.
-   *
-   * True from the moment a run first qualifies as an import until the mirror has been still for
-   * {@link IMPORT_END_IDLE_MS}. It is deliberately NOT cleared when a RUN ends, and that is the
-   * point: both qualifiers that can start an episode are effectively single-use in a session.
-   * `runStartCount === 0` can only hold before the first gap, because {@link growthStep} moves the
-   * baseline off zero and never back; and `bootstrapping` goes false on this tab's first
-   * successful drain (`sync-scheduler.ts`) and never returns. So without a latch, an import that
-   * pauses for 31 seconds has to re-earn two rises AND twenty-five messages before the strip may
-   * speak again — five times during one import, which is what was measured.
-   *
-   * A boolean and not a timestamp: nothing reads WHEN the episode began, and everything
-   * time-based reads `lastRiseAt`, which is the fact that actually decays. A field nobody reads
-   * is a claim under test that fails.
+   * The episode latch. True from the moment a run first qualifies as an import until the mirror
+   * is still for {@link IMPORT_END_IDLE_MS} — deliberately NOT cleared when a run ends: both
+   * qualifiers are effectively single-use in a session (`runStartCount === 0` only holds before
+   * the first gap; `bootstrapping` never returns), so without a latch an import that pauses 31
+   * s re-earns two rises and twenty-five messages before speaking — five times in one measured
+   * import. A boolean, not a timestamp: nothing reads WHEN the episode began, and a field
+   * nobody reads is a claim under test that fails.
    */
   importing: boolean;
 }
 
 /**
- * The seed. `lastRiseAt: -Infinity` and not `Date.now()`, deliberately.
- *
- * The mirror persists into IndexedDB, so a tab that opens onto a settled mailbox starts at
- * 495 rather than at 0. Seeding the clock with "now" would make the next arrival look like the
- * second rise of a run that never had a first, so every reload of a healthy mailbox would
- * announce an import. `-Infinity` makes the first rise unambiguously a first rise.
- *
- * `importing: false` for the same reason, and it is the one place the latch does not survive: a
- * tab opening mid-import cannot tell itself apart from a tab opening onto a settled mailbox, so
- * it must claim nothing. It re-enters through `bootstrapping` while its own first drain runs, and
- * after that needs {@link IMPORT_MIN_DELTA} more messages to latch — the cold-start behaviour this
- * module always had, and the episode timeout above does not change it.
+ * The seed. `lastRiseAt: -Infinity`, not `Date.now()`: the mirror persists
+ * into IndexedDB, so a tab opening onto a settled mailbox starts at 495
+ * rather than 0, and seeding "now" would make the next arrival look like
+ * the second rise of a run that never had a first — every reload of a
+ * healthy mailbox would announce an import. `importing: false` for the
+ * same reason, the one place the latch does not survive: a tab opening
+ * mid-import cannot tell itself from one opening onto a settled mailbox,
+ * so it claims nothing; it re-enters via `bootstrapping`, then needs {@link IMPORT_MIN_DELTA} to latch.
  */
 export function seedGrowth(count: number): MirrorGrowth {
   return {
@@ -1368,29 +927,14 @@ export function isGrowing(g: MirrorGrowth, now: number): boolean {
 }
 
 /**
- * Is this growth an IMPORT worth interrupting the screen for? Two ways in, all client facts.
- *
- * ── 1. THE EPISODE IS LATCHED ───────────────────────────────────────────────────────────
- *
- * {@link growthStep} set {@link MirrorGrowth.importing} when a run first qualified — it started
- * from an EMPTY mirror (a first import, the original defect itself), or it added
- * {@link IMPORT_MIN_DELTA} or more (a mid-import stall that resumed at count 300 is still an
- * import). The only question left here is whether the mirror has gone still for
- * {@link IMPORT_END_IDLE_MS}, which is the whole of the fix: the qualifiers are evaluated once,
- * at the rise that earns them, and never re-litigated between two worker cycles.
- *
- * ── 2. THIS TAB'S FIRST DRAIN HAS NOT COMPLETED ─────────────────────────────────────────
- *
- * A new device repopulating its own mirror. It is the one arm that CANNOT latch, because
- * `growthStep` is not told about `bootstrapping` — and it is not told because that would mean
- * changing `MailStateProvider.tsx`'s call, which is out of this module's reach. It does not need to
- * latch: it is true for seconds, it covers exactly the cold-start window `seedGrowth` describes,
- * and a run that matters outlives it by qualifying on its own.
- *
- * Not one of them reads a timestamp the server wrote. That rule — client-observed progress
- * only, never a server clock — is deliberate, and it
- * is why the import FLOOR (`initial_import_completed_at`, the case a partial server state needs)
- * is a separate arm in {@link deriveMailState}, not a third way into this function. See the header.
+ * Is this growth an import worth interrupting the screen for? Two ways in, all client facts. 1:
+ * the episode is latched — {@link growthStep} set it when a run first qualified (an
+ * empty-mirror start, or {@link IMPORT_MIN_DELTA} added); the only question here is whether the
+ * mirror has been still for {@link IMPORT_END_IDLE_MS} — qualifiers are evaluated once, never
+ * re-litigated between worker cycles. 2: this tab's first drain has not completed — true for
+ * seconds, covers the cold-start window, cannot latch and does not need to. Neither reads a
+ * server timestamp; that rule is why the import FLOOR is a separate arm in {@link
+ * deriveMailState}, not a third way in here.
  */
 export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number): boolean {
   if (g.importing) return now - g.lastRiseAt < IMPORT_END_IDLE_MS;
@@ -1398,67 +942,26 @@ export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number
 }
 
 /**
- * How long the import FLOOR is trusted with no corroboration at all.
- *
- * Twenty-four hours, and the number's job is to DOMINATE any genuine first import rather than to
- * estimate one. The measurements this file already records are the scale it has to beat: a first
- * attach at around six minutes, twice; a few thousand messages drained in minutes; attaches are
- * SERIAL, so a second mailbox legitimately waits behind the first with nothing stamped the whole
- * time. A day is an order of magnitude past all of it, which is what makes the window safe to
- * treat as absolute — inside it the floor is obeyed exactly as it was before this bound existed.
- *
- * Exported so a test can drive either side of it rather than sleeping past a literal it cannot see.
+ * How long the import floor is trusted with no corroboration. Twenty-four
+ * hours; the number's job is to DOMINATE any genuine first import rather
+ * than estimate one — the measured scale is a first attach at ~6 minutes
+ * (twice), thousands of messages drained in minutes, attaches serial so a
+ * second mailbox waits with nothing stamped. A day is an order of
+ * magnitude past all of it, which is what makes the window safe to treat
+ * as absolute: inside it the floor is obeyed exactly as before the bound
+ * existed. Exported so a test can drive either side.
  */
 export const IMPORT_FLOOR_MAX_MS = 86_400_000;
 
 /**
- * Does the server's unwritten stamp still entitle the strip to say "importing" about THIS mailbox?
- *
- * ── THE DEFECT THIS EXISTS TO END ───────────────────────────────────────────────────────
- *
- * `initial_import_completed_at` is written by the worker on the first cycle that drains with no
- * backlog, and by nothing else. A mailbox that never reaches such a cycle is therefore never
- * stamped — and the floor, as first written, read that as "still importing" FOR EVER. The shape of
- * it: a mailbox connected days earlier, `connected`, its `last_sync_at` minutes old, its mirror
- * fully drained and motionless, and the strip still announcing an import in progress over mail the
- * reader could already open. Worse where an account has more than one mailbox — the floor's `some`
- * let a single unstamped mailbox speak for every healthy one beside it.
- *
- * The stamp is documented as readable ONLY as `=== null`, meaning "not KNOWN to be finished". This
- * function is where that reading stops being turned into a positive, counted, clocked claim about
- * work in flight on evidence that is merely absent. A null is an unknown, and an unknown that has
- * outlived every plausible import — against a client that has drained and a mirror that has not
- * moved — is not grounds for a sentence about what the app is doing right now.
- *
- * ── WHY RELEASING IT DOES NOT BRING BACK THE PARTIAL MAILBOX ────────────────────────────
- *
- * Two structural reasons, and neither is a judgement call:
- *
- *  1. Inside {@link IMPORT_FLOOR_MAX_MS} the floor is ABSOLUTE — no corroboration is consulted and
- *     the behaviour is bit-for-bit what it was. The case the floor was written for (a tab meeting a
- *     partial server state minutes to hours after a connect) lives entirely inside that window.
- *  2. PAST the window, a server import that is genuinely still running re-enters through the growth
- *     arm above this one, which outranks it: {@link growthStep} re-qualifies a run at two rises and
- *     {@link IMPORT_MIN_DELTA} added, and a real backfill crosses that in seconds.
- *
- * What is left is exactly the case this bound is for: a mailbox older than the window whose server
- * import is not producing anything. That IS a server-side fault — but a permanent false "Syncing"
- * is the worse way to render it, and it is not a claim this client can honestly make.
- *
- * ── THE CORROBORATION IS THE WHOLE SYNC STATUS, NOT A BOOLEAN ───────────────────────────
- *
- * `bootstrapping` goes false only after `engine.syncOnce()` RESOLVES, and that call commits the
- * snapshot and then pages until `hasMore` is false — so `!bootstrapping` is precisely "this tab has
- * completed a full drain at least once". `failures === 0` is required WITH it and is not
- * belt-and-braces: the `failing` state is only reached at `failureStreak` consecutive failures, so
- * a mailbox one or two failed drains deep reaches this arm with a mirror that is frozen for the
- * WRONG REASON. A still `lastRiseAt` is then the absence of observation rather than evidence of a
- * quiet server, and releasing the floor on it would be reading a broken instrument as a reading.
- * The scheduler sets `failures = 0` and `bootstrapping = false` in the same success, so together
- * they mean "this tab has drained, and the most recent attempt worked".
- *
- * Taken as the struct rather than a pre-computed boolean deliberately: a bare `drained` parameter
- * is invertible at the call site with both polarities green against a resting fixture.
+ * Does the server's unwritten stamp still entitle the strip to say "importing" about THIS mailbox? The stamp is written only
+ * by a no-backlog cycle, which nothing guarantees: a mailbox observed four days unstamped kept a permanent "Syncing" over a
+ * drained, motionless mirror, and the floor's `some` spread it to a healthy sibling. A null is an unknown, and an unknown that
+ * has outlived every plausible import is not grounds for a claim about work in flight. Inside {@link IMPORT_FLOOR_MAX_MS} the
+ * floor is absolute; past it, corroboration — `!bootstrapping` (a completed full drain) AND `failures === 0` (a frozen mirror
+ * during failures is a broken instrument, not a reading) AND a still `lastRiseAt`. A real import past the window re-enters
+ * through the growth arm, which outranks this. Taken as the struct, not a pre-computed boolean: a bare `drained` parameter is
+ * invertible at the call site with both polarities green.
  */
 export function importFloorSpeaks(
   mailbox: MailboxFacts,
@@ -1498,60 +1001,14 @@ export function importFloorSpeaks(
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * ── THE SIX STATES ──────────────────────────────────────────────────────────────────────
- *
- *  1. `awaiting`      a mailbox is connected, no cycle has completed and the mirror is EMPTY.
- *                     The honest replacement for "Waiting for first sync" — often the correct
- *                     thing to say (a first attach was measured at ~6 minutes), and it says
- *                     how long, so it can never be a frozen spinner.
- *  2. `importing`     **THE MIRROR IS GROWING.** Keyed on the client's own count rising across
- *                     syncs, never on a stamp. Counts, never a percentage. An EPISODE rather
- *                     than a run of rises, because the worker writes an import in cycles a
- *                     minute apart and a state that re-qualified between them flapped.
- *  3. `screenerOnly`  emitted as {@link MailState.screenerCandidate}, not as a key: mail has
- *                     landed, the mirror is settled and nothing is wrong. The OHBOX pane
- *                     combines it with its own emptiness — a fresh account is mostly Screener
- *                     by design, so this is where an empty Ohbox is CORRECT and needs saying.
- *  4. `blocked`       our own infrastructure is declining to serve the mailbox
- *                     (`syncBlockedReason`, mail 0029) — the UI half of the block the
- *                     server records on the row.
- *  5. `mailboxError`  the mailbox itself refused us (`status === 'error'`, `errorCode`).
- *  6. `noMailbox`     the probe answered, and there are none. Distinct from "we cannot see".
- *
- * ── AND THE ONE THAT WAS HERE AND IS NOT A STATE ────────────────────────────────
- *
- * `behind` — "this device holds N of the account's M" — was a seventh arm and a warning triangle
- * at the foot of the rail. It is GONE, and {@link deviceHoldings} carries the whole argument: a
- * windowed mirror in front of working reach-past doors is the product behaving correctly, the arm
- * could not tell that apart from a stalled copy, and an alarm over a healthy state teaches people
- * to ignore the alarms that matter. The pair it quoted is still said, quietly, in the Mailboxes
- * pane. Do not put it back on the strip without a signal that distinguishes the wrong shape — and
- * the signal is nameable: the SIDECAR's own verdict that its last hosted drain reached the horizon
- * (`/sync` answered `hasMore: false`) and the mirror is STILL short. That is the one reading that
- * separates "converged, and this is the window" from "stopped short". It is not on any wire the
- * shell can read today — `GET /mirror/freshness` carries the age of the last completed pull, not
- * its completeness — so it is filed rather than guessed at.
- *
- * ── AND THE TWO THAT ARE NOT THIS LADDER'S ──────────────────────────────────────────────
- *
- * `stopped` and `failing` belong to the failure strip and they OUTRANK all six. The reason is the rule
- * `OhboxView`'s counter already followed and this one inherits: once the drains are failing the
- * mirror count is FROZEN, so every claim below about growth is a claim about a number that
- * cannot move. A frozen counter is the same lie in a new font.
- *
- * `failing` has ONE cause, and it is a SUSTAINED one: `failureStreak` consecutive failed drains.
- * It used to have a second — a single coded 401/403 the server had not yet re-made (`sync.refused`)
- * — and that second cause was the "Sync failed. Retrying." false alarm reported on open: a transient
- * 401 on the first `/api/sync` (a cold function, a warming session, a deploy alias mid-roll — all
- * recoverable, all documented in `sync-scheduler.ts`) painted a failure banner over a first sync
- * that was about to succeed, and cleared itself a minute later when the confirm drain landed. A
- * refusal one request old is not a sustained failure, so it no longer reaches `failing`; it falls
- * through to the calm progress states. Only when the server RE-MAKES the refusal does the loop latch
- * `terminal` and reach `stopped` — the confirmation already required in front of the stronger
- * banner, now honoured by the weaker one too.
- *
- * `quiet` is the resting value and it is most of the time. There is no permanent "everything
- * is fine" chrome to learn to ignore.
+ * The six states: `awaiting` (connected, no cycle completed, empty mirror — says how long, so never a frozen
+ * spinner); `importing` (the mirror is growing — an EPISODE, keyed on the client's own count rising, never a stamp);
+ * `screenerCandidate` (mail landed, settled, nothing wrong — the Ohbox pane combines it with its own emptiness);
+ * `blocked` (our infrastructure declining, mail 0029); `mailboxError` (the mailbox refused us); `noMailbox` (the
+ * probe answered: none). `behind` is gone — {@link deviceHoldings} carries the argument; do not put it back without
+ * the sidecar's "drained to the horizon and still short" verdict, which is on no wire today. `stopped`/`failing`
+ * outrank all six (a frozen mirror count cannot speak); `failing` needs a SUSTAINED streak — a single unconfirmed
+ * 401 falls through to the calm states. `quiet` is the rest.
  */
 export type MailStateKey =
   | "stopped"
@@ -1581,40 +1038,23 @@ export interface MailState {
   count: number;
   /**
    * Messages in the ACCOUNT — the denominator {@link count} is measured against, or `null`
-   * whenever no sentence may name one.
-   *
-   * `null` is the common case and must stay cheap to reach: the hosted browser client never
-   * learns this number (see {@link MailboxFacts.hostedMessageCount}), one mailbox failing to
-   * report withdraws it for the whole account, and — the arithmetic guard — it is withheld
-   * whenever it is not STRICTLY greater than {@link count}. That last clause is what makes a
-   * fraction whose top exceeds its bottom unreachable rather than merely unlikely: a denominator the numerator has
-   * already passed is a stale reading, and the honest response to a stale reading is to stop
-   * quoting it, not to clamp it to the numerator and render the two as equal, as though they had
-   * been measured together.
-   *
-   * Carried by `importing` alone — progress, WHILE THE MIRROR MOVES — and that is now the only
-   * place on the strip where a denominator may appear at all. A still mirror that is short of the
-   * account is the ordinary shape of a windowed copy and gets no strip sentence ({@link
-   * deviceHoldings}); every other state leaves this `null`, including the failure arms, because
-   * once the loop is frozen the numerator cannot move and a fraction whose top is stuck is the
-   * frozen-counter lie this module already refuses elsewhere.
+   * whenever no sentence may name one. `null` is the common case: the hosted browser client
+   * never learns this number, one silent mailbox withdraws it for the whole account, and it is
+   * withheld unless STRICTLY greater than {@link count} — a passed denominator is a stale
+   * reading, and the honest response is to stop quoting it, never to clamp. Carried by
+   * `importing` alone — progress while the mirror moves; every other state leaves it `null` (a
+   * frozen numerator under a fraction is the frozen-counter lie this module refuses elsewhere).
    */
   total: number | null;
   /**
-   * `blocked` only, and it is a COPY TOKEN rather than a wire value — `SyncBar` interpolates it
-   * into `t(\`blocked_${reason}\`)`.
-   *
-   * A member of {@link SYNC_BLOCK_REASONS} (mail 0029, our infrastructure declining to serve a
-   * `connected` mailbox) or of {@link STAND_DOWN_REASONS} (mail 0027, the organizer lease
-   * declining to serve a `disabled` one), or `null` when the server sent a sync-block reason
-   * this build does not know — the state still fires, with generic copy. Silence would re-create
-   * mail 0029's "unobservable by design" one layer up.
-   *
-   * The two sets share one field and one state because they are one sentence to a reader: this
-   * mailbox is not syncing, and here is why. They are kept apart at the SOURCE — different
-   * columns, different closed sets, different writers — and joined only here, where the only
-   * remaining question is which sentence to render. A stand-down never yields `null`: see
-   * {@link standDownToken}.
+   * `blocked` only, and a COPY TOKEN, not a wire value — `SyncBar`
+   * interpolates it into `t(\`blocked_${reason}\`)`. A member of
+   * {@link SYNC_BLOCK_REASONS} (mail 0029) or {@link STAND_DOWN_REASONS}
+   * (mail 0027), or `null` for an unrecognised sync-block reason — the
+   * state still fires with generic copy; silence would re-create mail
+   * 0029's "unobservable by design" one layer up. The two sets share one
+   * field because they are one sentence to a reader; they stay apart at the
+   * source. A stand-down never yields `null` ({@link standDownToken}).
    */
   reason: SyncBlockReason | StandDownReason | null;
   /** `mailboxError` only — the `errorCode` key whose sentence lives in `mailboxes.err_*`. */
@@ -1629,15 +1069,12 @@ export interface MailState {
   /** The mailbox the state is ABOUT, when it is about exactly one. */
   address: string | null;
   /**
-   * Whole minutes this state has been true, and WHICH clock differs per state because the
-   * useful number does:
-   *
-   *  · `blocked`  — since `syncBlockedSince`, the server's own record of the block.
-   *  · `awaiting` — since the mailbox was CONNECTED (`createdAt`). The one per-mailbox clock
-   *                 that is not shared between rows, and the honest answer to "how long have
-   *                 I been looking at this".
-   *
-   * `null` when the stamp behind it is absent or unparseable.
+   * Whole minutes this state has been true; which clock differs per state
+   * because the useful number does: `blocked` — since `syncBlockedSince`,
+   * the server's own record; `awaiting` — since the mailbox was connected
+   * (`createdAt`), the one per-mailbox clock not shared between rows and
+   * the honest answer to "how long have I been looking at this". `null`
+   * when the stamp behind it is absent or unparseable.
    */
   minutes: number | null;
   /**
@@ -1659,15 +1096,13 @@ export interface MailState {
    */
   screenerCandidate: boolean;
   /**
-   * `filing` only — how many of OUR OWN filings the mail server has not applied yet.
-   *
-   * A field of its own and not `count`, which is documented as the size of the MIRROR and is
-   * carried by every state for context. Overloading it would make one number mean two things
-   * depending on the key beside it, and the first surface to read it without checking the key
-   * would report a backlog of six as a mailbox holding six messages.
-   *
-   * `0` in every other state. The arm never fires at 0 — see {@link MailboxFacts.pendingMoves}
-   * for why "Filing 0 messages" is as wrong as silence is.
+   * `filing` only — how many of OUR OWN filings the mail server has not
+   * applied yet. Its own field, not `count`: overloading would make one
+   * number mean two things depending on the key beside it, and the first
+   * surface to read it without checking the key would report a backlog of
+   * six as a mailbox holding six messages. `0` in every other state; the
+   * arm never fires at 0 ({@link MailboxFacts.pendingMoves} — "Filing 0
+   * messages" is as wrong as silence).
    */
   pending: number;
   /**
@@ -1681,61 +1116,14 @@ export interface MailState {
    */
   filing: FilingReport | null;
   /**
-   * **MAY AN EMPTY LIST BE STATED AS A SETTLED FACT?**
-   *
-   * ── THE DEFECT ──────────────────────────────────────────────────────────────────────────
-   *
-   * Reported from real use: opening ohmail.app signed in, over a slow connection, shows "no
-   * messages". Reproduced against the shipped shell with `/sync` held
-   * open — the first paint and the paint five seconds later are the same three sentences:
-   *
-   *     Ohbox · 0 unread of 0 messages · All clear · ✉ Nothing in your Ohbox.
-   *
-   * Every one of them is a claim about the user's own mail, made in the product's voice, before
-   * the product has finished looking. "Empty", "not loaded yet" and "the read failed" are three
-   * different facts and the panes had one rendering for all three.
-   *
-   * ── WHAT IT IS, AND WHY IT IS NOT A KEY ─────────────────────────────────────────────────
-   *
-   * `screenerCandidate`'s shape exactly, for `screenerCandidate`'s reason: it is a
-   * QUALIFICATION of a fact each PANE owns ("my list is empty"), not an account-wide sentence.
-   * The strip already has `awaiting` and `importing` for account-level progress; a seventh key
-   * here would put a sentence on screen for the ~200 ms a fast connection takes, and
-   * `engine.tsx` has already ruled that a sentence that flashes is worse than a quiet frame.
-   * The panes, by contrast, are ALREADY rendering something in that slot — replacing a false
-   * sentence with a true one adds no chrome.
-   *
-   * ── THE DERIVATION READS THE LADDER'S VERDICT, NOT THE LADDER'S CONDITIONS ──────────────
-   *
-   * `!bootstrapping || key === "stopped" || key === "failing"`, and the second half is
-   * deliberately expressed as KEYS rather than as `terminal || failures >= streak`.
-   * Those are the same thing today ({@link deriveMailState}'s first two arms), and writing the
-   * conditions out again would be a second copy of a precedence rule that lives twenty lines
-   * away — the exact drift this module's header was written to end. A future change to what
-   * counts as failing flows through for free — and one such change already happened: a single
-   * unconfirmed `refused` no longer keys `failing`, so it no longer settles an empty list either,
-   * which is correct (a transient refusal is not an answer about whether the mailbox is empty).
-   *
-   * ── WHY `bootstrapping` IS THE RIGHT CLOCK HERE, HAVING BEEN THE WRONG ONE THERE ────────
-   *
-   * `OhboxView`'s header records that a live COUNT gated on `bootstrapping` was the original defect:
-   * it means "this TAB's first drain has not completed", which is seconds, while the WORKER's
-   * first import is minutes — so the counter switched itself off and the pane went silent for
-   * the whole import. That argument is about DURATION and it is untouched: progress still keys
-   * on the mirror growing, and still lives in the strip.
-   *
-   * This is a different question with a different answer. "Has anything authoritative populated
-   * this mirror yet" is exactly what `bootstrapping` means, and seconds is exactly the right
-   * length for it — the scheduler hydrates from the device BEFORE it drains, so `!bootstrapping`
-   * implies the local copy has already been read too.
-   *
-   * ── AND IT CANNOT SPIN FOR EVER ─────────────────────────────────────────────────────────
-   *
-   * A loop that is failing never clears `bootstrapping`, so without the two key arms a mailbox
-   * whose network is down would say "still loading" until the tab was closed — one lie traded
-   * for another. `stopped` and `failing` are precisely the states in which the strip is already
-   * explaining that the mirror is frozen, so from there an empty list is as settled as it is
-   * ever going to get and the panes may say so plainly.
+   * May an empty list be stated as a settled fact? Reported: a slow connection showed "Nothing in your
+   * Ohbox" before the product finished looking — "empty", "not loaded yet" and "the read failed" had
+   * one rendering. A qualification each pane owns, not a strip key (a sentence that flashes for 200 ms
+   * is worse than a quiet frame). Reads the ladder's VERDICT, not its conditions: `!bootstrapping ||
+   * key === "stopped" || key === "failing"` — keys, so a change to what counts as failing flows
+   * through. `bootstrapping` is the right clock here (has anything authoritative populated this mirror
+   * yet — seconds, and the scheduler hydrates from the device before it drains); the two key arms stop
+   * a failing loop from spinning "still loading" for ever.
    */
   settled: boolean;
 }
@@ -1761,46 +1149,25 @@ const QUIET: MailState = {
 };
 
 /**
- * When a first import has taken longer than one is measured to take.
- *
- * TEN minutes, and the number is set against a measurement rather than a feeling:
- * `mailbox_attach_started → mailbox_attached` has been timed at around six minutes, twice, on
- * a mailbox of a few thousand messages. So SIX minutes with an empty mirror is NORMAL, and
- * escalating at three would dress a healthy large-mailbox import as a fault — the opposite defect to the
- * one this change fixes, and just as false. Attaches are serial, so a second mailbox waits
- * behind the first; ten leaves room for that.
- *
- * **It must stay under the server's `syncLag` alert threshold (15 minutes), and
- * `test/mail-state.test.ts` asserts that against the real constant.** This is the
- * `syncBlockGraceMs < syncLagMs` argument one layer up: if the operators are paged before the
- * screen has escalated, the user is again the last to know — which is exactly the half-hour of
- * silence this whole module exists to end.
+ * When a first import has taken longer than one is measured to take. Ten minutes, set against a
+ * measurement: attach has been timed at ~6 minutes, twice, on a mailbox of a few thousand
+ * messages — so six minutes with an empty mirror is NORMAL, and escalating at three would dress
+ * a healthy large-mailbox import as a fault. Attaches are serial, so a second mailbox waits
+ * behind the first; ten leaves room. It must stay under the server's `syncLag` alert threshold
+ * (15 min) — `test/mail-state.test.ts` asserts that against the real constant: if operators are
+ * paged before the screen escalates, the user is again the last to know.
  */
 export const AWAITING_SLOW_MS = 600_000;
 
 /**
- * ═══ WHY AN OUTSTANDING FILING IS OUTSTANDING — the four situations one sentence covered ═════
- *
- * Reported from real use: this strip read "Filing 1 message on your mail server… <address> · your
- * decisions are already applied here; the server is catching up." for about ten minutes while
- * nothing changed on the mailbox, then cleared by itself. Twice, on two mailboxes.
- *
- * The COUNT was right both times — one `folder_state` row really was outstanding — and
- * {@link MailboxFacts.pendingMoves} is the only field the arm could read, so one sentence had to
- * cover every reason a row can be outstanding. Three of the four are not "the server is catching
- * up", and one of them says something FALSE:
- *
- *  · WORKING — the organizer has not reached this mailbox in its rotation yet. A 60 s tick queues
- *    one serialized pass and each mailbox gets one bounded turn in it, so a wait of a minute or
- *    two is the ordinary shape of the handoff. The honest version says when the last pass
- *    finished, which is the difference between "mine is next" and "nothing is running".
- *  · WAITING — the server REFUSED the move and the retry is scheduled. The row is DEFERRED: it is
- *    absent from the reconciler's queue until `next_attempt_at`, so nothing is catching up.
- *  · STUCK — refused more than once, or outstanding longer than a rotation can account for.
- *  · SOMEBODY ELSE FILES IT — a reader install. The reconcile pass is skipped for a reader, so
- *    the decisions made here are applied by whichever install holds the mailbox, on its own
- *    schedule. "The server is catching up" is false by construction: the server is not the
- *    organizer, and on a mailbox held by a machine that is asleep nothing is coming at all.
+ * Why an outstanding filing is outstanding — the four situations one
+ * sentence used to cover ("the server is catching up", on screen ten
+ * minutes, twice; the count was right, the reason was not):
+ *  · WORKING — the organizer has not reached this mailbox in its rotation.
+ *  · WAITING — the server refused the move; deferred until    `next_attempt_at`, so nothing is catching up.
+ *  · STUCK — refused more than once, or outstanding past a rotation.
+ *  · SOMEBODY ELSE FILES IT — a reader install: the reconcile pass is
+ *    skipped, and "the server is catching up" is false by construction.
  */
 export type FilingArm = "working" | "waiting" | "stuck" | "elsewhere";
 
@@ -1885,17 +1252,14 @@ function filingReason(v: string | null): FilingRefusalReason | null {
 export const FILING_ROTATION_ESTIMATE_MS = 240_000;
 
 /**
- * How long an outstanding filing may wait before the strip calls it STUCK rather than WORKING.
- *
- * Five minutes, and the arithmetic is the whole justification: it must EXCEED
- * {@link FILING_ROTATION_ESTIMATE_MS}, or a mailbox waiting its ordinary turn would be reported as
- * stuck — a false alarm on the healthy path, which is how a warning becomes something people learn
- * to ignore. A test asserts the inequality rather than the value, so the two can only move
- * together.
- *
- * DATA-DRIVEN AND NEVER A FLAG: the operand is the row's own `updated_at`, which is the
- * reconciler's queue order and the instant the intent was written. Nothing here reads a setting,
- * so there is no state to get out of step with the rows.
+ * How long an outstanding filing may wait before the strip calls it STUCK
+ * rather than WORKING. Five minutes; it must exceed
+ * {@link FILING_ROTATION_ESTIMATE_MS} or a mailbox waiting its ordinary
+ * turn is reported stuck — a false alarm on the healthy path, which is how
+ * a warning becomes something people learn to ignore. A test asserts the
+ * inequality, so the two move together. Data-driven, never a flag: the
+ * operand is the row's own `updated_at` — nothing here reads a setting, so
+ * there is no state to get out of step with the rows.
  */
 export const FILING_STUCK_MS = 300_000;
 
@@ -1911,24 +1275,13 @@ export const FILING_STUCK_MS = 300_000;
 export const FILING_STUCK_ATTEMPTS = 2;
 
 /**
- * WHICH OF THE FOUR SENTENCES, over every live mailbox that reported the aggregate.
- *
- * ── ONE REPORT FOR THE ACCOUNT, AND THE WORST ARM WINS ──────────────────────────────────────
- *
- * The strip makes ACCOUNT-WIDE statements (`awaiting`'s `every`, and the address withheld above
- * whenever more than one mailbox is involved), so two mailboxes with outstanding filings produce
- * one sentence. Which one is decided by severity and not by recency: a mailbox whose filing has
- * been refused four times is the fact worth a person's attention even while another mailbox is
- * filing normally. Reporting the calmer of two states because it happened to come second is the
- * inverse of the defect this whole arm exists to fix.
- *
- * The OPERANDS are aggregated across the mailboxes the winning arm covers — the longest wait, the
- * soonest retry, the highest attempt count — so no number in the sentence is about a different
- * mailbox from the one the arm chose.
- *
- * Returns `null` when NO live mailbox carries the aggregate. That is a real state and not an
- * empty one: every deployment older than the field sends the count alone, and the caller then
- * renders the sentence it always rendered rather than an arm with no reason in it.
+ * Which of the four sentences, over every live mailbox that reported the aggregate. One report
+ * for the account, and the worst arm wins — severity, not recency: a filing refused four times
+ * is the fact worth attention even while another mailbox files normally. The operands are
+ * aggregated across the mailboxes the winning arm covers (longest wait, soonest retry, highest
+ * attempts), so no number in the sentence is about a different mailbox than the arm chose.
+ * Returns `null` when no live mailbox carries the aggregate — an older deployment sends the
+ * count alone, and the caller renders the sentence it always rendered.
  */
 function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null {
   const rows = live.filter((m): m is MailboxFacts & { filing: FilingFacts } =>
@@ -1969,23 +1322,16 @@ function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null 
     count, deferred, reason, nextAttemptAt, waitedMinutes, lastPassSeconds, who: null, asOf,
   } as const;
 
-  /* ── WHO FILES THIS MAILBOX, WHEN IT IS NOT US ─────────────────────────────────────────────
-   *
-   * A READER's decisions are applied by the install that HOLDS the mailbox: `reconcileFolders`
-   * is skipped for a reader, so nothing on our side is going to file these, ever. That makes
-   * "the server is catching up" false by construction — the server is not the organizer — and
-   * on a mailbox held by a machine that is asleep it is false twice over.
-   *
-   * OUTRANKS the three arms below because it changes WHO the sentence is about. A reader whose
-   * holder has stopped renewing is also "stuck", but naming a schedule and a refusal class would
-   * describe a retry ladder on this side that is not running.
-   *
-   * A HOLDER MUST BE NAMED, not merely "the role says reader": the holder columns are rewritten
-   * by the per-cycle peek and go ALL NULL whenever it finds an empty claim folder, so a genuine
-   * stand-down decays into the holder-less shape on its own. `readerStandDown` records the same
-   * rule for the same reason, and claiming "another install files this" over a mailbox nobody
-   * holds would be a false statement about a machine. A holder-less reader therefore falls
-   * through to the ordinary arms, which describe our own side and are true there. */
+  /* Who files this mailbox, when it is not us: a READER's decisions are
+   * applied by the install that HOLDS the mailbox (`reconcileFolders` is
+   * skipped for a reader), so "the server is catching up" is false by
+   * construction. Outranks the three arms below because it changes WHO the
+   * sentence is about. A holder must be NAMED, not merely "the role says
+   * reader": the per-cycle peek rewrites the holder columns all-null on an
+   * empty claim folder, so a genuine stand-down decays into the holder-less
+   * shape on its own (`readerStandDown` records the same rule) — a
+   * holder-less reader falls through to the ordinary arms, which describe
+   * our own side and are true there. */
   const elsewhere = rows.find((m) =>
     m.organizerRole === "reader"
     && (m.filing.due + m.filing.deferred) > 0
@@ -2063,34 +1409,27 @@ function earliest(stamps: Array<string | null>): string | null {
 /** Everything the ladder is allowed to read. Every field is something the CLIENT observes. */
 export interface MailStateInputs {
   /**
-   * `useSyncStatus()` — what the tab's own drain loop is doing.
-   *
-   * Structural, and re-declared rather than imported as `SyncStatus`, for the reason
-   * {@link MailboxFacts} is: this module ships in the Desktop mirror. It carries all four fields
-   * the scheduler publishes so the shape mirrors `SyncStatus` exactly, but the ladder keys states
-   * on only three of them. `refused` — a coded 401/403 the server has not yet RE-MADE — is
-   * received and NOT rendered as a failure: it is one request's evidence, weaker than `terminal`
-   * and deliberately treated as transient, so a single one falls through to the calm progress
-   * states rather than surfacing "Sync failed". Only a CONFIRMED refusal (`terminal`) speaks. See
+   * `useSyncStatus()` — what the tab's own drain loop is doing. Structural,
+   * re-declared rather than imported ({@link MailboxFacts}'s reason: this
+   * module ships in the Desktop mirror). All four scheduler fields, but the
+   * ladder keys on three: `refused` — a coded 401/403 the server has not
+   * yet RE-MADE — is received and NOT rendered as a failure; one request's
+   * evidence is treated as transient and falls through to the calm progress
+   * states. Only a confirmed refusal (`terminal`) speaks — see
    * {@link climb}'s `failing` arm.
    */
   sync: { bootstrapping: boolean; failures: number; terminal: boolean; refused: boolean };
   /** `SYNC_FAILURE_STREAK`, passed in so the surfaces cannot drift from the scheduler. */
   failureStreak: number;
   /**
-   * THE FRESHNESS CONTRACT'S VERDICT (INSTANT-ARCH §6.6) — structural, re-declared rather than
-   * imported as `MirrorFreshness` for the reason {@link MailboxFacts} is: this module ships in
-   * the Desktop bundle. On the web it is `useFreshness()` — the engine's own derivation from
-   * its completion stamp; on the desktop it is the SIDECAR mirror's verdict over
-   * `GET /mirror/freshness`, because the window engine drains the sidecar's local feed and is
-   * always "current" relative to it — its own stamp cannot say the desktop is behind the
-   * hosted account.
-   *
-   *  · `unknown` — never drained; the panes' skeleton owns it, the strip says nothing.
-   *  · `stale`   — the content on screen is truth as of `asOf`; the strip labels it quietly
-   *    until a drain settles. NEVER silent: staleness labeled is honest, staleness silent is
-   *    the bug (a mirror days old rendering as if current).
-   *  · `current` — the resting state; nothing renders.
+   * The freshness contract's verdict (INSTANT-ARCH §6.6) — structural,
+   * re-declared for {@link MailboxFacts}'s reason. On the web it is
+   * `useFreshness()`; on the desktop it is the SIDECAR mirror's verdict
+   * over `GET /mirror/freshness`, because the window engine drains the
+   * sidecar's local feed and its own stamp cannot say the desktop is behind
+   * the hosted account. `unknown` — never drained; the skeleton owns it.
+   * `stale` — truth as of `asOf`, labeled quietly until a drain settles
+   * (staleness labeled is honest; silent is the bug). `current` — resting.
    */
   freshness: { state: "unknown" | "stale" | "current"; asOf: string | null };
   /**
@@ -2124,18 +1463,13 @@ export interface MailStateInputs {
 }
 
 /**
- * WHAT TO SAY, from what the client can see — plus whether the panes may call an empty list
- * empty. Pure.
- *
- * ── THE STAMP IS APPLIED HERE AND NOT INSIDE THE LADDER ─────────────────────────────────
- *
- * {@link MailState.settled} is a property of EVERY state, and `climb` below has ten `return`
- * statements. Stamping it in one place rather than ten is not tidiness: it is what makes the
- * flag impossible to omit, including from the eleventh state somebody adds next year. The same
- * argument `stripSpeaks` makes about keys — the surfaces decide nothing — applied to a field.
- *
- * It is also why the derivation can read `climb`'s KEY: the verdict exists before the stamp
- * does. See {@link MailState.settled} for why that indirection is the point.
+ * What to say, from what the client can see — plus whether the panes may
+ * call an empty list empty. Pure. The `settled` stamp is applied HERE and
+ * not inside the ladder: it is a property of every state and `climb` has
+ * ten returns — stamping in one place makes the flag impossible to omit,
+ * including from the eleventh state somebody adds next year. That is also
+ * why the derivation can read `climb`'s KEY: the verdict exists before the
+ * stamp does ({@link MailState.settled}).
  */
 export function deriveMailState(input: MailStateInputs): MailState {
   const state = climb(input);
@@ -2176,73 +1510,42 @@ function climb(input: MailStateInputs): MailState {
   // `terminal` first: the loop has disarmed itself and will not restart, so no count below
   // can move and no mailbox fact below can be refreshed.
   if (sync.terminal) return { ...QUIET, key: "stopped" };
-  // And a SUSTAINED failing loop means the mirror is FROZEN. `OhboxView`'s counter already stops
-  // here; every state below would be reading a number that cannot change. The streak is what makes
-  // this a SUSTAINED claim rather than a blip: `failureStreak` consecutive failures, which at the
-  // backoff ceilings is well inside one cap — the network is down, and the strip may say so.
-  //
-  // `sync.refused` DELIBERATELY does NOT join it, and this is the fix for the false alarm that had
-  // "Sync failed. Retrying." painted over a healthy first sync on every open. A single coded
-  // 401/403 the server has not yet RE-MADE is one request's evidence, and `sync-scheduler.ts`
-  // itself records that such a 401 on `/api/sync` is routinely TRANSIENT — a cold serverless
-  // function, a session still warming, a deploy alias mid-roll. Rendering "failed" on it is the
-  // same over-reach the `stopped` banner was moved behind a confirmation to end, one banner
-  // weaker: it announces a failure on evidence that resolves in `REFUSAL_CONFIRM_MS`, and it did so
-  // over a first sync that was about to succeed. So an UNCONFIRMED refusal is handled by the calm
-  // `catchingUp` FLOOR below — never "failed" — rather than here. It is not answered with a scarier
-  // sentence than the facts support, and (the other half, which the ladder used to get wrong) it is
-  // not answered with silence either. What surfaces a failure banner is a SUSTAINED failure and
-  // nothing else: the streak here, or a CONFIRMED refusal, which `sync-scheduler.ts` latches to
-  // `terminal` and the `stopped` arm above renders. This mirrors the discipline of that non-latching
-  // fix at the weaker banner.
+  // A SUSTAINED failing loop means the mirror is frozen — every state below
+  // would read a number that cannot change. The streak is what makes this
+  // sustained rather than a blip. `sync.refused` deliberately does NOT join
+  // it: a single coded 401/403 the server has not re-made is one request's
+  // evidence and routinely transient (cold function, warming session,
+  // deploy alias mid-roll — `sync-scheduler.ts`); rendering "failed" on it
+  // painted a false alarm over a healthy first sync. An unconfirmed refusal
+  // takes the calm `catchingUp` floor below — never "failed", never
+  // silence. What surfaces a failure banner is a sustained streak here, or
+  // a confirmed refusal latched `terminal` and rendered by `stopped`.
   if (sync.failures >= failureStreak) return { ...QUIET, key: "failing" };
 
-  // ── STALE — the content on screen is real and OLD, and the strip says which (stage 2) ───
-  //
-  // The Freshness Contract's labeled middle state: the mirror renders instantly (frame one is
-  // local, always), a drain is converging behind it, and until that drain SETTLES the honest
-  // sentence is "As of <time> · catching up" — the time being the last completed drain's own
-  // stamp. It clears itself: a settled drain re-stamps, the freshness input flips to
-  // `current`, and this arm stops matching. Nothing here is a claim about progress — the
-  // importing arm below still owns the moving count — this is a claim about AGE.
-  //
-  // BELOW `stopped` and `failing`, deliberately: those mean the loop is frozen or dead, so
-  // "catching up" would be a false statement about what the app is doing — the failure arms
-  // already explain why the mirror cannot move. ABOVE everything else, including the
-  // `mailboxes === null` probe gate: staleness is an ENGINE fact, known before any probe
-  // answers — and the first seconds of a days-stale resume, when the probe has not landed,
-  // are exactly when the label is owed. It also outranks `blocked`/`importing` for the label's
-  // one job: while the view is not current, nothing may present it as current — the stronger
-  // per-mailbox sentences return the moment the mirror is.
-  //
-  // NEVER without a time: `asOf` is the sentence's checkable half, and the freshness input
-  // carries it for every `stale` by construction (the engine reports `unknown`, not `stale`,
-  // when the stamp is missing or unreadable). The guard is belt for a probe-fed desktop value.
+  // STALE — the content on screen is real and OLD, and the strip says
+  // which: "As of <time> · catching up", the last completed drain's own
+  // stamp; it clears itself when a drain settles. A claim about AGE, not
+  // progress (importing owns the moving count). Below `stopped`/`failing`
+  // (a frozen loop is not "catching up"); above everything else including
+  // the probe gate — staleness is an ENGINE fact known before any probe
+  // answers, and the first seconds of a days-stale resume are exactly when
+  // the label is owed. Never without a time: the freshness input carries
+  // `asOf` for every `stale` by construction; the guard is belt for a
+  // probe-fed desktop value.
   if (freshness.state === "stale" && freshness.asOf !== null) {
     return { ...QUIET, key: "stale", clock: true, count: mirrored, asOf: freshness.asOf };
   }
 
-  // ── The calm FLOOR for an UNCONFIRMED coded refusal ─────────────────────────────────────
-  //
-  // `sync.refused` is a 401/403 our API made about this identity ONCE and has not yet RE-MADE
-  // (`REFUSAL_CONFIRM_MS`, sync-scheduler.ts). It must never be answered with the scary "Sync
-  // failed. Retrying." — the confirm window exists so a refusal that resolves inside it is not
-  // announced as a failure (the arm above) — and it must never be answered with SILENCE. A coded
-  // refusal answered with nothing on screen is the invariant this floor exists to hold: the strip
-  // says something true and calm the whole time the refusal is being confirmed.
-  //
-  // But it is a FLOOR, not a high-priority arm, and the difference is deliberate. The visible states
-  // below — `awaiting` ("the first sync has not finished"), `importing` ("Syncing your mail"),
-  // `blocked`, and the rest — are calm true sentences in their own right, so a refusal DURING one of
-  // them changes nothing a reader needs: a first-sync refusal shows the first-sync sentence, not a
-  // generic "catching up" (`test/mail-state.test.ts` pins exactly that). What this replaces is only the
-  // SILENT `quiet` fall-throughs — a `null` mailbox probe, no connected mailbox, and above all the
-  // settled mirror whose screener pointer is silent by design — which is the exact settled case the
-  // ladder used to answer a refusal with nothing at all. Once the refusal is CONFIRMED the scheduler
-  // latches `terminal` and the `stopped` arm above renders the banner and the sign-in remedy.
-  //
-  // Not in the `settled` keys (see {@link MailState.settled}) on purpose: a transient refusal is not
-  // an answer about whether the mailbox is empty.
+  // The calm FLOOR for an UNCONFIRMED coded refusal: a 401/403 made once
+  // and not yet re-made (`REFUSAL_CONFIRM_MS`) must never be answered with
+  // "Sync failed. Retrying." — nor with silence. A floor, not a
+  // high-priority arm: the visible states below are calm true sentences in
+  // their own right, so a refusal during one of them changes nothing a
+  // reader needs (`test/mail-state.test.ts` pins the first-sync case);
+  // what it replaces is only the silent `quiet` fall-throughs. Once
+  // confirmed, the scheduler latches `terminal` and `stopped` renders the
+  // banner. Not in the `settled` keys: a transient refusal is not an
+  // answer about whether the mailbox is empty.
   const quietOrCatchingUp: MailState = sync.refused ? { ...QUIET, key: "catchingUp" } : QUIET;
 
   // "We cannot see mailboxes" — not "there are none". Everything from here reads them. Silent unless
@@ -2251,88 +1554,31 @@ function climb(input: MailStateInputs): MailState {
 
   const live = mailboxes.filter((m) => m.status !== "disabled");
 
-  /* ── 4a. STOOD DOWN — the ORGANIZER LEASE is declining to serve it ──────────────────────
-   *
-   * ── THE FALSE SENTENCE THIS ARM EXISTS TO DELETE ─────────────────────────────────────
-   *
-   * Observed on a real Cloud account. A mailbox connect was
-   * accepted end to end and then lost the organizer claim to a LOCAL install whose heartbeat was
-   * three hours stale, so the worker wrote `status='disabled'` +
-   * `disabled_reason='organized_elsewhere:local'`. The `live` filter one line above drops every
-   * `disabled` row — which is correct for the six states below it and catastrophic here — and
-   * with the account's only mailbox dropped, `live.length === 0` fired and the strip said
-   * **"No mailbox connected, so nothing can arrive"** to somebody who had connected one three
-   * minutes earlier. Three statements on one screen, no two of them agreeing.
-   *
-   * ── IT SCANS `mailboxes`, NOT `live`, AND THAT IS THE ENTIRE FIX ─────────────────────
-   *
-   * A stood-down mailbox IS disabled — the status is honest, `markMailboxStoodDown` wrote it on
-   * purpose, and the six states below have no business speaking about a row nothing is syncing.
-   * What was missing is that "disabled" has two causes and the product only ever knew one of
-   * them. `disabledReason` is the discriminator, and it is why this arm cannot simply relax the
-   * filter: an ordinary disconnect must still reach `noMailbox`, because a user who removed
-   * their only mailbox HAS no mailbox and telling them so is correct.
-   *
-   * ── AND IT OUTRANKS `blocked`, NOT THE OTHER WAY ROUND ───────────────────────────────
-   *
-   * Both say "this mailbox is not syncing". A sync block is our own infrastructure declining and
-   * RETRYING — `reconcileSyncBlocks` rewrites it every roster pass and it clears itself when the
-   * fault does. A stand-down is terminal from the product's side: `loadEnabledMailboxes` filters
-   * `status <> 'disabled'`, so the row is off the roster entirely and no amount of waiting moves
-   * it. Between two true sentences, the one that is not going to stop being true wins.
-   *
-   * Above the growth states for the reason `blocked` already is, verbatim: a mailbox nobody is
-   * syncing is not syncing, whatever a second mailbox is doing to the mirror.
-   *
-   * `minutes` stays null. There is no `disabled_since` column — nothing timestamps a stand-down
-   * — and inventing an elapsed time from `createdAt` would be measuring the wrong thing. `Since`
-   * renders nothing for a null, which is the path `blockedUnknown` already takes.
-   */
+  /* 4a. STOOD DOWN — the organizer lease is declining to serve it. The
+   * `live` filter drops every `disabled` row, so an account whose only
+   * mailbox was stood down read "No mailbox connected" minutes after
+   * connecting one. This arm scans `mailboxes`, not `live` — "disabled" has
+   * two causes and `disabledReason` discriminates; an ordinary disconnect
+   * still reaches `noMailbox`. It outranks `blocked`: a sync block retries
+   * and clears itself, a stand-down is terminal from this side — between
+   * two true sentences, the one that will not stop being true wins. Above
+   * the growth states for `blocked`'s reason. `minutes` stays null: nothing
+   * timestamps a stand-down. */
   /* `typeof === "string"` AND NOT `!== null`, and the difference is a caught defect. The field
    * is typed `string | null`, but a probe compiled before the field existed — a cached Cloud
    * bundle, a fixture that predates it — simply omits it, and `undefined !== null` is TRUE. That reading
    * turns EVERY ordinary disconnect into an organizer conflict, which is a brand-new false
    * sentence in the place a false sentence was being removed. It went red on exactly that. */
-  /* ── AND A STOOD-DOWN ROW WHOSE ADDRESS IS BACK IS SUPERSEDED, NOT SPEAKING ─────────────
-   *
-   * A tombstone is a DESIGNED, PERMANENT state here, which is what makes this arm's "scan every
-   * mailbox" reach one it must not. `mailboxes_active_address_uq` is unique on
-   * `(account_id, lower(address))` only `WHERE status <> 'disabled'`
-   * (`packages/db/src/schema-mail.ts:446`), and the comment there says why in as many words: a
-   * plain unique "would make reconnecting a disconnected address fail forever against its own
-   * tombstone". So reconnecting an address AFTER a stand-down is the supported path, and it
-   * leaves the old row disabled, carrying `organized_elsewhere:*`, for ever — nothing clears it.
-   *
-   * This arm outranks every state below it, so that dead row pinned the whole strip to
-   * "Not organized here — ohmail on your own machine has claimed this mailbox" naming an address
-   * that was connected and syncing. MEASURED, not argued: on a self-hosted instance read from a
-   * Windows guest, Settings → Mailboxes said `ohmaillouis@gmail.com — Gmail · connected ·
-   * 11 messages · Synced just now` while the rail, in the same render, said that mailbox was not
-   * organized here. That is precisely the failure the block above says this arm exists to end —
-   * "Three statements on one screen, no two of them agreeing" — arrived at from the other side.
-   *
-   * The Mailboxes pane already knows the rule and says it out loud ("An earlier entry for this
-   * address is no longer in use"), so this is the ladder catching up with copy the product had.
-   *
-   * ── THE COMPARISON IS `addressKey`, THE ONE THE MAILBOXES PANE ALREADY USES ────────────
-   *
-   * This took two wrong answers to reach, and both are worth the lines because each looked
-   * right from where it was written.
-   *
-   * The first fold was `toLowerCase()` reasoned from the unique index. A review objected that
-   * `mailbox-service.ts:99-103` forbids that inference — "`lower(address)` is one account's own
-   * connect form, in one database. The lease is the physical mailbox" — so I made it exact and
-   * case-preserving. That was WORSE, and the second review found why: the Mailboxes pane groups
-   * these same rows with `addressKey` (case folds, never trims) and labels the dead one
-   * superseded. A case-sensitive rail beside a case-folding pane puts an organizer-conflict
-   * banner on screen next to a row that shows nothing to act on — the SAME two-contradictory-
-   * sentences defect this arm exists to end, reintroduced from the other side.
-   *
-   * So the rule is not re-derived here at all: it is imported. Whether `lower()` is the right
-   * notion of mailbox identity is a real question, and it belongs to the INDEX and the pane that
-   * already inherit its caveat — not to this arm, which must not invent a third answer. The
-   * `trim()` I had added is gone with it: `address-key.ts` explains that trimming is WIDER than
-   * the constraint and would hide a row Postgres is willing to keep active. */
+  /* A stood-down row whose ADDRESS is back is superseded, not speaking.
+   * Reconnecting after a stand-down is the supported path
+   * (`mailboxes_active_address_uq` is unique only WHERE status <> 'disabled'), and it leaves the old row disabled with
+   * `organized_elsewhere:*` for ever — which pinned the whole strip to
+   * "Not organized here" while Settings showed the same address connected
+   * and syncing (measured on a self-hosted instance). The comparison is
+   * `addressKey` — the fold the Mailboxes pane already uses — imported, not
+   * re-derived: a case-sensitive rail beside a case-folding pane put the
+   * contradiction back from the other side, and trimming is wider than the constraint (`address-key.ts`).
+   */
   const liveAddresses = new Set(live.map((m) => addressKey(m.address)));
   const stoodDown = mailboxes.find(
     (m) => m.status === "disabled"
@@ -2350,28 +1596,16 @@ function climb(input: MailStateInputs): MailState {
     };
   }
 
-  // ── 4. BLOCKED — our own infrastructure is declining to serve it (mail 0029) ────────────
-  //
-  // Above the error and progress states both. The mailbox is `connected` and has no
-  // `errorCode` — that is the entire design of the column — so nothing else on this ladder
-  // would notice it; and if a mailbox is not being synced at all, "syncing" is false even
-  // when a second mailbox happens to be growing the mirror.
-  //
-  // THE TEST IS `syncBlockedSince !== null`, AND IT IS NOT THE FIELD IT LOOKS LIKE IT SHOULD BE.
-  //
-  // This line used to read `m.syncBlockedReason !== null` with a comment saying the test is
-  // `!== null` and NOT `isSyncBlockReason` — the right rule, aimed one field to the left. The
-  // server NARROWS the reason to the closed set and forwards the timestamp UNCONDITIONALLY, so a
-  // server that grows a fourth reason emits `{syncBlockedReason: null, syncBlockedSince: <ts>}` —
-  // the narrowing has already happened by the time it reaches us, and refusing to narrow again
-  // here bought nothing because there was nothing left to narrow. Gating on the reason gave that
-  // mailbox silence, which is exactly what this column was added to end.
-  //
-  // A timestamp is also the safer predicate to have chosen: it cannot carry a server-authored
-  // token, so the generic copy below is authored here and nowhere else.
-  //
-  // COMPLETE only because `reason non-null ⇒ since non-null` — an audit of the server found five
-  // writers, each setting and clearing both columns in one statement, and no CHECK enforcing it.
+  // 4. BLOCKED — our own infrastructure declining to serve it (mail 0029).
+  // Above the error and progress states: the mailbox is `connected` with no
+  // `errorCode` (the design of the column), so nothing else on the ladder
+  // would notice; and a mailbox not being synced makes "syncing" false whatever a second mailbox is doing. The test is
+  // `syncBlockedSince !== null`, NOT the reason field: the server narrows
+  // the reason to the closed set and forwards the timestamp
+  // unconditionally, so a fourth reason arrives as `{reason: null, since:
+  // <ts>}` — gating on the reason gave that mailbox silence. Complete only
+  // because reason non-null ⇒ since non-null (five writers audited, each
+  // sets and clears both in one statement).
   const blocked = live.find((m) => m.syncBlockedSince !== null);
   if (blocked) {
     return {
@@ -2400,61 +1634,26 @@ function climb(input: MailStateInputs): MailState {
     };
   }
 
-  // ── 5a. FILING — WE HAVE FILED THE MAIL AND THE SERVER HAS NOT ─────────────────────────
-  //
-  // ── THE STATE THAT HAD NO SENTENCE ───────────────────────────────────────────────────
-  //
-  // Invariant #3: the serverless API never opens IMAP. Every decision writes `folder_state`
-  // and returns; the WORKER performs the move on its next cycle. So there is always a window
-  // where ohmail shows the mail filed and the user's own mail server still holds it where it
-  // was — and if the host is refusing connections, the window does not close.
-  //
-  // Nothing above this arm can see that. The mailbox is `connected` (a single refused cycle
-  // does not earn `error` — that takes `maxSyncFailures` in a row, or a refused ATTACH), it is
-  // not `blocked` because a sync block is OUR infrastructure declining and this is theirs, and
-  // it is not `stoodDown`. So the ladder fell straight through to `quiet` and the product
-  // looked finished while the backlog grew. The user's evidence was the mail moving in ohmail;
-  // their mail server disagreed silently and for as long as the outage lasted.
-  //
-  // ── WHY HERE, AND NOT HIGHER OR LOWER ────────────────────────────────────────────────
-  //
-  // BELOW `mailboxError`: a mailbox in `error` is quarantined and earning a backoff, and
-  // "your mail server refused us" is the larger, more actionable fact — a pending backlog on a
-  // mailbox that is already reported broken adds nothing a person can act on differently.
-  //
-  // ABOVE `importing` and everything under it: those states are about mail COMING IN, and this
-  // is about the user's own decisions GOING OUT. A first import can run for minutes and is
-  // expected to; unapplied filings are not, and burying them under "Syncing your mail" for the
-  // duration of an import is how this stayed invisible in the first place.
-  //
-  // ── THE `typeof` GUARD IS THE PRECEDENT ONE ARM UP, RESTATED ─────────────────────────
-  //
-  // `typeof m.pendingMoves === "number"` and NOT `m.pendingMoves != null` — the stale-probe
-  // reading `stoodDown` records the same rule and the same caught defect: a bundle or a server
-  // compiled before the field simply OMITS it, and `undefined != null` is false but
-  // `undefined > 0` is also false, so only the positive test says what is meant. An absent
-  // field is "this build cannot tell" and it must produce silence, not a number.
-  //
-  // `> 0` is the other half: `Filing 0 messages on your mail server…` is a sentence about
-  // nothing, and it would be on screen for every healthy account permanently.
-  //
-  // SUMMED across live mailboxes, and the ADDRESS is the one they belong to only when there is
-  // exactly one — the strip makes account-wide statements (see `awaiting`'s `every`), and
-  // naming one of two mailboxes beside a total covering both would be a sentence whose two
-  // halves are about different things.
+  // 5a. FILING — we have filed the mail and the server has not. The API
+  // never opens IMAP: decisions write `folder_state` and the worker moves
+  // mail on its next cycle — a window nothing above this arm can see
+  // (still `connected`, not `blocked`, not stood down), so the ladder fell
+  // through to `quiet` while the backlog grew. Below `mailboxError` (a
+  // quarantined mailbox is the larger fact); above `importing` (decisions
+  // going OUT must not be buried under mail coming in).
+  // `typeof === "number"` and `> 0`: an absent field must produce silence,
+  // and "Filing 0 messages" is a sentence about nothing. Summed across live
+  // mailboxes; the address is named only when there is exactly one.
   const filing = live.filter((m) => typeof m.pendingMoves === "number" && m.pendingMoves > 0);
   const outstanding = filing.reduce((n, m) => n + (m.pendingMoves ?? 0), 0);
-  // ── AND *WHY* THEY ARE OUTSTANDING, WHEN THE SERVER CAN SAY (mail 0097) ────────────────
-  //
-  // The count above fires the arm; this decides which of four sentences it renders. See
-  // {@link FilingArm} for the reported defect — one sentence for four situations, one of them
-  // saying something FALSE.
-  //
-  // The report is derived over the mailboxes that CARRY the aggregate, which may be a subset of
-  // `live` during a rolling deploy. `filingReportOf` returns null when none does AND when nothing
-  // is outstanding on the ones that do, so a non-null report is by itself the arm's condition and
-  // the legacy count remains the only other way in — which is what a server older than the field
-  // gives, and it then renders exactly what it rendered before.
+  // And WHY they are outstanding, when the server can say (mail 0097): the
+  // count fires the arm; this decides which of four sentences it renders
+  // ({@link FilingArm}). The report is derived over the mailboxes that
+  // CARRY the aggregate — possibly a subset of `live` during a rolling
+  // deploy. `filingReportOf` returns null when none does and when nothing
+  // is outstanding, so a non-null report is by itself the arm's condition;
+  // the legacy count remains the only other way in, and an older server
+  // renders exactly what it rendered before.
   const report = filingReportOf(live, now);
   if (outstanding > 0 || report !== null) {
     return {
@@ -2491,21 +1690,15 @@ function climb(input: MailStateInputs): MailState {
   const connected = live.filter((m) => m.status === "connected");
   if (connected.length === 0) return quietOrCatchingUp;
 
-  // ── 2. IMPORTING — the mirror is growing ───────────────────────────────────────────────
-  //
-  // Above `awaiting` by construction (`awaiting` requires an empty mirror) and above the
-  // Screener pointer, because while mail is still landing "it is all in the Screener" is a
-  // claim about a set that is still changing.
-  //
-  // `now` is the SHELL's clock, beaten every `MAIL_CLOCK_MS` by `MailStateProvider` while
-  // `state.clock` is true — which is what ends a latched episode. The reducer only ever runs when
-  // the mirror MOVES, so an import that simply stops would otherwise never be told it had.
-  // THE DENOMINATOR — {@link deviceHoldings}, which is also what the Mailboxes pane's quiet
-  // holdings line reads. ONE derivation, deliberately: the pane and the strip must not be able to
-  // answer "how much of the account is on this device" differently, and the every-or-nothing sum
-  // plus the strict `> mirrored` clamp are the whole of that answer. `null` here means no
-  // sentence on this strip may name a total, which is the common case (a hosted browser tab never
-  // learns the hosted counts at all).
+  // 2. IMPORTING — the mirror is growing. Above `awaiting` by construction
+  // (that arm needs an empty mirror) and above the Screener pointer ("it is
+  // all in the Screener" is a claim about a set still changing). `now` is
+  // the shell's clock, beaten by `MailStateProvider` while `state.clock` is
+  // true — the reducer only runs when the mirror moves, so a stopped import
+  // would otherwise never be told it had. The denominator is
+  // {@link deviceHoldings} — the same derivation the Mailboxes pane reads,
+  // so strip and pane cannot answer "how much is on this device"
+  // differently; `null` means no sentence may name a total.
   const totalIfAhead = deviceHoldings(mailboxes, mirrored)?.total ?? null;
 
   if (isImporting(growth, sync.bootstrapping, now)) {
@@ -2513,24 +1706,13 @@ function climb(input: MailStateInputs): MailState {
   }
 
   /**
-   * HAS ANY CYCLE COMPLETED? The ONE use of `lastSyncAt`, and only as a negative.
-   *
-   * Sound under BOTH worker defects (see the file header): only ids in `synced` are ever
-   * stamped, so a null cannot be somebody else's success and cannot be an early stamp. It
-   * means "not one cycle has completed for this mailbox".
-   *
-   * It is also NECESSARY, not merely safe. A non-null stamp over an empty mirror means a cycle
-   * ran and the mailbox is genuinely empty — which must be QUIET (the ordinary empty pane),
-   * not "waiting for the first sync" for ever.
-   *
-   * ── `every` AND NOT `some`, AND THE LIMIT THAT BUYS ─────────────────────────────────────
-   *
-   * With two mailboxes where one has synced and one never has, `every` is false and the strip
-   * stays quiet about the young one. Deliberate, and the division is: the STRIP makes
-   * account-wide statements; a per-mailbox statement belongs on the per-mailbox ROW
-   * (`(product)/mailbox/MailboxSection.tsx`, in the same change, from this same state). `some`
-   * would put "nothing has arrived" over a mirror already full of mail from the other
-   * mailbox — a new false claim rather than a missing true one.
+   * Has any cycle completed? The ONE use of `lastSyncAt`, and only as a negative — sound under
+   * both worker defects (see the header): only ids in `synced` are stamped, so a null cannot be
+   * somebody else's success or an early stamp. Also necessary: a non-null stamp over an empty
+   * mirror means a cycle ran and the mailbox is genuinely empty — which must be QUIET, not
+   * "waiting" for ever. `every`, not `some`: with one synced and one young mailbox the strip
+   * stays quiet about the young one — its status belongs on its row; `some` would put "nothing
+   * has arrived" over a mirror already full from the other mailbox.
    */
   const noCycleYet = connected.every((m) => m.lastSyncAt === null);
 
@@ -2552,60 +1734,16 @@ function climb(input: MailStateInputs): MailState {
     };
   }
 
-  // ── 2b. THE IMPORT FLOOR — the SERVER has not stamped this mailbox's first import done ──
-  //
-  // ── THE CASE ARM 2 CANNOT SEE ────────────────────────────────────────────────────────
-  //
-  // A first import drains newest-first in bounded batches over minutes, so the server holds a
-  // PARTIAL mailbox — a recent block, a gap, then older mail — for the whole of it. Arm 2 keys on
-  // THIS CLIENT's mirror growing, which is the right progress signal but a blind one at the edges:
-  // a tab that opens onto the partial state after the growth run has lapsed, or that catches up to
-  // it, sees a settled mirror and falls through to the Screener pointer below — declaring a
-  // mailbox with a hole in it complete. The Screener then shows a recent block, jumps to old mail,
-  // and presents that as the whole of it.
-  //
-  // `initial_import_completed_at` is the server's own answer, and it is the ONE stamp this module
-  // reads. It is stamped once, per mailbox, only when a worker cycle drains with no backlog — so
-  // unlike `lastSyncAt` it is neither shared nor early, and a NULL genuinely means "the first
-  // import is not finished". Read as a FLOOR: while any connected mailbox has not been stamped, the
-  // strip says "importing" regardless of what the mirror is doing.
-  //
-  // `=== null` AND NOT `== null`: an older server that has not deployed the column omits the field,
-  // which arrives as `undefined`. `undefined === null` is false, so a deploy skew degrades to the
-  // prior growth-only behaviour rather than announcing a false import over every settled mailbox —
-  // the same `typeof`-shaped care the stand-down arm above takes for `disabledReason`.
-  //
-  // `some` AND NOT `every`, which is the opposite of `noCycleYet` one arm up, because the sentence
-  // is: "importing" over a partially-full mirror is TRUE while even one mailbox's FLOOR STILL
-  // SPEAKS, whereas "nothing has arrived" over a mirror the other mailbox already filled would be
-  // false. The release is judged PER MAILBOX inside that `some` and never account-wide: a mailbox
-  // connected five minutes ago must keep an absolute floor even while a four-day-old sibling on the
-  // same account releases, and an account-wide test would strip the protection from the young one.
-  //
-  // ── THE FLOOR IS BOUNDED, AND WHY IT HAD TO BE ─────────────────────────────────────────
-  //
-  // As first written this arm trusted an unwritten stamp for ever. Nothing guarantees the worker
-  // ever reaches a no-backlog cycle, and a mailbox was observed going four days without one while
-  // syncing healthily — so the strip announced an import permanently, over a mirror that was
-  // complete, current and readable, and the `some` here spread that across a second mailbox that
-  // was properly stamped. {@link importFloorSpeaks} owns the
-  // bound and its full argument; the short version is that inside a day the floor is untouched,
-  // and past it the client must be able to corroborate with a completed drain, a healthy loop and
-  // a motionless mirror before it stops repeating a claim the server never made.
-  //
-  // `mirrored > 0` is the gate, and it is what confines this to the case it exists for. The defect
-  // is a PARTIAL mailbox — mail on screen with a hole in it — reading as complete, so there has to
-  // be mail on screen for the floor to matter. With an empty mirror there is nothing being
-  // presented as complete: the `awaiting` arm above already owns "connected, nothing arrived", and
-  // its deliberate `every` (a mixed pair stays QUIET, the young mailbox's status belongs on its
-  // ROW) must not be overridden here by a `some` that would announce an account-wide import over a
-  // mirror with zero rows in it. Below `awaiting` and gated on the same `mirrored > 0` the Screener
-  // pointer uses, so when the mirror has content the answer is exactly one of: still importing
-  // (here) or done and pointing at the Screener (below).
-  // `clock: true` is load-bearing on THIS arm in a way it is not on the others: the floor's release
-  // is driven by elapsed time and by nothing else, so it repaints only because `MailStateProvider`
-  // beats the clock while `state.clock` is true. Drop it and the bound above still passes every
-  // unit test and never fires on an idle tab.
+  // 2b. THE IMPORT FLOOR — the server has not stamped this mailbox's first
+  // import done. A first import leaves a PARTIAL mailbox for minutes, and
+  // the growth arm is blind at the edges: a tab opening onto it declares a
+  // mailbox with a hole complete. `initial_import_completed_at` is read as
+  // a floor, `=== null` never `== null` (an older server omits the field,
+  // degrading to growth-only). `some`, not `every`, judged per mailbox — a
+  // young mailbox keeps its floor while a four-day sibling releases. The
+  // floor is bounded ({@link importFloorSpeaks}); `mirrored > 0` confines
+  // it to the partial-mailbox case (`awaiting` owns the empty one);
+  // `clock: true` is load-bearing — the release is driven by time alone.
   if (mirrored > 0 && connected.some((m) => importFloorSpeaks(m, growth, sync, now))) {
     return { ...QUIET, key: "importing", clock: true, count: mirrored, total: totalIfAhead };
   }

@@ -792,7 +792,7 @@ jobs:
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
             xdg-utils rpm cpio \
-            xvfb x11-utils x11-apps
+            xvfb x11-utils
 
       - name: Toolchain
         run: |
@@ -1414,13 +1414,6 @@ jobs:
       - name: The packaged app opens a window that renders
         run: |
           set -euo pipefail
-          # THE TOOLS FIRST, BY NAME. `xwd` captures the frame and `xwininfo` says the display is
-          # up; `xwd` ships in x11-apps, not x11-utils, and without it every capture failed
-          # `spawnSync xwd ENOENT` and the check reported the APP as not rendering. A missing tool
-          # refuses here, with its name, before anything is started.
-          for t in xwd xwininfo; do
-            command -v "$t" > /dev/null || { echo "launch check: $t is not installed"; exit 1; }
-          done
           Xvfb :99 -screen 0 1400x900x24 &
           XVFB=$!
           # Waited for, not slept on: a capture against a server that is not up
@@ -1584,7 +1577,7 @@ jobs:
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
             xdg-utils rpm cpio \
-            xvfb x11-utils x11-apps
+            xvfb x11-utils
 
       - name: Toolchain
         run: |
@@ -2196,13 +2189,6 @@ jobs:
       - name: The packaged app opens a window that renders
         run: |
           set -euo pipefail
-          # THE TOOLS FIRST, BY NAME. `xwd` captures the frame and `xwininfo` says the display is
-          # up; `xwd` ships in x11-apps, not x11-utils, and without it every capture failed
-          # `spawnSync xwd ENOENT` and the check reported the APP as not rendering. A missing tool
-          # refuses here, with its name, before anything is started.
-          for t in xwd xwininfo; do
-            command -v "$t" > /dev/null || { echo "launch check: $t is not installed"; exit 1; }
-          done
           Xvfb :99 -screen 0 1400x900x24 &
           XVFB=$!
           # Waited for, not slept on: a capture against a server that is not up

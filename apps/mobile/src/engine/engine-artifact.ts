@@ -2,10 +2,11 @@
  * WHERE THE PHONE'S ENGINE ARTIFACT IS REGISTERED — one module, so there is one answer.
  *
  * The phone engine is built as a single file with every specifier resolved and every Node builtin
- * substituted, and it is loaded, booted and watched dialling before a release. How the RELEASED
- * app carries it — a Metro asset,
- * a native resource, a resolver alias — is a packaging decision and is deliberately not taken here
- * or in `local-engine.ts`.
+ * substituted, and it is loaded, booted and watched dialling before a release. How the RELEASED app
+ * carries it is now DECIDED: `scripts/bundle-engine.mjs` writes it into the app's own ignored
+ * `generated/` directory, `engine-bundle-native.ts` requires it by path, and `metro.config.js`
+ * refuses to configure a build without it. This module is still the one answer to "is there an
+ * engine in this build", because the door follows the registration rather than the file.
  *
  * ── SO THE ARTIFACT REGISTERS ITSELF, AND THE DOOR FOLLOWS THE REGISTRATION ────────────────────
  *

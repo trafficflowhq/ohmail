@@ -1,103 +1,12 @@
 /**
- * STRUCTURED LOGS — one JSON object per line, on the paths where a silent failure costs
- * money or mail.
- *
- * The arch doc's "Observability required before beta" note asks for exactly two things
- * first: JSON logs carrying the `requestId` the API already mints, and alerts. This file is
- * the first half. It is deliberately dependency-free code rather than pino or winston, for the
- * same reason `templates.ts` renders four emails without React Email: a log line is
- * `JSON.stringify` plus a newline, and the parts that are actually hard here — redaction,
- * never throwing, and error serialisation that cannot leak a connection string — are decisions
- * no logging library would make for us.
- *
- * ── IT LIVES IN `core` BECAUSE OF THE DEPENDENCY GRAPH ────────────────────────────────────
- * `packages/core` depends on `packages/db`; everything else depends on `core`. The worker may
- * import core + db and nothing else — a guard walks the worker's sources and fails on an import
- * of any other workspace package — and the API imports all of them. `core` is therefore the
- * highest package that BOTH the worker and the API can reach, which is what lets one logger
- * serve both hosts.
- *
- * ── WHY THIS FILE IS AN ALLOWLIST AND NOT A DENYLIST ─────────────────────────────────────
- * It used to be a denylist of EXACT normalised names, and an exact-name denylist is a list of
- * the spellings someone thought of. Every composite survived it: `imapPassword`,
- * `smtp_password`, `TF_KEK_V1`, `authToken`, `requestCookie` all reached stdout verbatim,
- * because the set held the bare words `password`, `kek`, `token`, `cookie`. `{config:
- * {password}}` redacted; `{config: {smtpPassword}}` did not.
- *
- * That is High and not cosmetic in this product's specific terms. Credentials are envelope
- * encrypted under a KEK that is held in the host environment and is absent from the database,
- * which is the entire reason a plaintext dump of `mailbox_credentials` is survivable. A KEK on
- * one log line, combined with any retained dump's wrapped DEK, retroactively decrypts every
- * password ever written under that KEK version — and `crypto.ts` does not re-wrap on rotation,
- * so "every" has no end date. This file is the channel that would do it.
- *
- * So: {@link ALLOWED_FIELDS} is the primary control. A key not on it never has its VALUE
- * emitted, at any depth, under any spelling. The alternative — hardening the denylist to
- * substring matching — was rejected on evidence, not on effort:
- *
- *   · A substring denylist cannot see the non-key string channels. `event`, `service`,
- *     `Error.name` and `Error.code` never reach a key filter at all, so hardening the key
- *     filter does nothing for them. They are handled here by GRAMMAR instead.
- *   · Substring matching over-redacts destructively on this repo's real vocabulary. A `token`
- *     rule eats `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens` and
- *     `thinkingTokens` — the five numbers cost accounting requires ("measure against real measured
- *     per-action cost"). A `key` rule eats `alertKey` and `keyVersion`. An allowlist keeps
- *     them by naming them; a denylist can only keep them by being weakened.
- *   · The field vocabulary is small and closed: 79 names across every call site in
- *     `packages/**` and `apps/**` when that extraction was made (86 logger calls, 82 with a
- *     literal fields object, ZERO with a computed one). Enumerable means allowlistable — and it
- *     has stayed enumerable: {@link ALLOWED_FIELDS} holds 220 names today, grown one reviewed
- *     diff at a time, which is the shape this design predicted rather than a drift away from it.
- *
- * The honest cost of an allowlist is that a field an operator needs at 3am can go missing. It
- * is paid down two ways rather than denied: a dropped key's NAME (never its value) is reported
- * on the line in `droppedFields`, so the log says what it refused and the fix is one entry in
- * {@link ALLOWED_FIELDS}; and the denylist survives as a SECOND gate that runs FIRST, so the
- * dangerous edit — adding `imapPassword` to the allowlist — fails closed to `[redacted]`
- * instead of open. The six names that legitimately trip the second gate are enumerated in
- * {@link SUBSTRING_EXEMPT_FIELDS} with the reason each is a count and not a secret.
- *
- * ── FOUR PROPERTIES ARE LOAD-BEARING ─────────────────────────────────────────────────────
- *
- * **1. It never throws.** `console.error` raises `EPIPE` when stdout is closed — a real
- * container condition on shutdown, already documented in `db/src/ai-gate.ts`. A logger that
- * can throw turns "we logged the failure" into "the failure handler crashed", so every write
- * is wrapped and a failed write is dropped in silence. There is nowhere better for it to go.
- * The cost is that a redaction bug ALSO fails silently, which is exactly why the guard for
- * this file asserts the bytes handed to the sink and not `sanitize()`'s return value.
- *
- * **2. It gates by KEY at every depth, and the gate is an allowlist.** The console-privacy
- * invariant says subjects, senders, snippets and bodies never leave the mail
- * path; the api-vercel host already learned the credential half the hard way (its `internal()`
- * comment records a driver error message carrying `host=…&user=…` going to a log drain). One
- * gate here beats fifty call sites remembering.
- *
- * **3. Every string channel is a GRAMMAR, not free text.** `event`, `service`, `errorClass`
- * and `errorCode` are identifiers, so they are validated as identifiers. `logger.error(
- * err.message)` is a natural call and it used to publish the message verbatim: `event` was
- * written into the line without ever passing through the filter. It now becomes
- * `invalid_event` plus the refused length. `describeError` no longer trusts `name`/`code`
- * either — both are mutable and library-supplied, and a driver puts a connection string
- * wherever it likes.
- *
- * **4. `err` is CLASS + CODE, never message + stack.** Same reasoning as the serverless API
- * host's top-level error handler: class and code are enumerable and safe; a driver message
- * carries the connection string and a `postgres` error carries the failing query.
- *
- * That fourth rule used to end "pass `errorDetail` explicitly when a message genuinely is safe
- * and needed — a decision a human makes per call site". It is gone, and `errordetail` is a
- * redacted name instead, because an escape hatch named after the thing the rule forbids is not
- * a decision point, it is a signpost. Its only three call sites in this repository were the
- * hosted sync worker's process-level crash handlers, and all three passed `err.message` — the
- * exact string reduced away one line above, into an operator-visible drain, from the one code
- * path that runs only when something has already gone wrong. That was a leak that had shipped,
- * not a hypothetical one. For the same reason there is no `allowFields` option: a
- * per-caller widening of {@link ALLOWED_FIELDS} would be `errorDetail` again, wearing a
- * different name.
- *
- * A caller who genuinely holds a safe fact still logs it — under a key that NAMES the fact
- * (`configVar`, `errorCode`, `statusCode`), which is a claim a reviewer can check, and which
- * is then added to {@link ALLOWED_FIELDS} in a diff a reviewer can see. "Detail" is not.
+ * Structured logs — one JSON object per line, on the paths where a silent failure costs money or
+ * mail. Dependency-free: a log line is `JSON.stringify` plus a newline, and the hard parts —
+ * redaction, never throwing, error serialisation — are ours to decide. In `core`, the highest
+ * package both the worker and the API can reach. An ALLOWLIST, not a denylist: a denylist is a
+ * list of spellings someone thought of, and every composite (`imapPassword`, `TF_KEK_V1`)
+ * survived it. A dropped key's NAME is reported in `droppedFields`; the denylist runs FIRST, so
+ * adding `imapPassword` to the allowlist fails closed. Never throws; gates by KEY at every depth;
+ * string channels are GRAMMARS; `err` is CLASS + CODE, never message + stack.
  */
 
 /** Ordered least → most severe. A logger emits an event when its level is at or above `level`. */
@@ -110,39 +19,14 @@ const RANK: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 export type LogFields = Record<string, unknown>;
 
 /**
- * THE CENSUS. Every field name any caller in this repository passes to a logger, and nothing
- * else. A key not here has its value dropped at every depth and its NAME reported in
- * `droppedFields`.
- *
- * Frozen literal on purpose, in the same spirit as the API's route-cost census — a frozen list of
- * every route by cost class: the list is the claim, and a diff to it is the review. It was
- * extracted mechanically rather than recalled — every `*Log`/`*Logger`
- * `.debug|info|warn|error(` call in `packages/**` and `apps/**` including optional-chained
- * receivers, plus `child()` bindings, plus `LoggerOptions.fields`, plus the funnels that
- * forward a caller's own object: the sync worker's organizer-lease callback (hence `verdict`),
- * the AI client's `ai_call` line, which spreads a whole call report (hence the whole of
- * `AnthropicCallReport`), and `apps/sidecar/src/log.ts` (`createSidecarLog`, the
- * `(event, detail) => void` seam the local engine, the stdio host and `readMailboxLease` all
- * write through — hence `inFlight`).
- *
- * That last one was missing from the mechanical extraction because there was nothing to extract:
- * the sidecar hand-rolled a `JSON.stringify` sink whose comment claimed this logger's shape, so
- * the same two field leaks stood unfixed in a second implementation. The guard against a third is
- * a census test scoped to the sidecar package, which fails when a call site there passes a field
- * name absent from this list; its header says why it covers one package for now.
- *
- * THE COST OF THAT SCOPE IS NOW MEASURED RATHER THAN ASSUMED, which is the one thing worth adding
- * here — the decision itself lives in that test's header and is not repeated. Since it was written
- * this census has refused a live line's fields three more times, all of them in `apps/worker`, the
- * package the scanner does not cover: the sensitivity repair's counts, `messageId`, and every
- * number on `known_set_read`. A sweep of `apps/worker/src` taken while adding the last of those
- * found the condition is not exhausted — the message-retry and reconcile lines pass `folder`,
- * `uid` and `uidValidity`, none of which is on this list, so those lines drop the two facts they
- * exist to name. Widening the scanner is what closes the class; adding entries one live line at a
- * time is what this file has been doing instead.
- *
- * `err`, `errorClass` and `errorCode` are deliberately absent: they are logger-owned slots
- * handled in {@link createLogger}'s `emit`, before this gate runs.
+ * The census: every field name any caller passes to a logger, and nothing else — a key not here
+ * has its value dropped at every depth and its NAME reported in `droppedFields`. A frozen
+ * literal: the list is the claim, a diff to it is the review. Extracted mechanically from every
+ * logger call in `packages/**` and `apps/**`, funnels included (the lease callback, the `ai_call`
+ * spread, the sidecar's log seam). The sidecar-only census scope has a measured cost: this list
+ * has refused live lines several times, all in `apps/worker`, the package the scanner does not
+ * cover. `err`, `errorClass` and `errorCode` are deliberately absent: logger-owned slots handled
+ * before this gate runs.
  */
 export const ALLOWED_FIELDS: readonly string[] = [
   // ── identity and correlation (what makes a line greppable at all) ──
@@ -159,15 +43,13 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // name, so it cannot silently go missing again.
   "messageId",
   /**
-   * ── THREE FOLDER-SHAPED NAMES, AND THE VALUES THEY MAY CARRY ARE NOT FOLDER NAMES ─────────
-   *
-   * `fromFolder` / `toFolder` / `folderLabel` are written ONLY through `sync.ts#folderLabel`,
-   * which answers one of the six folders ohmail organizes or the literal `"other"`. That is the
-   * whole reason they are new names rather than the `folder` the reconcile and message-retry
-   * lines already pass: `folder` carries a RAW path from the mail server, and a folder a person
-   * made is their own words, so admitting THAT name here would leak ten existing call sites'
-   * values in one edit. `ref` is a `uidvalidity:uid` pair — digits and a colon, minted by the
-   * server's own numbering.
+   * Three folder-shaped names, and the values they may carry are NOT folder names:
+   * `fromFolder`/`toFolder`/`folderLabel` are written only through `sync.ts#folderLabel`, which
+   * answers one of the six organized folders or the literal `"other"`. That is why they are new
+   * names rather than the `folder` the reconcile lines already pass: `folder` carries a RAW
+   * server path — a folder a person made is their own words — so admitting THAT name would leak
+   * ten existing call sites' values in one edit. `ref` is a `uidvalidity:uid` pair — digits and a
+   * colon, minted by the server's numbering.
    */
   "fromFolder", "toFolder", "folderLabel", "ref",
   // `threadId`/`candidateThreadId` are `threads.id` ROW UUIDs, the same non-secret shape and the
@@ -192,44 +74,28 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // field cannot be added without being emitted.
   // ── the sentence a human reads, and the config name a human checks ──
   "connectMs", "leaseMs", "foldersMs", "kickstartMs", "watchMs", "attachMs",
-  // ── The SEND path's own phase durations, and `sendId`, added WITH the line that emits them ──
-  //
-  // `send_phases` decomposes one attempt: the reservation transaction, the attachment assembly,
-  // the cold dial (`openMs`, which on some providers is the largest and by far the most variable
-  // phase of the whole attempt), the SMTP session and Sent APPEND, the finalize, and the sent-copy
-  // projection. The whole point of the line is the SPLIT — a total nobody can decompose is the
-  // state that made "sending is slow" an investigation rather than a reading — so a census that
-  // keeps `totalMs` and drops the other six keeps the one number that was never the question.
-  //
-  // Added here after this list refused them on the first real run (`droppedFields` named all six)
-  // — the fourth time that has happened, and the second where the suite could not see it because
-  // it asserts a FAKE logger. The guard for these names drives the real one.
-  //
-  // Every value is a duration in milliseconds computed from two clock reads. `sendId` is the
-  // `outbound_sends` ROW UUID, the same non-secret shape and justification as `messageId` and
-  // `threadId` above: it correlates a line to the reservation row and carries no mail content —
-  // not the recipient, not the subject, and never the minted `Message-ID` header, which reads
-  // like an address and is logged nowhere.
+  // The SEND path's phase durations and `sendId`, added WITH the line that emits them.
+  // `send_phases` decomposes one attempt: reservation, attachment assembly, the cold dial
+  // (`openMs`, on some providers the largest and most variable phase), the SMTP session and Sent
+  // APPEND, the finalize, the sent-copy projection. The point of the line is the SPLIT — a total
+  // nobody can decompose made "sending is slow" an investigation — so a census keeping `totalMs`
+  // and dropping the six keeps the one number that was never the question. Added after this list
+  // refused them on the first real run; the suite could not see it because it asserts a FAKE
+  // logger. Every value is a millisecond delta; `sendId` is the `outbound_sends` row UUID — never
+  // the recipient, the subject, or the minted `Message-ID`, which reads like an address and is
+  // logged nowhere.
   "reserveMs", "assembleMs", "openMs", "submitMs", "finalizeMs", "projectMs", "sendId",
   "reason", "detail", "kind", "severity", "phase", "state", "verdict", "configVar",
-  // ── The `SIZE` back-fill pass's counts and its two per-mailbox facts ──
-  //
-  // Added WITH the lines that emit them, not after, because this census has silently swallowed
-  // instrumentation twice already (the attach-phase durations above, `messageId` below) and the
-  // suites could not see it either time: a test that injects a fake logger asserts what a call
-  // site HANDS OVER, never what this list lets through.
-  //
-  // `announcedBytes` is the RFC 1870 `SIZE` a submission server published — a number about a
-  // server's configuration, carrying nothing about a person or a message. `code` is a member of
-  // the closed `SmtpSizeFailure` set and never the server's own words; the whole reason that type
-  // is a union of literals we wrote (five, since an oauth mailbox with no mintable access token
-  // joined it) is that `reason` one line up is allowlisted and the value scrubber only redacts
-  // strings that label themselves, so a remote server's AUTH response must not be able to arrive
-  // under either name.
-  //
-  // `stamped` is the durable half of the same pass (mail 0063): how many rows now remember that
-  // they were dialled, which is deliberately not the same number as `considered` — a mailbox whose
-  // credentials rotated mid-dial is left unstamped so it stays due.
+  // The `SIZE` back-fill pass's counts and its two per-mailbox facts, added WITH the lines that
+  // emit them — this census has silently swallowed instrumentation before, and suites cannot see
+  // it: a test that injects a fake logger asserts what a call site HANDS OVER, never what this
+  // list lets through. `announcedBytes` is the RFC 1870 `SIZE` a submission server published — a
+  // fact about a server's configuration. `code` is a member of the closed `SmtpSizeFailure` set
+  // and never the server's own words: `reason` is allowlisted and the value scrubber only redacts
+  // strings that label themselves, so a remote AUTH response must not be able to arrive under
+  // either name. `stamped` is the durable half (mail 0063): rows that now remember they were
+  // dialled — deliberately not `considered`, since a mailbox whose credentials rotated mid-dial
+  // stays unstamped and due.
   "considered", "learned", "silent", "skipped", "failed", "announcedBytes", "stamped",
   "disabledReason", "stoppedBy", "heldBy",
   // ── `ownClaimTerm`: HOW A MAILBOX'S HOLDER RELATES TO THE INSTALL THAT STOOD DOWN ─────────
@@ -259,20 +125,15 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // line: the same silent stop reached two ways means two different things about the socket, and
   // without the name both read as one sentence.
   "detectedBy",
-  // ── `closed`: HOW MANY APPOINTMENTS A STAND-DOWN ENDED, added WITH the lines that emit it ──
-  //
-  // A mailbox changing organizer ends every pending send-later appointment on it — the pass that
-  // would have kept them is behind the gate that just said no, and the appointment does not
-  // travel. All three stand-down sites (the sidecar's lease gate, the worker's, the reconcile
-  // cron's) report the count, and the count is the ONLY thing they report about those messages:
-  // which message was scheduled, to whom and for when are facts about somebody's mail and stay in
-  // the database. Exactly the `flipped`/`merged`/`tripped` class one shelf up.
-  //
-  // Added here in the same change as the call sites, which is what the header of this list asks
-  // for and what the sidecar's census enforced in practice: the first run of that guard read
-  // `engine.ts → scheduled_sends_stood_down passes 'closed': expected 'dropped' to be 'keep'`,
-  // so without this entry the one line that records a person's send not happening would have been
-  // emitted with the number stripped out.
+  // `closed`: how many appointments a stand-down ended, added WITH the lines that emit it. A
+  // mailbox changing organizer ends every pending send-later appointment — the pass that would
+  // have kept them is behind the gate that just said no, and the appointment does not travel. All
+  // three stand-down sites report the count, and the count is the ONLY thing reported about those
+  // messages: which message, to whom and for when are facts about somebody's mail and stay in the
+  // database. Added in the same change as the call sites — the sidecar's census guard read
+  // `scheduled_sends_stood_down passes 'closed'` on its first run, so without this entry the one
+  // line recording a person's send not happening would have been emitted with the number stripped
+  // out.
   "closed",
   // ── counts and roster arithmetic (the worker's roster pass, kickstart, thread backfill) ──
   "accounts", "accountsAffected", "mailboxes", "maxMailboxes", "selected", "serving",
@@ -314,101 +175,60 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // `count`, on this file's own rule: `totalMs` and `slowestMs` are different quantities and one
   // `count` meaning either is not a claim a reviewer can check. (`drained` is already above.)
   "cycles", "totalMs", "slowestMs",
-  // ── The three cron-pass counts, added WITH the call sites and not after them ──
-  //
-  // `generated` (proposals stored), `flipped` (bubble-ups resurfaced) and `drained` (workflow runs
-  // executed) are the return values of the four cron passes, accumulated by `+=` from a `.length`
-  // or a local counter and assigned by nothing else — structurally integers, so they cannot carry
-  // content. They are NAMED rather than folded into the existing `count` because this file's own
-  // header prescribes it: a key that names the fact is a claim a reviewer can check, and one
-  // `count` meaning three different quantities depending on the event is not.
-  //
-  // Deliberately absent, and this is the half worth reading: `pass`, `ran` and `skipped`. WHICH
-  // pass ran is encoded in the event NAME (`cron_proposals_ran`), because `event` is already a
-  // validated grammar with no allowlist behind it, so it costs nothing — while every entry added
-  // here is another chance to repeat the attach-phase mistake four lines up.
+  // The three cron-pass counts, added WITH the call sites: `generated` (proposals stored),
+  // `flipped` (bubble-ups resurfaced) and `drained` (workflow runs executed) are return values
+  // accumulated by `+=` from a `.length` or a local counter — structurally integers, no content.
+  // NAMED rather than folded into `count`, per this file's header: one `count` meaning three
+  // quantities is not a claim a reviewer can check. Deliberately absent: `pass`, `ran` and
+  // `skipped` — WHICH pass ran is encoded in the event NAME (`cron_proposals_ran`), a validated
+  // grammar with no allowlist behind it, so it costs nothing, while every entry added here is
+  // another chance to repeat the attach-phase mistake.
   "generated", "flipped", "drained",
   // `rescued` is GONE with its call sites: it was the bubble-up reconciliation's counter, and
-  // that pass was removed when resurfacing stopped forcing read state (2026-08-26) — an entry
-  // with no emitter is exactly the kind of standing exception this file's header forbids.
-  // ── The local store's bloat-compaction line (`store_compacting`/`store_compacted`), added WITH
-  // the call site (`apps/sidecar/src/db.ts#reclaimBodyBloat`) ──
-  //
-  // `beforeBytes`/`afterBytes` are `pg_total_relation_size()` reads and `liveEstimateBytes` is
-  // arithmetic over `reltuples` and `pg_stats.avg_width` — integers from the catalog, naming no
-  // mailbox and no message. They are the whole evidence for a once-per-install table rewrite
-  // (measured: 21 GB on disk over ~1.6 GB of data), so a line reading only `droppedFields` would
-  // hide exactly the numbers the event exists to report. NAMED rather than folded into `count`,
-  // per this file's own rule: three different quantities under one key is not a claim a reviewer
-  // can check.
+  // that pass was removed when resurfacing stopped forcing read state — an entry with no emitter
+  // is exactly the standing exception this file's header forbids. The local store's
+  // bloat-compaction line: `beforeBytes`/`afterBytes` are `pg_total_relation_size()` reads and
+  // `liveEstimateBytes` is arithmetic over catalog statistics — integers naming no mailbox and no
+  // message. They are the whole evidence for a once-per-install table rewrite (measured: 21 GB on
+  // disk over ~1.6 GB of data), so a line reading only `droppedFields` would hide exactly the
+  // numbers the event exists to report. NAMED rather than folded into `count`, per this file's
+  // rule.
   "beforeBytes", "afterBytes", "liveEstimateBytes",
   // …and `compactMs` rides `boot_phases` beside the other phase timings — a `Date.now()` delta
   // over the same pass, named for the same reason the attach-phase timings are.
   "compactMs",
-  // ── The sender-name / recipients backfill's three counters, added WITH the call sites ──
-  //
-  // `scanned` (candidate rows read), `fillable` (rows whose stored headers can supply a value) and
-  // `written` (rows the guarded UPDATE actually took) are integers accumulated by `++`/`+=` from
-  // that pass's own local counters and assigned by nothing else, so
-  // they are structurally content-free. Added here in the SAME change as the call sites rather
-  // than after a live run refused them — which is what the attach-phase and sensitivity-repair
-  // paragraphs above are both records of, and this pass logs progress across a walk of tens of
-  // thousands of rows, so a line reading only `droppedFields` would leave an operator with no way
-  // to tell a slow run from a stalled one.
-  //
-  // NAMED rather than folded into `count`, on this file's rule: three quantities behind one key is
-  // not a claim a reviewer can check. The pass's other numbers are deliberately NOT here — they
-  // reach the operator through the runner's console summary, and `skipped` in particular stays off
-  // the census exactly as the cron paragraph above decided. The cursor is logged as `messageId`,
-  // the row-uuid entry that already exists, not as a new `lastId`.
-  //
-  // What must never appear on this list is a key named for the VALUES this pass moves —
-  // `fromName`, `toAddresses`, `ccAddresses` are display names and recipient addresses, i.e.
-  // somebody's mail, and the pass logs counts of them and never one of them.
+  // The sender-name/recipients backfill's three counters, added WITH the call sites: `scanned`
+  // (candidate rows read), `fillable` (rows whose stored headers can supply a value) and
+  // `written` (rows the guarded UPDATE took) — integers accumulated from local counters,
+  // structurally content-free. Added in the SAME change as the call sites rather than after a
+  // live run refused them; the pass logs progress across tens of thousands of rows, and a line
+  // reading only `droppedFields` cannot distinguish a slow run from a stalled one. The pass's
+  // other numbers reach the operator through the runner's console summary; the cursor is logged
+  // as `messageId`, not a new `lastId`. What must never appear here is a key named for the VALUES
+  // the pass moves — `fromName`, `toAddresses`, `ccAddresses` are somebody's mail; the pass logs
+  // counts of them and never one of them.
   "scanned", "fillable", "written",
-  // ── The sensitivity-false-positive repair's counts, added AFTER the first live run refused them ──
-  //
-  // The attach-phase paragraph four entries up, reproduced exactly, by somebody who had read it. The
-  // pass shipped, and its first live line read
-  // `droppedFields=["candidates","fetched","cleared","stillSensitive","unreadable","mismatched",
-  // "capped","marked"]` — every number the line existed to report, refused, leaving `examined`
-  // alone on a line about a correction to somebody's mail. The worker's own tests could not see
-  // it for the reason the attach-phase paragraph names: they inject a fake logger, so they assert what the call
-  // site HANDS OVER and never what this census lets through.
-  //
-  // All eight are structurally content-free. Six are integers accumulated by `++` and `+=` from
-  // local counters in the worker's sensitivity backfill pass, and `capped`/`marked` are booleans
-  // — one from a budget comparison, one from `RETURNING`'s row count. None is derived from a
-  // message, a sender or a subject, which is the question this list exists to ask.
-  //
-  // NAMED rather than folded into `count`, on this file's own rule: `cleared` and
-  // `stillSensitive` are the two halves of the only question an operator asks about this pass —
-  // how much mail became readable, and how much was correctly left alone — and one `count` that
-  // means either depending on the event is not a claim anybody can check.
-  //
-  // `clearedFromStored` is the ninth, added with the oversized-original ruling: a candidate whose
-  // ORIGINAL is over the re-read ceiling cannot be re-read, so its sensitivity is cleared from the
-  // STORED text instead — a repair that un-withholds the row but cannot restore the html the false
-  // positive deleted. It is counted APART from `cleared` because the two are not the same outcome
-  // (one restores the body, one only the metadata), which is the distinction an operator asks
-  // about. Structurally an integer accumulated by `++`, so it carries no content, same as the eight.
+  // The sensitivity-false-positive repair's counts, added AFTER the first live run refused them —
+  // the pass shipped and its first live line read `droppedFields=[…]` with every number the line
+  // existed to report, leaving `examined` alone on a line about a correction to somebody's mail;
+  // the worker's tests inject a fake logger and assert what the call site hands over, never what
+  // this census lets through. All are structurally content-free: integers from local counters,
+  // plus two booleans from a budget comparison and a RETURNING row count. NAMED rather than
+  // folded into `count`: `cleared` and `stillSensitive` are the two halves of the only question
+  // an operator asks — how much mail became readable, and how much was correctly left alone.
+  // `clearedFromStored` is counted APART from `cleared` because the outcomes differ: one restores
+  // the body, one only the metadata.
   "candidates", "fetched", "cleared", "clearedFromStored", "stillSensitive", "unreadable",
   "mismatched", "capped", "marked",
-  // `undecided`, `walk` and `maxWalks` are the tenth, eleventh and twelfth, added WITH the marker-
-  // honesty ruling and not after it — the paragraph three entries up is about this pass and it was
-  // read before these were added.
-  //
-  // They exist because the completion marker used to certify over messages the pass could not
-  // READ: a dropped connection refused a message for the life of the process, the walk finished,
-  // the durable marker landed, and that message stayed redacted for ever with nothing anywhere
-  // recording that a decision was owed. `undecided` is the `Set.size` of those, `walk` is which
-  // re-attempt this was and `maxWalks` the bound — three integers derived from counters and a
-  // module constant, none of them from a message, a sender or a subject.
-  //
-  // The message IDS deliberately do NOT appear on a log line and are on the pass's jsonb audit row
-  // instead. `messageId` (singular) one section up is allowlisted for a ROW-SCOPED line about one
-  // row; a `messageIds` entry would license an unbounded list of uuids on a single line, which is a
-  // size problem the audit payload does not have and a widening of that entry's justification.
+  // `undecided`, `walk` and `maxWalks`, added WITH the marker-honesty ruling. They exist because
+  // the completion marker used to certify over messages the pass could not READ: a dropped
+  // connection refused a message for the life of the process, the walk finished, the durable
+  // marker landed, and that message stayed redacted for ever with nothing recording that a
+  // decision was owed. `undecided` is the `Set.size` of those, `walk` which re-attempt this was,
+  // `maxWalks` the bound — integers from counters and a module constant. The message IDS
+  // deliberately do NOT appear on a log line and live on the pass's jsonb audit row instead:
+  // `messageId` (singular) is allowlisted for a row-scoped line; a `messageIds` entry would
+  // license an unbounded list of uuids on one line.
   "undecided", "walk", "maxWalks",
   // `tripped` is the inbound-quiet pass's half of a pair whose other half (`cleared`) is already
   // above: how many mailboxes ENTERED a quiet episode this pass (`apps/worker/src/inbound-quiet.ts`,
@@ -449,20 +269,15 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // and cannot carry content. It is on the census because a `shutdown` line that cannot say
   // whether requests were still in flight cannot say whether the shutdown dropped work.
   "inFlight",
-  // ── SEND LATER's pass (mail 0077), added WITH the call sites ──
-  //
-  // `draftId` is the `drafts.id` ROW UUID the scheduled-send pass names when it acts on one
-  // appointment — the same non-secret shape and the same justification as `messageId` and
-  // `threadId` above: it correlates a line to a database row and carries no mail content. What
-  // that pass deliberately does NOT log: the draft's subject, its recipients, its body — all
-  // deny-listed content the id points into. `claimed`/`sent`/`unverified`/`deferred` are the
-  // pass summary's `++` counters (`failed` is already here from the SIZE probe's census),
-  // named rather than folded into `count` on this file's own rule: an operator reading the
-  // summary asks which appointments DELIVERED, which ended ambiguous, and which are merely
-  // waiting out a blip — three different 3am questions. `sent` also repairs a standing drop:
-  // the worker's `away_responder_pass` line has handed it over since that pass shipped and the
-  // census refused it every time, leaving a line about outbound mail unable to say how much
-  // mail went out.
+  // SEND LATER's pass (mail 0077), added WITH the call sites. `draftId` is the `drafts.id` row
+  // UUID the pass names when it acts on one appointment — the same non-secret shape as
+  // `messageId`; what the pass deliberately does NOT log: the draft's subject, recipients, body.
+  // `claimed`/`sent`/`unverified`/`deferred` are the summary's `++` counters, named rather than
+  // folded into `count`: an operator asks which appointments DELIVERED, which ended ambiguous,
+  // and which are merely waiting out a blip — three different 3am questions. `sent` also repairs
+  // a standing drop: the `away_responder_pass` line has handed it over since that pass shipped
+  // and the census refused it every time, leaving a line about outbound mail unable to say how
+  // much mail went out.
   "draftId", "claimed", "sent", "unverified", "deferred",
   // ── The REQUEST DRAIN's own counter, added WITH its call sites ──
   //
@@ -474,44 +289,26 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // updates. Folding it into `refused` would make an ordinary version skew read as a run of
   // rejected decisions; folding it into `deferred` would promise a retry that changes nothing.
   "standing",
-  // ── The SEND RECONCILER's two counters, added WITH the call sites ──
-  //
-  // The pass that resolves a `pending` reservation nobody is coming back for reports the four
-  // above plus these two, and the two are separated for the same "three different 3am questions"
-  // reason: `resolvedElsewhere` is how often this pass raced another resolver and lost the
-  // compare-and-swap — healthy in ones, a sign of a second clock running if it dominates a
-  // summary — and `gaveUp` is the strictly worse number, how many rows were closed as ambiguous
-  // because a whole day of cycles could not decide them. Folding either into `deferred` would
-  // hide the one outcome where somebody's draft was settled by a clock rather than by evidence.
-  //
-  // Both are `++` counters on a literal result object, so they are structurally integers and can
-  // carry no content. `decidedBy` is the reconciler's own decision word — a member of the closed
-  // `ResolveStaleBy` union, five literals this repository wrote, beside `disabledReason` and
-  // `syncBlockedReason` and for that entry's exact reason: it names HOW a row was decided
-  // (`mirror`, `probe`, `undialable`, `elsewhere`, `deferred`) and never a server's own words.
-  // Spelled out rather than `by`, because a two-letter generic name on a GLOBAL allowlist is an
-  // open door for the next call site that happens to reach for it — this list's own header, on
-  // why an allowlist is keyed by name and the names have to be worth allowing.
+  // The SEND RECONCILER's two counters, added WITH the call sites. `resolvedElsewhere` is how
+  // often this pass raced another resolver and lost the compare-and-swap — healthy in ones, a
+  // sign of a second clock if it dominates — and `gaveUp` is the strictly worse number: rows
+  // closed as ambiguous because a whole day of cycles could not decide them. Folding either into
+  // `deferred` would hide the one outcome where somebody's draft was settled by a clock rather
+  // than by evidence. Both are `++` counters, structurally integers. `decidedBy` is a member of
+  // the closed `ResolveStaleBy` union — five literals this repository wrote — and never a
+  // server's words; spelled out rather than `by`, because a two-letter generic name on a GLOBAL
+  // allowlist is an open door for the next call site.
   "resolvedElsewhere", "gaveUp", "decidedBy",
-  // ── The AWAY RESPONDER's pass (mail 0087), added WITH the call sites ──
-  //
-  // Three more `++` counters and one setting name, named for the same 3am reason the send pass's
-  // are: an operator reading `away_responder_pass` asks how many correspondents were ANSWERED, how
-  // many were held back because they were answered recently (`throttled`), and how many because a
-  // guard refused them outright (`suppressed`) — and those are three different situations with
-  // three different fixes. Folding them into `count` would make the line unable to distinguish
-  // "the responder is working" from "the responder is refusing everybody".
-  //
-  // All three are integers the pass only ever `++`s, so they are structurally content-free.
-  // `throttle` is the SETTING's name — one of four literals from a closed enum (`always`,
-  // `per_message`, `per_day`, `per_week`), never a value anybody typed. `accounts`, `examined` and
-  // `capped` are already on this census from earlier passes and are reused rather than re-added.
-  //
-  // What this pass deliberately does NOT log, and it is the sharpest omission on this file: the
-  // CORRESPONDENT'S ADDRESS. `away_replies.sender` is somebody else's personal data, held only
-  // because we sent them mail, and a log line naming who wrote to a person while they were away is
-  // a disclosure about both of them. The lines carry `messageId` and `mailboxId` — ids that point
-  // into rows the deletion sweep erases — and the responder's own text is never logged either.
+  // The AWAY RESPONDER's pass (mail 0087), added WITH the call sites. An operator reading
+  // `away_responder_pass` asks how many correspondents were ANSWERED, how many were held back
+  // because answered recently (`throttled`), and how many a guard refused outright (`suppressed`)
+  // — three situations with three fixes; folding them into `count` would make the line unable to
+  // distinguish "working" from "refusing everybody". All three are `++` integers. `throttle` is
+  // the SETTING's name — one of four closed literals, never a value anybody typed. The sharpest
+  // omission on this file: the CORRESPONDENT'S ADDRESS. `away_replies.sender` is somebody else's
+  // personal data, and a log line naming who wrote to a person while they were away is a
+  // disclosure about both of them; the lines carry ids that point into rows the deletion sweep
+  // erases, and the responder's own text is never logged.
   "throttled", "suppressed", "throttle", "deferredAccounts", "deferredCandidates",
   // `undeliverableMarked` is the same pass's fifth number and it was NOT on this census, so the
   // one line that reports a correspondent's address going dead has been dropping it since the
@@ -526,40 +323,24 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // waiting for. A literal boolean read off `CloudMirror.draining()` (`inflight !== null`), so it
   // is structurally content-free — the same shape and the same argument as `changed` above.
   "mirrorDraining",
-  // ── The desktop engine's BOOT phases (`boot_phases`), added WITH the call sites ──
-  //
-  // The attach-phase paragraph above, applied before the fact rather than after it. Both sidecar
-  // doors serve the bridge only once their constructor returns, so the window's "Opening your
-  // mailbox" screen lasts exactly as long as that constructor — and, as with the attach phases, a
-  // single start-to-finish number could not say WHICH phase owned it. These five can: `pgliteOpenMs` is
-  // the WASM instantiation plus Postgres' own startup on the local mirror, `adoptBaselineMs` and
-  // `migrateMs` the two schema passes, `worldMs` the mailbox row and the launch session, and
-  // `totalReadyMs` the whole constructor — so the four subtracted from the total are the unnamed
-  // remainder, which is a reading rather than a guess.
-  //
-  // All five are `Date.now()` deltas, the same clock `cycles`/`totalMs`/`slowestMs` above use.
-  // Structurally integers from a clock: they name no mailbox, no address and no path, and the
-  // data directory deliberately stays off the line for the reason `serving` dropped `dataDir`.
-  // NAMED rather than folded into `totalMs`, on this file's own rule — five durations under one
-  // key is not a claim a reviewer can check.
+  // The desktop engine's BOOT phases (`boot_phases`), added WITH the call sites — the
+  // attach-phase lesson applied before the fact. Both sidecar doors serve the bridge only once
+  // their constructor returns, so the window's "Opening your mailbox" screen lasts exactly as
+  // long as that constructor — and a single start-to-finish number could not say WHICH phase
+  // owned it. These five can: `pgliteOpenMs` (WASM instantiation plus Postgres startup),
+  // `adoptBaselineMs` and `migrateMs` (the two schema passes), `worldMs` (the mailbox row and
+  // launch session), `totalReadyMs` (the whole constructor) — the four subtracted from the total
+  // are the unnamed remainder, a reading rather than a guess. All five are `Date.now()` deltas
+  // naming no mailbox, no address and no path.
   "pgliteOpenMs", "adoptBaselineMs", "migrateMs", "worldMs", "totalReadyMs",
-  // ── THE ENGINE'S OWN MEMORY, added WITH the line that emits it ──
-  //
-  // `process.memoryUsage()`'s three numbers, as `engine_vitals` reports them on a timer beside
-  // `boot_phases`. Structurally integers from the runtime: they name no mailbox, no address, no
-  // path and nothing a person wrote. `external` is the one that matters most on this door and is
-  // the reason all three are named rather than folded into one — a WASM database keeps its heap
-  // OUTSIDE the JavaScript heap, so `heapUsed` alone would describe a fraction of the process
-  // and `rss` alone could not say which half was growing.
-  //
-  // Added because the question has no answer anywhere: nothing in this repository has ever called
-  // `memoryUsage`, so the only figure that exists for the desktop engine came from a throwaway
-  // spike build. There is deliberately NO threshold attached to any of them — a bar set before
-  // the first measurement would be a number somebody invented, and the measurement is the point.
-  // …and `storeBytes`, the WASM heap the local store runs Postgres inside, read from the runtime
-  // rather than inferred: structurally a byte count from an allocator, naming nothing a person
-  // wrote. It is the number that attributes a rise in `rss` to the database or to the engine, and
-  // it is a FLOOR — measured constant from an empty mirror to a large one — so the reading
+  // The engine's own memory — `process.memoryUsage()`'s three numbers, as `engine_vitals` reports
+  // them on a timer beside `boot_phases`. Integers from the runtime, naming nothing a person
+  // wrote. `external` matters most on this door and is why all three are named rather than
+  // folded: a WASM database keeps its heap OUTSIDE the JavaScript heap, so `heapUsed` alone
+  // describes a fraction of the process and `rss` alone cannot say which half is growing. Added
+  // because nothing in this repository had ever called `memoryUsage`. Deliberately NO threshold
+  // attached — a bar set before the first measurement would be a number somebody invented.
+  // `storeBytes` is the WASM heap the local store runs Postgres inside — a FLOOR, so the reading
   // worth acting on is one that grows with the mailbox.
   "rss", "heapUsed", "external", "uptimeMs", "storeBytes",
   // WHERE THAT READING CAME FROM, added WITH the line that emits it. `engine_vitals` runs on every
@@ -582,70 +363,35 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // rule: "how long was the database gone" and "how many mailboxes met it" are different
   // quantities, and one key meaning either is not a claim a reviewer can check.
   "outageMs", "faults",
-  // ── a crash the contract deliberately did NOT exit on, added WITH its call site ──
-  //
-  // `survived` is a `++` counter on `uncaught_exception_survived` — the running number of times a
-  // process's crash handlers have met an uncaught throw its host named as survivable, rather than
-  // exiting on it. (Today there is one such shape: a database driver that throws from a timer when
-  // a connection dies with a write still buffered, which is not evidence about the process at all
-  // and whose only effect on `exit(1)` is a restart loop through the outage.) Structurally an
-  // integer naming no mailbox, no address and no path.
-  //
-  // It is on this list because it is the ESCALATION SIGNAL and there is no other: one of these is
-  // a known driver defect riding out an outage, and a thousand is a process that should have died
-  // an hour ago. The line is emitted from the one code path that only runs when something has
-  // already gone wrong, so a census drop would leave `droppedFields=["survived"]` exactly where an
-  // operator is trying to size a suppression — the same failure the `rescued` note above records.
+  // A crash the contract deliberately did NOT exit on, added WITH its call site. `survived` is a
+  // `++` counter on `uncaught_exception_survived` — how many times the crash handlers have met an
+  // uncaught throw its host named as survivable rather than exiting (today one shape: a database
+  // driver throwing from a timer when a connection dies with a write buffered, whose only effect
+  // on `exit(1)` is a restart loop through the outage). It is here because it is the ESCALATION
+  // SIGNAL and there is no other: one of these is a known driver defect riding out an outage, and
+  // a thousand is a process that should have died an hour ago. The line runs only when something
+  // has already gone wrong, so a census drop would leave `droppedFields=["survived"]` exactly
+  // where an operator is sizing a suppression.
   "survived",
-  // ── the auto-suggest pass's own count, added WITH its call site ──
-  //
-  // `bought` is the number of held senders a pass stored an advisory suggestion for — a `++`
-  // counter on a loop with a fixed page above it, so structurally an integer naming no sender, no
-  // subject and no verdict. It rides beside `examined` and `capped`, which are already here.
-  //
-  // NAMED rather than folded into `count`, on this file's own rule: "how many were eligible" and
-  // "how many were answered for" are different quantities and the gap between them IS the reading
-  // — a pass that examined ten and bought three stopped early, which is the one thing this line
-  // exists to make visible. It matters most on the desktop, where the pass runs against a model
-  // the person in front of it is paying for directly and a line saying `droppedFields=["bought"]`
-  // would leave them with no record of what was done on their key.
+  // The auto-suggest pass's own count, added WITH its call site. `bought` is the number of held
+  // senders a pass stored an advisory suggestion for — a `++` counter under a fixed page,
+  // structurally an integer naming no sender, subject or verdict. NAMED rather than folded into
+  // `count`: "how many were eligible" and "how many were answered for" are different quantities
+  // and the gap between them IS the reading — a pass that examined ten and bought three stopped
+  // early, the one thing this line exists to make visible. It matters most on the desktop, where
+  // the pass runs against a model the person is paying for directly, and
+  // `droppedFields=["bought"]` would leave no record of what was done on their key.
   "bought",
-  // ── The known-set memo's per-cycle census (`known_set_read`), added AFTER the first live run
-  //    refused ALL FOUR of them ──
-  //
-  // The fifth time the attach-phase paragraph above has been reproduced as a defect
-  // (`log-fields.test.ts` numbers the third and the fourth), and the first where the line reached
-  // the drain carrying nothing but its own explanation: every live `known_set_read` read
-  // `droppedFields=["rows","bytes","bytesSaved","droppedBy"]` while the `reason` sentence telling an
-  // operator how to READ those four numbers survived, because `reason` was already here. The worker
-  // suite could not see it for the reason that paragraph gives — those tests inject a fake logger,
-  // so they assert what the call site HANDS OVER and never what this census lets through.
-  //
-  // All four are structurally content-free, which is the question this list exists to ask.
-  // `rows` is `rows.length` of the last `listKnownLocators` read. `bytes` and `bytesSaved` are sums
-  // of column WIDTHS (`estimateWireBytes` adds `Buffer.byteLength` of each field to a fixed
-  // per-field overhead) — arithmetic over lengths and never over the values, so no folder name, no
-  // `Message-ID` and no address can survive the addition.
-  //
-  // `droppedBy` is the only string and the only one that needed checking rather than arguing. Its
-  // value set is closed and author-written: either a `WorkerRepo` METHOD NAME, captured by the
-  // memo's proxy from a property key of a class in this repository, or one of the leadership
-  // sentences the worker hands `KnownSetCache.drop` (`"lease-lost"`, `"fenced"`, `"cycle-threw"`,
-  // `"leader lock lost"`, `` `detached: ${reason}` ``) — the same static English a human wrote that
-  // `reason` carries, which is why `reason` is on neither denylist. Nothing runtime-composed and
-  // nothing mailbox-derived reaches it.
-  //
-  // NAMED rather than folded into `count`/`totalMs`, on this file's own rule: `rows` is the SIZE of
-  // the read, `bytes` its cost once, and `bytesSaved` the cost the memo has avoided since the
-  // attachment began — three quantities, and the reading IS the ratio between the last two. One
-  // `count` meaning any of them is not a claim a reviewer can check. `droppedBy` is what makes the
-  // line actionable rather than merely informative: a memo re-reading every cycle is a
-  // classification bug in `KNOWN_SET_NEUTRAL`, and this names the method to classify.
-  //
-  // `dbReads` and `hits` are deliberately absent, on the cron paragraph's rule. The call site emits
-  // only when `dbReads > 0`, so the event's EXISTENCE already says what `dbReads` would, and `hits`
-  // is per-cycle bookkeeping the operator has no question about — and every entry added here is
-  // another chance to repeat the mistake this paragraph records.
+  // The known-set memo's per-cycle census (`known_set_read`), added AFTER the first live run
+  // refused ALL FOUR — every live line read
+  // `droppedFields=["rows","bytes","bytesSaved","droppedBy"]` while the `reason` sentence
+  // explaining them survived. All four are content-free: `rows` is a `.length`; `bytes` and
+  // `bytesSaved` are sums of column WIDTHS — arithmetic over lengths, never values. `droppedBy`
+  // is the only string: a `WorkerRepo` method name from a property key, or a leadership sentence
+  // the worker hands `KnownSetCache.drop` — nothing runtime-composed. NAMED because the reading
+  // IS the ratio of the last two, and `droppedBy` makes the line actionable: a memo re-reading
+  // every cycle is a classification bug in `KNOWN_SET_NEUTRAL`. `dbReads` and `hits` are absent:
+  // the event's existence already says what `dbReads` would.
   "rows", "bytes", "bytesSaved", "droppedBy",
   // ── alerting (the worker's alert loop and the API's internal alert route) ──
   "alertKey", "alertKeys", "alertSinks", "alertIntervalMs", "rosterIntervalMs",
@@ -673,15 +419,13 @@ export const ALLOWED_FIELDS: readonly string[] = [
 ] as const;
 
 /**
- * Name FRAGMENTS that mean "never write this value". Matched as a SUBSTRING of the normalised
- * key, which is what catches `imapPassword`, `smtp_password`, `TF_KEK_V1` and `Set-Cookie`
- * under one entry each.
- *
- * Short, ambiguous words are deliberately NOT here — they are in {@link SECRET_EXACT_NAMES}
- * instead. `pass` as a substring eats `passed` and `bypass`; `text` eats `context`; `key` eats
- * `alertKey` and `keyVersion`. Precision matters less than it used to (an unmatched key is
- * dropped by the allowlist rather than emitted), but a false positive here would silently
- * blank a field the allowlist deliberately keeps, so it still matters.
+ * Name FRAGMENTS that mean "never write this value", matched as a SUBSTRING of the normalised key
+ * — which is what catches `imapPassword`, `smtp_password`, `TF_KEK_V1` and `Set-Cookie` under one
+ * entry each. Short, ambiguous words are deliberately NOT here — they live in {@link
+ * SECRET_EXACT_NAMES}: `pass` as a substring eats `passed` and `bypass`, `text` eats `context`,
+ * `key` eats `alertKey` and `keyVersion`. Precision matters less than it used to (an unmatched
+ * key is dropped by the allowlist rather than emitted), but a false positive here silently blanks
+ * a field the allowlist deliberately keeps.
  */
 export const SECRET_NAME_SUBSTRINGS: readonly string[] = [
   // ── credentials, keys, tokens ──
@@ -697,18 +441,12 @@ export const SECRET_NAME_SUBSTRINGS: readonly string[] = [
 
 /**
  * Names that redact on an EXACT normalised match only, because as substrings they would eat
- * ordinary words: `pass` eats `passed` and `bypass`, `text` eats `context`, `key` eats
- * `alertKey`, `tag` eats `tagId`. The last five are `crypto.ts`'s envelope components.
- *
- * `reason` is deliberately absent from both lists: ~40 call sites pass it a static English
- * sentence the author wrote, which is the opposite of a value the runtime composed. `keyVersion`
- * is absent too, and on purpose — a KEK VERSION is an integer that the health endpoint already
- * publishes; redacting it would be the same over-reach that makes a `key` substring rule wrong.
- * It simply is not on {@link ALLOWED_FIELDS}, so it is dropped rather than redacted.
- *
- * Nothing here duplicates a fragment above. `secretEnc`, `stackTrace`, `bodyText`, `bodyHtml`
- * and `rawBody` were all explicit entries under the old exact-match design and are now covered
- * by `secret`, `stack` and `body` — which is the point of the change.
+ * ordinary words: `pass` eats `passed`, `text` eats `context`, `key` eats `alertKey`. The last
+ * five are `crypto.ts`'s envelope components. `reason` is deliberately absent from both lists:
+ * ~40 call sites pass it a static English sentence the author wrote. `keyVersion` is absent too:
+ * a KEK VERSION is an integer the health endpoint already publishes; it is simply not on {@link
+ * ALLOWED_FIELDS}, so it is dropped rather than redacted. Nothing here duplicates a fragment
+ * above — `secretEnc`, `stackTrace` and `bodyText` are covered by `secret`, `stack` and `body`.
  */
 export const SECRET_EXACT_NAMES: readonly string[] = [
   "pass", "key", "text", "auth", "sig", "signature", "iv", "tag", "wdek", "dtag", "div",
@@ -744,18 +482,14 @@ export const SUBSTRING_EXEMPT_FIELDS: readonly string[] = [
 ] as const;
 
 /**
- * Value shapes that are secrets whatever key they arrive under — the residual risk once the
- * key gate holds. Every one of these is SELF-LABELLING: it says what it is. That is the whole
- * selection rule, and the reason there is no entropy or length heuristic here.
- *
- * An entropy rule was considered and rejected on a concrete failure: `[A-Za-z0-9_-]{32,}`
- * matches a UUID, so it would redact every `accountId` and `mailboxId` on every line, which
- * breaks the one thing an operator needs at 3am and would take the end-to-end observability
- * test with it. A 43-character base64 KEK under an allowlisted key is therefore still emittable in
- * principle — and that is the stated residual: it takes a deliberate edit adding a
- * KEK-carrying value under a reviewed name, which is a diff, not an accident. The five
- * patterns below cover the accidents that have actually happened in this codebase (a driver
- * message with `host=…&user=…`, an `Authorization` header echoed into a failure line).
+ * Value shapes that are secrets whatever key they arrive under — the residual once the key gate
+ * holds. Every one is SELF-LABELLING, and that is the whole selection rule. An entropy rule was
+ * rejected on a concrete failure: `[A-Za-z0-9_-]{32,}` matches a UUID, so it would redact every
+ * `accountId` and `mailboxId` — breaking the one thing an operator needs at 3am. A base64 KEK
+ * under an allowlisted key is therefore still emittable in principle — the stated residual: it
+ * takes a deliberate edit under a reviewed name, a diff, not an accident. The patterns cover the
+ * accidents that have actually happened here (a driver message with `host=…&user=…`, an echoed
+ * `Authorization` header).
  */
 export const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   /-----BEGIN[ A-Z]*(?:PRIVATE KEY|CERTIFICATE|OPENSSH)/,        // a PEM block
@@ -775,15 +509,14 @@ const EXACT_SET = new Set(SECRET_EXACT_NAMES.map(normalizeKey));
 const EXEMPT_SET = new Set(SUBSTRING_EXEMPT_FIELDS.map(normalizeKey));
 
 /**
- * Collapse a key to its comparison form. Case, `-`, `_`, `.` and whitespace all disappear, so
+ * Collapse a key to its comparison form: case, `-`, `_`, `.` and whitespace all disappear, so
  * `body_text`, `bodyText`, `Body-Text` and `BODY TEXT` are one name — and `TF_KEK_V1` becomes
- * `tfkekv1`, which contains `kek`. camelCase needs no special handling: lowercasing collapses
- * it into the same string a SCREAMING_SNAKE spelling collapses into.
- *
- * The separator stripping earns its keep on the names a fragment does NOT already span:
- * `e.mail`, `to-ken` and `sub ject` contain no secret fragment as written and would merely be
- * DROPPED by the allowlist, which hides the value but tells the operator nothing about why.
- * Collapsed, they are `email`, `token` and `subject`, and the line says `[redacted]`.
+ * `tfkekv1`, which contains `kek`. camelCase needs no special handling: lowercasing collapses it
+ * into the same string a SCREAMING_SNAKE spelling collapses into. The separator stripping earns
+ * its keep on names a fragment does not already span: `e.mail`, `to-ken` and `sub ject` contain
+ * no secret fragment as written and would merely be DROPPED, which hides the value but tells the
+ * operator nothing; collapsed, they are `email`, `token` and `subject`, and the line says
+ * `[redacted]`.
  */
 function normalizeKey(key: string): string {
   return key.toLowerCase().replace(/[-_.\s]/g, "");
@@ -819,25 +552,13 @@ const MAX_DROPPED = 12;
 
 /**
  * Keys the logger itself authors. A payload may not supply them: `...payload` used to be spread
- * LAST, so a field named `event` or `service` silently replaced the value constructed above it.
- * They are now REMOVED from the payload before it is sanitised.
- *
- * The removal, not the spread order, is the control — and mutation testing is how that was
- * established rather than assumed. Reverting the spread to payload-last leaves every test of
- * this module green, because by then the payload no longer holds those keys; so does deleting
- * the removal, because none of these names is on {@link ALLOWED_FIELDS} and the allowlist drops
- * them anyway. Two redundant controls and no test can tell them apart. What keeps the
- * redundancy honest is the disjointness of these two lists, which a test asserts
- * directly: the day a reserved name is added to the census, the removal below stops being
- * belt-and-braces and starts being the only thing holding, and that guard says so.
- *
- * `errorClass`/`errorCode` are NOT here, and that is a deliberate departure from what was
- * recommended. Two call sites in the worker's mailbox-failure path pass `errorCode: code` (the
- * mailbox-failure taxonomy code) TOGETHER WITH `err`, and in one of them `err` is a plain string,
- * so making the logger's copy win would replace a real operator signal with `null`. They are
- * instead taken from the payload as first-class candidates and put through
- * {@link ERROR_CODE_RE}/{@link ERROR_CLASS_RE} — which closes the actual hole (an unvalidated
- * string channel) without deleting the field that hole was next to.
+ * LAST, so a field named `event` silently replaced the constructed value. They are now REMOVED
+ * before sanitising — and the removal, not the spread order, is the control, established by
+ * mutation testing: reverting the spread leaves every test green, and so does deleting the
+ * removal — two redundant controls no test can tell apart; what keeps that honest is the
+ * DISJOINTNESS of the two lists, asserted directly. `errorClass`/`errorCode` are NOT here: two
+ * worker sites pass `errorCode` with a string `err`, so the logger's copy winning would replace a
+ * real signal with `null` — they go through the grammars instead.
  */
 export const RESERVED_KEYS: readonly string[] = [
   "ts", "level", "service", "event", "eventLength", "droppedFields",
@@ -886,37 +607,26 @@ function scrubString(value: string): string {
 }
 
 /**
- * AN ADDRESS INSIDE A FREE-TEXT STRING, replaced by its shape.
- *
- * `SECRET_VALUE_PATTERNS` redacts a whole string that ANNOUNCES a secret; this is the other case,
- * where the sentence is the diagnosis and one token inside it is somebody's mailbox. Redacting
- * the whole line would throw the diagnosis away, and that is the failure this pair exists between:
- * a thrown string's text is its only evidence, and an address is not ours to write down.
- *
- * The domain must be dotted, so a `user:pass@host` inside a URL is left for the pattern above to
- * refuse whole rather than half-masked into something that pattern no longer matches — which is
- * why {@link redactThrownText} runs the patterns FIRST.
+ * An address inside a free-text string, replaced by its shape. `SECRET_VALUE_PATTERNS` redacts a
+ * whole string that ANNOUNCES a secret; this is the other case, where the sentence is the
+ * diagnosis and one token inside it is somebody's mailbox — redacting the whole line would throw
+ * the diagnosis away. The domain must be dotted, so a `user:pass@host` inside a URL is left for
+ * the pattern above to refuse whole rather than half-masked into something that pattern no longer
+ * matches — which is why {@link redactThrownText} runs the patterns FIRST.
  */
 const ADDRESS_IN_TEXT = /[^\s<>()[\]:;,"']+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+/g;
 /** What an address becomes. Not `[redacted]`: the reader is meant to see that one WAS there. */
 const ADDRESS_MASK = "[address]";
 
 /**
- * THE ONE CHANNEL THAT CARRIES A STRANGER'S PROSE, AND WHAT IT IS PUT THROUGH.
- *
- * `err` reduces to a class and a code precisely so no driver message reaches a log. A thrown
- * STRING is the exception: it has no `name` and no `code`, so reducing it discards the whole
- * diagnosis — a throw and a line that never ran look identical from such a record. So the text
- * is kept, and it is put through the same two readings an allowlisted string value gets:
- *
- *  1. the secret patterns, which refuse the WHOLE string — a driver message with `host=…&user=…`
- *     or a `scheme://user:pass@host` is not partially safe;
- *  2. the address mask, which keeps the sentence and takes the mailbox out of it;
- *
- * and only then the length bound, so a truncation cannot cut an address in half and leave the
- * half in. The stated residual is anything ELSE a stranger's message might carry — a subject, a
- * folder name — which is why this channel exists for a thrown string and never for an `Error`'s
- * `message`, where the class and the code are the diagnosis.
+ * The one channel that carries a stranger's prose. `err` reduces to class and code so no driver
+ * message reaches a log; a thrown STRING is the exception — no `name`, no `code`, so reducing it
+ * discards the whole diagnosis. The text is kept and put through two readings: the secret
+ * patterns, which refuse the WHOLE string (a `host=…&user=…` message is not partially safe); then
+ * the address mask, which keeps the sentence and takes the mailbox out — and only then the length
+ * bound, so a truncation cannot cut an address in half and leave the half in. The residual is
+ * anything ELSE a stranger's message might carry, which is why this exists for a thrown string
+ * and never for an `Error`'s `message`.
  */
 function redactThrownText(text: string): string {
   for (const pattern of SECRET_VALUE_PATTERNS) if (pattern.test(text)) return REDACTION;
@@ -973,15 +683,14 @@ function sanitize(value: unknown, scrub: Scrub, path = "", depth = 0): unknown {
 }
 
 /**
- * The safe shape of a thrown value: class name and `code`, both put through an identifier
- * grammar. Never the message, never the stack — see the file header.
- *
- * The grammar is the string-channel half. `name` and `code` are mutable and library-supplied; neither
- * is inherently an identifier just because it usually is one. A connection string fails
- * {@link ERROR_CODE_RE} on its `://`, which is precisely the string the api-vercel host lost
- * to a log drain. It is a grammar rather than an enumerated taxonomy on purpose: an enumerated
- * list in `core` would have to know every error class in sixteen packages, and the failure mode
- * of forgetting one is blanking a real class name at the moment it matters most.
+ * The safe shape of a thrown value: class name and `code`, both through an identifier grammar.
+ * Never the message, never the stack — see the file header. The grammar is the string-channel
+ * half: `name` and `code` are mutable and library-supplied, and neither is inherently an
+ * identifier just because it usually is one — a connection string fails {@link ERROR_CODE_RE} on
+ * its `://`, which is precisely the string the api-vercel host once lost to a log drain. A
+ * grammar rather than an enumerated taxonomy on purpose: a list in `core` would have to know
+ * every error class in sixteen packages, and forgetting one blanks a real class name at the
+ * moment it matters most.
  */
 export function describeError(err: unknown): { errorClass: string; errorCode: string | null } {
   const e = err as { name?: unknown; code?: unknown; constructor?: { name?: string } } | null;
@@ -1020,34 +729,14 @@ function describeThrownText(err: unknown): string | null {
 const MAX_CAUSE_DEPTH = 4;
 
 /**
- * The safe shape of a thrown value's CAUSE — the same two grammars, one layer in.
- *
- * ── WHY THE CAUSE IS WORTH ANY BYTES AT ALL ────────────────────────────────────────────────
- *
- * A wrapper class is often the least informative thing about a failure. `LeaseUnavailableError`
- * exists precisely so callers can exempt an infrastructure fault BY CLASS — which means every one
- * of them logs `errorClass: "LeaseUnavailableError"` and, before this function, nothing else. In
- * one incident that was the entire record of a mailbox that did not sync for half an hour: the class of
- * our own wrapper, and no trace of the imapflow error underneath it that said what the server
- * refused.
- *
- * ── AND WHY IT IS EXACTLY `name` + `code`, THROUGH THE SAME GRAMMARS ───────────────────────
- *
- * This is {@link describeError} applied one level in, deliberately reusing it rather than
- * paraphrasing it: `name` and `code` are mutable and library-supplied, a driver puts a connection
- * string wherever it likes, and the grammar is what catches that (`ERROR_CODE_RE` rejects a `://`).
- * Nothing else travels. In particular imapflow's `serverResponseCode` may NOT — it is built by
- * uppercasing the SERVER's own bracket atom, so `* NO [SECRETPASSWORD123]` is a server-chosen
- * string wearing an identifier's clothes and it passes any grammar you can write. Its only safe
- * destination is `mailboxes.error_detail`, where MEMBERSHIP of a closed set is tested; membership
- * cannot be forged, a grammar can. And `responseText` never: harmless on a FETCH, and on a LOGIN
- * refusal it echoes the login argument, which is the same string-channel leak exactly.
- *
- * ── THE WALK STOPS AT THE FIRST `code` ────────────────────────────────────────────────────
- *
- * A code is the operationally useful half, and it is the wrapper that lacks one — so the loop keeps
- * descending only while it has found no code, and reports the deepest layer it reached. That yields
- * `ETIMEOUT` from under a `LeaseUnavailableError`, rather than the shrug the immediate layer gives.
+ * The safe shape of a thrown value's CAUSE — the same two grammars, one layer in. A wrapper class
+ * is often the least informative thing about a failure: every caller logs `LeaseUnavailableError`
+ * and, before this, nothing else — once the entire record of a mailbox that did not sync for half
+ * an hour. Exactly `name` + `code` through {@link describeError}. imapflow's `serverResponseCode`
+ * may NOT travel: it uppercases the SERVER's own bracket atom — a server-chosen string wearing an
+ * identifier's clothes; its only safe destination is `mailboxes.error_detail`, where MEMBERSHIP
+ * of a closed set is tested. The walk stops at the first `code`, reporting the deepest layer
+ * reached — `ETIMEOUT` from under a wrapper.
  */
 function describeCause(err: unknown): { causeClass: string; causeCode: string | null } | null {
   let cur: unknown = (err as { cause?: unknown } | null)?.cause;

@@ -121,19 +121,13 @@ export interface MarkSeenBody {
 }
 
 /**
- * The batch cap, and why there is one at all.
- *
- * The route runs ONE transaction that allocates one `change_log` seq per message from a row
- * lock on `account_sync_state`, so the transaction's duration is the window during which
- * every other mutation on this account blocks. An uncapped "select all, mark read" on a
- * very large mailbox would hold that lock for tens of thousands of allocations and as many
- * updates, on a platform with a 60 s `maxDuration` — the request dies mid-flight and the client
- * retries the same impossible thing.
- *
- * 200 is the same number as `DEFAULT_SYNC_BATCH_MAX_MESSAGES`, deliberately: it is already the
- * batch size the system is tuned for end to end, and a second, different "how many is too many"
- * would be a number nobody could justify. A client with more than 200 sends more than one
- * request, which is also what makes progress visible.
+ * The batch cap, and why there is one. The route runs ONE transaction that allocates one
+ * `change_log` seq per message from a row lock on `account_sync_state`, so the transaction's
+ * duration is the window during which every other mutation on this account blocks. An uncapped
+ * "select all, mark read" would hold that lock for tens of thousands of allocations on a 60 s
+ * `maxDuration` platform — the request dies mid-flight and the client retries the same impossible
+ * thing. 200 is `DEFAULT_SYNC_BATCH_MAX_MESSAGES`, deliberately: already the batch size the
+ * system is tuned for. A client with more sends more requests, which also makes progress visible.
  */
 export const MARK_SEEN_MAX_IDS = 200;
 
@@ -163,20 +157,14 @@ export interface MoveResult {
 }
 
 /**
- * A move or delete that became a REQUEST — this install reads the mailbox, another one organizes
- * it, and the press is now waiting on that install (mail 0094).
- *
- * ── `dto` IS THE MESSAGE UNMOVED, AND THAT IS THE POINT ────────────────────────────────────
- *
- * Invariant #3 (organize-in-place): a request writes DESIRED state on the machine that holds the
- * mailbox, and NOTHING here. So the DTO this returns is the row exactly as it stood before the
- * press — same folder, same everything — and the client renders "waiting for <holder>" beside a
- * message that has not moved, rather than moving it optimistically and un-moving it when the
- * organizer refuses. A DTO showing the destination would be the false state ruling 6 exists to
- * end.
- *
- * There is no `seq`: nothing changed in this install's store, so there is no change to echo. A
- * `seq` here would advance every client's cursor past a change that does not exist.
+ * A move or delete that became a REQUEST — this install reads the mailbox, another organizes it,
+ * and the press is now waiting on that install (mail 0094). `dto` IS THE MESSAGE UNMOVED, and
+ * that is the point: a request writes DESIRED state on the machine that holds the mailbox, and
+ * NOTHING here — so the DTO is the row exactly as it stood before the press, and the client
+ * renders "waiting for <holder>" beside a message that has not moved, rather than moving it
+ * optimistically and un-moving it when the organizer refuses. There is no `seq`: nothing changed
+ * in this install's store, and a `seq` would advance every client's cursor past a change that
+ * does not exist.
  */
 export interface MoveRequestResult {
   pending: true;
@@ -206,30 +194,14 @@ export interface PatchResult {
 }
 
 /**
- * ── (date, id) KEYSET, AND THE THIRD POSITION THE TUPLE USED TO LOSE ──────────────────────────
- *
- * The list is ordered by `date desc NULLS LAST, id desc`; the cursor carries both components so
- * the next page resumes exactly after the last row under that composite order.
- *
- * **`messages.date` IS NULLABLE and the null is a POSITION, not a missing value.** It is the
- * sender's own `Date:` header — `mime.ts:503` writes `parsed.date ?? null`, so any stranger can
- * produce one by omitting the header — and this encoder used to write epoch `0` for it. Two
- * separate defects came out of that one substitution:
- *
- *  1. **The undated tail was unreachable.** `0` says "1970-01-01", so the next page asked for rows
- *     strictly older than that. Every remaining undated row was skipped and the list simply ended
- *     early, with no cursor and nothing said.
- *  2. **The ORDER BY and the predicate disagreed inside this one class.** Drizzle's `desc()` emits
- *     bare `ORDER BY … DESC`, which in PostgreSQL is `DESC NULLS FIRST` — so undated mail sorted
- *     at the TOP of every view — while the `before` branch's predicate below (copied from
- *     `sync-service.ts:807-811`) was written for NULLS LAST. Rows were selected under one order
- *     and sorted under another.
- *
- * `nulls last` is not a new opinion: the snapshot bootstrap (`sync-service.ts:848`) already orders
- * that way with an explicit-null cursor, the Screener collapses null to epoch 0 in its own sort key
- * (`screener-service.ts:1137`), and the client mirror sorts a missing date last
- * (`client-engine/src/engine.ts:1886`). Three of the four surfaces already treated undated mail as
- * oldest; this one was the odd one out, and only because nobody wrote a `nulls` clause.
+ * (date, id) keyset, and the third position the tuple used to lose. Ordered `date desc NULLS
+ * LAST, id desc`; the cursor carries both components. `messages.date` IS NULLABLE and the null is
+ * a POSITION: it is the sender's own `Date:` header, and this encoder used to write epoch `0` for
+ * it — two defects: the undated tail was UNREACHABLE (the next page asked for rows older than
+ * 1970, so the list ended early), and the ORDER BY and the predicate disagreed (drizzle's bare
+ * `DESC` is `NULLS FIRST` in PostgreSQL while the `before` predicate was written for NULLS LAST).
+ * `nulls last` is not a new opinion: the snapshot bootstrap, the Screener's sort key and the
+ * client mirror already treat undated mail as oldest; this surface was the odd one out.
  */
 function encodeMsgCursor(date: Date | null, id: string): string {
   return encodeNullableKeysetCursor(date === null ? null : date.getTime(), id);
@@ -272,73 +244,52 @@ export interface GetBodiesOptions {
   after?: string;
   limit?: number;
   /**
-   * THE OTHER MODE: name the messages instead of paging through them.
-   *
-   * Present ⇒ `after`/`limit` are ignored and exactly these ids are answered, capped at
-   * {@link BODIES_IDS_MAX}. It exists for the thread open — a conversation needs its siblings'
-   * bodies at once, and asking per message is N requests through the client's own concurrency
-   * limiter, so the tail of a thread does not begin loading until a whole round trip has finished.
-   *
-   * The two modes are the SAME ROUTE because they are the same read of the same rows under the
-   * same `cost: "read"` and the same ownership proof; only the row selection differs. A second
-   * route would have been a second place for the account scoping to be written.
+   * The other mode: name the messages instead of paging through them. Present means
+   * `after`/`limit` are ignored and exactly these ids are answered, capped at {@link
+   * BODIES_IDS_MAX}. It exists for the thread open — a conversation needs its siblings' bodies at
+   * once, and asking per message is N requests through the client's own concurrency limiter, so
+   * the tail of a thread does not begin loading until a whole round trip has finished. The two
+   * modes are the SAME ROUTE because they are the same read of the same rows under the same
+   * `cost: "read"` and ownership proof; only the row selection differs. A second route would be a
+   * second place for the account scoping to be written.
    */
   ids?: string[];
 }
 
 /**
- * The batch text pull bounds, and why each one exists on a `maxDuration = 60` lambda.
- *
- * `limit` defaults to 50 and is capped at 100: each row here is a whole stored body — the full
- * `text` and the sanitized `html` — not a compact DTO, so a page is far heavier than a list page
- * and 100 is the most rows one request may name.
- *
- * The BYTE BUDGET is the real fence, because the count cap alone is not one. A single page of
- * newsletter html can be hundreds of KiB, so 100 marketing bodies would push megabytes through
- * the lambda and past its time budget. Accumulated `text` + `html` is measured as the page is
- * assembled and the page stops early once it crosses ~4 MiB, returning a `nextCursor` so the
- * client resumes exactly after the last row it received. At least one row is always returned
- * even when it alone exceeds the budget — otherwise one oversized body would stall pagination
- * for ever.
+ * The batch text pull bounds, on a `maxDuration = 60` lambda. `limit` defaults to 50, capped at
+ * 100: each row is a whole stored body — the full `text` and sanitized `html` — so a page is far
+ * heavier than a list page. The BYTE BUDGET is the real fence: a single page of newsletter html
+ * can be hundreds of KiB, so 100 marketing bodies would push megabytes through the lambda.
+ * Accumulated `text` + `html` is measured as the page is assembled and the page stops early past
+ * ~4 MiB, returning a `nextCursor` so the client resumes exactly after the last row it received.
+ * At least one row is always returned even when it alone exceeds the budget — otherwise one
+ * oversized body would stall pagination for ever.
  */
 export const BODIES_DEFAULT_LIMIT = 50;
 export const BODIES_MAX_LIMIT = 100;
 
 /**
- * How many ids `?ids=` may name.
- *
- * Twenty rather than the keyset mode's hundred, because this mode is INTERACTIVE — a reader is
- * waiting for it with a thread half-drawn — and because the id list is a client-chosen set rather
- * than a page the server controls. It is well past any conversation a reader scrolls.
- *
- * OVER THE CAP IS A REFUSAL, NOT A TRUNCATION, and that asymmetry with `limit` (which clamps) is
- * deliberate: a clamped page is honest because it carries a cursor for the rest, while a truncated
- * id list is indistinguishable from "those messages have no body" and the caller cannot tell which
- * of the two it got. The client splits its own list — see `BODIES_IDS_MAX` in the engine — so this
- * is a contract guard rather than a state the product reaches.
+ * How many ids `?ids=` may name. Twenty rather than the keyset mode's hundred, because this mode
+ * is INTERACTIVE — a reader is waiting with a thread half-drawn — and the id list is a
+ * client-chosen set rather than a page the server controls; it is well past any conversation a
+ * reader scrolls. Over the cap is a REFUSAL, not a truncation, and the asymmetry with `limit`
+ * (which clamps) is deliberate: a clamped page is honest because it carries a cursor for the
+ * rest, while a truncated id list is indistinguishable from "those messages have no body". The
+ * client splits its own list, so this is a contract guard rather than a state the product
+ * reaches.
  */
 export const BODIES_IDS_MAX = 20;
 export const BODIES_BYTE_BUDGET = 4 * 1024 * 1024;
 
 /**
- * THE SIZE PROBE — how the byte budget bounds the TRANSFER and not merely the response.
- *
- * The budget used to be spent inside a loop over rows PostgreSQL had already sent and this process
- * had already materialized: the response was correctly bounded and the cost was not, which is the
- * definition of the class: a budget enforced after the read is not a budget. A sender chooses each body's size — the
- * IMAP raw-message ceiling admits roughly 32 MiB — so an authenticated `?limit=100` could pull
- * gigabytes over the wire and answer with a small page.
- *
- * `octet_length` is the reason a second query is cheaper than the first one was. For a `text`
- * column PostgreSQL answers it from the varlena header (`toast_raw_datum_size`) — the stored
- * length is read WITHOUT detoasting or transferring the value — so this projection costs a header
- * read per row and returns two integers. The prefix that fits the budget is then fetched for real.
- *
- * `octet_length` and NOT `length`: the budget is bytes and `length()` counts CHARACTERS, which for
- * any non-ASCII body (most mail) under-counts by up to a factor of four and would put the ceiling
- * back above the transfer it exists to bound. It is the same UTF-8 byte count
- * `Buffer.byteLength(x, "utf8")` produced when the accounting was done in JS, so the number the
- * budget compares against has not changed — only when it is known.
+ * The size probe — how the byte budget bounds the TRANSFER, not merely the response. The budget
+ * used to be spent inside a loop over rows PostgreSQL had already sent: the response was bounded
+ * and the cost was not — a budget enforced after the read is not a budget, and a sender chooses
+ * each body's size. `octet_length` is why a second query is cheaper than the first was: for a
+ * `text` column PostgreSQL answers from the varlena header, WITHOUT detoasting or transferring
+ * the value; the fitting prefix is then fetched for real. `octet_length` and NOT `length`: the
+ * budget is bytes, and `length()` counts CHARACTERS — under-counting non-ASCII mail by up to 4x.
  */
 const BODY_BYTES = sql<number>`coalesce(octet_length(${messageBodies.text}), 0)
   + coalesce(octet_length(${messageBodies.html}), 0)`;
@@ -370,25 +321,14 @@ function prefixUnderBudget(sized: readonly { messageId: string; bytes: number | 
 interface SizedCandidate { messageId: string; bytes: number | string | null }
 
 /**
- * SIZE, THEN FETCH — the two passes, and the ONE SNAPSHOT that makes them mean something together.
- *
- * Both body modes have the same shape and the same hazard, so they share this rather than each
- * writing it: a byte budget spent on pass 1's answer bounds pass 2's transfer only if the two
- * passes see THE SAME ROWS. Under `READ COMMITTED` each statement takes its own snapshot, so a
- * body that was empty (or withheld, or not yet ingested) when it was sized could be filled in by
- * the worker between the statements — and pass 2 would then transfer a body the budget was never
- * asked about. A hundred of those is the unbounded read this whole change removes, restored by a
- * race. Found by review round 1 on the first version of this code, which ran the two passes as
- * bare statements.
- *
- * `repeatable read` + `read only` pins both to one snapshot, which is exactly what
- * `organizer-profile-store.ts#serializeOrganizerProfile` does for the same reason a few tables
- * over (a torn read across statements), and PGlite is real Postgres so the level holds on both
- * stores. `read only` says the intent out loud and lets the server refuse a write that appears
- * here later.
- *
- * The transaction is CHEAP and its span is two selects with no user work between them: the
- * candidate window costs two integers a row, and the fetch is already bounded to the budget.
+ * Size, then fetch — two passes, ONE SNAPSHOT. A byte budget spent on pass 1's answer bounds pass
+ * 2's transfer only if the two passes see THE SAME ROWS: under READ COMMITTED each statement
+ * takes its own snapshot, so a body empty when sized could be filled in by the worker between the
+ * statements — pass 2 then transfers a body the budget was never asked about; a hundred of those
+ * is the unbounded read, restored by a race. `repeatable read` + `read only` pins both to one
+ * snapshot — the same fix `serializeOrganizerProfile` uses — and PGlite is real Postgres, so the
+ * level holds on both stores. The transaction is cheap: two selects with no user work between
+ * them.
  */
 async function sizedThenFetch<R extends { messageId: string }>(
   ctx: ServiceContext,
@@ -467,45 +407,15 @@ export class MessageService {
         filters,
       });
     }
-    /* ── TRASH — MAIL THIS ACCOUNT DELETED IN OHMAIL (mail 0099) ────────────────────────────
-     *
-     * BEFORE `validView`, because Trash is not one of the seven views: it is not a
-     * `folder_state.desired_folder` this product organizes into, it is the PROVIDER's folder,
-     * and its rows are TOMBSTONED — every other read here excludes `deleted_at IS NOT NULL` by
-     * construction and this one must not.
-     *
-     * ── WHAT IS IN IT, AND WHAT IS DELIBERATELY NOT ─────────────────────────────────────────
-     *
-     * Rows whose desired folder IS this row's own mailbox's Trash path. The join to `mailboxes`
-     * is what makes that per-mailbox rather than per-account: two connected mailboxes can name
-     * their Trash differently ("Trash", "INBOX.Trash", "Deleted Messages"), and a single literal
-     * would show one mailbox's deletions and hide the other's.
-     *
-     * NOT in it, and neither is an accident:
-     *
-     *  · a message the expunge reaper tombstoned because it left every watched folder. It has
-     *    `deleted_at` and its desired folder is wherever it last was — never Trash — so the
-     *    predicate excludes it. That is right: nobody deleted it here, and this list's whole
-     *    claim is "mail you deleted in ohmail".
-     *  · mail trashed in ANOTHER client. The worker never reads the provider's Trash
-     *    (`passiveFolderExclusion` gives it no cursor), so the server does not know it is there.
-     *    The view's foot line says so rather than pretending otherwise.
-     *  · mail whose FOLDER was deleted. `tombstoneFolderMessages` stamps `deleted_at`, drops the
-     *    locator and DELETES the `folder_state` row — it never writes desired = trash — so those
-     *    rows are outside this predicate. Measured, not assumed; the scope sentence is written
-     *    for the message-delete verb alone.
-     *
-     * ── ORDERED BY DELETION, NOT BY DATE ────────────────────────────────────────────────────
-     *
-     * `folder_state.updated_at desc` — the instant the delete wrote the desired folder, which is
-     * the order a person looking for what they just deleted expects. Every other view orders by
-     * the message's own date; here that would bury a mail from last year that was deleted a
-     * second ago under everything deleted last month. The cursor is the same tuple, so the walk
-     * and the sort cannot disagree.
-     *
-     * NO `foldersEnabled` GATE. Trash is the provider's own system folder, present in every
-     * mailbox this product will connect to; the flag governs whether the account's OWN folders
-     * are a surface, which is a different question.
+    /**
+     * Trash — mail this account deleted in ohmail (mail 0099). BEFORE `validView`: Trash is not
+     * one of the seven views — it is the PROVIDER's folder, and its rows are TOMBSTONED, so this
+     * read must not exclude `deleted_at`. In it: rows whose desired folder IS this mailbox's own
+     * Trash path (the `mailboxes` join makes that per-mailbox). NOT in it: expunge-reaper
+     * tombstones, mail trashed in ANOTHER client (the worker never reads the provider's Trash),
+     * and mail whose FOLDER was deleted. Ordered by DELETION (`folder_state.updated_at desc`),
+     * not date — the order a person looking for what they just deleted expects. No
+     * `foldersEnabled` gate: Trash is the provider's own system folder.
      */
     if (opts.view === "trash") return this.listTrash(ctx, opts);
     const view = this.validView(opts.view);
@@ -537,15 +447,13 @@ export class MessageService {
 
     const pageRows = rows.slice(0, limit);
     /**
-     * ONE PAGE, ONE SET OF ROUND-TRIPS.
-     *
-     * This was `for (const r of pageRows) await materializeMessage(...)`, and the singular form
-     * is a one-element wrapper over the batch: a page cost six sequential queries PER ROW where
-     * the batch costs six for the page whatever its size — the shape `materializeMessages` was
-     * written to have ended, and which `SearchService` had already ended on its own page. On a
-     * store that serialises (PGlite is the desktop's) those round-trips are the read's whole
-     * latency, so every other request waits behind them. `deleted: "include"` keeps the
-     * singular's exact selection: only the round-trips change.
+     * One page, one set of round-trips. This was `for (const r of pageRows) await
+     * materializeMessage(...)`, and the singular form is a one-element wrapper over the batch: a
+     * page cost six sequential queries PER ROW where the batch costs six for the page whatever
+     * its size — the shape `materializeMessages` was written to end. On a store that serialises
+     * (PGlite is the desktop's) those round-trips are the read's whole latency, so every other
+     * request waits behind them. `deleted: "include"` keeps the singular's exact selection: only
+     * the round-trips change.
      */
     const items = await materializeMessagesInOrder(
       ctx.db, ctx.accountId, pageRows.map((r) => r.id), { deleted: "include" },
@@ -613,39 +521,14 @@ export class MessageService {
   }
 
   /**
-   * WHERE A RESTORE PUTS THIS MESSAGE — the stored origin, resolved, or INBOX.
-   *
-   * ── WHY THE STORED VALUE IS NEVER TRUSTED ──────────────────────────────────────────────────
-   *
-   * `trashed_from` is a folder PATH written at the delete. Between then and the restore the
-   * folder can be renamed away or deleted outright — mail sits in Trash precisely while somebody
-   * reorganises — and a desired folder naming a folder the server does not have is a move the
-   * reconciler will refuse for ever (`no_such_folder`), with the message stuck pending and the
-   * filing strip counting it. So the value is CHECKED, and the fallback is INBOX.
-   *
-   * INBOX and not a refusal: a person looking at a row in Trash pressed Restore, and answering
-   * "the folder that used to hold this is gone" with nothing is worse than putting the mail
-   * where mail arrives, from where they can file it anywhere in one press. Stated on the row
-   * itself — `restoreTo` travels with every item, so the destination is on screen before the
-   * press and the toast names it after.
-   *
-   * ── WHAT COUNTS AS A LIVE TARGET ───────────────────────────────────────────────────────────
-   *
-   *  · INBOX and the five `ohmail/*` folders — the product's own spine, present by construction
-   *    (`ensureFolders` creates them), so no inventory read is needed or wanted.
-   *  · a path `mailbox_folders` still carries for THIS mailbox. That table is the worker's cursor
-   *    list: a row exists because the sync actually reads that folder.
-   *
-   * The `mailbox_folders` read here deliberately does NOT apply the "Use folders" participation
-   * filter that `userFolderById` applies. That filter answers "is this folder a SURFACE in this
-   * account's interface"; this asks "does the mail server have this folder", which is a different
-   * question with a different consequence. A message deleted out of a user folder in a mailbox
-   * whose folders were later switched off still belongs back in that folder — the folder is
-   * still there, the mail was still in it — and restoring it to INBOX instead would move
-   * somebody's mail somewhere it had never been because of an interface toggle.
-   *
-   * Account-scoped through the `mailboxes` join, so a `trashed_from` value from another account's
-   * row could not resolve here even if one somehow reached this argument.
+   * Where a restore puts this message — the stored origin, resolved, or INBOX. The stored value
+   * is never trusted: `trashed_from` is a folder PATH written at the delete, and the folder can
+   * be renamed away while the mail sits in Trash — a desired folder the server does not have is a
+   * move the reconciler refuses for ever. So the value is CHECKED; the fallback is INBOX, not a
+   * refusal. `restoreTo` travels with every item. Live targets: INBOX and the five `ohmail/*`
+   * folders, plus a path `mailbox_folders` still carries for THIS mailbox — deliberately NOT the
+   * "Use folders" participation filter: that answers "is this folder a surface", this asks "does
+   * the server have it". Account-scoped through the `mailboxes` join.
    */
   private async resolveRestoreTarget(
     ctx: ServiceContext, mailboxId: string, trashedFrom: string | null,
@@ -732,15 +615,13 @@ export class MessageService {
   }
 
   /**
-   * The batch text pull — the foundation of the macOS Cloud-local text mirror.
-   *
-   * Keyset-paginates the account's message bodies by `messages.id` (ascending), returning the
-   * STORED ROW VERBATIM: `text` and `html` are the full original body written at ingest
-   * (`packages/core/src/pipeline.ts`), so this NEVER re-derives anything and NEVER rehydrates.
-   * Ownership is proven through `messages` — `message_bodies` has no
+   * The batch text pull — the foundation of the macOS Cloud-local text mirror. Keyset-paginates
+   * the account's message bodies by `messages.id` ascending, returning the STORED ROW VERBATIM:
+   * `text` and `html` are the full original body written at ingest, so this NEVER re-derives and
+   * NEVER rehydrates. Ownership is proven through `messages` — `message_bodies` has no
    * `account_id`, exactly as {@link getBody} handles it — and the query LEFT-JOINs
    * `message_bodies` and joins NOTHING ELSE: no headers, no attachment bytes, no other table.
-   * That absence IS the no-rehydrate guarantee, so there is deliberately no rehydrate path here.
+   * That absence IS the no-rehydrate guarantee.
    */
   async getBodies(ctx: ServiceContext, opts: GetBodiesOptions): Promise<Page<MessageBodyBatchItem>> {
     if (opts.ids !== undefined) return this.getBodiesByIds(ctx, opts.ids);
@@ -800,37 +681,14 @@ export class MessageService {
   }
 
   /**
-   * `GET /messages/bodies?ids=…` — the NAMED-IDS mode of the same route. The thread open.
-   *
-   * ── AN ID THIS ACCOUNT DOES NOT OWN IS SIMPLY ABSENT ──────────────────────────────────────
-   *
-   * Ownership is proven the same way {@link getBody} and the keyset mode prove it —
-   * `message_bodies` has no `account_id`, so the join through `messages` with
-   * `eq(messages.accountId, …)` IS the authorization — but the RESPONSE to a foreign id differs
-   * from the batch read-state route's, and the difference is deliberate on both sides.
-   * `PATCH /messages` REJECTS the whole request on a foreign id because it is a write and a
-   * partial batch would be unrepresentable. This is a read, and a read that answered 404 for
-   * "you do not own this" would be an existence oracle: a probe could walk ids and learn which
-   * exist in someone else's account from the status code. Absent is the only answer that
-   * distinguishes nothing — an unknown id, another account's id and a deleted id are one outcome.
-   *
-   * The caller therefore matches rows by `messageId` and must treat a short answer as normal.
-   *
-   * ── AND THIS MODE JOINS THE HEADERS, WHICH THE KEYSET MODE MUST NOT ───────────────────────
-   *
-   * The keyset mode feeds the macOS local text mirror and joins NOTHING but the body row: that
-   * absence IS its no-rehydrate guarantee, and it is asserted structurally (the wire item's key
-   * set is pinned). This mode feeds a READER — the same surface `getBody` feeds — so it owes the
-   * same unsubscribe posture, or a thread's siblings would silently lose a control the message
-   * above them has. The raw headers still never cross the wire: what leaves is the derived enum
-   * plus, for `not_one_click` only, the sender's own https page, exactly as `getBody` does it.
-   * Deriving it here rather than re-deriving it in the client keeps one implementation of the
-   * rule.
-   *
-   * NO BYTE BUDGET SHORTCUT AND NO CURSOR. The budget still applies — a thread of twenty
-   * newsletters is real — but there is no cursor to resume from, so a truncated answer is simply
-   * a short one and the client asks for what is missing per message. `nextCursor` is `null`
-   * always: this mode does not page.
+   * `GET /messages/bodies?ids=…` — the named-ids mode, the thread open. A foreign id is simply
+   * ABSENT: `PATCH /messages` rejects the whole request on one (a partial batch write is
+   * unrepresentable), but this is a READ, and a 404 for "you do not own this" would be an
+   * existence oracle — absent distinguishes nothing: unknown, foreign and deleted are one
+   * outcome. This mode joins the HEADERS, which the keyset mode must not: that mode's
+   * join-nothing absence IS its no-rehydrate guarantee; this feeds a READER and owes the
+   * unsubscribe posture `getBody` derives — raw headers never cross the wire. No cursor: a
+   * truncated answer is simply a short one; `nextCursor` is `null` always.
    */
   private async getBodiesByIds(
     ctx: ServiceContext,
@@ -940,27 +798,15 @@ export class MessageService {
       }
 
       if (folder !== undefined) {
-        /* ── THIS IS THE MOVE DOOR UNDER ANOTHER NAME, AND IT WAS NOT GATED (mail 0094) ───────
-         *
-         * `move` and this branch write the SAME row the SAME way — `desired_folder` with
-         * `last_set_by: 'us'`, plus a `move` change — and the reconciler turns either into a
-         * physical IMAP move. Mail 0083 gated `move` and `delete` and missed this one, so a reader
-         * could re-file mail by spelling the request differently: the record was written, the DTO
-         * and the mirror both said the message had moved, and the mailbox knew nothing about it.
-         * Two harms, and the second is the one with teeth — a false state now, and a QUEUE of
-         * desired moves that fires the instant this install is ever promoted, moving mail on a
-         * decision taken when it had no right to take it. That second sentence is written out at
-         * `move`'s own branch as the reason the refusal belongs at the door; it was true here too.
-         *
-         * `organizer-role-census.test.ts` could not see it: that census asks whether a FILE calls
-         * the refusal, and this file does, twice, at the other two doors. It pins the number of
-         * call sites per file for that reason, which is what makes a fourth unguarded door red.
-         *
-         * The `unread` half above is deliberately NOT inside this branch. `\Seen` is the reader's
-         * one legitimate IMAP write — `reconcileFlags` runs on a reader cycle on purpose — so
-         * gating the whole door would take a reader's ability to mark its own mail read, with
-         * every refusal test still green. The two halves are permitted separately and decided
-         * separately.
+        /**
+         * This is the move door under another name, and it was not gated (mail 0094). `move` and
+         * this branch write the SAME row the SAME way, and the reconciler turns either into a
+         * physical IMAP move — mail 0083 gated `move` and `delete` and missed this one, so a
+         * reader could re-file mail by spelling the request differently: a false state now, and a
+         * QUEUE of moves that fires on promotion. The census could not see it (it asks whether a
+         * FILE calls the refusal, and this file does at the other doors); it now pins call sites
+         * per file. The `unread` half is NOT inside this branch: `\Seen` is the reader's one
+         * legitimate IMAP write.
          */
         const route = await routeMailboxWrite(
           tx as unknown as Tx, ctx.accountId, msg.mailboxId, "message.move",
@@ -990,17 +836,15 @@ export class MessageService {
         }
       }
 
-      // A DELIBERATE read — or a re-file — spends the resurface. The batch route (`markSeen`)
-      // has always cleared it; this route marking the same message read through a different verb
-      // must not leave the pin standing, or which client a user reads in decides whether their
-      // Ohbox stays pinned. A GLANCE (`via: "glance"` — the stream sweep's per-id PATCH) marks
-      // read WITHOUT spending: the read sticks (owner ruling 2026-08-26), the pin is answered
-      // by dealing with the row. Re-filing is dealing with it, so `folder` spends regardless.
-      // …and `folder` spends only when it actually re-filed. A QUEUED re-file has moved nothing
-      // here (a request writes desired state on the machine that holds the
-      // mailbox, and nothing on this one), so spending the pin would be a local write about a
-      // move that has not happened, and would leave the row unpinned if the organizer refuses it.
-      // `move`'s request path spends nothing for the same reason.
+      // A DELIBERATE read — or a re-file — spends the resurface. The batch route has always
+      // cleared it; this route marking the same message read through a different verb must not
+      // leave the pin standing, or which client a user reads in decides whether their Ohbox stays
+      // pinned. A GLANCE (`via: "glance"`) marks read WITHOUT spending: the read sticks, and the
+      // pin is answered by dealing with the row. Re-filing is dealing with it, so `folder` spends
+      // regardless — and only when it actually re-filed: a QUEUED re-file has moved nothing here,
+      // so spending the pin would be a local write about a move that has not happened, leaving
+      // the row unpinned if the organizer refuses. `move`'s request path spends nothing for the
+      // same reason.
       if ((body.unread === false && !glance) || (folder !== undefined && pending === undefined)) {
         const spent = await this.spendResurface(tx, ctx, [id]);
         if (spent !== null) last = spent;
@@ -1022,30 +866,14 @@ export class MessageService {
   }
 
   /**
-   * `PATCH /messages { ids, unread }` — ONE read-state decision over up to
-   * {@link MARK_SEEN_MAX_IDS} messages.
-   *
-   * It exists because the single-message PATCH could not express what the UI does. Marking a
-   * selection read was N requests, N transactions and N seqs, so a client that lost the network
-   * halfway left half a selection flipped and no way to tell which half; and the engine's
-   * optimistic overlay had to guess an ordering the server never promised.
-   *
-   * FOUR properties, each one load-bearing:
-   *
-   *  · **ONE transaction.** All N updates, all N `change_log` rows and all N `flag_state`
-   *    upserts commit together or not at all. A partial batch is unrepresentable, which is what
-   *    lets the client apply its optimistic overlay to the whole selection.
-   *  · **Account scoping is a REJECTION, not a filter.** One id belonging to another account fails
-   *    the whole request with 404 and rolls back every other message in it. Silently skipping
-   *    foreign ids would answer 200 to a probe and let it learn, from the response length,
-   *    which ids exist in someone else's account — no cross-account disclosure is absolute and it
-   *    binds here. Unknown and cross-account are the same 404, indistinguishable, for the same reason.
-   *  · **One `recordChange` PER MESSAGE.** The delta feed is per-entity; a single change for a
-   *    batch would be an entity id the client cannot resolve. The per-account seq stays gap-free
-   *    because `allocateSeq` holds the counter row's lock for the whole transaction.
-   *  · **`flag_state` desired-state only. NO IMAP.** The API never opens a connection
-   *    to apply organization. This writes what the user wants; `reconcileFlags` in the worker
-   *    puts `\Seen` on the real server on its next cycle.
+   * `PATCH /messages { ids, unread }` — ONE read-state decision over up to {@link
+   * MARK_SEEN_MAX_IDS} messages; the single PATCH could not express a selection, so a lost
+   * network left half of one flipped. Four load-bearing properties: ONE transaction (a partial
+   * batch is unrepresentable); account scoping is a REJECTION — one foreign id fails the whole
+   * request with 404, since skipping would let a probe learn from the response length which ids
+   * exist elsewhere; one `recordChange` PER MESSAGE (the delta feed is per-entity; `allocateSeq`
+   * holds the counter lock for the whole transaction); `flag_state` desired-state only, NO IMAP —
+   * `reconcileFlags` applies `\Seen` next cycle.
    */
   async markSeen(ctx: ServiceContext, body: MarkSeenBody): Promise<MarkSeenResult> {
     if (typeof body.unread !== "boolean") {
@@ -1140,22 +968,15 @@ export class MessageService {
       }).from(messages)
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
-      /* -- A READER MOVES NOTHING HERE — IT ASKS (mail 0083, then mail 0094) ----------------
-       *
-       * The most direct case of the whole rule: this door writes `folder_state.desired_folder`
-       * with `last_set_by='us'`, and the reconciler turns that into a physical IMAP move. On a
-       * mailbox another install organizes, that is two organizers moving one person's mail —
-       * exactly what the lease exists to prevent, reached through a button rather than through a
-       * sync loop.
-       *
-       * Mail 0083 refused that outright. Mail 0094 keeps the refusal of the LOCAL WRITE — nothing
-       * below this branch runs for a reader — and replaces the dead end with a request the holder
-       * applies. What has NOT changed is the thing the 0083 comment was protecting: no
-       * `folder_state` row is written here, so a later promotion inherits no queue of moves
-       * decided when this install had no right to decide them.
-       *
-       * The refusal that remains is still not only `reconcileFolders`' skip: the skip stops a
-       * reader EXECUTING an intent, this stops one being RECORDED.
+      /**
+       * A reader moves nothing here — it ASKS (mail 0083, then 0094). This door writes
+       * `desired_folder` with `last_set_by='us'`, and the reconciler turns that into a physical
+       * IMAP move — on a mailbox another install organizes, two organizers moving one person's
+       * mail, reached through a button. Mail 0083 refused outright; 0094 keeps the refusal of the
+       * LOCAL WRITE — nothing below this branch runs for a reader — and replaces the dead end
+       * with a request the holder applies. No `folder_state` row is written here, so a later
+       * promotion inherits no queue of moves. The skip stops a reader EXECUTING an intent; this
+       * stops one being RECORDED.
        */
       const route = await routeMailboxWrite(
         tx as unknown as Tx, ctx.accountId, msg.mailboxId, "message.move",
@@ -1224,30 +1045,14 @@ export class MessageService {
   }
 
   /**
-   * DELETE — the third user-commanded write of the 2026-08-22 amendment (imap-types.ts): the
-   * message rides to the provider's native `\Trash` and leaves the mirror's living views.
-   *
-   * ── NEVER AN EXPUNGE, AND REFUSED WHEN TRASH DOES NOT EXIST ────────────────────────────────
-   *
-   * The physical move is `folder_state.desired_folder = <the mailbox's trash path>` — the same
-   * desired-state seam every move rides, drained by the worker (the API never opens IMAP). The
-   * trash path comes from the connect-time discovery (`mailboxes.trash_folder`); a mailbox with
-   * NONE gets a 422 `no_trash_folder` UP FRONT and nothing is written, because the only other
-   * ways to "delete" — expunging, or hiding mail that stays in the Imbox on the server — are
-   * respectively the destructive write the product rule forbids and the mirror lying about the
-   * mailbox.
-   *
-   * ── THE MIRROR SIDE IS ONE `delete` CHANGE ────────────────────────────────────────────────
-   *
-   * `deleted_at` stamps the row (kept — it is the message's identity) and every living view
-   * excludes it; the `change_log` `delete` rides the same seam every client already applies, so
-   * web, desktop and mobile tombstone on their next drain with no new code. A restore performed
-   * in the user's own client re-appears through the adopt path, which clears the stamp and
-   * re-emits the entity — "a LATER create resurrects", end to end.
-   *
-   * A message with NO server copy (`native_locator` null — a fixture, a seeded row) is
-   * tombstoned without a folder_state write: there is nothing to move, and a pending move at a
-   * locator that never existed would hang the "Filing N messages…" count for ever.
+   * DELETE — the message rides to the provider's native `\Trash` and leaves the living views.
+   * NEVER an expunge, and refused when Trash does not exist: the physical move is desired state
+   * drained by the worker, and a mailbox with NO discovered trash path gets a 422
+   * `no_trash_folder` UP FRONT — the alternatives are the destructive write the product forbids,
+   * or the mirror lying. The mirror side is one `delete` change: `deleted_at` stamps the row
+   * (kept — it is the message's identity), and a restore in the user's own client re-appears
+   * through the adopt path. A message with NO server copy is tombstoned without a folder_state
+   * write: a pending move at a locator that never existed would hang the filing count for ever.
    */
   async delete(
     ctx: ServiceContext, id: string,
@@ -1265,26 +1070,15 @@ export class MessageService {
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
 
-      /* -- A READER DELETES NOTHING HERE — IT ASKS (mail 0083 v1, then mail 0094) -----------
-       *
-       * A delete is a move to Trash plus a tombstone, so the argument above applies unchanged: no
-       * local `folder_state` write, no tombstone, nothing for a later promotion to inherit. What
-       * mail 0094 adds is that the press now travels as a `message.move` whose destination is the
-       * WORD `trash`.
-       *
-       * ── AND THE TRASH LOOKUP BELOW IS DELIBERATELY NOT REACHED ON THIS PATH ──────────────
-       *
-       * `mailboxes.trash_folder` is discovered at connect by the install that is CONNECTED. A
-       * reader's copy of that column is its own guess about somebody else's server, and it is
-       * routinely NULL — so asking it here would refuse a perfectly deliverable request with
-       * `422 no_trash_folder`, a true-sounding sentence about the wrong machine. The word travels
-       * unresolved and `applyMessageMove` resolves it on the organizer, which is the only place
-       * the answer exists; if THAT mailbox has no Trash, the drain reports `no_trash_folder` back
-       * as a refusal a person is told about.
-       *
-       * Placed before the Trash lookup for the same reason mail 0083 placed the refusal there: a
-       * true sentence about the wrong thing is the failure mode the probe refusals were rewritten
-       * to end.
+      /**
+       * A reader deletes nothing here — it ASKS. A delete is a move to Trash plus a tombstone, so
+       * the argument above applies; what 0094 adds is that the press travels as a `message.move`
+       * whose destination is the WORD `trash`. The Trash lookup below is deliberately NOT reached
+       * on this path: `mailboxes.trash_folder` is discovered at connect by the install that is
+       * CONNECTED — a reader's copy is a guess about somebody else's server, routinely NULL — so
+       * asking it here would refuse a deliverable request with `422 no_trash_folder`, a
+       * true-sounding sentence about the wrong machine. The word travels unresolved and
+       * `applyMessageMove` resolves it on the organizer, the only place the answer exists.
        */
       const route = await routeMailboxWrite(
         tx as unknown as Tx, ctx.accountId, msg.mailboxId, "message.move",
@@ -1376,68 +1170,13 @@ export class MessageService {
   }
 
   /**
-   * RESTORE — PUT A DELETED MESSAGE BACK WHERE IT WAS (mail 0099).
-   *
-   * ══ IT DOES NOT UN-DELETE ANYTHING, AND THAT IS THE DESIGN ═════════════════════════════════
-   *
-   * This writes ONE thing: `folder_state.desired_folder = <the resolved origin>`, pending, `us`,
-   * with `trashed_from` cleared. It does NOT clear `messages.deleted_at` and it emits NO change
-   * that resurrects the row in any client's mirror.
-   *
-   * That is not an omission — it is the mailbox-is-the-master rule applied to the one verb where
-   * the temptation to break it is strongest. The message is IN the provider's Trash. Clearing the
-   * tombstone here would put the row back in somebody's Ohbox while the mail server still has it
-   * in Trash, and if the reconciler then refused the move (the folder went away, the server said
-   * read-only, the copy was purged) the mirror would show mail in a place it is not. A false
-   * state shown now is the failure this product's whole desired/observed split exists to prevent.
-   *
-   * So the sequence is the ordinary one, and every step of it already exists:
-   *
-   *   1. this write records the intent;
-   *   2. the organizer's `reconcileMailbox` performs the physical IMAP move on its next turn
-   *      (the doorbell below asks it to come sooner);
-   *   3. the passive read then OBSERVES the message in the target folder;
-   *   4. `clearDeletedOnAdopt` (the pipeline's own "a re-appearance un-deletes") clears
-   *      `deleted_at` and the arrival emits a change carrying the live entity, which the client
-   *      apply contract upserts — the row is back in its pile because the SERVER has it back.
-   *
-   * Between (1) and (4) the row is a pending `folder_state` row like any other filing, so the
-   * filing strip's existing sentence is what the person sees. It has left this list already
-   * (its desired folder is no longer Trash), which is the honest render: the decision is taken,
-   * the mail server has not caught up.
-   *
-   * ── WHAT IT REFUSES, AND WHY EACH REFUSAL IS HERE ──────────────────────────────────────────
-   *
-   *  · A READER restores nothing. Identical to the argument at `move` and `delete`: this writes
-   *    a desired folder with `last_set_by='us'` and the reconciler turns it into a real IMAP
-   *    move, so on a mailbox another install organizes it is two organizers moving one person's
-   *    mail. Asked FIRST, before the state check, so a reader is refused for the reason that is
-   *    true rather than for the row not being in Trash.
-   *  · 409 `not_in_trash` for a message whose desired folder is not this mailbox's Trash path.
-   *    Every shape reaches it: a message that was never deleted, one already restored (so the
-   *    verb is IDEMPOTENT in the way that matters — pressing twice cannot move mail a second
-   *    time), and one filed elsewhere by another client in the meantime. 409 rather than 404,
-   *    because the message exists and the caller may read it; what is wrong is its state.
-   *
-   *    A REPLAY IS NOT A SECOND PRESS, and reading them as one was a defect: a client whose
-   *    first response was lost after the commit replays its durable intent, the message is no
-   *    longer in Trash — the write landed — and the answer was that 409, which the surface says
-   *    as "Couldn't restore" about a restore already committed to. The route is now
-   *    `idempotent`-marked and this claims the key inside the mutation transaction, so the
-   *    replay of one intent is answered with the first response and a genuinely NEW press (a new
-   *    key) still meets the state check above.
-   *  · 404 for a message this account does not own, exactly as every other door here.
-   *  · 422 `no_trash_folder` is unreachable and deliberately not written: a row can only be in a
-   *    mailbox's Trash path if that path exists.
-   *
-   * ── THE CHANGE ROW IS HISTORY AND NOTHING READS IT ─────────────────────────────────────────
-   *
-   * `op: "move"` with `{from: trash, to: target}`. It is recorded so the audit trail of the
-   * message reads truthfully — this account moved it out of Trash at this instant — and NOT to
-   * drive any client: the projection would re-materialize the row, find it still tombstoned, and
-   * emit a `delete` tombstone (`sync-service.ts` turns a null entity into one whatever the
-   * original op was), which is precisely the correct answer while the server still has the
-   * message in Trash. The client learns about the restore at step (4).
+   * RESTORE — put a deleted message back where it was (mail 0099). It does NOT un-delete: it
+   * writes the desired folder, pending, `us` — never `messages.deleted_at`. The message is IN the
+   * provider's Trash; clearing the tombstone here would show mail in a pile while the server
+   * still has it in Trash. Sequence: intent → the organizer's move → the passive read observes →
+   * `clearDeletedOnAdopt` un-deletes and re-emits the entity. Refusals: a READER restores nothing
+   * (asked FIRST); 409 `not_in_trash` for a row not in this mailbox's Trash path; a REPLAY is
+   * answered from the idempotency key.
    */
   async restore(
     ctx: ServiceContext, id: string,
@@ -1509,28 +1248,14 @@ export class MessageService {
   // ── helpers ──
 
   /**
-   * READING — OR RE-FILING — A RESURFACED ROW SPENDS THE RESURFACE.
-   *
-   * The worker flips a due `bubbled_up` state to `resurfaced` (see `bubbleUpPass`), which pins
-   * the row at the top of the Ohbox. The pin is answered by the user DEALING with the row, and
-   * exactly two verbs are dealing with it: DELIBERATELY marking it read (a settled reply marks
-   * the parent read through the same route, so it counts too) and filing it somewhere. Both
-   * clear the state back to `none` IN THE CALLER'S TRANSACTION, so "Resurfaced" never outlives
-   * the act that answered it — and never survives into the materialized DTO the same transaction
-   * returns. Merely OPENING the row is deliberately neither: a glance does not spend the
-   * resurface. Since the 2026-08-26 ruling the glance's READ still lands (`via: "glance"` on
-   * `markSeen`/`patch` marks read and skips this) — what a glance cannot do is take the pin down.
-   *
-   * One implementation for every route that can perform those verbs — the batch `markSeen`, the
-   * single-message `patch` (both arms) and `move` — because the first defect here was exactly a
-   * route gap: only the batch route cleared, so which client a user read in decided whether
-   * their pin came down.
-   *
-   * Scoped to `state = 'resurfaced'` alone: a `bubbled_up` row keeps its schedule (filing a
-   * snoozed message elsewhere does not cancel the return the user asked for), and the bottom
-   * piles are cleared by their own explicit transitions. Emitted as `message_state` updates so
-   * every client drops the pin on the next `/sync`; the caller has already emitted the paired
-   * `message` change its DTO projection rides on.
+   * Reading — or re-filing — a resurfaced row SPENDS the resurface. The worker flips a due
+   * `bubbled_up` to `resurfaced`, pinning the row at the top of the Ohbox; exactly two verbs deal
+   * with it: deliberately marking it read (a settled reply counts) and filing it. Both clear the
+   * state to `none` IN THE CALLER'S TRANSACTION, so "Resurfaced" never outlives the act that
+   * answered it. A GLANCE is neither: the read lands, the pin stays. One implementation for every
+   * route — the first defect was a route gap: only the batch route cleared, so which client a
+   * user read in decided whether their pin came down. Scoped to `state = 'resurfaced'` alone.
+   * Emitted as `message_state` updates so every client drops the pin on the next `/sync`.
    */
   // `LedgerTx`, not `Tx`: this writes the change log, and only a real transaction may.
   private async spendResurface(tx: LedgerTx, ctx: ServiceContext, ids: string[]): Promise<bigint | null> {
@@ -1601,39 +1326,14 @@ export class MessageService {
   }
 
   /**
-   * ═══ ASK THE ORGANIZER TO COME SOONER — AFTER THE COMMIT, NEVER INSIDE IT ═══════════════════
-   *
-   * A filing decision writes `folder_state` and returns; the organizer performs the IMAP move on
-   * its next turn. What decides how long that takes is the ROTATION — a tick queues one serialized
-   * pass and each mailbox gets one bounded turn in it — so one pending move waited the rest of the
-   * running pass plus its own turn, which is minutes. Folder operations ring this doorbell, a send
-   * rings it, the pull verb rings it, the Not-junk rescue rings it; the move door, the most common
-   * write in the product, did not.
-   *
-   * ── IT WAS INSIDE THE TRANSACTION AND THAT DEADLOCKED. MEASURED, NOT ARGUED ────────────────
-   *
-   * The first version stamped the column inside the deciding transaction, on the ground that a
-   * doorbell for a decision that rolled back is a lie. That reasoning is sound and the cost is
-   * higher: the transaction already holds row locks on `messages` and `folder_state` — and, on the
-   * Screener's verdict, on `rules` and the account's settings — so adding a `mailboxes` row lock at
-   * the end of that chain closed a cycle against the other writers of that row.
-   *
-   * Real Postgres answered `40P01 deadlock detected`, "while updating tuple in relation
-   * `mailboxes`", for two concurrent decisions over ONE mailbox — and one of the two reached its
-   * caller as a 500. Three pg suites caught it; PGlite saw none of it, which is the whole reason
-   * those twins exist.
-   *
-   * ── POST-COMMIT AND BEST-EFFORT, WHICH IS THIS COLUMN'S OWN PRECEDENT ─────────────────────
-   *
-   * `junk-window.ts` already rings the same column this way after the Not-junk rescue, in its own
-   * words: "Best-effort — the poll is the floor beneath it either way." That is exactly the trade.
-   * A single-statement transaction of its own cannot deadlock with anything; a crash between the
-   * commit and the ring costs ONE ROTATION, which is the behaviour that shipped before this
-   * existed; and a throw is swallowed, because a decision that has already committed must not be
-   * reported as failed by the thing that was only trying to make it faster.
-   *
-   * The stamp was never "proof the decision committed" and nothing reads it that way. It says COME
-   * SOONER, and the reconcile pass reads the pending rows itself.
+   * Ask the organizer to come sooner — AFTER the commit, never inside it. The ROTATION decides
+   * the wait, so one pending move waited minutes; every other filing verb rings this doorbell and
+   * the move door did not. Inside the transaction it DEADLOCKED, measured: the transaction
+   * already holds row locks on `messages` and `folder_state`, so adding a `mailboxes` lock closed
+   * a cycle — real Postgres answered `40P01` for two concurrent decisions over ONE mailbox; three
+   * pg suites caught it, PGlite saw none. Post-commit and best-effort: a crash between commit and
+   * ring costs ONE ROTATION, and a throw is swallowed — a committed decision must not be reported
+   * as failed by the thing that was only trying to make it faster.
    */
   private async ringFiledMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
     try {
@@ -1672,15 +1372,13 @@ export class MessageService {
 
 
   /**
-   * WRITE THE MOVE REQUEST AND ANSWER `pending`. No local write of any kind happens here.
-   *
-   * Shared by `move` and `delete` because the two differ only in which word they name, and two
-   * copies of "compose the payload, claim the idempotency key, materialize the unmoved row" is how
-   * one of them ends up claiming the key with the wrong status.
-   *
-   * The idempotency claim stores `202` — the status the live call returns — so a replay answers
-   * what the first press answered. `seq: null` because nothing changed in this store; a seq here
-   * would advance every client's cursor past a change that does not exist.
+   * Write the move request and answer `pending`. No local write of any kind happens here. Shared
+   * by `move` and `delete` because the two differ only in which word they name, and two copies of
+   * "compose the payload, claim the idempotency key, materialize the unmoved row" is how one of
+   * them ends up claiming the key with the wrong status. The idempotency claim stores `202` — the
+   * status the live call returns — so a replay answers what the first press answered. `seq: null`
+   * because nothing changed in this store; a seq here would advance every client's cursor past a
+   * change that does not exist.
    */
   private async requestMove(
     tx: Tx, ctx: ServiceContext,

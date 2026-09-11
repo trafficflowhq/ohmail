@@ -10,44 +10,16 @@ import { SENT_SHAPED_CANONICAL } from "@trafficflow/core/adapters/imap-types";
 import { accountSettings, folderOps, mailboxFolders, mailboxes } from "@trafficflow/db";
 import type { Db } from "./context.js";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE USER'S OWN FOLDERS, AS THE SERVER KNOWS THEM — the folders foundation's inventory read
-   (FOLDERS-SPEC.md §2/§4).
-
-   `mailbox_folders` is the worker's cursor table: one row per folder the sync actually reads —
-   the organized six, the mailbox's resolved Sent folder, and every passive folder that survived
-   `passiveFolderExclusion` (packages/core/src/adapters/imap-types.ts). So the rows are ALREADY
-   post-exclusion for everything the discovery could see: the provider's Junk/Trash/Drafts,
-   Gmail's virtual folders and the `ohmail` namespace never got a cursor in the first place.
-
-   What is left to exclude HERE, reading only what the database holds:
-
-     · the organized six (`DESTINATIONS`) — they are the product's spine, never "a folder";
-     · the `ohmail` namespace, belt-and-braces (discovery already refuses it, including the
-       namespace-prefixed forms);
-     · THE SENT FOLDER — one of two genuinely open edges (the other is staleness, below). The worker resolves it at connect
-       (SPECIAL-USE, then imap.ts's `SENT_BY_NAME`) and does NOT persist the answer, so this
-       module cannot ask "which row is Sent" — it can only recognise Sent-shaped paths. The
-       belt below covers every form the resolver itself can produce for the English names plus
-       the localized German family, which covers both production mailboxes (measured 2026-08-23:
-       `INBOX/Sent` and `INBOX/Sent Messages`). The residual — a Sent folder advertising
-       SPECIAL-USE under a name neither belt knows — would appear as a user folder until the
-       proper fix lands: persist the resolved Sent path beside `mailboxes.junk_folder` /
-       `trash_folder` (mail 0065's discovery already stands at the right seam). That column is
-       the sync lane's to grow; this comment is the hand-off.
-
-   STALENESS — the second open edge, and the second half of the same hand-off. `mailbox_folders`
-   rows are never deleted: a folder renamed or removed in another IMAP client stops appearing in
-   the worker's cursor writes but keeps its row, so this read emits it as a PHANTOM (a rename
-   emits old and new both) until the worker's discovery learns to prune disappeared rows and
-   emit the matching `folder` delete tombstones. That prune belongs beside the discovery that
-   writes the rows (`apps/worker/src/sync.ts`, the sync lane's hot path — not this module's),
-   and until it lands the phantom is bounded and honest in one direction: a phantom folder
-   renders EMPTY (its messages moved with the rename, the passive read adopts them under the
-   new path), never with another folder's mail, and a re-toggle or re-bootstrap after the prune
-   lands clears it. The IMAP-master rule is unbroken — nothing here writes to the mailbox —
-   but the inventory's answer can lag the mailbox by exactly this class of row.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * The user's own folders, as the server knows them (FOLDERS-SPEC.md §2/§4). `mailbox_folders` is
+ * the worker's cursor table, already post-exclusion. Left to exclude HERE: the organized six, the
+ * `ohmail` namespace, and THE SENT FOLDER — an open edge: the worker resolves Sent at connect and
+ * does not persist the answer, so this module can only recognise Sent-SHAPED paths; the residual
+ * appears as a user folder until the resolved path is persisted beside `mailboxes.junk_folder`.
+ * STALENESS is the second edge: rows are never deleted, so a folder renamed elsewhere reads as a
+ * PHANTOM until discovery learns to prune — bounded and honest: a phantom renders EMPTY, never
+ * with another folder's mail. Nothing here writes to the mailbox.
+ */
 
 /**
  * Sent-shaped canonical paths, at top level or under the INBOX prefix — `SENT_BY_NAME`
@@ -123,15 +95,12 @@ function opOf(r: OpColumns): UserFolderOp | null {
 
 /**
  * Every user folder of the account, post-exclusion — the rows `/sync` materializes as `folder`
- * entities and `setFoldersEnabled` writes change rows for. One query, account-scoped through
- * the mailbox join; deterministic order (by path) so two reads of the same state emit the same
- * sequence.
- *
- * PER-MAILBOX PARTICIPATION (mail 0073, FOLDERS-SPEC.md §17): a mailbox whose
- * `folders_disabled_at` is set contributes NOTHING here — not to the snapshot, not to the
- * master toggle's transition rows, not to the rail. NULL means participate, which is the
- * ruling's default. The filter lives on THIS read (and its two per-row
- * siblings below) rather than at each call site, so no emitter can forget it.
+ * entities and `setFoldersEnabled` writes change rows for. One query, account-scoped through the
+ * mailbox join; deterministic order (by path) so two reads of one state emit the same sequence.
+ * Per-mailbox participation (mail 0073, spec §17): a mailbox whose `folders_disabled_at` is set
+ * contributes NOTHING here — not to the snapshot, not to the master toggle's transition rows, not
+ * to the rail. NULL means participate, the default. The filter lives on THIS read (and its two
+ * per-row siblings) rather than at each call site, so no emitter can forget it.
  */
 export async function listUserFolders(db: Db, accountId: string): Promise<UserFolderRow[]> {
   const rows = await db
@@ -251,17 +220,13 @@ export async function userFolderById(
 }
 
 /**
- * MANY user-folder rows by entity id in ONE query — the delta page's read, and the reason it
- * exists is a production measurement, not taste: `GET /sync` used to call {@link userFolderById}
- * (plus a fresh {@link foldersEnabled}) PER ROW, two sequential round trips each, so the page a
- * "Use folders" enable writes — one create per folder, 527 on the first mailbox this shipped
- * to — cost ~1 000 serial round trips and 30+ seconds of a 60-second function budget. The rail
- * sat empty while the account watched, which read as "the switch does nothing" and produced
- * the off/on/off toggling that doubled the log. Same joins, same account scope, same
- * participation filter, same post-exclusion as the per-row read — batched, so a page costs the
- * same two queries whatever it carries. An id that is gone, excluded, or another account's is
- * simply absent from the map, and the caller drains it as the delete tombstone the per-row
- * null meant.
+ * MANY user-folder rows by entity id in ONE query — the delta page's read, born of a production
+ * measurement: `GET /sync` used to call {@link userFolderById} PER ROW, so the page a "Use
+ * folders" enable writes (527 creates on the first mailbox this shipped to) cost ~1 000 serial
+ * round trips and 30+ seconds of a 60-second budget — the rail sat empty, which read as "the
+ * switch does nothing". Same joins, scope, participation filter as the per-row read — batched. An
+ * id that is gone, excluded, or another account's is absent from the map, drained as the delete
+ * tombstone the per-row null meant.
  */
 export async function userFoldersByIds(
   db: Db, accountId: string, ids: readonly string[],

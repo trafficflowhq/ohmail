@@ -1,32 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE SSRF GATE — ONE implementation, and this is why it lives HERE and not in `services`
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * This file was `packages/services/src/ssrf-guard.ts` and moved here VERBATIM except for the
- * refusal type. It moved because a SECOND host now needs it and cannot reach the old home:
- * `apps/worker` POSTs a wake to a UnifiedPush endpoint a user registered
- * (`apps/worker/src/push-wake.ts`), so the worker must resolve-and-clear a caller-supplied URL
- * before opening the socket — and the worker's dependency test forbids
- * `@trafficflow/services` in worker `src/` for a MEASURED reason: the services barrel puts an
- * HTML sanitiser in the worker's boot graph, which on Node 23 is a hard `ERR_REQUIRE_CYCLE_MODULE`
- * at import time. The worker may import `@trafficflow/core` and `@trafficflow/db` and nothing else.
- *
- * The alternative was a second copy of the parsers and the refusal sets in the worker, and that
- * is the one thing this file must never become. Two hand-kept SSRF gates agree until one of them
- * is edited, and the edit that matters is the one that ADDS a range — a range added here and not
- * there is a bypass that no test in either package can see. So: one implementation, two thin
- * adapters (`packages/services/src/ssrf-guard.ts` keeps the `ServiceError` contract every existing
- * caller depends on; the worker catches {@link SsrfRefusal} directly).
- *
- * ── WHY THE REFUSAL IS A LOCAL ERROR CLASS AND NOT `ServiceError` ──────────────────────────
- *
- * `ServiceError` lives in `packages/services` and carries an HTTP status. `packages/core` sits
- * BELOW services in the dependency order and has no business knowing about HTTP at all — the
- * worker, which has no request to answer, would be catching a 400 to decide whether to open a
- * socket. So the gate throws {@link SsrfRefusal} carrying the `why` string and nothing else, and
- * the services adapter re-wraps it into the exact `ServiceError` message it always produced. The
- * wire contract is unchanged: `validation_failed` / 400 / `u is not a permitted url: <why>`.
+ * The SSRF gate — one implementation, here and not in `services`: the worker POSTs a wake to a
+ * user-registered UnifiedPush endpoint and must resolve-and-clear the URL first, and the worker's
+ * dependency test forbids `@trafficflow/services` (its barrel puts an HTML sanitiser in the boot
+ * graph — a hard `ERR_REQUIRE_CYCLE_MODULE` on Node 23). The alternative was a second copy of the
+ * parsers and refusal sets — two hand-kept gates agree until one is edited, and a range added on
+ * one side is a bypass no test can see. One implementation, two thin adapters. The refusal is
+ * {@link SsrfRefusal}, not `ServiceError`: core has no business knowing HTTP statuses; the
+ * services adapter re-wraps.
  */
 
 /**
@@ -48,20 +28,14 @@ export class SsrfRefusal extends Error {
 }
 
 /**
- * The INJECTED DNS port. Its whole reason to exist is that a URL guard which
- * checks only the *submitted* string is not a guard: `https://images.acme.com/`
- * is a perfectly ordinary hostname right up until it resolves to
- * `169.254.169.254`. The name has to be turned into addresses before anything
- * decides, and that turn is I/O, so it is a dependency.
- *
- * **REQUIRED at every construction site — deliberately no default.** A default
- * that fell back to `node:dns` would be worse than no guard: the test sandbox
- * blocks DNS, so every test would take the refuse branch, the permit branch
- * would ship having never executed, and production would run whatever the
- * default happened to do. The same trap applies to any DNS-dependent check —
- * `verifyAlignedDkim(raw, { resolveTxt })` is the other one in this codebase — so
- * the rule is the same, and it is why {@link nodeHostResolver} is a separate
- * named export wired at the composition root rather than a parameter default.
+ * The injected DNS port. A URL guard that checks only the submitted string is not a guard:
+ * `https://images.acme.com/` is ordinary right up until it resolves to `169.254.169.254` — the
+ * name must become addresses before anything decides, and that turn is I/O, so it is a
+ * dependency. REQUIRED at every construction site, deliberately no default: a fallback to
+ * `node:dns` would be worse than no guard — the test sandbox blocks DNS, so every test would take
+ * the refuse branch and the permit branch would ship never executed. The same trap applies to any
+ * DNS-dependent check (`verifyAlignedDkim` is the other), which is why {@link nodeHostResolver}
+ * is a separate named export wired at the composition root.
  */
 export interface HostResolver {
   /**
@@ -214,72 +188,37 @@ const refuse = (why: string): never => {
  */
 export interface PublicUrlOptions {
   /**
-   * Permit an explicit non-default port (`https://push.example.com:8443/…`).
-   *
-   * OFF by default, because for the two original callers — the unsubscribe fetch and the privacy
-   * proxy — a port is a strong signal that the URL is aimed at something other than a web server,
-   * and refusing it costs nothing real.
-   *
-   * ON for the UnifiedPush wake sender, and that is not a weakening of the address rules: a
-   * self-hosted distributor (an `ntfy` behind a reverse proxy on 8443, a NextPush on a Nextcloud
-   * that is not on 443) legitimately publishes an endpoint with a port, and the endpoint is a URL
-   * the DEVICE chose rather than one a request body invented. The address checks below are
-   * unchanged by this flag — a port on a private address is still refused.
+   * Permit an explicit non-default port (`https://push.example.com:8443/…`). OFF by default: for
+   * the two original callers — the unsubscribe fetch and the privacy proxy — a port is a strong
+   * signal the URL is aimed at something other than a web server, and refusing it costs nothing
+   * real. ON for the UnifiedPush wake sender, and that is not a weakening of the address rules: a
+   * self-hosted distributor behind a reverse proxy on 8443 legitimately publishes an endpoint
+   * with a port, and the endpoint is a URL the DEVICE chose. A port on a private address is still
+   * refused.
    */
   allowExplicitPort?: boolean;
   /**
-   * Refuse `http:`, permitting `https:` only.
-   *
-   * ── THE FLAG IS PHRASED THIS WAY ROUND BECAUSE THE OTHER WAY ROUND WAS A LIVE REGRESSION ──
-   *
-   * It was first written as `allowHttp`, defaulting to `false`. That reads like the safe choice and
-   * it was a behaviour change to every existing caller: this gate has always accepted both schemes,
-   * and `privacy-service`'s image proxy passes no options, so plain-`http:` images in real mail
-   * stopped loading — silently, because a refusal there is indistinguishable from an image that
-   * would not load anyway. It is the exact failure the docblock on this
-   * interface warns about, committed in the other direction: an added option must not change what
-   * an existing call site does, and TIGHTENING one is as much a change as loosening it.
-   *
-   * So the default is the historical behaviour — both schemes — and the caller that wants
-   * https-only says so. The UnifiedPush wake sender's strict arm does: a wake to a plaintext
-   * endpoint tells anyone on the path that this account just received mail, which is exactly the
-   * metadata the content-free payload exists to withhold. Its relaxed arm (an operator's own LAN)
-   * leaves this off.
+   * Refuse `http:`, permitting `https:` only. Phrased this way round because the other way was a
+   * live regression: `allowHttp` defaulting to `false` reads like the safe choice and changed
+   * every existing caller — the image proxy passes no options, so plain-`http:` images in real
+   * mail stopped loading, silently, a refusal indistinguishable from an image that would not load
+   * anyway. An added option must not change what an existing call site does, and TIGHTENING is as
+   * much a change as loosening. The default is the historical behaviour; the UnifiedPush strict
+   * arm opts in — a plaintext wake tells anyone on the path that this account just received mail,
+   * exactly the metadata the content-free payload withholds.
    */
   httpsOnly?: boolean;
 }
 
 /**
- * The SSRF gate for every caller-supplied URL this service is willing to fetch.
- * Refuses, in order and before any socket is opened:
- *
- *  · a non-`http(s)` scheme, userinfo (`https://u:p@internal/`, whose host half
- *    a careless reader — and some parsers — get wrong), a non-default port, an
- *    absent host, and the `.onion`/`.local`/`.internal` name spaces;
- *  · an IP LITERAL in a refused range, checked directly with no DNS at all;
- *  · a NAME, resolved through the injected {@link HostResolver}, refused when
- *    ANY returned address is in a refused range — any, not the first, because
- *    a multi-record answer only needs one internal address to be useful.
- *
- * ── THE RETURN VALUE IS LOAD-BEARING: IT IS THE PIN ──────────────────────────
- *
- * This used to return `void`, and returning `void` is what made it a HALF of the
- * SSRF defence rather than the whole of it. The caller then handed the same
- * *hostname* to a bare `fetch`, which resolves the name a SECOND time — so a
- * DNS-rebinding server could answer this gate with a public address and answer
- * `fetch`'s independent lookup with `169.254.169.254`. Validate-then-re-resolve
- * is a time-of-check/time-of-use hole the size of the whole guard.
- *
- * So it returns the VALIDATED addresses. The fetch port must connect ONLY to one
- * of these (see {@link pinnedLookup} / `pinned-fetch.ts`), never re-resolving the
- * name — the socket goes to an address this function has already cleared, while
- * the TLS SNI and the `Host` header still carry the original hostname. For an IP
- * literal the pin is the literal itself; for a name it is every A/AAAA record,
- * all of which were just proven public.
- *
- * `redirect: "manual"` at the fetch port is the other half and is not optional:
- * this function can only ever speak about the URL it was given, and a 302 is a
- * second URL nobody validated.
+ * The SSRF gate for every caller-supplied URL this service is willing to fetch. Refuses, before
+ * any socket: a non-`http(s)` scheme, userinfo, a non-default port, an absent host, the
+ * `.onion`/`.local`/`.internal` name spaces; an IP literal in a refused range, with no DNS; a
+ * name whose resolution returns ANY refused address — any, not the first. The return value is
+ * load-bearing: IT IS THE PIN. Returning `void` made this half a defence — the caller handed the
+ * hostname to a bare `fetch`, which resolves a second time: the rebinding hole. The fetch port
+ * connects only to a returned address ({@link pinnedLookup}), and `redirect: "manual"` is the
+ * other half: a 302 is a second URL nobody validated.
  */
 export async function assertPublicHttpUrl(
   raw: string, resolver: HostResolver, opts: PublicUrlOptions = {},
@@ -346,19 +285,13 @@ export async function assertPublicHost(hostname: string, resolver: HostResolver)
 }
 
 /**
- * The RESOLVE-ONLY variant, for a caller that is willing to dial an address the strict gate
- * refuses and still wants the PIN.
- *
- * It exists for exactly one deployment shape and it is named rather than obtained by omission: a
- * self-host operator whose UnifiedPush distributor is on their own LAN
- * (`TF_PUSH_ALLOW_PRIVATE=1`). The address rules are skipped; everything ELSE the gate does is
- * not — the URL must still parse, still be http(s), still carry no userinfo, and the name must
- * still resolve to at least one address, because the pin is what stops the socket re-resolving
- * later. So even the relaxed arm is not "hand the hostname to fetch".
- *
- * A LITERAL address returns itself. A name that does not resolve is still a refusal: there is
- * nothing to pin to, and dialling by name would reintroduce the rebinding window on the one arm
- * that was supposed to be the operator's own network.
+ * The resolve-only variant, for a caller willing to dial an address the strict gate refuses and
+ * still wanting the PIN. It exists for one deployment shape, named rather than obtained by
+ * omission: a self-host operator whose UnifiedPush distributor is on their own LAN
+ * (`TF_PUSH_ALLOW_PRIVATE=1`). The address rules are skipped; everything else is not — the URL
+ * must still parse, be http(s), carry no userinfo, and the name must still resolve, because the
+ * pin is what stops the socket re-resolving later. A literal returns itself; a name that does not
+ * resolve is a refusal: there is nothing to pin to.
  */
 export async function resolvePinUnchecked(raw: string, resolver: HostResolver): Promise<string[]> {
   let u: URL;

@@ -36,13 +36,29 @@
  *    The app is authored in the same style as the packages it consumes, so it
  *    gets the same hint. Caught by the pre-tag Hermes export, which exists for
  *    exactly this; nothing shipped broken.
+ *
+ * 3. **The app carries its own mail engine, or it does not build.** The fourth door — organizing a
+ *    mailbox on the phone itself — runs a pre-bundled engine that `scripts/bundle-engine.mjs`
+ *    writes to the ignored `generated/`, and `src/engine/engine-bundle-native.ts` requires by path.
+ *    The chooser offers that door exactly where the artifact registered itself, so a build without
+ *    the artifact would be a build showing three doors. The assertion below makes that state
+ *    unbuildable and says so in a sentence naming the generator; the `require` would fail anyway,
+ *    with a message about a path instead of a command.
  */
 const { getDefaultConfig } = require("expo/metro-config");
 const path = require("node:path");
 const fs = require("node:fs");
+/* The `.js` is REQUIRED, and not by node: the publish gate that proves every module a
+   published file imports is itself published resolves a specifier by trying `.ts`, `.tsx`,
+   `/index.ts` and `/index.tsx` — never `.js` — so the extensionless form resolved to nothing
+   and refused a target that is published. Measured at the 0.18 batch I landing. */
+const { assertPhoneEngineArtifact } = require("./src/engine/artifact-present.js");
 
 const projectRoot = __dirname;
 const workspaceRoot = path.resolve(projectRoot, "../..");
+
+/* Before the bundler is configured, let alone run: every phone build reads this file first. */
+assertPhoneEngineArtifact(projectRoot);
 
 const config = getDefaultConfig(projectRoot);
 

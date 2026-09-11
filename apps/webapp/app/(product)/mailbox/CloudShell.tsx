@@ -27,85 +27,46 @@ import { beginOAuthReturn } from "./oauth-return";
 import { useCloudFirstRun } from "./useCloudFirstRun";
 
 /**
- * THE MICROSOFT CONSENT RETURN, AT MODULE SCOPE — before the router, before the first render.
- *
- * Not an effect, and not inside a component: the ceremony has to be finished on any page load that
- * carries its parameters, including the ones where the shell routes somewhere else entirely. That is
- * not hypothetical — it is the production failure `oauth-return.ts` documents, where a dropped URL
- * fragment put the browser on the Ohbox and the `POST …/complete` that lived in the Mailboxes pane's
- * mount effect was therefore never called at all.
- *
- * This is the earliest client code on this route. It is idempotent, it is a no-op on every page load
- * that is not a consent return, and it is guarded for the server render inside.
+ * The Microsoft consent return, at module scope — before the router, before
+ * the first render. Not an effect: the ceremony must be finished on any
+ * page load that carries its parameters, including ones the shell routes
+ * somewhere else entirely — the production failure `oauth-return.ts`
+ * documents, where a dropped URL fragment put the browser on the Ohbox and
+ * the `POST …/complete` in a pane's mount effect was never called. This is
+ * the earliest client code on this route: idempotent, a no-op on every
+ * non-return load, guarded for the server render inside.
  */
 /*
- * ── THE BOUNDARY CLOSES BEFORE THE CEREMONY COMPLETES, NOT AFTER ─────────────────────────────
- *
- * `beginOAuthReturn()` runs at MODULE SCOPE — the moment this file is imported, which is before
- * any render and therefore before the render-time `pendApiOwner` below. It sends the consent
- * completion, and it sent it while the client was still `public`.
- *
- * The sequence: a consent return for A loads while the shared jar has become B. The completion
- * goes out under B's session; the server consumes A's single-use ceremony and only then rejects
- * the account mismatch. No mailbox is attached to anybody — and A's ceremony is destroyed, so the
- * person has to start the consent flow over with nothing on screen explaining why.
- *
- * So the pend happens first, on the same synchronous line. `readOwner()` is a cookie read with no
- * side effects and no imports of its own, which is what makes it safe at module scope.
+ * The boundary closes before the ceremony completes, not after. `beginOAuthReturn()` runs at module
+ * scope — before any render, so before the render-time `pendApiOwner` — and it used to send the
+ * completion while the client was still `public`: a consent return for A loading while the jar had
+ * become B sent the completion under B's session; the server consumed A's single-use ceremony and
+ * only then rejected the mismatch — no mailbox attached, A's ceremony destroyed, nothing on screen
+ * saying why. So the pend happens first, on the same synchronous line: `readOwner()` is a cookie
+ * read with no side effects, safe at module scope.
  */
 pendApiOwner(readOwner());
 beginOAuthReturn();
 
 /**
- * THE CLOUD CLIENT'S SEAM.
- *
- * `AppShell` is shared with `apps/desktop`, a standalone AGPL-3.0-only program whose build
- * deliberately does NOT bundle this app's session client
- * (`apps/desktop/vite.config.ts` aliases the `/sync` adapter to a stub that throws). So the
- * shell cannot import "ask the API who is signed in" — it takes it as a function, and this
- * file is where the Cloud client supplies one.
- *
- * ── WHY THE SHELL NEEDS AN ACCOUNT ID AT ALL ────────────────────────────────────────────
- *
- * Because the mail mirror persists. `packages/client-engine/src/idb.ts` used to default to
- * ONE IndexedDB database name for every account that ever signed in on a browser, so the
- * second person to use a shared machine inherited the first one's cursor and their
- * persisted records — `/sync` is account-filtered but it only merges pages, so nothing
- * removed the first account's mail and it rendered. The database is now named for the
- * account and stamped with it, and the id has to be a SERVER-verified one: `middleware.ts`
- * proved a session exists but says nothing about whose, and a client-side guess is exactly
- * the guess that produced the bug.
- *
- * `GET /auth/session` answers `{ user: SessionUser, scope }`. Only `scope === "full"`
- * counts — an enrollment-scoped session (the password factor alone) is not allowed
- * to open a mailbox, here for the same reason it is not allowed to at the gate.
- *
- * ── AND A FAILURE TO ASK IS NOT AN ANSWER, WHICH THIS PARAGRAPH USED TO DENY ──────────────
- *
- * It read: "Every other outcome, including a network failure, is `null`, and `EngineProvider`
- * renders an explanation instead of a shell." True of the code and false about the world —
- * the "explanation" was "You are signed out.", and a network failure is not evidence for it.
- * `session-outcome.ts` now classifies into three, `EngineProvider` retries the middle one on
- * a bounded schedule, and only an ANSWERED refusal reaches that screen. The production
- * request that forced the change is in `AUTH-FLICKER-DIAGNOSIS.md`.
+ * The Cloud client's seam. `AppShell` is shared with `apps/desktop`, whose build does not bundle this
+ * app's session client, so the shell takes "ask the API who is signed in" as a function and this file
+ * supplies it. The shell needs an account id because the mirror persists: one shared database once let
+ * the second person on a machine inherit the first's cursor and mail — the database is now named for the
+ * account, and the id must be SERVER-verified (`middleware.ts` proves a session exists, not whose). Only
+ * `scope === "full"` counts: an enrollment-scoped session may not open a mailbox. A failure to ask is not
+ * an answer: `session-outcome.ts` classifies into three, `EngineProvider` retries the middle one, and
+ * only an ANSWERED refusal reaches the signed-out screen (`AUTH-FLICKER-DIAGNOSIS.md`).
  */
 export function CloudShell({ demo }: { demo: boolean }) {
   /**
-   * IS THIS TAB STILL THE APP THIS ORIGIN SERVES? A browser client is downloaded once and then
-   * left running, and nothing about a deployment tells the tabs already open that they are
-   * looking at an older program. The watch asks `/version` occasionally and, when the answer is
-   * a build this document is not, raises the shell's quiet strip — at most once a day per build.
-   *
-   * ARMED HERE rather than in `AppShell`, and that is the same boundary every prop below draws:
-   * the shared shell is also the desktop app's window, which reaches no network at all and
-   * updates from a signed release feed instead. A build watch there would be a request that
-   * cannot be made about a build that does not update that way.
-   *
-   * NOT ON THE DEMO. The landing page's mailbox is a fixtures world with nothing to reload into,
-   * and a bar about a newer ohmail over invented mail is a sentence about the wrong thing.
-   *
-   * The token is computed from the constants `next.config.mjs` inlined into THIS bundle, so it
-   * names the build the reader is running by construction rather than by configuration.
+   * Is this tab still the app this origin serves? A browser client is downloaded once and left
+   * running, and nothing tells open tabs about a deployment. The watch asks `/version` occasionally
+   * and raises the quiet strip — at most once a day per build. Armed here, not in `AppShell`: the
+   * shared shell is also the desktop window, which reaches no network and updates from a signed
+   * release feed. Not on the demo: a bar about a newer ohmail over invented mail is a sentence
+   * about the wrong thing. The token is computed from constants `next.config.mjs` inlined into THIS
+   * bundle, so it names the running build by construction.
    */
   useEffect(() => {
     if (demo) return;
@@ -121,15 +82,14 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * on managed the Settings nav structurally cannot grow an Invites entry.
    */
   /**
-   * HAS THE SERVICE REFUSED THIS ACCOUNT? Subscribed once, for the whole client.
-   *
-   * Any door may answer `402 subscription_required`, so the client raises it here rather than at
-   * two hundred call sites — and the whole surface swaps for the lock screen, because mail beside
-   * a refusal is the state this exists to prevent. It never UNSETS itself: a refusal is a fact
-   * about the account, and a later request that happens to succeed (a cached read, an open door)
-   * is not evidence that it was lifted. Signing in again after paying is what clears it.
-   *
-   * NOT ON THE DEMO: the landing page's mailbox reaches no server and has no account to refuse.
+   * Has the service refused this account? Subscribed once, for the whole
+   * client: any door may answer `402 subscription_required`, so it is
+   * raised here rather than at two hundred call sites, and the whole
+   * surface swaps for the lock screen — mail beside a refusal is the state
+   * this prevents. It never unsets itself: a refusal is a fact about the
+   * account, and a later request that happens to succeed is not evidence it
+   * was lifted — signing in again after paying is what clears it. Not on
+   * the demo: no server, no account to refuse.
    */
   const [refused, setRefused] = useState<AccessRefusedFacts | null>(null);
   useEffect(() => {
@@ -160,89 +120,47 @@ export function CloudShell({ demo }: { demo: boolean }) {
   const devicePairing = useDevicePairing(demo);
 
   /**
-   * THE FIRST-RUN FLOW'S DOOR — the same seam as the panes below, one layer up.
-   *
-   * `AppShell` renders the setup stage and may not call `POST /mailboxes/probe`, `POST
-   * /mailboxes`, `POST /mailboxes/:id/organize` or `PATCH /consent/settings` itself, for the
-   * reason every prop on this component exists. `undefined` on the demo, which withholds the
-   * stage structurally rather than rendering one whose buttons refuse.
-   *
-   * The PAIRING panel rides along wherever this server pairs — the same `features.pairing` gate
-   * the Devices pane is built on, so the last step of setup exists exactly where the surface it
-   * links to does.
+   * The first-run flow's door — the same seam as the panes below, one layer up. `AppShell` renders
+   * the setup stage and may not call `POST /mailboxes/probe`, `POST /mailboxes`, `POST
+   * /mailboxes/:id/organize` or `PATCH /consent/settings` itself. `undefined` on the demo, which
+   * withholds the stage structurally rather than rendering one whose buttons refuse. The pairing
+   * panel rides along wherever this server pairs — the same `features.pairing` gate the Devices
+   * pane is built on, so setup's last step exists exactly where the surface it links to does.
    */
   const firstRun = useCloudFirstRun(demo, devicePairing ? <DevicesSection /> : undefined);
 
   /**
-   * The shell's confirm, which is now nothing but a pass-through to the shared classifier.
-   *
-   * It used to hold the predicate itself, and the predicate was one line long:
-   *
-   *     } catch { return null; }
-   *
-   * with a comment stating the conflation as the design — "ApiError (401/403/5xx) and a dead
-   * network are the same answer". They are not. `null` was also what an enrollment-scoped
-   * session returned, so a `503 db_busy` and a revoked family reached `EngineProvider` as the
-   * same value and got the same screen: "You are signed out.", over a cookie that answered
-   * `200 scope=full` a moment later. Measured in production 2.7 s before it was reported.
-   *
-   * `session-outcome.ts` is that predicate now, shared with `/login` so the two screens that
-   * ask this question cannot answer it differently — which they demonstrably did, inside the
-   * same ten seconds. Nothing is classified here any more; `EngineProvider` schedules the
-   * retries and decides what to render.
-   *
-   * Not wrapped in `useCallback`: it is already the same function object on every render, which
-   * is what `EngineProvider`'s confirm effect needs of its `resolveOwner` dependency. A
-   * `useCallback` around an imported function would add a hook to say what the import already
-   * guarantees.
+   * The shell's confirm — now nothing but a pass-through to the shared classifier. It used to hold
+   * the predicate itself: `} catch { return null; }`, with the conflation stated as design. `null`
+   * was also what an enrollment-scoped session returned, so a `503 db_busy` and a revoked family
+   * got the same "You are signed out." over a cookie that answered `200 scope=full` a moment later
+   * (measured in production). `session-outcome.ts` is the predicate now, shared with `/login` so
+   * the two screens cannot answer differently — which they demonstrably did. Not wrapped in
+   * `useCallback`: an imported function already has a stable identity, which is all
+   * `EngineProvider`'s effect needs.
    */
   const resolveOwner = resolveOwnerOutcome;
 
   /**
-   * ═══ A NAMED SHELL IS NEVER A PUBLIC SURFACE ══════════════════════════════════════════════
-   *
-   * The account boundary in `api-client.ts` had one nullable state meaning both "there is no
-   * account here" and "there is an account here and the server has not answered yet", and it let
-   * the second one through because the first one must go through. Review walked the consequence:
-   * a deep-linked settings pane over a warm mirror for A mounts, renders and issues requests
-   * while the confirmation is still in flight; another tab establishes B in that window; Security,
-   * Devices, Billing and Mailboxes all pass the boundary and read or change B. A freshly signed-in
-   * B is also exactly when a step-up window is open, which is what puts recovery-code generation
-   * and TOTP enrolment inside the window.
-   *
-   * So the moment a Cloud shell exists, the client stops being public. `readOwner()` is the same
-   * synchronous read the shell uses to choose which mirror to open, so where there is a warm
-   * mirror this names the account it is for and the boundary is as strict as it will be after the
-   * confirm; on a cold load it is `null`, which still fails closed on an absent or signed-out
-   * marker and merely cannot yet say WHICH account — one round trip later the confirm says.
-   *
-   * DURING RENDER, not in an effect, and that is the whole point: an effect runs after the commit
-   * that mounted the panes, and the panes issue their reads from their own effects. React orders
-   * a child's effect BEFORE its parent's, so a pane's first request would go out before an effect
-   * here could have closed the door. `pendApiOwner` never widens — a client already bound or
-   * blocked ignores it — so calling it on every render is idempotent and safe under StrictMode's
-   * double invocation.
+   * A named shell is never a public surface. The account boundary's one nullable state meant both "no
+   * account here" and "account here, server not answered yet", and let the second through: a deep-linked
+   * settings pane over a warm mirror for A issues requests while the confirm is in flight, another tab
+   * establishes B, and Security, Devices, Billing and Mailboxes read or change B — with a step-up window
+   * open. So the moment a Cloud shell exists the client stops being public: `readOwner()` is the same
+   * synchronous read that names the mirror; a cold load pends `null`, still failing closed. DURING
+   * RENDER, not an effect: React runs a child's effects before its parent's, so a pane's first request
+   * would beat an effect here. `pendApiOwner` never widens — idempotent under StrictMode.
    */
   pendApiOwner(readOwner());
 
   /**
-   * WHAT STATE ARE THIS ACCOUNT'S MAILBOXES IN? Same seam, same reason.
-   *
-   * `GET /mailboxes` is the only surface that knows whether a mailbox is connected, in error,
-   * or `connected` and nevertheless not being synced (`syncBlockedReason`, mail 0029) — and
-   * `app/shell/**` may not call it, because the shell ships inside the desktop program,
-   * whose build carries no session client.
-   *
-   * **It DELIBERATELY does not catch.** `resolveOwner` above maps every failure to `null`
-   * because "we cannot prove whose mailbox this is" has exactly one safe answer. Here the two
-   * outcomes are NOT interchangeable: an empty array means "this account has no mailboxes",
-   * and a 503 mapped to `[]` would put "No mailbox connected, so nothing can arrive" on the
-   * screen of somebody with five. So a failure propagates, and `MailStateProvider` keeps the
-   * last thing it actually knew.
-   *
-   * Narrowed to `MailboxFacts` here rather than passing the DTO: the ladder in
-   * `app/shell/mail-state.ts` may only consult the fields it names, and mapping at the seam is
-   * what makes that enforceable instead of aspirational.
+   * What state are this account's mailboxes in? Same seam, same reason: `GET /mailboxes` is the
+   * only surface that knows, and `app/shell/**` may not call it. It DELIBERATELY does not catch:
+   * `resolveOwner` maps every failure to `null` because that question has one safe answer; here the
+   * outcomes are not interchangeable — an empty array means "no mailboxes", and a 503 mapped to
+   * `[]` would put "No mailbox connected" on the screen of somebody with five. A failure propagates
+   * and `MailStateProvider` keeps the last thing it knew. Narrowed to `MailboxFacts` at the seam,
+   * so the ladder may only consult the fields it names — enforceable rather than aspirational.
    */
   const mailboxFacts = useCallback(async (): Promise<MailboxFacts[]> => {
     const { items } = await mailboxApi.list();
@@ -252,23 +170,16 @@ export function CloudShell({ demo }: { demo: boolean }) {
     return items.map(toMailboxFacts);
   }, []);
 
-  // Three injected panes, all for the same reason `resolveOwner` is a prop: `AppShell`,
-  // `SettingsView` and the (i) panel are shared with `apps/desktop`, which is standalone,
-  // has no account, and builds without `app/api-client`. `AppShell` withholds all three in demo mode.
-  //
-  //  · accountSection — the "Leave anytime" control.
-  //  · mailboxSection — connect a mailbox, and the REAL list. The shared pane renders the
-  //    mirror's `"mailbox"` entities, which only the FixturesAdapter ever emits, so for a
-  //    live account it was permanently empty; and `JoinScreen` was the only caller of
-  //    `POST /mailboxes` in the product, which left anyone whose step-up window expired
-  //    during onboarding with no way to connect a mailbox at all.
-  //  · aboutSection — the (i) body. Which mailbox, synced when, which build.
-  //
-  // `AccountLocale` is the same seam expressed as a CONTEXT instead of a node, and it has to be:
-  // the language row is the one control in Settings that a standalone install also has, so the ROW
-  // is shared and only the account write is injected. See its header.
-  // The lock replaces the shell entirely — after the hooks above, so the hook order is stable
-  // across the swap, and inside `AccountLocale` so the screen speaks the account's language.
+  // Three injected panes, for the reason `resolveOwner` is a prop: the
+  // shell is shared with the standalone desktop, which builds without
+  // `app/api-client`; `AppShell` withholds all three in demo mode.
+  // accountSection is the "Leave anytime" control; mailboxSection connects
+  // a mailbox and shows the REAL list (the shared pane renders fixture-only
+  // entities, so it was empty for live accounts); aboutSection is the (i)
+  // body. `AccountLocale` is the same seam as a CONTEXT: the language row
+  // is the one Settings control a standalone install also has, so the row
+  // is shared and only the account write is injected. The lock replaces the
+  // shell entirely — after the hooks, inside `AccountLocale`.
   if (refused) {
     return (
       <AccountLocale>
@@ -293,29 +204,16 @@ export function CloudShell({ demo }: { demo: boolean }) {
            `demo` keeps its own gate inside the shell — a fixture world has no row to stamp — so
            this is handed over unconditionally, exactly as `mailboxFacts` above is. */
         organizerNoticeTransport={(id) => mailboxApi.dismissOrganizerNotice(id)}
-        /* WHAT A SEND FROM THIS WINDOW RIDES — the staging bucket's per-object ceiling.
-
-           This used to declare nothing, which `composeAttachCap` resolves to the 3 MB constant,
-           and that was the truth while attachment bytes travelled base64 inside the send request:
-           the ~4.5 MB serverless body limit was a real ceiling between this form and the wire. It
-           is no longer between them. `createEngine` builds this window's adapter with
-           `stageAttachments: true`, so a send whose files do not fit that limit puts them straight
-           into storage and sends references — no request body carries them.
-
-           It then declared `null`, EXPLICITLY UNCAPPED, and that went one step too far. Removing
-           the request-body limit did not remove every limit: the staging bucket refuses an object
-           over its configured size, in the browser's own PUT, after the grant was minted and after
-           the person waited — and all the client can report is "try again", which is a retry that
-           can never succeed. So the surface is the bucket's per-object ceiling, which the mint
-           applies server-side as the same bound.
-
-           `composeAttachCap` still refuses to read a missing announcement as "unbounded": a
-           mailbox that has never announced a SIZE falls back to the constant, because an unknown
-           limit read as no limit costs the user a message they composed and waited for.
-
-           THE DESKTOP'S CLOUD DOOR KEEPS THE CONSTANT and must: it forwards this send verbatim to
-           the hosted API and does not stage, so its bytes really do ride a request body. That is
-           declared in `apps/desktop/src/DesktopGate.tsx` and guarded from source there. */
+        /* What a send from this window rides — the staging bucket's
+           per-object ceiling. Declaring nothing meant the 3 MB constant,
+           true while attachment bytes rode the send request base64;
+           `createEngine` now builds this adapter with
+           `stageAttachments: true`, so oversized files go to storage as
+           references. `null` (explicitly uncapped) went one step too far:
+           the bucket refuses an over-size object in the browser's own PUT,
+           with an unfixable "try again". So the surface is the bucket's
+           ceiling, applied server-side at the mint too. The desktop's cloud
+           door keeps the constant: it forwards verbatim (`DesktopGate.tsx`). */
         sendSurfaceMaxTotalBytes={COMPOSE_ATTACH_STAGED_SURFACE_BYTES}
         accountSection={<AccountSection />}
         securitySection={<SecuritySection />}

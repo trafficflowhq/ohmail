@@ -15,6 +15,12 @@
  * `src/theme/face.ts`, where the node suite can drive it — the provider only receives the
  * verdict. That is also why `Shell` sits INSIDE `WorldProvider`: the account half of the
  * appearance comes off the mirror's own consent read.
+ *
+ * THE PHONE'S ENGINE REGISTERS HERE, at module scope, above the router. `engine-artifact.ts` makes
+ * that a requirement rather than a preference: the chooser reads the registry at render time and
+ * holds no subscription, so an engine registered after the door list is drawn leaves a build that
+ * HAS an engine showing three doors until something else re-renders. Module scope is the only place
+ * that cannot be late.
  */
 import { useMemo } from "react";
 import { Stack } from "expo-router";
@@ -28,6 +34,12 @@ import { WakeProvider } from "../src/state/wake";
 import { Toast } from "../src/ui/chrome";
 import { LocaleProvider, useLocale } from "../src/i18n/LocaleProvider";
 import { secureKV } from "../src/state/servers-native";
+import { registerBundledPhoneEngine } from "../src/engine/engine-bundle-native";
+
+/* Before the first render, for the reason in the header. The answer is the registry's — `false`
+   would mean a second engine, which one artifact cannot produce — and it is read by nothing, so
+   the call stands alone rather than pretending to a decision. */
+registerBundledPhoneEngine();
 
 export default function RootLayout() {
   /* One keystore binding for the app's lifetime, like the profile store's. The provider holds it

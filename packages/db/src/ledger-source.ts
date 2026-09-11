@@ -1,43 +1,14 @@
 import { createHash } from "node:crypto";
 
 /**
- * THE LEDGER-SOURCE VOCABULARY — pure string construction, and nothing else.
- *
- * Every value here is a function of its arguments. There is no table, no transaction, no
- * connection, and no import beyond `node:crypto` — and that emptiness is the point rather than an
- * accident of how the file grew.
- *
- * ── WHY IT IS ITS OWN MODULE ──────────────────────────────────────────────────────────────
- *
- * These names belong to the hosted half conceptually: a ledger source is a credit-ledger concept.
- * But they are CALLED from the mail half — the ingest pipeline labels a classification, the
- * Screener labels a suggestion, the drafting path labels a draft, the HTTP edge brands a
- * client-supplied key — and every one of those modules also runs inside the desktop engine.
- *
- * While these strings lived in `credits.ts` and `ai-gate.ts`, naming one of them imported the
- * module that defined it, and those modules import `billing.js`, `admin-db.js` and the whole
- * Cloud schema. An ESM import edge is not free even when a single binding is used: absent a
- * `sideEffects` declaration a bundler must assume the named module has work to do at load, so it
- * keeps the bytes. That is how a `classify:` template string dragged Stripe, the staff directory
- * and its stored passwords into an artifact a stranger downloads.
- *
- * ── THE RULE THIS FILE EXISTS TO SATISFY ──────────────────────────────────────────────────
- *
- * A module reachable from the desktop engine's import closure may import from
- * `@trafficflow/db/mail` or from a leaf like this one, and from neither the root barrel's
- * connection half nor `@trafficflow/db/cloud`. Keep this file leaf-shaped: if it ever needs a
- * table, then the thing that needs the table belongs somewhere else.
- *
- * `credits.ts` and `ai-gate.ts` re-export every name below, so `@trafficflow/db/cloud` still
- * presents one surface to the code that reads and writes the ledger itself.
- *
- * ── AND IT STAYS ONE REGISTRY ─────────────────────────────────────────────────────────────
- *
- * `ledgerSources` is not split by caller, however tempting that looks from the import side. The
- * database pins each `reason` to its namespace with a CHECK constraint on the ledger's source
- * column, so the object below is the code-side half of that constraint. Two half-registries would let the
- * two drift, and the drift would surface as a constraint violation inside a caller's
- * transaction rather than as a mismatch anyone could read.
+ * The ledger-source vocabulary — pure string construction: no table, no transaction, no import
+ * beyond `node:crypto`, and that emptiness is the point. The names belong to the hosted half, but
+ * they are CALLED from the mail half — ingest, the Screener, drafting, the HTTP edge — and those
+ * modules also run inside the desktop engine. Naming one where they used to live imported the
+ * whole defining module (an ESM edge keeps the bytes absent `sideEffects`) — how a `classify:`
+ * template dragged the payment processor into an artifact a stranger downloads. Keep this file
+ * leaf-shaped. One registry, never split by caller: a CHECK pins each `reason` to its namespace,
+ * and two half-registries would drift into a constraint violation.
  */
 
 /**
@@ -65,27 +36,13 @@ export function clientIdempotencyKey(headerValue: string): IdempotencyKey {
 
 /**
  * The `source` NAMESPACE — the ledger's idempotency identity, in one place so its namespaces
- * cannot drift.
- *
- * `UNIQUE (account_id, source)` means "this economic event happened at most once for this
- * account". Each namespace is keyed so that the natural retry/replay unit of the PRODUCING
- * system maps to exactly ONE source value:
- *
- * | reason | source | why THIS identity |
- * |---|---|---|
- * | `invoice_grant` | `invoice:<stripe_invoice_id>` | Stripe retries webhooks and `stripe events resend` exists; the invoice id is the unit of "this money was received once". |
- * | `period_expiry` | `expiry:<prior_stripe_invoice_id>` | The expiry means "the credits bought by THAT invoice are over" — self-explanatory in the ledger, and replay-safe together with the composition contract. |
- * | `debit_classify` | `classify:<message_id>` | The worker reprocesses messages BY DESIGN (restart, `reconcileOnRestart`, re-sync). The message is the unit of "one AI classification of this mail". |
- * | `debit_draft` | `draft:<draft_id>:<hashed attempt key>` | A user may legitimately buy a SECOND AI draft of the same draft row, so the draft id alone is too coarse. See {@link ledgerSources.draft}. |
- * | `debit_propose` | `propose:<proposal_run_id>` | One proposer pass = one charge, however often its cron is re-entered. |
- * | `debit_workflow` | `workflow_run:<run_id>:<step_index>` | Mirrors the existing `workflow_dedup_key` crash-resume convention: a re-drained run re-executes steps idempotently, so the charge is per STEP, not per drain. |
- * | `refund` | `refund:<original_source>` | One refund per original charge, structurally — a crashed-and-retried refund path cannot refund twice because its own source collides. A refund-origin trigger additionally requires the original to be a real DEBIT on the same account, so a refund of nothing (and a refund of a refund) is refused by the database. |
- * | `adjustment_credit` / `adjustment_debit` | `admin:<uuid>` | Each staff adjustment is its own event (uuid minted per adjustment, staff user id in `meta`). |
- * | `trial_grant` | `trial:<account_id>` | The trial bounty is ONE event in an account's whole life, so the ACCOUNT is the identity. See {@link ledgerSources.trialGrant}. |
- *
- * These prefixes are not a convention: the source-reason CHECK constraint pins each `reason`
- * to its namespace, so a debit physically cannot be written under an `invoice:` source and be
- * reported back as a harmless `duplicate`.
+ * cannot drift. `UNIQUE (account_id, source)` means "this economic event happened at most once";
+ * each namespace keys the PRODUCING system's retry unit to one source value:
+ * `invoice:<stripe_invoice_id>` (webhooks are redelivered), `expiry:<prior invoice id>`,
+ * `classify:<message_id>`, `draft:<draft_id>:<hashed attempt key>`, `propose:<proposal_run_id>`,
+ * `workflow_run:<run_id>:<step_index>`, `refund:<original_source>`, `admin:<uuid>`,
+ * `trial:<account_id>`. The prefixes are not a convention: the source-reason CHECK pins each
+ * `reason` to its namespace.
  */
 /**
  * How long a charged `draft` attempt keeps paying for free retries.
@@ -99,19 +56,14 @@ export function clientIdempotencyKey(headerValue: string): IdempotencyKey {
 export const DRAFT_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * THE FIVE METERED CALL SITES, and the terms each one spends on.
- *
- * The key is the CALL SITE and not the ledger reason, because one reason is spent on different
- * terms: `debit_classify` is spent by ingest (no claim, no pool) and by the Screener (exclusive
- * claim, setup pool drawn first), so a table keyed by reason would silently give one of them the
- * other's terms. It is the entitlements program's own table (`docs/PORT-CONTRACT.md`, its
- * `src/port.ts`), duplicated here rather than imported because the two programs may not link —
- * `test/spend-actions-contract.test.ts` pins the two against each other.
- *
- * NOTHING HERE READS `exclusive`. The claim is taken by the program that answers the spend, so
- * this column is transcribed data: it exists so the terms can be read on this side and so the pin
- * can refuse a drift. Two sites claim — the Screener, and the proposer, whose key is one whole
- * pass (`<accountId>:<UTC hour>`).
+ * The five metered call sites, and the terms each spends on. The key is the CALL SITE, not the
+ * ledger reason: `debit_classify` is spent by ingest (no claim, no pool) and by the Screener
+ * (exclusive claim, setup pool first) — a table keyed by reason would silently give one the
+ * other's terms. It is the entitlements program's own table, duplicated rather than imported
+ * because the two programs may not link; `test/spend-actions-contract.test.ts` pins the two
+ * against each other. NOTHING HERE READS `exclusive`: the claim is taken by the program that
+ * answers the spend — the column exists so the terms are readable on this side. Two sites claim:
+ * the Screener, and the proposer (keyed by one whole pass).
  */
 export const SPEND_ACTIONS = {
   classify_ingest: { reason: "debit_classify", namespace: "classify", exclusive: false, setupPool: false },
@@ -157,19 +109,14 @@ const SPEND_NAMESPACES: readonly string[] =
   [...new Set(Object.values(SPEND_ACTIONS).map((s) => s.namespace))];
 
 /**
- * REFUSE A KEY THAT IS ALREADY A SOURCE, AND REFUSE IT LOUDLY.
- *
- * An `attemptKey` names one unit of WORK — a message, a draft plus its client key, a run, a step.
- * A caller that passes a full ledger source instead gets `<namespace>:<namespace>:<key>`, which
+ * Refuse a key that is already a source, and refuse it loudly. An `attemptKey` names one unit of
+ * WORK; a caller that passes a full ledger source gets `<namespace>:<namespace>:<key>`, which
  * passes the ledger's namespace CHECK and its UNIQUE, so already-paid work answers `ok` rather
- * than `duplicate` and is charged a second time. That is the one defect a green suite could not
- * see: both spellings write a well-formed row.
- *
- * It throws rather than answering a verdict, and the never-throw contract of
- * `EntitlementsPort.spend` is not weakened by it: this is the caller-bug class the wire contract
- * answers 400 for — *"a bug on the caller's side; never a verdict about money"* — and it is
- * reached before any decision, so no money moves either way. Degrading instead would switch AI
- * off for a whole path with nothing in any log, which is the failure this repo keeps paying for.
+ * than `duplicate` and is charged a second time — the one defect a green suite could not see,
+ * since both spellings write a well-formed row. It throws rather than answering a verdict, and
+ * `EntitlementsPort.spend`'s never-throw contract is not weakened: this is the caller-bug class
+ * the wire contract answers 400 for, reached before any decision, so no money moves. Degrading
+ * instead would switch AI off for a whole path with nothing in any log.
  */
 export function assertAttemptKey(action: SpendAction, attemptKey: string): void {
   if (attemptKey.length === 0 || attemptKey.length > ATTEMPT_KEY_MAX) {
@@ -236,19 +183,13 @@ export const ledgerSources = {
   classify: (messageId: string) => sourceFor("classify_ingest", messageId),
   /**
    * `attemptKey` MUST be the request's `Idempotency-Key` — hence the {@link IdempotencyKey}
-   * brand, which a server-minted `randomUUID()` cannot satisfy without someone writing
-   * {@link clientIdempotencyKey} and lying. This corrects an earlier design assumption: a key the
-   * server mints fresh per invocation turns a client's same-key retry of a LOST RESPONSE into
-   * a second charge, whereas the `Idempotency-Key` is exactly the client's own "this is one
-   * intent" token — and the debit is already committed atomically with the idempotency claim.
-   *
-   * The key is HASHED into the source rather than concatenated raw: it is client-controlled
-   * and `source` is a btree index key, so an oversized header would otherwise raise an index
-   * error from inside the caller's transaction. sha-256, 32 hex chars (128 bits) — collisions
-   * are not a practical concern and the value stays diff-stable and greppable.
-   *
-   * The route wiring requires `POST /messages/:id/draft` to be marked `idempotent: true` so a
-   * key EXISTS at the only call site that needs one.
+   * brand, which a server-minted uuid cannot satisfy. A key minted per invocation turns a
+   * client's same-key retry of a LOST RESPONSE into a second charge; the `Idempotency-Key` is the
+   * client's own "one intent" token, and the debit commits atomically with the idempotency claim.
+   * The key is HASHED into the source: it is client-controlled and `source` is a btree index key,
+   * so an oversized header would raise an index error inside the caller's transaction. sha-256,
+   * 32 hex chars. The route wiring requires `POST /messages/:id/draft` to be `idempotent: true`
+   * so a key EXISTS at the one call site that needs it.
    */
   draft: (draftId: string, attemptKey: IdempotencyKey) =>
     sourceFor("draft", draftAttemptKey(draftId, attemptKey)),
@@ -258,78 +199,27 @@ export const ledgerSources = {
   refund: (originalSource: string) => `refund:${originalSource}`,
   admin: (adjustmentId: string) => `admin:${adjustmentId}`,
   /**
-   * THE TRIAL BOUNTY, keyed by the ACCOUNT and by nothing else — idempotent by construction.
-   *
-   * Every other namespace here names the producing system's retry unit: an invoice, a message, a
-   * workflow step. This one names the ACCOUNT, because the economic event is "this account was
-   * given its one trial allowance" and there is exactly one of those per account for as long as
-   * the account exists. `UNIQUE (account_id, source)` then makes a second grant unrepresentable
-   * rather than merely unlikely — which is the property the callers need, since two of them exist
-   * and neither can see the other:
-   *
-   *  · the subscription mirror grants when a trial row first lands, and it runs on EVERY
-   *    subscription event for the account, redelivered and out of order;
-   *  · the one-shot backfill grants to accounts already trialing when the policy changed.
-   *
-   * Run both, twice each, in any order: the second write of the four answers `duplicate` and
-   * moves no money. Keying this by the subscription instead would have made a resubscribe — or a
-   * second trial after a cancel — a second bounty, which is the shape of the giveaway a bounty
-   * must not have.
-   *
-   * The account id is a uuid we minted, so unlike `draft` and `classify` there is nothing
-   * remote-controlled to bound or to hash: the source is 6 + 36 characters, always.
-   *
-   * THIS SHAPE IS ALSO THE DATABASE'S, and that is newer than the paragraph above. A BEFORE
-   * INSERT trigger refuses a `trial_grant` row whose source is not `'trial:' || account_id`, so
-   * "the account is the identity" stopped being a convention this registry keeps and became a
-   * predicate the table enforces. The `trial:%` namespace CHECK is still there and is now the
-   * weaker of the two: it admits any suffix, with no relation to the row's own account.
+   * The trial bounty, keyed by the ACCOUNT and nothing else — idempotent by construction. Every
+   * other namespace names the producing system's retry unit; this one names the account, because
+   * the event is the account's one trial allowance. `UNIQUE (account_id, source)` makes a second
+   * grant unrepresentable — needed, since two callers exist and neither sees the other: the
+   * subscription mirror (redelivered, out of order) and the one-shot backfill. Run both, twice
+   * each, in any order: the second write answers `duplicate`. Keying by subscription would make a
+   * resubscribe a second bounty. The shape is also the DATABASE'S: a BEFORE INSERT trigger
+   * refuses a `trial_grant` row whose source is not `'trial:' || account_id`.
    */
   trialGrant: (accountId: string) => `trial:${accountId}`,
 } as const;
 
 /**
- * WHAT EACH METERED ACTION COSTS, IN CREDITS — the price list, pinned per reason.
- *
- * ## Why a table and not a constant
- *
- * This was a single constant at 1: one credit per action, whichever action. The plan card sold
- * "~2 000 / 6 000 / 20 000 AI actions" against `monthly_credits` of the same figures, so the
- * exchange rate was 1:1 by construction — and the construction was the defect. The four metered
- * actions do not cost the same money and are not close:
- *
- *  · a CLASSIFICATION reads one message and is capped at 512 output tokens
- *    (`packages/core/src/ai/classify.ts`);
- *  · a DRAFT reads a whole thread plus the account's voice profile, capped at 1 024
- *    (`packages/core/src/ai/draft.ts`);
- *  · a PROPOSER PASS reads a BATCH of mail, capped at 2 048 (`.../workflows/propose.ts`) — the
- *    largest-context call in the product;
- *  · a WORKFLOW STEP is a draft. The only tool with a `prepare` is `draft_reply` and its prepare
- *    calls the draft path, so a step and a draft are one model call with one budget.
- *
- * Under a flat price the ALLOWANCE had to absorb that spread: it could only be sized against the
- * worst mix a customer might pick, so it was sized against a month of drafts, and every customer
- * who spent it the ordinary way — overwhelmingly classifications — was sold a pool priced for a
- * mix they never ran. Pricing the action instead lets the pool be honest, which is why the plan
- * card's credits fell to 1 000 / 2 000 / 4 000 in the same change (see `billing.ts`'s
- * `PLAN_LIMITS`, which explains the arithmetic — and the deliberate decision to move EXISTING
- * rows onto the new pools rather than grandfather them, cloud 0020).
- *
- * ## The weight is charged where the debit is MINTED, and nowhere else
- *
- * `makeAiCreditGate` defaults `amount` to `aiActionCost(opts.reason)`, and **no call site in the
- * product passes an `amount`** — the five gates (ingest classify, the Screener's request path and
- * its cron, drafting, the proposer, workflow steps) all take the default. So this table is the
- * price of every metered action in the hosted product, and there is no second place where a
- * price could disagree with it. The `amount` option survives for tests and for a future caller
- * that genuinely charges a multiple; it is not how the schedule is applied.
- *
- * ## It applies to EVERYONE, and that is structural rather than configured
- *
- * A weight is not on any row — it is what the action costs — so it is charged to every account
- * at the gate. (The POOLS moved for everyone too: the 2026-08-21 ruling overrode grandfathering
- * and cloud 0020 migrated every existing row to the new card. The weight table needed no
- * migration precisely because it was never denormalized anywhere.)
+ * What each metered action costs, in credits — the price list, pinned per reason. This was a flat
+ * constant of 1, and that was the defect: a classification reads one message (512-token cap), a
+ * draft a whole thread (1 024), a proposer pass a batch (2 048), and a workflow step IS a draft.
+ * Under a flat price the allowance had to be sized against the worst mix, so ordinary customers
+ * were sold a pool priced for a mix they never ran; pricing the action lets the pool be honest
+ * (`billing.ts` `PLAN_LIMITS`; existing rows moved, cloud 0020). The weight is charged where the
+ * debit is MINTED: `makeAiCreditGate` defaults `amount` to `aiActionCost(opts.reason)` and no
+ * call site passes an `amount`, so there is no second place a price could disagree.
  */
 export const AI_ACTION_WEIGHTS = {
   debit_classify: 1,
@@ -363,26 +253,14 @@ export function aiActionCost(reason: WeightedDebitReason): number {
 }
 
 /**
- * THE ARMING GUARD: refuse to construct a production managed-AI arm while debits are FLAT.
- *
- * The rule is older than the mechanism — *"managed AI must not be armed before the weights
- * land"* — and a rule that lives only in prose is a rule the next revert breaks silently. This
- * is that rule as a structural check, called from the composition root that arms managed AI
- * (an `ANTHROPIC_API_KEY` present on the billing plane). After the weighted schedule shipped it
- * passes by construction; it exists for the day somebody puts a weight back to 1.
- *
- * **It judges the SHAPE, not the exact numbers, and that split is the point.** The exact card
- * belongs in `test/ai-action-weights.test.ts`, which pins it by whole-object equality; a guard
- * that pinned it too would be a second copy of the card, and the copy would have to be edited
- * every time an action was re-priced — turning a safety check into a chore, which is how
- * safety checks get deleted. What cannot be allowed to change without a deliberate decision is
- * that the schedule is WEIGHTED at all: that every priced reason has a price, and that the two
- * expensive calls are strictly dearer than the cheap one. A flat table fails all three tests
- * below; a re-priced but still-weighted table passes, and should.
- *
- * Throws rather than returning a boolean: there is no useful degraded mode. An arm that came up
- * with a flat schedule would meter every draft at a fifteenth of its cost, and the resulting
- * spend is not recoverable from.
+ * The arming guard: refuse to construct a production managed-AI arm while debits are FLAT.
+ * "Managed AI must not be armed before the weights land" as a structural check, called from the
+ * composition root — prose alone is broken silently by the next revert. It judges the SHAPE, not
+ * the numbers: the exact card is pinned by `test/ai-action-weights.test.ts`, and a guard that
+ * pinned it too would be a second copy edited on every re-price — how safety checks get deleted.
+ * What cannot change without a decision: every priced reason has a price, and the two expensive
+ * calls are strictly dearer than the cheap one. Throws rather than returning a boolean: an arm
+ * with a flat schedule would meter every draft at a fifteenth of its cost.
  */
 export function assertWeightedScheduleActive(
   schedule: Record<WeightedDebitReason, number> = AI_ACTION_WEIGHTS,
@@ -423,95 +301,28 @@ export function assertWeightedScheduleActive(
 }
 
 /**
- * The ledger source for ONE classification of ONE message — a correction to the earlier registry keying.
- *
- * The earlier keying wrote `classify:<message_id>`, and at the moment the classifier is called there is no
- * message id: `planChange` runs the AI branch only on the `new` outcome, i.e. exactly when no
- * `messages` row exists yet (the row is inserted later, by `commitChange`, in the persist
- * transaction). The identity that DOES exist, and that is stable across every reprocess, is the
- * one the pipeline already uses to recognise the same mail — the `dedup_key`
- * `findByDedupKey` looks up. Scoping it by mailbox mirrors that lookup exactly
- * (`findByDedupKey(mailboxId, key)`), so the same newsletter delivered to two of an account's
- * mailboxes is two classifications and two charges, not one charge and one freebie.
- *
- * The key is HASHED for LENGTH, and for length only: a `mid:` dedup key — the format every
- * row written before the fingerprint-key change carries, and the one this hashing was designed against — contains
- * the sender's `Message-ID` header verbatim, which is remote-controlled and unbounded, while
- * `source` is a btree index key capped at 200 characters. Hashing makes the length a constant
- * 78 characters instead of a property of incoming mail. Since that change the key is `fp1:<sha256>` and
- * therefore already bounded, so the hash is now belt and braces for length — and still load-bearing
- * for one reason: a raw `mid:` key in an append-only table cannot be un-written. `ledgerSources.draft` hashes the
- * client's Idempotency-Key for the same reason.
- *
- * **THE HASH IS NOT A REDACTION, AND THIS COMMENT USED TO SAY OTHERWISE.** It ended
- * "if a debit ever needs to be traced back to a message, resolve it forward — hash the
- * candidate key and compare against `source`". That forward-resolve is exactly the attack: the
- * input is guessable — a sender chooses the `Message-ID` of mail it sends to the account, and a
- * natural client uses the SUBJECT as its Idempotency-Key — so anyone who can read `source` can
- * confirm "this account received this exact message" from a candidate list. 128 bits stops
- * collisions; it adds no entropy to a guessable input.
- *
- * So the forward-resolve is a **break-glass operation for the production owner or the runtime
- * role, never a staff one**, and it is not much of a privilege even then: both of those can
- * read `messages.subject` directly, which is why the oracle is strictly weaker than the access
- * needed to see it and why re-keying under an HMAC would have bought nothing at that privacy
- * boundary. What closed it is the GRANT: the staff role holds nothing on the ledger's own source
- * column, and the view it reads instead truncates the digest away.
- *
- * **The readable form IS lost, deliberately, and that is the point.** This comment used
- * to end "the caller puts `mailboxId` and the raw `dedupKey` in the ledger row's `meta`, which
- * is `jsonb` and indexes nothing" — documenting the leak as a convenience. Indexing nothing is
- * not the property that matters; the ledger is APPEND-ONLY, so a remote-controlled
- * sender/recipient identifier written there is written for good, in backups included. The
- * caller now passes `{ mailboxId }` alone. That destruction is also why the leak could not be fixed
- * by re-keying: with the plaintexts gone, no existing row can ever be re-hashed, so an HMAC
- * going forward would have left the whole historical oracle readable.
+ * The ledger source for ONE classification of ONE message. Keyed by `(mailboxId, dedup_key)`, not
+ * message id: at classification time no `messages` row exists yet, and the dedup key is how the
+ * pipeline recognises the same mail — per mailbox, so one newsletter in two mailboxes is two
+ * charges. Hashed for LENGTH: a `mid:` dedup key carries the sender's `Message-ID` verbatim
+ * (remote-controlled, unbounded); `source` is a btree key capped at 200 chars. THE HASH IS NOT A
+ * REDACTION: the input is guessable, so a reader of `source` could confirm "this account received
+ * this message". The oracle is closed by the GRANT (staff reads a view that truncates the digest)
+ * and by never writing the raw key: `meta` carries `{ mailboxId }` alone.
  */
 export function classifyLedgerSource(mailboxId: string, dedupKey: string): string {
   return sourceFor("classify_ingest", classifyAttemptKey(mailboxId, dedupKey));
 }
 
 /**
- * The ledger source for ONE Screener pre-suggestion of ONE message.
- *
- * The Screener's Yes/No hint is a `classify` spend like the pipeline's — same model, same
- * reason — but a DIFFERENT unit of work, so it needs a source of its own: the pipeline charges
- * for routing a message on arrival, this charges for advising on a sender already held. Sharing
- * one source would make whichever ran second free.
- *
- * Keyed by the message rather than by the sender or the page, and that is what makes a list
- * page cheap: `list` is re-fetched on every poll, every scroll and every reload, and each of
- * those re-asks for the same held mail. A per-message identity means the second and every later
- * ask answers `duplicate` and costs nothing, so the suggestion is bought once per message and
- * then re-read for free — while a per-request identity would have charged an account with 20
- * held senders 20 credits per page view.
- *
- * ── IT STAYS THE MESSAGE, AND A REVIEW FINDING IS WHY THAT NEEDED DECIDING ──────────────────
- *
- * That finding is exactly about this identity being too fine: the automatic pass bought one
- * suggestion per SENDER while charging per MESSAGE, so a sender re-sending promoted a new
- * representative and was bought again, ten a cycle, until the balance was gone. The obvious fix is
- * to re-key this function on the normalised address. It was not taken, for two reasons that only
- * appear once it is written out — and the entitlement moved instead, to a QUERY over the stored
- * advice (`screener-suggestion.ts`, `screenerSuggestedSenderExists`):
- *
- *  · **THE LEDGER IS APPEND-ONLY AND AN ADDRESS IS REMOTE-CONTROLLED AND GUESSABLE.** This
- *    source is built from a uuid WE minted, so it discloses nothing; a sender-keyed one would put
- *    a normalised address into a record that cannot be un-written — raw, or hashed, which is the
- *    same thing here for the reason {@link classifyLedgerSource} spells out at length ("the hash
- *    is not a redaction … the input is guessable, so anyone who can read `source` can confirm
- *    'this account received this exact message' from a candidate list"). That comment records the
- *    plaintexts being DESTROYED to close that oracle. Re-opening it for a spend bound would trade
- *    a money defect for a privacy one, in the one place with no way back.
- *  · **ONE SOURCE IS WHAT MAKES THE EXCLUSIVE CLAIM SERIALISE THE TWO BUYERS.** The cron and the
- *    button select the same representative by construction and therefore claim the same string, so
- *    one of them waits and only one pays. Give the automatic path its own namespace and that
- *    property is gone: a press racing the pass over one sender charges twice and calls the model
- *    twice, for one visible answer.
- *
- * So the rule is: the MESSAGE is the unit of paid work (what the model read, and what a retry is a
- * retry of), and the SENDER is the unit of automatic entitlement (whether an unpressed caller may
- * buy at all). The second is not a ledger concept and does not belong in this vocabulary.
+ * The ledger source for ONE Screener pre-suggestion of ONE message — the same `classify` reason
+ * as the pipeline, a DIFFERENT unit of work, so its own source: sharing one would make whichever
+ * ran second free. Keyed by the message, which makes a list page cheap: `list` re-asks for the
+ * same held mail on every poll, and a per-message identity answers `duplicate` from the second
+ * ask on. It STAYS the message: re-keying on the address would put a remote-controlled, guessable
+ * identifier into an append-only record, and one source is what serialises the cron and the
+ * button through the exclusive claim. The MESSAGE is the unit of paid work; the SENDER is the
+ * unit of automatic entitlement (a query over stored advice, not a ledger concept).
  */
 export function screenerLedgerSource(messageId: string): string {
   return sourceFor("screener", screenerAttemptKey(messageId));

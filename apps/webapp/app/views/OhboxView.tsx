@@ -113,31 +113,25 @@ const deleteDoc = (e: KeyboardEvent): Document =>
   (e.view as (Window & typeof globalThis) | null)?.document ?? document;
 
 /**
- * How long a row slides before it re-files under "Earlier".
- *
- * Long enough to read as a deliberate move rather than a jump, short enough that the row is gone
- * from "New for you" by the time attention returns to the list. It matches the `.row.settling`
- * transition in `row.css`; a device that prefers reduced motion gets no transition at all (the
- * rule is inside a `prefers-reduced-motion: no-preference` block) and the row simply moves on the
- * render this timer schedules.
- *
- * ONE CONSTANT FOR EVERY DEPARTURE FROM "NEW FOR YOU" — a reply that settled, a message read in
- * the app, a `\Seen` that arrived from another mail client. They are one gesture with three
- * causes, so they share one duration and one mechanism (see `slideOut`).
+ * How long a row slides before it re-files under "Earlier": long enough to
+ * read as a deliberate move, short enough that the row is gone from "New
+ * for you" by the time attention returns. Matches the `.row.settling`
+ * transition in `row.css`; reduced-motion devices get no transition and the
+ * row simply moves on the render this timer schedules. One constant for
+ * every departure from "New for you" — a settled reply, an in-app read, a
+ * `\Seen` from another client: one gesture, three causes, one mechanism
+ * (`slideOut`).
  */
 const SETTLE_MS = 280;
 
 /**
- * A reply that just landed, for the animate-to-Earlier gesture.
- *
- * The shell sets this from `onSendSettled` the moment a reply is delivered: `messageId` is the
- * message that was answered (the one that should slide from "New for you" down to "Earlier"), and
- * `at` is when it settled, so a consumer can key an animation and ignore a stale value on a later
- * render. Exported so the shell and the view name the same shape.
- *
- * WHAT THE VIEW DOES WITH IT IS NARROW: it marks the answered message read. The slide is not this
- * prop's — it belongs to `slideOut`, which moves ANY row the selector has re-filed under "Earlier",
- * whatever read it. Answering a message is one of the things that reads it, not a second gesture.
+ * A reply that just landed, for the animate-to-Earlier gesture. The shell
+ * sets this from `onSendSettled`: `messageId` is the answered message, `at`
+ * is the settle instant so a consumer can ignore a stale value on a later
+ * render. Exported so shell and view name one shape. The view's use is
+ * narrow: it marks the answered message read — the slide belongs to
+ * `slideOut`, which moves any row the selector re-files under "Earlier";
+ * answering is one of the things that reads it, not a second gesture.
  */
 export interface OhboxReplyDone {
   /** The answered message — the row that moves to Earlier. */
@@ -185,29 +179,24 @@ export function OhboxView({
    */
   replyDone?: OhboxReplyDone | null;
   /**
-   * A QUIET LINE ABOVE THE LIST — the shell's channel for ambient state the Ohbox's owner
-   * should see without being interrupted. Today that is the away responder's "replies are
-   * going out for you" (`shell/AwayNotice.tsx`); the next quiet notice reuses this slot.
-   *
-   * A `ReactNode` SLOT and not a boolean per notice, deliberately: a boolean prop per notice
-   * is how a view ends up with five, and this view's props are already twenty named things
-   * about mail rows. The view draws what it is given and gates NOTHING — whether there is
-   * anything to say, and on which install, is the shell's call, made where the server state
-   * lives. Absent means absent: no placeholder, no reserved height.
+   * A quiet line above the list — the shell's channel for ambient state the
+   * Ohbox's owner should see without being interrupted (today: the away
+   * responder's "replies are going out for you"). A `ReactNode` slot, not a
+   * boolean per notice — a boolean per notice is how a view ends up with
+   * five. The view draws what it is given and gates nothing: whether there
+   * is anything to say is the shell's call, made where the server state
+   * lives. Absent means absent — no placeholder, no reserved height.
    */
   noticeSection?: ReactNode;
   /**
-   * THE STANDING NOTICE — the list's FIRST BLOCK, inside the scroller, not the header's last line.
-   *
-   * `noticeSection` above is the header slot: what stands there stays put at every width and
-   * pushes the doorbell down. That is right for the offer and the organizer notice, which ask
-   * for something or report a change; it was wrong for the away responder's line, which states a
-   * standing setting. On a phone a standing line pinned above the rows is a toolbar taking a
-   * third of the screen; on a desktop the same line scrolling away is a fact hidden from the one
-   * pane its owner reads. So the away line goes HERE — the `Banner` primitive's one media rule
-   * pins it at the desktop breakpoint and lets it flow below it — and this slot's whole contract
-   * is where it renders: first, inside `.scroller`. Same rule as its sibling: the view draws what
-   * it is given and gates nothing; absent means absent.
+   * The standing notice — the list's FIRST BLOCK, inside the scroller, not
+   * the header's last line. `noticeSection` is the header slot, right for
+   * the offer and the organizer notice (they ask or report); wrong for the
+   * away responder's standing line — pinned above the rows it is a toolbar
+   * eating a third of a phone screen, scrolled away on a desktop it is
+   * hidden. Here the `Banner` primitive's one media rule pins it at the
+   * desktop breakpoint and lets it flow below. Same contract: the view
+   * draws what it is given; absent means absent.
    */
   standingNotice?: ReactNode;
   /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
@@ -271,31 +260,24 @@ export function OhboxView({
    */
   onMarkSeen: (ids: string[], unread: boolean, via?: "glance") => void;
   /**
-   * THE ARMED READ, REPORTED UPWARD — `id` while a message's read is armed but not yet written,
-   * `null` the moment the debt is spent or torn up.
-   *
-   * An armed read PRESENTS as read (see {@link commitPendingRead} and `effUnread` below): the row
-   * loses its dot and the read-state verb flips, while the write still waits for departure. This
-   * view can only flip the surfaces it renders — and the mobile reader sheet is the SHELL's
-   * `MessagePane`, mounted over `readerMessage` in `AppShell`, so the sheet's verb would go on
-   * deriving from the not-yet-written store flag without this channel. The shell holds the id and
-   * presents the sheet's message with the same effective state; it is a REPORT of view-local
-   * fact, never a second writer of read-state. Optional: a harness mounted without it simply has
-   * no sheet to inform.
+   * The armed read, reported upward — `id` while a message's read is armed
+   * but not yet written, `null` when the debt is spent or torn up. An armed
+   * read PRESENTS as read ({@link commitPendingRead}, `effUnread`), and the
+   * mobile reader sheet is the SHELL's `MessagePane`, so its verb would go
+   * on deriving from the not-yet-written store flag without this channel.
+   * A report of view-local fact, never a second writer of read-state.
+   * Optional: a harness mounted without it has no sheet to inform.
    */
   onReadArmed?: (id: string | null) => void;
   /**
-   * WHICH MESSAGE THE READER SHEET IS SHOWING, or `null` when it is closed.
-   *
-   * This view does not open the sheet and does not read it for anything it renders. It needs the
-   * value for ONE reason: closing the sheet is one of the four ways of LEAVING a message, and
-   * leaving is what commits reading (see the commit below). The sheet belongs to the shell, so
-   * the only way for this view to notice it closing is to be told.
-   *
-   * REQUIRED, with no default, for the reason `settled` and `older` have none: the safe-looking
-   * default is `null`, which reads as "the sheet is never open" — and a mobile reader would then
-   * mark nothing read on close, silently, in exactly the surface where closing the sheet is the
-   * only way to leave a message at all.
+   * Which message the reader sheet is showing, or `null` when closed. This
+   * view does not open the sheet and renders nothing from it; it needs the
+   * value because closing the sheet is one of the four ways of LEAVING a
+   * message, and leaving commits reading. The sheet belongs to the shell,
+   * so the only way to notice it closing is to be told. Required, no
+   * default: the safe-looking default is `null` — "the sheet is never open"
+   * — and a mobile reader would then mark nothing read on close, in exactly
+   * the surface where closing the sheet is the only way to leave.
    */
   readerId: string | null;
   doorbellInitials: string[];
@@ -303,20 +285,14 @@ export function OhboxView({
   doorbellHues?: number[];
   doorbellCount: number;
   /**
-   * MAY THIS VIEW STATE ITS EMPTINESS AS A FACT? Derived once in `shell/mail-state.ts` — see
-   * {@link MailState.settled} there for the defect and the derivation.
-   *
-   * Three sentences on this pane are claims about the user's own mail rather than about the
-   * list: the meta count, the doorbell's "All clear", and the empty pane. All three were
-   * rendered before the first drain had finished, over a mailbox that was not empty.
-   *
-   * It arrives as a PROP and not from `useMailState()`, because this view is mounted with no
-   * provider by `test/ohbox-read-state.test.ts` and that hook throws without one — deliberately.
-   *
-   * REQUIRED, with no default. A default would be `true` (nothing else is renderable), which is
-   * exactly the silent-omission mode `sync-scheduler.ts` rejects for the wake signal: a caller
-   * that forgets it gets the lying surface and no error anywhere. Required, the omission is a
-   * type error at the one shipped call site and a visible difference in any harness.
+   * May this view state its emptiness as a fact? Derived once in
+   * `shell/mail-state.ts` ({@link MailState.settled}). Three sentences here
+   * are claims about the user's own mail — the meta count, "All clear", the
+   * empty pane — and all three were rendered before the first drain over a
+   * mailbox that was not empty. A prop, not `useMailState()`: the hook
+   * throws without a provider and `test/ohbox-read-state.test.ts` mounts
+   * this view bare. Required, no default — the default would be `true`,
+   * the lying surface with no error anywhere.
    */
   settled: boolean;
   onDoorbell: () => void;
@@ -334,17 +310,13 @@ export function OhboxView({
   /** The verbs a multi-selection offers. */
   bulk: BulkVerbs;
   /**
-   * WHAT LIES BEYOND THE END OF THIS DEVICE'S WINDOW, and how to reach it. See
-   * `app/shell/older-mail.ts`.
-   *
-   * A PROP with no default, for the reason `settled` has none: the only safe default would be
-   * "there is nothing older", which is the sentence a windowed client must never say by
-   * accident. Required, and a caller that forgets it is a type error at the one shipped call
-   * site rather than a list that quietly stops at ninety days.
-   *
-   * It arrives from the shell rather than from a hook called here because this view is mounted
-   * with no engine at all by several tests, deliberately — the same seam every other engine
-   * fact on this pane comes through.
+   * What lies beyond the end of this device's window, and how to reach it
+   * (`app/shell/older-mail.ts`). A prop with no default, for `settled`'s
+   * reason: the only safe default would be "there is nothing older", which
+   * a windowed client must never say by accident — a caller that forgets it
+   * is a type error, not a list that quietly stops at ninety days. From the
+   * shell rather than a hook because several tests mount this view with no
+   * engine at all — the same seam every other engine fact comes through.
    */
   older: OlderMail;
   /** Mark every unread Ohbox message read, chunked, via the shell. Optional: this view is
@@ -358,61 +330,14 @@ export function OhboxView({
   const tReader = useTranslations("reader");
 
   /**
-   * ═══ SESSION-SCOPED PLACEMENT, AND THE SLIDE THAT ENDS IT ════════════════════════════
-   *
-   * Two refs, one per pinned upper group — resurfaced and New for you. Each is reconciled at
-   * render: it keeps the ids it already held that are still in the Ohbox, then MERGES any that the
-   * selector has newly placed in that group into the slot the selector's own order gives them
-   * relative to the kept rows (see `reconcile`). Refs, and reconciled in render rather than an
-   * effect, for the reason `allRef` below is: the value has to be right for the render that reads
-   * it, not one render late.
-   *
-   * What the session order is FOR is the ordering: a row keeps the slot it was given rather than
-   * being re-sorted every time the selector recomputes, and a live arrival INSERTS between the
-   * kept rows without shuffling their order among themselves. For genuinely new mail — the common
-   * arrival — that slot is the TOP, which is where new mail belongs. Appending is what shipped,
-   * and it was a reported defect: every message that arrived by sync after mount filed at the
-   * BOTTOM of "New for you", below mail that had been sitting on screen since the mount, for the
-   * whole session. What the session order is NOT for is holding a message in "New for you" after
-   * it has been read.
-   *
-   * ── A READ MESSAGE LEAVES "NEW FOR YOU" NOW, NOT ON THE NEXT RELOAD ──────────────────
-   *
-   * This reverses the earlier ruling, deliberately. That ruling deferred the forward move: a
-   * message read this session kept its slot with its dot cleared, on the argument that "the reader
-   * did not ask for the move". The cost of it is what shipped, and it is worse than the churn it
-   * avoided — a mailbox read in the app looked exactly like a mailbox that had not been read.
-   * "New for you" went on listing mail the reader had finished with, for the whole session, and the
-   * only way to make the list agree with the reading was to reload the page. A section heading that
-   * needs a page refresh to become true is not a stable list; it is a stale one.
-   *
-   * So: the moment the selector files a row under "Earlier" — because the reader read it here,
-   * because a reply to it settled, or because a `\Seen` for it arrived from another mail client —
-   * the row SLIDES down and re-files. `settling` carries the slide (280 ms, `SETTLE_MS`), and when
-   * it ends `dismissed` drops the id from the session order so the next render draws it under
-   * "Earlier". `slideOut` below owns all of it.
-   *
-   * THE ONE THING THAT DOES NOT MOVE IS THE MESSAGE BEING READ RIGHT NOW, and that is not an
-   * exception bolted on here — it falls out of reading being committed on the way OUT (see
-   * {@link commitPendingRead}). Nothing is written while the message is on screen, so there is
-   * nothing for the selector to re-file and nothing to slide; the row moves when the reader leaves
-   * it, which is the moment their attention is already somewhere else.
-   *
-   * ── THE REVERSE MOVE: `promoted` ─────────────────────────────────────────────────────
-   *
-   * `promoted` holds the ids the reader has explicitly put back to unread this session, and
-   * `reconcile` enters each of them at the FRONT of the New order rather than at the slot the
-   * date merge would give them. A message somebody marks unread is usually OLD, so its date slot
-   * is the bottom of New — where the append used to put it too, and that was a reported defect:
-   * the row a reader has just finished with sits at the TOP of "Earlier", so filing it by date
-   * moved it exactly one position — past the "Earlier" label to the last slot of New, where it
-   * looks like nothing happened. The top of New is also where the next thing the reader intends
-   * to do with it is, and on a long list the bottom of New is off screen.
-   *
-   * IT WINS OVER A SLIDE THAT IS ALREADY RUNNING, which is why `promote` cancels the timer, clears
-   * `settling` and clears `dismissed`: a message read a moment ago is on its way down, and the
-   * reader has just said "no, this is unfinished". The later explicit act wins, and it wins
-   * immediately rather than 280 ms later when a timer nobody can see fires.
+   * Session-scoped placement, and the slide that ends it. Two refs, one per pinned upper group, reconciled at
+   * render (the value must be right for the render that reads it): a row keeps its slot; a live arrival INSERTS
+   * at the selector's slot — the top for genuinely new mail (appending filed every post-mount arrival at the
+   * bottom; reported). A read message leaves "New for you" NOW — keeping read rows made a read mailbox look
+   * unread all session: the moment the selector re-files a row it slides (`SETTLE_MS`) and `dismissed` releases
+   * its slot. The one unmoved row is the message being read — reading commits on the way OUT ({@link
+   * commitPendingRead}). `promoted` is the reverse move: an explicit mark-unread enters at the FRONT of New and
+   * cancels a slide in flight — the later explicit act wins, immediately.
    */
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   const [promoted, setPromoted] = useState<Set<string>>(() => new Set());
@@ -423,18 +348,13 @@ export function OhboxView({
   const slideTimers = useRef<Map<string, number>>(new Map());
 
   /**
-   * Record an explicit "this is unread again" for one or more ids — see `promoted` above.
-   *
-   * Four halves, and none of them is housekeeping. The id joins the promote set so the next
-   * reconcile leads the New order with it; the slide timer is torn up and the `settling` class
-   * comes off, so a row caught mid-descent stops where it is instead of finishing a move the
-   * reader has just contradicted; and it leaves `dismissed` so a slide that already completed
-   * cannot keep filtering it out of the order it is being promoted into.
-   *
-   * NOT PRUNED when a row leaves the Ohbox. The set is bounded by explicit user acts within one
-   * session, and an id it still holds is inert the moment the row is in the New order (reconcile
-   * only consults it for ids it is placing for the first time). A prune would be a second writer
-   * of the same fact for no behaviour.
+   * Record an explicit "this is unread again" for one or more ids (see `promoted`). Four
+   * halves, none housekeeping: the id joins the promote set so the next reconcile leads New
+   * with it; the slide timer is torn up and `settling` comes off, so a row caught mid-descent
+   * stops where it is; and it leaves `dismissed`, so a completed slide cannot keep filtering it
+   * out of the order it is being promoted into. NOT pruned when a row leaves the Ohbox: the set
+   * is bounded by explicit acts in one session and a held id is inert once the row is in the
+   * New order — a prune would be a second writer of the same fact for no behaviour.
    */
   const promote = useCallback((ids: readonly string[]) => {
     for (const id of ids) {
@@ -469,62 +389,25 @@ export function OhboxView({
   const byId = useMemo(() => new Map(ohboxAll.map((m) => [m.id, m])), [ohboxAll]);
 
   /**
-   * THE ROWS THE SELECTOR NOW FILES UNDER "EARLIER" — the predicate the whole slide turns on.
-   *
-   * Membership of `previouslySeen`, and not `m.unread === false`, because those two are not the
-   * same question. A RESURFACED row that has been read is read and still belongs at the top of the
-   * list: the worker's pin, not the read state, decides that group, and `ohboxView` keeps it out of
-   * "Earlier" until the pin is cleared. Sliding on the read flag alone would drop such a row out of
-   * its pinned group and into a section that does not contain it — a row that vanishes from the
-   * list entirely until the server catches up.
-   *
-   * So the question asked here is the one the answer depends on: does the selector say this row's
-   * place is now "Earlier"? Every cause is covered by construction — an in-app read, an answered
-   * message, a `\Seen` adopted from another client — because all three reach this view as the same
-   * re-partition.
+   * The rows the selector now files under "Earlier" — the predicate the slide turns on.
+   * Membership of `previouslySeen`, NOT `m.unread === false`: a resurfaced row that has been
+   * read still belongs at the top — the pin, not the read state, decides that group, and
+   * sliding on the read flag would drop it into a section that does not contain it (a row that
+   * vanishes until the server catches up). The question asked is the one the answer depends on:
+   * does the selector say this row's place is now "Earlier"? Every cause — in-app read,
+   * answered message, adopted `\Seen` — reaches this view as the same re-partition.
    */
   const earlierIds = useMemo(() => new Set(previouslySeen.map((m) => m.id)), [previouslySeen]);
 
   /**
-   * ── THE STABLE MERGE: WHERE A FRESH ID ENTERS THE SESSION ORDER ──────────────────────────
-   *
-   * A fresh id — one the session order is not already holding — inserts BEFORE the first kept
-   * row the selector ranks after it, and at the end when there is none. For New, the selector's
-   * order is date desc, so "ranks after" is "is older": a genuinely new arrival is newer than
-   * everything on screen and enters at the TOP, which is the reported defect this replaces (the
-   * append filed every post-mount arrival at the bottom). And it is a MERGE, not a re-sort, on
-   * both sides: kept rows never move relative to each other — the list does not shuffle under
-   * the reader — and fresh ids keep the selector's own order among themselves.
-   *
-   * THE HONEST HALF OF THE RULE IS THE OLD ARRIVAL. A sync can also deliver an OLD unread
-   * message — a mirror backfill, or old mail marked unread on another client, which arrives as a
-   * plain re-partition with no `promote` anywhere — and "new mail at the top" must not read as
-   * "anything fresh at the top": its date slot is below everything newer, so it files there, and
-   * only mail that genuinely just arrived leads the list.
-   *
-   * The rank is the id's index in `current` — the selector's own output — not a date comparator
-   * of this view's: `byDateDesc` lives in the selector and a copy here would be a second writer
-   * of the same rule, one tiebreak drift away from disagreeing with it. A kept id the selector
-   * no longer files in this group (a row mid-slide to "Earlier", holding its slot on the
-   * `dismissed` lease) has no rank and no opinion: it anchors no insertion and keeps its slot.
-   *
-   * `lead` is the promote block: ids entering this group for the first time that the reader has
-   * explicitly marked unread go to the FRONT — above even a genuinely newer arrival merging in
-   * the same render, because the promote is the reader's own act at this instant and the later
-   * word wins — keeping the group's relative order among themselves (a bulk unread of three
-   * keeps their arrival order rather than reversing it). Once placed, a promoted id is a kept
-   * row like any other: mail newer than it arriving on a LATER sync files above it, which is the
-   * rule every inbox keeps after a mark-unread. An id already in `prev` is skipped by `have`, so
-   * a row the session order is already holding never moves — which is what makes marking a row
-   * that is already in New a no-op on placement.
-   *
-   * A DISMISSAL IS SPENT THE MOMENT THE SELECTOR STOPS FILING THE ROW UNDER "EARLIER", which is
-   * what `dropped` says. `dismissed` is a session set that now takes an entry for every message
-   * read in the session, so a permanent one would swallow the row's way back: mail marked unread
-   * from another client arrives as a plain re-partition — no `promote` call, nothing explicit here
-   * — and an unconditional `dismissed.has(id)` would file it under a section it is no longer in and
-   * then refuse to draw it in the section it IS in. Reading the two facts together is what makes
-   * the set self-healing rather than a leak with a UI consequence.
+   * The stable merge: where a fresh id enters the session order — before the first kept row the
+   * selector ranks after it (for New: date desc, so a genuinely new arrival enters at the top), at
+   * the end when none. A merge, not a re-sort: kept rows never move relative to each other, and an
+   * OLD unread arrival (a backfill, a foreign mark-unread) files at its date slot. The rank is the
+   * id's index in `current`, the selector's own output. `lead` is the promote block: explicit
+   * unreads go to the front; once placed they are kept rows. A dismissal is spent when the selector
+   * stops filing the row under "Earlier" (`dropped`) — a permanent one would swallow the way back
+   * for mail marked unread elsewhere.
    */
   const dropped = (id: string): boolean => dismissed.has(id) && earlierIds.has(id);
   const reconcile = (
@@ -544,16 +427,14 @@ export function OhboxView({
     }
     if (fresh.length === 0) return lead.length > 0 ? [...lead, ...keep] : keep;
     /**
-     * ONE PASS, NOT ONE SCAN PER FRESH ID. The naive form — scan `keep` from the top for each
-     * fresh id and splice — is O(kept × fresh), and the case that maximises it is the most
-     * ordinary one there is: a cold mount, where EVERY id is fresh and a large unread group costs
-     * millions of rank lookups inside a render. A two-pointer merge is equivalent because the
-     * anchor is MONOTONIC: `fresh` is in `current` order, i.e. ascending rank, and the anchor
-     * ("the first kept row with rank > r") can only move DOWN the list as r grows — the set
-     * {rank > r} shrinks as r rises, so its first member's index never decreases, and a kept row
-     * skipped for one fresh id (unranked, or ranked at or above it) is skipped for every later
-     * one. So kept rows are emitted up to each fresh id's anchor, the fresh id before it, and
-     * nothing is ever revisited.
+     * One pass, not one scan per fresh id: the naive splice is
+     * O(kept × fresh), maximised by the most ordinary case — a cold mount,
+     * where every id is fresh and a large unread group costs millions of
+     * rank lookups inside a render. A two-pointer merge is equivalent
+     * because the anchor is monotonic: `fresh` ascends in rank, so "the
+     * first kept row with rank > r" only moves down the list as r grows,
+     * and a kept row skipped for one fresh id is skipped for every later
+     * one. Nothing is revisited.
      */
     const merged: string[] = [];
     let ki = 0;
@@ -573,28 +454,14 @@ export function OhboxView({
   // Resurfaced takes no promote set: that group is the worker's pin, not a reading order, and a
   // `u` on a resurfaced row leaves it exactly where the pin put it.
   /**
-   * THE PIN CLAIMS A ROW OUT OF THE SESSION ORDERS — the display half of the selector's dedup.
-   *
-   * `ohboxView` already files a resurfaced row in the pinned group and holds it out of the other
-   * two, so the props this view receives never show one message twice. The session orders can:
-   * `reconcile`'s keep clause holds an id as long as `byId` — built over ALL THREE groups — still
-   * knows it, and `dropped` releases only the read-into-"Earlier" slide. So a "Resurface now" on a
-   * row sitting in New put its id into `resurfacedOrder` while `newOrder` went on holding it, and
-   * the message rendered TWICE — pinned at the top and again in its old slot — until a reload
-   * emptied the session orders. The settled state was always right; the optimistic window lied.
-   *
-   * The rule that ends it: each upper order is pruned to agree with the SELECTOR about which
-   * section owns the id. `newOrder` never holds a pinned id — the pin is instant, in both
-   * directions of the optimistic window. `resurfacedOrder` holds an id the pin claims OR one the
-   * selector has re-filed under "Earlier": that second clause is not a leak, it is the slide's
-   * lease — reading a pinned row clears the pin and files it below in one gesture, and the slide
-   * effect (keyed on `earlierIds`, right below) needs the order to keep the row's slot for
-   * `SETTLE_MS` before `dismissed` releases it, exactly as it does for a read row leaving New.
-   * An id in neither set — a pin rolled back on an unread row — is released to New immediately,
-   * where `reconcile` re-admits it, so a rollback re-files the row instead of leaving it pinned
-   * to nothing or drawn twice. Pruning the ORDERS rather than filtering the display lists keeps
-   * `upper` (which holds rows out of "Earlier") honest for the same reason. What is lost is only
-   * the row's old position in New across an unpin, which no reload preserves either.
+   * The pin claims a row out of the session orders — the display half of the selector's dedup. The selector
+   * never shows one message twice; the session orders could: a "Resurface now" on a row sitting in New put
+   * its id into `resurfacedOrder` while `newOrder` kept holding it, and the message rendered twice until a
+   * reload. Each upper order is pruned to agree with the SELECTOR about which section owns the id:
+   * `newOrder` never holds a pinned id; `resurfacedOrder` holds a pinned id OR one re-filed under "Earlier"
+   * — the slide's lease, kept for `SETTLE_MS`. An id in neither (a rolled-back pin on an unread row) is
+   * released to New immediately. Pruning the ORDERS, not the display lists, keeps `upper` honest too; what
+   * is lost is only the row's old position across an unpin.
    */
   const pinnedIds = new Set(resurfaced.map((m) => m.id));
   resurfacedOrder.current = reconcile(resurfacedOrder.current, resurfaced)
@@ -614,19 +481,14 @@ export function OhboxView({
   const displayPrev = previouslySeen.filter((m) => !upper.has(m.id));
 
   /**
-   * ═══ ONE ROW PER CONVERSATION, PER SECTION ═══════════════════════════════════════════════
-   *
-   * Five unread replies in one thread were five rows in "New for you" — the list rendered one
-   * row per unread message by design, and only the demo fixtures ever populated `threadCount`.
-   * `groupSection` (see `ohbox-groups.ts` for the rules) folds each section's DISPLAY list —
-   * after session placement, so a fold never fights the session order — into one row per
-   * `threadId`. New and Earlier fold independently: a thread with unreads here and history
-   * there shows one row in each. Resurfaced rows stay per-message (each pin is its own "you
-   * asked to see this again"), and the server-paged Older tail is not this client's to fold.
-   *
-   * MESSAGES REMAIN THE UNIT OF EVERYTHING BUT THE ROWS. `all` below still lists messages:
-   * the meta count, mark-all-read, the read-state machinery and the pick set all keep their
-   * message semantics — a grouped row is a rendering and a keyboard stop, not a new entity.
+   * One row per conversation, per section. Five unread replies in one thread were five rows in
+   * "New for you". `groupSection` (`ohbox-groups.ts`) folds each section's DISPLAY list — after
+   * session placement, so a fold never fights the session order — into one row per `threadId`.
+   * New and Earlier fold independently; resurfaced rows stay per-message (each pin is its own
+   * "you asked to see this again"); the server-paged Older tail is not this client's to fold.
+   * Messages remain the unit of everything but the rows: the meta count, mark-all-read,
+   * read-state and the pick set keep message semantics — a grouped row is a rendering and a
+   * keyboard stop, not a new entity.
    */
   const groupedNew = groupSection(displayNew);
   const groupedPrev = groupSection(displayPrev);
@@ -647,17 +509,14 @@ export function OhboxView({
   const hasOwnSent = displayPrev.some(isOwnSent);
 
   /**
-   * THE LIST IS A WINDOW over `[New for you, Earlier]`. The Ohbox is a working set, but a
-   * standalone desktop client's mirror is the whole mailbox, and grouped `.map(row)` mounted
-   * every accepted row of it — the unbounded cost History was windowed for. The two groups keep
-   * their own `role="listbox"` containers; each renders only its share of the mounted window,
-   * with reserved height above and below. The `Older` tail below is bounded (server pages) and
-   * stays whole. The Ohbox writes no `\Seen` on scroll (its read-state is the dwell), so unlike
-   * Reads/Receipts the window needs no observer re-scan. The split reader is untouched: it reads
-   * `selected` from `all` by id, so a pick survives its row scrolling out of the window.
-   *
-   * RESURFACED ROWS ARE NOT WINDOWED — they are a small, pinned set at the very top, rendered
-   * whole above the window's own top padding. Only New for you and Earlier are windowed.
+   * The list is a window over `[New for you, Earlier]`: a mirror window still holds thousands
+   * of rows, and grouped `.map(row)` mounted every accepted row — the unbounded cost
+   * History was windowed for. The two groups keep their own `role="listbox"` containers, each
+   * rendering its share of the window with reserved height above and below; the Older tail is
+   * server-paged and stays whole. The Ohbox writes no `\Seen` on scroll (read-state is the
+   * dwell), so no observer re-scan is needed; the split reader reads `selected` from `all` by
+   * id, so a pick survives its row scrolling out. Resurfaced rows are not windowed — a small
+   * pinned set rendered whole at the top.
    */
   const listScrollerRef = useRef<HTMLDivElement>(null);
   // The window counts ROWS — grouped conversations — because rows are what get mounted.
@@ -679,20 +538,13 @@ export function OhboxView({
   const selected = all.find((m) => m.id === selectedId) ?? null;
 
   /**
-   * REVEAL A SELECTION THE WINDOW HAS NOT MOUNTED — the search jump's landing.
-   *
-   * `openMessage` sets this pile's cursor and navigates here in one gesture, but the row it
-   * named only EXISTS if the window mounted it, and the window mounts the top of the list.
-   * A hit on anything deeper arrived at a list resting at its top: no row, no flash (the
-   * locate effect polls a selector against rows that were never in the DOM), and nothing on
-   * screen connecting the click to the arrival. Scrolling the SCROLLER is the fix the window
-   * is built for — the slice derives from `scrollTop`, so putting the row's offset in view
-   * mounts it, and the shell's locate pass then finds, centers and flashes it.
-   *
-   * Keyed on the SELECTION, and a no-op whenever the row is already mounted — an ordinary
-   * click (which can only land on a mounted row) changes nothing, and this never runs on
-   * scroll, so it cannot fight the reader for the viewport. Resurfaced rows render whole
-   * above the window and need no revealing; their negative `winIdx` returns early.
+   * Reveal a selection the window has not mounted — the search jump's landing. `openMessage`
+   * sets the cursor and navigates, but the row only EXISTS if the window mounted it, and the
+   * window mounts the top: a hit on anything deeper arrived at a resting list — no row, no
+   * flash, nothing connecting click to arrival. Scrolling the scroller is the fix the window is
+   * built for: the slice derives from `scrollTop`, so putting the row's offset in view mounts
+   * it and the locate pass flashes it. Keyed on the selection, a no-op when already mounted,
+   * never runs on scroll; resurfaced rows render whole and return early.
    */
   useEffect(() => {
     if (!selectedId) return;
@@ -827,15 +679,13 @@ export function OhboxView({
   /* ── read-state ────────────────────────────────────────────────────────── */
 
   /**
-   * THE LIST, READABLE FROM INSIDE A TIMER.
-   *
-   * The dwell below fires two seconds after the render that armed it and has to judge the
-   * list as it is THEN — still present, still unread — without putting `all` in its
-   * dependency array (see the dwell for why that would be fatal). Assigned in render rather
-   * than refreshed by an effect: an effect would make the dwell's correctness depend on
-   * effect DECLARATION ORDER, an invariant nothing states and a reorder would silently
-   * break, with this bug as the failure mode. Same shape as `StreamShell` and
-   * `useSeenOnScroll` in `@ohmail/ui`.
+   * The list, readable from inside a timer. The dwell fires two seconds
+   * after the render that armed it and must judge the list as it is THEN —
+   * still present, still unread — without putting `all` in its dependency
+   * array (see the dwell). Assigned in render, not refreshed by an effect:
+   * an effect would make the dwell's correctness depend on effect
+   * declaration order, an invariant nothing states. Same shape as
+   * `StreamShell` and `useSeenOnScroll` in `@ohmail/ui`.
    */
   const allRef = useRef(all);
   allRef.current = all;
@@ -863,84 +713,37 @@ export function OhboxView({
   earlierRef.current = earlierIds;
 
   /**
-   * THE MESSAGE `u` JUST PUT BACK TO UNREAD, and why nothing here may undo it.
-   *
-   * Pressing `u` on the row under the cursor marks it unread — and in the split pane the cursor
-   * is still on it, so the dwell below arms and the commit further down would mark it read again.
-   * The mutation fires, the server agrees, and the user's explicit act is reverted by a heuristic
-   * while they watch. That is not subtle; it makes `u` useless in the one view whose keyboard map
-   * advertises it, and the `?` overlay would be documenting a key that does not do what it says.
-   *
-   * An explicit "unread" therefore pins the message until the cursor MOVES. A ref rather than
-   * state: it must be readable in the same commit by code that runs outside a render, and it
-   * should not cause a render of its own.
-   *
-   * KEYED TO `dwellOn`, NOT to `selected`, so that the pin and the machinery it blocks agree on
-   * what "the cursor" means — `selected` also moves when the list re-partitions underneath the
-   * user, which is not a cursor move and must not release a pin. The release itself is an effect
-   * further down, where `dwellOn` exists; the ref is declared HERE because the commit below reads
-   * it and a forward reference into a later `const` is exactly the kind of ordering dependency
-   * this file has already been bitten by once.
+   * The message `u` just put back to unread, and why nothing here may undo it: in the split
+   * pane the cursor is still on the row, so the dwell arms and the departure commit would mark
+   * it read again — the user's explicit act reverted by a heuristic while they watch. An
+   * explicit unread pins the message until the cursor MOVES. A ref, not state: readable in the
+   * same commit by code outside a render. Keyed to `dwellOn`, not `selected` — `selected` also
+   * moves when the list re-partitions, which is not a cursor move and must not release a pin.
+   * Declared here because the commit below reads it (no forward reference into a later const).
    */
   const pinnedUnread = useRef<string | null>(null);
 
   /**
-   * ═══ READING IS COMMITTED ON THE WAY OUT, NOT ON THE WAY IN ═══════════════════════════════
-   *
-   * The message a reader is looking at RIGHT NOW keeps its dot and keeps its place in "New for
-   * you". That is not a delay for its own sake — it is what makes the list stable to read from.
-   * Committing on arrival re-partitions the list under the cursor at the moment attention is on
-   * it: the row you just opened jumps from one group to the other, everything below it slides up,
-   * and the "New" count drops while you are still reading the thing it was counting.
-   *
-   * So arrival ARMS and departure COMMITS. This ref holds the one message that has been read but
-   * not yet left — written by the dwell when its two seconds elapse, and by an explicit open —
-   * and it is spent by {@link commitPendingRead} at each of the four ways out.
-   *
-   * IT CARRIES THE WHOLE OF THE STABILITY ARGUMENT NOW. A read used to be doubly deferred: nothing
-   * was written until the reader left, and the row then held its slot anyway until a reload. The
-   * second half is gone — a read row slides to "Earlier" at once (see the session-placement block
-   * above) — so this is the only thing standing between the reader and a list that re-sorts under
-   * their eyes. Which is enough, and is where the protection belonged all along: the list moves at
-   * the moment attention has already left the message, never while it is being looked at.
-   *
-   * A ref rather than state, for the same reason `pinnedUnread` is one: the commit paths run
-   * outside React's render (a timer, a document event, an unmount cleanup) and must see the value
-   * as it is at that instant.
-   *
-   * At most ONE message is ever owed. Reading is a cursor, not a set: arriving somewhere new is
-   * itself a departure from the last place, so the previous debt is settled before a new one is
-   * taken on and this can never become a queue that a reload would drop.
+   * Reading is committed on the way OUT, not on the way in. The message being looked at keeps its dot and its
+   * place: committing on arrival re-partitions the list under the cursor — the opened row jumps groups,
+   * everything below slides up, the count drops mid-read. So arrival ARMS and departure COMMITS: this ref holds
+   * the one message read but not yet left (written by the dwell and by an explicit open), spent by {@link
+   * commitPendingRead} at each of the four ways out. It carries the whole stability argument now that a read
+   * row slides to "Earlier" at once. A ref, not state: the commit paths run outside render (a timer, a document
+   * event, unmount cleanup). At most ONE message is ever owed — arriving somewhere new settles the previous
+   * debt first, so this can never become a queue a reload would drop.
    */
   const pendingRead = useRef<string | null>(null);
 
   /**
-   * ═══ AN ARMED READ PRESENTS AS READ ══════════════════════════════════════════════════════
-   *
-   * The renderable twin of {@link pendingRead}, and the fix for the two surfaces that leaked the
-   * deferral (owner-reported). Committing on departure is invisible by design — except that the
-   * open message's read-state verb went on offering "Mark read" (deriving from a store flag the
-   * departure had not written yet), and its row sat at full unread weight under "New for you" for
-   * as long as it was being read. Both surfaces now derive from the ARMED state: the moment a
-   * read is armed — an explicit open, or the split pane's two-second dwell — the row loses its
-   * dot and its weight, and the verb flips to "Mark unread", the only honest action on a message
-   * that is being read.
-   *
-   * WHAT DOES NOT MOVE WITH IT, deliberately:
-   *   · THE WRITE. Departure still commits, on the one path every read-state write takes. This
-   *     is presentation of a fact this view already holds, never a second writer.
-   *   · THE PLACE. The row keeps its slot under "New for you" until departure — the session
-   *     lease is untouched, and the arming render can restyle a row but never moves one.
-   *   · THE COUNTS. The header's "N unread" and mark-all-read keep counting TRULY unread mail
-   *     (`unreadIds`), so they can sit one above the dots on screen while a message is open.
-   *     A count that followed the presentation would claim a write that has not happened — and
-   *     the commit's own re-judgement reads true state through `allRef`, which is what keeps
-   *     the departure write firing at all.
-   *
-   * Arming used to be free of renders on purpose; the render is now the point — it is what draws
-   * the unbold. One writer for the pair: {@link armRead} moves the ref and the state together
-   * (plus the upward report — see the `onReadArmed` prop), so the two can never disagree, and
-   * `commitPendingRead` stays callable from cleanups because `armRead` is memoised on nothing.
+   * An armed read presents as read — the renderable twin of {@link pendingRead}. Committing on departure is
+   * invisible by design, except the open message's verb kept offering "Mark read" and its row sat at full
+   * unread weight while being read (owner-reported). Both now derive from the ARMED state: on arm the row loses
+   * its dot and the verb flips to "Mark unread". What does not move: the WRITE (departure still commits, one
+   * path), the PLACE (the row keeps its slot until departure), the COUNTS (the header and mark-all-read count
+   * truly unread mail via `unreadIds` — a count following the presentation would claim an unhappened write, and
+   * the commit re-judges through `allRef`). One writer for the pair: {@link armRead} moves ref and state
+   * together, and `commitPendingRead` stays callable from cleanups.
    */
   const [armedRead, setArmedRead] = useState<string | null>(null);
   const onReadArmedRef = useRef(onReadArmed);
@@ -952,24 +755,14 @@ export function OhboxView({
   }, []);
 
   /**
-   * SPEND THE DEBT — and re-judge it at the moment of spending, never at the moment of arming.
-   *
-   * The world moves between arming and leaving: the message can be filed or moved out of the
-   * Ohbox, another device or a `⇧I` can already have marked it read, or `u` can have pinned it
-   * unread on purpose. All three are checked HERE, against the list as it is now, because a check
-   * performed when the debt was taken on would be answering a question about a mailbox that no
-   * longer exists.
-   *
-   * It clears the ref FIRST and unconditionally. Two of the four departure triggers can fire in
-   * the same tick (closing the reader on a phone unmounts nothing, but leaving the view while a
-   * sheet is up closes both), and a debt spent twice is two `mark_seen` dispatches for one
-   * reading — one request too many, and on a slow network a visible flicker as the second answer
-   * lands. Idempotent by construction rather than by the writer being asked to de-duplicate.
-   *
-   * Reads ONLY refs, so it is safe to call from a cleanup with an empty dependency array and from
-   * a `pagehide` listener registered once. That is deliberate: a callback with dependencies would
-   * make the unmount commit depend on the last render having the right closure, which is exactly
-   * the class of bug the dwell's own dependency array was rewritten to remove.
+   * Spend the debt — and re-judge it at the moment of spending, never at arming: the message
+   * can be filed away, marked read by another device, or pinned unread by `u` between the two,
+   * so all three are checked here against the list as it is now. It clears the ref FIRST and
+   * unconditionally: two departure triggers can fire in one tick, and a debt spent twice is two
+   * `mark_seen` dispatches for one reading — idempotent by construction. Reads only refs, so it
+   * is safe from a cleanup with an empty dependency array and a once-registered `pagehide`
+   * listener — a closure-dependent commit is the bug class the dwell's own dependency array was
+   * rewritten to remove.
    */
   const commitPendingRead = useCallback(() => {
     const id = pendingRead.current;
@@ -988,25 +781,14 @@ export function OhboxView({
   }, [armRead]);
 
   /**
-   * THE CURSOR THE USER PUT HERE — and the only value in this file that can arm the dwell.
-   *
-   * `selectedId` cannot answer this question, and that is what shipped the runaway. It used to
-   * arrive already resolved through TWO implicit fallbacks — `AppShell`'s `?? allOhbox[0]` and
-   * this view's own — so before anything had been picked it meant "the newest unread message",
-   * and it silently RE-RESOLVED onto a different message every time the list re-partitioned.
-   * Since the list is partitioned BY `unread` (`ohboxView`), marking one message read is itself
-   * a re-partition, so a dwell keyed on `selected` fed itself: commit → the row leaves "New for
-   * you" → the fallback lands on the next unread message → the effect sees a selection it never
-   * asked for and arms again. Two seconds per message, straight through the Ohbox, onto a real
-   * IMAP server.
-   *
-   * BOTH FALLBACKS ARE GONE NOW, so `selected` can no longer re-resolve onto anything — and
-   * this state is still the value the dwell keys on rather than `selected`. The reason is
-   * unchanged and is not the fallback: `selected` also moves when a message leaves the pile
-   * underneath the user, which is not a cursor move and must not arm a timer. The guarantee is
-   * still structural rather than a condition in the effect body: `dwellOn` is written in
-   * exactly two places — `selectByUser`, reachable only from j, k and a click, and `open`,
-   * which clears it. Nothing derived from the list can produce it.
+   * The cursor the USER put here — the only value that can arm the dwell. `selectedId` cannot answer
+   * this: it used to arrive through two implicit fallbacks meaning "the newest unread message",
+   * silently re-resolving on every re-partition — and since the list is partitioned BY `unread`, a
+   * commit fed the next arm: two seconds per message, straight through the Ohbox, onto a real IMAP
+   * server. Both fallbacks are gone, and the dwell still keys on this rather than `selected`:
+   * `selected` also moves when a message leaves the pile, which is not a cursor move. Structural
+   * guarantee: `dwellOn` is written in exactly two places — `selectByUser` (j, k, click) and `open`
+   * (clears it). Nothing derived from the list can produce it.
    */
   const [dwellOn, setDwellOn] = useState<string | null>(null);
 
@@ -1026,31 +808,13 @@ export function OhboxView({
 
   /**
    * Opening a message IS reading it — Enter, a second click on the selected row, mobile tap.
-   *
-   * `onEnterReader` is an unconditional statement of INTENT ("the user asked to open this
-   * message"), not an instruction to raise a sheet. The shell answers it with the
-   * reader only where the reading column is hidden; at a split width the column beside this
-   * list IS the open, and a sheet over it was the same message rendered twice.
-   *
-   * It also PINS the selection by calling `onSelect`, and that is not housekeeping. It was
-   * added because a click on the top row of a fresh Ohbox took the "already selected" branch
-   * below — the implicit fallback had made it `selected` with nobody choosing it — so the open
-   * committed while `ohboxSel` stayed null; the moment the commit moved that row into
-   * "Previously seen" the fallback re-resolved to the next unread message and the reader sheet,
-   * which renders `selectedOhbox`, swapped to a message the user had not opened. That entry
-   * point no longer exists: with both fallbacks deleted the first click on a fresh Ohbox is a
-   * plain selection and `open` is only ever reached with a selection already made. The call
-   * stays because it is what makes `open` a complete statement on its own — the mobile tap and
-   * a `↵` arriving from anywhere else both need the cursor to end up where the reader is.
-   *
-   * And an open SUPERSEDES a dwell: reading is established the moment the message is opened, so
-   * the timer armed by whichever click selected this row has nothing left to decide.
-   *
-   * WHAT IT DOES NOT DO IS DISPATCH. Opening ARMS the read; leaving commits it. An open that
-   * marked the message read on the spot would re-partition the list under the reader at the exact
-   * moment they turned their attention to the message — the row leaving "New for you" while it is
-   * the thing being looked at. So this records the debt and the four departure paths spend it.
-   * The message keeps its dot and its place for as long as it is the one on screen.
+   * `onEnterReader` is a statement of intent, not an instruction to raise a sheet: the shell answers with
+   * the reader only where the reading column is hidden — at a split width the column IS the open. It also
+   * pins the selection via `onSelect`, which is what makes `open` a complete statement on its own: the
+   * mobile tap and a `↵` from anywhere both need the cursor where the reader is. An open supersedes a dwell
+   * — reading is established, the timer has nothing to decide. It does NOT dispatch: opening arms the read,
+   * leaving commits it — a write on open would re-partition the list at the exact moment attention turned
+   * to the message. The row keeps its dot and place while on screen.
    */
   const open = useCallback((m: EngineMessage) => {
     setDwellOn(null);
@@ -1063,17 +827,14 @@ export function OhboxView({
   }, [onSelect, onEnterReader, commitPendingRead, armRead]);
 
   /**
-   * STEPPING INTO THE PANE WITH → IS ENGAGEMENT — `open` minus the reader raise.
-   *
-   * The ratified read-marking guard has two triggers: dwelling on one message, and explicit
-   * engagement with it. Arrowing right into the reading column is the second one, so it ARMS
-   * the read exactly as `open` does — the debt is recorded through the same `armRead`, spent
-   * by the same four departures, and written with the same `"glance"` label (the pane focus
-   * is not "dealing with the row", so a resurface pin must survive it). No sheet is raised:
-   * at a split width the column beside the list already shows this message, and → is a focus
-   * move, not an open. At widths where the column is hidden the zone hook never calls this —
-   * it calls `open` (`onHiddenEnter`), because there "into the message" has to mean the
-   * deliberate open.
+   * Stepping into the pane with → is engagement — `open` minus the reader
+   * raise. The read-marking guard has two triggers: dwelling, and explicit
+   * engagement; arrowing into the reading column is the second, so it ARMS
+   * the read through the same `armRead`, spent by the same departures,
+   * written with the same `"glance"` label (pane focus is not "dealing with
+   * the row", so a resurface pin survives it). No sheet: at a split width
+   * the column already shows this message and → is a focus move. Where the
+   * column is hidden the zone hook calls `open` instead (`onHiddenEnter`).
    */
   const engage = useCallback((m: EngineMessage) => {
     setDwellOn(null);
@@ -1084,18 +845,13 @@ export function OhboxView({
   }, [commitPendingRead, armRead]);
 
   /**
-   * THE SELECTION TAKEN AWAY FROM OUTSIDE IS A DEPARTURE — the Back button's half of the
-   * commit-on-leave rule. The URL carries the open message now, so Back on `#/ohbox/m/A`
-   * clears the SHELL's selection while this view stays mounted — a way of
-   * leaving message A that none of the four departures below can see. Without this, the dwell
-   * timer armed on A kept running with A no longer selected (Back inside the two seconds:
-   * A armed OFF-screen and a later cursor move wrote it read), and a debt already armed was
-   * spent only at the NEXT departure instead of at this one.
-   *
-   * So: the cursor prop going null while this view holds a dwell or a debt cancels the dwell
-   * (leaving before the two seconds elapsed is not reading) and COMMITS the debt (leaving after
-   * they elapsed is exactly the departure the commit waits for) — the same two halves
-   * `selectByUser` applies when the cursor moves to another row.
+   * The selection taken away from outside is a departure — the Back button's half of
+   * commit-on-leave. The URL carries the open message, so Back on `#/ohbox/m/A` clears the
+   * SHELL's selection while this view stays mounted — a way of leaving A none of the four
+   * departures sees. Without this, a dwell armed on A kept running unselected, and an armed
+   * debt was spent only at the NEXT departure. So the cursor prop going null cancels the dwell
+   * (leaving inside two seconds is not reading) and COMMITS the debt (leaving after them is
+   * exactly the departure the commit waits for) — the same two halves `selectByUser` applies.
    */
   const prevSelectedId = useRef(selectedId);
   useEffect(() => {
@@ -1125,45 +881,14 @@ export function OhboxView({
   }, [dwellOn]);
 
   /**
-   * ═══ TWO DIRECTIONS, NOT ONE TOGGLE ═══════════════════════════════════════════════════
-   *
-   * This was a single `toggleUnread` on a single key. It is now two idempotent commands, and
-   * the reason is what a toggle does to a SET: "invert eleven messages" turns a mixed
-   * selection into a different mixed selection, so pressing the key twice is not a no-op and
-   * pressing it once has an outcome nobody can predict without counting first. A direction
-   * always produces the same state from any state, which is why Gmail binds two keys for this
-   * and why the bulk vocabulary (`BulkAction`) has always had `read` and `unread` as separate
-   * members rather than one flip. The single-message case is the one-element case of that
-   * rule, and it should not disagree with it.
-   *
-   * ── THE PIN IS THE WHOLE REASON THESE ARE NOT `onMarkSeen` AT THE CALL SITE ────────────
-   *
-   * Marking unread inside the dwell window arms nothing new, but the debt that was already
-   * recorded would be spent on the way out and mark it read again — the message would silently
-   * un-unread itself one keypress later. So `u` does BOTH halves: it sets the pin the commit
-   * checks, and it tears up the debt outright.
-   *
-   * TWO MECHANISMS FOR ONE OUTCOME, AND BOTH ARE LOAD-BEARING. Cancelling the debt is what makes
-   * `u` survive the very next departure; the pin is what makes it survive a departure that
-   * happens some other way — a second open, a re-entry into the same row. Neither alone covers
-   * both, and an explicit unread that a heuristic can undo is not an explicit unread.
-   *
-   * The debt is cancelled only when it is THIS message's. `u` acts on the row under the cursor;
-   * if some other message is still owed a commit, that reading really did happen and the pin
-   * here says nothing about it.
-   *
-   * ── AND IT MOVES THE ROW BACK ABOVE THE "EARLIER" LINE ─────────────────────────────────
-   *
-   * A THIRD mechanism, and it is about placement rather than about the write: the two above keep
-   * the state from being undone, and neither of them puts the row anywhere. `promote` does (see
-   * `promoted`), because "New for you" is defined by unread-in-Ohbox and a row this key has just
-   * made unread that stayed under "Earlier" is the list contradicting its own section heading.
-   *
-   * `promote` ALSO TEARS UP A SLIDE IN FLIGHT, which is the case this key meets most often now
-   * that reading moves rows: read a message, change your mind within 280 ms, and the row is
-   * mid-descent. The two mechanisms above would leave the read state alone and the timer would
-   * still file the row under "Earlier" a quarter-second later — the reader's last word undone by
-   * a clock they cannot see. See `promote`.
+   * Two directions, not one toggle: "invert eleven messages" turns a mixed selection into a different mixed selection — a
+   * direction produces the same state from any state, which is why the bulk vocabulary has `read` and `unread` as separate
+   * members; the single-message case must not disagree. The pin is why these are not `onMarkSeen` at the call site: marking
+   * unread inside the dwell window leaves an already-recorded debt that departure would spend — the message un-unreading
+   * itself one keypress later. So `u` sets the pin AND tears up the debt (its own message's only); both are load-bearing — the
+   * debt covers the next departure, the pin covers re-entry. And it calls `promote`, the third mechanism, about placement: a
+   * row just made unread must move back above the "Earlier" line, and `promote` also cancels a slide in flight — read, change
+   * your mind within 280 ms, and the timer would otherwise file the row anyway.
    */
   const markUnread = useCallback((m: EngineMessage) => {
     pinnedUnread.current = m.id;
@@ -1183,45 +908,14 @@ export function OhboxView({
   }, [onMarkSeen]);
 
   /**
-   * THE 2 s DWELL, and why j/k alone must commit nothing.
-   *
-   * In the split pane the reading column already shows whatever the cursor is on, so a strict
-   * "only an explicit open counts" rule would leave a message the user has plainly read sitting
-   * bold. But `jjjjj` down a list is navigation, not reading, and marking every row it passes
-   * would empty the Ohbox by accident — the one destructive-feeling thing a keyboard sweep can
-   * do. A dwell separates the two: the timer is armed on selection and CANCELLED by the cleanup
-   * on every change, so a sweep of ten rows arms and cancels ten times and commits nothing,
-   * while stopping on one for two seconds commits that one.
-   *
-   * IT ARMS ON `dwellOn` AND ON NOTHING ELSE, which is the whole of the runaway fix. The
-   * dependency array is the guarantee, not a condition in the body: a list that re-partitions
-   * — which is exactly what a read commit does to a list grouped by `unread` — cannot change
-   * `dwellOn`, so the effect does not re-run and a commit can never arm the next one. The
-   * previous version depended on `selected`, which the implicit fallback re-pointed at the
-   * next unread message after every commit, and the Ohbox marked itself read at one message
-   * per two seconds, on the user's own IMAP server.
-   *
-   * `all` IS DELIBERATELY NOT A DEPENDENCY. It changes on every sync delta, and a dependency
-   * on it would restart the two seconds each time — on a live mailbox the dwell would never
-   * reach the end of its own clock. The current list is read through `allRef` instead, at the
-   * two moments that need it.
-   *
-   * THE TARGET IS FROZEN AT ARM TIME. It records the id the user was standing on, never
-   * "whatever is selected now", so a list that reorders mid-dwell cannot redirect the write
-   * onto a message nobody looked at.
-   *
-   * ── AND IT DISPATCHES NOTHING. IT RECORDS A DEBT ──────────────────────────────────────
-   *
-   * The timer used to call the writer directly, which meant two seconds of stillness re-sorted
-   * the list under the reader's eyes: the row moved out of "New for you" while it was the one
-   * being read, the count dropped, and everything below it slid up. The dwell's judgement is
-   * still exactly the same — this is the moment the product decides reading has happened — but
-   * the CONSEQUENCE is deferred to the moment the reader leaves. So the fire-time re-read moves
-   * with it, into {@link commitPendingRead}, where it can answer the same three questions
-   * (still here, still unread, not pinned) against a list that is one departure newer.
-   *
-   * Split pane only. On mobile there is no reading column beside the list, so a selection shows
-   * nothing and dwelling on it means nothing; there, only `open` counts.
+   * The 2 s dwell, and why j/k alone must commit nothing: the split pane's reading column shows
+   * whatever the cursor is on, but `jjjjj` is navigation, and marking every passed row would empty
+   * the Ohbox by accident. The timer arms on selection, the cleanup cancels on every change;
+   * stopping for two seconds commits that one. It arms on `dwellOn` and NOTHING else — the
+   * dependency array is the guarantee: a re-partition cannot change `dwellOn`, so a commit can
+   * never arm the next one. `all` is deliberately not a dependency (read through `allRef`); the
+   * target is frozen at arm time; and it dispatches nothing — it records a debt, spent in {@link
+   * commitPendingRead}. Split pane only: on mobile only `open` counts.
    */
   useEffect(() => {
     if (dwellOn == null) return;
@@ -1249,34 +943,25 @@ export function OhboxView({
    */
 
   /**
-   * #2 — THE VIEW GOES AWAY. Switching to Reads, Receipts, the Screener or Settings unmounts this
-   * component (the shell renders exactly one view), and leaving the Ohbox is unambiguously
-   * leaving the message that was open in it. Without this, walking away by clicking a rail item
-   * would be the one exit that silently forgot the reading.
-   *
-   * THE EFFECT BODY IS EMPTY AND THE CLEANUP IS THE WHOLE OF IT, which only works because
-   * {@link commitPendingRead} has a stable identity — it reads nothing but refs and is memoised on
-   * nothing. A cleanup re-runs whenever a dependency changes, so a commit function that was
-   * rebuilt each render would fire this on ordinary re-renders and mark mail read mid-session,
-   * with no departure anywhere in sight.
+   * #2 — the view goes away. Switching views unmounts this component, and
+   * leaving the Ohbox is unambiguously leaving the message open in it —
+   * without this, walking away via the rail would be the one exit that
+   * silently forgot the reading. The effect body is empty and the cleanup
+   * is the whole of it, which only works because {@link commitPendingRead}
+   * has a stable identity (reads only refs, memoised on nothing): a commit
+   * function rebuilt each render would fire this on ordinary re-renders and
+   * mark mail read mid-session.
    */
   useEffect(() => commitPendingRead, [commitPendingRead]);
 
   /**
-   * #3 — THE READER SHEET CLOSES, AND ONLY WHERE THE SHEET WAS THE READING.
-   *
-   * Below 900px there is no reading column: the sheet IS how a message is read, so dismissing it
-   * is leaving the message, and on a phone it is usually the ONLY departure that happens — a
-   * reader taps a message, reads it, taps back, and never moves the cursor at all.
-   *
-   * At a split width it is not a departure and must not be treated as one. The column beside the
-   * list goes on showing the same message after the sheet closes, so committing there would mark
-   * mail read while the reader is still looking at it — the very thing this whole mechanism was
-   * built to stop, arriving through the one path that looks like an exit and is not.
-   *
-   * The width question is asked with the SAME query the dwell asks, at the moment the sheet
-   * closes rather than at the moment it opened: a device rotated or a window resized mid-read
-   * should be judged by where the reading actually ended.
+   * #3 — the reader sheet closes, and only where the sheet WAS the reading. Below 900px there
+   * is no reading column: dismissing the sheet is leaving the message, and on a phone it is
+   * usually the only departure. At a split width it is not one: the column goes on showing the
+   * same message, so committing there would mark mail read while the reader is looking at it —
+   * the very thing this mechanism stops, arriving through the one path that looks like an exit.
+   * The width question uses the same query the dwell asks, at the moment the sheet closes, not
+   * when it opened: a rotated device is judged by where the reading actually ended.
    */
   const prevReaderId = useRef<string | null>(readerId);
   useEffect(() => {
@@ -1289,20 +974,13 @@ export function OhboxView({
   }, [readerId, commitPendingRead]);
 
   /**
-   * #4 — THE TAB GOES AWAY. `pagehide` is the last event a page reliably gets on a close, a
-   * navigation away, or being frozen into the back/forward cache, and it fires in cases
-   * `beforeunload` does not — notably on mobile, which is where a reader is most likely to leave
-   * without ever moving the cursor.
-   *
-   * IT DISPATCHES THE ORDINARY MUTATION, not a beacon. A side-channel request would leave the
-   * client's own idempotency key and optimistic overlay behind, so the write would arrive by a
-   * route no other read-state write takes and could not be de-duplicated against the one the user
-   * might make from another device a second later. One writer, one path.
-   *
-   * The cost is stated rather than hidden: a tab killed hard enough that no listener runs loses
-   * the pending commit. That is the direction to fail in — the message stays unread and is
-   * presented as new next time, which is a second chance to read it rather than mail silently
-   * marked read on the strength of a session nobody finished.
+   * #4 — the tab goes away. `pagehide` is the last event a page reliably gets on close,
+   * navigation, or bfcache-freeze, and it fires where `beforeunload` does not — notably mobile,
+   * where a reader leaves without moving the cursor. It dispatches the ORDINARY mutation, not a
+   * beacon: a side channel would leave the idempotency key and overlay behind, a write no other
+   * read-state write takes and nothing can de-duplicate. The cost is stated: a tab killed hard
+   * enough loses the pending commit — the right direction to fail: the message stays unread, a
+   * second chance to read it rather than mail silently marked read.
    */
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1312,25 +990,14 @@ export function OhboxView({
   }, [commitPendingRead]);
 
   /**
-   * ═══ THE SLIDE: A ROW LEAVES THE UPPER GROUPS BY MOVING, NOT BY DISAPPEARING ══════════
-   *
-   * Start one row's descent to "Earlier". It is the only writer of `settling` and the only writer
-   * of `dismissed`, so there is exactly one answer in this file to "how does a row leave New for
-   * you", however it came to be read.
-   *
-   * TWO STEPS AND A GAP BETWEEN THEM, and the gap is the point. The class goes on first and the
-   * row keeps its slot for {@link SETTLE_MS}, which is what `row.css` transitions over; only then
-   * is the id dropped from the session order and the row redrawn under "Earlier". Dropping it in
-   * the same tick would be a teleport — the row would vanish from under the cursor and reappear
-   * somewhere below, and everything between the two positions would jump up a row with no motion
-   * to explain it.
-   *
-   * IT RE-JUDGES ITS OWN PREMISE WHEN IT LANDS, the way {@link commitPendingRead} does. 280 ms is
-   * long enough for the answer to change: `u` can put the message back to unread, another client
-   * can, the row can be filed out of the Ohbox altogether. So the completion asks `earlierRef`
-   * again — is "Earlier" still where this belongs? — and abandons the move if it is not, leaving
-   * the row exactly where the reader last saw it. `promote` cancels the timer outright for the
-   * explicit case; this covers the ones nothing in this view initiated.
+   * The slide: a row leaves the upper groups by MOVING, not disappearing. The only writer of `settling`
+   * and `dismissed`, so there is exactly one answer to "how does a row leave New for you". Two steps and
+   * a gap: the class goes on first and the row keeps its slot for {@link SETTLE_MS} (what `row.css`
+   * transitions over); only then is the id dropped and the row redrawn under "Earlier" — same-tick
+   * dropping is a teleport. It re-judges its premise when it lands ({@link commitPendingRead}'s shape):
+   * 280 ms is long enough for `u`, another client, or a filing to change the answer, so completion asks
+   * `earlierRef` again and abandons the move if "Earlier" is no longer where the row belongs; `promote`
+   * cancels the timer outright for the explicit case.
    */
   const slideOut = useCallback((id: string) => {
     if (slideTimers.current.has(id)) return;
@@ -1349,24 +1016,14 @@ export function OhboxView({
   }, []);
 
   /**
-   * ═══ WHAT STARTS A SLIDE: THE SELECTOR RE-FILING A ROW THIS VIEW IS STILL HOLDING UP ══
-   *
-   * The whole gesture keys on ONE observation, made against the session orders rather than against
-   * any particular act: an id these orders are holding in an upper group, which `ohboxView` now
-   * files under "Earlier". Reading a message here produces exactly that (the optimistic `mark_seen`
-   * overlay flips the row before any request lands), and so does a reply settling, and so does a
-   * `\Seen` adopted from Exchange, Mail.app or a phone — the worker writes it to the mirror and it
-   * arrives as the same delta. One mechanism, because they are one event with different causes; a
-   * per-cause hook would have been three places to forget the third one, which is precisely how
-   * external reads came to move nothing at all until a reload.
-   *
-   * KEYED ON `earlierIds` AND NOTHING ELSE. It is a memo over `previouslySeen`, so the effect
-   * re-runs on exactly the changes that can add work and never on the ones that cannot — a new
-   * unread arriving, a selection moving, a picked set changing. The session orders are read from
-   * their refs, which render has already reconciled by the time any effect runs.
-   *
-   * `slideOut` is idempotent on an id already in flight, so a re-render mid-slide re-observes the
-   * same row and does nothing to it.
+   * What starts a slide: the selector re-filing a row this view is still holding up. One
+   * observation against the session orders: an id held in an upper group that `ohboxView` now
+   * files under "Earlier". An in-app read (the optimistic overlay flips the row), a settled
+   * reply, and a `\Seen` adopted from another client all arrive as the same delta — one
+   * mechanism, because they are one event with different causes; per-cause hooks were how
+   * external reads came to move nothing until a reload. Keyed on `earlierIds` and nothing else
+   * — a memo over `previouslySeen`, so it re-runs exactly on changes that can add work.
+   * `slideOut` is idempotent on an id already in flight.
    */
   useEffect(() => {
     for (const id of resurfacedOrder.current) if (earlierIds.has(id)) slideOut(id);
@@ -1383,22 +1040,14 @@ export function OhboxView({
   }, []);
 
   /**
-   * ═══ A SETTLED REPLY MARKS THE MESSAGE IT ANSWERED READ ═══════════════════════════════
-   *
-   * Answering a message is being done with it, and the product says so by writing the read state —
-   * which is also what clears any resurfaced pin server-side (`MessageService.markSeen`), so a
-   * reply closes a resurface. The shell hands the settled reply down as {@link replyDone}, keyed on
-   * the settle instant so a value already acted on is ignored across later renders.
-   *
-   * THE MOVE IS NOT WRITTEN HERE ANY MORE. This used to run its own slide-then-dismiss, because it
-   * was the one deliberate mid-session move in a design where reads did not move rows at all. Reads
-   * move rows now, so a second copy of the gesture would be two mechanisms racing over one row —
-   * both setting `settling`, both scheduling a dismissal. The write is the whole of this effect;
-   * the slide follows from it through `slideOut`, exactly as it does for a message read by hand.
-   *
-   * It still acts only on a row CURRENTLY in the New session order: a reply to something already in
-   * "Earlier" is answering mail that has been read, and a late confirmation for a message the list
-   * no longer shows in New is a no-op.
+   * A settled reply marks the message it answered read. Answering is being done with it, and
+   * the write also clears any resurfaced pin server-side (`MessageService.markSeen`), so a
+   * reply closes a resurface. The shell hands the settled reply down as {@link replyDone},
+   * keyed on the settle instant so a value already acted on is ignored. The move is NOT written
+   * here any more: reads move rows now, and a second copy of the gesture would be two
+   * mechanisms racing over one row — the write is the whole of this effect, the slide follows
+   * through `slideOut`. It acts only on a row currently in the New session order: a reply to
+   * something in "Earlier" is answering read mail, a no-op.
    */
   const replyDoneStamp = useRef<string | null>(null);
   useEffect(() => {
@@ -1460,27 +1109,20 @@ export function OhboxView({
   };
 
   /**
-   * ⇧↓ / ⇧↑ — MOVE THE CURSOR AND DRAG THE SELECTION WITH IT.
-   *
-   * The keyboard twin of a shift-click, and it was simply missing: `x` picked one row at the
-   * cursor and ⇧-click built a range, so a range could be built with a mouse and not with the
-   * keys — on a product whose whole list is keyboard-first.
-   *
-   * ADDITIVE, NEVER SUBTRACTIVE, which is the one real decision here. Shrink-on-reverse (⇧↑
-   * un-picking what a preceding ⇧↓ picked) is what a text field does, and it needs a second
-   * piece of state beside the set — a live range with a direction — because the set alone
-   * cannot say which of its members came from THIS gesture. Worse, it would remove rows the
-   * person picked by other means: ⌘-click four rows, then ⇧↓ ⇧↑, and two of them are gone. So
-   * the range only ever adds, exactly as ⇧-click does, and the way to remove is the way you
-   * added — `x` or ⌘-click on the row, or Escape for all of it.
-   *
-   * WITH NO ANCHOR THE CURSOR'S OWN ROW BECOMES ONE, so the first ⇧↓ picks the row you are on
-   * and the row you land on — the pair the gesture visibly spans. Anything else would leave the
-   * origin row unpicked and the selection would not match the movement.
-   *
-   * KEY REPEAT IS ALLOWED here, unlike `⌫`: a held ⇧↓ walking a range down the list is the
-   * gesture, and each repeat adds one row to a set that is not yet acted on. A held `⌫` would
-   * walk a pile into Trash one window at a time, which is why item 10 guards that one.
+   * ⇧↓ / ⇧↑ — move the cursor and drag the selection with it. The keyboard twin of a shift-click, and it was simply
+   * missing: a range could be built with a mouse and not with the keys, on a product whose list is keyboard-first.
+   * ADDITIVE, never subtractive — the one real decision: shrink-on-reverse (⇧↑ un-picking what ⇧↓ picked) is what a
+   * text field does, and it needs a second piece of state beside the set — a live range with a direction — because
+   * the set alone cannot say which members came from THIS gesture; worse, it would remove rows picked by other means
+   * (⌘-click four rows, then ⇧↓ ⇧↑, and two are gone). So the range only ever adds, exactly as ⇧-click does; removal
+   * is the way you added — `x`, ⌘-click, or Escape. With no anchor the cursor's own row becomes one, so the first ⇧↓
+   * picks the row you are on and the row you land on — the pair the gesture visibly spans.
+   */
+
+  /**
+   * Key repeat is allowed, unlike `⌫`: a held ⇧↓ walking a range down the list is the gesture, and each repeat adds
+   * one row to a set not yet acted on — a held `⌫` would walk a pile into Trash one window at a time, which is why
+   * item 10 guards that one.
    */
   const extendPick = useCallback((dir: 1 | -1) => {
     if (order.length === 0) return;
@@ -1495,32 +1137,24 @@ export function OhboxView({
   }, [order, at, selectedId, selectByUser, pickRangeTo]);
 
   /**
-   * DELETE THE SELECTION — one press, one window, one toast, one Undo for the whole set.
-   *
-   * It goes through `BulkAction`'s `delete` arm, which hands the ids to the SAME
-   * `delete-undo.ts` window a single ⌫ opens. Nothing is dispatched here and nothing is
-   * dispatched by the shell's arm either: the window holds the ids and sends one
-   * `message_delete` per id only when it closes, so Undo inside it cancels a delete that never
-   * happened. That is the only undo this wire can honour — there is no un-delete on it.
-   *
-   * The pick clears on the press, like every verb that ran: the rows leave every pile at once
-   * (`hideMessages` over the held ids), so a set that survived would be pointing at rows that
-   * are not on screen.
+   * DELETE THE SELECTION — one press, one window, one toast, one Undo for the whole set. It goes through
+   * `BulkAction`'s `delete` arm, which hands the ids to the SAME `delete-undo.ts` window a single ⌫ opens. Nothing is
+   * dispatched here and nothing is dispatched by the shell's arm either: the window holds the ids and sends one
+   * `message_delete` per id only when it closes, so Undo inside it cancels a delete that never happened. That is the
+   * only undo this wire can honour — there is no un-delete on it. The pick clears on the press, like every verb that
+   * ran: the rows leave every pile at once (`hideMessages` over the held ids), so a set that survived would be
+   * pointing at rows that are not on screen.
    */
   const deletePicked = useCallback(() => runBulk("delete"), [runBulk]);
   /**
-   * NO CURSOR IS ITS OWN REASON — spread into every `message` binding below whose `disabled` is
-   * `selected == null`. See `keymap.tsx#DisabledReason`.
-   *
-   * This is the view the defect was reported against: an Ohbox nobody had touched has no cursor,
-   * so ↵, `t`, `x`, `u` and `⇧I` here — and the shell's nine verbs under them — were all
-   * `disabled`, and the dispatcher dropped each one before the chord was matched. Every one of
-   * those presses did nothing at all, with the `?` sheet the only place that state showed. The
-   * first press now places the cursor on the first row and says which verb the next press runs.
-   *
-   * NOT on `⇧U` or the four extend chords: those rest on the PICK (`picked.size`, `order.length`),
-   * not on the cursor, and ⇧↓ is how a pick starts. The selection layer above is absent rather
-   * than disabled when nothing is picked, so none of it can be reached by this rule either.
+   * NO CURSOR IS ITS OWN REASON — spread into every `message` binding below whose `disabled` is `selected == null`.
+   * See `keymap.tsx#DisabledReason`. This is the view the defect was reported against: an Ohbox nobody had touched
+   * has no cursor, so ↵, `t`, `x`, `u` and `⇧I` here — and the shell's nine verbs under them — were all `disabled`,
+   * and the dispatcher dropped each one before the chord was matched. Every one of those presses did nothing at all,
+   * with the `?` sheet the only place that state showed. The first press now places the cursor on the first row and
+   * says which verb the next press runs. NOT on `⇧U` or the four extend chords: those rest on the PICK
+   * (`picked.size`, `order.length`), not on the cursor, and ⇧↓ is how a pick starts. The selection layer above is
+   * absent rather than disabled when nothing is picked, so none of it can be reached by this rule either.
    */
   const noCursor = selected == null ? ({ disabledReason: "no_cursor" } as const) : {};
 
@@ -1534,27 +1168,14 @@ export function OhboxView({
     },
     {
       /**
-       * THE EXACT INVERSE OF `j`, AND THAT HAS TO INCLUDE THE WAY IN.
-       *
-       * The Ohbox rests with NO cursor. That is deliberate — the reading column stays at rest
-       * until somebody chooses a message, rather than opening the newest unread on nobody's
-       * behalf — and it means the keys are how a reader enters the list, not merely how they
-       * move around inside it.
-       *
-       * `j` has always had an entry move: with nothing selected it lands on the first row. `k`
-       * had none. It was declared inert whenever the cursor was not already on a row, so on a
-       * freshly opened Ohbox `j` walked the list and `k` did nothing at all, with nothing on
-       * screen to explain the difference. Two keys presented as a pair, one of them dead.
-       *
-       * The pair is one gesture in two directions, so it enters from the two ends: `j` comes in
-       * at the top going down, `k` comes in at the bottom going up. Inside the list they are
-       * strict inverses over the same row order — `j` then `k` returns to the row you left,
-       * whatever the grouping and whatever order this session placed the rows in, because both
-       * read the one `order` array built above.
-       *
-       * `at < 0` covers both readings of "not on a row": nothing selected, and a selection
-       * standing on something outside the three grouped sections. Neither is a state either key
-       * may quietly ignore.
+       * The exact inverse of `j`, and that has to include the way in. The Ohbox rests with NO cursor — deliberate:
+       * the reading column stays at rest until somebody chooses a message — so the keys are how a reader ENTERS the
+       * list, not merely how they move inside it. `j` has always had an entry move (nothing selected → first row);
+       * `k` had none, declared inert whenever the cursor was not on a row — on a fresh Ohbox `j` walked the list and
+       * `k` did nothing, two keys presented as a pair, one dead. The pair is one gesture in two directions, so it
+       * enters from the two ends: `j` at the top going down, `k` at the bottom going up; inside the list they are
+       * strict inverses over the same row order — both read the one `order` array built above. `at < 0` covers both
+       * readings of "not on a row": nothing selected, and a selection standing outside the three grouped sections.
        */
       chord: "k",
       group: "navigate",
@@ -1582,28 +1203,21 @@ export function OhboxView({
       // the sheet it opened rendered a `<span/>`.
       run: () => selected && open(selected),
     },
-    /* ══ THE SELECTION LAYER ══════════════════════════════════════════════════════════════
-     *
-     * WHILE A SELECTION EXISTS, THE VERB LETTERS ACT ON IT. That is the whole rule, and it
-     * follows from one the product already has: every verb wears its keycap, and a keycap on
-     * the selection pill must do what the pill does. The pill offers Later, Park, Resurface,
-     * Tag, Screening, Move, Read, Unread and Delete, so those letters mean the selection while
-     * there is one and mean the cursor's message when there is not.
-     *
-     * DECLARED FIRST, because declaration order IS precedence inside a layer (`ordered()` walks
-     * a layer's bindings in order and the first ENABLED match runs). `t` and `u` have cursor
-     * twins a few rows below; these outrank them exactly while `picked.size > 0` and stand down
-     * to them otherwise. `a e b s m d ⌫ ⌦` have no view-level twin — their cursor versions are
-     * the SHELL's, and the `view` scope outranks the shell, which is the same precedence that
-     * lets the Screener own `c`.
-     *
-     * EVERY ONE OF THEM IS `disabled`, NOT ABSENT, WITHOUT A SELECTION. A disabled binding still
-     * appears in the `?` sheet, which is the rule that keeps a shortcut learnable: one that
-     * vanished from the documentation whenever the list was empty is one nobody discovers.
-     *
-     * THE COST, STATED. Somebody who used `x` and then a letter expecting the cursor's message
-     * now acts on the pick instead. That is Gmail's model, the sheet says so in words while the
-     * selection is up, and it is a real behaviour change rather than a strictly additive one.
+    /**
+     * The selection layer. While a selection exists, the verb letters act on it — following a rule the product
+     * already has: every verb wears its keycap, and a keycap on the selection pill must do what the pill does. The
+     * pill offers Later, Park, Resurface, Tag, Screening, Move, Read, Unread and Delete, so those letters mean the
+     * selection while there is one and the cursor's message when there is not. Declared FIRST, because declaration
+     * order IS precedence inside a layer (`ordered()` runs the first ENABLED match): `t` and `u` have cursor twins
+     * below, outranked exactly while `picked.size > 0`; `a e b s m d ⌫ ⌦` have no view-level twin — their cursor
+     * versions are the SHELL's, and `view` outranks the shell, the same precedence that lets the Screener own `c`.
+     */
+
+    /**
+     * Every one is `disabled`, not absent, without a selection: a disabled binding still appears in the `?` sheet,
+     * which keeps a shortcut learnable. The cost, stated: somebody who used `x` and then a letter expecting the
+     * cursor's message now acts on the pick — Gmail's model, the sheet says so in words while the selection is up,
+     * and it is a real behaviour change.
      */
     {
       chord: "shift+ArrowDown",
@@ -1633,27 +1247,20 @@ export function OhboxView({
       disabled: order.length === 0,
       run: () => extendPick(-1),
     },
-    /* ── AND THESE TEN ARE DECLARED ONLY WHILE A SELECTION EXISTS ──────────────────────
-     *
-     * Not `disabled`, ABSENT — the one place this view departs from "declare it and disable
-     * it", and the reason is the `?` sheet rather than the dispatcher.
-     *
-     * `groupedBindings` dedups BY CHORD and keeps one row per key ("what will this key do
-     * HERE?"), preferring an enabled declaration over a disabled one. Every chord below has a
-     * twin for the cursor's message — `t` and `u` in this view, `a e b s m d ⌫ ⌦` in the shell
-     * — and the view's layer is walked FIRST. So a disabled selection binding sitting ahead of
-     * a disabled message binding won the row and the sheet taught "Park the selection" to
-     * somebody with nothing selected. Measured: with no pick and no cursor, `a` read "Queue
-     * the selection for the Reply Run".
-     *
-     * Absent when there is nothing to act on, the sheet is exactly right in both states and
-     * the shared dedup rule is untouched. Nothing becomes undiscoverable, which is what
-     * "declare it and disable it" exists to protect: the CHORD is listed either way, by the
-     * twin, and only the label changes with the state.
-     *
-     * THE FOUR EXTEND CHORDS ABOVE ARE NOT IN HERE, deliberately. They have no twin, and they
-     * are how a selection STARTS — ⇧↓ with nothing picked picks the cursor's row and the next
-     * one. A key that creates the state cannot be gated on the state.
+    /**
+     * And these ten are declared only while a selection exists — not `disabled`, ABSENT: the one departure from
+     * "declare it and disable it", for the `?` sheet rather than the dispatcher. `groupedBindings` dedups BY CHORD,
+     * one row per key, preferring an enabled declaration over a disabled one; every chord below has a twin for the
+     * cursor's message (`t`/`u` in this view, `a e b s m d ⌫ ⌦` in the shell) and the view's layer is walked FIRST —
+     * so a disabled selection binding won the row and the sheet taught "Park the selection" to somebody with nothing
+     * selected (measured: with no pick and no cursor, `a` read "Queue the selection for the Reply Run"). Absent, the
+     * sheet is right in both states and the shared dedup rule untouched; the CHORD is still listed by the twin, only
+     * the label changes.
+     */
+
+    /**
+     * The four extend chords above are NOT in here: they have no twin, and they are how a selection STARTS — a key
+     * that creates the state cannot be gated on it.
      */
     ...(picked.size > 0
       ? ([
@@ -1721,20 +1328,19 @@ export function OhboxView({
       label: t("keySelDelete"),
       /**
        * TWO CONDITIONS ON THE EVENT, and neither can be a `disabled` flag.
-       *
-       *  · A HELD KEY IS ONE PRESS. Backspace auto-repeats, and a finger resting on it would
-       *    open window after window over a whole pile.
-       *  · NOTHING IS STANDING OVER THE DECK. Measured before this line existed: three rows
-       *    picked, the `?` sheet OPEN, one press of ⌫ — and all three were filed, because the
-       *    selection's delete chords never received a modal gate at all. The shell's own delete
-       *    keys had one; these were not on the list, and could not have been, since the list
-       *    enumerated what the SHELL owns and the More menu's open state lives below it.
-       *
-       * `isModalOpen` asks the DOM instead of a list, which is why it is a `when` and not a
-       * `disabled`: `disabled` is computed while React renders, and the menu this is meant to
-       * catch opens without the shell re-rendering. A `false` here does not consume the key —
-       * it falls through, and the `?` sheet keeps listing the verb, which is right: the key is
-       * bound, it is simply not the innermost thing being asked.
+       * · A HELD KEY IS ONE PRESS. Backspace auto-repeats, and a finger resting on it would open window after
+       *   window over a whole pile.
+       * · NOTHING IS STANDING OVER THE DECK. Measured before this line existed: three rows picked, the `?` sheet
+       *   OPEN, one press of ⌫ — and all three were filed, because the selection's delete chords never received a
+       *   modal gate at all. The shell's own delete keys had one; these were not on the list, and could not have
+       *   been, since the list enumerated what the SHELL owns and the More menu's open state lives below it.
+       */
+
+      /**
+       * `isModalOpen` asks the DOM instead of a list, which is why it is a `when` and not a `disabled`: `disabled` is
+       * computed while React renders, and the menu this is meant to catch opens without the shell re-rendering. A
+       * `false` here does not consume the key — it falls through, and the `?` sheet keeps listing the verb, which is
+       * right: the key is bound, it is simply not the innermost thing being asked.
        */
       when: (e: KeyboardEvent) => !e.repeat && !isModalOpen(deleteDoc(e)),
       run: deletePicked,
@@ -1773,17 +1379,12 @@ export function OhboxView({
     },
     {
       /**
-       * THE PAIR, AND WHY IT IS NOT GMAIL'S EXACT PAIR.
-       *
-       * Gmail is ⇧I to mark read and ⇧U to mark unread, and it is the precedent worth
-       * following — but `shift+u` is taken here, by the bulk "mark what I picked" verb
-       * declared a few lines below, and taking it back would break a shipped shortcut to
-       * match a convention. So: `⇧I` is Gmail's, verbatim, and `u` keeps the key this
-       * product has always used for unread — which is also the better mnemonic of the two.
-       *
-       * `u` USED TO BE A TOGGLE. See `markUnread` for why a direction is the right shape.
-       * Both are listed in the `?` sheet because both declare a label, and the sheet is
-       * generated from this registry.
+       * THE PAIR, AND WHY IT IS NOT GMAIL'S EXACT PAIR. Gmail is ⇧I to mark read and ⇧U to mark unread, and it is the
+       * precedent worth following — but `shift+u` is taken here, by the bulk "mark what I picked" verb declared a few
+       * lines below, and taking it back would break a shipped shortcut to match a convention. So: `⇧I` is Gmail's,
+       * verbatim, and `u` keeps the key this product has always used for unread — which is also the better mnemonic
+       * of the two. `u` USED TO BE A TOGGLE. See `markUnread` for why a direction is the right shape. Both are listed
+       * in the `?` sheet because both declare a label, and the sheet is generated from this registry.
        */
       chord: "u",
       group: "message",
@@ -1802,18 +1403,13 @@ export function OhboxView({
     },
     {
       /**
-       * THE BULK ACTION, ON THE KEYBOARD.
-       *
-       * The complaint was that multiple messages could not be selected and marked seen, and
-       * the half that shipped could only be finished with a mouse: the bar's buttons are
-       * reachable by Tab, but there was no way to say "mark what I picked" from the keys
-       * that made the pick, and nothing in the `?` sheet mentioned that marking a selection
-       * was possible at all. Declaring it here documents it — the sheet is generated from
-       * this registry and cannot list a key that does nothing.
-       *
-       * `⇧U` and not a fresh letter: `u` is already "mark read / unread" at the cursor, so
-       * the shifted twin is the same verb over the selection. `chordMatches` keeps plain
-       * `u` from swallowing it.
+       * THE BULK ACTION, ON THE KEYBOARD. The complaint was that multiple messages could not be selected and marked
+       * seen, and the half that shipped could only be finished with a mouse: the bar's buttons are reachable by Tab,
+       * but there was no way to say "mark what I picked" from the keys that made the pick, and nothing in the `?`
+       * sheet mentioned that marking a selection was possible at all. Declaring it here documents it — the sheet is
+       * generated from this registry and cannot list a key that does nothing. `⇧U` and not a fresh letter: `u` is
+       * already "mark read / unread" at the cursor, so the shifted twin is the same verb over the selection.
+       * `chordMatches` keeps plain `u` from swallowing it.
        */
       chord: "shift+u",
       group: "message",
@@ -1823,20 +1419,14 @@ export function OhboxView({
     },
     {
       /**
-       * ESCAPE CANCELS THE OPEN SUB-ROW BEFORE IT CLEARS THE SELECTION.
-       *
-       * FIRST in this array, and the array's order IS the precedence — `ordered()` walks a
-       * layer's bindings in declaration order and the first match runs (`keymap.tsx`). So
-       * this is stated where precedence lives rather than as a condition inside the clear
-       * binding, which is the shape that rots.
-       *
-       * It matters most for the confirm row: that row is the last moment before a consent
-       * decision commits, and an Escape that blew past it to clear the selection would leave
-       * the user with neither the confirmation nor the set they had built.
-       *
-       * NO NEW `document` LISTENER — there are already five, measured. This is a registry
-       * binding in the view layer, which the shell's `overlay` scope still outranks, so a `?`
-       * sheet or the palette opened over this closes first and the sub-row survives.
+       * ESCAPE CANCELS THE OPEN SUB-ROW BEFORE IT CLEARS THE SELECTION. FIRST in this array, and the array's order IS
+       * the precedence — `ordered()` walks a layer's bindings in declaration order and the first match runs
+       * (`keymap.tsx`). So this is stated where precedence lives rather than as a condition inside the clear binding,
+       * which is the shape that rots. It matters most for the confirm row: that row is the last moment before a
+       * consent decision commits, and an Escape that blew past it to clear the selection would leave the user with
+       * neither the confirmation nor the set they had built. NO NEW `document` LISTENER — there are already five,
+       * measured. This is a registry binding in the view layer, which the shell's `overlay` scope still outranks, so
+       * a `?` sheet or the palette opened over this closes first and the sub-row survives.
        */
       chord: "Escape",
       group: "message",
@@ -1846,22 +1436,19 @@ export function OhboxView({
     },
     {
       /**
-       * Escape clears the selection — when nothing is open on top of it.
-       *
-       * This used to read `picked.size === 0 || chrome.replyTo != null`, and the second
-       * clause is the whole story. The reply tests went red the moment a selection survived
-       * into the reply editor — "r opened an inline editor but Esc did not close it" —
-       * because this VIEW binding outranked the shell's Escape cascade unconditionally and
-       * cleared the selection instead. The patch taught this view to name ONE of the
-       * shell's overlays, which left the `?` sheet, the ⌘K palette and the screening
-       * popover broken in exactly the same way and put the next overlay one line from
-       * joining them.
-       *
-       * The condition is gone because the precedence is stated where precedence lives: the
-       * shell's Escape is registered in the `overlay` scope, which outranks every view
-       * layer while something is open and stands down when nothing is (`keymap.tsx`). So
-       * this binding is once again only about this view — a picked set is the innermost
-       * thing the OHBOX has — and it knows nothing about what the shell may be showing.
+       * Escape clears the selection — when nothing is open on top of it. This used to read `picked.size === 0 ||
+       * chrome.replyTo != null`, and the second clause is the whole story. The reply tests went red the moment a
+       * selection survived into the reply editor — "r opened an inline editor but Esc did not close it" — because
+       * this VIEW binding outranked the shell's Escape cascade unconditionally and cleared the selection instead. The
+       * patch taught this view to name ONE of the shell's overlays, which left the `?` sheet, the ⌘K palette and the
+       * screening popover broken in exactly the same way and put the next overlay one line from joining them.
+       */
+
+      /**
+       * The condition is gone because the precedence is stated where precedence lives: the shell's Escape is
+       * registered in the `overlay` scope, which outranks every view layer while something is open and stands down
+       * when nothing is (`keymap.tsx`). So this binding is once again only about this view — a picked set is the
+       * innermost thing the OHBOX has — and it knows nothing about what the shell may be showing.
        */
       chord: "Escape",
       group: "message",
@@ -1898,31 +1485,23 @@ export function OhboxView({
    * rather than doing both.
    */
   /**
-   * ══ ENTERING A SELECTION ON A PHONE — A LONG PRESS ON A ROW ═══════════════════════════════
-   *
-   * A phone had NO WAY IN AT ALL. `x` needs a keyboard, ⇧-click needs a modifier, and a tap is
-   * the open — so every verb the selection bar offers was desktop-only, on a product whose
-   * phone layout is otherwise complete. The hold is the gesture both platforms already use for
-   * "start selecting" in a list, so it is the one to implement rather than a visible control:
-   * a checkbox on every row would cost the row its lead alignment for a mark the rail already
-   * makes, and a hover-reveal has no touch equivalent at all.
-   *
-   * FOUR CONDITIONS, and each one is there to keep this gesture out of another's way:
-   *
-   *   · `pointerType === "touch"`. A mouse hold is not this gesture — it is a click somebody
-   *     is taking their time over, and picking a row under it would be a control the desktop
-   *     never asked for. The desktop has `x` and ⌘-click.
-   *   · 450ms. Long enough not to fire on a tap that lingers, short enough to feel like a
-   *     press rather than a wait; it is the figure both platforms use for the same gesture.
-   *   · NO TRAVEL past `DRAG_SLOP_PX`. A finger that moves is scrolling the list, and a
-   *     selection appearing mid-scroll would be the worst kind of surprise. Same threshold
-   *     the drag-to-file gesture uses, imported rather than restated — and `drag-file.ts`
-   *     RETURNS EARLY on touch, so the two gestures cannot both arm on one pointer.
-   *   · The press that fired is not also a TAP. The `click` that follows a hold would open the
-   *     reader over the selection that just appeared, so the next one is swallowed.
-   *
-   * `contextmenu` is prevented while the timer runs: Android fires it on a long press and iOS
-   * raises the callout (`-webkit-touch-callout: none` on `.row` covers the second half).
+   * Entering a selection on a phone — a long press on a row. A phone had NO way in: `x` needs a
+   * keyboard, ⇧-click a modifier, and a tap is the open — every verb the selection bar offers
+   * was desktop-only. The hold is the gesture both platforms already use for "start selecting"
+   * in a list, so it is the one to implement: a checkbox on every row would cost the row its
+   * lead alignment for a mark the rail already makes, and a hover-reveal has no touch
+   * equivalent.
+   */
+
+  /**
+   * Four conditions, each keeping this gesture out of another's way: `pointerType === "touch"` — a mouse hold is a
+   * click somebody is taking their time over, and the desktop has `x` and ⌘-click; 450ms — long enough not to fire on
+   * a lingering tap, the figure both platforms use; no travel past `DRAG_SLOP_PX` — a moving finger is scrolling, and
+   * a selection mid-scroll would be the worst surprise (same threshold the drag-to-file gesture uses, imported — and
+   * `drag-file.ts` returns early on touch, so the two cannot both arm on one pointer); and the press that fired is
+   * not also a TAP — the `click` after a hold would open the reader over the selection that just appeared, so the
+   * next one is swallowed. `contextmenu` is prevented while the timer runs: Android fires it on a long press, and
+   * iOS's callout is covered by `-webkit-touch-callout: none` on `.row`.
    */
   const holdRef = useRef<{ id: string; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   /** A hold FIRED, so the `click` closing the same press is not a tap. Cleared by that click. */
@@ -2041,25 +1620,20 @@ export function OhboxView({
   };
 
   /**
-   * "DONE" ON A PINNED ROW — the deliberate release, standing where the eye looks for it.
-   *
-   * A resurfaced row's one way out (short of answering it) was a read verb that never said so:
-   * `⇧I`, the bar's "Mark as read", a bulk Read. Reported from real use in exactly those terms —
-   * "we need a clear action to mark it done, it must be clear how to remove the resurfaced
-   * state" — and the question is asked AT THE PIN, so the answer stands on the pinned row itself, in the
-   * Screener quick-adjust's own reveal grammar (`MessageRow.actions`, shown on hover, focus and
-   * selection; always shown where hover does not exist — see `.rsf-done` in `app.css`).
-   *
-   * IT DISPATCHES `resurface_done` — the shell's one release arm, shared with the action bar's
-   * Done — for THIS row's message, never the selected one, which is why it does not press `⇧I`.
-   * The choreography that follows is entirely the existing one: the deliberate `mark_seen`
-   * spends the pin first-frame, `lastReadAt` files the row at the top of "Earlier", and
-   * `slideOut` draws the descent.
-   *
-   * NULL, NOT ABSENT, ONCE THE PIN IS SPENT: the slot must survive the 280 ms slide
-   * (`MessageRow.actions` — dropping the prop remounts the button and kills the transition),
-   * and a control that offered "Done" on a row already released would be a press that does
-   * nothing. The rows of the other groups never carry the slot at all.
+   * "Done" on a pinned row — the deliberate release, standing where the eye looks for it. A resurfaced row's one way
+   * out (short of answering) was a read verb that never said so: `⇧I`, the bar's "Mark as read", a bulk Read.
+   * Reported from real use in exactly those terms, and the question is asked AT THE PIN, so the answer stands on the
+   * pinned row itself, in the Screener quick-adjust's reveal grammar (`MessageRow.actions` — hover, focus, selection;
+   * always shown where hover does not exist). It dispatches `resurface_done` — the shell's one release arm, shared
+   * with the action bar's Done — for THIS row's message, never the selected one, which is why it does not press `⇧I`;
+   * the choreography that follows is the existing one (the deliberate `mark_seen` spends the pin first-frame,
+   * `lastReadAt` files the row atop "Earlier", `slideOut` draws the descent).
+   */
+
+  /**
+   * NULL, not absent, once the pin is spent: the slot must survive the 280 ms slide (dropping the prop remounts the
+   * button and kills the transition), and offering "Done" on a released row would be a press that does nothing. The
+   * other groups' rows never carry the slot at all.
    */
   const doneFor = (m: EngineMessage): ReactNode =>
     isResurfaced(m) ? (
@@ -2076,21 +1650,20 @@ export function OhboxView({
     ) : null;
 
   /**
-   * READ-STATE AS PRESENTED — {@link presentsUnread} minus the armed read (see `armedRead`). Used
-   * by exactly the surfaces that SHOW read-state: the row's dot/ink and the open message's verb.
-   * Everything that acts on or counts read-state (`unreadIds`, mark-all-read, the dwell's and the
-   * commit's re-judgements, the slide) keeps reading the store's own flag.
-   *
-   * ── A PINNED ROW IS UNREAD, AND THE ARMED READ DOES NOT SUBTRACT FROM IT ────────────────
-   *
-   * `presentsUnread` answers `true` for every resurfaced row (owner ruling 2026-08-31 — the
-   * engine holds the reasoning), and the `armedRead` subtraction is applied to what is LEFT of
-   * that, never over the top of it. Which is the point: the arming exists so a message being
-   * read stops looking new, and a resurfaced row is not claiming to be new — it is claiming the
-   * reader asked to see it again, and that claim is answered by Done or by a reply, not by
-   * looking. Subtracting the arm here would put the flip-flop straight back: the row would
-   * unbold on the dwell, the glance-read would land without spending the pin, and the next
-   * render would re-bold it from a state nothing had changed.
+   * READ-STATE AS PRESENTED — {@link presentsUnread} minus the armed read (see `armedRead`). Used by exactly the
+   * surfaces that SHOW read-state: the row's dot/ink and the open message's verb. Everything that acts on or counts
+   * read-state (`unreadIds`, mark-all-read, the dwell's and the commit's re-judgements, the slide) keeps reading the
+   * store's own flag. A PINNED ROW IS UNREAD, AND THE ARMED READ DOES NOT SUBTRACT FROM IT: `presentsUnread` answers
+   * `true` for every resurfaced row (owner ruling 2026-08-31 — the engine holds the reasoning), and the `armedRead`
+   * subtraction is applied to what is LEFT of that, never over the top of it. Which is the point: the arming exists
+   * so a message being read stops looking new, and a resurfaced row is not claiming to be new — it is claiming the
+   * reader asked to see it again, and that claim is answered by Done or by a reply, not by looking.
+   */
+
+  /**
+   * Subtracting the arm here would put the flip-flop straight back: the row would unbold on the dwell, the
+   * glance-read would land without spending the pin, and the next render would re-bold it from a state nothing had
+   * changed.
    */
   const effUnread = (m: EngineMessage): boolean =>
     isResurfaced(m) ? true : presentsUnread(m) && m.id !== armedRead;
@@ -2176,15 +1749,11 @@ export function OhboxView({
   const row = (m: EngineMessage) => rowWith(m);
 
   /**
-   * THE VOICES A GROUPED ROW SPEAKS FOR — one message per distinct sender, newest first.
-   *
-   * The unread members while the conversation is waiting (what is unanswered is what the row is
-   * for), else the newest member alone once it has all been read.
-   *
-   * Returns the MESSAGES rather than their names because two things are derived from this list
-   * and they must not drift: the sender line ({@link groupSenders}) and the row's lead circles.
-   * A row whose text reads "Ada Lund, Bo Ek" and whose faces are somebody else's would be two
-   * answers to one question.
+   * THE VOICES A GROUPED ROW SPEAKS FOR — one message per distinct sender, newest first. The unread members while the
+   * conversation is waiting (what is unanswered is what the row is for), else the newest member alone once it has all
+   * been read. Returns the MESSAGES rather than their names because two things are derived from this list and they
+   * must not drift: the sender line ({@link groupSenders}) and the row's lead circles. A row whose text reads "Ada
+   * Lund, Bo Ek" and whose faces are somebody else's would be two answers to one question.
    */
   const groupVoices = (g: OhboxRowGroup): EngineMessage[] => {
     const pool = (g.unreadCount > 0 ? g.members.filter((m) => m.unread) : [g.latest])
@@ -2206,27 +1775,21 @@ export function OhboxView({
     groupVoices(g).map(senderName).join(", ");
 
   /**
-   * ONE ROW FOR A CONVERSATION — and a plain {@link row} for anything that did not fold, so a
-   * section of singletons renders byte-for-byte as it always has.
-   *
-   * What the folded row shows and does:
-   *   · the conversation's STORED name (server-cleaned; see the `threadSubject` prop), falling
-   *     back to the newest member's subject while the thread row has not synced;
-   *   · the NEWEST member's snippet and time — a new reply updates the row in place;
-   *   · the distinct unread senders on the sender line, THOSE SAME PEOPLE as the row's lead
-   *     circles (see `participants` below), and the member count as the `⤷ N` beside the
-   *     subject — who and how many, said once each;
-   *   · click and ↵ act on the LATEST UNREAD member — the ordinary per-message open, so the
-   *     thread view, the dwell and the departure commit behave exactly as for a plain row, and
-   *     nothing bulk-marks the folded members read;
-   *   · `selected` is row MEMBERSHIP, so the highlight survives the lead message changing;
-   *   · `settling` ONLY WHEN EVERY MEMBER IS SLIDING, which is what makes a conversation behave
-   *     the way a reader expects when they work through it. The slide is per MESSAGE: read one
-   *     of five unread replies and that message alone descends, so the row stands still and its
-   *     count goes to four — nothing moves, because the conversation is still waiting. Read the
-   *     last one and every member is in flight at once, so the row itself slides and the whole
-   *     conversation re-files under "Earlier" as one row. A row that animated on each member
-   *     would be five slides for one conversation, four of which end where they started.
+   * One row for a conversation — and a plain {@link row} for anything that did not fold, so a section of singletons
+   * renders byte-for-byte as it always has. The folded row shows the conversation's STORED name (server-cleaned; see
+   * `threadSubject`, falling back to the newest member's subject until the thread row syncs), the newest member's
+   * snippet and time, the distinct unread senders on the sender line — the same people as the row's lead circles
+   * (`participants` below) — and the member count as `⤷ N`. Click and ↵ act on the LATEST UNREAD member: the ordinary
+   * per-message open, so the thread view, dwell and departure commit behave exactly as for a plain row and nothing
+   * bulk-marks the folded members read. `selected` is row MEMBERSHIP, so the highlight survives the lead message
+   * changing.
+   */
+
+  /**
+   * `settling` ONLY WHEN EVERY MEMBER IS SLIDING: the slide is per MESSAGE — read one of five unread replies and that
+   * message alone descends while the row stands and its count drops; read the last and the whole conversation
+   * re-files under "Earlier" as one row. A row that animated on each member would be five slides, four ending where
+   * they started.
    */
   const groupRow = (g: OhboxRowGroup) => {
     if (g.members.length === 1) return row(g.members[0]!);
@@ -2234,32 +1797,29 @@ export function OhboxView({
     const shown = g.latest;
     const voices = groupVoices(g);
     /**
-     * THE ROW'S FACES, and they are the SENDER LINE's people whenever there are people on it.
-     *
-     * Two sources, one precedence, and the order matters. A waiting conversation names its
-     * distinct unread senders — so the circles are those senders, from the members the view
-     * already holds. A conversation that has all been read names only its newest voice, which
-     * is one face and not a conversation, so the row falls back to the mirror's own answer for
-     * who is in the thread (`threadParticipants`, newest first) — the whole history, including
-     * the members this section is not showing.
-     *
-     * `MessageRow` draws nothing for fewer than two, which is the same "there is no
+     * THE ROW'S FACES, and they are the SENDER LINE's people whenever there are people on it. Two sources, one
+     * precedence, and the order matters. A waiting conversation names its distinct unread senders — so the circles
+     * are those senders, from the members the view already holds. A conversation that has all been read names only
+     * its newest voice, which is one face and not a conversation, so the row falls back to the mirror's own answer
+     * for who is in the thread (`threadParticipants`, newest first) — the whole history, including the members this
+     * section is not showing. `MessageRow` draws nothing for fewer than two, which is the same "there is no
      * conversation of people here" both sources already agree on.
      */
     const participants =
       voices.length > 1 ? voices.map(circleOf) : threadParticipants ? threadParticipants(g.key) : [];
     /**
-     * THE NEWEST MEMBER IS THE ACCOUNT'S OWN REPLY — the conversation ends, so far, with the
-     * reader's own words, and the row says who they went to rather than showing the reader
-     * their own name (see `sentLabelOf`). Two arms, one label, never both:
-     *   · everything read (the live shape — own-sent is never unread, so a folded reply sits
-     *     in an all-read "Earlier" row): the sender line and the LEAD circle are the
-     *     recipient's, exactly as on a singleton sent row — the strip beside the subject keeps
-     *     the conversation's people either way;
-     *   · unread members present: the distinct unread senders own the sender line, unchanged,
-     *     and the snippet — which is the reply's — carries the label as its attribution.
-     * A reply with no recipients on the row (pre-recipient mirror) is `sent == null`, and the
-     * row keeps the ordinary sender summary.
+     * THE NEWEST MEMBER IS THE ACCOUNT'S OWN REPLY — the conversation ends, so far, with the reader's own words, and
+     * the row says who they went to rather than showing the reader their own name (see `sentLabelOf`). Two arms, one
+     * label, never both:
+     * · everything read (the live shape — own-sent is never unread, so a folded reply sits in an all-read "Earlier"
+     *   row): the sender line and the LEAD circle are the recipient's, exactly as on a singleton sent row — the strip
+     *   beside the subject keeps the conversation's people either way;
+     */
+
+    /**
+     * · unread members present: the distinct unread senders own the sender line, unchanged, and the snippet — which
+     *   is the reply's — carries the label as its attribution. A reply with no recipients on the row (pre-recipient
+     *   mirror) is `sent == null`, and the row keeps the ordinary sender summary.
      */
     const sent = sentLabelOf(shown);
     const sentLeads = sent !== null && g.unreadCount === 0;
@@ -2322,20 +1882,20 @@ export function OhboxView({
   };
 
   /**
-   * ═══ DRAG-TO-FILE — what a row's drag STANDS FOR, and what a drop DISPATCHES ═══════════
-   *
-   * The gesture lives in `shell/drag-file.ts`; these two closures are the semantics, and
-   * they are deliberately thin because every arm is an EXISTING verb:
-   *
-   *   · a picked row drags the whole selection and a drop is `runBulk` — the bulk bar's own
-   *     commit, selection-clear included;
-   *   · a lone row is the pill's `onAction`, verbatim;
-   *   · a folded conversation outside the selection is the bulk fan-out over its members —
-   *     the row says "⤷ 5", so the drop acts on five, exactly as a pick of that row would;
-   *   · a tag drop is the picker's apply (`onDropTag` → `bulkToggleTag`, apply-direction).
-   *
-   * Fresh closures each render, read through the hook's ref at use time — nothing here can
-   * run stale, and nothing is memoised for a gesture that happens at hand speed.
+   * DRAG-TO-FILE — what a row's drag STANDS FOR, and what a drop DISPATCHES: The gesture lives in
+   * `shell/drag-file.ts`; these two closures are the semantics, and they are deliberately thin because every arm is
+   * an EXISTING verb:
+   * · a picked row drags the whole selection and a drop is `runBulk` — the bulk bar's own commit, selection-clear
+   *   included;
+   * · a lone row is the pill's `onAction`, verbatim;
+   * · a folded conversation outside the selection is the bulk fan-out over its members — the row says "⤷ 5", so the
+   *   drop acts on five, exactly as a pick of that row would;
+   */
+
+  /**
+   * · a tag drop is the picker's apply (`onDropTag` → `bulkToggleTag`, apply-direction).
+   * Fresh closures each render, read through the hook's ref at use time — nothing here can run stale, and nothing is
+   * memoised for a gesture that happens at hand speed.
    */
   const dragSourceFor = (rowId: string): DragSource | null => {
     const idx = rowIndexOf(rowId);
@@ -2393,31 +1953,23 @@ export function OhboxView({
       <ListPane
         title={t("title")}
         scrollerRef={listScrollerRef}
-        /* "0 unread" IS A CLAIM ABOUT THE MAILBOX, not a description of the
-           list — and its predecessor ("0 unread of 0 messages") was on screen, beside
-           "Nothing in your Ohbox.", over an account that
-           was not empty, for as long as the first drain took. While the mirror has not
-           been read there is no count to state, so none is stated: no dash, no zero, no
-           substitute. A count that returns the moment there is one to give is not a gap; a
-           wrong count is a lie. Any NON-zero total is a real observation whatever the drain is
-           doing, so only the empty case is withheld.
+        /* "0 unread" is a claim about the mailbox, not a description of the list — and its
+           predecessor ("0 unread of 0 messages") was on screen beside "Nothing in your Ohbox."
+           over an account that was not empty, for as long as the first drain took. While the
+           mirror has not been read there is no count to state, so none is stated: no dash, no
+           zero, no substitute — a wrong count is a lie. Any NON-zero total is a real
+           observation whatever the drain is doing, so only the empty case is withheld. */
 
-           THE FORM IS SHORT, AND THE NOUN IS THE POINT — "{count} unread", one compact line
-           with the action right-aligned beside it. This said "{count} new" for two releases,
-           and the reason recorded here was that the form matched the Reads header. It no
-           longer does: Reads and Receipts count the WATERLINE and now say so in full ("12 new
-           since you were here" — `stream.newSince`), while THIS number is `unreadIds.length`,
-           the mailbox's own `\Seen`. One word for two facts on two adjacent piles is the
-           confusion that change was made to end, so the noun is here rather than only in the
-           rail tooltip (`rail.ohboxTitle`, "N unread of M messages").
-
-           WHAT WRAPPED THE HEADER TO THREE LINES WAS THE TAIL, NOT THE NOUN: the old form was
-           "unread of N messages", and it is the "of N messages" that cost the room. "12 unread"
-           is three characters longer than "12 new" and `.vhead .meta` yields before the action
-           does (`packages/ui/src/composites/list-pane.css`), so the claim is measured rather
-           than argued — `scripts/fit-render.mjs` reads this header at 360 and 390 on both faces
-           in both languages for self-overflow AND for the title, the count and the action
-           standing on ONE line. */
+        /* The form is short, and the noun is the point — "{count} unread". This said
+           "{count} new" for two releases to match the Reads header; Reads and Receipts count
+           the WATERLINE and now say so in full ("12 new since you were here" — `stream.newSince`)
+           while THIS number is `unreadIds.length`, the mailbox's own `\Seen` — one word for two
+           facts on two adjacent piles is the confusion that change ended, so the noun is here
+           rather than only in the rail tooltip. What wrapped the header to three lines was the
+           TAIL, not the noun: "of N messages" cost the room, "12 unread" is three characters
+           longer than "12 new", and `.vhead .meta` yields before the action does — measured,
+           not argued: `scripts/fit-render.mjs` reads this header at 360 and 390 on both faces
+           in both languages for self-overflow AND for title, count and action on ONE line. */
         meta={
           !settled && all.length === 0
             ? undefined
@@ -2462,19 +2014,16 @@ export function OhboxView({
            with the reading column. One affordance now — the key that opens the generated
            sheet. The bindings themselves are unchanged, declared in `keys` above. */
         hints={<ShortcutHint />}
-        /* THE SELECTION'S VERBS, AT THE FOOT — and they TAKE the hints strip's place rather
-           than standing beside it (`ListPane`'s `foot`).
-
-           It used to be a wash in the HEADER slot above, which was itself a fix for a worse
-           bug: as the scroller's first child, the count scrolled off the moment you picked
-           something forty rows down. The header answered that and cost 105–142px of the list,
-           above the rows it was talking about, in a control shape nothing else in the product
-           uses. The foot answers it too — the strip is outside the scroller either way — and
-           it is where this product puts the verbs for the thing you are looking at.
-
-           The count is IN the pill now, so there is no separate `role="status"` wrapper here:
-           the capsule carries it (see `rowGroups`), which is also what makes pressing it the
-           way out. */
+        /**
+         * THE SELECTION'S VERBS, AT THE FOOT — and they TAKE the hints strip's place rather than standing beside it
+         * (`ListPane`'s `foot`). It used to be a wash in the HEADER slot above, which was itself a fix for a worse
+         * bug: as the scroller's first child, the count scrolled off the moment you picked something forty rows down.
+         * The header answered that and cost 105–142px of the list, above the rows it was talking about, in a control
+         * shape nothing else in the product uses. The foot answers it too — the strip is outside the scroller either
+         * way — and it is where this product puts the verbs for the thing you are looking at. The count is IN the
+         * pill now, so there is no separate `role="status"` wrapper here: the capsule carries it (see `rowGroups`),
+         * which is also what makes pressing it the way out.
+         */
         foot={
           picked.size > 0 ? (
             <SelectionPill
@@ -2510,21 +2059,16 @@ export function OhboxView({
             mounted slice inside its own listbox, then reserved height below. A group whose rows
             are entirely outside the window renders neither its label nor an empty listbox — the
             heading-over-nothing rule, kept as the window slides. */}
-        {/* RESURFACED — pinned at the very top under its own quiet label, whole and outside
-            the window (a scheduled set is small). It is a different claim from "New for you": not
-            "this arrived" but "you asked to see this again now", so it earns its own heading rather
-            than being folded in.
-
-            EVERY ROW HERE IS DRAWN UNREAD, whatever its stored flag says (owner ruling
-            2026-08-31 — `presentsUnread`, and `effUnread` above for how the armed read is kept
-            off it). A DELIBERATE read clears the pin server-side (`MessageService.markSeen`
-            without the glance label), and the row then slides down to "Earlier" on the same
-            mechanism a read row in "New for you" does — but only once the selector actually
-            files it there, which is the whole reason the slide keys on section membership
-            rather than on the read flag (see `earlierIds`). A GLANCE — the two-second dwell —
-            records the reading and spends no pin, so the row does not move and does not change
-            appearance: that non-event is the fix for the flip-flop this group was reported for.
-            Each pinned row carries the "Done" release control — see `doneFor`. */}
+        {/* Resurfaced — pinned at the very top under its own quiet label, whole and outside the
+            window (a scheduled set is small): not "this arrived" but "you asked to see this
+            again now", so it earns its own heading. Every row here is drawn unread whatever its
+            stored flag says (owner ruling 2026-08-31 — `presentsUnread`, with `effUnread` above
+            keeping the armed read off it). A DELIBERATE read clears the pin server-side
+            (`MessageService.markSeen` without the glance label) and the row slides to "Earlier"
+            — once the selector actually files it there, why the slide keys on section
+            membership rather than the read flag (see `earlierIds`). A GLANCE — the two-second
+            dwell — records the reading and spends no pin, so the row does not move or change:
+            the fix for the reported flip-flop. Each row carries "Done" — see `doneFor`. */}
         {displayResurfaced.length > 0 ? (
           <>
             <ListGroupLabel>{t("resurfacedGroup")}</ListGroupLabel>
@@ -2572,51 +2116,17 @@ export function OhboxView({
             <ListRows multiSelectable ariaLabel={t("olderTitle")}>{older.items.map(row)}</ListRows>
           </>
         ) : null}
-        {/* THE TAIL, AND IT SAYS THREE DIFFERENT TRUE THINGS DEPENDING ON THE CLIENT.
-
-            The demo keeps its own sentence. "Older mail stays on your server — find it in
-            Search." is true of Mila's fixture world, a hand-made slice of a mailbox with a
-            beginning; there is no server behind it to load anything from.
-
-            A client that keeps the WHOLE mailbox — the standalone desktop client — gets
-            nothing at all. Its list ends where its mail ends, and an affordance to load more
-            would be an offer it cannot keep. That is `older.available === false`, read from the
-            engine rather than guessed from the mode.
-
-            A windowed client gets the control and a sentence that says what it is offering.
-            That sentence used to be shipped to live accounts as a claim, unconditionally, and
-            it was FALSE then: the mirror held every message, so telling a paying customer their
-            old mail was somewhere else was a claim the code contradicted. It is true now, of
-            this client, because the mirror is a window — and it comes with the way back rather
-            than with a suggestion to go and search.
-
-            The no-collapse rule — never an "N more" count standing in for mail — is satisfied
-            throughout: every message is a real
-            row, above the line or below it.
-
-            ── AND IT WAITS FOR THE MIRROR TO HAVE BEEN READ ────────────────────────────────
-
-            `settled` gates the whole windowed arm, for the reason `SyncState` above it is gated
-            and it is the same defect one block further down the pane. Reported on first open:
-            "Nothing in your Ohbox. This device keeps your recent mail. The rest is on your
-            server. Load older mail", for up to a minute, and then the mail arrived. The first
-            sentence was already withheld; these two were not, because they were gated on the
-            CLIENT SHAPE — "is this mirror a window" — which is a build-time fact and true from
-            the first frame. Being a window is not the claim being made. "This device keeps your
-            recent mail" says where the reader's mail IS, which is exactly the class of statement
-            {@link MailState.settled} exists to hold back: before the first drain the mirror holds
-            nothing, so "recent mail" has no referent and the sentence is false in the ordinary
-            reading of it. And `olderAction` is worse than a false statement, it is a wrong
-            INSTRUCTION — the newest mail is in flight, and the only control on the pane points
-            backwards, past it, at a page the reader has not been shown yet.
-
-            The cost is that a RETURNING tab, whose hydrated mirror is on screen before its drain
-            lands, loses the tail for the length of that drain. That is a control appearing at the
-            bottom of a list a second later, which is the cheap side of this trade: the alternative
-            is stating where somebody's mail is kept before having looked. Nothing about the window
-            is hidden for good — `SyncBar` is saying what is happening the whole time, and the
-            sentence and its control return together the moment there is a drained mirror to
-            describe. */}
+        {/* The tail says three true things by client. The demo keeps its own sentence (no
+            server behind Mila's fixtures); a client whose list ends where its mail ends gets
+            nothing (`older.available === false`, read from the ENGINE, never guessed from the
+            mode — which is why the desktop needed no change here when its mirror became a
+            window); a windowed client gets the control and a sentence once shipped
+            unconditionally when it was FALSE. Every message is
+            a real row — never an "N more" count. `settled` gates the windowed arm: "this device
+            keeps your recent mail" has no referent before the first drain (reported on first
+            open, for up to a minute), and `olderAction` was a wrong INSTRUCTION, pointing
+            backwards past mail still in flight. The cost — a returning tab loses the tail for
+            one drain — is cheap: `SyncBar` narrates, and both return with the drained mirror. */}
         {demo ? <div className="tail-row">{t("tail")}</div> : null}
         {!demo && older.available && settled ? (
           <div className="tail-row" role="status">
@@ -2692,32 +2202,20 @@ export function OhboxView({
           />
         ) : all.length > 0 ? (
           /**
-           * ═══ THE RESTING COLUMN ═══════════════════════════════════════════════════════════
-           *
-           * What the reading column says when nothing is open, which since the two fallbacks
-           * were deleted is what it says on arrival. A blank panel here would read as a pane
-           * that failed to load; this one names the state and says how to leave it.
-           *
-           * It is the `.empty` shape every other pile's empty state already uses — glyph,
-           * title, one line — so an unfamiliar column is answered in a vocabulary the reader
-           * has met in the Screener, in a tag and in Search. Nothing more is put in it:
-           *
-           *   · NO UNREAD COUNT. The list header beside it already states one, and a number
-           *     restated two panels apart is a number that will eventually disagree with
-           *     itself.
-           *   · NO SECOND KEY LEGEND. The `?` sheet is the one list of the bindings, and the
-           *     pane foot already carries the affordance that opens it (`ShortcutHint`). One
-           *     `<kbd>j</kbd>` in the sentence is a pointer at a key, not a copy of the map.
-           *   · NO `role="status"`. This is not an announcement of something that changed; it
-           *     is what the region contains at rest. It becomes a live region the moment a
-           *     screen reader is told it changed, and every `j` would then read out a panel the
-           *     reader is not in.
-           *
-           * AND ONLY WHEN THERE ARE ROWS. An empty Ohbox already says it is empty, in the list
-           * — the Screener's show-once rule. "Nothing open." beside "Nothing in your Ohbox." is
-           * one absence stated twice, so with no rows the column stays empty and the list's own
-           * sentence is the only one. Mobile needs no arm of its own: `app.css` puts
-           * `display:none` on this column under 900px, where a tap IS the open.
+           * The resting column — what the reading column says when nothing is open, which since the two fallbacks
+           * were deleted is what it says on arrival. A blank panel reads as a pane that failed to load; this one
+           * names the state and says how to leave it, in the `.empty` shape every other pile's empty state uses
+           * (glyph, title, one line). Nothing more: no unread count (the list header beside it states one, and a
+           * number restated two panels apart eventually disagrees with itself); no second key legend (the `?` sheet
+           * is the one list of bindings, and the pane foot carries the affordance that opens it — one `<kbd>j</kbd>`
+           * in the sentence is a pointer, not a copy of the map); no `role="status"` (this is what the region
+           * contains at rest, and a live region would read out a panel the reader is not in on every `j`).
+           */
+
+          /**
+           * And only when there are rows: an empty Ohbox already says it is empty in the list — the Screener's
+           * show-once rule — so with no rows the column stays empty. Mobile needs no arm: `app.css` hides this column
+           * under 900px, where a tap IS the open.
            */
           <div className="empty">
             <span className="glyph" aria-hidden="true">✉</span>
@@ -2731,66 +2229,40 @@ export function OhboxView({
 }
 
 /**
- * ═══ THE SELECTION'S ACTION BAR — WHICH IS THE MESSAGE'S ACTION BAR ════════════════════
- *
- * The requirement was that a selection must offer more than mark read, mark unread and
- * Escape. It was answered once with a STRIP: an accent-soft wash in the list head, the count
- * on the left, a Clear on a line of its own, the verbs between them, and a "More" that swapped
- * the row for another row. That answer is retired, and the reason is worth keeping because it
- * is not a matter of taste.
- *
- * ── WHY A THIRD SHAPE WAS THE DEFECT ──────────────────────────────────────────────────
- *
- * The product had three control shapes for one job. The Screener's `.scn-bulk` capsules act on
- * a whole PILE ("Apply all", "Mark all spam"). The message pill (`.msg-actions > .abar`) acts
- * on the message in front of you. The strip acted on a SELECTION — with the message pill's own
- * verbs, its own classes, and none of its behaviour: its own two container rungs at 456px and
- * 601px derived from label widths in one reference font, in English only, so the row overflowed
- * its box in German by 20px at 390 and by 23px at 1440 with the More chevron cut off at the
- * wash's edge. It wrapped to three lines, 142px tall on a phone, above the rows it spoke about.
- *
- * So the selection's verbs ARE the message pill now: the same element, the same float and
- * `--lift-3`, the same grouping, the same `bar-density` measurement, the same `MoreMenu`. Not a
- * pill-like thing — `.msg-actions > .abar`, so every rule in `action-bar.css` applies with no
- * selector and no branch, and the two mounts cannot drift because there is nothing to drift.
- *
- * ── WHERE IT STANDS, AND WHY NOT WHERE THE STRIP STOOD ────────────────────────────────
- *
- * In the FOOT of the list column (`ListPane`'s `foot` slot), taking the key-hint strip's place
- * while a selection exists. The verbs on the thing you are looking at stand at its foot
- * everywhere else in this product — the reading column, the reader sheet, the Reads card — and
- * on a phone the foot is where the thumb is. On a 1440 split its bottom edge and the reading
- * column's pill's sit on one line, because both are 12px off their panel's floor.
- *
- * Not sticky inside the scroller, which was the other candidate and was measured: a pill stuck
- * there lands at y 787–798, and the toast band is y 790–828 — so a refusal toast raised BY the
- * pill's own verb covered its Read/Unread pair. Below the scroller there is no overlap.
- *
- * ── THE TWO DELIBERATE DIVERGENCES FROM A MESSAGE'S BAR ───────────────────────────────
- *
- *   · **No Reply, Reply all or Forward.** There is no such act over eleven messages, and a
- *     pick of ONE is still a pick — switching to the single-message vocabulary at count 1
- *     would be the app changing its mind about what you selected. The cursor's message keeps
- *     those verbs in the reading column, where they mean something.
- *   · **The leading slot holds the COUNT**, where a message holds Reply, and pressing it clears
- *     the selection. See `rowGroups`.
- *
- * ── AND SCREENING STILL GETS A CEREMONY THE OTHERS DO NOT ─────────────────────────────
- *
- * Everything else here is a mail operation on the messages you picked. Screening is a decision
- * about SENDERS: for a sender still waiting at the gate it promotes a rule that governs all
- * their future mail, and it moves every message that sender has in the mirror, not only the
- * ones in the selection. So it is two steps — pick a destination, then a row that states the
- * senders, the messages and the rules before anything is dispatched.
- *
- * **There is no undo, and that is why the confirm row exists.** `POST /screener/:id` has no
- * inverse, so an Undo affordance would either do nothing or move the mail back while the rule
- * it created stood — a control that lies about what it reversed. Stating the counts before
- * committing is the honest version of the same protection.
- *
- * DELETE IS THE OPPOSITE CASE and gets the opposite ceremony: it is reversible for as long as
- * the toast is up, because `delete-undo.ts` holds the request rather than sending it. So the
- * ask is cheap (the count, the note, two buttons) and the Undo is real.
+ * The selection's action bar — which IS the message's action bar. The requirement — a selection must offer more than
+ * read, unread and Escape — was first answered with a STRIP: an accent-soft wash in the list head with its own
+ * classes and none of the pill's behaviour. That was a THIRD control shape for one job (beside the Screener's pile
+ * capsules and the message pill), with its own container rungs derived from label widths in one reference font,
+ * English only — it overflowed its box in German by 20px at 390 and 23px at 1440, More chevron cut off, and wrapped
+ * to three lines, 142px tall on a phone. So the selection's verbs ARE the message pill now: the same element,
+ * `.msg-actions > .abar`, same float, `--lift-3`, grouping, `bar-density` measurement and `MoreMenu` — every rule in
+ * `action-bar.css` applies with no branch, and the two mounts cannot drift because there is nothing to drift.
+ */
+
+/**
+ * Where it stands: the FOOT of the list column (`ListPane`'s `foot` slot), taking the key-hint strip's place while a
+ * selection exists — the verbs on the thing you are looking at stand at its foot everywhere else in this product, and
+ * on a phone the foot is where the thumb is; on a 1440 split its bottom edge and the reading pill's sit on one line
+ * (both 12px off their panel's floor). Not sticky inside the scroller, which was measured: a pill stuck there lands
+ * at y 787–798 and the toast band is y 790–828, so a refusal toast raised by the pill's own verb covered its
+ * Read/Unread pair.
+ */
+
+/**
+ * Two deliberate divergences from a message's bar: no Reply, Reply all or Forward — there is no such act over eleven
+ * messages, and a pick of ONE is still a pick (the cursor's message keeps those verbs in the reading column); and the
+ * leading slot holds the COUNT, where a message holds Reply — pressing it clears the selection (see `rowGroups`).
+ */
+
+/**
+ * Screening still gets a ceremony the others do not. Everything else here is a mail operation on the messages you
+ * picked; screening is a decision about SENDERS — for a sender still at the gate it promotes a rule governing all
+ * their future mail and moves every message that sender has in the mirror, not only the selection. So it is two
+ * steps: pick a destination, then a row stating the senders, messages and rules before anything is dispatched. There
+ * is no undo, and that is why the confirm row exists — `POST /screener/:id` has no inverse, so an Undo would either
+ * do nothing or move the mail back while the rule it created stood. Delete is the opposite case and gets the opposite
+ * ceremony: reversible for as long as the toast is up (`delete-undo.ts` holds the request rather than sending it), so
+ * the ask is cheap and the Undo is real.
  */
 function SelectionPill({
   ids,
@@ -2976,17 +2448,13 @@ function SelectionPill({
 
   if (panel?.kind === "delete") {
     /**
-     * THE ASK, AND IT IS THE MESSAGE STRIP'S ASK — same panel, same `alertdialog`, same note,
-     * same pair of answers. What differs is one number: the sentence counts the selection.
-     *
-     * WHY THERE IS AN ASK HERE AT ALL when `⌫`/`⌦` have none: item 10's own distinction, one
-     * verb wider. A key held down over a list is a gesture that can run away, so the keys open
-     * the window directly and the toast's Undo is the protection; a BUTTON labelled Delete,
-     * and the `d` that names it, are aimed presses over a set somebody built — cheap to ask,
-     * and the ask is the last place the count is stated before the rows go.
-     *
-     * `deleteNote` is reused WORD FOR WORD from the single-message ceremony (a parity test on
-     * the mobile side pins it): what happens to the mail does not change with the count.
+     * THE ASK, AND IT IS THE MESSAGE STRIP'S ASK — same panel, same `alertdialog`, same note, same pair of answers.
+     * What differs is one number: the sentence counts the selection. WHY THERE IS AN ASK HERE AT ALL when `⌫`/`⌦`
+     * have none: item 10's own distinction, one verb wider. A key held down over a list is a gesture that can run
+     * away, so the keys open the window directly and the toast's Undo is the protection; a BUTTON labelled Delete,
+     * and the `d` that names it, are aimed presses over a set somebody built — cheap to ask, and the ask is the last
+     * place the count is stated before the rows go. `deleteNote` is reused WORD FOR WORD from the single-message
+     * ceremony (a parity test on the mobile side pins it): what happens to the mail does not change with the count.
      */
     return (
       <div className="msg-actions">
@@ -3105,20 +2573,15 @@ function SelectionPill({
 
       <div className="abar-g abar-read-g">
         {/*
-         * TWO DIRECTIONS, NEVER A TOGGLE — `BulkAction`'s own rule, and the reason is the set:
-         * `role="switch"` reports a current state and a selection has a MIXED one, so a toggle
-         * over it would mark six read and five unread in a gesture that reads as one decision.
-         *
-         * The dots are the message pill's, and they mean the same thing here: the dot previews
-         * what the press LEAVES BEHIND — hollow on Read (no dot on the row afterwards), filled
-         * on Unread (a dot). The same mark the list row uses for unread, so "there is a dot"
-         * says one thing everywhere.
-         *
-         * NEITHER LABEL FOLDS. These carry no `.abar-read-lab`, deliberately: the compact floor
-         * drops one word, and dropping these two would leave a pair of bare dots, which say
-         * nothing about direction. "Read" and "Unread" are already the shortest labels on the
-         * row — it is the COUNT's word that folds here (`bar-density.ts`).
-         */}
+            Two directions, never a toggle — `BulkAction`'s own rule, and the reason is the set: `role="switch"`
+            reports a current state and a selection has a MIXED one, so a toggle would mark six read and five unread
+            in a gesture that reads as one decision. The dots are the message pill's and mean the same thing: the dot
+            previews what the press LEAVES BEHIND — hollow on Read, filled on Unread, the same mark the list row uses,
+            so "there is a dot" says one thing everywhere. Neither label folds: these carry no `.abar-read-lab`,
+            deliberately — the compact floor drops one word, and dropping these two would leave bare dots saying
+            nothing about direction; "Read" and "Unread" are already the shortest labels on the row, and it is the
+            COUNT's word that folds (`bar-density.ts`).
+          */}
         <span className="abar-g abar-seg" role="group" aria-label={t("groupRead")}>
           <button type="button" className="abar-b" onClick={onMarkSeen}>
             <span className="abar-dot abar-dot-off" aria-hidden="true" />
@@ -3175,71 +2638,46 @@ function SelectionPill({
 }
 
 /**
- * WHY AN EMPTY OHBOX IS EMPTY — the one answer that is this VIEW's to give.
- *
- * ── WHAT THIS PANE USED TO DO, AND WHY IT WAS SILENT FOR HALF AN HOUR ────────────────────
- *
- * A live count was put here — "Syncing your mailbox · 3 messages so far" — gated on
- * `SyncStatus.bootstrapping`. That gate is the defect. `bootstrapping` means "this TAB's first
- * drain has not completed", and a fresh account's first drain completes in seconds against an
- * empty server-side mirror. The WORKER's first import is a different clock entirely: minutes
- * on a mailbox of any size, and tens of minutes on a full one. So the counter switched itself off within
- * seconds and the pane then said nothing at all for the entire import — which is exactly the
- * half hour a first import spends saying "Waiting for first sync" somewhere else.
- *
- * The counter therefore MOVED, and moved UP: it is `SyncBar`'s `importing` state now, keyed on
- * the mirror actually growing (`shell/mail-state.ts`) rather than on a tab-local boolean, and
- * rendered above the deck so it is visible in Reads, Receipts and the Screener too. This is
- * the same lesson a second time — a view can only speak about itself, and "your mail is arriving"
- * is not a fact about the Ohbox.
- *
- * ── WHAT IS LEFT HERE, AND WHY IT BELONGS HERE ──────────────────────────────────────────
- *
- * One thing: an empty Ohbox that is CORRECT. A fresh account is mostly Screener by design, so
- * the true sentence is "nothing has reached the Ohbox because every sender so far is new" —
- * and that is a statement about THIS list, which no shell-level strip may make. Rendered above
- * the deck it would tell somebody standing in the Screener that everything is in the Screener.
- *
- * The split is: `mail-state.ts` derives `screenerCandidate` (mail landed, mirror settled,
- * nothing wrong), ONCE, for everybody. This pane contributes the only fact it owns — that its
- * own list is empty — and renders. **It does not re-derive.**
- *
- * That last rule is why this pane reads no `SyncStatus` field itself. It used to say
- * "`bootstrapping`, `failures` and `terminal` are deliberately no longer read here", which
- * described the mechanism rather than the rule and is no longer true of the second half of what
- * this pane says. It reads {@link MailState.settled}, which is derived from `bootstrapping` and
- * from the ladder's own verdict, ONCE, up in `mail-state.ts`. The argument is untouched: what
- * was wrong was a COUNTER gated on a tab-local boolean that goes false in seconds while the
- * worker's import runs for minutes. Progress still keys on the mirror growing and still lives in
- * the strip. Seconds is exactly the right length for the different question asked here.
- *
- * ── AND THE THIRD STATE THIS PANE USED TO COLLAPSE ──────────────────────────────────────
- *
- * "Empty" and "not looked yet" were one rendering, so a slow connection showed "no messages".
- * The mirror persists in IndexedDB and the client's own first drain had not finished, so
- * `Nothing in your Ohbox.` was a statement about mail the app had simply not read yet. Before the mirror has been read there is no emptiness to report, so this pane reports
- * what is actually happening instead — after {@link LOADING_GRACE_MS}, so a fast connection
- * still gets the silent frame it always had rather than a sub-second flash.
- *
- * **It says the app is loading, never what it will find.** A placeholder row, an invented count
- * or a skeleton shaped like mail would answer this defect by creating the one this product
- * treats as unforgivable.
- *
- * ── AND THE LINE THAT RULE ACTUALLY DRAWS ───────────────────────────────────────────────
- *
- * It is about CONTENT, not about shape, and the difference is the whole of what may be added
- * here. A bar as long as a real subject line is a claim about that subject; a row carrying a
- * name is a claim about a sender; a count invented to fill a slot is the worst of the three. All
- * three remain forbidden. `BootSkeleton` below is on the other side of that line by
- * construction: zero text nodes, `aria-hidden`, and a fixed width table that is derived from
- * nothing — so there is nothing in it that could be mistaken for this mailbox, because there is
- * nothing in it at all. It draws where the list is about to be, and the sentence above it stays
- * the only thing on this pane that says anything. `test/boot-skeleton.test.tsx` holds that boundary
- * as a structural assertion rather than as this paragraph.
- *
- * The demo and the Desktop never reach the `screenerCandidate` arms — the derivation returns the
- * resting value for a fixtures engine before it looks at anything else — and `settled` is true
- * for them for the same reason: a fixtures engine is permanently settled.
+ * Why an empty Ohbox is empty — the one answer that is this VIEW's to give. A live count used to sit here ("Syncing
+ * your mailbox · 3 messages so far") gated on `SyncStatus.bootstrapping`, and that gate is the defect:
+ * `bootstrapping` means "this TAB's first drain has not completed", which on a fresh account finishes in seconds
+ * against an empty server-side mirror, while the WORKER's first import runs minutes to tens of minutes. The counter
+ * switched itself off in seconds and the pane said nothing for the entire import. It MOVED, and moved UP: it is
+ * `SyncBar`'s `importing` state now, keyed on the mirror actually growing (`shell/mail-state.ts`) and visible above
+ * the deck in every pile — a view can only speak about itself, and "your mail is arriving" is not a fact about the
+ * Ohbox.
+ */
+
+/**
+ * What is left here: an empty Ohbox that is CORRECT. A fresh account is mostly Screener by design, so the true
+ * sentence is "nothing has reached the Ohbox because every sender so far is new" — a statement about THIS list, which
+ * no shell-level strip may make (above the deck it would tell somebody standing in the Screener that everything is in
+ * the Screener). The split: `mail-state.ts` derives `screenerCandidate` once, for everybody; this pane contributes
+ * the only fact it owns — its own list is empty — and renders. It does not re-derive: it reads {@link
+ * MailState.settled}, derived from `bootstrapping` and the ladder's verdict up in `mail-state.ts`. Progress still
+ * keys on the mirror growing and still lives in the strip; seconds is exactly the right length for the different
+ * question asked here.
+ */
+
+/**
+ * The third state this pane used to collapse: "empty" and "not looked yet" were one rendering,
+ * so a slow connection showed "Nothing in your Ohbox." about mail the app had simply not read
+ * yet. Before the mirror has been read there is no emptiness to report, so the pane reports
+ * what is happening instead — after {@link LOADING_GRACE_MS}, so a fast connection keeps its
+ * silent frame. It says the app is loading, never what it will find: a placeholder row, an
+ * invented count or a skeleton shaped like mail would answer this defect by creating the one
+ * this product treats as unforgivable.
+ */
+
+/**
+ * The line that rule draws is about CONTENT, not shape: a bar as long as a real subject line is
+ * a claim about that subject, a row carrying a name is a claim about a sender, an invented
+ * count is the worst of the three — all forbidden. `BootSkeleton` below is on the other side by
+ * construction: zero text nodes, `aria-hidden`, a fixed-width table derived from nothing, so
+ * nothing in it can be mistaken for this mailbox. `test/boot-skeleton.test.tsx` holds that
+ * boundary structurally. The demo and the Desktop never reach the `screenerCandidate` arms —
+ * the derivation returns the resting value for a fixtures engine — and `settled` is true for
+ * them for the same reason: a fixtures engine is permanently settled.
  */
 function SyncState({ waiting, settled }: { waiting: number; settled: boolean }) {
   const t = useTranslations("ohbox");
@@ -3271,20 +2709,20 @@ function SyncState({ waiting, settled }: { waiting: number; settled: boolean }) 
     );
   }
 
-  /* ── AND WHEN THERE IS NO EXPLANATION, SAY THE FACT ANYWAY ────────────────────────────
-   *
-   * `screenerCandidate` is false for the whole of a first sync — it requires mail to have
-   * landed and the mirror to have settled — so outside the demo this returned `null` for the
-   * whole of the first import, which is the stretch that matters most, and the pane rendered NOTHING. Combined with the group labels
-   * above, an empty Ohbox was literally the two words "New" and "Earlier" on an otherwise blank
-   * column, which reads as a broken screen rather than an empty one.
-   *
-   * The sentence is bare on purpose. `SyncBar` is directly above this pane and it is the one
-   * place allowed to say WHY the list is empty — it is the only surface that has derived it,
-   * and it is already saying "Connected. The first sync has not finished yet." or "Not
-   * syncing — …" or nothing at all. Repeating any of that here would reintroduce the same
-   * defect: a view speaking about something that is not a fact about this view. What this
-   * pane owns is "this list is empty", which is true in every one of those states.
+  /**
+   * AND WHEN THERE IS NO EXPLANATION, SAY THE FACT ANYWAY: `screenerCandidate` is false for the whole of a first sync
+   * — it requires mail to have landed and the mirror to have settled — so outside the demo this returned `null` for
+   * the whole of the first import, which is the stretch that matters most, and the pane rendered NOTHING. Combined
+   * with the group labels above, an empty Ohbox was literally the two words "New" and "Earlier" on an otherwise blank
+   * column, which reads as a broken screen rather than an empty one. The sentence is bare on purpose. `SyncBar` is
+   * directly above this pane and it is the one place allowed to say WHY the list is empty — it is the only surface
+   * that has derived it, and it is already saying "Connected. The first sync has not finished yet." or "Not syncing —
+   * …" or nothing at all.
+   */
+
+  /**
+   * Repeating any of that here would reintroduce the same defect: a view speaking about something that is not a fact
+   * about this view. What this pane owns is "this list is empty", which is true in every one of those states.
    */
   if (!state.screenerCandidate) {
     return (

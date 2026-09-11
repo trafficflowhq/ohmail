@@ -1,69 +1,26 @@
 /**
- * THE PAIRING SEAM — how this phone becomes a session on a server, all flavors, one mechanism.
- *
- * One mechanism, every server flavor: the picker negotiates via `GET /hello` and shows a next
- * step only where `features.pairing` allows it (never a dead button); the credential arrives as
- * `${origin}/pair#${token}` — a QR on the desktop's Devices pane, a copy link on the LAN pane,
- * or two fields typed by hand — and is spent exactly once, in the body of `POST /pair/redeem`.
- *
- * ── THE TOKEN DISCIPLINE (carried from the desktop PairScreen) ──────────────────────────────
- *
- *  · the token rides the link's FRAGMENT; {@link parsePairLink} refuses a token moved into the
- *    query or the path, so the safe shape cannot regress by convenience;
- *  · the ONLY request that ever carries it is the redeem's JSON body — it appears in no URL,
- *    no header, no log line, and no error sentence this module composes;
- *  · the redeem rides a BARE fetch, deliberately not a BearerManager's: there is no session
- *    yet, and a 401 recovery has nothing to recover.
- *
- * ── THE NO-SECURE-CONTEXT WIN, STATED — AND THE CLEARTEXT LOSS THAT CAME WITH IT ────────────
- *
- * The served BROWSER client carries three [SecureContext] dependencies that make a LAN origin
- * unusable there — which is why the desktop's LAN door serves an explainer, not the client, and
- * why its pane says "browsers use Tailscale, the mobile app uses same-network". This module is
- * the other half of that sentence: RN fetch has no secure-context gate and no CORS, and nothing
- * in this seam or the manager touches `navigator.locks`, `isSecureContext` or bare
- * `crypto.randomUUID` (the census in `pairing.test.ts` pins that).
- *
- * What was NOT true, and read as true here for the whole life of this file, is the rest of that
- * sentence: *"a plain `http://192.168…` desktop-host door pairs and drains exactly like an https
- * one."* It does not, and it never did in a build anybody could install. A release build permits
- * no cleartext (`targetSdk` past 28; iOS App Transport Security is the same refusal by another
- * name), so the request died with `UnknownServiceException` before opening a socket. Every
- * exercise of this path was a DEBUG build, whose manifest carries `usesCleartextTraffic`.
- *
- * The door serves TLS now, with a key of its own that no authority vouches for, and
- * {@link admitOrigin} is where this module refuses everything that would paper over that:
- * cleartext to a network address, and an unverifiable address with no pin.
- *
- * ── AND WHERE THE MAIL API IS, WHICH IS NOT ALWAYS THE ORIGIN ───────────────────────────────
- *
- * Every door this app could reach before the self-hosted one served its API at the root of the
- * address the pairing named, so "the origin" and "the base" were one value and nothing had to say
- * which. A one-origin self-host stack breaks that: its proxy routes `/hello`, `/pair/*` and
- * `/auth/*` at the bare path and the `/sync` family only under `/api`. The ceremony below
- * therefore MEASURES the base before it spends the token ({@link resolveApiBase}) and stores it on
- * the profile, and `net/server-base.ts` carries the measurements and the reasoning. Without it a
- * self-host pairing succeeded and mirrored nothing, for ever.
- *
- * ── WHO NAMES THE ACCOUNT ───────────────────────────────────────────────────────────────────
- *
- * The mirror is named by (origin, accountId) and the `__owner` stamp CLAIMS it, so the id must
- * be the SERVER's word, never a guess: {@link resolveAccountId} asks `GET /auth/session` where
- * the composition mounts it (the standalone server), and falls back to the server's own rows —
- * one snapshot/sync page's `entity.accountId` — on the desktop-host door, which mounts no
- * session read. A door that can name no account (no session read AND zero rows) refuses the
- * pairing out loud rather than minting a mirror under an invented owner that the drain-time
- * account guard would then refuse forever.
+ * The pairing seam — every flavor through one mechanism: `GET /hello`
+ * negotiates, the credential is `${origin}/pair#${token}`, and the token is
+ * spent exactly once, in the `POST /pair/redeem` body — it rides the link's
+ * fragment ({@link parsePairLink} refuses query or path) and appears in no
+ * URL, header, log or error sentence. {@link admitOrigin} refuses cleartext
+ * to a network address and an address no pin can verify. The API base is
+ * measured before the burn ({@link resolveApiBase}, `net/server-base.ts`);
+ * {@link resolveAccountId} takes the server's word — a door naming no account is refused.
  */
 import { originNeedsPin, type OhmailEngine, type SqlMirrorStore } from "@ohmail/client-engine";
 import {
   bootEngine,
   forgetMirror,
+  localEngineTransport,
   mirrorOwnerKey,
   normalizeOrigin,
+  LOCAL_ENGINE_ORIGIN,
   type IdentityVerdict,
   type MobileEngineDeps,
 } from "../engine/boot";
+import { holdStandaloneDoor } from "../engine/organizer-session";
+import type { ReopenOutcome, StandaloneEngine } from "../engine/standalone-door";
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
 import { BearerManagerRN, type FetchLike, type RefreshVault } from "./bearer";
 import {
@@ -163,25 +120,14 @@ export { parsePairLink, shortPin, type PairLink } from "@ohmail/client-engine";
 /* ── the picker's origin handoff ────────────────────────────────────────────────────────────── */
 
 /**
- * THE ADDRESS THE MANUAL SCREEN OPENS ON — held in this process, never in a URL.
- *
- * `/connect` used to take the picker's negotiated address as a ROUTE PARAMETER, and this app
- * registers the `ohmail` scheme as a BROWSABLE deep link — so any web page could open
- * `ohmail://connect?origin=<anything>` and choose the server address that screen would then send
- * a pairing token to. That is not a cosmetic prefill, because THE TOKEN IS THE CREDENTIAL:
- * `POST /pair/redeem` is `public + anonymous` and hands a bearer pair to whoever presents the raw
- * token (`packages/api/src/routes/pair.ts:162-164` — its own docblock says so), inside a
- * five-minute default TTL (`packages/services/src/pairing.ts:107`). Combined with the screen's
- * own supported "type the token on its own" path, a prefilled hostile address is a way to have
- * somebody hand their live grant to a stranger who then redeems it at the real server first.
- *
- * A module-level value cannot be reached from outside this process, so the address the manual
- * screen opens on is now necessarily one THIS APP negotiated in this launch (the picker only
- * stashes an origin `/hello` answered for). The whole-link paste path is unchanged and still
- * wins over the field, because a link carries its own origin.
- *
- * READ rather than consumed, deliberately: leaving the manual screen and coming back must show
- * the same address. A stale value is harmless — it can only ever be an app-negotiated origin.
+ * The address the manual screen opens on — held in this process, never in a
+ * URL. The `ohmail` scheme is a browsable deep link, so a route parameter let
+ * any web page open `ohmail://connect?origin=<anything>` and choose the server
+ * a pairing token would be sent to — and the token is the credential:
+ * `POST /pair/redeem` is public+anonymous and hands a bearer pair to whoever
+ * presents it, within the five-minute TTL. A module-level value is unreachable
+ * from outside the process, so the address is one this app negotiated in this
+ * launch. Read, not consumed: returning to the screen shows the same address.
  */
 let stashedPairOrigin: string | null = null;
 
@@ -198,15 +144,13 @@ export function pendingPairOrigin(): string {
 /* ── the server-verified account id ─────────────────────────────────────────────────────────── */
 
 /**
- * Ask the server whose session this is — the session read first, the server's own rows where
- * that route is not mounted (see the header). `null` = this door could name no account.
- *
- * TWO ADDRESSES, and they are the same string on two of the three doors. `/auth/session` is
- * routed at the bare ORIGIN everywhere (the self-host Caddyfile names `/auth/*` explicitly), and
- * the row reads are `/sync` family — which a one-origin self-host stack serves ONLY under `/api`.
- * This read is the one place the fallback path is exercised on the door that needs the prefix, so
- * getting it wrong here would leave the pairing naming no account and refusing itself out loud
- * after the token was already burned. See `net/server-base.ts`.
+ * Ask the server whose session this is — the session read first, the server's
+ * own rows where that route is not mounted. `null` = this door could name no
+ * account. `/auth/session` is routed at the bare origin everywhere (the
+ * self-host Caddyfile names `/auth/*`), while the row reads are `/sync`
+ * family, which a one-origin self-host stack serves only under `/api` — this
+ * read is the one place the fallback runs on the door that needs the prefix.
+ * See `net/server-base.ts`.
  */
 export async function resolveAccountId(
   fetchImpl: FetchLike,
@@ -258,7 +202,27 @@ export async function resolveAccountId(
 /** What the connection layer holds while a profile is live. */
 export interface ConnectedSession {
   profile: ServerProfile;
-  bearer: BearerManagerRN;
+  /**
+   * THE ROTATING CREDENTIAL — or `null` ON THE STANDALONE DOOR, where there is no family to rotate.
+   *
+   * Named rather than filled in. A BearerManager built over the engine's own per-launch token would
+   * be a manager whose `rotate()` has no server to ask and whose `onSessionDead` can never fire, so
+   * every caller reading it would believe it had a credential lifecycle it has not got. The two
+   * readers that genuinely want the MANAGER — the dead signal and the logout — ask for it and skip
+   * their work when it is absent; everything that only wanted a transport uses {@link fetch}.
+   */
+  bearer: BearerManagerRN | null;
+  /**
+   * EVERY AUTHENTICATED REQUEST THIS SESSION MAKES — the manager's on a paired door, the engine's
+   * `handle` on the standalone one.
+   *
+   * The app's own reads (`net/mailboxes.ts`, the release route, consent, the folder verbs) used to
+   * reach through `bearer.fetch`, which made a manager the precondition for talking to a server at
+   * all. None of them wants rotation; they want the transport this session is on, and the local
+   * door has one — `localEngineTransport` — that is the same composition the engine's own adapter
+   * rides. One field, so a screen cannot be written against a door it will not work on.
+   */
+  fetch: FetchLike;
   engine: OhmailEngine;
   store: SqlMirrorStore;
   ownerKey: string;
@@ -268,6 +232,15 @@ export interface ConnectedSession {
    * adoption, once the dead signal is subscribed, and tears the session down on `mismatch`.
    */
   verifyIdentity: () => Promise<IdentityVerdict>;
+  /**
+   * IS THIS SESSION THE ENGINE IN THIS APP — the standalone door, rather than a server on a wire.
+   *
+   * Derived from the ORIGIN and nothing else, HERE rather than by the reader: `bootEngine` refuses
+   * a local engine handed any other address, so the origin is the door's identity, and deriving it
+   * in the layer that composes the session keeps the screens out of `engine/` (`privacy.test.ts`
+   * — the connection layer is the one door to the network seam).
+   */
+  standalone: boolean;
 }
 
 /** The two kinds this app can truthfully be — the hosted device vocabulary's mobile half. */
@@ -291,46 +264,25 @@ function isLoopback(host: string): boolean {
 }
 
 /**
- * MAY THIS PHONE TALK TO THIS ORIGIN AT ALL — and if so, on what terms?
- *
- * Called before the FIRST request to an origin, in both places a session begins
- * ({@link pairWithServer} and {@link buildSession}), because the pin has to be installed before
- * `/hello` and not merely before the redeem.
- *
- * Three refusals, and every one of them is a thing the platform would otherwise refuse
- * obscurely or — worse — a thing nothing would refuse at all:
- *
- *  1. **Cleartext to a network address.** The OS kills this with
- *     `UnknownServiceException: CLEARTEXT communication to <addr> not permitted by network
- *     security policy`, which reads to a person as "the server is down". Refusing it here says
- *     what actually happened and what to do. Loopback is exempt: a request from this process to
- *     this process is not a network hop, and it is where the test suite's servers live.
- *  2. **An address no certificate can be issued for, with no pin.** An IP literal cannot be
- *     verified by any trust store, so a TLS connection to one is either pinned or unverified.
- *     Unverified is worth nothing, so the only honest answer to "no pin" is no pairing.
- *  3. **A pin this build cannot install.** `canPin()` is false where the native half is absent —
- *     today, that is iOS. Falling through would connect unpinned, which is precisely the
- *     property the pin exists to provide; so it refuses, and says which platform half is
- *     missing rather than blaming the network.
- *
- * Note the fourth case, which is a PASS: a DNS-named https origin with no pin — the hosted
- * service, and a self-host box behind a real certificate. Those are verified by the platform's
- * own trust store exactly as any website is, and a pin there would add a way for the pairing to
- * break on certificate renewal while adding nothing.
+ * May this phone talk to this origin at all, and on what terms? Called before
+ * the first request, in both places a session begins ({@link pairWithServer},
+ * {@link buildSession}), so the pin installs before `/hello`. Three refusals:
+ * cleartext to a network address (the OS would kill it obscurely; loopback is
+ * exempt — not a network hop, and where the test servers live); an IP literal
+ * with no pin (unverified TLS is worth nothing); a pin this build cannot
+ * install (`canPin()` false — today iOS; connecting unpinned defeats the pin).
+ * The pass: a DNS-named https origin — the platform's trust store verifies it.
  */
 export type Admitted =
   /**
-   * `enforcedPin` is the key the TLS stack is now ENFORCING for this origin, or `null` where none
-   * is needed because the platform's own trust store verifies it.
-   *
-   * IT IS NOT "the pin that was in the link", and that distinction is the whole reason this type
-   * exists. A link carrying a fingerprint for a DNS-NAMED origin installs nothing — `originNeedsPin`
-   * is false there, correctly — and the confirmation screen was rendering that unenforced value
-   * under "Its key" beside the sentence "the same characters as under Settings → Devices there".
-   * An attacker with a real certificate for their own name and the VICTIM's fingerprint in the
-   * fragment got a screen that told the person to compare, and the comparison MATCHED. The screen
-   * built to catch that was assuring them of it. Only an enforced key may be shown, so only an
-   * enforced key leaves here.
+   * `enforcedPin` is the key the TLS stack is now enforcing for this origin, or
+   * `null` where the platform's own trust store verifies it. It is not "the pin
+   * that was in the link" — the distinction is this type's reason: a fingerprint
+   * for a DNS-named origin installs nothing (`originNeedsPin` is false there),
+   * yet the confirmation once rendered that unenforced value under "Its key" —
+   * an attacker with a real certificate for their own name and the victim's
+   * fingerprint in the fragment got a matching comparison from the very screen
+   * built to catch them. Only an enforced key leaves here, so only one is shown.
    */
   | { ok: true; enforcedPin: string | null }
   | { ok: false; reason: Refusal };
@@ -339,15 +291,13 @@ export function admitOrigin(
   origin: string,
   pin: string | null,
   /**
-   * The pin this phone ALREADY enforces for this origin, when it has one — read from the stored
-   * profile by the caller so this function stays pure.
-   *
-   * A DIFFERENT pin for an origin already paired under another key is refused rather than
-   * installed. `installPin` REPLACES the registry's entry for a (host, port), so without this a
-   * probe nobody confirmed rewrote the trust of a LIVE pairing: an attacker answering that address
-   * on the network offers a link for it carrying their key, the person probes and backs out, and
-   * the next refresh hands the existing bearer to the attacker's machine over a socket the phone
-   * now trusts. A key change is a deliberate re-pair — forget and pair again — and never a side
+   * The pin this phone already enforces for this origin, when it has one —
+   * read from the stored profile by the caller so this function stays pure.
+   * A different pin for an origin paired under another key is refused, never
+   * installed: `installPin` replaces the registry's (host, port) entry, so a
+   * probe nobody confirmed could rewrite the trust of a live pairing and the
+   * next refresh would hand the existing bearer to an attacker's machine. A
+   * key change is a deliberate re-pair — forget and pair again — never a side
    * effect of looking at a code.
    */
   knownPin?: string | null,
@@ -395,21 +345,14 @@ export function admitOrigin(
     return { ok: true, enforcedPin: pin };
   }
   /**
-   * ── AN ORIGIN THAT NEEDS NO PIN ENFORCES NONE, AND THE TWO CASES DIVERGE ────────────────────
-   *
-   * Either way the admission carries NO key, because nothing was enforced and only an enforced
-   * key may be drawn. What differs is whether the code itself is refused, and the split is the one
-   * `originNeedsPin` already argues:
-   *
-   *  · **A DNS NAME is refused.** The desktop composes a key into a code only for its
-   *    same-network address, so a pinned code naming a host is either a mistake or the attack:
-   *    a real certificate for the attacker's own name plus the VICTIM's fingerprint in the
-   *    fragment. Admitting it silently would leave a pairing that works and a person who believes
-   *    they compared a key.
-   *  · **LOOPBACK is admitted, with the pin dropped.** That is an exemption rather than an
-   *    oversight — no network path exists to attack, which is the same reason `originNeedsPin`
-   *    exempts it, and it is where this suite's own servers live. The value is discarded, so the
-   *    confirmation shows its no-key sentence and nothing unchecked reaches a screen.
+   * An origin that needs no pin enforces none, and the two cases diverge.
+   * Either way the admission carries no key — nothing was enforced, and only
+   * an enforced key may be drawn. A DNS name is refused: the desktop composes
+   * a key into a code only for its same-network address, so a pinned code
+   * naming a host is a mistake or the attack (a real certificate plus the
+   * victim's fingerprint), and admitting it leaves a person believing they
+   * compared a key. Loopback is admitted with the pin dropped — no network
+   * path exists to attack, and it is where this suite's own servers live.
    */
   if (pin !== null && !isLoopback(host)) {
     return { ok: false, reason: refuse("admitPinUnenforceable") };
@@ -439,6 +382,22 @@ export interface PairingEnv {
    * that does not care about wakes omits it and forgets exactly as before.
    */
   distributor?: Pick<UnifiedPushDistributor, "unregister">;
+  /**
+   * The mailbox on this phone, as a port — the fourth door's half of
+   * {@link buildSession}. Two members because a launch and a door press arrive
+   * in opposite states: a press has already opened the engine (the door screen
+   * holds it), a cold launch has a profile row and nothing running — `door()`
+   * answers the first, `reopen()` the second. A port for `distributor`'s reason:
+   * opening the engine needs the platform's SQLite, key ring and install marker,
+   * none importable here. Absent means this build cannot organize a mailbox;
+   * the arm refuses in words, never a silent fall-through to the chooser.
+   */
+  standalone?: {
+    /** The engine this process holds, or `null` — `organizerDoor()` in the app. */
+    door: () => StandaloneEngine | null;
+    /** Open it again from what it sealed for itself. `reopenStandaloneMailbox` in the app. */
+    reopen: () => Promise<ReopenOutcome>;
+  };
 }
 
 export type PairOutcome =
@@ -461,35 +420,14 @@ function vaultFor(profiles: ServerProfileStore, id: string): RefreshVault {
 }
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE ADMISSION — what a probe MEASURED about a door, and the only way to reach a redeem
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * A pairing is two acts with a PERSON between them: find out what is at this address (no
- * credential spent, nothing stored), show them what was found, and only then spend the code.
- * Before this type existed there was one act — {@link pairWithServer} took an origin and a token
- * and redeemed on the spot — which is why a scanned QR paired a phone with whatever answered.
- *
- * A QR is a string nobody can read. The desktop's Devices pane has said, in every shipped
- * release since the same-network door landed, *"a device pairing over your network shows these
- * characters before it pairs. If it shows different ones, something else is answering for this
- * computer."* The phone showed nothing and pressed on. So the sentence was false, and the check
- * it invites — the one thing standing between a scan and trusting a stranger's key for the life
- * of the pairing — was not offered to anybody.
- *
- * WHY IT IS A TYPE AND NOT A SCREEN'S DISCIPLINE. A confirmation any new call site can forget is
- * not a gate. {@link pairWithServer} no longer accepts an origin at all: it accepts one of these,
- * and the only function that makes one is {@link probePairing}. The unconfirmed pairing is not
- * refused — it is unrepresentable. A census over this app's own sources closes the other half by
- * naming the one component allowed to redeem, so a screen that probed and then redeemed without
- * showing anybody the answer is a failing build rather than a review note.
- *
- * Every field is MEASURED, never taken from the link, with one exception that is stated because
- * it matters: `origin` and `pin` ARE the link's, because they are what the phone will connect to
- * and the key it will accept — the subject of the question, not the answer. `flavor` is the
- * door's own word about itself, read over the pinned connection. A "display name" carried in the
- * QR was rejected for this reason: it would let the attacker's code name the attacker's server
- * "MacBook Pro" on the very screen built to catch it.
+ * The admission — what a probe measured about a door, and the only way to
+ * reach a redeem. A pairing is two acts with a person between them: find out
+ * what is at this address (no credential spent), show them, then spend the
+ * code. A type, not a screen's discipline — a confirmation any call site can
+ * forget is not a gate: {@link pairWithServer} accepts only an admission, only
+ * {@link probePairing} makes one, so an unconfirmed pairing is unrepresentable
+ * (a census names the one component allowed to redeem). Every field is
+ * measured, never the link's, except `origin` and `pin` — the question itself.
  */
 export interface PairAdmission {
   /** Lower-cased scheme+host(+port) — where the redeem and every later request will go. */
@@ -517,15 +455,13 @@ export type ProbeOutcome =
   | { kind: "refused"; reason: Refusal };
 
 /**
- * ASK AN ADDRESS WHAT IT IS, SPENDING NOTHING.
- *
- * Steps 0, 1 and 1b of the old one-shot ceremony, unchanged and in the same order — the transport
- * gate, `/hello`, and where the mail API answers. Every one is credential-free, which is what
- * lets them run before the person has decided anything and what makes a refusal here cost a
- * sentence instead of a spent code.
- *
- * The TOKEN IS NOT A PARAMETER. It stays with whoever scanned it until the confirmation is
- * pressed, so nothing on this path can log it, send it or hold it.
+ * Ask an address what it is, spending nothing. Steps 0, 1 and 1b of the
+ * ceremony in order — the transport gate, `/hello`, and where the mail API
+ * answers. Every step is credential-free, which is what lets them run before
+ * the person has decided anything and makes a refusal cost a sentence instead
+ * of a spent code. The token is not a parameter: it stays with whoever
+ * scanned it until the confirmation is pressed, so nothing on this path can
+ * log it, send it or hold it.
  */
 export async function probePairing(
   env: PairingEnv,
@@ -582,17 +518,14 @@ export async function probePairing(
     };
   }
 
-  // 1b — WHERE IS THIS SERVER'S MAIL API? BEFORE THE BURN, and that placing is the whole point.
-  //
-  // A one-origin self-host stack serves `/hello`, `/pair/*` and `/auth/*` at its root and the
-  // `/sync` family only under `/api`. Every request this ceremony makes up to here answers at the
-  // root, so the pairing SUCCEEDED against such a stack and then mirrored nothing, for ever, with
-  // an HTML 404 as the only clue — the defect `net/server-base.ts` documents and closes. Measured
-  // here rather than derived from the door or the flavor, for the reason stated there: a QR
-  // carries an origin and no door.
-  //
-  // Placed before the redeem so a server whose API cannot be found costs a sentence and not a
-  // spent code. Both probes are credential-free, which is what lets them run this early.
+  // 1b — where is this server's mail API? Measured before the burn: a
+  // one-origin self-host stack serves `/hello`, `/pair/*` and `/auth/*` at
+  // its root and the `/sync` family only under `/api`, so a pairing could
+  // succeed and then mirror nothing forever, with an HTML 404 as the only
+  // clue (`net/server-base.ts` documents and closes it). Measured rather than
+  // derived from the door or flavor — a QR carries an origin and no door —
+  // and placed before the redeem so a server whose API cannot be found costs
+  // a sentence, not a spent code.
   const resolved = await resolveApiBase(fetchImpl, origin);
   if (resolved.kind === "refused") {
     // A HANDSHAKE FAILURE HERE READS AS A PIN FAILURE too — the probe is a request to the same
@@ -723,19 +656,14 @@ export async function pairWithServer(
     };
   }
 
-  // 3b — AN OWED FORGET FOR THIS MIRROR IS SETTLED BEFORE THE PAIRING IS ADOPTED.
-  //
-  // A forget whose deletion failed leaves `{oldId, owner}` in the durable queue, and a re-pair
-  // of the SAME (origin, account) resolves to that same owner — and, because `add()` re-pairs in
-  // place, often the same profile id. Adopting it would boot the surviving mirror, let the reader
-  // queue work into it, and then have the next launch's drain delete the database the person had
-  // just re-authorized: a debt written against the OLD pairing collected against the NEW one.
-  //
-  // So the debt is paid here, on the mail that is genuinely owed a deletion, before anything is
-  // stored or booted. The mirror is deleted and read back; the pairing starts from empty, which
-  // is what a re-pair after a forget means. If the deletion still cannot land the pairing is
-  // REFUSED — adopting a mirror this app owes a deletion for is the one outcome that cannot be
-  // made honest, and the token is already spent so the sentence says what to do next.
+  // 3b — an owed forget for this mirror is settled before the pairing is
+  // adopted. A forget whose deletion failed leaves `{oldId, owner}` in the
+  // durable queue, and a re-pair of the same (origin, account) resolves to
+  // the same owner — adopting it would boot the surviving mirror and let the
+  // next launch's drain delete a database the person just re-authorized. So
+  // the debt is paid here: mirror deleted and read back, the pairing starts
+  // from empty. If the deletion still cannot land the pairing is refused —
+  // the token is already spent, so the sentence says what to do next.
   const ownerKey = mirrorOwnerKey(origin, identity.accountId);
   if ((await env.profiles.pendingWipes()).some((w) => w.owner === ownerKey)) {
     try {
@@ -813,15 +741,13 @@ export async function pairWithServer(
  */
 export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Promise<boolean> {
   /**
-   * A CLEARED TOKEN IS NOT A COMPLETED REVOCATION, and this answered `true` for it.
-   *
-   * The token is null because the server REFUSED the family — a reuse judgment, a device revoke.
-   * That kills the sessions and nothing else: the push row is stamped with the device and is
-   * pruned only by `AuthService.logout` or a Devices-pane revoke, neither of which ran. So the
-   * registration stays live on a shared distributor endpoint the phone is still answering, and
-   * this profile no longer holds anything that could take it down. Saying "told" here reported a
-   * complete forget over exactly that. `false` shows the Devices-list remedy, which is the only
-   * one left.
+   * A cleared token is not a completed revocation. The token is null because
+   * the server refused the family (a reuse judgment, a device revoke): that
+   * kills the sessions and nothing else — the push row is pruned only by
+   * `AuthService.logout` or a Devices-pane revoke, neither of which ran, so
+   * the registration stays live on a distributor endpoint the phone still
+   * answers. Answering `true` here reported a complete forget over exactly
+   * that; `false` shows the Devices-list remedy, the only one left.
    */
   if (profile.refreshToken === null) return false;
   const bearer = new BearerManagerRN({
@@ -857,38 +783,14 @@ export type ForgetOutcome =
   | { kind: "partial"; reason: Refusal };
 
 /**
- * FORGET A PAIRING — the whole ceremony, at the seam rather than in the React provider.
- *
- * ── WHY THIS IS NOT THREE LINES IN A CALLBACK ───────────────────────────────────────────────
- *
- * "Forget this server" spans THREE stores — the keystore (the credential), a SQLite database
- * (the mail), and the server (the session and its wake registration) — and it used to touch
- * one of them. `env.profiles.remove` plus a best-effort logout; the mirror's handle was closed
- * and the file left on disk holding every header in the 90-day window and every body the reader
- * had opened. The app had NO deletion path at all, so the only way to get that mail off the
- * phone was to uninstall it.
- *
- * A take-back is a mutation like any other. It must be performed at every place the thing
- * exists, VERIFIED there, and honest when it cannot be — which is why this is a function with
- * an outcome type and not a callback that resolves to `void`.
- *
- * ── THE ORDER IS FORCED, AND THE FIRST STEP IS THE DURABLE INTENT ───────────────────────────
- *
- *  1. **Mark the wipe owed.** The mirror is named by `(origin, account)` — exactly what the
- *     forgotten profile row stops holding. A kill between the removal and the deletion would
- *     otherwise strand the mail under a name nothing on the device could still derive. Written
- *     first, cleared last, drained at every launch ({@link drainPendingWipes}).
- *  2. **Wait for the store handle to close.** Deleting a database underneath a live sqlite
- *     handle is the kind of thing that works on one platform and not another; the caller passes
- *     the close it already scheduled.
- *  3. **Remove the credential**, and read the keystore back. This is the residue that can still
- *     OPEN the mailbox, so its refusal is the loud one.
- *  4. **Revoke server-side, AWAITED.** This is also what takes the phone's WAKE REGISTRATION
- *     down: the hosted `logout` prunes `push_subscriptions` for the session's device, so a
- *     forgotten server stops ringing a phone that can no longer open the account. Its verdict
- *     shapes the result — see the note at the call for why it is no longer fire-and-forget, and
- *     why a durable retry queue was rejected.
- *  5. **Delete the mail and read it back** ({@link forgetMirror}).
+ * Forget a pairing — the whole ceremony at the seam, not in the React
+ * provider. It spans three stores — keystore, the mirror's SQLite, the server
+ * (session + wake registration) — performed at every place the thing exists,
+ * verified there, honest when it cannot be: an outcome type, never `void`.
+ * Forced order: mark the wipe owed (durable intent, drained each launch by
+ * {@link drainPendingWipes}); wait for the store handle to close; remove the
+ * credential, reading the keystore back; revoke server-side, awaited (hosted
+ * `logout` prunes the device's push row); delete the mail, read back ({@link forgetMirror}).
  */
 export async function forgetProfile(
   env: PairingEnv,
@@ -897,15 +799,14 @@ export async function forgetProfile(
 ): Promise<ForgetOutcome> {
   const row = (await env.profiles.list()).find((p) => p.id === profileId) ?? null;
   /**
-   * ── A SECOND FORGET OF A ROW THE FIRST ALREADY REMOVED IS NOT AUTOMATICALLY DONE ──────────
-   *
-   * Two taps before the row re-renders both reach here through the gate. The first writes the
-   * debt, removes the credential and — if the mirror deletion failed — returns `partial` with
-   * the mail still on the phone. The second then found no row, derived no owner key, and
-   * returned `forgotten`: an unearned success that immediately replaced the first tap's honest
-   * warning, and on the last pairing sent the screen to Welcome over a mirror that was still
-   * there. So a missing row is not the end of the question — the durable queue is asked whether
-   * this profile is still owed a forget, and if it is, that debt is what this call finishes.
+   * A second forget of a row the first already removed is not automatically
+   * done. Two taps before the row re-renders both reach here: the first
+   * writes the debt, removes the credential and may return `partial` with the
+   * mail still on the phone; the second then found no row and returned
+   * `forgotten` — an unearned success that replaced the honest warning and,
+   * on the last pairing, sent the screen to Welcome over a mirror still
+   * there. A missing row is not the end of the question: the durable queue is
+   * asked whether this profile still owes a forget, and that debt is finished.
    */
   const owed = row === null
     ? (await env.profiles.pendingWipes()).find((w) => w.id === profileId) ?? null
@@ -929,22 +830,24 @@ export async function forgetProfile(
     }
   }
 
-  // ── THE SERVER HALF IS AWAITED, AND ITS ANSWER SHAPES THE RESULT ─────────────────────────
-  //
-  // This was fire-and-forget on the reasoning that an unreachable server must not hold a local
-  // forget open. That reasoning is sound about BLOCKING and was wrong about REPORTING: the
-  // credential this call is destroying is the only thing that could ever retry the logout, and
-  // the logout is what revokes the session AND, on the hosted tier, takes this device's wake
-  // registration down. A forget reported over a logout that never landed leaves both alive with
-  // nothing left to retry them — the take-back class, at the one seam where recovery is
-  // genuinely impossible afterwards.
-  //
-  // A DURABLE REVOCATION DEBT WAS CONSIDERED AND REJECTED, because it would have to carry the
-  // refresh token: retrying a logout needs the credential, so the queue would be a second
-  // durable home for the exact secret the forget exists to remove, kept for as long as the
-  // retries take. That is a worse trade than a sentence naming the remedy — and the remedy
-  // (revoke the device from the server's Devices list) needs neither this phone nor its token.
-  const told = opts.revoke ? await opts.revoke().catch(() => false)
+  // The server half is awaited and its answer shapes the result. The
+  // credential this call destroys is the only thing that could ever retry
+  // the logout, and the logout both revokes the session and (hosted) takes
+  // the device's wake registration down — reporting a forget over a logout
+  // that never landed leaves both alive with nothing left to retry. A durable
+  // revocation debt was rejected: retrying a logout needs the refresh token,
+  // so the queue would be a second durable home for the exact secret the
+  // forget exists to remove. The remedy (revoke from the server's Devices
+  // list) needs neither this phone nor its token.
+  /* NOBODY TO TELL ON THE STANDALONE DOOR, and `revokeProfile` would say the opposite. It answers
+     `false` for a credential-less row — right for a pairing whose token a server judged, and a
+     false negative here: the session this row names was minted by the engine in this process and
+     ends with it. Reported as "the server was not told", a forget of the phone's own mailbox would
+     show the Devices-list remedy for a server that does not exist. */
+  const localOnly = (row?.origin ?? "") === LOCAL_ENGINE_ORIGIN
+    || (ownerKey ?? "").startsWith(`${LOCAL_ENGINE_ORIGIN}::`);
+  const told = localOnly ? true
+    : opts.revoke ? await opts.revoke().catch(() => false)
     : row !== null ? await revokeProfile(env, row)
     : true;
 
@@ -965,17 +868,14 @@ export async function forgetProfile(
     // would be a take-back refused for a reason nobody could act on.
     if (row !== null) unpin(row.origin);
     /**
-     * ── AND SO DOES THE WAKE REGISTRATION, which is this profile's own now ──────────────────
-     *
-     * Step 4's `logout` prunes the SERVER's `push_subscriptions` row. The DISTRIBUTOR end is the
-     * phone's and no server can reach it, and it became per-pairing in this slice — so forgetting
-     * one of two pairings left an instance registered for an account this phone can no longer
-     * open, for ever. `wake.tsx` sweeps only when the LAST pairing goes (the distributor CHOICE is
-     * app-wide), and `forgetWake` is reached only by turning wakes off explicitly. Neither is this
-     * path, which is the one a person actually takes.
-     *
-     * Best-effort for the pin's reason: an endpoint nothing POSTs to is not a residue that opens
-     * anything, and a forget must not fail in somebody's face over it.
+     * The wake registration goes too — per-pairing now. Step 4's `logout` prunes
+     * the server's `push_subscriptions` row, but the distributor end is the
+     * phone's and no server can reach it: forgetting one of two pairings would
+     * leave an instance registered for an account this phone can no longer open.
+     * `wake.tsx` sweeps only when the last pairing goes (the distributor choice
+     * is app-wide) and `forgetWake` is reached only by turning wakes off — neither
+     * is this path. Best-effort for the pin's reason: an endpoint nothing POSTs to
+     * opens nothing, and a forget must not fail in somebody's face over it.
      */
     if (env.distributor) {
       await env.distributor.unregister(profileId).catch(() => undefined);
@@ -1013,20 +913,14 @@ export async function forgetProfile(
 const NOT_TOLD = (): Refusal => refuse("forgetServerUnreachable");
 
 /**
- * Finish the forgets that did not finish — run once at launch, BEFORE any profile is read.
- *
- * ── THE CREDENTIAL GOES FIRST HERE TOO, AND THAT ORDER IS THE WHOLE POINT ───────────────────
- *
- * An owed entry naming a profile means the person pressed Forget and the process died before
- * the keystore row went. Deleting only the mirror in that state is worse than doing nothing:
- * the profile is still there and still ACTIVE, so the launch that follows reconnects it and
- * drains the entire mailbox back onto the phone — a forget interrupted at its documented crash
- * point coming back as a paired server with the mail in it. So the row is removed first, and
- * only then is the mirror deleted and read back.
- *
- * A refusal KEEPS the debt: the entry stays in the index and the next launch tries again. That
- * is the whole reason the intent is durable, so swallowing the failure here is the design and
- * not a shrug. Answers the mirror keys whose mail is still on the device, for the caller's log.
+ * Finish the forgets that did not finish — run once at launch, before any
+ * profile is read. The credential goes first here too: an owed entry means
+ * Forget was pressed and the process died before the keystore row went, and
+ * deleting only the mirror would leave an active profile whose next launch
+ * reconnects and drains the whole mailbox back onto the phone. So the row is
+ * removed first, then the mirror deleted and read back. A refusal keeps the
+ * debt — the entry stays and the next launch retries; that is why the intent
+ * is durable. Answers the mirror keys whose mail remains, for the caller's log.
  */
 export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
   const stillOwed: string[] = [];
@@ -1055,24 +949,14 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
 }
 
 /**
- * PAY THE OWED WAKE-ROW DELETIONS — run at launch, beside {@link drainPendingWipes}.
- *
- * A registration is a row on somebody's server, and taking it down is a request that can be
- * refused. The two paths that hit that — a profile switch, and a registration superseded
- * mid-flight — used to fire the delete and discard both the id and its verdict, so a refusal
- * left a row nothing could ever name again. It kept waking a phone for an account it no longer
- * syncs, and because the distributor endpoint is SHARED and still live, the server never got
- * the 404/410 it prunes on.
- *
- * Ridden through a manager on the profile's OWN vault — not a throwaway one, unlike
- * {@link revokeProfile}, and the difference is load-bearing (see the vault's own note): a
- * stored profile holds only a refresh token, so the first attempt 401s and the manager's one
- * recovery spends it into an access token and replays, and the rotation that comes back has to
- * be kept, because this launch is about to boot that same profile. A profile that is gone or
- * whose credential was refused can never pay its debt, so its entry is DROPPED rather than
- * retried for ever — the row will lapse with the pairing it belonged to.
- *
- * Answers the subscription ids still owed, for the caller's log. Never throws.
+ * Pay the owed wake-row deletions — run at launch, beside
+ * {@link drainPendingWipes}. A profile switch or a superseded registration
+ * used to fire the delete and discard id and verdict, so a refusal left a row
+ * nothing could name again, waking a phone for an account it no longer syncs.
+ * Ridden through a manager on the profile's own vault (unlike
+ * {@link revokeProfile} — load-bearing): the first attempt 401s, recovery
+ * spends the stored refresh token, and the rotation must be kept because this
+ * launch boots that same profile. A gone or refused entry is dropped. Never throws.
  */
 export async function drainPendingWakeDrops(env: PairingEnv): Promise<string[]> {
   const stillOwed: string[] = [];
@@ -1088,22 +972,23 @@ export async function drainPendingWakeDrops(env: PairingEnv): Promise<string[]> 
       accessToken: null,
       refreshToken: profile.refreshToken,
       /**
-       * ── THE PROFILE'S REAL VAULT, AND THE THROWAWAY ONE HERE WAS A PAIRING-KILLER ─────────
-       *
-       * `revokeProfile` uses a throwaway vault correctly: the profile it spends is being
-       * forgotten, so nothing should persist into it. This drain is the opposite case — the
-       * profile it pays a debt for is about to be BOOTED, moments later, by the same launch.
-       * A cold manager holds no access token, so the DELETE 401s, the recovery spends the
-       * stored refresh token, and the server rotates it. Discarding the replacement leaves the
-       * CONSUMED token in the keystore, and presenting a consumed token is the reuse signal
-       * that revokes the whole family: paying an ancillary "stop waking me" debt would have
-       * ended a perfectly good pairing and sent the reader back to the QR code.
+       * The profile's real vault — a throwaway one here killed pairings.
+       * `revokeProfile` uses a throwaway correctly: the profile it spends is
+       * being forgotten. This drain is the opposite case — the profile is
+       * about to be booted by the same launch. A cold manager 401s, recovery
+       * spends the stored refresh token, the server rotates it; discarding
+       * the replacement leaves a consumed token in the keystore, and
+       * presenting a consumed token is the reuse signal that revokes the
+       * family — paying a "stop waking me" debt would end a good pairing.
        */
       vault: vaultFor(env.profiles, profile.id),
       ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
     });
     const dropped = await dropWakeRow(
-      { profile, bearer } as unknown as ConnectedSession,
+      /* `fetch` beside the manager, because that is the member `dropWakeRow` reads now. A cast
+         through `unknown` compiles either way, so the omission would have been a runtime throw on
+         the launch path that pays these debts. */
+      { profile, bearer, fetch: bearer.fetch } as unknown as ConnectedSession,
       owed.subscriptionId,
     );
     if (dropped.ok) await env.profiles.clearPendingWakeDrop(owed.subscriptionId);
@@ -1146,18 +1031,14 @@ async function buildSession(
   accessToken: string | null,
 ): Promise<ConnectOutcome> {
   /**
-   * ── A PROFILE THE PERSON ASKED TO FORGET IS NOT BOOTABLE ──────────────────────────────────
-   *
-   * A forget whose CREDENTIAL removal was refused leaves the row in place and the debt in the
-   * queue — correctly, because the row is the only thing that still names it and the launch
-   * retries. What must not follow is the launch then reading that row as the active profile and
-   * connecting it: the retry mechanism would be a resurrection path, and the person would be
-   * looking at the mailbox they pressed Forget on.
-   *
-   * Here rather than at the call sites, for this file's own stated reason: this is the ONE place
-   * every session is built, so launch, switch and re-pair inherit it and a new caller cannot
-   * forget. A re-pair is not caught by it, because `pairWithServer` settles the owed forget
-   * before it ever gets here.
+   * A profile the person asked to forget is not bootable. A forget whose
+   * credential removal was refused leaves the row and the debt — correctly,
+   * the launch retries — but the launch must not then read that row as the
+   * active profile and connect it: the retry mechanism would be a
+   * resurrection path showing the mailbox they pressed Forget on. Here, not
+   * at call sites: this is the one place every session is built, so launch,
+   * switch and re-pair inherit it. A re-pair is not caught here because
+   * `pairWithServer` settles the owed forget before it arrives.
    */
   if (await env.profiles.isOwedForget(profile.id)) {
     return {
@@ -1166,16 +1047,24 @@ async function buildSession(
     };
   }
   /**
-   * ── THE PIN IS RE-INSTALLED ON EVERY LAUNCH, HERE, BEFORE ANY WIRE TOUCH ──────────────────
-   *
-   * The native registry is process-local and empty at launch, so a cold start of a phone paired
-   * with a desktop host holds no pin until this line runs. `buildSession` is the ONE place every
-   * session is built (launch, profile switch, re-pair), which is the same reason the
-   * owed-forget refusal below lives here rather than at the call sites: a new caller cannot
-   * forget to do it.
-   *
-   * A refusal is a refusal to BOOT, never a boot without the pin: the alternative is a phone
-   * that, after one restart, accepts any key on the local network for the mailbox it holds.
+   * The mailbox on this phone — this arm's position is load-bearing. Ahead of
+   * the admission: `LOCAL_ENGINE_ORIGIN` is `http://sidecar` and `admitOrigin`
+   * correctly refuses cleartext to a non-loopback name — a network rule
+   * applied to a door that never reaches one. Ahead of the refresh-token
+   * refusal: this row holds no refresh token by design. Behind the
+   * owed-forget refusal: a person who pressed Forget on this phone's own
+   * mailbox must not have it re-opened by the next launch — the same
+   * resurrection the queue prevents one door over.
+   */
+  if (profile.origin === LOCAL_ENGINE_ORIGIN) return buildLocalSession(env, profile);
+  /**
+   * The pin is re-installed on every launch, here, before any wire touch.
+   * The native registry is process-local and empty at launch, so a cold
+   * start of a phone paired with a desktop host holds no pin until this
+   * runs. `buildSession` is the one place every session is built (launch,
+   * switch, re-pair) — a new caller cannot forget it. A refusal is a refusal
+   * to boot, never a boot without the pin: the alternative is a phone that,
+   * after one restart, accepts any key on the local network.
    */
   /* The stored pin is BOTH the pin to install and the known one, so a launch can never be read
      as a key change: a profile's own key is what it is paired under. */
@@ -1183,30 +1072,14 @@ async function buildSession(
   if (!admitted.ok) return { kind: "refused", reason: admitted.reason };
 
   /**
-   * ── THE ONE POPULATION AN UPGRADE CANNOT FIX BY ITSELF, REPAIRED HERE ─────────────────────────
-   *
-   * A self-hosted pairing made by a build that predates the measured base is stored with no base at
-   * all, which reads as the origin — and the origin is exactly what never worked: every drain
-   * fetched an HTML 404 from the web container. Review named the consequence of leaving it: those
-   * profiles stay broken FOR EVER, because nothing re-probes, so the fix ships and the people it
-   * was written for see no change until somebody tells them to re-pair.
-   *
-   * ── AND IT DOES NOT BREAK BOOT-FROM-LOCAL, BECAUSE OF WHO IT APPLIES TO ──────────────────────
-   *
-   * `bootEngine`'s contract is that the boot touches no wire, so the app paints its cached mirror
-   * immediately. That is why this is NOT a blanket re-probe: it is gated on `flavor === "selfhost"`
-   * AND `apiBase === null`, which is precisely the set of profiles that have never mirrored a
-   * single message. There is no cached mirror to paint quickly for them — the rule's whole benefit
-   * is nil for exactly this set, and its cost is one or two credential-free requests, once, after
-   * which the base is stored and this never runs again.
-   *
-   * Every other profile — managed, desktop-host, local, and any selfhost row paired since the
-   * measurement — takes the same wire-free path it always did.
-   *
-   * A FAILURE HERE IS NOT FATAL. If the probe cannot find the API the profile boots against the
-   * origin exactly as it did before, which is no worse than the state it is already in, and the
-   * drain's own sync error says what happened. Refusing the boot would turn a broken mirror into
-   * an app that will not open at all.
+   * The one population an upgrade cannot fix by itself, repaired here: a
+   * self-hosted pairing made before the measured base stored none, which reads
+   * as the origin — exactly what never worked (an HTML 404 on every drain) —
+   * and nothing re-probes, so those profiles stay broken until told to re-pair.
+   * Not a blanket re-probe: gated on `flavor === "selfhost"` and
+   * `apiBase === null`, precisely the profiles that never mirrored a message, so
+   * `bootEngine`'s wire-free contract holds for everyone else. A failure here
+   * is not fatal: the profile boots against the origin as before, no worse than it was.
    */
   let apiBase = profile.apiBase;
   if (apiBase === null && profile.flavor === "selfhost") {
@@ -1267,10 +1140,72 @@ async function buildSession(
     session: {
       profile,
       bearer,
+      /* THE MANAGER'S OWN TRANSPORT — the same function the adapter above rides, so the app's reads
+         and the drain's pages carry one credential and one rotation. */
+      fetch: bearer.fetch,
       engine: boot.engine,
       store: boot.store,
       ownerKey: mirrorOwnerKey(profile.origin, profile.accountId),
       verifyIdentity: boot.verifyIdentity,
+      standalone: profile.origin === LOCAL_ENGINE_ORIGIN,
+    },
+  };
+}
+
+/**
+ * The standalone door's session — the engine in this process, as a session
+ * like any other; this is `bootEngine`'s once-missing caller. It does not give
+ * this install a second copy of the mailbox: the mirror is keyed
+ * (`LOCAL_ENGINE_ORIGIN`, accountId) with the id the engine reports, and the
+ * id on the row is compared against it rather than trusted — a restored backup
+ * can leave a row naming an account this store no longer serves, and opening
+ * a mirror under that name would be the second copy, quietly.
+ */
+async function buildLocalSession(env: PairingEnv, profile: ServerProfile): Promise<ConnectOutcome> {
+  const port = env.standalone;
+  if (port === undefined) return { kind: "refused", reason: refuse("standaloneNoEngine") };
+  let door = port.door();
+  if (door === null) {
+    /* A COLD LAUNCH. Nothing is running, the form that took the password is long gone, and what
+       opens the mailbox is what the engine sealed for itself — see `reopenStandaloneMailbox`. */
+    const opened = await port.reopen();
+    if (!opened.ok) return { kind: "refused", reason: opened.reason };
+    door = opened.door;
+    /**
+     * Held here, not by the port: this is the one place a door becomes the
+     * session's. A port implementation that forgot would leave
+     * `organizerDoor()` null with an engine running, so a second connect in
+     * the same launch opens a second engine — two organizers of one mailbox —
+     * the forget finds nothing to hand back, and the engine keeps polling a
+     * mailbox the person removed. First-start-wins, so a port that holds it
+     * itself is not a conflict.
+     */
+    holdStandaloneDoor(door);
+  }
+  const says = door.accountId.trim();
+  if (says !== profile.accountId.trim()) {
+    return { kind: "refused", reason: refuse("standaloneOtherMailbox") };
+  }
+  const boot = await bootEngine(env.engineDeps, {
+    origin: LOCAL_ENGINE_ORIGIN,
+    accountId: profile.accountId,
+    localEngine: door,
+  });
+  if (boot.kind === "refused") return { kind: "refused", reason: boot.reason };
+  return {
+    kind: "connected",
+    session: {
+      profile,
+      /* NO MANAGER, and that is the state rather than a gap: the engine mints its own bearer per
+         launch, there is no family to rotate and nothing can refuse it. The two readers that want a
+         manager check for it. */
+      bearer: null,
+      fetch: localEngineTransport(door).fetch,
+      engine: boot.engine,
+      store: boot.store,
+      ownerKey: mirrorOwnerKey(LOCAL_ENGINE_ORIGIN, profile.accountId),
+      verifyIdentity: boot.verifyIdentity,
+      standalone: profile.origin === LOCAL_ENGINE_ORIGIN,
     },
   };
 }

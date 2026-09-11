@@ -7,57 +7,14 @@ import { ServiceError } from "./errors.js";
 import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-service.js";
 
 /**
- * THE SCHEDULED-SEND PASS — the piece that turns an appointment (`drafts.send_at`, mail 0077)
- * into a delivery, by claiming due rows and pressing the ordinary send button on each.
- *
- * ── ONE IMPLEMENTATION, TWO HOSTS, AND WHY IT LIVES IN `services` ──────────────────────────
- *
- * The hosted deployment runs it on the API HOST (`GET /internal/sends/scheduled/run`, poked
- * every minute by the worker's `api-cron.ts`), and that placement is forced twice over by
- * measured facts, not preference: the production sync host's platform BLOCKS outbound SMTP
- * submission at the port level (`apps/worker/src/smtp-size.ts` — twelve hosts, every dial a
- * timeout, IMAP to the same host 300 ms), and the worker's runtime dependency set may not
- * include `@trafficflow/services` at all (its package.json records the measured Node-23
- * boot crash that promoting it caused). The standalone desktop runs the SAME function from its
- * local loop with its own send adapter — the sync pipeline's one-implementation rule, applied
- * to sending on a clock.
- *
- * ── THE CLAIM, AND WHY IT FLIPS `status` BACK TO `'draft'` ─────────────────────────────────
- *
- * `FOR UPDATE SKIP LOCKED` over `status = 'scheduled' AND send_at <= now`, then the claimed
- * rows go to `'draft'` IN THE SAME TRANSACTION — because `'draft'` is the one status
- * `SendService.reserve` accepts, and the whole point is to run THAT function unmodified.
- * `send_at` and `send_key` deliberately survive the flip: they are the recovery predicate. A
- * process that dies anywhere after this commit leaves a row that {@link claimDue}'s RECOVERY
- * arm re-finds once the appointment is {@link SEND_STALE_AFTER_MS} past due — and the retry
- * presents the SAME `send_key`, so `reserve`'s idempotency gate replays whatever the first
- * attempt achieved instead of delivering twice. That constant is reused rather than shadowed:
- * it is already the system's one answer to "how old must an attempt be before no invocation
- * can still be running".
- *
- * The claim window (status `'draft'`, `send_at` standing) is also what the user-facing verbs
- * key on: `ScheduleService.cancel` answers 409 "already being sent" for it, and
- * `ScheduleService.schedule` refuses to mint a second appointment over it.
- *
- * ── OUTCOMES, AND WHO CLEARS THE BOOKKEEPING ───────────────────────────────────────────────
- *
- *   sent / unverified   `SendService`'s own finalizers clear `send_at`/`send_key` in the same
- *                       transaction that records the terminal status, and emit the `draft`
- *                       change. Nothing to do here. An `unverified` row surfaces in Drafts
- *                       under the standing "we couldn't confirm this send" copy.
- *   ServiceError        a DETERMINISTIC refusal (the mailbox was disconnected by send time, the
- *                       recipients were removed, a prior attempt under this key is terminally
- *                       `failed`): the appointment is closed, the row returns to an ordinary
- *                       draft, and `send_error` carries the server's sentence for the Drafts
- *                       row to quote. Retrying a refusal that cannot change is not honesty.
- *   anything else       a TRANSIENT fault (the adapter's dial threw, the database blipped): the
- *                       row is RE-ARMED (`status = 'scheduled'` again) so the next pass
- *                       retries — unless the appointment is more than {@link
- *                       SCHEDULED_SEND_EXPIRY_MS} past due, at which point retrying quietly
- *                       forever would be the dishonest state and the row is closed with a
- *                       sentence instead. The re-arm is guarded on the row still being in the
- *                       claim window, so it can never resurrect a row a concurrent finalizer
- *                       settled.
+ * THE SCHEDULED-SEND PASS — turns an appointment (`drafts.send_at`, mail 0077) into a delivery:
+ * claim due rows, press the ordinary send button. Two hosts, one implementation: the API host
+ * (`GET /internal/sends/scheduled/run`; the sync host blocks outbound SMTP) and the desktop's
+ * local loop. CLAIM: `FOR UPDATE SKIP LOCKED`, flip to `'draft'` in one transaction — the status
+ * `SendService.reserve` accepts; `send_at`/`send_key` survive as the recovery predicate, retried
+ * after `SEND_STALE_AFTER_MS` under the SAME key, so idempotency replays rather than delivering
+ * twice. OUTCOMES: sent/unverified — finalizers clear the bookkeeping; `ServiceError` — closed
+ * with the sentence; else transient — RE-ARMED unless `SCHEDULED_SEND_EXPIRY_MS` past due.
  */
 
 /**
@@ -86,17 +43,12 @@ const defaultLog = createLogger({ service: "scheduled-send" });
 
 export interface ScheduledSendPassDeps {
   /**
-   * STOP BEFORE THE NEXT DELIVERY — a predicate this pass consults between rows.
-   *
-   * A pass that has begun is not entitled to finish. On the desktop the mailbox can change hands
-   * mid-pass: the socket dies, a re-dial re-reads the organizer lease, and a stranger's claim is
-   * found — while this loop is still holding rows it claimed under the old answer. Sending them
-   * duplicates the real organizer's reply, from an install the mailbox no longer belongs to, and
-   * no amount of checking BEFORE the pass can see it because the change happens during.
-   *
-   * Answering `true` stops the loop where it stands. Rows already claimed are left to the
-   * reconciler, which is the same recovery any crash mid-pass takes; nothing new is invented for
-   * this case. Absent means "never cancel", so every hosted caller is unchanged.
+   * STOP BEFORE THE NEXT DELIVERY — consulted between rows. A pass that has begun is not entitled
+   * to finish: on the desktop the mailbox can change hands MID-PASS (the socket dies, a re-dial
+   * re-reads the lease, a stranger's claim is found) while this loop holds rows claimed under the
+   * old answer — no check BEFORE the pass can see it. `true` stops the loop where it stands;
+   * claimed rows are left to the reconciler, the same recovery a crash takes. Absent means "never
+   * cancel", so every hosted caller is unchanged.
    */
   cancelled?: () => boolean;
 
@@ -106,54 +58,24 @@ export interface ScheduledSendPassDeps {
   resolveStorageCap?: (ctx: ServiceContext) => Promise<StorageCap>;
   /**
    * MAY THIS ACCOUNT'S AUTOMATION STILL FIRE? — the suspension gate, INJECTED because the fact
-   * lives in the cloud half (`account_suspensions`, read with `isSuspended` from
-   * `@trafficflow/db/cloud`) and this pass ships in the desktop engine bundle, which may not
-   * name a cloud table. The hosted route and the self-host clock inject the real read; the
-   * standalone door injects nothing, which resolves to ELIGIBLE — its store has no suspension
-   * concept, and the machine's own login is the boundary.
-   *
-   * Consulted INSIDE the claim transaction, before the flip, so an ineligible account's due
-   * rows are left exactly as they stand — still `'scheduled'`, re-examined next cycle, sent
-   * promptly once the suspension lifts, and never dialled meanwhile. The worker's own passes
-   * make the same ruling from the other end (a suspended account is in no shard's roster):
-   * "a suspended account's automation must not keep firing", and a pass that dials SMTP with
-   * retained credentials is exactly such automation.
-   *
-   * ── THE READ RUNS ON THE HANDLE THE PASS HANDS OVER, AND THAT IS A DEADLOCK RULE ──────────
-   *
-   * The callback receives the CLAIM TRANSACTION's own handle and must query THAT, never a
-   * captured outer `db`. On a pooled handle that serves one connection per invocation — the
-   * serverless shape — the claim transaction holds that connection, so a read on the captured
-   * outer handle queues behind the very transaction awaiting it: every run of the sender clock
-   * then times out at the platform ceiling and no appointment fires, which is how this rule
-   * was learned. The injectors' whole body is `isSuspended(handle, accountId)`, so handing
-   * the handle through costs one parameter and removes the failure class.
+   * lives in the cloud half (`account_suspensions`, `isSuspended` from `@trafficflow/db/cloud`)
+   * and this pass ships in the desktop engine bundle, which may not name a cloud table. The
+   * standalone door injects nothing ⇒ ELIGIBLE. Consulted INSIDE the claim transaction, before
+   * the flip: an ineligible account's rows stay `'scheduled'`, sent promptly once the suspension
+   * lifts, never dialled meanwhile. DEADLOCK RULE: the callback queries the CLAIM TRANSACTION's
+   * own handle, never a captured outer `db` — on a one-connection pooled handle the read queues
+   * behind the transaction awaiting it, and every run times out at the platform ceiling.
    */
   accountEligible?: (accountId: string, db: Db) => Promise<boolean>;
   /**
-   * WHICH MAILBOXES THIS PASS MAY CLAIM FOR — absent means ALL of them, which is the hosted
-   * clock's shape and the one every existing caller keeps.
-   *
-   * The scan below is store-wide by design: one host runs one pass and every due appointment in
-   * reach is its business. That stops being true on the standalone desktop the moment an install
-   * holds more than one mailbox, because the mailboxes do not share a ROLE. A machine can be the
-   * organizer of one and a mere reader of another at the same time, and a reader must not send an
-   * appointment: its own were closed when it was demoted, and one that survived that close — the
-   * close is best-effort and says so — would otherwise be delivered from an install the mailbox's
-   * real organizer knows nothing about, at a time nobody re-chose.
-   *
-   * Gating the whole pass on "every mailbox here organizes" was the alternative and it is worse
-   * in a way that is easy to miss: it would withhold the ORGANIZER's own appointments too,
-   * because one unrelated mailbox in the same install had been taken over. The filter is what
-   * lets each runtime claim exactly its own.
-   *
-   * ── AN EMPTY ARRAY MEANS NONE, AND IS NOT THE SAME AS ABSENT ─────────────────────────────
-   *
-   * This is the "absent config selects the dangerous branch" shape, so the two are separated
-   * deliberately rather than collapsed by a truthiness test: `undefined` is "no filter — claim
-   * anything", and `[]` is "this caller has no mailboxes to claim for", which must claim
-   * NOTHING. Folding them would make a desktop install with no organizer runtime behave like the
-   * hosted clock and send every appointment in the store.
+   * WHICH MAILBOXES THIS PASS MAY CLAIM FOR — absent means ALL, the hosted clock's shape.
+   * Store-wide stops being right on the desktop once an install holds more than one mailbox:
+   * mailboxes do not share a ROLE — a machine can organize one and merely read another, and a
+   * reader must not send an appointment (one surviving a best-effort demotion close would go out
+   * from an install the real organizer knows nothing about). Gating the whole pass on "every
+   * mailbox organizes" withholds the ORGANIZER's own appointments. AN EMPTY ARRAY MEANS NONE, NOT
+   * ABSENT: `undefined` is "no filter", `[]` is "nothing to claim for" — folded by truthiness, a
+   * filterless desktop behaves like the hosted clock.
    */
   mailboxIds?: readonly string[];
   log?: Logger;
@@ -245,62 +167,28 @@ export async function runScheduledSendPass(
           { includeSending: true });
         result.failed += 1;
       } else {
-        // `in_flight` OR `queued`, and they defer for the same reason from opposite ends.
-        //
-        // `in_flight`: a live invocation already owns this key (two pokes overlapping in the
-        // one window SKIP LOCKED cannot arbitrate — after the claim committed).
-        // `queued`: THIS call's own submission passed the attempt ceiling and was abandoned
-        // mid-flight, so its fate is unknown. In-process it may still land and finalize itself;
-        // if it does not, the row is a `sending` draft with its `send_key` standing, which is
-        // exactly what the recovery arm claims once it is provably stale.
-        //
-        // Nothing is written either way, and that is the point: a pass that closed the
-        // appointment here would be writing up an ending it cannot prove, and one that re-armed
-        // it would offer a second envelope for a message that may already be gone.
+        // `in_flight` OR `queued` — both defer, from opposite ends. `in_flight`: a live
+        // invocation already owns this key (two pokes overlapping in the one window SKIP LOCKED
+        // cannot arbitrate — after the claim committed). `queued`: this call's own submission
+        // passed the attempt ceiling and was abandoned mid-flight, fate unknown — in-process it
+        // may still land and finalize itself; if not, the row is a `sending` draft with its key
+        // standing, exactly what the recovery arm claims once provably stale. Nothing is written
+        // either way: closing here writes an ending this pass cannot prove; re-arming offers a
+        // second envelope for a message that may already be gone.
         result.deferred += 1;
       }
     } catch (err) {
       if (err instanceof ServiceError) {
-        // Deterministic refusal. When `reserve` itself threw, it rolled back and the row is an
-        // ordinary 'draft' with the key standing — the close lands and the sentence goes in the
-        // Drafts row.
-        //
-        // When the refusal came AFTER the reservation committed, the close DECLINES, and WHICH
-        // decline it is decides the count — which is why the reservation is consulted rather
-        // than assumed. Two different states reach this line:
-        //
-        //   reservation `failed`   the pre-SMTP window already finalized it terminally and wrote
-        //                          the sentence itself (`SendService.finalizeFailed`), clearing
-        //                          `send_key` — which is precisely why the close cannot match.
-        //                          Nothing is owed and nothing will retry: count FAILED.
-        //   reservation `pending`  the fate is genuinely unknown — the envelope went to the
-        //                          server and the Sent probe threw on the way back. The row is
-        //                          'sending', the key stands, and the recovery arm replays it
-        //                          once the row is provably stale: count DEFERRED, because
-        //                          "failed" would be this pass writing up an ending it cannot
-        //                          prove.
-        //
-        // This used to read the first case as the second — the comment here asserted the row was
-        // still 'sending' with the key standing, which stopped being true when the window began
-        // finalizing. The count was `deferred` for an outcome that was already terminal, so an
-        // operator reading the counters saw a retry coming for a row whose `send_at` and
-        // `send_key` were both already NULL. Nothing would ever claim it again.
-        // ── A RETRYABLE REFUSAL IS NOT A DETERMINISTIC ONE, AND CLOSING ON IT LOSES THE SEND ──
-        //
-        // This arm treats every `ServiceError` as a settled refusal and closes the appointment,
-        // clearing `send_at` and `send_key`. That is right for the deterministic ones — a disabled
-        // mailbox, an expired ticket, too many recipients — and wrong for a refusal the server has
-        // marked RETRYABLE, which means "not yet", not "no".
-        //
-        // The one that exists today is a duplicate refused while the FIRST attempt is still
-        // `pending`. Two appointments for the same message, one minute: A reserves and pauses
-        // before SMTP; B is refused as pending and, under the old behaviour, LOST its appointment;
-        // A then fails before SMTP. Zero deliveries, and the next pass claims neither row, because
-        // B no longer has a key to be claimed by. The person scheduled a message and nothing ever
-        // went.
-        //
-        // So a retryable refusal DEFERS: the appointment stands, the key stands, and the row comes
-        // due again — by which time the first attempt has ended and the answer is a real one.
+        // Deterministic refusal. When `reserve` itself threw, it rolled back — the row is an
+        // ordinary 'draft' with the key standing; the close lands. When the refusal came AFTER
+        // the reservation committed, the close DECLINES and the reservation is consulted:
+        // `failed` — the pre-SMTP window finalized terminally and cleared `send_key`; nothing
+        // retries — count FAILED. `pending` — the envelope went out and the Sent probe threw;
+        // recovery replays once provably stale — count DEFERRED ("failed" would write an ending
+        // this pass cannot prove). A RETRYABLE refusal is not deterministic: the case today is a
+        // duplicate refused while the FIRST attempt is still `pending` — closing on it lost the
+        // send. So a retryable refusal DEFERS: appointment and key stand, the row comes due
+        // again.
         if (err.retryable === true) {
           // RE-ARM, exactly as the transient arm below does and guarded the same way: status still
           // 'draft' (the claim window's own state) and the SAME key. That matches only a row this
@@ -363,34 +251,26 @@ export async function runScheduledSendPass(
 export const SCHEDULED_SEND_SCAN_FACTOR = 4;
 
 /**
- * How many DISTINCT accounts one claim may consult the eligibility gate about before stopping —
- * the walk's runaway brake, and deliberately NOT a page count. A page count was tried first and
- * reviewed out: pages after the first exclude known-ineligible accounts, so each page discovers
- * at least one new parked account or fills the batch — but a cap of N pages with no memory
- * between invocations meant N+1 parked accounts starved everything behind them PERMANENTLY,
- * every minute re-discovering the same N and exiting. Bounding by accounts examined makes the
- * walk finish whenever fewer than this many distinct accounts are parked, however many rows
- * each has parked (a parked account costs one page and one PK lookup, ever, per claim).
- *
- * Two hundred: each costs a PK lookup and at most one page read, so the saturated walk is still
- * well inside the serverless ceiling — and two hundred distinct suspended accounts all owning
- * due appointments in one minute is an operator-scale event, not a schedule, which is why
- * hitting this brake is LOGGED as its own loud line rather than absorbed as a quiet defer.
+ * How many DISTINCT accounts one claim may consult the eligibility gate about — the walk's
+ * runaway brake, deliberately NOT a page count. A page cap with no memory between invocations
+ * meant N+1 parked accounts starved everything behind them PERMANENTLY, every minute
+ * re-discovering the same N and exiting. Bounding by accounts examined finishes the walk whenever
+ * fewer distinct accounts are parked (a parked account costs one page and one PK lookup per
+ * claim). Two hundred keeps the saturated walk inside the serverless ceiling — and two hundred
+ * suspended accounts with due appointments in one minute is an operator-scale event, so hitting
+ * the brake is LOGGED loudly, not absorbed as a quiet defer.
  */
 export const SCHEDULED_SEND_SCAN_ACCOUNTS = 200;
 
 /**
  * Claim what this invocation will attempt: DUE appointments first, then RECOVERY — rows whose
- * claim (or whole invocation) died mid-flight, identified by `send_key` standing on a row that
- * is `{SEND_STALE_AFTER_MS}` past due and no longer `'scheduled'`. Both under
- * `FOR UPDATE SKIP LOCKED`, so two hosts (or an overlapping poke) split the work instead of
- * double-claiming a row — and a user's `cancel`, which contends on the same row lock, either
- * wins outright or observes the claim's committed flip and answers "already being sent".
- *
- * The ELIGIBILITY GATE runs inside the transaction, before the flip, per account rather than
- * per row (one read per distinct account this scan touched): an ineligible account's rows are
- * left untouched — still `'scheduled'`, still due, dialled the cycle after the suspension
- * lifts — and never counted toward the batch.
+ * claim (or invocation) died mid-flight, identified by `send_key` standing on a row
+ * `SEND_STALE_AFTER_MS` past due and no longer `'scheduled'`. Both under `FOR UPDATE SKIP
+ * LOCKED`, so two hosts split the work instead of double-claiming — and a user's `cancel`,
+ * contending on the same row lock, either wins outright or observes the committed flip and
+ * answers "already being sent". The ELIGIBILITY GATE runs inside the transaction, before the
+ * flip, per distinct account: an ineligible account's rows stay `'scheduled'`, dialled the cycle
+ * after the suspension lifts, never counted toward the batch.
  */
 async function claimDue(
   db: Db, now: Date, batch: number,
@@ -526,18 +406,14 @@ async function claimDue(
  * counters can tell a settled failure from a row the predicate protected.
  */
 /**
- * Did the reservation under this row's key end TERMINALLY as a definite non-delivery?
- *
- * The discriminator between "already finished and explained" and "fate unknown, recovery owns
- * it" — the two states a post-reservation throw can leave behind, which are indistinguishable
- * from the exception alone and were being conflated. Read from the reservation row because that
- * is where the answer is authoritative: `SendService` writes it in the same transaction that
- * clears the appointment, so there is no window in which the two disagree.
- *
- * Only on the failure path, and only when the close declined, so it costs one query per failure
- * and none per delivery. A read failure answers `false`, which routes the row to DEFERRED — the
- * conservative direction: it claims nothing this function could not establish, and the recovery
- * arm re-examines the row rather than an operator being told an ending that was never proven.
+ * Did the reservation under this row's key end TERMINALLY as a definite non-delivery? The
+ * discriminator between "already finished and explained" and "fate unknown, recovery owns it" —
+ * indistinguishable from the exception alone. Read from the reservation row because that is where
+ * the answer is authoritative: `SendService` writes it in the same transaction that clears the
+ * appointment, so the two never disagree. Only on the failure path and only when the close
+ * declined — one query per failure, none per delivery. A read failure answers `false`, routing
+ * the row to DEFERRED: the conservative direction — recovery re-examines the row rather than an
+ * operator being told an ending never proven.
  */
 async function reservationFailed(db: Db, ctx: ServiceContext, row: ClaimedRow): Promise<boolean> {
   try {

@@ -32,90 +32,24 @@ import { healthRoutes } from "./health.js";
 import { helloRoutes } from "./hello.js";
 
 /**
- * THE MAIL-ONLY ROUTE TABLE — what a single-user engine on the user's own machine serves.
- *
- * A SEPARATE ARRAY rather than a filter over {@link apiRoutes}, and the difference matters: a
- * filter would still `import` every route module to build the list it then discards, so the
- * artifact would carry the billing handler, the Stripe webhook and the cross-account admin reads
- * whether or not anything could route to them. Only a distinct import list actually leaves them
- * out of the module graph. `routes/index.ts` is untouched and still owns the hosted table.
- *
- * ── WHAT IS ABSENT, AND WHY EACH ONE ──────────────────────────────────────────────────────
- *
- *  · the 20 AUTH routes — registration, password login, WebAuthn, TOTP, recovery, OAuth, devices.
- *    There is nobody to register: the engine mints one session per launch for the shell that
- *    spawned it, and the machine's own login is the boundary. The routes are not merely
- *    unreachable, they are not built.
- *  · `billing`, `waitlist` — Cloud is what you pay for and there is no funnel to join on a laptop.
- *  · `account` — Art. 17 erasure is a hosted-account operation. Here, deleting the data directory
- *    IS the erasure, and it takes nothing from the mailbox on the user's own server.
- *  · `ai-settings` — the managed-AI off switch governs OUR spend on OUR models. Desktop is BYO.
- *  · `internal`, `admin` — an operator surface on one person's machine is only attack surface.
- *
- * ── AND ONE THAT LOOKS ABSENT AND IS NOT: `screening` ───────────────────────────────────────
- *
- * `screeningRoutes` serves `GET/PATCH /account/screening` and IS mounted here, one line below the
- * Screener it configures. It shares a path prefix with the `account` module above and shares
- * nothing else: that module is erasure, this one is two columns on `account_settings` — the Ohbox
- * posture and the mailbox owner's own words, the BAR. Both columns are mail-half (`mail 0042`), so every
- * standalone install already has them, `getScreeningPreference` already reads them exactly as the
- * hosted service does, and the bar already reaches the model in the user turn of the screening
- * question. What was missing was the ability to WRITE one: the words were readable-and-unwritable
- * on the one tier whose owner supplies the model that reads them.
- *
- * Its PATCH is `cost: "work"`, which classifies nothing here — the spend gate is a hosted concern
- * and this host runs no gate — and is kept because `cost` is a property of the handler, not of the
- * table it is mounted in. Cloud-mode desktop is untouched: that engine mounts `cloud-read.ts` plus
- * a write-through proxy and never this array, so a mirrored account still reads and writes its
- * preference on the hosted account, where `account_settings` actually lives.
- *
- * `events` STAYS despite SSE being disabled in this host. Disabled, `GET /events` answers a
- * finite 503 that the client adapter already tolerates as "no wake signal, keep polling `/sync`".
- * Dropping the module would answer 404 instead, which is a different contract for no gain.
+ * The mail-only route table — what a single-user engine serves. A separate array, not a filter
+ * over {@link apiRoutes}: a filter still imports every route module into the artifact. Absent:
+ * the auth routes (the engine mints one session per launch; the machine's login is the boundary);
+ * `billing`/`waitlist`; `account` (deleting the data directory IS the erasure); `ai-settings`
+ * (desktop is BYO); `internal`/`admin` (attack surface on one person's machine). `screening`
+ * looks absent and is not: `GET/PATCH /account/screening` is mounted here. `events` stays despite
+ * SSE off: a finite 503 the adapter tolerates; dropping the module would answer 404 — a different
+ * contract for no gain.
  */
 /**
- * THE CONSENT GROUP WITH THE FOLDERS FLAG TAKEN OUT — for every door built from this table.
- *
- * That is the STANDALONE door and the SELF-HOST one, because `selfHostRoutes` spreads
- * `localRoutes` whole (which is why `consentRoutes` was removed from its own list as a double
- * mount). Both are correct to strip, and for one reason: `foldersRoutes` is spread at
- * `routes/index.ts` and NOWHERE else, so the four verbs exist on the HOSTED table alone. Neither
- * door built from this one can serve them, so on neither may the flag be raised.
- *
- * ── WHY THIS EXISTS, AND WHAT mail 0083 BROKE ON ITS WAY PAST ──────────────────────────────
- *
- * The sidecar's client-route coverage census exempts four `/folders` verbs from the LOCAL
- * census, and the exemption is DERIVED rather than declared: it re-measures a chain and hands back
- * nothing when any link stops holding. Link four was *"the standalone engine cannot answer
- * `GET /consent`"* — the read whose answer is the only thing that can raise `foldersEnabled` off
- * its resting `false`.
- *
- * Mounting `consentRoutes` here (the screening window, above) broke that link on purpose and did
- * not notice this one. It is not theoretical: `apps/desktop/src/local-consent.ts` composes
- * `PATCH /consent/settings { foldersEnabled }`, so a standalone user could switch folders ON, the
- * rail would mount, and all four verbs would answer 404 — this table serves NO folder route at
- * all, not even the summary.
- *
- * ── WHY THE FLAG AND NOT THE VERBS ────────────────────────────────────────────────────────
- *
- * Serving the four verbs is the other repair and it is a FEATURE, not a fix: the standalone engine
- * owns the IMAP connection, so folder create/rename/delete there is real work with real failure
- * modes, and mounting the routes without it would be a larger lie than the one being closed. The
- * rule this codebase already keeps is the smaller one — a control wired to nothing is worse than
- * an absent one — so the flag is withheld until the verbs exist.
- *
- * ── WHY AT THE ROUTE AND NOT IN THE WINDOW ────────────────────────────────────────────────
- *
- * Gating the desktop's toggle would work today and is a check somebody can forget. Here it is
- * structural: on this table the field cannot be written and cannot be read as anything but off, so
- * no client — this one, a future one, or a hand-made request with the launch bearer — can raise it.
- * That is also what re-licenses the census exemption, on a link that is true again.
- *
- * The HOSTED table is untouched: it spreads `consentRoutes` directly (`routes/index.ts`) and it is
- * the table that actually serves the verbs, so the flag means something there.
- *
- * READ AND WRITE BOTH, because either alone is a half-truth: a GET that reported `on` over a PATCH
- * that refused would show a rail the server had just declined to enable.
+ * The consent group with the folders flag taken out — for both doors built from this table.
+ * `foldersRoutes` is spread at `routes/index.ts` and nowhere else, so the verbs exist on the
+ * hosted table alone; on neither door here may the flag be raised — `local-consent.ts` composes
+ * `PATCH /consent/settings { foldersEnabled }`, so a standalone user could switch folders on and
+ * meet four 404s. The flag and not the verbs: serving them is a feature (the standalone engine
+ * owns the IMAP connection), and a control wired to nothing is worse than an absent one. At the
+ * route, not in the window: the field cannot be written and cannot read as anything but off, for
+ * any client. Read and write both: either alone is a half-truth.
  */
 function withoutFoldersFlag(routes: Route[]): Route[] {
   return routes.map((r) => {
@@ -175,28 +109,15 @@ export const localRoutes: Route[] = [
   ...screenerRoutes,
   ...trashRoutes,
   ...screeningRoutes,
-  /* -- THE SCREENING WINDOW REACHES THE FREE DESKTOP (mail 0083) --------------------------
-   *
-   * `consentRoutes` was mounted by `selfHostRoutes` and by the hosted table, and NOT here — so
-   * the standalone install, which is the funnel and the tier most people meet first, had:
-   *
-   *  · no `GET /consent`, so no way to READ `dormancy_days`, `screening_scope` or
-   *    `screening_baseline_at`;
-   *  · no `PATCH /consent/settings`, so no way to WRITE any of them;
-   *  · and therefore no window at all — `apps/sidecar/src/engine.ts` had zero occurrences of
-   *    `screeningCutoff`, so its cycle screened EVERY backfilled message regardless of age. A
-   *    person with a decade of mail got a decade of it in `ohmail/Screener`, one physical IMAP
-   *    move at a time, and there was nowhere in the product to say otherwise.
-   *
-   * Mounting it here is half the fix; the other half is `engine.ts` threading the resolved cutoff
-   * into its `runSyncCycle` deps exactly as the hosted `index.ts#screeningFor` does. Both are in
-   * this commit, because either alone is a surface that does nothing (the mount without the
-   * thread is a dial that stores a value nothing reads).
-   *
-   * `POST /consent/reset` and `/consent/seed` come with it, which is correct rather than
-   * incidental: they are the same account state, they are already reachable on every other door,
-   * and a standalone user who can choose a window can also re-run the seed review and clear
-   * screening state. The routes are account-scoped and this host serves exactly one account.
+  /**
+   * The screening window reaches the free desktop (mail 0083). `consentRoutes` was mounted by
+   * `selfHostRoutes` and the hosted table, not here — so the standalone install had no `GET
+   * /consent`, no `PATCH /consent/settings`, and no window at all: the engine's cycle screened
+   * every backfilled message regardless of age — a decade of mail into `ohmail/Screener`, one
+   * physical move at a time. Mounting it here is half the fix; the other half is `engine.ts`
+   * threading the resolved cutoff into its cycle deps, and both land together. `POST
+   * /consent/reset` and `/seed` come with it, correctly: the same account state, and this host
+   * serves exactly one account.
    */
   ...withoutFoldersFlag(consentRoutes),
   ...approvalRoutes,

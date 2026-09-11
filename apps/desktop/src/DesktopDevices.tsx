@@ -1,73 +1,35 @@
 /**
- * SETTINGS → DEVICES — host mode's whole surface: turn this computer into the household's mail
- * server, pair a phone by pointing its camera at the screen, see what is paired, take one back.
- *
- * The design bar this pane is held to is the password-manager one, not the SSH one: every state
- * is a sentence and one action, never a stack trace, never a code. The ladder is detect-and-guide
- * — the pane asks the shell what is true (`tailscale_status`, `host_state`) and renders the one
- * step that is actually in the way, with the button that takes it. Nothing here instructs and
- * hopes.
- *
- * ── WHERE EACH VERB GOES ─────────────────────────────────────────────────────────────────────
- *
- * Arming, disarming, probing the tailnet and start-at-login are SHELL commands (`src/host.ts`) —
- * the `tailscale` binary and the login registration are process-level facts only the shell can
- * touch. The pairing ceremony and the device list are ENGINE requests over the bridge
- * (`bridgeFetch`): `POST/GET/DELETE /pair` and `GET/DELETE /devices`, mounted on the stdio door
- * only while host mode is armed — so this pane loads them only then, and a disarmed engine never
- * sees a request it would 404.
- *
- * ── THE PAIRING LINK'S SHAPE, AND THE ONE APPEARANCE OF THE RAW TOKEN ────────────────────────
- *
- * The QR encodes `${origin}/pair#<fragment>` — the fragment-link idiom the Invites pane
- * established, for the reasons its header carries: a fragment is not sent in the page request,
- * cannot land in a log, and never rides a `Referer`. The fragment's own shape lives in
- * `@ohmail/client-engine` (`pair-link.ts`) because the PHONE parses it, and on the same-network
- * address it carries this computer's key fingerprint beside the token — see the LAN note below.
- * The raw token appears exactly once
- * (this mint's answer), as a QR and behind a copy button, and is NEVER printed: a hundred
- * characters of credential is exactly the thing the design rules say never to show where a scan
- * or a copy would do. The engine stores only a hash; the code works once and expires in five
- * minutes; the list below carries metadata only.
- *
- * ── WHY THE WINDOW'S OWN SESSION IS NOT IN THE DEVICE LIST ───────────────────────────────────
- *
- * `GET /devices` answers every live session, including the launch session this window itself is
- * asking over — which is not a paired device and must not render as one ("Remove" on it would be
- * the window revoking itself). The launch session is exactly the row the engine marks `current`,
- * so the list renders the rows that are NOT current: the paired phones and browsers, each with a
- * name, a date, and a take-back.
- *
- * ── THE COPY BAR ─────────────────────────────────────────────────────────────────────────────
- *
- * "While this computer is awake" — never an unqualified "always on". The serving line carries the
- * qualifier verbatim, and the catalogue test pins it in both languages: a laptop lid ends the
- * service until it opens again, and a pane that promised otherwise would be lying about the one
- * limit a household will actually meet.
- *
- * ── SAME-NETWORK ACCESS: `https`, A KEY OF THIS COMPUTER'S, AND STILL APPS ONLY ─────────────
- *
- * The LAN option binds one operator-chosen interface and serves TLS with a key the engine keeps
- * (`apps/sidecar/src/host-lan-tls.ts`). It used to serve plain HTTP, and that is exactly why
- * same-network pairing never worked on a shipped phone: a release build of the mobile app
- * permits no cleartext and refused the socket before opening it.
- *
- * No certificate authority issues for a DHCP address, so the trust rides the CEREMONY: this pane
- * reads the door's key fingerprint (`GET /local/lan/pin`) at mint time and puts it in the link,
- * and the phone accepts that key and no other. A same-network mint with no fingerprint is
- * REFUSED here rather than handed out unpinned.
- *
- * A phone BROWSER still cannot use the address, for a changed reason: a browser cannot check a
- * key it was never handed, so it warns — and past the warning the served client's
- * `[SecureContext]` dependencies still have no trusted origin (the audit is
- * `apps/sidecar/src/host-lan.ts`'s header; the premise is pinned by
- * `test/host-client-secure-context.test.ts`). The copy says so plainly — truthful over
- * flattering, because a QR that opened a broken mail client would be worse than a sentence. The
- * option is opt-in (default off), the address is CHOSEN from the engine's own enumeration
- * (`GET /local/lan/candidates` over the bridge — never typed, never 0.0.0.0), and it is also
- * the no-Tailscale path: with a LAN address picked, enabling works without any tailnet and the
- * pane reports the tailnet half's absence beside a serving same-network half.
+ * SETTINGS → DEVICES — host mode's whole surface: turn this computer into the household's
+ * mail server, pair a phone by pointing its camera at the screen, see what is paired, take
+ * one back. The bar is the password-manager one: every state is a sentence and one action —
+ * the pane asks the shell what is true (`tailscale_status`, `host_state`) and renders the one
+ * step actually in the way. Arming, disarming, probing and start-at-login are SHELL commands
+ * (`src/host.ts`); the pairing ceremony and device list are ENGINE requests over the bridge
+ * (`POST/GET/DELETE /pair`, `GET/DELETE /devices`), mounted only while host mode is armed —
+ * so this pane loads them only then, and a disarmed engine never sees a request it would 404.
  */
+
+/*
+ * THE LINK: the QR encodes `${origin}/pair#<fragment>` (the Invites pane's fragment idiom — a
+ * fragment is not sent in the page request, cannot land in a log, never rides a `Referer`);
+ * the fragment's shape lives in `@ohmail/client-engine` (`pair-link.ts`) because the PHONE
+ * parses it. The raw token appears exactly once — this mint's answer, QR plus copy button,
+ * never printed; the engine stores only a hash, the code works once and expires in five
+ * minutes. The window's OWN session is not in the device list: `GET /devices` answers every
+ * live session including the launch session this window asks over (the row marked `current`),
+ * and "Remove" on it would be the window revoking itself — the list renders the NOT-current.
+ */
+
+/*
+ * THE COPY BAR: "While this computer is awake" — never an unqualified "always on"; the
+ * catalogue test pins the qualifier in both languages. SAME-NETWORK ACCESS is `https` with a
+ * key the engine keeps (`apps/sidecar/src/host-lan-tls.ts`); plain HTTP is why LAN pairing
+ * never worked on a shipped phone (a release build permits no cleartext). No authority
+ * issues for a DHCP address, so the trust rides the CEREMONY: the pane reads the door's
+ * fingerprint (`GET /local/lan/pin`) at mint time and puts it in the link — a mint with no
+ * fingerprint is REFUSED. A phone BROWSER still cannot use the address
+ * (`test/host-client-secure-context.test.ts`); opt-in, address CHOSEN from
+ * `GET /local/lan/candidates`, and the no-Tailscale path — no tailnet needed. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFormatter, useTranslations } from "next-intl";
@@ -105,15 +67,13 @@ import {
 export const DEFAULT_HOST_PORT = 6245;
 
 /**
- * THE GUIDED LADDER — every problem the shell can name, mapped to the one designed sentence and
- * nothing else. A closed vocabulary on both sides: `host.ts` parses the shell's answer against
- * `HOST_PROBLEMS` and degrades an unknown name to `null`, and this map takes `null` to the
- * generic guidance — so a shell one version ahead of this bundle gets a calm sentence, never a
- * raw code and never a blank. Exported so the test can hold the mapping cell for cell.
- *
- * The four tailnet-side names double as the OFF state's probe vocabulary (`tailscale_status`
- * answers the same words), which is why one map serves both moments: the sentence that is true
- * before enabling is the sentence that is true when the same thing breaks later.
+ * THE GUIDED LADDER — every problem the shell can name, mapped to the one designed sentence
+ * and nothing else. A closed vocabulary on both sides: `host.ts` parses the shell's answer
+ * against `HOST_PROBLEMS` and degrades an unknown name to `null`, and this map takes `null`
+ * to the generic guidance — a shell one version ahead gets a calm sentence, never a raw code.
+ * Exported so the test can hold the mapping cell for cell. The four tailnet-side names double
+ * as the OFF state's probe vocabulary (`tailscale_status` answers the same words), so one map
+ * serves both moments.
  */
 export type GuideKey =
   | "guideNoCli"
@@ -287,22 +247,14 @@ export function DesktopDevices() {
     useState<Array<{ address: string; name: string }> | null | undefined>(undefined);
   const [lanChoice, setLanChoice] = useState<string | null>(null);
   /**
-   * THIS COMPUTER'S OWN KEY, as the twelve characters a person compares — or null.
-   *
-   * ── WHY IT IS SHOWN AT ALL ───────────────────────────────────────────────────────────────
-   *
-   * The same-network door serves TLS with a key nobody vouches for, so the pairing carries the
-   * trust: the link names the key, and the joining machine accepts that key and nothing else.
-   * That is sound as long as the link came from here. If something on the network hands somebody
-   * a link naming ITS key, the ceremony authenticates the wrong machine perfectly.
-   *
-   * The defence is a value the person can read on both screens. The joining machine shows twelve
-   * characters before it pairs; this row is where the same twelve are read from. Without it the
-   * comparison has only one side and the sentence over there ("the same characters as under
-   * Settings → Devices") names a row that does not exist.
-   *
-   * `null` while unread or on a build with no same-network door — the row simply does not render
-   * rather than showing a placeholder somebody might compare against.
+   * THIS COMPUTER'S OWN KEY, as the twelve characters a person compares — or null. The
+   * same-network door serves TLS with a key nobody vouches for, so the pairing carries the
+   * trust: the link names the key and the joining machine accepts that key only — sound as
+   * long as the link came from here, and if something on the network hands somebody a link
+   * naming ITS key, the ceremony authenticates the wrong machine perfectly. The defence is a
+   * value readable on both screens: the joining machine shows twelve characters before it
+   * pairs, and this row is where the same twelve are read from. `null` while unread or with
+   * no same-network door — no placeholder somebody might compare against.
    */
   const [lanKey, setLanKey] = useState<string | null>(null);
 
@@ -389,71 +341,43 @@ export function DesktopDevices() {
   }, [refresh]);
 
   /**
-   * When the background read should run: while host mode is ON, and while this window has not
-   * yet had a readable answer at all.
-   *
-   * The second half is a retry, not a poll, and it closes a dead end older than this screen's
-   * polling: the mount read has no catch, so a shell call that rejects leaves `host` at
-   * `undefined` and the pane sits on "Checking…" with no control to try again until it is
-   * remounted. The boundary that matters is a CONFIRMED off state — that is the one place a
-   * background read destroys information (see the effect below) — and "we have never heard
-   * back" is not that.
+   * When the background read should run: while host mode is ON, and while this window has
+   * not yet had a readable answer at all. The second half is a retry, not a poll: the mount
+   * read has no catch, so a shell call that rejects leaves `host` at `undefined` and the pane
+   * sits on "Checking…" with no control to try again until remounted. The boundary that
+   * matters is a CONFIRMED off state — the one place a background read destroys information
+   * (see the effect below) — and "we have never heard back" is not that.
    */
   const armed = host?.enabled === true;
   /**
-   * When the background read should run: while host mode is ON, and until the opening read has
-   * finished at all.
-   *
-   * The retry closes a dead end older than this polling: the mount read has no failure path, so a
-   * shell call that rejects leaves the pane on "Checking…" with no control to try again until it
-   * is remounted. It went through two wrong shapes before this one, and both were the same
-   * mistake — INFERRING "the opening read has not finished" from `host` and `probe`, which every
-   * other action on this pane also writes. First it watched only `host`, so a failure in the
-   * probe half stopped it one step later. Then it watched both, and matched a state reached long
-   * after the mount: a disarm that failed leaves an unresolved probe too, and the retry's
-   * `refresh()` then cleared the disarm's own error off the screen — the very thing the OFF gate
-   * exists to protect.
-   *
-   * So it is a recorded fact now, set once by the read that completes, and it cannot be confused
-   * with anything that happens afterwards.
+   * When the background read should run: while host mode is ON, and until the opening read
+   * has finished at all. The retry closes a dead end: the mount read has no failure path, so
+   * a rejected shell call left the pane on "Checking…" until remounted. Two wrong shapes
+   * preceded this, both INFERRING "the opening read has not finished" from `host` and
+   * `probe`, which every other action also writes: watching `host` alone stopped one step
+   * late, and watching both matched a state reached long after mount — a failed disarm also
+   * leaves an unresolved probe, and the retry's `refresh()` cleared the disarm's own error
+   * off the screen. So it is a recorded fact, set once by the read that completes.
    */
   const pollHostState = armed || !openingReadDone;
 
   /**
-   * KEEP THE OPEN PANE HONEST — re-read host state while this screen is on the display.
-   *
-   * The pane used to read once at mount and never again, and two states this screen exists to
-   * report arrive AFTER that read. The engine's LAN door finishes binding a moment after the
-   * window comes up, so the pane said "Same-network access is starting…" for the life of the
-   * window over a door that was serving — and the pairing controls, which are gated on the
-   * serving state, never appeared at all. Separately, the firewall warning names a command; the
-   * engine re-checks after the operator runs it, but nothing was asking the shell for the result.
-   *
-   * A quiet poll, not a subscription, because the shell exposes state by command and the answer
-   * is three integers and two strings. `busy` is deliberately NOT set: this must never make a
-   * button look pressed or a screen flicker while somebody is reading it.
-   *
-   * **ONLY WHILE ARMED, and that gate is a fix rather than an optimisation.** Every state this
-   * poll exists to catch — the LAN door binding, a firewall opening — happens on an ARMED
-   * install. Polling while host mode is OFF actively destroys information: an arm the shell
-   * refused answers with the CURRENT state (still off) plus that attempt's problem, and that
-   * problem is the only thing on screen explaining why nothing happened. A plain `host_state` a
-   * moment later does not carry it, so an unconditional poll wiped the explanation and left the
-   * stale "Tailscale is ready" probe beside an Enable button that silently does nothing — the
-   * exact silent-retry loop `desktop-devices.test.tsx` already guards. Off is driven by explicit
-   * acts; there is nothing here to discover between them.
-   */
+   * KEEP THE OPEN PANE HONEST — re-read host state while this screen is on the display. Read
+   * once at mount, the pane said "Same-network access is starting…" for the life of the
+   * window over a door that was serving (the LAN door binds a moment after the window comes
+   * up), and the firewall warning's re-check never reached the screen. A quiet poll, not a
+   * subscription; `busy` is deliberately NOT set — never a pressed-looking button while
+   * somebody reads. ONLY WHILE ARMED, a fix rather than an optimisation: polling while OFF
+   * destroys information — a refused arm answers the current state plus that attempt's
+   * problem, and an unconditional poll wiped that one explanation
+   * (`desktop-devices.test.tsx` guards the loop). Off is driven by explicit acts. */
   /**
-   * READ THIS COMPUTER'S KEY once the same-network door is up, and forget it when it goes down.
-   *
-   * `GET /local/lan/pin` is the same route the mint already reads, and it is read here for the
-   * same reason the mint reads it late rather than at mount: the key belongs to the engine, the
-   * engine can be respawned, and a fingerprint held from an earlier process is a value somebody
-   * would compare against a link that no longer matches it — a mismatch reported as an attack.
-   *
-   * Keyed on `lanState`, so arming or disarming the door re-reads or clears it. A failed read
-   * leaves `null` and the row does not render: a placeholder in a row whose whole purpose is
-   * comparison is worse than no row.
+   * READ THIS COMPUTER'S KEY once the same-network door is up, and forget it when it goes
+   * down. `GET /local/lan/pin` is the same route the mint reads, late rather than at mount
+   * for the same reason: the key belongs to the engine, the engine can be respawned, and a
+   * fingerprint held from an earlier process would be compared against a link that no longer
+   * matches — a mismatch reported as an attack. Keyed on `lanState`, so arming or disarming
+   * re-reads or clears it; a failed read leaves `null` and the row does not render.
    */
   useEffect(() => {
     /* `host` is null until the opening read lands, and "not read yet" is not "not armed" — but
@@ -635,16 +559,12 @@ export function DesktopDevices() {
 
   const mint = async (): Promise<void> => {
     // The link's base: the served tailnet origin where there is one (the browser flow), else
-    // the LAN address (the app/API flow — this door's only public bootstrap is /pair/redeem,
-    // so a LAN-only install without a mint would be an address nothing can authenticate to).
-    //
-    // ── THE SAME-NETWORK ADDRESS IS `https`, AND IT CARRIES THIS COMPUTER'S KEY ─────────────
-    //
-    // It used to be `http://…`, and that is the whole reason same-network pairing never worked
-    // on a shipped phone build: a release app permits no cleartext and refuses the socket before
-    // opening it. The door serves TLS with a key of its own now, and because no certificate
-    // authority vouches for a DHCP address, the CEREMONY carries the trust — the fingerprint
-    // goes in the link, the phone pins it, and a key that is not that key is refused.
+    // the LAN address (the app/API flow — this door's only public bootstrap is /pair/redeem).
+    // The same-network address is `https` and carries this computer's key: it used to be
+    // `http://…`, the whole reason LAN pairing never worked on a shipped phone build (a
+    // release app permits no cleartext). No certificate authority vouches for a DHCP
+    // address, so the CEREMONY carries the trust — the fingerprint goes in the link, the
+    // phone pins it, and a key that is not that key is refused.
     const lanBase = host?.lan && host?.port ? `https://${host.lan}:${host.port}` : null;
     const origin = host?.origin ?? lanBase;
     if (!origin) return;
@@ -1070,20 +990,15 @@ export function DesktopDevices() {
                   : t("mintedLead")
                 : t("lanMintedLead")}
             </p>
-            {/* ── THE QR IS DRAWN IN BOTH MODES NOW, AND LAN-ONLY IS THE CASE THAT NEEDS IT ──
-
-                It used to be tailnet-only, on the argument that "a camera scan opens a phone
-                browser, and this door refuses browsers by design". That was about the phone's
-                OS camera app; the ohmail app has its own scanner, and the app is precisely the
-                client this door exists for.
-
-                What made it necessary rather than merely nicer is the pin: a same-network link
-                now carries the door's 43-character key fingerprint, and there is no world in
-                which somebody re-types that onto a phone. The copy button hands the link to
-                something that can paste; the QR hands it to the camera. Both, or the ceremony
-                has no path that ends with a paired phone.
-
-                The raw link is still printed nowhere. */}
+            {/* ── THE QR IS DRAWN IN BOTH MODES NOW, AND LAN-ONLY IS THE CASE THAT NEEDS IT.
+                The old tailnet-only argument ("a camera scan opens a phone browser, and this
+                door refuses browsers") was about the OS camera app; the ohmail app has its
+                own scanner, and the app is precisely the client this door exists for. What
+                made it necessary is the pin: a same-network link carries the door's
+                43-character key fingerprint, and nobody re-types that onto a phone. The copy
+                button hands the link to something that can paste; the QR hands it to the
+                camera — both, or the ceremony has no path ending with a paired phone. The
+                raw link is still printed nowhere. */}
             <div className="join-qr">
               <QrCode value={minted.link} ariaLabel={t("qrAria")} />
             </div>

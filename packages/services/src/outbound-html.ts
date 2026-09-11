@@ -2,63 +2,23 @@ import sanitizeHtml from "sanitize-html";
 import { Parser } from "htmlparser2";
 
 /**
- * OUTBOUND HTML — the allowlist a composed message passes through, and the text/plain
- * alternative derived from what survives it.
- *
- * ── WHY THERE IS A SECOND SANITIZER IN THIS REPOSITORY ───────────────────────────────────
- *
- * The other one is DOMPurify in `apps/webapp/app/components/MessageBody.tsx`, and it solves the
- * opposite problem: markup a STRANGER wrote, rendered into a sandboxed frame in the reader's
- * browser. It is browser-only (it needs a DOM), and its allowlist is wide because inbound mail
- * legitimately contains tables, images and layout.
- *
- * This one runs on the server, on markup OUR OWN editor produced — and that is exactly why it
- * cannot be skipped. "Our editor produced it" is a statement about the client, and the client is
- * a browser somebody else controls. `POST /drafts` accepts a string; nothing about the request
- * proves an editor was involved. So the server's rule is not "clean up what the editor sent", it
- * is "reduce whatever arrived to the small grammar the editor is allowed to speak", and anything
- * outside that grammar is dropped rather than repaired.
- *
- * ── THE GRAMMAR IS DELIBERATELY SMALL, AND SMALLNESS IS THE FEATURE ──────────────────────
- *
- * Bold, italic, strike, links, ordered and bullet lists, block quotes, inline code and code
- * blocks. No images, no tables, no styles, no classes, no fonts and no colours. Two consequences
- * worth stating because they are load-bearing rather than incidental:
- *
- *   · There is no `img`, so there is no way for a composed message to carry an inline `data:`
- *     payload. That is the mechanism behind the 2026-08-01 storage outage, arriving from the
- *     other direction — the migration that caps stored HTML bodies closed the inbound half. The
- *     cap below is a tripwire; this allowlist is why it should never be reached.
- *   · The grammar is small enough that {@link htmlToPlainText} can render ALL of it faithfully.
- *     A `multipart/alternative` is a promise that its two parts say the same thing, and that
- *     promise is only keepable while every construct the html half can express has a text half.
- *
- * ── THE ALLOWLIST IS A FROZEN LITERAL ────────────────────────────────────────────────────
- *
- * `sanitize-html`'s defaults are permissive by design — an options object that arrives partly
- * undefined selects them, silently. Every field this module cares about is therefore stated,
- * including the ones whose value equals the default, so that a reader can see the whole policy
- * in one place and a test can mutate any single line of it and watch a fixture go red.
- *
- * FROZEN IS NOT THE SAME AS FIXED. The list changes when the editor's grammar changes, and only
- * then, and only in the same commit: `pre` is here because `RichEditor.tsx` now offers a code
- * block, and it arrived together with the `<pre>` case in {@link htmlToPlainText} below. An
- * entry added on its own would widen what a hostile client may post for no gain, and an editor
- * node added on its own would be a control whose output this function flattens.
+ * OUTBOUND HTML — the allowlist composed messages pass through, plus the text/plain alternative
+ * derived from what survives. DOMPurify in `MessageBody.tsx` solves the opposite problem (a
+ * stranger's markup in the reader's browser); this runs on the server because `POST /drafts`
+ * accepts a string from any client — reduce input to the small grammar the editor may speak, drop
+ * the rest. The grammar: bold, italic, strike, links, lists, block quotes, inline/block code. No
+ * `img`, so no inline `data:` payloads; small enough that `htmlToPlainText` renders all of it,
+ * keeping the `multipart/alternative` promise. Every `sanitize-html` option is stated, defaults
+ * included; the list changes only with the editor's grammar, in the same commit.
  */
 
 /**
- * The ceiling on one stored/sent html body, in bytes.
- *
- * 262144 = 256 KiB, and it is `message_bodies`' number rather than a second one — the argument
- * for the value is in `0022_message_body_html_cap.sql` and is not repeated here. This constant
- * and `drafts_html_cap` in `0037_draft_html.sql` are the same ceiling expressed twice, because a
- * migration freezes the moment it is applied and code does not. A test reads the migration and
- * reconciles the two, which is the same arrangement `STORED_HTML_CAP_BYTES` has.
- *
- * Measured in BYTES, not characters. `octet_length` is what the constraint counts, so a body of
- * emoji or accented text must be measured the same way here or the two disagree exactly where it
- * matters.
+ * Ceiling on one stored/sent html body, in bytes. 262144 = 256 KiB — `message_bodies`' number,
+ * argued in `0022_message_body_html_cap.sql`, not repeated here. This constant and
+ * `drafts_html_cap` in `0037_draft_html.sql` are one ceiling expressed twice (a migration freezes
+ * when applied; code does not); a test reconciles them, as with `STORED_HTML_CAP_BYTES`. Measured
+ * in BYTES: `octet_length` is what the constraint counts, so emoji and accented text must be
+ * measured the same way.
  */
 export const DRAFT_HTML_CAP_BYTES = 262144;
 
@@ -106,16 +66,12 @@ const ALLOWED_ATTRIBUTES: Readonly<Record<string, readonly string[]>> = {
 const ALLOWED_SCHEMES = ["http", "https", "mailto"] as const;
 
 /**
- * The policy, whole, in one object.
- *
- * `disallowedTagsMode: "discard"` drops a disallowed TAG and keeps its text — so a pasted
- * `<h1>Hello</h1>` becomes `Hello` rather than vanishing. `nonTextTags` is the exception that
- * makes that safe: the content of `script`, `style`, `textarea` and `option` is discarded WITH
- * the tag, because keeping the text of a `<script>` would paste executable source into the
- * message body as prose.
- *
- * `allowProtocolRelative: false` closes `//evil.example/x`, which passes a scheme allowlist by
- * having no scheme at all and resolves to `https:` in a browser.
+ * The policy, whole, in one object. `disallowedTagsMode: "discard"` drops a disallowed TAG and
+ * keeps its text — pasted `<h1>Hello</h1>` becomes `Hello`. `nonTextTags` is the exception that
+ * makes that safe: `script`, `style`, `textarea` and `option` lose their content WITH the tag,
+ * else a `<script>`'s source would paste into the body as prose. `allowProtocolRelative: false`
+ * closes `//evil.example/x`, which passes a scheme allowlist by having no scheme and resolves to
+ * `https:` in a browser.
  */
 const POLICY: sanitizeHtml.IOptions = {
   allowedTags: [...ALLOWED_TAGS],
@@ -163,43 +119,14 @@ export function sanitizeOutboundHtml(html: string): string {
 const BLOCKS = new Set(["p", "ul", "ol", "li", "blockquote"]);
 
 /**
- * Render sanitized html as the text/plain alternative.
- *
- * ── WHY THIS IS HAND-WRITTEN AND WHY THAT IS NOT THE USUAL MISTAKE ───────────────────────
- *
- * It runs on the OUTPUT of {@link sanitizeOutboundHtml}, over exactly the tags {@link
- * ALLOWED_TAGS} names. The count is deliberately NOT restated here: this line used to say "a
- * grammar of thirteen tags", and `git log -L` on the literal shows it has one commit in its
- * history — so the list was fifteen entries long on the day that sentence was written, and a
- * restated number is a claim that is wrong the moment it is copied and that nothing can check.
- * It is not a general html-to-text converter and must never be used as one: its
- * input is already known-safe and known-small, and its output is `text/plain`, so its worst
- * possible failure is ugly text rather than injection. What it is NOT is a hand-written PARSER —
- * walking markup with regular expressions is how ugly text becomes wrong text — so the tags come
- * from `htmlparser2`, which is the same parser `sanitize-html` used a moment earlier.
- *
- * ── WHAT IS PRESERVED, AND WHY THAT LIST STOPS WHERE IT DOES ─────────────────────────────
- *
- * Structure and links; not emphasis. A plaintext reader who loses bold loses decoration, and one
- * who loses a list, a quotation boundary or a link TARGET loses meaning:
- *
- *   · `<a href="…">text</a>` becomes `text (href)`, and bare `href` when the two are equal. A
- *     link whose destination is dropped is unfollowable, which makes the two parts of the
- *     alternative say different things — the one failure this whole function exists to prevent.
- *   · `<li>` becomes `- ` inside `<ul>` and `1. `, `2. ` … inside `<ol>`. The counter is per
- *     list and nested lists indent, so an outline survives as an outline.
- *   · `<blockquote>` prefixes `> ` on every line it contains, which is what mail has meant by a
- *     quotation since before html existed.
- *   · Emphasis, strike and inline code render as their text with no markers. Inventing `**` or
- *     backticks would put characters in the message that the sender did not type and that a
- *     reader has no way to tell from literal ones.
- *   · `<pre>` renders VERBATIM — its own line breaks, its own indentation, no fence around it.
- *     Same rule as the line above (no invented characters), and the one place in this function
- *     where whitespace is meaning rather than layout: a code block whose leading spaces were
- *     collapsed is not the same program. It is also the only construct exempt from the blank-run
- *     collapse at the bottom, because two blank lines between two functions is how a great deal
- *     of real code is written and the alternative half of a `multipart/alternative` may not
- *     silently reformat it.
+ * Render sanitized html as the text/plain alternative. Runs on the OUTPUT of
+ * `sanitizeOutboundHtml`, over exactly the tags `ALLOWED_TAGS` names — not a general converter,
+ * not a hand-written parser: tags come from `htmlparser2`, the same parser `sanitize-html` used.
+ * Structure and links survive; emphasis does not. `<a href>` becomes `text (href)`, bare `href`
+ * when equal. `<li>` becomes `- ` in `<ul>`, `1. `, `2. ` … in `<ol>`, per-list, nested lists
+ * indent. `<blockquote>` prefixes `> `. Emphasis, strike and inline code render as plain text —
+ * no invented `**` or backticks. `<pre>` renders VERBATIM — the one place whitespace is meaning,
+ * and the only construct exempt from the blank-run collapse.
  */
 export function htmlToPlainText(html: string): string {
   /** The output, built as lines so block boundaries are decided in one place. */
@@ -218,23 +145,13 @@ export function htmlToPlainText(html: string): string {
   let lead = "";
   /**
    * Per-OPEN-ITEM state, innermost last: the pending marker that stood before the item opened.
-   *
-   * THE RULE THAT ENDED THE ANCHOR HEURISTICS: a marker is
-   * consumable only by a flush inside its own item — the item's close RESTORES whatever marker
-   * stood when it opened, unconditionally. `flush()` consumes the marker it emits, so an item
-   * whose content flushed has "" to restore over; one whose content DEFERRED into a
-   * block-wrapping anchor's buffer never flushed, and its unconsumed marker is simply put
-   * back — the parent's pending `1. ` (which an empty child must hand back, not destroy), ""
-   * everywhere ordinary. Every cheaper reading of "did this item produce content" was
-   * falsified in turn: `line` alone misses text buffering inside a wrapping anchor; "an
-   * anchor is open" is not evidence of content; the anchor's pending href is the anchor's
-   * own; raw buffer growth counts whitespace the anchor's close will trim; a scalar lets a
-   * nested child erase its parent's marker; an inner anchor swaps the buffer out from under
-   * any length baseline. All of those tried to PREDICT what a wrapping anchor's close would
-   * eventually contribute, and the prediction is the part that kept being wrong. So nothing
-   * predicts: content that defers into an anchor earns no marker for the item it sat in, and
-   * the anchor's eventual line ships unnumbered — the honest floor for markup no editor of
-   * ours produces, rendered into the sender's own message.
+   * The rule: a marker is consumable only by a flush inside its own item — the item's close
+   * RESTORES whatever marker stood when it opened, unconditionally. `flush()` consumes the marker
+   * it emits, so an item whose content flushed restores ""; content that DEFERRED into a
+   * block-wrapping anchor's buffer never flushed, and its unconsumed marker is put back (a
+   * parent's pending `1. ` an empty child must hand back). Every cheaper reading tried to PREDICT
+   * what a wrapping anchor's close would contribute, and the prediction kept being wrong — so
+   * nothing predicts: deferred content earns no marker, and the anchor's line ships unnumbered.
    */
   const liState: Array<{ savedLead: string }> = [];
   /**
@@ -309,23 +226,13 @@ export function htmlToPlainText(html: string): string {
   };
 
   /**
-   * A hard break — what a `<br>` means, and where the text half stops disagreeing with the html
-   * half about vertical space.
-   *
-   * A `<br>` after content flushes that content, exactly as {@link flush} does. A `<br>` on an
-   * otherwise-EMPTY line is the difference: it is a deliberate blank line — the author pressed
-   * Enter on an empty line, or twice running — and a second `<br>` renders as that gap in a mail
-   * client. So it emits the gap here too, rather than being swallowed as an empty flush is.
-   *
-   * This is the text side of the editor's line-break model. It emits a single Enter as one `<br>` (a soft line
-   * break, single-spaced) and a blank line as `<br><br>`, in ONE paragraph, instead of splitting
-   * into paragraphs whose margins the recipient reads as gaps. The html half therefore shows
-   * single breaks where the author made single breaks; this keeps the text half saying the same
-   * thing, which is the whole promise of a `multipart/alternative`.
-   *
-   * A LEADING empty break is dropped for the same reason {@link blankLine} drops a leading empty
-   * paragraph: it is a gap before the first word, not between two of them. A trailing run is
-   * capped by the final collapse, so `<br><br><br>` is one gap and not three.
+   * A hard break — what a `<br>` means. A `<br>` after content flushes it, exactly as `flush`
+   * does; a `<br>` on an otherwise-EMPTY line is a deliberate blank line (Enter on an empty line)
+   * and emits the gap rather than being swallowed. This is the text side of the editor's
+   * line-break model: one Enter is one `<br>`, a blank line is `<br><br>`, in ONE paragraph — so
+   * the text half says what the html half shows, the promise of a `multipart/alternative`. A
+   * LEADING empty break is dropped (a gap before the first word); a trailing run is capped by the
+   * final collapse, so `<br><br><br>` is one gap, not three.
    */
   const hardBreak = (): void => {
     // An NBSP-only SEGMENT between hard breaks is KEPT, unlike the paragraph flush's
@@ -352,15 +259,9 @@ export function htmlToPlainText(html: string): string {
   };
 
   /**
-   * A finished code block, written out line by line with the quote prefix and NOTHING else.
-   *
-   * Three normalisations, and each is what a renderer of the html half already does, so keeping
-   * them is what keeps the two parts equal rather than what makes them differ:
-   *   · `\r\n`/`\r` become `\n`. A stray carriage return is a byte no reader sees.
-   *   · ONE leading newline is dropped — html's own rule for the character immediately after
-   *     `<pre>`, which every browser applies and which a paste routinely carries.
-   *   · Trailing blank lines go. They are invisible in the html half, and the alternative
-   *     ending in six of them reads as a mistake somebody made.
+   * A finished code block, written line by line with the quote prefix and nothing else. Three
+   * normalisations, each what a renderer of the html half already does: `\r\n`/`\r` become `\n`;
+   * ONE leading newline is dropped (html's own rule after `<pre>`); trailing blank lines go.
    * Interior whitespace — indentation, alignment, blank lines between blocks — is untouched.
    */
   const flushPre = (raw: string): void => {
@@ -482,19 +383,13 @@ export function htmlToPlainText(html: string): string {
         }
         if (name === "li") {
           flush();
-          // An EMPTY item's marker (every boundary flush inside it was empty too) must be
-          // cleared HERE, at the item's own close — the list closing later is too late, the
-          // marker would already have escaped onto whatever prose follows the list, and the
-          // NEXT item must not inherit a marker that was never this item's to give away
-          // (`<ol><li><p></p></li></ol><p>after</p>` read "1. after").
-          //
-          // THE ITEM'S CLOSE RESTORES THE MARKER IT FOUND — see `liState`'s header for the
-          // seven falsified predictions this one unconditional line replaced. The `flush()`
-          // above is this item's last chance to consume its own marker (ordinary
-          // `<li>text</li>` content is in `line` here and flushes with it, leaving "" to
-          // restore over); content that deferred into a wrapping anchor's buffer never
-          // flushed, earns nothing, and the marker goes back to whoever held it. O(1) per
-          // item; nothing reads the anchor at all.
+          // An EMPTY item's marker must be cleared HERE, at the item's own close — the list
+          // closing later is too late (the marker escapes onto prose after the list), and the
+          // NEXT item must not inherit it (`<ol><li><p></p></li></ol><p>after</p>` read "1.
+          // after"). The close RESTORES the marker it found — see `liState`'s header. The
+          // `flush()` above is the item's last chance to consume its own marker; content that
+          // deferred into a wrapping anchor's buffer never flushed, and the marker goes back to
+          // whoever held it. O(1) per item.
           lead = (liState.pop() ?? { savedLead: "" }).savedLead;
           return;
         }
@@ -513,15 +408,11 @@ export function htmlToPlainText(html: string): string {
   flush();
 
   /**
-   * One trailing newline at most, and no run of blank lines anywhere — a mail body that ends in
-   * six blank lines reads as a mistake — EXCEPT inside a code block.
-   *
-   * The exemption is not a nicety. Two blank lines between two top-level definitions is how
-   * Python is conventionally written and is ordinary in most other languages, and a collapse
-   * applied over the whole output would silently reflow a snippet the author pasted — the text
-   * half quietly saying something the html half does not. So the collapse runs over the prose
-   * BETWEEN the recorded code spans and leaves their bytes alone. The spans are in the order
-   * they were written and cannot overlap, so one pass over them is the whole of it.
+   * One trailing newline at most and no run of blank lines anywhere — EXCEPT inside a code block.
+   * Two blank lines between top-level definitions is how Python is written; a whole-output
+   * collapse would silently reflow a pasted snippet, the text half saying something the html half
+   * does not. So the collapse runs over the prose BETWEEN the recorded code spans and leaves
+   * their bytes alone; the spans are in written order and cannot overlap, so one pass covers it.
    */
   // The no-break spaces carried this far exist to SURVIVE the whitespace collapse, not to
   // reach a recipient: prose ships the same width in ordinary spaces. INSIDE a recorded code

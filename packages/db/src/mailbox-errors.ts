@@ -1,24 +1,12 @@
 /**
- * The stable failure taxonomy stored in `mailboxes.error_code` — ONE definition.
- *
- * It was written out three times: this union in the worker's mailbox module (which EMITS the
- * values), the identical union in `packages/services/src/dto/types.ts` (which SHIPS them to the
- * client as `MailboxDTO.errorCode`), and a `//` comment on the column itself. Nothing connected
- * them, so the DTO could come to promise a code the worker never emits, or — worse in the other
- * direction — the worker could emit one the client has no copy for and the Settings pane would
- * render a blank reason next to a red mailbox.
- *
- * The duplication looked architectural: an import boundary forbids the worker importing
- * `@trafficflow/services` (that package resolves Stripe and Resend, which are not installed in the
- * worker's image, and a guard walks the worker's sources and fails on such an import). But the
- * constraint is only about *that* edge —
- * both the worker and services already depend on `@trafficflow/db`, and this taxonomy is the
- * domain of a database column, so this is where it belongs. A guard "asserting the two unions
- * match" was the other option; a single definition is strictly better, because it makes the
- * drift impossible rather than merely detected.
- *
- * TEXT in the database rather than a Postgres enum, so adding a classification is a code deploy
- * and never a migration that has to land before the worker that emits it.
+ * The stable failure taxonomy stored in `mailboxes.error_code` — ONE definition. It was written
+ * out three times — the worker's union (emits), the DTO union (ships `MailboxDTO.errorCode`), a
+ * column comment — and nothing connected them, so the worker could emit a code the client has no
+ * copy for and the Settings pane would render a blank reason next to a red mailbox. The
+ * duplication looked architectural (the worker may not import services), but both already depend
+ * on `@trafficflow/db`, and the taxonomy is the domain of a database column. One definition beats
+ * a guard: drift becomes impossible rather than detected. TEXT rather than an enum, so a new
+ * classification is a code deploy, never a migration that must land first.
  */
 
 /** Every value `mailboxes.error_code` may hold. Order is documentation, not semantics. */
@@ -44,27 +32,14 @@ export function isMailboxErrorCode(v: unknown): v is MailboxErrorCode {
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Every value `mailboxes.disabled_reason` may hold. CLOSED, and closed for a different reason
- * than {@link MAILBOX_ERROR_CODES} is open.
- *
- * `error_code` is a failure taxonomy and taxonomies grow, which is why migration 0023 kept it out
- * of a Postgres enum. This set tracks the organizer kinds — `cloud`, `local`, `mobile` (a
- * standalone phone) and `unknown` for a peer whose kind or protocol we cannot rank — and
- * `unknown` is the catch-all that makes it closed rather than merely short. It grows only when
- * `ORGANIZER_KINDS` does, by a migration in the same slice. So mail 0027 backs it with a CHECK
- * constraint as well, and a test against real Postgres watches it refuse.
- *
- * It lives HERE and not in a second list. The failure taxonomy's three copies were collapsed into
- * this module because the taxonomy is the domain of a database column; the same argument applies
- * verbatim to this one. `packages/core`'s `StandDownReason` is the ENGINE's own union of the same
- * strings and cannot import this package (the engine tier may not depend on the private
- * half) — so the two are reconciled by assignment at the one place they meet, the worker's gate,
- * plus a test that fails if either side gains a member the other lacks.
- *
- * NOT A FAILURE. A mailbox carrying one of these is working perfectly and is being organized by
- * somebody else; `error_code` / `error_detail` / `failed_at` are cleared in the same statement
- * that writes it, or the row would say "organized elsewhere" and "the mailbox rejected the
- * password" at once.
+ * Every value `mailboxes.disabled_reason` may hold. CLOSED, unlike {@link MAILBOX_ERROR_CODES} (a
+ * failure taxonomy grows): this set tracks the organizer kinds — `cloud`, `local`, `mobile`,
+ * `unknown` — and `unknown` is the catch-all that makes it closed rather than merely short. It
+ * grows only when `ORGANIZER_KINDS` does, in the same slice; mail 0027 backs it with a CHECK.
+ * `packages/core`'s `StandDownReason` is the engine's own union of the same strings and cannot
+ * import this package — reconciled by assignment at the worker's gate plus a test that fails if
+ * either side gains a member. NOT a failure: a mailbox carrying one is working, organized by
+ * somebody else; the error columns are cleared in the same statement.
  */
 export const MAILBOX_DISABLED_REASONS = [
   "organized_elsewhere:cloud",
@@ -94,41 +69,14 @@ export function isMailboxDisabledReason(v: unknown): v is MailboxDisabledReason 
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Every value `mailboxes.sync_blocked_reason` may hold. CLOSED, and closed for a THIRD reason —
- * neither {@link MAILBOX_ERROR_CODES}' nor {@link MAILBOX_DISABLED_REASONS}'.
- *
- * ── WHAT THE SET *IS*, WHICH IS WHY IT CANNOT GROW UNDER US ────────────────────────────────
- *
- * These are the ways OUR OWN INFRASTRUCTURE declines to serve a mailbox that we know is
- * expected. Not one member is chosen by, derived from, or influenced by a mail server: each is a
- * branch in the worker's own sync loop that we wrote and can enumerate by reading it.
- * 0023's argument for leaving `error_code` unconstrained — "a failure taxonomy grows, and a new
- * classification must be a code deploy rather than a migration that has to land before the worker
- * that emits it" — is an argument about the *provider's* failure vocabulary, which is unbounded
- * because providers are. **It does not apply here, and someone will claim it does.** A new member
- * of this set can only appear alongside a new refusal branch in the worker, which is a code change
- * either way; the migration lands with it, in the same slice.
- *
- * So it gets a CHECK constraint, like `disabled_reason` and unlike `error_code`.
- *
- * ── THERE IS NO `no_organizer` MEMBER, AND THAT IS DELIBERATE ──────────────────────────────
- *
- * "There is no worker running at all" is the one blocked state this column structurally cannot
- * record: **the worker is the only writer.** A column only the worker writes cannot say "no
- * worker" — nobody would be there to write it, and nobody would be there to clear it either, so
- * every row would carry a stale reason for ever after the deploy that stopped a shard. That state
- * lives in the sync fleet's liveness table (one row per shard, beat staleness) and is reported by the
- * `worker_down` alert rule in `alerts.ts`. Adding the member here would make every row lie after
- * a deploy; this paragraph is what stops the next reader adding it.
- *
- * ── NOT A FAILURE, AND NOT A DISABLE ──────────────────────────────────────────────────────
- *
- * A mailbox carrying one of these is `status='connected'`, has no `error_code`, and has earned no
- * retry backoff — an infrastructure fault must never quarantine a mailbox. It is simply not being
- * synced right now, and this column is the only place that says so. Every writer that moves the
- * mailbox to a state where the statement is no longer true clears it in the SAME statement:
- * `markMailboxConnected`, `markMailboxStoodDown`, `markMailboxFailed` (all in the worker) and
- * `MailboxService.update`.
+ * Every value `mailboxes.sync_blocked_reason` may hold — CLOSED for a third reason: these are the
+ * ways OUR OWN infrastructure declines to serve a mailbox we know is expected. Each member is a
+ * branch in the worker's own sync loop; a new one appears only with a new refusal branch, so the
+ * migration lands with it, and it gets a CHECK. NO `no_organizer` member: the worker is the only
+ * writer, and a column only the worker writes cannot say "no worker" — nobody would clear it, so
+ * every row would lie after a deploy stopped a shard; that state lives in the liveness table and
+ * `worker_down`. Not a failure, not a disable: the mailbox is `connected`, no backoff; every
+ * writer leaving that state clears the column in the SAME statement.
  */
 export const MAILBOX_SYNC_BLOCK_REASONS = [
   /**
@@ -170,38 +118,14 @@ export function isMailboxSyncBlockReason(v: unknown): v is MailboxSyncBlockReaso
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Every value `mailboxes.smtp_size_probe_code` may hold. CLOSED, with a CHECK, on
- * {@link MAILBOX_SYNC_BLOCK_REASONS}' argument rather than {@link MAILBOX_ERROR_CODES}' — and the
- * distinction is the whole reason this comment is long, because the first reading of this set is
- * that it is a failure taxonomy and therefore ought to be open.
- *
- * It is not. Every member is a branch WE wrote:
- *
- *  · `learned` / `silent` — the dial completed, and the EHLO either named a usable ceiling or did
- *    not. Two states of our own reading of RFC 1870, not of anybody's error vocabulary.
- *  · `auth_refused` / `unreachable` / `tls_refused` / `unknown` — `SmtpSizeFailure` in
- *    `packages/core`, which is derived from nodemailer's own `code` field through a closed switch
- *    with `unknown` as its default. A provider that invents a new response line cannot add a member
- *    here: it lands in `unknown`. Only a new branch in OUR classifier can, and that is a code
- *    change the migration rides along with.
- *  · `token_unavailable` — an oauth mailbox for which no access token could be minted, so no dial
- *    happened.
- *  · `no_credentials` — nothing to dial with at all: no `imap` row, an `authType` this build
- *    refuses, or a credential envelope this deployment cannot decrypt.
- *
- * ── WHY THE CHECK IS A PRIVACY BOUNDARY AND NOT TIDINESS ────────────────────────────────────
- *
- * The value this column records is derived from an SMTP AUTH failure, and nodemailer's error text
- * for one embeds the server's own response line — which routinely contains the username, can
- * contain an echoed credential, and is written by a third party. The entire `code`-not-message rule
- * in `SmtpSizeFailure` exists for that reason, and the CHECK is the half of it that survives a call
- * site nobody has written yet: `error_detail` had exactly one guard at the write site and a server's
- * bracket atom walked straight through it into a column an operator reads. This column starts closed
- * at both ends.
- *
- * TEXT with a CHECK rather than a Postgres enum, on the whole repository's rule: a set member is
- * added by a migration that lands with the code, and `ALTER TYPE` is not a thing to do to a live
- * database when `ALTER TABLE … ADD CONSTRAINT` says the same thing.
+ * Every value `mailboxes.smtp_size_probe_code` may hold — CLOSED, with a CHECK, on {@link
+ * MAILBOX_SYNC_BLOCK_REASONS}' argument: every member is a branch WE wrote. `learned`/`silent`
+ * are our reading of RFC 1870; `auth_refused`/`unreachable`/`tls_refused`/`unknown` come from
+ * `SmtpSizeFailure`'s closed switch over nodemailer's `code` field (a provider's new response
+ * lands in `unknown`); `token_unavailable` and `no_credentials` mean no dial happened. The CHECK
+ * is a privacy boundary: nodemailer's error text for an SMTP AUTH failure embeds the server's own
+ * response line — routinely the username, possibly an echoed credential. The CHECK is the half of
+ * the `code`-not-message rule that survives a call site nobody has written yet.
  */
 export const SMTP_SIZE_PROBE_CODES = [
   /** The server announced a usable `SIZE`; the row carries the number. */

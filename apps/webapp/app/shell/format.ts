@@ -30,29 +30,14 @@ function readerFields(d: Date): ReturnType<typeof zonedFields> {
 }
 
 /**
- * THE HUMAN NAME OF EACH CLIENT VIEW — the badge on a search hit, the "→ Reads" in a move menu, the
- * "Moved to Receipts." in a toast. Keys are view ids, never folders.
- *
- * It was a hardcoded English table and it is one of the most-repeated pieces of copy in the product,
- * so it now reads the `place` namespace. `liveCopy` rather than a hook because this module is a
- * FUNCTION LIBRARY: `screener-state.ts` reads it from inside a reducer and `AppShell` from inside a
- * toast callback, neither of which can call `useTranslations`. See `app/shell/locale.ts`.
- *
- * The English strings below are the fallback and the parity oracle, exactly as the reading pane's
- * tables are.
- *
- * ── WHICH OF THESE SIX ARE TRANSLATED IS A PRODUCT DECISION, NOT A MECHANICAL ONE ──────────────
- *
- * `Ohbox`, `Screener`, `Spam` and `Reads` keep their names in every language. The first two are what
- * this product IS — a coined word and the signature feature — and a reader who is told about "the
- * Screener" in a review, a changelog or a support thread has to find that word in their own
- * interface. `Reads` is here for a different reason and it is the one that changed: German has no
- * plain one-word noun for it (every candidate is either literary or a coinage), and the pile is a
- * REAL FOLDER named `Reads` on the reader's own IMAP server — a German name in the client would not
- * match what they see in every other mail app. `Receipts` → `Belege` and `Screened` → `Aussortiert`
- * translate, because those are ordinary German words for exactly what the piles hold.
- *
- * The catalogue is where each choice lives; `test/locale-catalog.test.ts` is where it is enforced.
+ * The human name of each client view — the badge on a search hit, the "→ Reads" in a move menu, the
+ * toast. Keys are view ids, never folders. It reads the `place` namespace through `liveCopy` rather
+ * than a hook because this is a function library: `screener-state.ts` reads it inside a reducer and
+ * `AppShell` inside a toast callback, neither of which can call `useTranslations`. The English
+ * strings below are the fallback and the parity oracle. Which of the six translate is a product
+ * decision: `Ohbox`, `Screener`, `Spam` and `Reads` keep their names in every language (the first
+ * two are what the product IS; `Reads` is a real IMAP folder on the reader's own server, and German
+ * has no plain noun for it); `Receipts`/`Screened` translate. `test/locale-catalog.test.ts` enforces.
  */
 const PLACE_EN = {
   ohbox: "Ohbox",
@@ -81,21 +66,14 @@ export function placeLabel(folder: string): string {
 }
 
 /**
- * WHICH SENTENCE A WITHHELD BODY GETS — the `body.*` catalogue key per marker.
- *
- * `MessageBody.withheld` is the server's closed set (mail 0065 widened it from the storage cap
- * alone), and the selector deliberately carries the member through so "the surface owes each
- * member its own sentence" is writable: the storage cap names the space and the way to more of
- * it, the junk filing names the verdict and where the bytes live, the expunge says the copies
- * are gone. ONE resolver for the three surfaces that render the state (the focused pane, a
- * conversation sibling, a stream card) — a per-surface copy of this mapping is three ways for
- * the same marker to get two different sentences.
- *
- * An ABSENT marker (`null`/`undefined`) degrades to the storage sentence: it is the only member
- * that existed before the set widened, so it is exactly what a record written before the
- * widening means. A genuinely new member cannot slip through silently — the parameter is the
- * engine's closed `WithheldMarker`, so widening the set is a type error at this mapping until
- * the new policy gets its own sentence.
+ * Which sentence a withheld body gets — the `body.*` catalogue key per marker. `MessageBody.withheld`
+ * is the server's closed set (mail 0065 widened it beyond the storage cap), and the selector carries
+ * the member through so each member owes its own sentence: the storage cap names the space, the junk
+ * filing names the verdict, the expunge says the copies are gone. One resolver for the three
+ * rendering surfaces (focused pane, conversation sibling, stream card) — a per-surface copy is three
+ * ways for one marker to get two sentences. An absent marker degrades to the storage sentence (the
+ * only member that predates the widening); a new member is a type error at this mapping until it
+ * gets its own sentence — the parameter is the engine's closed `WithheldMarker`.
  */
 export function withheldCopyKey(
   marker: WithheldMarker | null | undefined,
@@ -143,54 +121,14 @@ export function displayTime(m: Pick<EngineMessage, "time" | "date">, now: Date):
 }
 
 /**
- * A META LINE, JOINED — and the separator is never printed without a value on both sides.
- *
- * ── "Ohbox ·" ───────────────────────────────────────────────────────────────────────────
- *
- * A message with **no `Date:` header** — which spam and scripts routinely omit, and which nothing in the pipeline
- * substitutes for — carries `date: null` all the way to the client, so
- * {@link displayTime} answers `""` (`packages/client-engine/src/selectors.ts:66-77`, and
- * correctly: there is no instant to format). Every surface then interpolated that empty
- * string into a template that had already committed to the separator:
- *
- *   · `SearchView`  — `` `${placeLabel(m.folder)} · ${displayTime(m, now)}` `` ⇒ **"Ohbox · "**
- *   · `MessagePane` — `messages.threadMeta` was the literal `"thread ({count}) · "` ⇒
- *                     **"thread (3) · "**, a separator introducing nothing
- *   · `Conversation` — an unconditional `<span className="t num">{displayTime(…)}</span>`,
- *                      i.e. an empty stamp element in a row that has a slot for one
- *
- * A dangling "·" is not a cosmetic defect. It is the interface asserting that a second fact
- * follows, and there is no second fact — the same class of untrue statement as the copy this
- * slice's five siblings fix, said in punctuation instead of words.
- *
- * ── WHY THE JOINER IS HERE AND NOT A GUARD AT EACH CALL SITE ────────────────────────────
- *
- * `placeLabel` two functions up is here for the reason its own docstring records: the two
- * copies of that fallback drifted, and one of them shipped `undefined` on screen. Three
- * hand-written `x ? \` · ${x}\` : ""` ternaries would be that shape again, and the fourth
- * surface — the one nobody has written yet — would get the ternary wrong once and reproduce
- * this exact report.
- *
- * ── AND WHY THE FALLBACK IS NOT ON THE WIRE, WHICH WAS THE FIRST THING TRIED ────────────
- *
- * The audit asks for IMAP INTERNALDATE, and that is the right value — but it is not reachable
- * from anywhere a display fix can stand:
- *
- *  1. **Nothing persists it.** The MIME parser writes `parsed.date ?? null`, and INTERNALDATE is
- *     read only for ORDERING, into an in-memory `arrivalKey` cache. The `messages` table has no
- *     column for it, so materialization has nothing to coalesce to but `createdAt` — when the
- *     sync worker wrote the row. The IMAP adapter already records why that is the wrong answer:
- *     an imported mailbox "leaves every message stamped with the import time".
- *  2. **A non-null `MessageDTO.date` would desynchronise two orderings.** The server sorts by
- *     `messages.date`, which is still NULL; the client sorts by the DTO's `date`, and
- *     `byDateDesc` reads a missing one as 0 — oldest. Synthesizing a value client-side of the
- *     sort would place an undated message NEWEST here and OLDEST there, and the sync contract
- *     makes the server's order the order.
- *
- * So the true repair belongs at ingest, where INTERNALDATE is in hand and one write fixes every
- * surface at once; it is owed rather than done. This function is what stops the product lying in
- * the meantime, and it stays correct after that fix lands: a date that is always present simply
- * means no part is ever dropped.
+ * A meta line, joined — the separator is never printed without a value on both sides. A message with
+ * no `Date:` header (spam routinely omits it) carries `date: null` to the client and `displayTime`
+ * answers `""` — correctly — so every surface that had committed to the separator rendered a
+ * dangling "Ohbox · ": punctuation asserting a second fact that does not exist. The joiner is here,
+ * not a guard per call site: hand-written ternaries drift (how `placeLabel`'s fallback shipped
+ * `undefined` on screen). The fallback is NOT on the wire: nothing persists INTERNALDATE, and a
+ * non-null `MessageDTO.date` would desynchronise the two sort orders (the server sorts by
+ * `messages.date`, still NULL). The true repair belongs at ingest and is owed; this stays correct.
  */
 export function metaLine(...parts: Array<string | null | undefined>): string {
   return parts.filter((p): p is string => typeof p === "string" && p !== "").join(" · ");
@@ -204,31 +142,14 @@ export function resurfaceLabel(when: string): string {
 }
 
 /**
- * ═══ THE RESURFACE HORIZONS ═════════════════════════════════════════════════════════════
- *
- * The action carries a chosen instant, so the presets are computed here rather than baked at the
- * one call site `nextFridayNine` used to serve. All four land at 09:00 IN THE READER'S ZONE, and
- * `resurfaceLabel` reads them back the same way whichever preset produced them.
- *
- * ── WHY 09:00 MOVED, WHICH IS THE HALF THAT IS EASY TO MISS ─────────────────────────────────
- *
- * These used to mint 09:00 UTC, and while every stamp in the product was ALSO read in UTC that was
- * self-consistent: the reader picked "tomorrow" and the label said "09:00". The moment the display
- * side reads the reader's zone, a 09:00Z instant renders as "11:00" to a reader in Zurich in
- * summer — the product would offer a morning and deliver a late morning, having been told which
- * one it meant. So the wall clock is what is fixed at 09:00 and the INSTANT is what varies:
- * 07:00Z in CEST, 08:00Z in CET.
- *
- * Storage is unchanged. `bubbleUpAt` is still a UTC instant on the wire and in the mirror, and the
- * worker still compares instants — it never sees a wall clock and does not need to.
- *
- * ── AND WHY THE ARITHMETIC IS `zonedInstant` AND NOT AN OFFSET ──────────────────────────────
- *
- * "Add two hours" is right for half the year. `zonedInstant` asks the platform what the offset
- * actually is at the instant being minted, which is the only version that survives 29 March and
- * 25 October; the day arithmetic below stays in CALENDAR fields (`day + diff`), which `Date.UTC`
- * normalizes across month and year ends, so no branch of it is counting 86 400 000 milliseconds
- * and hoping every day has that many.
+ * The resurface horizons. The action carries a chosen instant, so the presets are computed here; all
+ * four land at 09:00 IN THE READER'S ZONE and `resurfaceLabel` reads them back the same way. They
+ * used to mint 09:00 UTC — self-consistent while every stamp was read in UTC, but once display reads
+ * the reader's zone, a 09:00Z instant renders as "11:00" in Zurich summer: the wall clock is what
+ * is fixed and the instant varies (07:00Z in CEST, 08:00Z in CET). Storage is unchanged —
+ * `bubbleUpAt` stays a UTC instant and the worker compares instants. The arithmetic is
+ * `zonedInstant`, not an offset: "add two hours" is right for half the year, and the day arithmetic
+ * stays in calendar fields (`day + diff`, normalized by `Date.UTC`) — nothing counts 86 400 000 ms.
  */
 
 /** 09:00 on a calendar day in the reader's zone, as the UTC instant that is. */
@@ -381,21 +302,18 @@ export function senderName(m: EngineMessage): string {
 }
 
 /**
- * THE SENDER CIRCLE — the same letter and the same colour for one person, in
- * every list, on every device, forever.
- *
- * The requirement: the small circle carrying the sender's or receiver's letter belongs on the
- * mail list too, not only in the Screener. The component already existed — it is what the Screener's
- * rows and the doorbell stack — so the only new thing is the derivation, and the only
- * requirement on the derivation is that it be a pure function of the ADDRESS. Not of the
- * display name, which the same person changes between messages, and not of a random seed,
- * which would repaint the list on every reload.
- *
- * The hues are eight fixed angles, not `hash % 360`: the free wheel produces the candy
- * greens and electric blues the Blanc system rules out, while these sit in the same
- * warm-adjacent band as the tag hues (rosewood 25 · terracotta 42 · ochre 78 · olive 112 ·
- * moss 150 · slate 196 · indigo 250 · mauve 318). Lightness and chroma are pinned in
- * `avatar.css` per theme, so legibility is not a property of this table.
+ * THE SENDER CIRCLE — the same letter and the same colour for one person, in every list, on every device, forever.
+ * The requirement: the small circle carrying the sender's or receiver's letter belongs on the mail list too, not only
+ * in the Screener. The component already existed — it is what the Screener's rows and the doorbell stack — so the
+ * only new thing is the derivation, and the only requirement on the derivation is that it be a pure function of the
+ * ADDRESS. Not of the display name, which the same person changes between messages, and not of a random seed, which
+ * would repaint the list on every reload. The hues are eight fixed angles, not `hash % 360`: the free wheel produces
+ * the candy greens and electric blues the Blanc system rules out, while these sit in the same warm-adjacent band as
+ * the tag hues (rosewood 25 · terracotta 42 · ochre 78 · olive 112 · moss 150 · slate 196 · indigo 250 · mauve 318).
+ */
+
+/**
+ * Lightness and chroma are pinned in `avatar.css` per theme, so legibility is not a property of this table.
  */
 const AVATAR_HUES = [25, 42, 78, 112, 150, 196, 250, 318];
 
@@ -452,21 +370,19 @@ export interface SentRowRecipient {
 }
 
 /**
- * WHO AN OWN-SENT ROW IS ABOUT.
- *
- * A sent message's `from` is the reader's own identity — the one fact on the row that says
- * nothing. The row says who the mail WENT TO instead ("Me → Nora Lindt"), assembled by the
- * caller from this structure. Pure and i18n-free like {@link recipientSummary}, for the same
- * reason: the words ("Me", "+N") are the app's, read from `en.json` where the row renders.
- *
- * `null` twice, and both mean "keep the ordinary sender display":
- *  · a row that is not the account's own sent mail;
- *  · an own-sent row with no To recipient to name — rows ingested before recipients reached
- *    the wire carry an empty `to`, and "Me →" with nothing after the arrow is the same
- *    punctuation-shaped lie the dangling "·" was ({@link metaLine}).
- *
- * Cc is deliberately not consulted: the label names who the mail was written to, not everyone
- * who was copied — the open view's recipients block is where Cc is said.
+ * WHO AN OWN-SENT ROW IS ABOUT. A sent message's `from` is the reader's own identity — the one fact on the row that
+ * says nothing. The row says who the mail WENT TO instead ("Me → Nora Lindt"), assembled by the caller from this
+ * structure. Pure and i18n-free like {@link recipientSummary}, for the same reason: the words ("Me", "+N") are the
+ * app's, read from `en.json` where the row renders. `null` twice, and both mean "keep the ordinary sender display":
+ * · a row that is not the account's own sent mail;
+ * · an own-sent row with no To recipient to name — rows ingested before recipients reached the wire carry an empty
+ *   `to`, and "Me →" with nothing after the arrow is the same punctuation-shaped lie the dangling "·" was ({@link
+ *   metaLine}).
+ */
+
+/**
+ * Cc is deliberately not consulted: the label names who the mail was written to, not everyone who was copied — the
+ * open view's recipients block is where Cc is said.
  */
 export function sentRowRecipient(m: EngineMessage): SentRowRecipient | null {
   if (!isOwnSent(m)) return null;
@@ -492,18 +408,14 @@ export function firstName(m: EngineMessage): string {
 }
 
 /**
- * ABSOLUTE date and time, for the hover title on a message's relative stamp — "Tue 5 Aug 2026,
- * 14:32". The visible stamp is {@link displayTime} (relative: "09:12", "Mon"); this is what the
- * reader gets when they want the exact instant, so it carries the year and never abbreviates
- * to a weekday.
- *
- * The reader's zone, like every other formatter in this file (`clockOf`, `resurfaceLabel`,
- * `displayTime`) — this is the value a reader opens precisely to check an exact time against
- * their own clock, so it is the one place a UTC render would be most obviously wrong. Note the
- * DATE moves with it, not only the hour: 22:10 UTC on the 4th is 00:10 on the 5th in Zurich.
- * Empty string for a message with no `Date:` header — there is no instant to name, exactly as
- * `displayTime` answers "" — so a caller interpolating it prints nothing rather than
- * "Invalid Date".
+ * ABSOLUTE date and time, for the hover title on a message's relative stamp — "Tue 5 Aug 2026, 14:32". The visible
+ * stamp is {@link displayTime} (relative: "09:12", "Mon"); this is what the reader gets when they want the exact
+ * instant, so it carries the year and never abbreviates to a weekday. The reader's zone, like every other formatter
+ * in this file (`clockOf`, `resurfaceLabel`, `displayTime`) — this is the value a reader opens precisely to check an
+ * exact time against their own clock, so it is the one place a UTC render would be most obviously wrong. Note the
+ * DATE moves with it, not only the hour: 22:10 UTC on the 4th is 00:10 on the 5th in Zurich. Empty string for a
+ * message with no `Date:` header — there is no instant to name, exactly as `displayTime` answers "" — so a caller
+ * interpolating it prints nothing rather than "Invalid Date".
  */
 /*
  * `Pick<…, "date">` and not the whole message, because `date` is all it reads. The away-answer
@@ -520,26 +432,18 @@ export function fullDateTime(m: Pick<EngineMessage, "date">): string {
 }
 
 /**
- * ═══ A LIST ROW'S STAMP, BOTH FORMS AND THE FLIP BETWEEN THEM ═══════════════════════════════
- *
- * `MessageRow`'s three stamp props in one call, the way {@link avatarOf} is its two circle props:
- * a view spreads this where it used to pass `time={displayTime(m, now)}`, and the rule for which
- * form is on screen, which is on hover, and whether the date may be pressed at all lives HERE
- * rather than seven times over.
- *
- * WHICH FORM IS SHOWN is the caller's `absolute` — one boolean the shell owns for the whole
- * session, so every row in the list (and the open message with them) flips together and none of
- * them holds a state of its own. The TITLE is always the other one: relative on screen names the
- * exact instant on hover, absolute on screen names the relative one, so hovering says something
- * new either way.
- *
- * ── A MESSAGE WITH NO `Date:` HEADER GETS NO FLIP, AND THAT IS THE POINT ────────────────────
- *
- * Spam and scripts routinely omit the header, and `fullDateTime` answers "" for one because there
- * is no instant to name (the same "" `displayTime` answers). Such a row has ONE form, so it is
- * handed no title and no `onToggleTime` — a date that cannot be exact must not offer to be. This
- * is also the production path that keeps `MessageRow`'s unwired branch honest rather than
- * theoretical.
+ * A list row's stamp, both forms and the flip between them — `MessageRow`'s three stamp props in one call, the way
+ * {@link avatarOf} is its two circle props: a view spreads this where it used to pass `time={displayTime(m, now)}`,
+ * and the rule for which form is on screen, which is on hover, and whether the date may be pressed lives here rather
+ * than seven times over. Which form is shown is the caller's `absolute` — one boolean the shell owns for the whole
+ * session, so every row (and the open message) flips together and none holds its own state. The title is always the
+ * other form, so hovering says something new either way. A message with no `Date:` header gets no flip:
+ * `fullDateTime` answers "" (no instant to name), so the row is handed no title and no `onToggleTime` — a date that
+ * cannot be exact must not offer to be.
+ */
+
+/**
+ * This is also the production path that keeps `MessageRow`'s unwired branch honest.
  */
 export interface RowStampProps {
   /** What the row shows — the relative form, or the absolute one once the list is flipped. */
@@ -565,16 +469,12 @@ export function rowStamp(
 }
 
 /**
- * One recipient, WRITTEN OUT — a chip under the header (viewer redesign).
- *
- * `me` marks the reader's own address so the card can swap the ACCOUNT's identity onto the
- * face; the flag is computed here, on the STORED form, and the name the account goes by is
- * deliberately not — that answer belongs to `GET /mailboxes` and reaches the card through the
- * chrome (`ownNameOf`), not through a pure function every mount shares.
- *
- * `address` is the wire form, untouched: every action a chip offers (copy, write, screening)
- * acts on it, and only the FACE decodes (`displayAddress`, at the render site). Carrying a
- * pre-decoded string here is exactly the leak `idn.ts`'s header forbids.
+ * One recipient, WRITTEN OUT — a chip under the header (viewer redesign). `me` marks the reader's own address so the
+ * card can swap the ACCOUNT's identity onto the face; the flag is computed here, on the STORED form, and the name the
+ * account goes by is deliberately not — that answer belongs to `GET /mailboxes` and reaches the card through the
+ * chrome (`ownNameOf`), not through a pure function every mount shares. `address` is the wire form, untouched: every
+ * action a chip offers (copy, write, screening) acts on it, and only the FACE decodes (`displayAddress`, at the
+ * render site). Carrying a pre-decoded string here is exactly the leak `idn.ts`'s header forbids.
  */
 export interface RecipientRowChip {
   /** True when this recipient IS the reader — fold on the stored, case-folded address. */
@@ -586,18 +486,18 @@ export interface RecipientRowChip {
 }
 
 /**
- * WHO THE MESSAGE WENT TO, in full — the summarised single line and its "+N" fold are retired
- * with the viewer redesign: every To and Cc recipient renders as its own chip, so nothing here
- * caps, counts or folds. Pure and i18n-free like the summary it replaces: the row labels
- * ("To", "Cc") are the card's, from `messages/*.json`.
- *
- * The two rules that survive from the old fold, because they are invariants and not layout:
- *  · **Nothing to say → `empty`.** No To and no Cc renders no block at all — never a dangling
- *    label with nothing after it.
- *  · **The me-fold compares STORED addresses.** `ownAddresses` is what `GET /mailboxes`
- *    answered — A-labels — so a fold on the decoded string would stop recognising the reader
- *    on their own internationalized mailbox. An empty set recognises the reader nowhere and
- *    every address renders in full, which is the honest degradation.
+ * WHO THE MESSAGE WENT TO, in full — the summarised single line and its "+N" fold are retired with the viewer
+ * redesign: every To and Cc recipient renders as its own chip, so nothing here caps, counts or folds. Pure and
+ * i18n-free like the summary it replaces: the row labels ("To", "Cc") are the card's, from `messages/*.json`. The two
+ * rules that survive from the old fold, because they are invariants and not layout:
+ * · **Nothing to say → `empty`.** No To and no Cc renders no block at all — never a dangling label with nothing
+ *   after it.
+ */
+
+/**
+ * · **The me-fold compares STORED addresses.** `ownAddresses` is what `GET /mailboxes` answered — A-labels — so a
+ *   fold on the decoded string would stop recognising the reader on their own internationalized mailbox. An empty set
+ *   recognises the reader nowhere and every address renders in full, which is the honest degradation.
  */
 export interface RecipientRows {
   to: RecipientRowChip[];
@@ -667,18 +567,13 @@ const AGO_EN = { justNow: "just now" };
 export const AGO_COPY: typeof AGO_EN = liveCopy("relativeTime", AGO_EN);
 
 /**
- * HOW LONG AGO an instant was, in the reader's language — plus the absolute stamp for the
- * tooltip, because "2 minutes ago" answers "is it fresh" and the title answers "when exactly".
- *
- * This sat in `MailboxSection` formatting through `Intl.RelativeTimeFormat(undefined, …)`,
- * which reads the BROWSER's locale rather than the app's — so a German session showed
- * "Synchronisiert 1 minute ago", half a sentence in each language — and its under-45-seconds
- * arm was the hardcoded English "just now". `activeFormatLocale()` is the app's own choice
- * (the same seam every other stamp in this file reads), and the young arm goes through the
- * catalogue like any other copy.
- *
- * An unparseable instant echoes back rather than rendering "Invalid Date": the callers put
- * `rel` in a sentence and `abs` in a `title`, and a verbatim token is at least debuggable.
+ * How long ago an instant was, in the reader's language — plus the absolute stamp for the tooltip:
+ * "2 minutes ago" answers "is it fresh", the title answers "when exactly". It sat in
+ * `MailboxSection` with `Intl.RelativeTimeFormat(undefined, …)`, which reads the BROWSER's locale —
+ * a German session showed "Synchronisiert 1 minute ago" — and its under-45-seconds arm was
+ * hardcoded English. `activeFormatLocale()` is the app's own choice and the young arm goes through
+ * the catalogue. An unparseable instant echoes back rather than rendering "Invalid Date": a
+ * verbatim token in a sentence is at least debuggable.
  */
 export function agoStamp(iso: string, now: number): { rel: string; abs: string } {
   const d = new Date(iso);
@@ -698,20 +593,13 @@ export function agoStamp(iso: string, now: number): { rel: string; abs: string }
 }
 
 /**
- * THE DAY SOMETHING BECAME TRUE — a DATE, with no clock on it.
- *
- * "You stopped organizing this here on 3 Sep 2026" is a standing fact somebody reads once.
- * Putting a timestamp in it ("on 03/09/2026, 15:28:43") makes it look like an event log and
- * invites watching — the same reason the mailbox row carries when an install BECAME the
- * organizer rather than when it was last seen. That is why this is not `agoStamp(…).abs`,
- * which is built for a tooltip answering "when exactly".
- *
- * It lives here, not in a pane, because the desktop's Mailboxes pane and the browser's render
- * the SAME sentence from the same catalogue key. Two copies of the rule would be two dates for
- * one fact the day either one is touched.
- *
- * An absent or unparseable instant renders an em dash rather than "Invalid Date": the callers
- * interpolate this into a sentence, and a sentence with a dash in it is still readable.
+ * The day something became true — a date, with no clock on it. "You stopped organizing this here on
+ * 3 Sep 2026" is a standing fact somebody reads once; a timestamp makes it an event log and invites
+ * watching, the reason the mailbox row carries when an install BECAME the organizer rather than when
+ * it was last seen (so not `agoStamp(…).abs`, which is built for a tooltip). It lives here because
+ * the desktop's Mailboxes pane and the browser's render the same sentence from the same catalogue
+ * key — two copies would be two dates for one fact. An absent or unparseable instant renders an em
+ * dash rather than "Invalid Date": a sentence with a dash is still readable.
  */
 export function dayStamp(iso: string | null | undefined): string {
   if (!iso) return "—";

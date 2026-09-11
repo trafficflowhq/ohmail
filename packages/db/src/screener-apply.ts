@@ -16,44 +16,14 @@ import { upsertDesiredSeen } from "./flag-intent.js";
 const ledger = (tx: Tx): LedgerTx => tx as unknown as LedgerTx;
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE SCREENER DECISION'S APPLY, ON ITS OWN LEAF — MOVED DOWN THE SPINE (0.14.1)
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * `ScreenerService.decide` (`packages/services/src/screener-service.ts`) is a promoted rule, a
- * held-bag re-route and a mark-read, all in one transaction, all reachable through the ORGANIZER's
- * own HTTP door. 0.14.1 adds a second way to reach it: a READER's decision, appended to
- * `ohmail/_meta` as a request record, DRAINED by the install that organizes the mailbox
- * (`apps/worker/src/request-drain.ts`) — and the worker may not import `@trafficflow/services` at
- * runtime (`apps/worker/package.json` "//services-is-test-only": a CJS `sanitize-html` re-entering
- * an ESM `htmlparser2` mid-evaluation is a hard `ERR_REQUIRE_CYCLE_MODULE` on Node 23).
- *
- * So the transactional CORE — everything `decide`'s ruling names (contacts, the baseline stamp,
- * the promoted rule, the held-bag re-route with the `desired=Screener` guard, mark-read-on-decide,
- * `change_log`, the learning signal) — lives here, where both the organizer's own door and the
- * drain can reach it. `ScreenerService.applyDecision` becomes a thin wrapper: validate (which
- * stays in services — it needs `@trafficflow/core`'s `effectForDestination`, a dependency this
- * package must not take; see {@link DECIDABLE_FOLDERS}'s own comment), then this.
- *
- * ── WHAT DID NOT MOVE, AND WHY ─────────────────────────────────────────────────────────────────
- *
- *  · The PHYSICAL IMAP move (`applyReconcileAction`, outside the transaction). The organizer's own
- *    door has an injected adapter sometimes and the drain always has one (it runs inside a live
- *    organizer cycle) — but the move is a caller concern in both cases, using `rerouted` from the
- *    result below, exactly as `decide` already does it.
- *  · The auto-unsubscribe courtesy (`UnsubscribeService.onScreenOut`). It is OPTIONAL DI on
- *    `ScreenerDeps` already (`unsubscribe?:`), sends a real HTTP POST, and belongs to the services
- *    layer for the same reason the IMAP move does not belong here. The drain does not perform it —
- *    a documented, narrow gap for 0.14.1: a sender screened out through a REQUEST is not
- *    auto-unsubscribed, though their mail is still filed correctly and their bag is still
- *    re-routed. Not load-bearing for the product's correctness claim (only the
- *    organizer moves) and named here rather than silently dropped.
- *  · The idempotency-key claim-and-replay (`claimIdempotencyKey` with the HTTP response body).
- *    That is a REQUEST/RESPONSE replay contract specific to the organizer's own door. The drain has
- *    its OWN idempotency, keyed `meta-request:<id>` (see `request-drain.ts`), which is the same
- *    primitive (`idempotency.ts#claimIdempotencyKey`) used for a different purpose: not replaying
- *    an HTTP response, but refusing to insert a SECOND promoted rule when a request's expunge
- *    failed and the same record is drained again next cycle.
+ * The Screener decision's apply, on its own leaf — moved down the spine (0.14.1).
+ * `ScreenerService.decide` is a promoted rule, a held-bag re-route and a mark-read in one
+ * transaction; 0.14.1 adds a second caller — a READER's decision drained from `ohmail/_meta` by
+ * the worker, which may not import services at runtime. The transactional CORE (contacts, the
+ * baseline stamp, the promoted rule, the guarded re-route, mark-read, `change_log`, the learning
+ * signal) lives here; `ScreenerService.applyDecision` is a thin wrapper. Not moved: the physical
+ * IMAP move (a caller concern), the auto-unsubscribe courtesy (the drain does not perform it — a
+ * named gap), and the idempotency claim-and-replay (each door keys its own).
  */
 
 /** Where unknown first-contact senders are held (core routing, `source:"screener"`). */
@@ -62,47 +32,27 @@ const YES_FOLDER = "INBOX"; // Imbox
 const NO_FOLDER = "ohmail/Screened";
 
 /**
- * THE FIVE PLACES A DECISION MAY FILE MAIL, duplicated from `@trafficflow/core/mail`'s
- * `effectForDestination` (`packages/core/src/rules.ts`) rather than imported — this package must
- * not depend on `@trafficflow/core` (see `organizer-role.ts#CAPABILITY_REQUESTS` for the
- * dependency-direction argument this follows). The set is closed and stable — `Destination` is a
- * six-member union exhaustively switched over at its one definition — and
- * `screener-apply.test.ts` holds this copy equal to `effectForDestination`'s answer for every
- * member, the same way `organizer-role-capability.test.ts` holds `CAPABILITY_REQUESTS` equal to
- * its own.
- *
- * `ohmail/Screener` is deliberately ABSENT: it is where mail is HELD, never a place a decision may
- * file to. `DECIDABLE_FOLDERS ∩ {allow}` = {@link YES_FOLDER}, `ohmail/Reads`, `ohmail/Receipts};
- * `DECIDABLE_FOLDERS ∩ {deny}` = {@link NO_FOLDER}, `ohmail/Quarantine`.
+ * The five places a decision may file mail, duplicated from core's `effectForDestination` rather
+ * than imported — this package must not depend on `@trafficflow/core`
+ * (`organizer-role.ts#CAPABILITY_REQUESTS` has the direction argument). The set is closed and
+ * stable, and `screener-apply.test.ts` holds this copy equal to `effectForDestination`'s answer
+ * for every member. `ohmail/Screener` is deliberately ABSENT: it is where mail is HELD, never a
+ * place a decision may file to. The allow members are {@link YES_FOLDER}, `ohmail/Reads`,
+ * `ohmail/Receipts`; the deny members are {@link NO_FOLDER} and `ohmail/Quarantine`.
  */
 export const DECIDABLE_FOLDERS: ReadonlySet<string> = new Set([
   YES_FOLDER, "ohmail/Reads", "ohmail/Receipts", NO_FOLDER, "ohmail/Quarantine",
 ]);
 
 /**
- * ── THE TWO "NO" DESTINATIONS WHOSE MAIL A DECISION MARKS READ, AND THE SAFETY LINE ─────────
- *
- * A screen-out (`ohmail/Screened`) or a spam press (`ohmail/Quarantine`) is the user saying they
- * are done with this sender, so the mail they dismissed should not sit unread on the server for
- * ever. This set is exactly those two folders, and its membership IS the safety boundary
- * itself: `INBOX`, `ohmail/Reads` and `ohmail/Receipts` are ADMITTED mail and their read
- * state is never touched here — admitting a sender is not reading their backlog — and
- * `ohmail/Screener` is not a {@link DECIDABLE_FOLDERS} member at all, so mail still waiting at the
- * gate for a decision can never be pre-read (which would hide that it needs the user's attention).
- *
- * The `\Seen` write is ADDITIVE and reversible: this records `flag_state.desired_seen = true`
- * (`last_set_by = 'us'`, so it is distinguishable from the mailbox's own state and reversible by
- * `scripts/undo-runaway-reads.mjs`), and the worker's `reconcileFlags` (`apps/worker/src/sync.ts`)
- * adds `\Seen` on the real server. No move, no delete, no flag is ever REMOVED by this.
- *
- * It equals `decision === "no"` today — the consent gate refuses any other pairing — but is
- * expressed as folder membership so a future destination cannot silently inherit a read-mark by
- * being wired to a `no`. The same shape, for the same reason, as the membership-first check in
- * `DECIDABLE_FOLDERS`.
- *
- * Moved here from `packages/services/src/screener-service.ts` (0.14.1) along with the rest
- * of `applyScreenerDecision`'s body — the HTTP door and the organizer's request drain are ONE
- * implementation now, and this is one of the invariants that implementation enforces either way.
+ * The two "no" destinations whose mail a decision marks read, and the safety line. A screen-out
+ * or a spam press is the user saying they are done with this sender, so the dismissed mail should
+ * not sit unread forever. The membership IS the safety boundary: admitted mail is never touched —
+ * admitting a sender is not reading their backlog — and `ohmail/Screener` is not decidable at
+ * all, so mail waiting at the gate can never be pre-read. The `\Seen` write is additive and
+ * reversible: `flag_state.desired_seen = true` with `last_set_by = 'us'`; no move, no delete, no
+ * flag removed. It equals `decision === "no"` today, but is expressed as folder membership so a
+ * future destination cannot silently inherit a read-mark by being wired to a `no`.
  */
 const MARK_READ_ON_DECIDE: ReadonlySet<string> = new Set([NO_FOLDER, "ohmail/Quarantine"]);
 
@@ -112,24 +62,13 @@ export function admitsDestination(dest: string): boolean {
 }
 
 /**
- * VALIDATE A DECISION PAYLOAD THAT ARRIVED THROUGH AN RFC822 HEADER (0.14.1).
- *
- * `ScreenerService.requestAsReader` (`packages/services`) constructs the payload this validates
- * FROM its own already-validated `scope`/`decision`/`appliedFolder`/`address`, so at the instant
- * it is written it is trustworthy. By the time the organizer's drain reads it back
- * (`apps/worker/src/request-drain.ts`), it has crossed an install boundary through a mailbox
- * ANOTHER machine wrote to — a corrupted append, a future build's differently-shaped payload, or
- * a hostile one — so it is validated again, independently, with the SAME rules
- * `ScreenerService.validateScreenerDecision` enforces at the writing end. This is the function
- * Reviewed as an untrusted-input boundary: the payload is untrusted, bounded (the wire format
- * already caps it at {@link REQUEST_PAYLOAD_MAX_BYTES} encoded — see `organizer-lease.ts`), and
- * every field is checked before a single write happens.
- *
- * Returns `null` for anything that fails ANY check — a missing field, a value of the wrong type,
- * a folder outside {@link DECIDABLE_FOLDERS}, a `dest`/`decision` disagreement, an empty address,
- * a domain-scope decision whose address carries no `@`. The caller's response to `null` is to
- * REFUSE the request (expunge it from the mailbox, log `organizer_request_refused`) — never to
- * coerce it to a guess.
+ * Validate a decision payload that arrived through an RFC822 header (0.14.1). At the writing end
+ * it was built from already-validated values; by the time the drain reads it back it has crossed
+ * an install boundary through a mailbox ANOTHER machine wrote to — a corrupted append, a future
+ * build's shape, or a hostile one — so it is validated again, independently, with the SAME rules
+ * the writing end enforces. Untrusted and bounded (the wire format caps it at {@link
+ * REQUEST_PAYLOAD_MAX_BYTES} encoded); every field checked before a single write. Returns `null`
+ * for anything that fails ANY check. The caller REFUSES on `null`, never coerces to a guess.
  */
 export interface ValidatedRequestPayload {
   scope: "sender" | "domain";
@@ -228,18 +167,13 @@ function toAppliedScreenerRow(r: {
 
 /**
  * All held mail for the account, optionally narrowed by `extra` and by `mailboxId`. Mirrors
- * `ScreenerReadService.heldRows`.
- *
- * ── `mailboxId` IS OPTIONAL HERE, AND EVERY WRITE-PATH CALLER MUST PASS IT ──────────────────
- *
- * It stays optional on this LEAF function only because `heldRowById` looks up by primary key,
- * where a mailbox filter changes nothing about which row is found. `heldRowsForSender` /
- * `heldRowsForDomain` — the two functions {@link applyScreenerDecision} actually re-routes —
- * REQUIRE it (see their own signatures): a decision names the mailbox it was made about, and
- * supersedes the account-wide read this file shipped with. An account may hold several mailboxes
- * with different roles (the mailbox-removal design's own reason `assertAccountOrganizes` was account-scoped), and
- * a decision made about ONE mailbox re-routing a sender's held mail in a DIFFERENT one this
- * install does not organize is exactly the cross-mailbox write the one-organizer rule forbids.
+ * `ScreenerReadService.heldRows`. `mailboxId` stays optional on this LEAF only because
+ * `heldRowById` looks up by primary key, where a mailbox filter changes nothing.
+ * `heldRowsForSender` / `heldRowsForDomain` — the two functions {@link applyScreenerDecision}
+ * actually re-routes — REQUIRE it: a decision names the mailbox it was made about, an account may
+ * hold several mailboxes with different roles, and a decision about ONE mailbox re-routing a
+ * sender's held mail in a DIFFERENT one this install does not organize is exactly the
+ * cross-mailbox write the one-organizer rule forbids.
  */
 async function heldRows(
   tx: Tx, accountId: string, extra?: SQL, mailboxId?: string,
@@ -351,14 +285,12 @@ export interface ApplyScreenerDecisionResult {
 
 /**
  * THE ONE IMPLEMENTATION. Contacts, the screening baseline, the promoted rule, the held-bag
- * re-route (guarded on `desired_folder = 'ohmail/Screener'` — see `decide`'s own header for why:
- * a row that has already moved on keeps where it went, "user always wins"), mark-read-on-decide,
- * `change_log` for every write, and the learning signal. See the module header for what stays with
- * each caller instead.
- *
- * FENCES FIRST, as the FIRST statement of whatever transaction the caller opened — this is a
- * writer of `account_settings` (the baseline stamp), and every such writer fences before touching
- * anything else (`erasure-fence.ts`'s own rule).
+ * re-route (guarded on `desired_folder = 'ohmail/Screener'`: a row that has already moved on
+ * keeps where it went — user always wins), mark-read-on-decide, `change_log` for every write, and
+ * the learning signal. See the module header for what stays with each caller. FENCES FIRST, as
+ * the first statement of whatever transaction the caller opened: this writes `account_settings`
+ * (the baseline stamp), and every such writer fences before touching anything else
+ * (`erasure-fence.ts`'s rule).
  */
 export async function applyScreenerDecision(
   tx: Tx, input: ApplyScreenerDecisionInput,

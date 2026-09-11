@@ -1,22 +1,12 @@
 /**
- * THE CLOUD-ONLY SCHEMA — the 27 tables the hosted service adds, and the half that never ships.
- *
- * The identity ceremony (password hashes, WebAuthn, TOTP, recovery codes; the refresh-token
- * store itself moved to the mail half in 0060 — paired devices rotate against the store that
- * serves them), the money (Stripe customers, subscriptions, the credit ledger), the ops tables,
- * the funnel and the admin console's own staff identity. A local install has none of it: it
- * mints a session per launch, it is free, it has no operator and nobody to sign in.
- *
- * **Nothing in the desktop engine's import closure may reach this file.** That is not a style
- * rule — the desktop artifact's sources are published, and `password_hash`, `token_hash` and
- * `credit_ledger` are one-way. `test/schema-split.test.ts` checks the closure;
- * `test/desktop-mirror-excludes-the-engine.test.ts` checks what the publisher will carry.
- *
- * The reverse direction is fine and is used below: a Cloud table may reference a mail table,
- * because `accounts` and `users` exist in every database that has this half.
- *
- * The per-table justification for each placement is in `test/journal-split.test.ts`,
- * beside the journal partition it mirrors.
+ * The CLOUD-ONLY schema — the tables the hosted service adds, and the half that never ships: the
+ * identity ceremony, the money (Stripe customers, subscriptions, the credit ledger), the ops
+ * tables and the staff identity. A local install has none of it. Nothing in the desktop engine's
+ * import closure may reach this file — the desktop artifact's sources are published, and
+ * `password_hash`, `token_hash` and `credit_ledger` are one-way. `test/schema-split.test.ts`
+ * checks the closure; `test/desktop-mirror-excludes-the-engine.test.ts` checks what the publisher
+ * carries. The reverse direction is fine: a Cloud table may reference a mail table. Per-table
+ * placement arguments: `test/journal-split.test.ts`.
  */
 
 import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb, integer, numeric, real, unique, uniqueIndex, index, primaryKey, check } from "drizzle-orm/pg-core";
@@ -161,21 +151,15 @@ export const authThrottle = pgTable("auth_throttle", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ uqKey: unique().on(t.key) }));
 
-//
-// `push_subscriptions` — shaped for both Web Push and APNs from day one. `transport`
-// selects which identity column is live (endpoint for webpush AND unifiedpush,
-// device_token for apns); the coalesced UNIQUE(account_id, transport, COALESCE(endpoint,
-// device_token)) is added by hand in the migration SQL (an expression index
-// Drizzle's schema DSL cannot express). Payloads are wake-signals only.
-//
-// 'unifiedpush' reuses the ENDPOINT column: the device's own distributor mints a URL and the
-// organizer POSTs a content-free constant to it. `p256dh`/`auth` are OPTIONAL on that transport
-// and stored when a connector offers them — UnifiedPush 3.x endpoints are Web Push endpoints, so
-// a connector hands back exactly the three values webpush already uses. Nothing reads the two
-// key columns for this transport yet (the wake that ships is unencrypted); accepting them costs
-// one column each and means an encrypting sender needs no migration and no re-registration on
-// every device. `device_id` is stamped from the REGISTERING SESSION rather than trusted from the
-// request body, which is what lets revoking a device take its wake registration down with it.
+// `push_subscriptions` — shaped for Web Push and APNs from day one. `transport` selects which
+// identity column is live (endpoint for webpush AND unifiedpush, device_token for apns); the
+// coalesced UNIQUE is hand-written in the migration SQL (an expression index the DSL cannot
+// express). Payloads are wake-signals only. `unifiedpush` reuses the ENDPOINT column: the
+// device's own distributor mints a URL and the organizer POSTs a content-free constant to it.
+// `p256dh`/`auth` are OPTIONAL there and stored when a connector offers them — UnifiedPush 3.x
+// endpoints are Web Push endpoints — so an encrypting sender needs no migration and no
+// re-registration. `device_id` is stamped from the REGISTERING SESSION, never trusted from the
+// request body: revoking a device takes its wake registration down with it.
 
 
 export const pushSubscriptions = pgTable("push_subscriptions", {
@@ -192,40 +176,26 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BILLING + the credit ledger (migration 0018). Five additive tables
-// whose whole purpose is to make "revenue precedes token spend" true BY
-// CONSTRUCTION rather than by policy. The constraints that carry
-// that guarantee — the sign↔reason CHECK, `CHECK (balance >= 0)`, the partial
-// one-live-subscription unique index and the append-only trigger — are hand-written
-// in `drizzle/0018_billing.sql`, because the DSL cannot express them; the doc
-// comments here name each one so a reader of the schema is never left guessing why
-// an insert was refused.
-//
-// `credit_balances` is DELIBERATELY a separate table from `credit_ledger`. Deriving
-// the balance from `SUM(delta)` or from the newest `balance_after` hands two
-// CONCURRENT debits the same starting read and both "succeed" — overspend, the exact
-// failure this design exists to prevent. One row per account means every balance
-// change contends on ONE row lock, so debits serialize inside Postgres, and
-// `CHECK (balance >= 0)` is the floor no app-side refactor can buy off.
-// ─────────────────────────────────────────────────────────────────────────────
+// Billing + the credit ledger (migration 0018): five additive tables whose purpose is to make
+// "revenue precedes token spend" true BY CONSTRUCTION. The constraints that carry the guarantee —
+// the sign-reason CHECK, `CHECK (balance >= 0)`, the partial one-live-subscription unique index
+// and the append-only trigger — are hand-written in `drizzle/0018_billing.sql` (the DSL cannot
+// express them); the doc comments here name each so a reader is never left guessing why an insert
+// was refused. `credit_balances` is DELIBERATELY separate from `credit_ledger`: deriving the
+// balance from `SUM(delta)` hands two concurrent debits the same starting read and both "succeed"
+// — overspend. One row per account means every balance change contends on ONE row lock, so debits
+// serialize inside Postgres, and `CHECK (balance >= 0)` is the floor no app-side refactor can buy
+// off.
 
 /**
- * The LEADER'S PULSE, as a durable row (migration 0019).
- *
- * The alert "no leader lock held for > 2 minutes" is not answerable from the lock: an
- * advisory lock is session-scoped, so a dead worker's lock does not exist, and `pg_locks`
- * can only ever say "not held right now". This row says how long, from a single read.
- *
- * Written ONLY by the process that holds shard N's lock (`apps/worker/src/index.ts`), which
- * is why the primary key is the shard and not the instance: at most one writer per key by
- * construction, a takeover overwrites, and no dead-instance rows accumulate for the alert
- * evaluator to reason about.
- *
- * `last_cycle_at` mirrors `WorkerStats.lastCycleAt` exactly — it advances only on a cycle in
- * which work actually succeeded — so a leader that is alive but syncing nothing is visible
- * here as a fresh `beat_at` with a stale `last_cycle_at`, which is a different fault from a
- * dead worker and must not be reported as the same one.
+ * The leader's pulse, as a durable row (migration 0019). "No leader lock held for > 2 minutes" is
+ * not answerable from the lock: an advisory lock is session-scoped, so a dead worker's lock does
+ * not exist, and `pg_locks` can only say "not held right now" — this row says how long, from a
+ * single read. Written ONLY by the process holding shard N's lock, which is why the primary key
+ * is the shard and not the instance: at most one writer per key by construction, a takeover
+ * overwrites, no dead-instance rows accumulate. `last_cycle_at` advances only on a cycle in which
+ * work actually succeeded, so a leader alive but syncing nothing is a fresh `beat_at` with a
+ * stale `last_cycle_at` — a different fault from a dead worker.
  */
 export const workerHeartbeats = pgTable("worker_heartbeats", {
   shardIndex: integer("shard_index").primaryKey(),
@@ -238,19 +208,14 @@ export const workerHeartbeats = pgTable("worker_heartbeats", {
   quarantined: integer("quarantined").notNull().default(0),
   degraded: boolean("degraded").notNull().default(false),
   /**
-   * When this worker's CLASSIFIER CIRCUIT first opened in its current unbroken run of trips
-   * (cloud 0030), or NULL while it is closed.
-   *
-   * The breaker is in-process state (`apps/worker/src/ai-circuit.ts`) and nothing about it
-   * reached this database before, so "the model provider has been unavailable for ten minutes"
-   * — which means every customer's mail is being filed rules-only — was unreportable. It rides
-   * the heartbeat because it is exactly what the heartbeat already is: a fact about one worker
-   * process, written by that process, keyed by its shard, overwritten every beat.
-   *
-   * FIRST open, not last: the cooldown doubles per trip and the breaker half-opens between them,
-   * so a provider down for an hour produces a series of opens whose newest is always minutes old.
-   * The question the rule asks is how long mail has been degraded, and only the first open
-   * answers it. Cleared to NULL by the first success.
+   * When this worker's classifier circuit FIRST opened in its current unbroken run of trips
+   * (cloud 0030), or NULL while closed. The breaker is in-process state and nothing about it
+   * reached this database before, so "the provider has been unavailable for ten minutes" — every
+   * customer's mail filing rules-only — was unreportable. It rides the heartbeat because it is
+   * what the heartbeat already is: a fact about one worker process, keyed by its shard,
+   * overwritten every beat. FIRST open, not last: the cooldown doubles per trip and the breaker
+   * half-opens between, so the newest open is always minutes old however long the provider has
+   * been down. Cleared to NULL by the first success.
    */
   aiCircuitOpenSince: timestamp("ai_circuit_open_since", { withTimezone: true }),
   /**
@@ -266,19 +231,14 @@ export const workerHeartbeats = pgTable("worker_heartbeats", {
 }, (t) => ({ ixBeat: index("worker_heartbeats_beat_idx").on(t.beatAt) }));
 
 /**
- * One row per FIRING alert rule (migration 0019), so a fault pages a human
- * once rather than once per poll.
- *
- * `alertKey` is the rule's stable identity (`worker_down:0`, `billing_events_failed`,
- * `sends_stuck`, `sync_lag`), never per-occurrence: an alert is a condition, and "3 events
- * failed" is `detail`, not three rows. `notified_at` + `notify_count` are what make the
- * repeat interval enforceable; the row is MARKED `resolved_at` when the condition clears — see
- * that column — so what a reader gets through `selectOpenAlerts` is a live list of what is
- * currently wrong. The rows themselves are kept for a bounded time because the observation
- * write's INSERT branch has nothing to fence against without them.
- *
- * Nothing here can carry mail content — every field is a count, an age, or a rule name
- * produced by `alerts.ts` itself.
+ * One row per FIRING alert rule (migration 0019), so a fault pages a human once rather than once
+ * per poll. `alertKey` is the rule's stable identity, never per-occurrence: an alert is a
+ * condition, and "3 events failed" is `detail`, not three rows. `notified_at` + `notify_count`
+ * make the repeat interval enforceable; the row is MARKED `resolved_at` when the condition
+ * clears, so `selectOpenAlerts` reads a live list of what is currently wrong; resolved rows are
+ * kept because the observation write's INSERT branch has nothing to fence against without them.
+ * Nothing here can carry mail content — every field is a count, an age, or a rule name produced
+ * by `alerts.ts` itself.
  */
 export const alertState = pgTable("alert_state", {
   alertKey: text("alert_key").primaryKey(),
@@ -300,16 +260,13 @@ export const alertState = pgTable("alert_state", {
   notifyCount: integer("notify_count").notNull().default(0),
   detail: text("detail"),
   /**
-   * The CONDITION SIGNATURE of the last CONFIRMED notification — what "unchanged" means for
-   * the renotify policy (cloud 0025). An UNCHANGED standing condition re-pages on a long
-   * interval; a signature that differs from the firing alert's re-pages once the change-arm
-   * floor passes. Written ONLY by the guarded confirm, beside `notified_at` — a claim writes
-   * nothing but its lease, so a failed delivery and a crashed pass leave the confirmed
-   * condition standing and the retry re-fires by construction (a signature written at claim
-   * time read as "already told them" after a mid-delivery death — the crash-swallow the
-   * confirm-only rule exists to refuse). Concurrent duplicate claims are `claimed_until`'s
-   * job, not this column's. NULL = never notified with a signature (pre-migration rows),
-   * which reads as "unchanged" — a deploy must not page every standing alert once just
+   * The condition signature of the last CONFIRMED notification — what "unchanged" means for the
+   * renotify policy (cloud 0025). An unchanged standing condition re-pages on a long interval; a
+   * differing signature re-pages once the change-arm floor passes. Written ONLY by the guarded
+   * confirm, beside `notified_at` — a claim writes nothing but its lease, so a failed delivery
+   * and a crashed pass leave the confirmed condition standing and the retry re-fires by
+   * construction. Concurrent duplicate claims are `claimed_until`'s job. NULL = never notified
+   * with a signature, which reads as "unchanged" — a deploy must not page every standing alert
    * because the column arrived.
    */
   notifiedSignature: text("notified_signature"),
@@ -322,18 +279,13 @@ export const alertState = pgTable("alert_state", {
    */
   claimedUntil: timestamp("claimed_until", { withTimezone: true }),
   /**
-   * INCIDENT or SIGNAL (cloud 0030) — the class that decides DELIVERY, not merely presentation.
-   *
-   * An incident is a real application problem and goes to the sinks. A signal is an
-   * informational observation: it is recorded here, it renders on the board, and it never wakes
-   * anybody. Severity could not express this — `storage_at_cap` and `sync_lag` are both warnings
-   * and only one of them is a customer being wronged — and the difference is not a matter of
-   * degree, because the two want different behaviour from the pager.
-   *
-   * DEFAULTED to `'incident'`, which is the safe direction: a row written by a driver that
-   * predates this column, or a rule whose author forgot the field, pages. The other default turns
-   * a new incident into a row that fires, renders, and reaches no human — the exact silence the
-   * alert subsystem exists to refuse.
+   * Incident or SIGNAL (cloud 0030) — the class that decides DELIVERY, not merely presentation.
+   * An incident is a real application problem and goes to the sinks; a signal is informational —
+   * recorded, rendered, never wakes anybody. Severity could not express this: `storage_at_cap`
+   * and `sync_lag` are both warnings and only one is a customer being wronged. DEFAULTED to
+   * `'incident'`, the safe direction: a row written by an older driver, or a rule whose author
+   * forgot the field, pages. The other default turns a new incident into a row that fires,
+   * renders, and reaches no human — the exact silence the alert subsystem exists to refuse.
    */
   cls: text("cls").notNull().default("incident"),
   /**
@@ -362,23 +314,14 @@ export const alertState = pgTable("alert_state", {
 }, (t) => ({ ixLastSeen: index("alert_state_last_seen_idx").on(t.lastSeenAt) }));
 
 /**
- * ONE ROW PER ALERT DRIVER (cloud 0030) — the pulse of the thing that takes everyone else's pulse.
- *
- * The alert pass has two drivers: the worker's in-process timer and the API host's cron route.
- * Until this table, neither left a record that it had run, so both could stop and the only
- * evidence would be an ABSENCE of pages — indistinguishable from a healthy deployment, and the
- * exact failure the alerting subsystem was built to prevent, reproduced one level up.
- *
- * `driver` IS the primary key, so there is at most one row per arm by construction and no history
- * accumulates for a table nobody queries historically — `worker_heartbeats` makes the same choice
- * for the same reason. What a reader needs is "when did each arm last complete a pass".
- *
- * The rule built on it (`alert_driver_dark`) is evaluated by the OTHER driver, never by itself: a
- * dead driver cannot report its own death, which is why there are two of them.
- *
- * CONTENT: counts and one timestamp. `failed_sinks` is a COUNT rather than the sink names —
- * a sink name is a vendor endpoint's identity, it belongs in the log line where a drain gates it,
- * and no operator screen needs it to know the pager is being refused.
+ * One row per ALERT DRIVER (cloud 0030) — the pulse of the thing that takes everyone else's
+ * pulse. Two drivers: the worker's timer and the API host's cron. Until this table neither left a
+ * record of having run, so both could stop and the only evidence would be an ABSENCE of pages —
+ * indistinguishable from a healthy deployment. `driver` IS the primary key: at most one row per
+ * arm, no history for a table nobody queries historically. The rule built on it
+ * (`alert_driver_dark`) is evaluated by the OTHER driver: a dead driver cannot report its own
+ * death. Content: counts and one timestamp — `failed_sinks` is a COUNT, never sink names; a
+ * vendor endpoint's identity belongs in the log line.
  */
 export const alertPassRuns = pgTable("alert_pass_runs", {
   /** `'worker'` or `'api'`. CHECK-constrained — see the migration for why the set is closed. */
@@ -401,21 +344,14 @@ export const alertPassRuns = pgTable("alert_pass_runs", {
 });
 
 /**
- * WHAT THE HOSTING PLATFORM SERVED (cloud 0030) — request and error counts per project per window.
- *
- * It exists because the API host's 5xx rate is invisible from inside the API host: a serverless
- * invocation that returns a 502 and dies writes nothing to this database, and the only surface
- * that knows is the platform's own request-log store. A five-minute cron polls it; the rule reads
- * three windows.
- *
- * TWO COUNTS, never a stored rate: three five-minute rows must add up to the fifteen minutes the
- * rule is written against, and a stored percentage cannot be re-summed — averaging three
- * percentages is wrong whenever the windows carry different traffic.
- *
- * `window_start` is the window's own start instant; `fetched_at` is when the poll answered. The
- * two differ by however long the poll took, which is exactly the freshness the board reports.
- *
- * No `account_id`, and there cannot be one: this is a count of HTTP requests to a deployment.
+ * What the hosting platform served (cloud 0030) — request and error counts per project per
+ * window. The API host's 5xx rate is invisible from inside the host: an invocation that returns a
+ * 502 and dies writes nothing here; only the platform's own request-log store knows. A
+ * five-minute cron polls it; the rule reads three windows. TWO COUNTS, never a stored rate: three
+ * five-minute rows must add up to the fifteen minutes the rule is written against, and a stored
+ * percentage cannot be re-summed. `window_start` is the window's own start; `fetched_at` is when
+ * the poll answered. No `account_id`, and there cannot be one: this is a count of HTTP requests
+ * to a deployment.
  */
 export const platformSignals = pgTable("platform_signals", {
   /** CHECK-constrained to the platforms this deployment can poll. */
@@ -451,15 +387,48 @@ export const platformSignals = pgTable("platform_signals", {
 }));
 
 /**
- * Everyone who asked to be let in, from `POST /waitlist` (the landing form).
+ * ONE ROW PER 5xx THE API'S OWN ERROR ENVELOPE ANSWERED (cloud 0033) — the first-party half of
+ * `platformSignals`, which counts what the PLATFORM served and cannot say which route failed.
  *
- * UPSERTed on `email`, never appended: a person who submits the form three times is one
- * entry, one confirmation mail (the mailer's per-recipient limiter takes care of the rest), and
- * one `updated_at` that moves when they change their mind about the tier.
- *
- * `invited_at` / `registered_at` make the whole funnel readable from this one table —
- * waiting → invited → registered — which is the only reporting the beta needs and is what
- * the operator mint script lists.
+ * Every column is a literal this repository chose or an integer: the route PATTERN, never a URL;
+ * the thrown value's CLASS, never its message (a driver's message quotes connection strings and
+ * an application's quotes what a person typed). Seven-day retention, pruned by a worker pass.
+ */
+export const apiFaults = pgTable("api_faults", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  at: timestamp("at", { withTimezone: true }).defaultNow().notNull(),
+  /** The MATCHED ROUTE's pattern (`/messages/:id`) — one of a closed set the route table declares. */
+  route: text("route").notNull(),
+  method: text("method").notNull(),
+  /** CHECK-constrained to 500–599: a 4xx is the API working, and would poison every rule's rate. */
+  status: integer("status").notNull(),
+  /** The thrown value's class name, or `String` for a thrown primitive. Never the message. */
+  errorClass: text("error_class").notNull(),
+  /** Our own `withRequestId` uuid, so a row and a log line join. NULL when the id was unbound. */
+  requestId: text("request_id"),
+  /**
+   * WHICH ARM ANSWERED — the closed set `alert_pass_runs.driver` uses, and the table's LAST
+   * column, which is why `health-cloud.ts`'s marker and `alerts.ts`'s SCHEMA_BEHIND_MARKER both
+   * name it. Adding a column after this one means moving both in the same commit.
+   */
+  arm: text("arm").notNull(),
+}, (t) => ({
+  ixAt: index("api_faults_at_idx").on(t.at),
+  ixAtRoute: index("api_faults_at_route_idx").on(t.at, t.route),
+  ckStatus: check("api_faults_status_check", sql`${t.status} >= 500 and ${t.status} <= 599`),
+  ckLen: check("api_faults_len_check",
+    sql`char_length(${t.route}) <= 200 and char_length(${t.method}) <= 20
+      and char_length(${t.errorClass}) <= 200 and char_length(${t.requestId}) <= 100`),
+  ckArm: check("api_faults_arm_check", sql`${t.arm} in ('api', 'worker')`),
+}));
+
+/**
+ * Everyone who asked to be let in, from `POST /waitlist` (the landing form). UPSERTed on `email`,
+ * never appended: a person who submits the form three times is one entry, one confirmation mail
+ * (the mailer's per-recipient limiter handles the rest), and one `updated_at` that moves when
+ * they change their mind about the tier. `invited_at` / `registered_at` make the whole funnel
+ * readable from this one table — waiting, invited, registered — which is the only reporting the
+ * beta needs and is what the operator mint script lists.
  */
 export const waitlist = pgTable("waitlist", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -479,40 +448,14 @@ export const waitlist = pgTable("waitlist", {
 }));
 
 /**
- * STAFF IDENTITY FOR THE ADMIN CONSOLE (cloud migration 0007). One operator, no RBAC.
- *
- * ── WHY THIS IS NOT A ROW IN `users`, AND MUST NOT BECOME ONE ─────────────────────────────
- *
- * `users` is the CUSTOMER identity: it is joined to `accounts`, it carries the product's own
- * 2FA, its sessions authorise mail reads, and a row in it is reachable from the product's
- * whole auth surface. A `role='staff'` column on that table would mean one SQL mistake, one
- * over-broad `OR`, or one forgotten predicate anywhere in the product's auth path is a
- * privilege escalation into cross-account access. Keeping staff in a table the product's auth
- * never queries means the product has no code path that can promote anybody into it.
- *
- * It is also why the console's sign-in cannot reuse `AuthService`: that service exists to
- * establish CUSTOMER sessions against `users`, and pointing it at a different table would be
- * the same coupling by another route.
- *
- * ── WHAT THE BLIND ROLE CAN SEE OF IT: NOTHING ────────────────────────────────────────────
- *
- * `ohmail_admin` (the content-blind handle every admin READ runs on — `staff-grants.ts`) is
- * granted column by column against an allowlist, and this table is not on it. So the role
- * that serves the console cannot read a password hash or a sealed TOTP secret even though the
- * console it serves is the thing those credentials protect. The staff routes run on the
- * RUNTIME connection instead (`deps.db`), which is why this table needs no grant change and
- * the blindness attestation is untouched by this slice.
- *
- * ── THE TOTP SECRET IS SEALED, NEVER PLAINTEXT ────────────────────────────────────────────
- *
- * Same envelope as `totp_secrets`: `secret_enc` + `key_version` through the KeyProvider,
- * so a database dump is not a set of working authenticators. `last_consumed_step` is the
- * single-use-per-timestep guard — without it the same six digits replay for the whole
- * 30-second window, which is a real login for anyone who can read one over a shoulder.
- *
- * `totp_activated` is separate from "a secret exists" on purpose: enrolment writes the secret
- * FIRST and flips this only once a code from it has verified. An enrolment that is abandoned
- * half way leaves a row nobody can sign in with, rather than a locked-out operator.
+ * Staff identity for the admin console (cloud 0007). One operator, no RBAC. NOT a row in `users`:
+ * `users` is the CUSTOMER identity, reachable from the product's whole auth surface, and a
+ * `role='staff'` column there would make one over-broad `OR` a cross-account escalation; a table
+ * the product's auth never queries has no code path that can promote anybody. The console's
+ * sign-in cannot reuse `AuthService` for the same reason. The blind role sees NOTHING of it:
+ * `ohmail_admin` is granted column by column and this table is not on the allowlist. The TOTP
+ * secret is sealed; `totp_activated` is separate from "a secret exists", so an abandoned
+ * enrolment leaves a row nobody can sign in with, not a locked-out operator.
  */
 export const staffUsers = pgTable("staff_users", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -534,37 +477,14 @@ export const staffUsers = pgTable("staff_users", {
 }, (t) => ({ uqEmail: unique("staff_users_email_unique").on(t.email) }));
 
 /**
- * THE STAFF SESSION (cloud migration 0007). Opaque, hashed at rest, revocable.
- *
- * ── WHY THIS IS A TABLE AND NOT A SIGNED COOKIE ───────────────────────────────────────────
- *
- * The operator console's outer gate (its middleware) uses a STATELESS signed token, and
- * that is right for what it guards: it hides the surface, it has no identity to revoke, and
- * rotating one environment variable invalidates every issued token at once with no state.
- *
- * This credential is different in kind. It authorises WRITES — suspending an account, moving
- * credits through the ledger — and it names the person the audit row will blame. A
- * self-verifying token cannot be withdrawn: a laptop lost at 09:00 stays signed in until the
- * expiry it was minted with, and the only remedy is rotating the signing secret, which signs
- * out everybody and is indistinguishable from an outage. So the row IS the session, and
- * `revoked_at` is a sign-out that actually signs out.
- *
- * Verifiable-without-a-round-trip was considered and rejected: every consumer of this cookie
- * is a write endpoint that is about to talk to the database anyway, so the round trip is free,
- * and buying "stateless" with "unrevocable" is a bad trade for the credential that moves money.
- *
- * ── `expires_at` IS THE AUTHORITY, NOT THE COOKIE'S `Max-Age` ─────────────────────────────
- *
- * `Max-Age` is a client-side attribute a client controls; a cookie whose attribute was stripped
- * or edited is still presented. The middleware's own note makes the same point about the gate
- * token. So the column decides, and the cookie attribute is a courtesy that makes browsers
- * tidy up on time.
- *
- * ── HASH AT REST ──────────────────────────────────────────────────────────────────────────
- *
- * `token_hash` via `hashToken`, exactly as `sessions`/`refresh_tokens` do it: a database dump
- * — or a read-only SQL injection anywhere — is then a list of useless digests rather than a
- * set of live staff sessions. The plaintext exists only in the operator's cookie jar.
+ * The staff session (cloud 0007). Opaque, hashed at rest, revocable. A table and not a signed
+ * cookie: this credential authorises WRITES (suspending an account, moving credits) and names the
+ * person the audit row blames, and a self-verifying token cannot be withdrawn — a laptop lost at
+ * 09:00 stays signed in until expiry, and rotating the signing secret signs out everybody. So the
+ * row IS the session, and `revoked_at` is a sign-out that actually signs out. `expires_at` is the
+ * authority, not the cookie's `Max-Age` — a client controls its own attributes. `token_hash` via
+ * `hashToken`: a dump is a list of useless digests; the plaintext exists only in the operator's
+ * cookie jar.
  */
 export const staffSessions = pgTable("staff_sessions", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -581,38 +501,14 @@ export const staffSessions = pgTable("staff_sessions", {
 }));
 
 /**
- * THE MAILBOX OAuth2 CEREMONY (cloud 0009) — a redirect-based consent flow in flight, and a
- * HOSTED-ONLY fact.
- *
- * A row exists for the ninety seconds between "this account pressed Connect Outlook" and
- * "Microsoft redirected their browser back". It holds the PKCE verifier the code exchange needs
- * and the account the ceremony belongs to, and it is consumed exactly once.
- *
- * ── `state` IS THE PRIMARY KEY BECAUSE IT IS THE CONSUMPTION KEY ──────────────────────────
- *
- * 256 bits of `randomBytes`, base64url. It is the redirect's CSRF token (RFC 6749 §10.12) and the
- * key the single-use write turns on:
- * `UPDATE … SET consumed_at = now() WHERE state = $1 AND consumed_at IS NULL RETURNING …`.
- * Postgres serializes two concurrent replays of one authorization code on the row, so the loser
- * reads zero rows and is refused — there is no read-then-write window, which is why the callback
- * does not `SELECT` first. See `packages/api/src/routes/mailbox-oauth.ts`.
- *
- * ── THE VERIFIER IS ENVELOPE-ENCRYPTED, KEY VERSION BESIDE IT ─────────────────────────────
- *
- * Same shape as `totpSecrets.secretEnc` / `mailboxCredentials.secretEnc`. Both columns are NOT
- * NULL together, so unlike `staffUsers` there is no "sealed together" CHECK to write — the state
- * where one exists without the other is unrepresentable. A verifier alone buys nothing (redeeming
- * the code also needs the confidential client's secret); it is encrypted because this row is the
- * one place a read-only injection could stand between a leaked code and somebody's mailbox.
- *
- * ── DELIBERATELY NO `mailbox_id` ──────────────────────────────────────────────────────────
- *
- * A reconnect does not name a mailbox row. The address comes from the `id_token`'s
- * `preferred_username` claim and mail 0021's `mailboxes_active_address_uq` makes at most one live
- * mailbox per (account, lower(address)) — so the callback resolves its target BY ADDRESS. A
- * `mailbox_id` would be a second answer to the same question, and a person who starts a reconnect
- * for A and then signs in to Microsoft as B would have row A repointed at an address it does not
- * hold.
+ * The mailbox OAuth2 ceremony (cloud 0009) — a redirect consent flow in flight, hosted-only. A
+ * row lives between "Connect Outlook" and the redirect back; it holds the PKCE verifier and the
+ * owning account, consumed exactly once. `state` is the PRIMARY KEY because it is the consumption
+ * key: 256 bits of `randomBytes`, the redirect's CSRF token and the key the single-use UPDATE
+ * turns on. The verifier is envelope-encrypted; both columns NOT NULL together, so the
+ * half-sealed state is unrepresentable. Deliberately NO `mailbox_id`: the address comes from the
+ * `id_token` claim and the live-address unique index resolves the target — a stored id would let
+ * a reconnect started for A be repointed at B.
  */
 export const mailboxOauthCeremonies = pgTable("mailbox_oauth_ceremonies", {
   /** 256-bit random, base64url. The CSRF token of the redirect AND the single-use consumption key. */
@@ -637,48 +533,14 @@ export const mailboxOauthCeremonies = pgTable("mailbox_oauth_ceremonies", {
 }));
 
 /**
- * THE DEVICE-CODE CEREMONY (cloud 0027) — the self-host door's in-flight state.
- *
- * A SEPARATE TABLE from `mailbox_oauth_ceremonies`, and the reason is not that the fields differ a
- * little. It is that the two ceremonies have opposite consumption disciplines and one column that
- * cannot be shared:
- *
- *  · The redirect ceremony is spent by ONE request. Its `code_verifier_enc` is NOT NULL, and a
- *    device ceremony has no PKCE verifier to put there — the device grant has no redirect and no
- *    authorization code, so there is nothing for a verifier to bind (RFC 8628 has no PKCE arm).
- *    Sharing the table would mean either dropping that NOT NULL — weakening the redirect flow's
- *    own invariant for a feature that does not use the column — or storing a dummy verifier, which
- *    is a lie in the one place a reader most needs the truth.
- *  · The device ceremony is READ REPEATEDLY and consumed once. A person is walking to a browser;
- *    this row is polled every few seconds for up to fifteen minutes and must survive every one of
- *    those reads. Its single-use write happens only on a TERMINAL verdict. Two disciplines in one
- *    table is one `WHERE` clause away from the poll consuming the ceremony it is polling for.
- *
- * ── WHAT IS SECRET HERE, AND WHAT IS MERELY ON SCREEN ─────────────────────────────────────
- *
- * `device_code_enc` is the bearer credential that redeems the grant. It is a KEK envelope for the
- * same reason `mailbox_credentials.secret_enc` is: this row is the one place a read-only injection
- * could stand between the ceremony and somebody's mailbox. It is never rendered and never logged.
- *
- * `user_code` and `verification_uri` are the two values the person is SHOWN. They are stored in
- * clear, deliberately, and storing them adds no exposure the start response did not already have —
- * what it buys is that a poll can re-supply them, so reloading the settings page does not strand a
- * live grant the operator can no longer complete.
- *
- * ── `poll_interval_ms` AND `last_polled_at` ARE THE SHARED CLIENT'S PROTECTION ────────────
- *
- * RFC 8628 §3.5 requires the interval to increase by five seconds on every `slow_down`,
- * CUMULATIVELY. Across a stateless poll route that arithmetic has nowhere to live but this row: a
- * client that carried it could simply not, and the client id being throttled is SHARED by every
- * self-hosted install using the public registration, so one buggy or hostile caller degrades the
- * flow for all of them. The server therefore holds the interval and refuses a poll that arrives
- * early, without spending a request on Microsoft to be told so.
- *
- * ── DELIBERATELY NO `mailbox_id`, FOR THE REDIRECT CEREMONY'S REASON VERBATIM ─────────────
- *
- * The address comes from the `id_token` this ceremony's own tokens carry, and the live-address
- * unique index resolves the target row. A `mailbox_id` here would be a second answer to a question
- * the token already answers, and it would let a ceremony started for one address attach to another.
+ * The device-code ceremony (cloud 0027). A SEPARATE table from `mailbox_oauth_ceremonies`:
+ * opposite consumption disciplines — the redirect ceremony is spent by ONE request with
+ * `code_verifier_enc` NOT NULL, and the device grant has no PKCE arm; this one is READ REPEATEDLY
+ * and consumed once, on a TERMINAL verdict only. Two disciplines in one table is one `WHERE` away
+ * from the poll consuming the ceremony it polls for. `device_code_enc` is the bearer credential,
+ * KEK-enveloped, never rendered or logged; `user_code`/`verification_uri` are what the person is
+ * SHOWN, in clear so a reload does not strand a live grant. `poll_interval_ms`/`last_polled_at`
+ * protect the SHARED client id. No `mailbox_id`.
  */
 export const mailboxOauthDeviceCeremonies = pgTable("mailbox_oauth_device_ceremonies", {
   /**
@@ -718,42 +580,14 @@ export const mailboxOauthDeviceCeremonies = pgTable("mailbox_oauth_device_ceremo
 }));
 
 /**
- * THE OPERATOR'S OAuth APPLICATION REGISTRATION (cloud 0009) — the Entra app the whole hosted
- * deployment signs with, managed from the admin console.
- *
- * ── ONE ROW PER PROVIDER, `provider` AS THE PRIMARY KEY ───────────────────────────────────
- *
- * Two live registrations for one provider is a state no reader could resolve: the API's authorize
- * URL and the worker's token POST would name different clients and only one of them would work.
- * The PK makes it unrepresentable and makes the write an `ON CONFLICT (provider) DO UPDATE`.
- *
- * ── A TABLE, WITH ENV AS THE BOOTSTRAP ────────────────────────────────────────────────────
- *
- * A client secret rotated in Azure must be replaceable without redeploying two apps, so the
- * registration is a row. `MS_OAUTH_CLIENT_ID` / `MS_OAUTH_CLIENT_SECRET` / `MS_OAUTH_TENANT` stay
- * as the FALLBACK — `resolveOAuthProviderConfig` (`oauth-config.ts`) prefers the row and drops to
- * env, so a first deploy works with no row and an operator locked out of the console still has a
- * way in. Both readers, the API and the worker, call that one resolver: there is exactly one
- * precedence rule and neither host re-derives it.
- *
- * ── THE SECRET NEVER COMES BACK OUT ───────────────────────────────────────────────────────
- *
- * `clientSecretEnc` is the KEK envelope; the admin read projects `secretSet: boolean` and nothing
- * else, ever. Both secret columns are nullable TOGETHER — a half-written registration is a real
- * state (an id and a tenant saved before Azure has minted the secret) — and the CHECK is what makes
- * "sealed together" true rather than hoped for, exactly as `staffUsers` does over its TOTP secret.
- *
- * `enabled` defaults FALSE: a registration that exists is not one that is live. The dangerous
- * direction would be a default of true, which offers a consent screen the deployment cannot
- * complete.
- *
- * `redirectUris` / `scopes` are jsonb arrays because Azure holds several — the hosted web callback
- * now, a loopback URI for the desktop flow later. The web ceremony selects the first `https://`
- * entry, so a loopback URI sits in the list without changing which one the browser uses.
- *
- * `updatedBy` is the `staff_users` actor, and it is why this table cannot live in the mail journal.
- * There is no `audit_log` row for a change here — `auditLog.accountId` is NOT NULL and this change
- * belongs to no account — so the actor, the time and the operator's note live on the row.
+ * The operator's OAuth application registration (cloud 0009) — the Entra app the hosted
+ * deployment signs with. One row per provider, `provider` as the PRIMARY KEY: two live
+ * registrations is a state no reader could resolve. A table, with env as the BOOTSTRAP: a secret
+ * rotated in Azure must be replaceable without redeploying two apps; `resolveOAuthProviderConfig`
+ * prefers the row and drops to env, and both hosts call that one resolver. The secret never comes
+ * back out: the admin read projects `secretSet: boolean`; both secret columns are nullable
+ * TOGETHER, with a CHECK. `enabled` defaults FALSE. `updatedBy` is the `staff_users` actor — no
+ * `audit_log` row exists for a change here, so the actor and note live on the row.
  */
 export const oauthProviderConfig = pgTable("oauth_provider_config", {
   provider: text("provider").primaryKey(),
@@ -772,46 +606,14 @@ export const oauthProviderConfig = pgTable("oauth_provider_config", {
 });
 
 /**
- * STAGED ATTACHMENT BYTES — the ticket half of the hosted send's direct-upload transport, and a
- * HOSTED-ONLY fact.
- *
- * ── WHY THE TABLE EXISTS AT ALL ───────────────────────────────────────────────────────────
- *
- * Attachment bytes used to ride the send request base64-encoded, which put the whole feature
- * under the hosted platform's ~4.5 MB request-body limit and forced the compose surface to
- * promise 3 MB whatever the user's own mail server announced. The bytes now go to object storage
- * on a signed URL the browser uses directly, and the send request carries a REFERENCE. This row
- * is that reference: it is what makes the ticket account-scoped, size-bounded and expiring, none
- * of which an opaque object path in a request body would be.
- *
- * ── WHY CLOUD AND NOT MAIL ────────────────────────────────────────────────────────────────
- *
- * Staging is a property of the HOSTED transport, exactly as `account_suspensions` is a property
- * of the hosted operations surface. A local install runs the send handler in the same process as
- * its own SMTP dial — there is no request body between the compose form and the wire, so there is
- * nothing to stage AROUND and no object storage to stage INTO. The mail journal creating this
- * table would put a table nothing on that install can ever write into every desktop database.
- * (It references `accounts`, a MAIL table — legal in this direction: mail runs first.)
- *
- * ── WHAT THE COLUMNS ARE FOR ──────────────────────────────────────────────────────────────
- *
- * `object_path` is where the bytes are, and it is UNIQUE because it is also the delete key: the
- * sweep removes the row and the object as a pair, and two rows naming one object would leave a
- * live row pointing at bytes another row's expiry already deleted.
- *
- * `size_bytes` is the size the MINT was asked for and refused against — the client's declaration,
- * not a measurement. It is stored because the send re-checks the declared total before it
- * downloads anything: refusing 40 MB of tickets costs one query, while discovering the same fact
- * after the download costs the transfer. The bytes themselves are measured again after download,
- * which is the check that catches a client that declared one size and uploaded another.
- *
- * `expires_at` is the retention promise as a row fact rather than as a convention, so the sweep
- * has a predicate and the privacy copy has something to be true about.
- *
- * There is no `consumed_at`. A send does not consume a ticket — it reads the bytes and leaves the
- * row to expire, because a send that fails mid-flight and is retried under the same idempotency
- * key must find the same bytes still there. Retention, not consumption, is what ends a staging
- * row's life.
+ * Staged attachment bytes — the ticket half of the hosted send's direct-upload transport,
+ * hosted-only. Bytes used to ride the send request base64-encoded under the platform's ~4.5 MB
+ * body limit; now they go to object storage on a signed URL and the send carries a REFERENCE —
+ * this row: account-scoped, size-bounded, expiring. Cloud, not mail: a local install sends beside
+ * its own SMTP dial — nothing to stage around. `object_path` is UNIQUE because it is also the
+ * delete key. `size_bytes` is the client's DECLARATION, refused against before download; the
+ * bytes are measured again after. No `consumed_at`: a send reads the bytes and leaves the row to
+ * expire — a retry under the same idempotency key must find the same bytes.
  */
 export const attachmentStaging = pgTable("attachment_staging", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -834,22 +636,14 @@ export const attachmentStaging = pgTable("attachment_staging", {
 }));
 
 /**
- * A consumable, expiring, EMAIL-BOUND beta invite — an open item the session-hardening work
- * named and deferred for want of a migration number.
- *
- * Three properties, each of which the `AuthConfig.inviteCodes` `Set` structurally cannot
- * have, and each of which a user-visible refusal depends on:
- *
- *  · **hashed** (`code_hash = sha256(raw)`, same as every other bearer credential here) —
- *    a database dump is not a list of working invites;
- *  · **single-use** — consumption is one `UPDATE … WHERE code_hash = $1 AND consumed_at IS
- *    NULL AND expires_at > now RETURNING id` inside the registering transaction, so two
- *    concurrent redemptions of one code produce exactly one account and one honest
- *    `invite_used`;
- *  · **email-bound** (`email` NOT NULL) — the register endpoint's 201-vs-409 answer is an
- *    account-existence oracle for whatever address the caller types, and binding the code
- *    to one address reduces that to "the inbox you already control". See 0020's header for
- *    the argument in full.
+ * A consumable, expiring, EMAIL-BOUND beta invite. Three properties the `AuthConfig.inviteCodes`
+ * `Set` structurally cannot have: hashed (`code_hash = sha256(raw)`) — a database dump is not a
+ * list of working invites; single-use — consumption is one `UPDATE … WHERE code_hash = $1 AND
+ * consumed_at IS NULL AND expires_at > now RETURNING id` inside the registering transaction, so
+ * two concurrent redemptions produce exactly one account; email-bound (`email` NOT NULL) — the
+ * register endpoint's 201-vs-409 is an account-existence oracle for whatever address the caller
+ * types, and binding the code to one address reduces that to "the inbox you already control"
+ * (0020's header has the full argument).
  */
 export const invites = pgTable("invites", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -860,15 +654,14 @@ export const invites = pgTable("invites", {
   issuedBy: text("issued_by").notNull().default("operator"),
   note: text("note"),
   /**
-   * Does redeeming this invite PROVE its holder controls `email`? (migration 0018)
-   *
-   * Register's invite path stamps `users.email_verified_at` only when this is true. TRUE for
-   * mailed invites (receipt is the proof — the same argument a mailed verification link stands
-   * on) and for the invite minted by a server's first-boot setup token (control of the box is
-   * the proof). FALSE for invites minted by a pairing-token redeem, where the redeemer typed
-   * the address and nothing was ever mailed: those accounts register fine and verify later
-   * through the ordinary mailed flow. The writer decides from its own record — the pairing
-   * redeem reads the consumed token row, never a caller-supplied flag.
+   * Does redeeming this invite PROVE its holder controls `email`? (migration 0018). Register's
+   * invite path stamps `users.email_verified_at` only when this is true. TRUE for mailed invites
+   * (receipt is the proof — the same argument a mailed verification link stands on) and for the
+   * invite minted by a server's first-boot setup token (control of the box is the proof). FALSE
+   * for invites minted by a pairing-token redeem, where the redeemer typed the address and
+   * nothing was mailed: those accounts register fine and verify later through the ordinary flow.
+   * The writer decides from its own record — the pairing redeem reads the consumed token row,
+   * never a caller-supplied flag.
    */
   confersVerified: boolean("confers_verified").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -907,7 +700,7 @@ export const invites = pgTable("invites", {
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
-  workerHeartbeats, alertState, alertPassRuns, platformSignals,
+  workerHeartbeats, alertState, alertPassRuns, platformSignals, apiFaults,
   waitlist, staffUsers, staffSessions,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,

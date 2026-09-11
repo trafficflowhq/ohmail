@@ -52,24 +52,14 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * THE QUOTED ORIGINAL of a forward — a text block always, and an html block for a rich send.
- *
- * The header is the conventional forwarded-message banner (From / Date / Subject). The original's
- * stored html is RE-SANITIZED before it is quoted (it is attacker-authored, and this is the last
- * place it is touched before the wire); a plain original is escaped into `<br>`-joined text so an
- * html recipient still sees it. The html half is folded into the outgoing message only when the
- * draft is itself rich — a plain forward carries the quote in text alone.
- *
- * ── THE BLOCK CARRIES NO SEPARATOR. {@link forwardJoin} OWNS THAT ───────────────────────────
- *
- * This used to return `\n\n` + the banner in text and `<br><br><hr>` + the banner in html — the
- * gap between the author's note and the quote, baked into the quote. A forward may now be sent
- * with NO note (the forwarded message is the content; the note is the optional part), and then
- * there is nothing to separate FROM: the gap became the first thing in the mail — two blank lines
- * above the banner in text/plain, and a rule floating over nothing in html.
- *
- * A separator between two things belongs to the join, not to either thing, so it moved there.
- * The block returned here starts on the banner and can be sent as-is.
+ * THE QUOTED ORIGINAL of a forward — a text block always, an html block for a rich send. The
+ * header is the conventional forwarded-message banner (From / Date / Subject). The original's
+ * stored html is RE-SANITIZED before quoting (attacker-authored, and this is the last touch
+ * before the wire); a plain original is escaped into `<br>`-joined text. The html half is folded
+ * in only when the draft is itself rich. THE BLOCK CARRIES NO SEPARATOR — `forwardJoin` owns
+ * that: a forward may be sent with NO note, and a baked-in gap became the first thing in the mail
+ * (two blank lines above the banner, a rule floating over nothing). A separator between two
+ * things belongs to the join; the block starts on the banner.
  */
 function forwardedQuote(
   orig: { from: string; date: Date | null; subject: string },
@@ -97,17 +87,13 @@ function forwardedQuote(
 }
 
 /**
- * THE AUTHOR'S NOTE ABOVE A QUOTED ORIGINAL — with the separator only where there are two things.
- *
- * `note` is the draft's own body (or its sanitized html); `quote` is {@link forwardedQuote}'s
- * separator-free block; `gap` is what stands between them in this part's syntax. A BLANK note —
- * absent, empty, or nothing but whitespace — yields the quote alone, which is what a forward sent
- * with no message of its own is: the forwarded mail, opening on its own banner.
- *
- * Blankness is judged on the PLAIN note in both arms (see the call site), so the two parts of a
- * multipart forward cannot disagree about whether a note exists — and it is the same `trim()`
- * emptiness the client's Send lock exempts (`mail-send.ts#canSend`), so a note the editor let
- * through as "nothing" is not printed here as a gap.
+ * THE AUTHOR'S NOTE ABOVE A QUOTED ORIGINAL — the separator only where there are two things.
+ * `note` is the draft's own body (or its sanitized html); `quote` is `forwardedQuote`'s
+ * separator-free block; `gap` stands between them in this part's syntax. A BLANK note — absent,
+ * empty, or whitespace — yields the quote alone: the forwarded mail, opening on its own banner.
+ * Blankness is judged on the PLAIN note in both arms, so the two parts of a multipart forward
+ * cannot disagree about whether a note exists — the same `trim()` emptiness the client's Send
+ * lock exempts (`mail-send.ts#canSend`).
  */
 function forwardJoin(note: string, quote: string, gap: string, blankNote: boolean): string {
   return blankNote ? quote : note + gap + quote;
@@ -117,33 +103,24 @@ function forwardJoin(note: string, quote: string, gap: string, blankNote: boolea
 export interface SendDeps {
   openSendAdapter: OpenSendAdapter;
   /**
-   * THE ACCOUNT'S MANAGED STORAGE CAP, for the sent-copy projection — resolved lazily (per
-   * send, inside the projection's own try) because the cap is per-account and this bag is built
-   * per request before anything about the account's billing has been read.
-   *
-   * The hosted API resolves it from the subscription row (`ApiDeps.storageCapOf`); the local
-   * engine and the self-host server type `UNMETERED_STORAGE_CAP` — a value somebody WROTE, the
-   * declaration-not-inference rule. ABSENT means REFUSAL, never unmetered — the
-   * mailbox-allowance registry's exact default: `projectSentCopy` substitutes a resolver that
-   * throws, which costs exactly the projection (swallowed and logged; the send answered `sent`
-   * long before), and the worker's Sent-folder pass — metered through its own REQUIRED cap —
-   * writes the row on its next cycle. So a host nobody read gets a loud log line per send and a
-   * row that arrives a poll interval late, and can never get uncapped storage.
+   * THE ACCOUNT'S MANAGED STORAGE CAP, for the sent-copy projection — resolved lazily (per send,
+   * inside the projection's own try): the cap is per-account and this bag is built per request.
+   * The hosted API resolves it from the subscription row; the local engine and self-host server
+   * type `UNMETERED_STORAGE_CAP` — a value somebody WROTE. ABSENT means REFUSAL, never unmetered:
+   * `projectSentCopy` substitutes a resolver that throws, which costs exactly the projection
+   * (swallowed and logged; the send answered `sent` long before), and the worker's Sent-folder
+   * pass writes the row on its next cycle. A host nobody read gets a loud log line per send — and
+   * can never get uncapped storage.
    */
   resolveStorageCap?: (ctx: ServiceContext) => Promise<StorageCap>;
   /**
-   * THE PLATFORM CEILING OF THE HOST SERVING THIS SEND, in raw attachment bytes — or `null` for a
-   * host that has none. **Three values, and `undefined` is not a fourth spelling of `null`.**
-   *
-   *  · a NUMBER — this host's request pipeline refuses a body above it, so the send must stay under
-   *    it whatever the mail server would have accepted. The hosted API passes
-   *    {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES}; see that constant for where ~4.5 MB becomes 3 MB.
-   *  · `null` — this host has NO platform ceiling. That is the local engine: it runs this same
-   *    service in its own process and hands the message straight to SMTP, so there is no request
-   *    body anywhere in the path and the only limit that exists is the mail server's own.
-   *  · ABSENT (`undefined`) — nobody said. Resolved to {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES}, the
-   *    STRICTER of the two branches, deliberately: a host that forgets to declare itself must not
-   *    thereby acquire an unbounded one. See {@link effectiveAttachmentCap}.
+   * THE PLATFORM CEILING OF THE HOST SERVING THIS SEND, in raw attachment bytes — and `undefined`
+   * is not a fourth spelling of `null`. A NUMBER: this host's pipeline refuses a body above it,
+   * so the send must stay under it (the hosted API passes `SEND_ATTACHMENT_MAX_TOTAL_BYTES`).
+   * `null`: this host has NO platform ceiling — the local engine hands the message straight to
+   * SMTP, so the only limit is the mail server's own. ABSENT: nobody said — resolved to
+   * `SEND_ATTACHMENT_MAX_TOTAL_BYTES`, the STRICTER branch, deliberately: a host that forgets to
+   * declare itself must not thereby acquire an unbounded one. See `effectiveAttachmentCap`.
    */
   surfaceMaxTotalBytes?: number | null;
   /**
@@ -183,32 +160,24 @@ export interface SendDeps {
 }
 
 /**
- * WHERE STAGED ATTACHMENT BYTES COME FROM, in two phases, and the split is the point.
- *
- * `declare` is metadata: it answers what the caller's own tickets say they weigh, at the cost of
- * one query, so the send can be REFUSED for exceeding the cap before anything is transferred. A
- * one-phase port would have to download in order to find out, which hands an authenticated caller
- * a way to make this process pull an arbitrary number of bytes it is then going to throw away.
- *
- * `fetch` is the bytes, and it runs outside the reservation transaction for the same reason
- * `streamForwardParts` does. It re-measures every object against the size its ticket declared:
- * `declare` reports what a CLIENT asserted at mint time, so the cap would otherwise be enforced
- * against a number the client chose.
+ * WHERE STAGED ATTACHMENT BYTES COME FROM, in two phases — the split is the point. `declare` is
+ * metadata: what the caller's tickets say they weigh, one query, so the send can be REFUSED for
+ * exceeding the cap before anything is transferred; a one-phase port would have to download to
+ * find out, handing an authenticated caller a way to make this process pull arbitrary bytes it
+ * then throws away. `fetch` is the bytes, outside the reservation transaction for
+ * `streamForwardParts`' reason; it re-measures every object against its ticket, because `declare`
+ * reports what a CLIENT asserted at mint time.
  */
 export interface StagedAttachmentSource {
   /**
    * The caller's own tickets. Ids that name nothing, or another account's row, are simply absent.
-   *
-   * `filename` and `contentType` ride along beside the size, and they are METADATA the mint
-   * already stored — never content. {@link sendContentFingerprint} folds a staged file by
-   * `(filename, contentType, sizeBytes)` for the same reason it folds an inline one that way, and
-   * it cannot use the ticket ID: a re-send under a fresh key RE-STAGES, minting new ids for the
-   * same files (`HttpAdapter.stagedIdsFor` POSTs `/attachments/staging` on every call it does not
-   * short-circuit), so a manifest keyed on ids would differ for an identical message and the
-   * duplicate guard would miss every send that carries an attachment.
-   *
-   * Digesting the BYTES is not on the table: they live in object storage, and reaching for them
-   * would put a network call inside the reserve transaction.
+   * `filename` and `contentType` ride beside the size — METADATA the mint stored, never content.
+   * `sendContentFingerprint` folds a staged file by `(filename, contentType, sizeBytes)` and
+   * cannot use the ticket ID: a re-send under a fresh key RE-STAGES, minting new ids for the same
+   * files, so an id-keyed manifest would differ for an identical message and the duplicate guard
+   * would miss every attachment-carrying send. Digesting the BYTES is not on the table: they live
+   * in object storage, and reaching for them would put a network call inside the reserve
+   * transaction.
    */
   declare(
     accountId: string, ids: readonly string[],
@@ -229,43 +198,33 @@ export interface StagedAttachmentSource {
 export type SendAttachment = NonNullable<OutboundMessage["attachments"]>[number];
 
 /**
- * WHAT RIDES THE SEND REQUEST BODY BEYOND THE DRAFT — and why none of it is stored.
- *
- * The draft row is the message as it was composed; these are the parts that exist only for the
- * one delivery and are DELIBERATELY not persisted (§13.2/§14): the files the sender attached, whose
- * bytes are handed straight to the transport and written to no table. Absent for an ordinary send,
- * which builds exactly the `OutboundMessage` it always did.
- *
- * "Not persisted" is a statement about THIS DATABASE and it stays exactly true. Staged bytes
- * (`stagedAttachmentIds`) reached this process from object storage rather than from the request
- * body, so they were at rest for a bounded window before arriving — 24 hours at most, in a private
- * bucket, swept whether the send happened or not. That is a fact about the TRANSPORT, it is stated
- * in the privacy copy, and it changes nothing about where the bytes go from here: the one
- * `OutboundMessage`, and no row.
+ * WHAT RIDES THE SEND REQUEST BODY BEYOND THE DRAFT — and why none of it is stored. The draft row
+ * is the message as composed; these parts exist only for the one delivery and are DELIBERATELY
+ * not persisted (§13.2/§14): the attached files are handed straight to the transport and written
+ * to no table. Absent for an ordinary send. "Not persisted" is a statement about THIS DATABASE
+ * and stays exactly true: staged bytes reached this process from object storage, at rest for a
+ * bounded window (24 hours at most, private bucket, swept either way) — a fact about the
+ * TRANSPORT, stated in the privacy copy; from here the bytes go to the one `OutboundMessage`, and
+ * no row.
  */
 export interface SendInput {
   /**
    * UPLOADED FILES — decoded bytes, on the request itself. Never written to any table; see
-   * {@link OutboundMessage}.
-   *
-   * THE PRIMARY TRANSPORT, not a legacy one, and this is the field a future "can we drop it yet"
-   * lands on. Every shipping client still emits it: the browser app stages only ABOVE the inline
-   * ceiling, so every send at or under 3 MB arrives here, and the desktop app never stages on
-   * either of its doors. Update uptake does not bear on that and could not be measured anyway —
-   * no client-version signal reaches the hosted service. The inline form can only be reconsidered
-   * once the desktop's Cloud door stages and the browser client stages unconditionally.
+   * `OutboundMessage`. THE PRIMARY TRANSPORT, not a legacy one — the field a future "can we drop
+   * it yet" lands on. Every shipping client still emits it: the browser stages only ABOVE the
+   * inline ceiling, so every send at or under 3 MB arrives here, and the desktop never stages on
+   * either door. Update uptake does not bear on that and cannot be measured — no client-version
+   * signal reaches the hosted service. The inline form can only be reconsidered once the
+   * desktop's Cloud door stages and the browser stages unconditionally.
    */
   attachments?: SendAttachment[];
   /**
-   * STAGED FILES — upload-ticket ids whose bytes are in object storage, not in this request.
-   *
-   * The second accepted shape of one thing, and the narrower of the two: it exists for the sends
-   * the request body cannot carry at all. A send may carry either, or both — the two lists are
-   * concatenated, inline first, and the cap is applied to the total.
-   *
-   * The bytes reach exactly the same place an inline attachment's do: the one `OutboundMessage`,
-   * and no table. What is different is that they existed in a bucket for a bounded window on the
-   * way here, which is why the privacy copy says so.
+   * STAGED FILES — upload-ticket ids whose bytes are in object storage, not in this request. The
+   * second accepted shape of one thing, and the narrower: it exists for the sends the request
+   * body cannot carry at all. A send may carry either or both — the lists are concatenated,
+   * inline first, and the cap applies to the total. The bytes reach exactly the same place an
+   * inline attachment's do: the one `OutboundMessage`, and no table. The difference is a bounded
+   * window in a bucket on the way here, which is why the privacy copy says so.
    */
   stagedAttachmentIds?: string[];
   /**
@@ -284,125 +243,50 @@ export const FORWARD_MAX_PARTS = 100;
 export const FORWARD_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
 /**
- * HOW MANY ATTACHMENT PARTS ONE SEND REQUEST MAY NAME — per list, inline or staged.
- *
- * ── WHY A COUNT CEILING EXISTS AT ALL, GIVEN THE BYTE ONE ────────────────────────────────────
- *
- * Because {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES} does not bound either list's LENGTH, and the
- * reading that it does is the one that left both lists open:
- *
- *  · an INLINE entry carrying no `contentBase64` decodes to zero bytes, so any number of them sum
- *    to zero and clear every byte cap there is. For that list this constant is the ONLY bound.
- *  · a STAGED ticket may declare ONE byte (the mint's floor is a positive integer), so a 3 MB
- *    ceiling still admits millions of references — and before the dedupe below each one was a
- *    separate object-storage round trip for the same object.
- *
- * ── WHY 100 ─────────────────────────────────────────────────────────────────────────────────
- *
- * It is {@link FORWARD_MAX_PARTS}, and deliberately the same number: that is already the ceiling
- * on the OTHER list of attachment parts this same service assembles onto an outgoing message, and
- * two different answers to "how many parts may ride one message" would be a distinction with no
- * reason behind it.
- *
- * Pinning rather than picking is the house rule for this decision, not a preference — `MARK_SEEN_MAX_IDS`
- * takes its 200 from `DEFAULT_SYNC_BATCH_MAX_MESSAGES` and says why in the same words: *"a second,
- * different 'how many is too many' would be a number nobody could justify"*. That constant also
- * settles the two questions this one would otherwise have to answer alone — it refuses on the RAW
- * array with `payload_too_large`/413 and deduplicates what survives, which is exactly the order
- * the send route follows.
- *
- * It is not a limit legitimate use meets. The staged transport only engages above 3 MB of files,
- * and the ceiling that then binds is the mailbox's own announced `SIZE` — typically 25–35 MB, so
- * 100 files inside it average 250–350 KB each. A compose surface with no count field at all is not
- * a surface anyone assembles a hundred-file message on; the byte cap is what stops them long
- * before this does. This is the defence-in-depth term, and its job is to make the length of these
- * lists a number rather than whatever fits in a request body.
- *
- * Applied PER LIST rather than to the sum, so each reader owns its own boundary. A mixed send is
- * therefore bounded at 200 parts and a mixed forward at 300 — the same order of magnitude, and far
- * inside what MIME assembly on this host carries.
+ * HOW MANY ATTACHMENT PARTS ONE SEND REQUEST MAY NAME — per list, inline or staged. The byte cap
+ * does not bound either list's LENGTH: an inline entry with no `contentBase64` decodes to zero
+ * bytes, so any number clears every byte cap; a staged ticket may declare ONE byte, so 3 MB still
+ * admits millions of references. 100 is `FORWARD_MAX_PARTS`, deliberately the same number —
+ * pinning over picking, the `MARK_SEEN_MAX_IDS` rule. Refused on the RAW array (413),
+ * deduplicated after. Not a limit legitimate use meets: the staged transport engages above 3 MB
+ * and the mailbox's own `SIZE` binds first. PER LIST — a mixed send bounds at 200 parts, a mixed
+ * forward at 300.
  */
 export const SEND_MAX_ATTACHMENT_PARTS = 100;
 
 /**
- * HOW MANY ADDRESSES ONE SENT MESSAGE MAY REACH — `to` + `cc` + `bcc`, together.
- *
- * This is the per-MESSAGE ceiling, and it belongs here rather than beside `DRAFT_MAX_RECIPIENTS`
- * because here is where the count stops being three stored columns and becomes network: the
- * transport issues one `RCPT TO` command per address on a socket THIS process holds open, and
- * the recipient headers it writes grow with them.
- *
- * 500, which is the LARGEST of the per-message recipient ceilings among the providers whose
- * mailboxes this product connects to — Outlook/Microsoft 365 and iCloud both allow 500, Gmail
- * allows 100 — and that choice is a correction. It was briefly 100, "the tightest, so above it
- * the provider refuses anyway". The premise is false for two of the three: an Outlook or iCloud
- * user sending to 300 people is doing something their provider will deliver, and a ceiling
- * derived from Gmail's number would have refused it on Gmail's behalf.
- *
- * The bound's job here is to stop the UNBOUNDED case, not to enforce each provider's policy —
- * a provider stricter than this still answers with its own refusal, which is its to make. A
- * per-mailbox ceiling learned from the SMTP probe (as `smtp_max_size_bytes` already is for bytes)
- * would be better than one number and is the obvious next step; it is not this slice.
- *
- * Checked INSIDE the reserve transaction, beside the attachment cap and for its stated reason:
- * throwing there rolls the reservation back, so nothing is reserved and the draft never leaves
- * `draft`.
- *
- * ── WHAT IT ACTUALLY CATCHES, stated rather than implied ─────────────────────────────────
- *
- * `DRAFT_MAX_RECIPIENTS` is 100 per field and there are three fields, so a draft assembled
- * through `DraftsService` can hold at most 300 — under this ceiling by construction. **So this
- * bound is a guard on the STORED ROW, not on the compose path**: a draft written before either
- * ceiling existed, or by any later writer that reaches the column without going through
- * `validAddresses`, is still what the transport is handed. That is the same reasoning
- * `assertRunnable` applies to a stored `steps` array, and the same reason a write-time bound is
- * not enough on its own: the row outlives the validator that wrote it.
- *
- * The two numbers are deliberately not made to meet. Raising the per-field cap to make them
- * interact would loosen the compose path to justify a test, and lowering this one to 300 would
- * refuse an Outlook or iCloud send those providers would deliver.
+ * HOW MANY ADDRESSES ONE SENT MESSAGE MAY REACH — `to` + `cc` + `bcc`, together. The per-MESSAGE
+ * ceiling lives here because here the count becomes network: one `RCPT TO` per address. 500 — the
+ * LARGEST per-message ceiling among connected providers (Outlook and iCloud allow 500, Gmail
+ * 100); a Gmail-derived 100 would refuse an Outlook send that provider delivers. The bound stops
+ * the UNBOUNDED case; a stricter provider answers with its own refusal. Checked INSIDE the
+ * reserve transaction so a throw rolls the reservation back. It guards the STORED ROW:
+ * `DRAFT_MAX_RECIPIENTS` bounds each field at 100, so a `DraftsService` draft holds at most 300 —
+ * this catches older rows, because a row outlives the validator that wrote it.
  */
 export const SEND_MAX_RECIPIENTS = 500;
 
 /**
  * The longest `filename` and `contentType` one attachment entry may carry.
- *
- * `SEND_MAX_ATTACHMENT_PARTS` bounds how MANY entries a send names and
- * `SEND_ATTACHMENT_MAX_TOTAL_BYTES` bounds their CONTENT — and each entry's two strings were
- * bounded by neither. They are not content: they become MIME header parameters on the outgoing
- * message and a stored column on the staged ticket, so a hundred entries carrying a megabyte
- * filename each is a megabyte-per-header message the transport has to build.
- *
+ * `SEND_MAX_ATTACHMENT_PARTS` bounds how MANY entries, `SEND_ATTACHMENT_MAX_TOTAL_BYTES` their
+ * CONTENT — and each entry's two strings were bounded by neither. They are not content: they
+ * become MIME header parameters and a stored column on the staged ticket, so a hundred entries
+ * carrying a megabyte filename each is a megabyte-per-header message the transport has to build.
  * 255 is the practical filename ceiling every mainstream filesystem shares, and a content type is
- * far shorter than that — one number for both, because a caller who exceeds either has not sent a
- * filename or a media type.
+ * far shorter — one number for both, because a caller exceeding either has not sent a filename or
+ * a media type.
  */
 export const SEND_ATTACHMENT_FIELD_MAX_CHARS = 255;
 
 /**
- * THE STAGED LIST, WITH EACH TICKET NAMED ONCE — first occurrence wins, order preserved.
- *
- * ── A REPEAT IS A SKIP, NOT A REFUSAL ───────────────────────────────────────────────────────
- *
- * The product already ruled on this one surface up, and this is that ruling carried to the wire.
- * `ComposeAttach` answers a re-picked file with *"THE SAME FILE TWICE IS A SKIP, NOT A SECOND
- * ROW"* — collapsed, and said in the muted register because nothing went wrong. Erroring here
- * would contradict the form directly above it, and would spend a composed message on what is at
- * worst a client bug.
- *
- * ── WHY THE INLINE LIST IS NOT DEDUPED, AND THE ASYMMETRY IS THE POINT ──────────────────────
- *
- * A staged id is a REFERENCE: naming it twice names one object, so the second naming buys the
- * caller a second download of bytes it did not have to send — that is the amplification. An inline
- * entry CARRIES its bytes: naming it twice costs the caller twice and is counted twice against the
- * cap, so there is nothing to amplify, and collapsing it would mean hashing every attachment's
- * bytes on the send path to undo something the compose form already did.
- *
- * ── WHAT THIS DOES NOT DECIDE ───────────────────────────────────────────────────────────────
- *
- * Not the count ceiling. {@link SEND_MAX_ATTACHMENT_PARTS} is refused against the list AS SENT,
- * ahead of this — the ceiling bounds how many references one request may name, and this decides
- * how many files those references are. `MARK_SEEN_MAX_IDS` orders its two the same way.
+ * THE STAGED LIST, WITH EACH TICKET NAMED ONCE — first occurrence wins, order preserved. A REPEAT
+ * IS A SKIP, NOT A REFUSAL: `ComposeAttach` answers a re-picked file with a collapse and a muted
+ * sentence, and erroring here would contradict the form directly above it, spending a composed
+ * message on what is at worst a client bug. THE INLINE LIST IS NOT DEDUPED, and the asymmetry is
+ * the point: a staged id is a REFERENCE — naming it twice buys a second download of bytes the
+ * caller did not send (the amplification); an inline entry CARRIES its bytes — naming it twice
+ * costs the caller twice and is counted twice. This does not decide the count ceiling:
+ * `SEND_MAX_ATTACHMENT_PARTS` is refused against the list AS SENT, ahead of this.
  */
 export function dedupeStagedIds(ids: readonly string[] | undefined): string[] {
   return ids ? [...new Set(ids)] : [];
@@ -430,60 +314,37 @@ interface ForwardPart {
 export const SEND_ATTACHMENT_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
 
 /**
- * WHAT THE MESSAGE COSTS BEFORE A SINGLE ATTACHMENT BYTE IS COUNTED — headers, the MIME
- * boundaries, and the body somebody typed.
- *
- * `SIZE` bounds the whole document, and {@link attachmentBudgetFor} converts it into a budget for
- * attachment bytes only; everything else in the message has to come out of the announcement first
- * or the conversion is optimistic by exactly the size of the letter. 64 KiB is generous for the
- * headers and boundaries and covers an ordinary body with room to spare. It is not a bound on the
- * body — a message with a megabyte of typed text can still be refused by the server — and it is
- * not pretending to be: the honest description is an allowance, and erring high here costs the
- * user 64 KiB of attachment they will never notice, while erring low costs them a bounced send.
+ * WHAT THE MESSAGE COSTS BEFORE A SINGLE ATTACHMENT BYTE — headers, MIME boundaries, and the body
+ * somebody typed. `SIZE` bounds the whole document, and `attachmentBudgetFor` converts it into a
+ * budget for attachment bytes only; everything else must come out of the announcement first or
+ * the conversion is optimistic by exactly the size of the letter. 64 KiB is generous for headers
+ * and boundaries and covers an ordinary body. It is not a bound on the body — a megabyte of typed
+ * text can still be refused by the server — and erring high costs the user 64 KiB of attachment
+ * they never notice, while erring low costs a bounced send.
  */
 export const SEND_MIME_ENVELOPE_BYTES = 64 * 1024;
 
 /**
  * THE PER-OBJECT CEILING OF THE STAGING BUCKET, and therefore of the transport that uses it.
- *
- * Uploading straight to object storage removes the request-body limit; it does not remove every
- * limit. The bucket refuses an object over its configured size, and it does so in the BROWSER's
- * PUT — after the mint answered 201 and after the person waited for the upload. The client can
- * only report that as "try again", which is a retry that can never succeed. So the number is
- * stated here, applied by the mint, and declared by the hosted window as its surface.
- *
- * It MIRRORS the bucket's own `file_size_limit` and cannot verify it from here: the bucket is
- * remote configuration. The direction of any drift is what matters — a bucket configured LARGER
- * than this simply goes unused above this line, while a bucket configured SMALLER reintroduces
- * exactly the failure above. Raising this number therefore means raising the bucket first.
+ * Uploading straight to object storage removes the request-body limit, not every limit: the
+ * bucket refuses an oversize object in the BROWSER's PUT — after the mint answered 201 and after
+ * the person waited — and the client can only say "try again", a retry that can never succeed. So
+ * the number is stated here, applied by the mint, and declared by the hosted window as its
+ * surface. It MIRRORS the bucket's `file_size_limit` and cannot verify it: a bucket configured
+ * LARGER goes unused above this line; one configured SMALLER reintroduces the failure. Raising
+ * this means raising the bucket first.
  */
 export const SEND_STAGED_OBJECT_MAX_BYTES = 40 * 1024 * 1024;
 
 /**
- * AN ANNOUNCED `SIZE` IS ABOUT THE ENCODED MESSAGE. This converts it into a budget for RAW
- * attachment bytes, which is what every caller here actually counts.
- *
- * RFC 1870's `SIZE` is the largest MESSAGE a submission server will accept, and a message is the
- * MIME document: attachments are base64 — four characters per three bytes — and the transfer
- * encoding wraps at 76 characters with a CRLF. So the expansion is (4/3)·(78/76), and the inverse
- * is exactly 19/26. 25 MB of files is about 34 MB of message.
- *
- * Reading the announcement as a raw budget therefore overshoots by more than a third, and the cost
- * of that lands on the user: they attach 25 MB to a server that said 25 MB, wait for the send, and
- * their own provider bounces it. This is the one direction the rule may not err in — the same
- * reason an unknown ceiling is read as the strict one rather than as no ceiling.
- *
- * ── WHY THIS WAS INVISIBLE UNTIL NOW ────────────────────────────────────────────────────────
- *
- * While every mailbox fell back to {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES}, the announcement was
- * never the binding term: 3 MB of files is about 4 MB of message, and no provider announces
- * anything that small. The overshoot became reachable the moment real announcements started being
- * learned for mailboxes that were already connected.
- *
- * The result is FLOORED AT ONE BYTE rather than allowed to reach zero. A server announcing less
- * than the envelope allowance accepts no attachment at all, and that is the truth — but zero and
- * negative are read as "not a ceiling" by {@link effectiveAttachmentCap}, which would make the
- * stingiest server in the world the most permissive one.
+ * AN ANNOUNCED `SIZE` IS ABOUT THE ENCODED MESSAGE; this converts it into a budget for RAW
+ * attachment bytes. RFC 1870's `SIZE` bounds the MIME document: attachments are base64 (4 chars
+ * per 3 bytes) wrapped at 76 with CRLF, so the expansion is (4/3)·(78/76) and the inverse is
+ * exactly 19/26 — 25 MB of files is about 34 MB of message. Reading the announcement as a raw
+ * budget overshoots by a third: the user's own provider bounces the send after the wait.
+ * Invisible while every mailbox fell back to the 3 MB constant. FLOORED AT ONE BYTE: zero and
+ * negative read as "not a ceiling" in `effectiveAttachmentCap`, which would make the stingiest
+ * server the most permissive.
  */
 export function attachmentBudgetFor(announcedMessageBytes: number): number {
   const forAttachments = announcedMessageBytes - SEND_MIME_ENVELOPE_BYTES;
@@ -492,41 +353,14 @@ export function attachmentBudgetFor(announcedMessageBytes: number): number {
 }
 
 /**
- * THE CAP THAT ACTUALLY APPLIES TO ONE SEND — the smaller of what the HOST can carry and what the
- * MAIL SERVER said it will accept.
- *
- * Two independent ceilings, and neither subsumes the other:
- *
- *  · `surfaceMax` is the host's request pipeline. The hosted API is behind a serverless body limit,
- *    so it declares {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES}. The local engine has no such limit at
- *    all — it is this same service in the same process as the SMTP dial — so it declares `null`.
- *  · `mailboxMax` is the submission server's own RFC 1870 `SIZE` announcement, recorded per mailbox
- *    by the connect-time SMTP probe (mail 0055), or `null` when it announced none.
- *
- * ── THE `min` IS THE POINT, NOT THE `null` HANDLING ──────────────────────────────────────────
- *
- * The interesting case is not a generous provider on the desktop; it is a STINGY one on the hosted
- * service. A provider that announces 2 MB binds a hosted compose to 2 MB even though the platform
- * would have carried 3 — and without the `min` the product would accept the send, spend the user's
- * wait on it, and let their own server bounce it. That is the acceptance check for this rule.
- *
- * ── AN UNKNOWN CEILING IS THE STRICT ONE — ON EITHER SIDE ────────────────────────────────────
- *
- * `undefined` for `surfaceMax` means the host did not declare itself, and it resolves to
- * {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES} rather than to "unbounded" — a caller that forgets must
- * not acquire a bigger allowance by forgetting. A `null` MAILBOX ceiling means the submission
- * server has never been probed, and it resolves to the same product constant rather than
- * dropping out of the `min` — this used to contribute NOTHING, which was invisible while every
- * declared surface was the 3 MB constant itself, and became a real widening the day a
- * long-running host declared a 32 MB transport surface: every never-probed mailbox silently
- * acquired 32 MB and learned its provider's real limit from an SMTP bounce after the wait. The
- * reason is mail 0055's own header, applied to both sides: an unknown limit read as no limit
- * costs the user a message they composed and waited for.
- *
- * Non-positive and non-finite values are ignored (never strict-substituted) on both sides. A `0`
- * from the mailbox — a server announcing `SIZE 0`, which RFC 1870 §6 defines as "no fixed
- * maximum" — is a MEASUREMENT saying the server takes anything, so the surface alone binds; a
- * host declaring a cap of nothing must never become a ceiling no message can clear.
+ * THE CAP THAT APPLIES TO ONE SEND — the smaller of what the HOST can carry (`surfaceMax`, the
+ * request pipeline) and what the MAIL SERVER accepts (`mailboxMax`, the per-mailbox RFC 1870
+ * `SIZE` probe, mail 0055). THE `min` IS THE POINT: a provider announcing 2 MB binds a hosted
+ * compose to 2 MB — without it the product accepts the send and the user's own server bounces it.
+ * AN UNKNOWN CEILING IS THE STRICT ONE, both sides: `undefined` surface resolves to the product
+ * constant, and a never-probed mailbox does too — it used to contribute NOTHING, a real widening
+ * the day a host declared a 32 MB surface. Non-positive values are ignored: `SIZE 0` means "no
+ * fixed maximum" (RFC 1870 §6), so the surface alone binds.
  */
 export function effectiveAttachmentCap(
   surfaceMax: number | null | undefined,
@@ -550,29 +384,14 @@ export function effectiveAttachmentCap(
 }
 
 /**
- * WHICH SURFACE CEILING THIS PARTICULAR SEND RIDES — and the answer is a property of the
- * TRANSPORT THE BYTES TOOK, not of the host.
- *
- * {@link SendDeps.surfaceMaxTotalBytes} describes the host's REQUEST PIPELINE, which is the right
- * description of a send whose attachment bytes are in the request body. Staged bytes are not: they
- * went from the browser to object storage on a signed URL and this process pulls them from there,
- * so no request-body limit stands between the compose form and the transport and the host's
- * declaration is simply not about them.
- *
- * So a send carrying ONLY staged references resolves the surface to `null` — explicitly uncapped,
- * the same value the local engine declares for the same underlying reason — and the mailbox's own
- * RFC 1870 `SIZE` announcement is then the only ceiling, with the usual "unknown is the strict
- * one" fallback when the mailbox has never been probed.
- *
- * A send carrying ANY inline attachment keeps the host's declaration, including a MIXED send. That
- * is the conservative direction and it is deliberate: the inline half of a mixed send really did
- * ride the request body, and a rule that read "some of these were staged, so lift the limit"
- * would let a request through that the platform in front of this handler refuses first — with an
- * opaque error the user cannot act on, which is the exact failure
- * {@link SEND_ATTACHMENT_MAX_TOTAL_BYTES} exists to prevent.
- *
- * A send with no attachments at all keeps the host's declaration too, which is a distinction
- * without a difference (the total is zero) and one fewer branch to reason about.
+ * WHICH SURFACE CEILING THIS SEND RIDES — a property of the TRANSPORT THE BYTES TOOK, not of the
+ * host. `surfaceMaxTotalBytes` describes the REQUEST PIPELINE; staged bytes went browser → object
+ * storage on a signed URL, so no request-body limit stands between compose and transport. A send
+ * carrying ONLY staged references resolves the surface to `null` — explicitly uncapped, the local
+ * engine's value — leaving the mailbox's own `SIZE` as the ceiling. A send carrying ANY inline
+ * attachment keeps the host's declaration, MIXED included: the inline half really did ride the
+ * request body, and lifting the limit lets through a request the platform refuses first, with an
+ * opaque error. No attachments keeps the declaration too — one fewer branch.
  */
 export function sendSurfaceFor(
   hostSurfaceMax: number | null | undefined,
@@ -596,72 +415,26 @@ export function sendSurfaceFor(
 export const SEND_STALE_AFTER_MS = 10 * 60 * 1000;
 
 /**
- * HOW LONG AN ACCOUNT'S CLAIM ON ONE MESSAGE'S CONTENT STANDS.
- *
- * Inside it, a second send of the identical message from the same mailbox is REFUSED, whatever key
- * it carries and whatever draft row it names. Outside it, the claim is reclaimed and the send goes.
- *
- * One hour, and the number is chosen against the two things that pull on it. The failure it
- * defends against is a person pressing Send again after an outcome they could not read — they
- * check the Sent folder, come back, press again — which is a seconds-to-minutes event, occasionally
- * a few minutes more. The cost it imposes is on a DELIBERATE identical re-send, the one-line nudge
- * sent twice, which is an hours-to-days event. An hour covers the whole of the first and almost
- * none of the second.
- *
- * It is deliberately NOT coupled to two neighbouring horizons that look relevant and are not.
- * `IDEMPOTENCY_TTL_MS` (24 h) is how long a stored RESPONSE is replayable, which is a statement
- * about a key rather than about content; `SEND_LOCK_TTL_MS` (7 d, `apps/webapp/app/shell/send-lock.ts`)
- * is how long a CLIENT still resumes its own key. This is the window in which two identical
- * messages are one intent.
- *
- * ── ENFORCED AT THE DECISION, NEVER BY THE PRUNE ────────────────────────────────────────────
- *
- * Compared against `ctx.now()` in the conflict arm of {@link SendService.reserve}. The 24-hour
- * DELETE a maintenance pass runs is hygiene and carries no correctness: the standalone engine runs
- * this same `reserve` and has NO maintenance pass at all, so a window that expired by pruning
- * would be unbounded on every desktop — identical re-sends refused for ever, with every suite
- * green, because no test on the hosted side would ever see it.
- *
- * RESIDUAL, stated rather than left to be discovered: a client that has lost its idempotency key
- * and presses Send again more than an hour later is not protected by this. It is protected by the
- * key while it has one, and by the draft-status refusal while it still names the same draft.
+ * HOW LONG AN ACCOUNT'S CLAIM ON ONE MESSAGE'S CONTENT STANDS. Inside it, a second send of the
+ * identical message from the same mailbox is REFUSED, whatever key it carries; outside, the claim
+ * is reclaimed. One hour: the failure defended is a person pressing Send again after an outcome
+ * they could not read (seconds to minutes); the cost falls on a DELIBERATE identical re-send
+ * (hours to days). NOT coupled to `IDEMPOTENCY_TTL_MS` (a key's replay) or `SEND_LOCK_TTL_MS` (a
+ * client's resume). ENFORCED AT THE DECISION, NEVER BY THE PRUNE — the standalone engine has NO
+ * maintenance pass, so prune-based expiry would be infinite on every desktop. A client that lost
+ * its key is protected by the draft-status refusal.
  */
 export const SEND_DUPLICATE_WINDOW_MS = 60 * 60 * 1000;
 
 /**
- * WHAT THE SERVER SAYS WHEN IT REFUSES A DUPLICATE — one sentence per state the FIRST send is in.
- *
- * Three states, three different facts, and collapsing them would make the product claim something
- * it does not know. `sent` is the only one where a copy is provably out there; `unverified` means
- * the first attempt's fate is genuinely unknown and the reader has somewhere to look; `pending`
- * means it is happening right now and nothing is settled either way.
- *
- * ── WHO READS THIS SENTENCE ─────────────────────────────────────────────────────────────────
- *
- * Not the ohmail web shell, which renders its own copy from `details.firstSend` in the reader's
- * own language — a protocol sentence in the wrong language inside a translated interface is a
- * defect this product has already shipped once. This one is for an API consumer, for a client
- * built before the phase existed (which shows it verbatim as the refusal's reason, truthfully:
- * this request sent nothing), and for the Drafts row of a SCHEDULED send, whose pass stores the
- * `ServiceError`'s own message as `send_error`.
- *
- * The time is ISO-8601 rather than a friendly rendering, because none of those three readers has
- * a locale this process knows, and an unambiguous instant beats a pretty one nobody can place.
- *
- * ── WHICH INSTANT `at` IS ───────────────────────────────────────────────────────────────────
- *
- * For `sent` it is `outbound_sends.sent_at` — the moment the send was recorded as sent, which is
- * what the Sent copy is stamped with and the only time the reader can look for. It is NOT the
- * content claim's `created_at`, which is the duplicate window's clock and is restamped whenever a
- * claim is re-pointed; passing that named a time nothing had happened at whenever a send was
- * confirmed later than it was reserved. The caller ({@link SendService.reserve}) reads the column
- * inside the same transaction, and falls back to the claim's stamp for the case that should not
- * occur — a `sent` row with no `sent_at`, which `finalizeSent` cannot produce, since it writes
- * both in one statement.
- *
- * For `unverified` it is still the claim's stamp: nothing was ever recorded as sent, so there is
- * no delivery instant to name, and the sentence says exactly that about the attempt. `pending`
- * carries no time at all.
+ * WHAT THE SERVER SAYS WHEN IT REFUSES A DUPLICATE — one sentence per state the FIRST send is in:
+ * `sent` — a copy is provably out there; `unverified` — the fate is unknown, the reader has
+ * somewhere to look; `pending` — happening right now. WHO READS IT: not the web shell (it renders
+ * its own copy from `details.firstSend`); this is for an API consumer, an older client, and the
+ * Drafts row of a SCHEDULED send (`send_error`). ISO-8601 — none of those readers has a locale
+ * this process knows. WHICH INSTANT: for `sent`, `outbound_sends.sent_at` — the delivery's clock
+ * — never the claim's `created_at`, restamped on every re-point, which named a time nothing
+ * happened at. For `unverified`, the claim's stamp; `pending` carries no time.
  */
 export function duplicateSendSentence(firstSendStatus: string, at: Date): string {
   const when = at.toISOString();
@@ -682,46 +455,14 @@ export function duplicateSendSentence(firstSendStatus: string, at: Date): string
 }
 
 /**
- * WHAT MAKES TWO SENDS THE SAME MESSAGE — the digest the account's content claim is keyed on.
- *
- * Every member is something a RECIPIENT can perceive. Nothing that is an artefact of the attempt
- * is in it, and the exclusions are as load-bearing as the inclusions:
- *
- *   · `draftId` — the field the defect MOVES. A client that sheds its draft id and composes a
- *     fresh row is exactly the sequence this guard exists to refuse, so keying on the row would
- *     reproduce the hole in a new table.
- *   · `mailboxId` — a KEY COLUMN on `outbound_send_fingerprints`. Counting it in both the key and
- *     the digest is redundant, and it would hide a defect in either one.
- *   · the minted Message-ID, the idempotency key, the thread id, the From display name — all
- *     per-attempt or invisible.
- *
- * `forwardOf` IS in it, and it has to be: two forwards of DIFFERENT originals, sent to the same
- * person with no note, agree on every other member. Without it the second is refused as a
- * duplicate of the first and a message the user meant to send never leaves.
- *
- * Addresses are compared as the delivery sees them — trimmed, lowercased, deduplicated and sorted,
- * with display names dropped — so re-typing a recipient's name is not a new message and reordering
- * the To line is not either.
- *
- * ── WHY ATTACHMENTS FOLD BY METADATA ────────────────────────────────────────────────────────
- *
- * `(filename, contentType, sizeBytes)`, sorted, inline and staged in ONE list. Staged bytes live in
- * object storage and digesting them would mean a network call inside the reserve transaction,
- * which this service does not do anywhere; inline bytes could be digested and buy a case nobody can
- * produce, since a picked file cannot be altered in place. The accepted consequence is named in
- * {@link SendService.reserve}'s refusal: two different files agreeing on name, type and exact byte
- * length read as one message.
- *
- * ── CANONICAL FORM ──────────────────────────────────────────────────────────────────────────
- *
- * `JSON.stringify` over an ARRAY, never a delimiter join. A join needs a separator that cannot
- * occur in the data, and the one that looks safe is a control byte — which makes `file` report the
- * source as binary and every `grep` skip it in silence. JSON escapes for us and the structure
- * carries the boundaries.
- *
- * SHA-256 rather than a cheap non-cryptographic hash. The client's own `sendFingerprint` may
- * collide harmlessly — a collision there costs one wasted key — while a collision HERE suppresses
- * a message somebody wrote.
+ * WHAT MAKES TWO SENDS THE SAME MESSAGE — the digest the content claim is keyed on. Every member
+ * is something a RECIPIENT can perceive; the exclusions are load-bearing: `draftId` (the field
+ * the defect moves), `mailboxId` (already a KEY COLUMN), the minted Message-ID, the idempotency
+ * key, the thread id, the From display name. `forwardOf` IS in it: two forwards of DIFFERENT
+ * originals with no note agree on everything else. Addresses compare as the delivery sees them.
+ * Attachments fold by `(filename, contentType, sizeBytes)` in ONE sorted list. `JSON.stringify`
+ * over an ARRAY, never a delimiter join (the safe-looking separator is a control byte). SHA-256:
+ * a collision HERE suppresses a message somebody wrote.
  */
 export function sendContentFingerprint(input: {
   to: readonly EmailAddress[];
@@ -744,22 +485,13 @@ export function sendContentFingerprint(input: {
   sendAt: Date | null;
   /**
    * Inline files, digested by CONTENT. Staged files never reach here — a send carrying them is
-   * excluded from the content claim entirely (see {@link SendService.reserve}), because metadata is
-   * not an identity and a ticket id is not one either.
-   *
-   * The metadata-only fold was wrong for inline files and the counter-example is ordinary: attach
-   * `invoice.csv` reading `amount\n100\n`, notice the figure is wrong, correct it to
-   * `amount\n900\n` and send the correction to the same person with the same subject. Same name,
-   * same type, same byte length — the digests collided and the CORRECTION never left, while the
-   * screen said the message had already been sent. Silently not sending is worse than sending
-   * twice, which is the whole ordering this guard is built on.
-   *
-   * The bytes were available all along: an inline attachment arrives decoded on the request.
-   *
-   * Staged files cannot be digested here at all — they live in object storage and reaching for them
-   * would put a network call inside the reserve transaction. Folding them by metadata was measured
-   * refusing a corrected 5 MiB file that kept its name, type and size, so a staged send is now
-   * excluded from the claim outright rather than covered by an identity that is not one.
+   * excluded from the content claim entirely (see `reserve`): metadata is not an identity. The
+   * metadata fold was wrong for inline files, and the counter-example is ordinary: attach
+   * `invoice.csv`, correct one figure, send the correction — same name, type, byte length; the
+   * digests collided and the CORRECTION never left while the screen said sent. Silently not
+   * sending is worse than sending twice. The bytes were available all along: an inline attachment
+   * arrives decoded. Staged files were measured refusing a corrected 5 MiB file the same way, so
+   * they are excluded outright rather than covered by an identity that is not one.
    */
   attachments: ReadonlyArray<{
     filename: string; contentType: string; sizeBytes: number; contentSha256: string | null;
@@ -785,61 +517,27 @@ export function sendContentFingerprint(input: {
 }
 
 /**
- * The Drafts-row sentence for a definite non-delivery whose cause has no sentence of its own.
- *
- * A `ServiceError` carries one already and it is quoted verbatim ({@link SendService.finalizeFailed});
- * this is for everything else — a socket reset while logging in, a storage read that threw, any
- * unexpected fault inside the pre-SMTP window. Those errors' messages are diagnostics, not
- * sentences: they name hosts, ports and library internals, and they belong in the log this pass
- * already writes, not in a row a person reads.
- *
- * It states the one fact that is certain and the one action that works. It deliberately does NOT
- * say "check your Sent folder" — that sentence is reserved for `unverified`, where the fate really
- * is unknown, and saying it here is the exact lie the pre-SMTP window was built to stop telling.
+ * The Drafts-row sentence for a definite non-delivery whose cause has no sentence of its own. A
+ * `ServiceError` carries one and is quoted verbatim (`finalizeFailed`); this is for everything
+ * else — a socket reset during login, a storage read that threw, any unexpected fault inside the
+ * pre-SMTP window. Those messages are diagnostics, not sentences: they name hosts, ports and
+ * library internals, and belong in the log. It states the one certain fact and the one action
+ * that works. It deliberately does NOT say "check your Sent folder" — that sentence is reserved
+ * for `unverified`, where the fate really is unknown; saying it here is the exact lie the
+ * pre-SMTP window was built to stop.
  */
 export const SEND_FAILED_SENTENCE =
   "This was not sent — the message never reached your mail server. Send it again.";
 
 /**
- * HOW LONG ONE SEND ATTEMPT MAY HOLD THE PRESS BEFORE THE ANSWER STOPS WAITING FOR IT.
- *
- * Not a network deadline — {@link DEFAULT_NET_TIMEOUTS} already bounds each individual socket
- * operation (15 s to connect, 25 s of inactivity). The gap this closes is that a send is a
- * SEQUENCE of those: a cold IMAP dial + LOGIN + LIST, then a full SMTP session, then a second
- * LIST, then an APPEND of the whole message. Every one of them can sit just under its own
- * deadline without any of them tripping, so the sequence had no ceiling at all, and the press
- * that started it had nothing to wait on but the platform's own kill.
- *
- * ── WHAT IT COVERS, STATED EXACTLY, BECAUSE "THE WHOLE ATTEMPT" WAS TOO STRONG ─────────────
- *
- * The clock starts once the RESERVATION HAS COMMITTED and covers everything after it: assembly,
- * the dial, the submission, the finalize, the projection — every step that touches a network or
- * can hang. It does NOT cover `reserve` itself, and that is a real residual rather than an
- * oversight to gloss: `reserve` takes `FOR UPDATE` on the draft row and its `recordChange` takes
- * the account's seq lock, and a lock wait does not throw. It is left outside because a breach
- * there would have no reservation to finalize and no key to answer under, so bailing would risk
- * a transaction that commits afterwards — a reservation nobody told the client about. The state
- * that resolves is a same-key retry, which is what `resumeExisting` is for; a ceiling that
- * manufactured a second unresolvable state to bound a lock wait would be the worse trade.
- * `totalMs` on the phase line DOES include the reservation, so the number an operator reads is
- * the whole request even though the clock is not.
- *
- * The number is chosen against what the sequence actually costs, not guessed. A send opens a
- * FRESH adapter every time, so every press pays a full cold dial; on some providers that dial is
- * the largest phase of the attempt and swings by nearly an order of magnitude between consecutive
- * presses on one mailbox, while on others the whole attempt finishes in a fraction of a second.
- * A ceiling therefore has to sit far above every healthy attempt and far below the 60-second
- * serverless invocation limit that is otherwise the only thing that ends a hung one — being
- * killed BY the platform is the one failure with no error handling at all: no `finally`, no
- * `close()`, no response, and a reservation left `pending` with nobody told.
- *
- * WHAT A BREACH MEANS depends on where it lands, and the boundary is the one the pre-SMTP
- * window already draws — "has anything been offered to a server yet":
- *   before `adapter.send`   nothing was offered, so this is a DEFINITE non-delivery and is
- *                           recorded as one ({@link SEND_TIMEOUT_SENTENCE}, status `failed`).
- *   at or after it          the fate is genuinely UNKNOWN. The reservation is left `pending`
- *                           with its key intact and the answer is `queued`. Nothing is
- *                           resent — see {@link SendResult}.
+ * HOW LONG ONE SEND ATTEMPT MAY HOLD THE PRESS. Not a network deadline — `DEFAULT_NET_TIMEOUTS`
+ * bounds each socket operation; a send is a SEQUENCE of them, each able to sit just under its own
+ * deadline, so the sequence had no ceiling but the platform kill. The clock starts once the
+ * RESERVATION HAS COMMITTED; `reserve` stays outside — a breach there has no reservation to
+ * finalize and no key to answer under (`resumeExisting` resolves that state). The number sits far
+ * above every healthy attempt and far below the 60-second invocation kill, which has no `finally`
+ * and no response. A BREACH means: before `adapter.send` — DEFINITE non-delivery (`failed`); at
+ * or after — UNKNOWN fate, answered `queued`, nothing resent.
  */
 export const SEND_ATTEMPT_CEILING_MS = 20_000;
 
@@ -854,26 +552,14 @@ export const SEND_TIMEOUT_SENTENCE =
   "This was not sent — your mail server did not answer in time. Send it again.";
 
 /**
- * The outcome the route maps to an HTTP response:
- *  - `sent`       → 200 { status, providerMessageId } (+ X-Sync-Seq)
- *  - `unverified` → 200 { status } — ambiguous, surfaced ("check Sent before retrying")
- *  - `failed`     → 409 — a definitively-undelivered prior attempt under this key
- *  - `in_flight`  → 409 — a genuinely-concurrent attempt is mid-flight
- *  - `queued`     → 202 — THIS request reserved the send and then stopped waiting for the
- *                   submission at {@link SEND_ATTEMPT_CEILING_MS}. The envelope may or may not
- *                   have reached the server, so this is the SAME unknown fate `unverified`
- *                   describes, caught earlier and while the attempt is still alive.
- *
- * `queued` is distinct from `in_flight` on purpose, though both say "not settled yet". `in_flight`
- * is what a SECOND request is told about someone else's live attempt; `queued` is what the
- * OWNING request is told about its own. The reader-facing difference is that `queued` is the only
- * one of the two that can be produced by a first press, so it is the one the compose surface has
- * to be able to close on.
- *
- * NOTHING IS EVER RESENT ON `queued`. The reservation stays `pending` with its `send_key`
- * standing, which is precisely the state {@link SendService.resumeExisting} reads: a same-key
- * retry answers `in_flight` while the attempt could still be alive and runs verify-by-Sent once
- * it provably is not. One press stays one delivery.
+ * The outcome the route maps: `sent` → 200 (+ X-Sync-Seq); `unverified` → 200, ambiguous,
+ * surfaced; `failed` → 409, a definitively-undelivered prior attempt under this key; `in_flight`
+ * → 409, a concurrent attempt mid-flight; `queued` → 202 — THIS request reserved the send and
+ * stopped waiting at `SEND_ATTEMPT_CEILING_MS`: `unverified`'s unknown fate, caught while the
+ * attempt is alive. `in_flight` is told to a SECOND request about someone else's attempt;
+ * `queued` to the OWNING request about its own — the one a first press can produce. NOTHING IS
+ * EVER RESENT ON `queued`: the reservation stays `pending` with its key, exactly what
+ * `resumeExisting` reads. One press stays one delivery.
  */
 export interface SendResult {
   status: "sent" | "unverified" | "failed" | "in_flight" | "queued";
@@ -883,16 +569,13 @@ export interface SendResult {
 }
 
 /**
- * HOW a stale reservation was decided — the half of {@link ResolveStaleOutcome} the reconciling
- * pass counts and the client path discards.
- *
- *  · `mirror`      the account's own `messages` mirror already holds the minted id. No dial.
- *  · `probe`       the Sent folder was searched over a live connection and answered.
- *  · `undialable`  no dial was possible or permitted and the caller asked for a decision anyway
- *                  (a `disabled` mailbox, a mailbox whose credentials are gone, a give-up).
- *  · `elsewhere`   the compare-and-swap matched nothing: another resolver had already written a
- *                  terminal state, and `status` is THEIRS, re-read.
- *  · `deferred`    nothing was written and nothing is claimed — try again next cycle.
+ * HOW a stale reservation was decided — the half of `ResolveStaleOutcome` the reconciling pass
+ * counts and the client path discards. `mirror` — the account's own `messages` mirror holds the
+ * minted id; no dial. `probe` — the Sent folder was searched over a live connection and answered.
+ * `undialable` — no dial was possible or permitted and the caller asked for a decision anyway (a
+ * `disabled` mailbox, credentials gone, a give-up). `elsewhere` — the compare-and-swap matched
+ * nothing: another resolver already wrote a terminal state, and `status` is THEIRS, re-read.
+ * `deferred` — nothing was written and nothing is claimed; try again next cycle.
  */
 export type ResolveStaleBy = "mirror" | "probe" | "undialable" | "elsewhere" | "deferred";
 
@@ -910,15 +593,12 @@ export interface ResolveStaleOutcome {
 }
 
 /**
- * The ceiling as a thing that can be raced — one timer per attempt, shared by both phases.
- *
- * ONE clock for the whole attempt rather than one per phase, because the budget being spent is
- * the reader's patience and it does not reset when the dial finishes. A per-phase timer would
- * let a slow open and a slow submission add up to twice the ceiling, which is the shape of the
- * unbounded sequence this exists to end.
- *
- * `reached` NEVER rejects: it is a race arm, and an arm that can reject would turn "we ran out of
- * time" into a throw the caller has to distinguish from a real fault.
+ * The ceiling as a thing that can be raced — one timer per attempt, shared by both phases. ONE
+ * clock for the whole attempt rather than one per phase, because the budget being spent is the
+ * reader's patience and it does not reset when the dial finishes — a per-phase timer would let a
+ * slow open and a slow submission add up to twice the ceiling, the unbounded sequence this exists
+ * to end. `reached` NEVER rejects: it is a race arm, and an arm that can reject turns "we ran out
+ * of time" into a throw the caller has to distinguish from a real fault.
  */
 const CEILING_REACHED = Symbol("send-attempt-ceiling");
 
@@ -945,18 +625,14 @@ function startAttemptCeiling(ms: number): AttemptCeiling {
 }
 
 /**
- * Race a phase against the attempt ceiling.
- *
- * The losing promise is NOT cancelled and must not be — there is no way to un-send an envelope,
- * and on a host whose process outlives the response (the desktop's local engine) the abandoned
- * submission goes on to its own finalizer, which is exactly the recovery this design wants: the
- * row flips to `sent` on its own and the client learns it from the next `/sync`. On a serverless
- * host the invocation ends instead and the reservation is resolved by the same verify-by-Sent
- * recovery a crashed attempt has always used. Neither host resends.
- *
- * The caller is therefore responsible for what happens to an abandoned promise — see the two
- * call sites in {@link SendService.send}, which close a leaked socket in one case and let the
- * submission finish in the other.
+ * Race a phase against the attempt ceiling. The losing promise is NOT cancelled and must not be —
+ * there is no way to un-send an envelope. On a host whose process outlives the response (the
+ * desktop's local engine) the abandoned submission runs to its own finalizer: the row flips to
+ * `sent` on its own and the client learns it from `/sync` — exactly the recovery this design
+ * wants. On a serverless host the invocation ends and the reservation is resolved by the same
+ * verify-by-Sent recovery a crashed attempt uses. Neither host resends. The caller owns what
+ * happens to an abandoned promise — see the two call sites in `send`: one closes a leaked socket,
+ * the other lets the submission finish.
  */
 async function raceCeiling<T>(work: Promise<T>, ceiling: AttemptCeiling): Promise<{ timedOut: true } | { timedOut: false; value: T }> {
   const outcome = await Promise.race([
@@ -1001,27 +677,14 @@ type Reservation =
   | { kind: "existing"; row: typeof outboundSends.$inferSelect; mailboxId: string };
 
 /**
- * SendService (POST /drafts/:id/send) — the SECURITY-SENSITIVE
- * gated idempotent send. It owns a domain state machine in `outbound_sends`; the
- * route is NOT idempotent-marked and 400s when `Idempotency-Key` is absent.
- *
- * The invariant is NO double-send to a recipient, even across a crash between the
- * (non-transactional) SMTP call and its DB finalize. The mechanism:
- *
- *   1. RESERVE (short tx, NO network): reserve `(accountId, idempotencyKey)` via
- *      INSERT … ON CONFLICT DO NOTHING with a Message-ID minted UP FRONT, and mark
- *      the draft `sending`. A conflict means this key was already used → branch on
- *      the stored status instead of sending again.
- *   2. SMTP OUTSIDE the tx (no network in a tx): send with the pre-minted id.
- *   3. FINALIZE (short tx): record `sent` + providerMessageId; mark the draft `sent`.
- *   4. RECOVERY (verify-by-Sent): a same-key request that finds a STALE `pending`
- *      row searches the Sent folder for the minted id — FOUND ⇒ reconcile `sent`
- *      (NO resend); NOT FOUND ⇒ `unverified` (NO resend, surfaced). NEVER resend on
- *      ambiguity.
- *
- * Every draft/outbound_sends transition emits a `draft` change so clients
- * see send progress in `/sync`. All queries are account-scoped: a
- * cross-account draft id is a 404.
+ * SendService (POST /drafts/:id/send) — the gated idempotent send; the route 400s without
+ * `Idempotency-Key`. The invariant is NO double-send, even across a crash between the SMTP call
+ * and its finalize: 1. RESERVE (short tx, NO network) — `(accountId, idempotencyKey)` via INSERT
+ * … ON CONFLICT DO NOTHING, Message-ID minted UP FRONT, draft marked `sending`; a conflict
+ * branches on the stored status. 2. SMTP OUTSIDE the tx. 3. FINALIZE (short tx) — `sent` +
+ * providerMessageId. 4. RECOVERY (verify-by-Sent) — a same-key request finding a STALE `pending`
+ * row searches Sent for the minted id: FOUND ⇒ `sent`, NOT FOUND ⇒ `unverified`; NEVER resend on
+ * ambiguity. Every transition emits a `draft` change; a cross-account draft id is a 404.
  */
 export class SendService {
   async send(
@@ -1054,51 +717,15 @@ export class SendService {
     // ── 2. SMTP OUTSIDE the tx. Always close() in finally. ───────────────
     const { sendId, mintedMessageId, mailboxId, msg } = reservation;
 
-    // ══════════════════════════════════════════════════════════════════════════════════════════
-    //  THE PRE-SMTP WINDOW. EVERY FAILURE IN HERE IS A DEFINITE NON-DELIVERY, AND IS RECORDED
-    //  AS ONE.
-    // ══════════════════════════════════════════════════════════════════════════════════════════
-    //
-    // The reservation has COMMITTED and the draft says `sending`. What has not happened is any
-    // part of a delivery: `openSendAdapter` has not been called, no socket exists, no envelope has
-    // been offered to anybody. So the two assembly steps below — pulling staged bytes from object
-    // storage, and streaming a forward's original parts from IMAP — can only fail in one way, and
-    // this service knows exactly what that way means.
-    //
-    // It did not act on that knowledge. A throw left the invocation with the reservation still
-    // `pending`, and this service reads a stale `pending` row as an AMBIGUOUS send: `in_flight`
-    // for ten minutes, then verify-by-Sent, which finds nothing because nothing was ever sent, and
-    // finalizes `unverified` — "check your Sent folder before retrying". The docblock on the staged
-    // arm below described that as "the user retries under the same key", which is true and is not
-    // the same thing as harmless: the same key is precisely what routes them into the ambiguous
-    // recovery instead of a new send.
-    //
-    // The window is closed as a WINDOW rather than at the one call that raised the row, because
-    // every step in it has the identical property. `finalizeFailed` records the definite outcome,
-    // the draft comes back to `draft`, and the reader is told the truth — including, for a stale
-    // forward source, what it was and what fixes it.
-    // ── OPENING THE TRANSPORT IS INSIDE THIS WINDOW, AND THAT WAS A REVIEW FINDING ────────────
-    //
-    // The window first covered the two assembly steps only, and `openSendAdapter` sat one line
-    // below it. That is the same defect the window exists to close, one call later: decrypting the
-    // stored credential, dialling, and authenticating all happen before any envelope is offered,
-    // so a failure in any of them is a DEFINITE non-delivery — and it was leaving the reservation
-    // `pending`, which is the state that becomes `unverified` ten minutes later. Drawing the
-    // boundary at "assembly" rather than at "before anything was offered to a server" was an
-    // arbitrary line, and the arbitrary line is what the finding pointed at.
-    //
-    // `adapter.send` is deliberately still OUTSIDE it. That call is where the envelope goes to the
-    // server, so its failure is genuinely ambiguous — SMTP may have accepted before the error —
-    // and it keeps the verify-by-Sent recovery it has always had. The boundary is now exactly
-    // "has anything been offered to a server yet", which is the only line that makes `failed`
-    // honest.
-    //
-    // ── AND THE CEILING RUNS OVER BOTH HALVES, SPLIT ON EXACTLY THIS BOUNDARY ────────────────
-    //
-    // {@link SEND_ATTEMPT_CEILING_MS} bounds the attempt as a whole, and the window is what gives
-    // a breach its meaning. Running out of time in HERE is a definite non-delivery for the same
-    // reason a throw in here is: no envelope has been offered. Running out of time BELOW is the
-    // unknown fate, and is answered `queued` rather than finalized.
+    // THE PRE-SMTP WINDOW: EVERY FAILURE IN HERE IS A DEFINITE NON-DELIVERY, AND IS RECORDED AS
+    // ONE. The reservation has COMMITTED and the draft says `sending`; no socket exists and no
+    // envelope has been offered. A throw here used to leave the reservation `pending` — read as
+    // AMBIGUOUS: `in_flight` for ten minutes, then verify-by-Sent finalizes `unverified`, "check
+    // your Sent folder" for mail that never left. Closed as a WINDOW because every step in it has
+    // the identical property: `finalizeFailed` records the definite outcome, the draft returns to
+    // `draft`. OPENING THE TRANSPORT IS INSIDE IT — credential decrypt, dial and login all
+    // precede any envelope. `adapter.send` stays OUTSIDE: its failure is genuinely ambiguous. The
+    // ceiling splits on this same boundary: a timeout in here is `failed`; below, `queued`.
     const ceiling = startAttemptCeiling(deps.attemptCeilingMs ?? SEND_ATTEMPT_CEILING_MS);
     try {
       let adapter: Awaited<ReturnType<OpenSendAdapter>>;
@@ -1164,18 +791,13 @@ export class SendService {
 
       /**
        * THE SUBMISSION — one promise, so the ceiling can stop waiting for it WITHOUT stopping it.
-       *
-       * It owns `adapter.close()` in its own `finally` rather than the caller's, and that is the
-       * whole reason it is a closure: once the ceiling has been reached this function has returned
-       * and there is no caller left to run a `finally`. Closing the adapter out from under a live
-       * SMTP session would also be the one thing that could turn a slow send into a failed one.
-       *
-       * ON A HOST WHOSE PROCESS OUTLIVES THE RESPONSE this promise runs to completion and calls
-       * the real finalizer, so a send that beat the clock by a second still lands as `sent`, the
-       * draft's own change is emitted, and the client learns it from the next `/sync` — the
-       * standalone door's "the submission continues in its own loop", with no loop to write.
-       * On a serverless host the invocation ends here instead and the reservation is left for
-       * verify-by-Sent, exactly as a crashed attempt always was. Neither host resends.
+       * It owns `adapter.close()` in its own `finally`: once the ceiling is reached this function
+       * has returned and there is no caller left to run one — and closing the adapter under a
+       * live SMTP session is the one thing that could turn a slow send into a failed one. On a
+       * host whose process outlives the response this promise runs to completion and calls the
+       * real finalizer, so a send that beat the clock by a second still lands `sent` and the
+       * client learns it from `/sync`. On a serverless host the invocation ends and the
+       * reservation is left for verify-by-Sent. Neither host resends.
        */
       const submitting = (async (): Promise<SendResult> => {
         try {
@@ -1273,15 +895,12 @@ export class SendService {
 
   /**
    * Put the attachment bytes on the outgoing message — the whole of the pre-SMTP window.
-   *
-   * Extracted from {@link send} so the window has one boundary rather than two call sites the
-   * next person has to notice are related. Both steps are network, both run outside the
-   * reservation transaction, and neither persists a byte: the files land on the one
-   * `OutboundMessage` that both goes out and is appended to Sent.
-   *
-   * A failure is never swallowed and never partially applied. A send that quietly dropped an
-   * attachment the composer showed is a WRONG send, which is the ruling the forward path made
-   * first and the staged path inherited.
+   * Extracted from `send` so the window has one boundary rather than two call sites the next
+   * person has to notice are related. Both steps are network, both run outside the reservation
+   * transaction, and neither persists a byte: the files land on the one `OutboundMessage` that
+   * both goes out and is appended to Sent. A failure is never swallowed and never partially
+   * applied — a send that quietly dropped an attachment the composer showed is a WRONG send, the
+   * ruling the forward path made first and the staged path inherited.
    */
   private async assemble(
     ctx: ServiceContext,
@@ -1291,27 +910,16 @@ export class SendService {
   ): Promise<void> {
     const { msg } = reservation;
 
-    // ── STAGED: PULL THE BYTES FROM OBJECT STORAGE onto the outgoing message ────────────────
-    //
-    // Here, outside the reservation tx (it is network) and BEFORE `send`, exactly where the
-    // forward's IMAP stream runs and for the same reasons: the files must be on the one
-    // `OutboundMessage` that both goes out and is appended to Sent, and they are never persisted.
-    //
-    // A failure is NOT swallowed. `fetch` throws when an object is gone or is bigger than its
-    // ticket declared, and that ends the send — as a DEFINITE non-delivery, recorded by the
-    // window's own handler in `send` (`finalizeFailed`), because nothing has been offered to any
-    // server at this point. This used to read "the reservation is `pending` — the user retries
-    // under the same key", which is how a definite failure came to be recovered as an ambiguous
-    // one. A send that quietly dropped an attachment the composer showed is a wrong send, which
-    // is the same ruling the forward path already made.
-    //
-    // The bytes were already refused against the cap BY DECLARATION in `reserve`; `fetch`
-    // re-measures each object against its own ticket, so what lands here can only be smaller.
-    //
-    // DEDUPED, and the same list `reserve` weighed. One ticket named twice is one file: the bytes
-    // are pulled once and the recipient gets one copy. Both halves of that mattered — before it,
-    // a repeated id was a second object-storage download AND a second copy of the file on the
-    // message, so the amplification and a plain correctness bug sat on the same line.
+    // STAGED: PULL THE BYTES FROM OBJECT STORAGE onto the outgoing message — outside the
+    // reservation tx (network), BEFORE `send`, where the forward's IMAP stream runs and for the
+    // same reasons: the files must be on the one `OutboundMessage`, never persisted. A failure is
+    // NOT swallowed: `fetch` throws when an object is gone or bigger than its ticket declared,
+    // ending the send as a DEFINITE non-delivery (`finalizeFailed`) — nothing has been offered to
+    // any server. This used to read "the user retries under the same key", which is how a
+    // definite failure came to be recovered as an ambiguous one. The bytes were refused against
+    // the cap BY DECLARATION in `reserve`; `fetch` re-measures, so what lands can only be
+    // smaller. DEDUPED, the same list `reserve` weighed: one ticket named twice is one file —
+    // before this, a repeat was a second download AND a second copy on the message.
     const stagedIds = dedupeStagedIds(input.stagedAttachmentIds);
     if (stagedIds.length > 0 && deps.stagedAttachments) {
       const staged = await deps.stagedAttachments.fetch(ctx.accountId, stagedIds, ctx.now());
@@ -1336,40 +944,14 @@ export class SendService {
   }
 
   /**
-   * PROJECT THE SENT COPY INTO THE DATABASE NOW, instead of waiting for the mailbox to be re-read.
-   *
-   * `ImapAdapter.send` has already APPENDed this message to the user's own Sent folder, so the
-   * master holds it before this function runs. Until this existed, the `messages` row was written
-   * only by the sync worker's next pass over that folder — a whole poll interval between pressing
-   * Send and the message existing anywhere the reader can see it.
-   * `sent-record.ts#recordSentMessage` is the projection and its header carries the design; this
-   * function is only the placement and the failure policy, and both are load-bearing.
-   *
-   * ── A SEPARATE TRANSACTION, AFTER THE FINALIZE, AND NEVER INSIDE IT ────────────────────────
-   *
-   * Folding this into `finalizeSent` would put a MIME parse, a thread resolution and five entity
-   * writes inside the transaction that holds the account's seq row lock and issues the
-   * mailbox doorbell — and, far worse, would make a failure to record roll the finalize back. The
-   * reservation would stay `pending` and the draft would never reach `sent` for a message that HAS
-   * ALREADY BEEN DELIVERED, which is the single outcome the whole reservation design exists to
-   * prevent (the same argument `finalizeSent`'s `SKIP LOCKED` note makes about a lock wait).
-   *
-   * ── AND A FAILURE IS LOGGED, NEVER THROWN ─────────────────────────────────────────────────
-   *
-   * The mail is gone. Nothing this function can discover changes that, and a 500 answering a send
-   * that succeeded is worse than a row that shows up on the worker's next cycle — which it will,
-   * because the Sent-folder watch is untouched and remains the backstop for exactly this case. So
-   * every fault is swallowed: a bad parse, an oversize body `normalizeMime` refuses, a serialization
-   * failure, a locator the instance table rejects. The send answers `sent` either way.
-   *
-   * ── AND THE RESPONSE'S `seq` IS DELIBERATELY STILL THE FINALIZE'S ─────────────────────────
-   *
-   * `seq` becomes `X-Sync-Seq`, the mark the client drains past. It is NOT advanced to the
-   * projection's rows, and it does not need to be: the client issues its drain AFTER this response
-   * arrives, and a `/sync` request reads the log at request time, so this transaction has already
-   * committed by the time that read happens. The message row is in the very next drain either way.
-   * Leaving `seq` alone keeps a send's echo meaning exactly what it always meant — the draft's own
-   * transition — and keeps a skipped projection indistinguishable from the pre-projection wire.
+   * PROJECT THE SENT COPY INTO THE DATABASE NOW, instead of waiting for the mailbox re-read.
+   * `ImapAdapter.send` has APPENDed to Sent, so the master holds it; until this, the `messages`
+   * row waited a whole poll interval. A SEPARATE TRANSACTION, AFTER the finalize: folding it in
+   * would put a MIME parse and five writes inside the transaction holding the seq lock — and a
+   * projection failure would roll the finalize back, leaving `pending` for a message ALREADY
+   * DELIVERED. A FAILURE IS LOGGED, NEVER THROWN: the mail is gone, and a 500 for a successful
+   * send is worse than a row the worker writes next cycle anyway. `seq` stays the FINALIZE's: the
+   * client drains after this response, so the row is in the next drain either way.
    */
   private async projectSentCopy(
     ctx: ServiceContext,
@@ -1426,22 +1008,16 @@ export class SendService {
     ctx: ServiceContext, draftId: string, idempotencyKey: string, deps: SendDeps, input: SendInput,
   ): Promise<Reservation> {
     const inlineTotal = (input.attachments ?? []).reduce((n, a) => n + a.content.byteLength, 0);
-    // ── STAGED REFERENCES: WHAT THEY WEIGH, BEFORE ANYTHING IS TRANSFERRED ──────────────────
-    //
-    // Outside the transaction, deliberately: this is a second query and the reserve tx holds a
-    // `FOR UPDATE` lock on the draft row. It is also the ONLY place the total can be refused
-    // cheaply — after the reservation the bytes have to be pulled to be measured, and an
-    // authenticated caller that can make this process download an arbitrary amount it then throws
-    // away is a cost hole an authenticated caller could open at will.
-    //
-    // The numbers are the client's own declarations from mint time and are treated as such: they
-    // bound what we are WILLING to fetch. `fetch` re-measures, and a body larger than its ticket
-    // declared never reaches the transport.
-    //
-    // DEDUPED HERE TOO, and it has to be the same list `send` will fetch, or the total refused
-    // against the cap is not the total that gets pulled. Summing per OCCURRENCE would also let a
-    // repeated one-byte ticket inflate the declared total until the cap fired on bytes nobody was
-    // going to transfer twice — a 413 for a send that is under the limit.
+    // STAGED REFERENCES: WHAT THEY WEIGH, BEFORE ANYTHING IS TRANSFERRED. Outside the
+    // transaction, deliberately: it is a second query and the reserve tx holds `FOR UPDATE` on
+    // the draft row — and it is the ONLY place the total can be refused cheaply; after the
+    // reservation the bytes must be pulled to be measured, and a caller that can make this
+    // process download an arbitrary amount it then throws away is a cost hole. The numbers are
+    // the client's own mint-time declarations and are treated as such: they bound what we are
+    // WILLING to fetch; `fetch` re-measures, and a body larger than its ticket never reaches the
+    // transport. DEDUPED HERE TOO — it must be the same list `send` will fetch, or the refused
+    // total is not the pulled total; summing per OCCURRENCE would let a repeated one-byte ticket
+    // inflate the total until the cap fired on bytes nobody transfers twice.
     const stagedIds = dedupeStagedIds(input.stagedAttachmentIds);
     let stagedTotal = 0;
     /**
@@ -1452,19 +1028,14 @@ export class SendService {
      */
     const stagedManifest: Array<{ filename: string; contentType: string; sizeBytes: number }> = [];
     /**
-     * A STAGED-REFERENCE PROBLEM, HELD RATHER THAN THROWN — because an idempotent REPLAY must
-     * not be turned into an error by it.
-     *
-     * The refusals below are about the tickets a client named, and a same-key retry that reaches
-     * the CONFLICT branch is not asking to send anything: it is asking what happened last time.
-     * Thrown here, an expired ticket would answer "your upload expired" to a replay of a send
-     * that SUCCEEDED — telling the user their message failed when the mail is in their Sent
-     * folder, which is the worst ending available on this path. So the fault is carried into the
-     * transaction and raised beside the disabled-mailbox check, AFTER the conflict branch has
-     * returned, on exactly the same reasoning that check's own header sets out.
-     *
-     * `stagedTotal` is left at 0 when a fault is held, so the cap check (which runs before the
-     * INSERT) cannot fire a spurious 413 off a partial sum and mask the real answer.
+     * A STAGED-REFERENCE PROBLEM, HELD RATHER THAN THROWN — an idempotent REPLAY must not be
+     * turned into an error by it. The refusals are about the tickets a client named, and a
+     * same-key retry that reaches the CONFLICT branch is not asking to send anything: it is
+     * asking what happened last time. Thrown here, an expired ticket would answer "your upload
+     * expired" to a replay of a send that SUCCEEDED — the worst ending on this path. So the fault
+     * is carried into the transaction and raised beside the disabled-mailbox check, AFTER the
+     * conflict branch has returned. `stagedTotal` stays 0 when a fault is held, so the cap check
+     * cannot fire a spurious 413 off a partial sum and mask the real answer.
      */
     let stagedFault: ServiceError | null = null;
     if (stagedIds.length > 0) {
@@ -1508,19 +1079,15 @@ export class SendService {
     }
     const attachTotal = inlineTotal + stagedTotal;
     return asTx(ctx).transaction(async (tx): Promise<Reservation> => {
-      // `FOR UPDATE`, because this read decides the SENDING IDENTITY. The draft's `mailboxId`
-      // is PATCHable while the row is a draft (`DraftsService.update`), and a plain read-
-      // committed SELECT does not wait for a concurrent move's row lock — it reads the
-      // pre-move snapshot, so the envelope, the minted Message-ID and the SMTP dial would all
-      // be the OLD identity's while the row (and every screen) commits the new one. Locking
-      // the row serializes the two writers: reserve either waits and reads what the move
-      // committed, or wins and flips the row to `sending`, at which point the move's own
-      // status predicate refuses it. Measured, not reasoned — `draft-move-race.pg.test.ts`
-      // watched the plain SELECT dial the pre-move mailbox across two real connections.
-      // The lock is safe to WAIT on here (unlike the finalize's mailbox doorbell, which must
-      // `SKIP LOCKED`): nothing has been sent yet, every other holder of a drafts row lock is
-      // a short CRUD transaction, and a reserve that waits a few milliseconds is a reserve
-      // that tells the truth.
+      // `FOR UPDATE`, because this read decides the SENDING IDENTITY. The draft's `mailboxId` is
+      // PATCHable while the row is a draft, and a plain read-committed SELECT does not wait for a
+      // concurrent move's row lock — it reads the pre-move snapshot, so the envelope, the minted
+      // Message-ID and the SMTP dial would all be the OLD identity's while the row commits the
+      // new one. The lock serializes the two writers: reserve waits and reads what the move
+      // committed, or wins and flips to `sending`, at which point the move's own status predicate
+      // refuses. Measured — `draft-move-race.pg.test.ts` watched the plain SELECT dial the
+      // pre-move mailbox. Safe to WAIT on here (unlike the finalize's doorbell): nothing has been
+      // sent yet and every other holder is a short CRUD transaction.
       const [d] = await dialect(ctx.db).forUpdate(tx.select().from(drafts)
         .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)))
         .limit(1));
@@ -1532,22 +1099,15 @@ export class SendService {
       }).from(mailboxes)
         .where(eq(mailboxes.id, d.mailboxId)).limit(1);
 
-      // ── THE ATTACHMENT CAP, refused BEFORE the reservation commits ────────────────────────
-      //
-      // Enforced on the decoded bytes (the route already rejected a body over the platform limit);
-      // this is the product rule and the number the compose surface states. It throws INSIDE the
-      // transaction and therefore rolls it back, so nothing is reserved and no draft leaves
-      // `draft` — the property this check has always had.
-      //
-      // It reads the mailbox row, which is why it is here rather than ahead of the transaction as
-      // it used to be: the ceiling is per-mailbox now ({@link effectiveAttachmentCap}), the
-      // SMALLER of the host's platform limit and what this mailbox's own submission server
-      // announced. The reordering costs one thing worth naming — a send over the cap on a draft
-      // that does not exist now answers 404 rather than 413, because the draft is loaded first.
-      // That is the more truthful of the two answers to a request naming nothing.
-      // The surface is `sendSurfaceFor`'s and not `deps`' directly — see that function: staged
-      // bytes did not ride this host's request body, so the host's declaration about that body is
-      // not a statement about them.
+      // THE ATTACHMENT CAP, refused BEFORE the reservation commits. Enforced on the decoded bytes
+      // (the route already rejected an oversize body); this is the product rule the compose
+      // surface states. It throws INSIDE the transaction, rolling it back — nothing is reserved
+      // and no draft leaves `draft`. It reads the mailbox row, which is why it sits here rather
+      // than ahead of the transaction: the ceiling is per-mailbox now (`effectiveAttachmentCap`),
+      // the SMALLER of the host's limit and what this mailbox's submission server announced. The
+      // reorder costs one thing worth naming: a send over the cap on a nonexistent draft answers
+      // 404 rather than 413 — the more truthful answer. The surface is `sendSurfaceFor`'s, not
+      // `deps`' directly: staged bytes did not ride this host's request body.
       const cap = effectiveAttachmentCap(
         sendSurfaceFor(deps.surfaceMaxTotalBytes, input),
         mb?.smtpMaxSizeBytes ?? null,
@@ -1581,66 +1141,27 @@ export class SendService {
         return { kind: "existing", row: existing, mailboxId: d.mailboxId };
       }
 
-      // ── A DISABLED MAILBOX REFUSES HERE, AND THE ROLLBACK IS THE POINT ─────────────────────
-      //
-      // Until this check existed a disabled mailbox was refused only BY ACCIDENT, and the
-      // accident was not even reliable. `MailboxService.delete` disables the row AND deletes its
-      // credentials, so `makeSendAdapter` throws 502 "mailbox has no IMAP credentials" — but it
-      // throws in `send()`, AFTER this transaction has committed the reservation and flipped the
-      // draft to `sending`. The draft is then stuck out of `draft` forever (no new key can send
-      // it — see the status check below), and a same-key retry walks it to `in_flight` and,
-      // once the row goes stale, to `unverified`: *"check your Sent folder"* for a message that
-      // never left the building. A user who is told to go look stops looking. That is the worst
-      // ending available here — worse than an error, because it ends the investigation.
-      //
-      // The other three disable paths do not even get the accident. `disableExcessMailboxes`
-      // (billing downgrade), `markMailboxStoodDown` (the organizer lease) and a plain
-      // `PATCH {status:'disabled'}` all set the status and LEAVE THE CREDENTIALS IN PLACE, so
-      // `makeSendAdapter` opens happily and the mail is genuinely sent — from a mailbox the
-      // account is no longer entitled to, or one another organizer now owns. So this is not only
-      // moving a refusal earlier; for three of the four ways a mailbox becomes disabled it is
-      // the only refusal there is.
-      //
-      // ── WHY IT SITS AFTER THE INSERT AND NOT BEFORE IT ────────────────────────────────────
-      //
-      // Placing it above the INSERT would also catch the CONFLICT branch, which returns before
-      // reaching here — and that branch is idempotent REPLAY. A client retrying its key after a
-      // send that SUCCEEDED, on a mailbox disabled in the meantime, would be told
-      // `mailbox_disabled` instead of being handed back the stored `sent` result: the same
-      // defect this check exists to remove, pointing the other way. So it belongs with the
-      // other NEW-reservation preconditions, and it costs nothing to be here — throwing
-      // anywhere in this callback rolls the whole transaction back, the INSERT above included,
-      // exactly as the two checks below already rely on. The draft never leaves `draft` and no
-      // `outbound_sends` row survives; a test asserts both against real Postgres, because an
-      // in-memory Postgres cannot see a rollback it never had to perform.
-      //
-      // ONLY `'disabled'`. `'error'` is the worker's IMAP verdict and SMTP is a different
-      // transport; `sync_blocked_reason` is a note about OUR infrastructure and is written
-      // without touching `status` at all. Neither may strand a user's outbox — see the longer
-      // note on `DraftsService.validMailbox`.
-      // THE HELD STAGED FAULT, raised here and not where it was found — see `stagedFault`. It
-      // sits with the disabled-mailbox check for the identical reason that check gives: above the
-      // INSERT it would also catch the CONFLICT branch, which returns before reaching here, and
-      // that branch is idempotent REPLAY. Throwing anywhere in this callback rolls the whole
-      // transaction back, the INSERT above included, so a NEW reservation refuses exactly as it
-      // would have and no `outbound_sends` row survives.
+      // A DISABLED MAILBOX REFUSES HERE, AND THE ROLLBACK IS THE POINT. It used to be refused by
+      // accident: `MailboxService.delete` also deletes credentials, so `makeSendAdapter` threw —
+      // AFTER the reservation committed, leaving the draft stuck and a same-key retry walking to
+      // `unverified`. The other three disable paths (billing downgrade, the organizer lease, a
+      // plain PATCH) LEAVE CREDENTIALS IN PLACE, so the mail was genuinely sent from a mailbox
+      // the account no longer holds — for those this is the only refusal. AFTER THE INSERT: above
+      // it, the CONFLICT branch — idempotent REPLAY — would be told `mailbox_disabled` instead of
+      // its stored `sent` result; a throw here rolls the INSERT back too. ONLY `'disabled'`:
+      // `'error'` is the worker's IMAP verdict, SMTP a different transport. THE HELD STAGED FAULT
+      // is raised here for the identical reason.
       if (stagedFault) throw stagedFault;
 
-      // ── THE RECIPIENT CAP, with the other NEW-RESERVATION preconditions ─────────────────
-      //
-      // The three lists are on the row this transaction has already locked, so the total costs
-      // nothing extra to compute — and this is the first moment all three exist together: a
-      // partial update names one field and cannot know the other two. See
-      // {@link SEND_MAX_RECIPIENTS} for why the per-message total lives here and the per-field
-      // one lives at the draft write.
-      //
-      // BELOW THE INSERT, for the reason the two checks above it give in full: the CONFLICT
-      // branch returns before reaching here, and that branch is idempotent REPLAY. Placed above,
-      // this would answer 413 to a client retrying its key after a send that SUCCEEDED — a draft
-      // written before this ceiling existed would have its stored `sent` result replaced by a
-      // refusal, which is the no-lie contract broken by the guard meant to protect it. A review
-      // round caught it there; the position is now the same as the disabled-mailbox check's, and
-      // costs nothing, since a throw anywhere in this callback rolls the INSERT back too.
+      // THE RECIPIENT CAP, with the other NEW-RESERVATION preconditions. The three lists are on
+      // the row this transaction already locked, so the total costs nothing — and this is the
+      // first moment all three exist together: a partial update names one field and cannot know
+      // the other two. See `SEND_MAX_RECIPIENTS` for why the per-message total lives here and the
+      // per-field one at the draft write. BELOW THE INSERT, for the reason the two checks above
+      // give in full: the CONFLICT branch returns before reaching here, and that branch is
+      // idempotent REPLAY — placed above, this would answer 413 to a client retrying its key
+      // after a send that SUCCEEDED. The position matches the disabled-mailbox check's and costs
+      // nothing: a throw anywhere in this callback rolls the INSERT back.
       const recipientCount = ((d.to as EmailAddress[] | null) ?? []).length
         + ((d.cc as EmailAddress[] | null) ?? []).length
         + ((d.bcc as EmailAddress[] | null) ?? []).length;
@@ -1675,27 +1196,16 @@ export class SendService {
         throw new ServiceError("validation_failed", 400, "draft has no recipients");
       }
 
-      // ── RFC 5322 §3.6.4: References is a CHAIN, not a pointer ─────────────────────────
-      //
-      // This used to send `references: inReplyTo` — the parent's Message-ID alone. The spec
-      // says the reply's References is the parent's References followed by the parent's
-      // Message-ID, and the practical consequence of sending only the parent is that a
-      // recipient whose client threads on the LEFTMOST reference anchors our reply mid-chain
-      // and mints a SECOND conversation for what is one exchange. Our own ingest is keyed on
-      // the leftmost entry for exactly that reason (see `threads.rootMessageIdHeader`), so we
-      // were sending other people mail we would have mis-threaded ourselves.
-      //
-      // ── WHY ROOT+PARENT AND NOT THE FULL CHAIN ────────────────────────────────────────
-      //
-      // We do not store the arriving `References` header anywhere — `messages` has no column
-      // for it — so the complete chain is not reconstructable here. What we DO store is the
-      // thread's root, and root+parent is the pair that carries the meaning: the root anchors
-      // the conversation for leftmost-threading clients, the parent places this reply under
-      // the message it answers. Middle ancestors are informational; losing them degrades a
-      // reader's ability to reconstruct order, it does not split the thread.
-      //
-      // The complete fix is to persist `References` at ingest and replay it here. Until then
-      // this is an approximation, and it is stated as one rather than dressed up as compliance.
+      // RFC 5322 §3.6.4: References is a CHAIN, not a pointer. This used to send `references:
+      // inReplyTo` — the parent's Message-ID alone; a recipient whose client threads on the
+      // LEFTMOST reference then anchors our reply mid-chain and mints a SECOND conversation. Our
+      // own ingest keys on the leftmost entry (`threads.rootMessageIdHeader`), so we were sending
+      // mail we would have mis-threaded ourselves. ROOT+PARENT, not the full chain: the arriving
+      // `References` header is not stored (`messages` has no column), so the chain is not
+      // reconstructable — the root anchors the conversation, the parent places the reply; middle
+      // ancestors are informational, and losing them degrades order, not threading. The complete
+      // fix is to persist `References` at ingest; until then this is an approximation, stated as
+      // one.
       let inReplyTo: string | undefined;
       let references: string | undefined;
       if (d.inReplyToMessageId) {
@@ -1715,24 +1225,14 @@ export class SendService {
       }
 
       /**
-       * THE LAST GATE BEFORE THE BYTES LEAVE THE BUILDING.
-       *
-       * `DraftsService` already sanitized this html on the way in, so this pass is normally a
-       * no-op — `sanitizeOutboundHtml` is idempotent, and a test asserts that rather than
-       * assuming it. It is here because "DraftsService is the only writer" is a
-       * claim about today: the AI workflow code under `packages/core/src/ai/workflows/` already
-       * inserts into `drafts` directly — html included, now that a generated reply is promoted
-       * to both halves — and the next writer will not remember to ask. Sanitizing where the
-       * envelope is assembled closes every writer at once instead of every known writer.
-       *
-       * Promoted markup is a FIXED POINT of this pass by construction — paragraphs, breaks and
-       * escaped text, every one of them inside the allow-list — and that is asserted rather than
-       * assumed, so the direct writer does not depend on this gate to be storing legal markup.
-       *
-       * `text` stays `d.body` untouched. When the draft is rich, `body` IS the alternative
-       * derived from this html at write time; deriving it again here would be a second
-       * rendering of the same content that could differ from the stored one, which is the exact
-       * disagreement between the two parts that deriving it once exists to prevent.
+       * THE LAST GATE BEFORE THE BYTES LEAVE THE BUILDING. `DraftsService` already sanitized this
+       * html, so this pass is normally a no-op — `sanitizeOutboundHtml` is idempotent, asserted
+       * rather than assumed. It is here because "DraftsService is the only writer" is a claim
+       * about today: the AI workflow code already inserts into `drafts` directly, and the next
+       * writer will not remember to ask; sanitizing where the envelope is assembled closes every
+       * writer at once. Promoted markup is a FIXED POINT of this pass, asserted. `text` stays
+       * `d.body` untouched: for a rich draft, `body` IS the alternative derived from this html at
+       * write time — deriving it again could differ from the stored one.
        */
       const html = d.html ? sanitizeOutboundHtml(d.html) : null;
 
@@ -1847,44 +1347,16 @@ export class SendService {
         ...(input.attachments && input.attachments.length ? { attachments: input.attachments } : {}),
       };
 
-      // ── THE ACCOUNT'S CLAIM ON THIS CONTENT — LAST, AND IMMEDIATELY BEFORE THE FLIP ─────────
-      //
-      // The duplicate defence that does not depend on the client keeping its key. Everything above
-      // has already refused a bad request; this is the only check left, and it is here rather than
-      // earlier for two reasons that both matter. The digest is computed from a FULLY VALIDATED
-      // row, so a draft that was going to be refused never leaves a claim behind. And the row lock
-      // this takes on the unique index is held for the SHORTEST possible span — the forward
-      // resolution above it reads IMAP metadata out of `messages` and can throw, and a claim taken
-      // before that would be held across it.
-      //
-      // WHY IT IS BELOW THE CONFLICT BRANCH and not above the `outbound_sends` INSERT: the same
-      // reason the disabled-mailbox, staged-fault and recipient-cap checks give at length. The
-      // CONFLICT branch returns before reaching here, and that branch is idempotent REPLAY — a
-      // client retrying its own key after a send that SUCCEEDED must be handed the stored result,
-      // not told it is a duplicate of itself.
-      // ── A SEND CARRYING STAGED FILES IS NOT COVERED BY THE CONTENT CLAIM, AND SAYS SO ──────
-      //
-      // Staged bytes live in object storage. Nothing in this transaction can see them — fetching
-      // them would be a network call inside the reserve tx, which this service does nowhere — so
-      // the only identity available for them is the metadata the mint recorded: name, type, size.
-      //
-      // That is not an identity, and treating it as one was a HIGH defect measured end to end:
-      // change one byte of a 5 MiB attachment, keep its name, type and size, send the correction
-      // under a fresh key, and the digests collided. The correction was refused as already sent and
-      // only the original was ever delivered. A silently unsent correction is the worst ending this
-      // path has, and it is worse than the duplicate the claim exists to prevent.
-      //
-      // Folding staged files by their TICKET ID instead would cure that and buy nothing: a re-send
-      // under a fresh key RE-STAGES, so the ids always differ and the claim would never match. The
-      // effect is identical to not having a claim, dressed up as though there were one — and a
-      // guard that looks like protection and is not is worse than an absent one, because the next
-      // reader stops looking.
-      //
-      // So a staged send is EXCLUDED, explicitly. It keeps the two defences it always had — the
-      // client's own durable key, which now fingerprints content, and the refusal of any draft not
-      // in `draft` status. What it does not get is the content claim, until a staged file can carry
-      // a content digest of its own; that needs the upload to record one at mint time and is filed
-      // rather than faked here.
+      // THE ACCOUNT'S CLAIM ON THIS CONTENT — LAST, IMMEDIATELY BEFORE THE FLIP; the duplicate
+      // defence that does not depend on the client keeping its key. Here for two reasons: the
+      // digest is computed from a FULLY VALIDATED row, so a refused draft never leaves a claim
+      // behind; and the row lock is held for the shortest span. BELOW THE CONFLICT BRANCH: that
+      // branch is idempotent REPLAY — a client retrying its key after a success is handed the
+      // stored result. A SEND CARRYING STAGED FILES IS NOT COVERED: staged bytes cannot be seen
+      // from this transaction, metadata is not an identity (measured: a one-byte correction kept
+      // name/type/size and never left), and ticket ids always differ on a re-stage — a claim
+      // keyed on them never matches. Excluded, explicitly; the durable key and the draft-status
+      // refusal remain.
       if (stagedIds.length > 0) {
         const now = ctx.now();
         await tx.update(drafts).set({ status: "sending", updatedAt: now })
@@ -1981,86 +1453,39 @@ export class SendService {
           })
             .from(outboundSends).where(eq(outboundSends.id, held.sendId)).limit(1);
           const priorStatus = prior?.status ?? "pending";
-          // ── TWO WAYS A STANDING CLAIM IS RECLAIMED, AND THE SECOND IS NOT AN OPTIMISATION ────
-          //
-          // AGE — the window has passed, so these are two intents rather than one. Compared
-          // against the REQUEST CLOCK here and never left to the prune: the standalone engine runs
-          // this same code and has no maintenance pass, so an expiry that depended on pruning
-          // would be infinite on every desktop.
-          //
-          // FAILED — the reservation this claim names ended in a DEFINITE NON-DELIVERY. The draft
-          // is back at `draft` and the person must be able to press Send again on the same
-          // unedited text; without this arm the message's own claim would refuse it, and the
-          // ordinary "the mail server was down, try again" retry would be broken by the guard
-          // meant to protect it. Terminal `sent` and `unverified` do NOT reclaim: something may be
-          // in the recipient's inbox.
+          // TWO WAYS A STANDING CLAIM IS RECLAIMED, AND THE SECOND IS NOT AN OPTIMISATION. AGE —
+          // the window has passed, so these are two intents rather than one; compared against the
+          // REQUEST CLOCK and never left to the prune (the standalone engine has no maintenance
+          // pass, so prune-based expiry would be infinite on every desktop). FAILED — the
+          // reservation this claim names ended in a DEFINITE NON-DELIVERY: the draft is back at
+          // `draft` and the person must be able to press Send again on the same unedited text;
+          // without this arm the ordinary "the mail server was down, try again" retry would be
+          // broken by the guard meant to protect it. Terminal `sent` and `unverified` do NOT
+          // reclaim: something may be in the recipient's inbox.
           const stale = claimNow.getTime() - held.createdAt.getTime() >= SEND_DUPLICATE_WINDOW_MS;
           if (!stale && priorStatus !== "failed") {
-            // ── RETRYABLE ONLY WHILE THE FIRST ATTEMPT IS UNSETTLED ─────────────────────────
-            //
-            // `sent` and `unverified` are terminal: something may be in the recipient's inbox and
-            // asking again can only be refused again. `pending` is NOT an outcome — it is the
-            // absence of one — and treating it as terminal loses a message.
-            //
-            // The sequence: device A reserves and stalls before SMTP; the person retries on device
-            // B and is refused with `pending`; B settles and stops asking; A then fails BEFORE
-            // submission, so its reservation ends `failed` and its claim becomes reclaimable.
-            // Nothing was ever delivered, and B is left showing "going out right now" for ever.
-            //
-            // Retryable, the retry carries the same key, and each outcome is then correct by
-            // construction: if A ended `failed` the claim is reclaimed and B's retry SENDS; if A
-            // ended `sent` or `unverified` the retry is refused terminally with that status; if A
-            // is still running it is refused as pending again, bounded by the outbox's own ceiling.
-            // ── A WAIT IS ONLY HONEST WHILE THE FIRST ATTEMPT COULD STILL BE RUNNING ────────
-            //
-            // Bounded by `SEND_STALE_AFTER_MS`, and the bound is what stops a WAIT becoming a
-            // second delivery. Without it: A is pending, B's retry is told to wait and QUEUES,
-            // A then DELIVERS, B reconnects more than an hour later, the claim has aged past
-            // `SEND_DUPLICATE_WINDOW_MS` and is reclaimed — and B's still-queued verb is admitted
-            // and delivers the same message again, with nobody having pressed Send a second time.
-            // Measured by review: the same queued key produced delivery 2 on its own.
-            //
-            // The two horizons are what make that reachable: a wait with no age limit outlives the
-            // window it is waiting inside. So the wait ends where this codebase already says an
-            // invocation cannot still be alive — past `SEND_STALE_AFTER_MS` the reconciler owns
-            // that reservation, "wait" stops being a true answer, and the refusal becomes terminal
-            // so the queued verb settles instead of surviving to the reclaim.
-            //
-            // A PERSON pressing Send again after the hour is unaffected: that is a fresh key and a
-            // fresh press, which is exactly what the window is for. This closes the automatic path
-            // only.
+            // RETRYABLE ONLY WHILE THE FIRST ATTEMPT IS UNSETTLED. `sent`/`unverified` are
+            // terminal — something may be in the recipient's inbox; `pending` is NOT an outcome,
+            // and treating it as terminal loses a message: A stalls, B retries and is refused
+            // with `pending`, B stops asking, A then fails BEFORE submission — nothing delivered.
+            // Retryable under the same key: A `failed` ⇒ the claim reclaims and B SENDS; A
+            // terminal ⇒ terminal refusal; A running ⇒ pending again. A WAIT IS ONLY HONEST WHILE
+            // THE FIRST ATTEMPT COULD STILL BE RUNNING — bounded by `SEND_STALE_AFTER_MS`: a
+            // queued wait outliving the window is admitted after the reclaim and delivers twice
+            // with nobody pressing Send. A person pressing again after the hour is a fresh key;
+            // this closes the automatic path only.
             const claimAgeMs = claimNow.getTime() - held.createdAt.getTime();
             const stillRunning = priorStatus === "pending" && claimAgeMs < SEND_STALE_AFTER_MS;
-            // ── WHICH INSTANT THIS REFUSAL NAMES, AND WHY IT IS NOT THE CLAIM'S ─────────────
-            //
-            // The time in the sentence is the one thing in it a person can act on: they go to the
-            // Sent folder and look for the copy. So it has to be the delivery's instant.
-            //
-            // `held.createdAt` is not that. It is the WINDOW's clock — stamped when the claim is
-            // taken and RESTAMPED at every re-point below — so it is the age of an intent and not
-            // the birthday of anything. `outbound_sends.sent_at` is the delivery's, written by the
-            // finalize that recorded the send as sent.
-            //
-            // The two come apart on an ordinary ending, not an exotic one: `adapter.send` throws,
-            // the fate is genuinely unknown, the reservation stays `pending` with its key, and
-            // verify-by-Sent settles it `sent` on ITS clock — the same-key retry's, or
-            // `runSendReconcilePass`'s, tens of minutes later. A press reserved at 09:00 and
-            // confirmed at 09:50 answered "already sent at 09:00", a time nothing happened at.
-            //
-            // The gap is bounded by the window and therefore always inside an hour: a 409 needs
-            // the claim to be YOUNGER than `SEND_DUPLICATE_WINDOW_MS`, and `sent_at` cannot be
-            // later than the request being refused. An older claim is not refused at all — it is
-            // reclaimed a few lines below and the message goes.
-            //
-            // BOTH HALVES MOVE TOGETHER — the sentence and `firstSend.at` — because a client that
-            // renders its own copy from the details would otherwise disagree with the sentence the
-            // API wrote, and the two would be describing different sends.
-            //
-            // A NULL `sent_at` on a `sent` row should not happen: `finalizeSent` is the only
-            // writer of `status = 'sent'` and it sets both columns in one statement. If one ever
-            // appears, this falls back to the claim's stamp — the answer this refusal gave before
-            // — rather than to no time at all. Named here and in {@link duplicateSendSentence}
-            // rather than left as a bare `??`.
+            // WHICH INSTANT THIS REFUSAL NAMES, AND WHY IT IS NOT THE CLAIM'S. The time is the
+            // one thing a person can act on — they go look in Sent — so it must be the delivery's
+            // instant. `held.createdAt` is the WINDOW's clock, restamped at every re-point: the
+            // age of an intent. `outbound_sends.sent_at` is the delivery's. They come apart on an
+            // ordinary ending: `adapter.send` throws, the reservation stays `pending`,
+            // verify-by-Sent settles it later — a press reserved at 09:00 and confirmed at 09:50
+            // answered "already sent at 09:00". The gap is bounded by the window. BOTH HALVES
+            // MOVE TOGETHER — the sentence and `firstSend.at`. A NULL `sent_at` on a `sent` row
+            // should not happen (`finalizeSent` writes both in one statement); if one appears,
+            // the claim's stamp is the fallback.
             const firstSendAt = priorStatus === "sent"
               ? (prior?.sentAt ?? held.createdAt)
               : held.createdAt;
@@ -2095,36 +1520,14 @@ export class SendService {
   }
 
   /**
-   * FETCH A FORWARD'S ORIGINAL ATTACHMENTS from IMAP and append them to the outgoing message.
-   *
-   * Runs outside any transaction (IMAP network), on its OWN adapter, closed in `finally`. Every
-   * part shares the original message's locator and differs by `partId` (the ingest-time MIME
-   * body-part key). An inline part keeps its `cid`, so the quoted html's `cid:` references still
-   * resolve. The bytes land only on `msg.attachments` — the same zero-at-rest path an uploaded
-   * file takes — and a part over the running byte budget stops the fetch: a forward that silently
-   * dropped files is a wrong send, and the total is bounded so it cannot OOM the function.
-   *
-   * ── A STALE SOURCE LOCATOR IS RE-RESOLVED ONCE, THEN REFUSED HONESTLY ───────────────────────
-   *
-   * The locator came off the `messages` row inside the reservation transaction. Between that read
-   * and this fetch the original can move — another client files it, or its folder is recycled and
-   * re-enumerated under a new UIDVALIDITY — and the adapter then refuses with `MessageGoneError`
-   * rather than handing back part *n* of whatever now wears that UID.
-   *
-   * **A READ MAY RE-RESOLVE, so this one does.** `messages.native_locator` is a mirror of what the
-   * organizer last observed, and adoption repoints it by Message-ID and fingerprint, so re-reading
-   * that column is the witness — no new IMAP surface, no search this code has to bound against a
-   * hostile server, and no possibility of acting on a message whose identity was never proved. It
-   * is tried EXACTLY ONCE and only when the row now names a DIFFERENT locator: a second attempt
-   * against the same value would be a retry loop dressed as a repair. Re-fetching is safe in a way
-   * re-moving is not — the worst case is one wasted read, which is why `gone.ts` grants this to
-   * reads and withholds it from mutations.
-   *
-   * When the re-read has not caught up, the send is refused with what is TRUE: nothing was sent,
-   * here is why, and here is what makes it work. It must never reach the ambiguous-send recovery,
-   * which would tell the reader to check Sent for a message that was never offered to any server —
-   * the window handler in {@link send} is what guarantees that, and this sentence is what makes
-   * the refusal actionable rather than merely accurate.
+   * FETCH A FORWARD'S ORIGINAL ATTACHMENTS from IMAP onto the outgoing message. Outside any
+   * transaction, on its OWN adapter, closed in `finally`; parts share the original's locator and
+   * differ by `partId`; an inline part keeps its `cid`. A part over the byte budget stops the
+   * fetch: silently dropping files is a wrong send. A STALE LOCATOR IS RE-RESOLVED ONCE, THEN
+   * REFUSED HONESTLY: the original can move between the reservation's read and this fetch; the
+   * adapter refuses with `MessageGoneError` rather than handing back whatever now wears that UID.
+   * Re-reading `messages.native_locator` is the witness — tried EXACTLY ONCE. If the re-read has
+   * not caught up, the send is refused with what is TRUE — never the ambiguous recovery.
    */
   private async streamForwardParts(
     ctx: ServiceContext,
@@ -2187,26 +1590,14 @@ export class SendService {
   }
 
   /**
-   * THE SENTENCE A READER SEES WHEN A FORWARD'S ORIGINAL HAS MOVED — three facts, in the order
-   * they need them.
-   *
-   * 1. *Nothing was sent.* First, because it is the thing they are actually worried about and the
-   *    thing the old behaviour got wrong. This service knows it with certainty: `adapter.send` had
-   *    not been reached.
-   * 2. *What went wrong*, in terms of the mailbox rather than of this code — the message being
-   *    forwarded moved, so its attachments could not be read. Not "MessageGoneError", not "the
-   *    mail server is having trouble" (it is not), and not a UIDVALIDITY lecture.
-   * 3. *What makes it work, CONDITIONALLY* — press Send again once the mailbox has caught up. The
-   *    condition is not decoration and review was right to require it: `MessageGoneError` also
-   *    covers a message that was permanently DELETED, and for that one no amount of waiting will
-   *    ever make the forward work. The sentence first read "Try again once your mailbox has caught
-   *    up" flatly, which promised a recovery in exactly the case where the reader needs to be told
-   *    the original is gone. It now offers the retry for the move case and names the other.
-   *
-   * 409 rather than 410: the state we held conflicts with the server's, which is exactly what 409
-   * means, and 410 would assert a permanence that is usually false — the message has almost always
-   * simply moved. The route maps `ServiceError`, and the client engine puts this sentence in front
-   * of the reader verbatim with Send live again (`mail-send.ts#phaseFor`).
+   * THE SENTENCE FOR A FORWARD WHOSE ORIGINAL HAS MOVED — three facts, in the order needed. 1.
+   * Nothing was sent — known with certainty (`adapter.send` was not reached). 2. What went wrong,
+   * in terms of the mailbox: the message being forwarded moved — not "MessageGoneError", not a
+   * UIDVALIDITY lecture. 3. What makes it work, CONDITIONALLY: press Send again once the mailbox
+   * has caught up — conditional because `MessageGoneError` also covers a permanent DELETE, where
+   * no waiting helps. 409 rather than 410: our state conflicts with the server's, and 410 asserts
+   * a permanence that is usually false. The client shows this sentence verbatim with Send live
+   * again.
    */
   private forwardSourceGone(err: unknown): unknown {
     if (!isMessageGone(err)) return err;
@@ -2249,24 +1640,14 @@ export class SendService {
     deps: SendDeps,
   ): Promise<SendResult> {
     /**
-     * ── THE KEY'S MESSAGE WAS DISCARDED, SO THERE IS NOTHING TO REPLAY ────────────────────────
-     *
-     * A terminal reservation whose draft has been thrown away is a state that only exists since
-     * mail 0095: `draft_id` is nullable `ON DELETE SET NULL`, so discarding a draft whose send is
-     * definitively over keeps the attempt's record and clears its pointer.
-     *
-     * This read is keyed on `(account_id, idempotency_key)` ALONE — the caller's draft id is a
-     * separate argument — so the row here need not be about the message the caller is holding.
-     * That is what makes a fabricated answer dangerous rather than merely untidy: replying with
-     * the CALLER's `draftId` would tell the client that the draft it currently has open was
-     * already sent, which is a false state about somebody's mail, and replying with a widened
-     * `draftId: null` pushes the same question into a client that has no branch for it.
-     *
-     * A named refusal instead, and the client maps it to a terminal rollback. This costs a live
-     * client nothing, because a live client cannot produce the sequence: the durable send key is
-     * released on EVERY terminal outcome (`mail-send.ts#absorb`), so the next press mints a fresh
-     * one. Reaching this arm means a stale client is replaying a key for a message that no longer
-     * exists, and the honest answer is to say so and let it start a new send.
+     * THE KEY'S MESSAGE WAS DISCARDED, SO THERE IS NOTHING TO REPLAY (mail 0095: `draft_id` is
+     * `ON DELETE SET NULL`). This read is keyed on `(account_id, idempotency_key)` ALONE, so the
+     * row need not be about the message the caller holds — replying with the CALLER's `draftId`
+     * would claim their open draft was already sent, and `draftId: null` pushes the question into
+     * a client with no branch for it. A named refusal instead, mapped to a terminal rollback. A
+     * live client cannot produce the sequence — the durable key is released on EVERY terminal
+     * outcome — so this arm means a stale client replaying a key for a message that no longer
+     * exists.
      */
     if (row.draftId === null && (row.status === "sent" || row.status === "failed")) {
       throw new ServiceError(
@@ -2287,26 +1668,16 @@ export class SendService {
       return { status: "failed", providerMessageId: null, draftId: draftOfTerminalAttempt(row), seq: null };
     }
 
-    // status === "pending" → is the first attempt STILL RUNNING, or is this the wreckage of
-    // one that died?
-    //
-    // Every pending row used to be treated as wreckage and probed immediately, which is wrong
-    // in the most ordinary case there is: a user double-taps Send, or a client retries because
-    // the response was slow. The second request then probes Sent WHILE the first is still
-    // mid-SMTP, finds nothing (the message has not landed yet), and writes `unverified` —
-    // marking a send that is in fact succeeding as ambiguous, and telling the user to go check
-    // their Sent folder. It also made the `in_flight` outcome this service DECLARES
-    // unreachable.
-    //
-    // `SEND_STALE_AFTER_MS` is the cutoff, and it is deliberately far longer than any single
-    // invocation can live (the hosted API's ceiling is 60 s): a row younger than that
-    // may still have a live sender behind it, so the honest answer is `in_flight` (409, retry
-    // later) and NOT a probe. Older than that, no invocation can still be running, so the row
-    // is genuinely orphaned and verify-by-Sent is the correct recovery.
-    //
-    // This recovery is no longer the ONLY one. It runs when the USER retries with the same key,
-    // and `runSendReconcilePass` runs the identical resolution on a clock for a row nobody
-    // retries — both through {@link SendService.resolveStale}, which is the single writer.
+    // status === "pending" → is the first attempt STILL RUNNING, or the wreckage of one that
+    // died? Every pending row used to be probed immediately, wrong in the most ordinary case: a
+    // double-tap or slow-response retry probes Sent WHILE the first attempt is mid-SMTP, finds
+    // nothing, and writes `unverified` — marking a succeeding send ambiguous and telling the user
+    // to go check Sent. It also made the declared `in_flight` outcome unreachable.
+    // `SEND_STALE_AFTER_MS` is the cutoff, deliberately far longer than any invocation can live:
+    // younger rows may have a live sender behind them, so the honest answer is `in_flight` (409,
+    // retry later); older rows are genuinely orphaned and verify-by-Sent is correct. No longer
+    // the ONLY recovery: `runSendReconcilePass` runs the identical resolution on a clock — both
+    // through `resolveStale`, the single writer.
     const ageMs = ctx.now().getTime() - row.createdAt.getTime();
     if (ageMs < SEND_STALE_AFTER_MS) {
       return { status: "in_flight", providerMessageId: null, draftId: draftOfOpenAttempt(row), seq: null };
@@ -2327,54 +1698,14 @@ export class SendService {
   }
 
   /**
-   * RESOLVE ONE STALE RESERVATION — the single implementation of "decide what became of a
-   * `pending` row that no live invocation owns", shared by the client's same-key retry
-   * ({@link SendService.resumeExisting}) and the reconciling pass (`send-reconcile-pass.ts`).
-   *
-   * It exists as one function because the two callers write the SAME terminal states from the
-   * SAME evidence, and a second copy of that decision is the fork the one-implementation rule
-   * forbids — the more so here, where the states are terminal and what they encode is the rule
-   * this whole path exists for: never resend on ambiguity.
-   *
-   * ── TWO ARMS, AND THE ORDER IS LOAD-BEARING ────────────────────────────────────────────────
-   *
-   * 1. **The MIRROR arm, which costs no dial.** `ImapAdapter.send` APPENDs our own copy to Sent
-   *    and the worker's Sent-folder watch ingests it like any other message, so a delivered send
-   *    usually has a `messages` row carrying the very `message_id_header` this reservation
-   *    minted. Reading that row settles the question with an indexed lookup
-   *    (`messages_account_message_id_header_idx`) instead of a LOGIN.
-   *
-   *    **A MISS SAYS NOTHING.** The mirror lags the mailbox by up to a poll interval, and on the
-   *    reconciling pass the row being examined is minutes old by construction — so "not in the
-   *    mirror" is indistinguishable from "not synced yet". Only the IMAP arm may write
-   *    `unverified`; a mirror miss falls through to it and, where no dial is permitted, to the
-   *    caller's stated `onMiss`.
-   *
-   * 2. **The IMAP arm** — `messageInSent`, the probe this service has always used. Found ⇒
-   *    `sent`. Not found ⇒ `unverified`: the adapter answered, so the Sent folder genuinely does
-   *    not hold the id. A THROW (including {@link ImapBoundExceeded}) is neither: it propagates
-   *    with the row untouched, because writing a terminal state off a connection that failed is
-   *    exactly the ambiguity this path exists to avoid.
-   *
-   * `openAdapter` is `null` for a caller that may NOT dial (the pass's `disabled`/`error`
-   * mailboxes — see the pass), and `onMiss` then says what a mirror miss MEANS: `"unverified"`
-   * writes the ambiguous terminal state now, `"defer"` leaves the row exactly as found for a
-   * later cycle. A caller that hands a factory always gets a probe.
-   *
-   * A **factory `ServiceError`** — a mailbox whose credential rows are gone
-   * (`send-adapter.ts:36`) — is resolved as `unverified` rather than raised, and that is a
-   * decision about EVIDENCE and not a swallowed error: no adapter can ever be built for that
-   * mailbox again, so no later cycle can decide the row, and leaving it `pending` forever is the
-   * permanently-unresolvable state this whole path exists to remove. A probe that throws is the
-   * opposite case (the next cycle may well succeed) and is not caught here.
-   *
-   * ── AND THE CAS LOSER ANSWERS THE WINNER'S STATE ───────────────────────────────────────────
-   *
-   * All three finalizers are compare-and-swap on `status='pending'`, so exactly one resolver ever
-   * writes a terminal state. When this call's CAS matches zero rows somebody else resolved the
-   * row while we probed: the answer is the state THEY wrote, re-read from the reservation and
-   * returned as `by: "elsewhere"` — never `queued`, never `in_flight`, and never a second probe.
-   * Overlapping resolvers therefore cost a duplicate read, never a wrong write.
+   * RESOLVE ONE STALE RESERVATION — the single implementation shared by the same-key retry
+   * (`resumeExisting`) and the reconciling pass; both write the SAME terminal states from the
+   * SAME evidence: never resend on ambiguity. TWO ARMS, ORDER LOAD-BEARING: 1. MIRROR — an
+   * indexed lookup on the minted id, no LOGIN; A MISS SAYS NOTHING (the mirror lags), so only the
+   * IMAP arm may write `unverified`. 2. IMAP — found ⇒ `sent`; not found ⇒ `unverified`; a THROW
+   * propagates, row untouched. `openAdapter` is `null` for a caller that may NOT dial; `onMiss`
+   * says what a miss MEANS. A factory `ServiceError` (credentials gone) resolves `unverified` —
+   * no adapter can ever be built again. THE CAS LOSER ANSWERS THE WINNER'S STATE.
    */
   async resolveStale(
     ctx: ServiceContext,
@@ -2383,19 +1714,15 @@ export class SendService {
     openAdapter: OpenSendAdapter | null,
     onMiss: "unverified" | "defer" = "unverified",
   ): Promise<ResolveStaleOutcome> {
-    // ── 1. The mirror arm. Account-scoped like every read in this service.
-    //
-    // NORMALIZED, and this is the whole arm: `mintedMessageId` is `<uuid@domain>` WITH the angle
-    // brackets (`mintMessageId`), while `messages.message_id_header` is written through
-    // `normalizeMessageId`, which STRIPS them — `record-at-send.pg.test.ts` pins that column as
-    // `providerMessageId.replace(/[<>]/g, "")`. Comparing the two spellings matches zero rows for
-    // every real send, so the arm silently never fired: every row paid a LOGIN, and — far worse —
-    // on the no-dial branches the mirror is the ONLY evidence there is, so a `disabled` mailbox
-    // or a give-up would write terminal `unverified` over a message the mirror was holding all
-    // along. That is the exact wrong write this whole slice exists to prevent.
-    //
-    // It shipped green because the first version of the test seeded the header WITH brackets,
-    // which no writer in this codebase does.
+    // 1. The mirror arm. Account-scoped like every read in this service. NORMALIZED, and this is
+    // the whole arm: `mintedMessageId` is `<uuid@domain>` WITH angle brackets (`mintMessageId`),
+    // while `messages.message_id_header` is written through `normalizeMessageId`, which STRIPS
+    // them (`record-at-send.pg.test.ts` pins the column). Comparing the two spellings matches
+    // zero rows for every real send, so the arm silently never fired: every row paid a LOGIN, and
+    // — far worse — on the no-dial branches the mirror is the ONLY evidence, so a `disabled`
+    // mailbox or a give-up would write terminal `unverified` over a message the mirror was
+    // holding all along. It shipped green because the first version of the test seeded the header
+    // WITH brackets, which no writer in this codebase does.
     const mintedKey = normalizeMessageId(row.mintedMessageId);
     const mirrored = mintedKey === null ? [] : await ctx.db.select({ id: messages.id })
       .from(messages)
@@ -2521,44 +1848,14 @@ export class SendService {
   }
 
   /**
-   * FINALIZE-sent tx: mark the reservation + draft `sent`, emit a `draft` change — AND stamp the
-   * sending mailbox for an ENFORCED SYNC (`mailboxes.sync_requested_at`).
-   *
-   * The send just appended a copy to the user's Sent folder, and that copy is invisible in their
-   * own mirror until the worker's next cycle picks it up — up to a poll interval away. Stamping the
-   * mailbox `now()` in the SAME transaction that records the send lets the worker's short kick scan
-   * reconcile it within seconds, so a message the user just sent shows in their Sent view promptly
-   * rather than a minute later. It is a doorbell, not state: the stamp is best-effort convergence,
-   * the worker clears it compare-and-clear, and a mailbox nobody stamps behaves exactly as before.
-   *
-   * Stamped only on the DEFINITE-sent finalize — never on `unverified`, where no Sent copy is known
-   * to exist and a kick would reconcile nothing new.
-   *
-   * ── AND IT MAY NEVER WAIT FOR A LOCK. `SKIP LOCKED`, NOT A PLAIN UPDATE ──────────────────
-   *
-   * This is the sharpest edge on the whole send path, and a plain `update mailboxes set
-   * sync_requested_at` had it. By the time this function runs, THE MESSAGE HAS ALREADY LEFT: SMTP
-   * accepted it and the copy is in the user's Sent folder. An `UPDATE` of the mailbox row must wait
-   * for any transaction holding that row — `MailboxService.delete` takes a genuine `FOR UPDATE`, and
-   * so does the disabler — and a lock wait does not throw, so the `catch`-and-log the migration note
-   * describes never fires. The finalize transaction simply stops.
-   *
-   * What that costs is not a slow request. It is the one outcome the whole reservation design exists
-   * to prevent: the reservation stays `in_flight` and the draft never reaches `sent`, so a message
-   * that DID go out is recorded as neither sent nor failed, and the serverless invocation is killed
-   * mid-transaction rather than reaching even the `unverified` arm. Disconnecting a mailbox while a
-   * send finalizes was enough to produce it — measured by `send-disabled-mailbox.pg.test.ts`, whose
-   * "reserve's read does NOT block on the disabler's row lock" case timed out at five seconds.
-   *
-   * `FOR UPDATE SKIP LOCKED` is the fix and it costs nothing real, because this column is a
-   * DOORBELL: the migration's own contract says the stamp is best-effort convergence and that "a
-   * mailbox nobody stamps behaves exactly as before". So a row somebody else is holding is simply
-   * not stamped, zero rows update, and the worker's ordinary poll picks the Sent copy up on its next
-   * cycle — the pre-doorbell behaviour, for that one send. Trading a few seconds of Sent-folder
-   * latency against a send recorded in no terminal state is not a close call.
-   *
-   * It stays INSIDE this transaction rather than moving after it: a stamp that outlived a rolled-back
-   * finalize would ask the worker to reconcile a send that did not happen.
+   * FINALIZE-sent tx: mark reservation + draft `sent`, emit the `draft` change — AND stamp the
+   * mailbox for an ENFORCED SYNC (`sync_requested_at`), so the Sent copy shows in seconds. A
+   * doorbell, not state; stamped only on the DEFINITE-sent finalize. IT MAY NEVER WAIT FOR A LOCK
+   * — `SKIP LOCKED`: by now THE MESSAGE HAS LEFT, and an UPDATE waiting on the disabler's `FOR
+   * UPDATE` stalls the finalize — the reservation stays `in_flight`, the invocation killed
+   * mid-transaction (`send-disabled-mailbox.pg.test.ts` timed out). A held row is simply not
+   * stamped; the ordinary poll covers that send. INSIDE this transaction: a stamp outliving a
+   * rolled-back finalize would reconcile a send that did not happen.
    */
   private async finalizeSent(
     ctx: ServiceContext, sendId: string, providerMessageId: string, draftId: string, mailboxId: string,
@@ -2587,22 +1884,15 @@ export class SendService {
         .where(and(
           eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId), eq(drafts.status, "sending"),
         ));
-      // See the note above: the doorbell is skipped rather than waited on, because waiting here
-      // strands a message that has already been sent. `SKIP LOCKED` needs the row to be selected,
-      // so the update is driven by a subquery rather than by `where id = ...` directly.
-      //
-      // REVERTED TO THE STATEMENT'S OWN TEXT, and the reason is measured rather than argued.
-      // Expressing this as `inArray(mailboxes.id, d.skipLocked(subquery))` compiles, renders and
-      // runs — and against real Postgres it turned twelve of fifteen cases in the send suites red
-      // where three were red before. The doorbell stopped doing what it is for, and a send that
-      // does not ring it settles as `pending` and pages the stuck-send alarm. Whatever drizzle
-      // renders for a locked builder embedded as a subquery, it is not this statement.
-      //
-      // So the clause stays INLINE — and it is now emitted by the seam rather than written out,
-      // which is the distinction that measurement was about: the objection was to embedding a
-      // LOCKED BUILDER as a subquery, not to the clause itself. `lockClause` renders exactly the
-      // text that is here today on the server, and renders nothing on the device store, where one
-      // serialized writer means there is nobody to exclude and nobody to skip.
+      // See the note above: the doorbell is skipped rather than waited on, because waiting
+      // strands a message already sent. `SKIP LOCKED` needs the row selected, so the update is
+      // driven by a subquery rather than `where id = ...` directly. REVERTED TO THE STATEMENT'S
+      // OWN TEXT, measured rather than argued: `inArray(mailboxes.id, d.skipLocked(subquery))`
+      // compiles and runs — and against real Postgres it turned twelve of fifteen send-suite
+      // cases red where three were red before; whatever drizzle renders for a locked builder
+      // embedded as a subquery, it is not this statement. The clause stays INLINE, emitted by the
+      // seam: `lockClause` renders exactly this text on the server and nothing on the device
+      // store, where one serialized writer means nobody to exclude.
       await tx.update(mailboxes).set({ syncRequestedAt: now }).where(sql`${mailboxes.id} in (
         select ${mailboxes.id} from ${mailboxes} where ${mailboxes.id} = ${mailboxId}
         ${dialect(ctx.db).lockClause({ mode: "update", skipLocked: true })}
@@ -2615,81 +1905,14 @@ export class SendService {
   }
 
   /**
-   * FINALIZE-failed tx: **the message definitively did not go out, and the code KNOWS it.**
-   *
-   * ── WHY THIS EXISTS AT ALL ──────────────────────────────────────────────────────────────────
-   *
-   * `failed` was declared by this service, mapped by the route (409) and handled by the client
-   * engine (`send_failed`, non-retryable) from the day the state machine was written — and NOTHING
-   * EVER WROTE IT. The `pending` reservation was the only thing a pre-SMTP failure left behind, and
-   * a `pending` row is, by this service's own recovery rules, an AMBIGUOUS one: a same-key retry
-   * answers `in_flight` for {@link SEND_STALE_AFTER_MS}, and after that it probes the Sent folder,
-   * finds nothing, and finalizes `unverified` — *"We couldn't confirm this send. Check your Sent
-   * folder before retrying."*
-   *
-   * That sentence is false for every failure that happens BEFORE `adapter.send` is called. No
-   * socket was opened, no envelope was offered, nothing can be in Sent, and telling somebody to go
-   * and look for mail that provably never left is the worst kind of wrong answer: it is
-   * unfalsifiable from where they are standing, and the honest action it hides — press Send again —
-   * is the one it talks them out of.
-   *
-   * ── AND WHY `failed` IS SAFE HERE SPECIFICALLY ──────────────────────────────────────────────
-   *
-   * `failed` is terminal for this KEY, which is the whole point: a same-key replay must never
-   * resend, and it does not — it replays this refusal. It does not brick the draft, because the
-   * client releases the durable send key on any terminal outcome (`mail-send.ts#absorb`), so the
-   * reader's next press is a genuinely new send with a new key. The draft is returned to `draft`
-   * rather than left at `sending` for the same reason `schedule-send-pass.ts` returns it: a
-   * composer stuck on "Sending…" for a message that was never sent is the same lie one surface
-   * over.
-   *
-   * `sendAt`/`sendKey` are cleared on the terminal outcome — {@link finalizeSent}'s rule, and it
-   * matters more here than there: an appointment that outlived a definite non-delivery would be
-   * re-claimed by the scheduled-send sweep and replayed.
-   *
-   * ── AND IT CARRIES THE SENTENCE, BECAUSE ON A SCHEDULE THERE IS NOBODY TO THROW TO ─────────
-   *
-   * This write is the ONLY channel a scheduled send has. An interactive send reaches a person
-   * through the thrown error the route maps, so returning the draft to `draft` is enough there.
-   * A scheduled one is run by `schedule-send-pass.ts` on a timer: the throw is caught by a loop,
-   * and the only thing the reader ever sees is the Drafts row. `send_error` is that row's
-   * sentence.
-   *
-   * It did not used to be written here, and the seam that used to write it CANNOT any more:
-   * `closeAppointment` is guarded on `send_key`, and this transaction has just set that key to
-   * NULL — so the close matches nothing and the sentence was silently dropped. Measured, not
-   * argued: a factory refusal on the scheduled path left `status='draft'`, `send_at`/`send_key`
-   * NULL, the reservation `failed`, and **`send_error` NULL** — an appointment that vanished
-   * from "Sending…" back to an ordinary draft with no explanation anywhere. That is the same
-   * defect this whole window exists to close, one surface over: the state was recorded honestly
-   * and the person was told nothing.
-   *
-   * A `ServiceError`'s own message is the sentence (it is written to be read — `closeAppointment`
-   * has always quoted it). Anything else gets {@link SEND_FAILED_SENTENCE}: an unexpected throw's
-   * message is an internal detail, not a sentence, and may name a host or a socket.
-   *
-   * ── AND ONLY FOR A SEND THAT HAD AN APPOINTMENT. `send_error` IS SCHEDULE-ONLY ─────────────
-   *
-   * The write is gated on `send_at` still standing, read in this same statement, because
-   * `send_error` is not a generic "last send failed" field — it means "the appointment could not
-   * be kept", and both clients read it that way:
-   *
-   *   `apps/webapp/messages/en.json#scheduleFailedNote`  "This message wasn't sent at its
-   *                                                       SCHEDULED TIME: {reason}"
-   *   `apps/mobile/src/state/live.ts#liveScheduled`      lists every `draft` row with a non-empty
-   *                                                       `send_error` on the SCHEDULED screen,
-   *                                                       because that app has no Drafts screen
-   *
-   * So an unconditional write would put a failed interactive send onto the phone's Scheduled
-   * list and tell the reader on the web that a message they had just pressed Send on missed a
-   * scheduled time that never existed. The interactive path needs none of it: its caller gets
-   * the throw and the route maps it, which is the whole reason this field was schedule-only to
-   * begin with. `dto/types.ts#DraftDTO.sendError` states that contract.
-   *
-   * `send_at` is the honest discriminator rather than a flag threaded from the caller: a
-   * scheduled send keeps its appointment through the claim window and through `sending`, and
-   * only a terminal finalize clears it — so at this moment it is exactly "was this an
-   * appointment". Done as one statement so there is no read to race.
+   * FINALIZE-failed tx: the message definitively did not go out, and the code KNOWS it. `failed`
+   * was declared and handled from day one — and NOTHING EVER WROTE IT: a pre-SMTP failure left a
+   * `pending` row, finalized `unverified` — "check your Sent folder" for mail that never left.
+   * `failed` is terminal for this KEY, does not brick the draft (the client releases the key on
+   * any terminal outcome), and returns the draft to `draft`. `sendAt`/`sendKey` are cleared — an
+   * appointment outliving a definite non-delivery would be replayed. IT CARRIES THE SENTENCE: on
+   * a schedule, `send_error` is the only channel. GATED ON `send_at` STANDING: `send_error` means
+   * "the appointment could not be kept".
    */
   private async finalizeFailed(
     ctx: ServiceContext, sendId: string, draftId: string, sentence: string,
@@ -2753,19 +1976,13 @@ export class SendService {
 
 /**
  * THE DRAFT A STILL-OPEN ATTEMPT IS ABOUT, which cannot be absent — and a 500 if it ever is.
- *
- * `outbound_sends.draft_id` became nullable `ON DELETE SET NULL` in mail 0095, so that a person
- * can discard a draft whose send is definitively over while the record of the attempt survives.
- * Every caller below is on a `pending` or `unverified` row, and neither state can have lost its
- * draft: both are inside `DraftsService.sendOnRecord`, so the discard is refused while one stands,
- * and it is refused under a `FOR UPDATE` on the draft that serializes against the reservation's
- * own `FOR KEY SHARE`. `send-reconcile-pass` additionally reaches its rows through
- * `INNER JOIN drafts`, so a row with no draft is invisible to it.
- *
- * A THROW rather than a silent fallback, and rather than an `if` nobody can watch fail. The state
- * is unreachable by construction, which is exactly the kind of claim that rots into a comment
- * nobody re-checks — this makes it observable: null a `pending` row's `draft_id` by hand and the
- * recovery answers 500 instead of quietly finalizing the wrong thing or nothing at all.
+ * `draft_id` became nullable `ON DELETE SET NULL` (mail 0095) so a settled send's draft can be
+ * discarded while the attempt's record survives. Every caller here is on a `pending` or
+ * `unverified` row, and neither can have lost its draft: `DraftsService.sendOnRecord` refuses the
+ * discard under a `FOR UPDATE` serialized against the reservation's `FOR KEY SHARE`; the
+ * reconcile pass joins `drafts`. A THROW rather than a silent fallback or an `if` nobody can
+ * watch fail: null a `pending` row's `draft_id` by hand and the recovery answers 500 instead of
+ * finalizing the wrong thing.
  */
 /**
  * The draft of a TERMINAL attempt, past the refusal that owns its absent case.

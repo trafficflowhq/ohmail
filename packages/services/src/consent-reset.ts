@@ -10,62 +10,16 @@ import { fenceErasedAccount } from "./erasure-fence.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   RESET SCREENING STATE — put an account back to "never screened anybody", keeping the mail.
-
-   This is a supported operation and not only a development convenience: re-running the seed
-   after a change of life is the same button. So it is careful about two things.
-
-   ── IT NEVER MOVES MAIL ───────────────────────────────────────────────────────────────────
-
-   Screening decisions taken in the past caused real IMAP moves, and those moves are visible in
-   every other mail client the person uses. Un-making them would be thousands more moves, made
-   on the strength of an assumption about what the mailbox "should" look like — and the moves
-   this would be undoing are indistinguishable, at the database level, from moves the user made
-   by hand. So the reset REPORTS what it is leaving behind, per pile, and stops. What to do
-   about it is a decision for a person.
-
-   The consequence to hold onto: after a reset, mail physically filed in the Screener folder
-   still belongs to a sender with no decision. The presentation layer handles exactly that — it
-   partitions by consent rather than by folder — so the account presents correctly without a
-   single message moving.
-
-   ── WHICH SURFACES THAT IS TRUE OF, BECAUSE IT WAS ONCE WRITTEN AS THOUGH IT WERE ALL OF THEM ──
-
-   This paragraph used to end at "presents correctly", and it was false where it mattered most.
-   The web client partitions Ohbox, Reads, Receipts, the triage piles, Tags and History through
-   `presentationReader`, and for a year the SCREENER QUEUE — the one surface the cutline exists
-   for — grouped the raw mirror by folder instead. On an account with a large backfill behind it
-   that queue offered an order of magnitude more sender rows than the real queue, with
-   the dormant remainder presented in History at the same time. Fixed in the webapp; the claim is
-   narrowed here rather than restated, because it is the reset's own justification for leaving
-   mail where it is and a reader has to be able to check it.
-
-   Still NOT covered, and both are real rather than theoretical:
-
-     · `GET /screener` — the SERVER's queue (`screener-service.ts`, `heldRows`) selects on
-       `desired_folder = 'ohmail/Screener'` with no cutline, so any client that trusts it rather
-       than partitioning locally sees the unfiltered backlog, and `suggestable.credits` prices it.
-     · DESKTOP / Local tier — `apps/desktop/src/no-api-client.ts` pins `apiConfigured()` false, so
-       the consent state never arrives and the partition is never switched on at all.
-
-       AMENDED 2026-09-01 (mail 0083): the second half of this bullet — *"The sidecar serves no
-       consent endpoint to switch it on with"* — is no longer true. `consentRoutes` are mounted on
-       `localRoutes`, so the standalone door answers `GET /consent` and `PATCH /consent/settings`
-       and the window is storable and readable there. What is STILL not covered is the first half:
-       the desktop window's own client is pinned to "no API", so it does not ask. That is a client
-       wiring item, not a missing endpoint, and it is the smaller of the two by a long way — the
-       endpoint's absence also meant the sidecar's CYCLE had no cutoff to apply, which is fixed
-       with it.
-
-   ── IT TELLS THE CLIENTS ──────────────────────────────────────────────────────────────────
-
-   `rule` is a synced entity. A bulk DELETE that skipped the change log would leave every
-   mirror — browser, desktop — showing the deleted rules for ever, with no event that could
-   ever remove them. Each deletion gets its own change-log row inside the same transaction.
-
-   `contacts` and `learning_signals` are NOT synced, so they are deleted plainly.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * Reset screening state — back to "never screened anybody", keeping the mail. It NEVER MOVES
+ * MAIL: past decisions caused real IMAP moves, indistinguishable from moves the user made by hand
+ * — the reset REPORTS what it leaves behind, per pile, and stops. Mail filed in the Screener
+ * still belongs to an undecided sender; the web client partitions by consent, not folder. Still
+ * NOT covered: `GET /screener` (the server's queue selects on the folder with no cutline) and the
+ * desktop window's client pinned to "no API" — a wiring item (mail 0083). `rule` is a synced
+ * entity: each deletion gets its own change-log row in the same transaction; `contacts` and
+ * `learning_signals` are not synced and are deleted plainly.
+ */
 
 /** Mail that a past decision physically moved, and that this reset is deliberately leaving. */
 export interface UnmovedPile {
@@ -133,24 +87,15 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
     // ── ERASURE FENCE, FIRST — before the settings lock below. The chain is accounts →
     // settings → sequence row; `erasure-fence.ts` states why it must be the first lock.
     await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
-    /* -- A READER'S ACCOUNT DOES NOT RESET SCREENING (mail 0083) --------------------------
-     *
-     * This one nearly escaped the reader ruling, because "reset" reads like a local clear. It is
-     * not: it DELETES EVERY RULE, clears the learning signals and graduations, and drops the
-     * screening baseline. Rules are the router; the baseline is the cutline the router measures
-     * from. So this is the largest single organizing act in the product — larger than any decide
-     * — and it was reachable from an install that organizes nothing.
-     *
-     * The damage is not confined to the install that pressed it. Rules TRAVEL: they are the
-     * substance of the profile document in `ohmail/_meta`, so a reader that wiped them would hand
-     * the actual organizer an empty rule set at its next profile read, and every sender the person
-     * had ever decided about would go back to the Screener — on the machine that IS organizing
-     * their mail, from a button pressed on one that is not.
-     *
-     * ACCOUNT-SCOPED, matching `decide` and the rules doors: the state being reset belongs to the
-     * account, so the question is whether this install organizes ANYTHING. Placed after the
-     * erasure fence and before the settings lock, so the lock chain (accounts → settings →
-     * sequence row) is unchanged — this read takes no lock of its own.
+    /**
+     * A reader's account does not reset screening (mail 0083). "Reset" reads like a local clear
+     * and is not: it DELETES EVERY RULE, clears learning signals, and drops the screening
+     * baseline — the largest single organizing act in the product, reachable from an install that
+     * organizes nothing. The damage travels: rules are the substance of the profile document in
+     * `ohmail/_meta`, so a reader that wiped them would hand the organizer an empty rule set at
+     * its next profile read — every decided sender back to the Screener, from a button pressed on
+     * a machine that is not organizing. ACCOUNT-scoped, matching `decide`. Placed after the
+     * erasure fence and before the settings lock: this read takes no lock of its own.
      */
     await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
     /**
@@ -196,28 +141,14 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
       .returning({ id: learningSignals.id });
 
     /**
-     * ── AND THE SCREENING BASELINE GOES BACK TO NULL (mail 0056) ──────────────────────────
-     *
-     * Not housekeeping — without this line the reset is a NO-OP for the cutline, which is most of
-     * what the user asked for.
-     *
-     * The baseline is the instant the dormancy window is measured back from, and once it is set
-     * the cutoff stops sliding: mail older than `baseline - dormancy_days` can no longer make an
-     * undecided sender active, so it presents in History rather than in the queue. Every rule
-     * above has just been deleted, so every sender in the mailbox is undecided again — and with a
-     * baseline still standing from the previous era, all of the mail that predates it would go
-     * straight back to History. The user presses "start over" and the Screener comes back empty.
-     *
-     * NULL is right rather than `ctx.now()` for the same reason the column is not stamped at
-     * signup: a baseline asserts that this account has worked through its backlog, and an account
-     * that just discarded every decision it had made has not. The next decide establishes the new
-     * one, which is exactly the event that established the old one.
-     *
-     * Unlike its neighbours here this field is written by a DIFFERENT writer in normal operation
-     * (`ScreenerService.decide`, guarded on it still being NULL), so the two must not fight: this
-     * runs inside the reset transaction, which has already deleted the rules a concurrent decide
-     * would have been writing beside, and the decide's own guard means the loser of that race
-     * simply does not re-stamp.
+     * And the screening baseline goes back to NULL (mail 0056) — without this the reset is a
+     * NO-OP for the cutline. The baseline is the instant the dormancy window measures back from;
+     * with every rule deleted, a standing baseline would send all mail predating it straight to
+     * History — "start over" and the Screener comes back empty. NULL rather than `ctx.now()`: a
+     * baseline asserts the account worked through its backlog, and one that just discarded every
+     * decision has not; the next decide establishes the new one. The other writer
+     * (`ScreenerService.decide`, guarded on NULL) cannot fight this: the reset already deleted
+     * the rules a concurrent decide would write beside, and the race's loser does not re-stamp.
      */
     await tx.insert(accountSettings).values({
       accountId: ctx.accountId,

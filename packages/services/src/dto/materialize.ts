@@ -18,19 +18,14 @@ import type {
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
 
 /**
- * ── THE ROW → DTO PROJECTIONS ARE EXPORTED, AND THAT IS THE POINT OF THEM ────────────────────
- *
- * Every `materializeX` below is "one `select` by id, then project". `SyncService.getChanges`
- * needs the by-id half because it starts from a `change_log` row; `SyncService.getSnapshot`
- * needs to read a whole table at once and must NOT pay one round trip per row (an account that
- * has run the consent seed holds one rule per correspondent — thousands of them, and an N+1
- * there is the same shape as the outage `materializeMessages` was written to end).
- *
- * So the projection is a separate, pure function per type and the by-id reader calls it. Both
- * callers therefore produce the identical DTO by construction rather than by inspection — the
- * same reason `messageRowToDTO` was extracted when the batch message path landed. A snapshot
- * that projected its own rules would be a second definition of what a rule looks like on the
- * wire, and the two would drift on the first field either side added.
+ * The row → DTO projections are EXPORTED, and that is the point. Every `materializeX` below is
+ * "one `select` by id, then project". `SyncService.getChanges` needs the by-id half (it starts
+ * from a `change_log` row); `getSnapshot` reads a whole table at once and must not pay one round
+ * trip per row — a seeded account holds one rule per correspondent, thousands of them, the same
+ * N+1 shape as the outage `materializeMessages` ended. So the projection is a separate, pure
+ * function per type and the by-id reader calls it: both callers produce the identical DTO by
+ * construction. A snapshot projecting its own rules would be a second definition of the wire
+ * shape, drifting on the first field either side added.
  */
 export function messageStateRowToDTO(r: typeof messageStates.$inferSelect): MessageStateDTO {
   return {
@@ -125,18 +120,14 @@ export function tagRowToDTO(t: typeof tags.$inferSelect): TagDTO {
 }
 
 /**
- * ONE message row → its DTO. Pure: every read has already happened.
- *
- * Extracted so the single-id path and the batch path cannot drift. They used to be the same
- * function because there WAS only one path, and the cost of that hid in `SyncService`, which
- * called it once per `change_log` row — three sequential round-trips per message, 1 500 for a
- * 500-row page. At real database round-trip latency that pushed a single page past the function
- * timeout and a full bootstrap into the minutes, so the first page timed out and the client
- * received NOTHING. On a large mailbox every view rendered empty.
- *
- * EXPORTED so the sensitivity projection can be watched directly rather than only through a
- * database round trip. `sensitive` decides whether a client renders a message's text AT ALL
- * (see the note inside), which is too consequential to be reachable only through a fixture.
+ * ONE message row → its DTO. Pure: every read has already happened. Extracted so the single-id
+ * path and the batch path cannot drift — they used to be one function, and the cost hid in
+ * `SyncService`, which called it once per `change_log` row: three sequential round trips per
+ * message, 1 500 for a 500-row page, pushing the first page past the function timeout so the
+ * client received NOTHING — on a large mailbox every view rendered empty. EXPORTED so the
+ * sensitivity projection can be watched directly rather than only through a database round trip:
+ * `sensitive` decides whether a client renders a message's text AT ALL, too consequential to be
+ * reachable only through a fixture.
  */
 export function messageRowToDTO(
   m: typeof messages.$inferSelect,
@@ -168,31 +159,14 @@ export function messageRowToDTO(
   const folder = (fs?.desiredFolder ?? loc?.folder ?? "INBOX") as Folder;
   const category = (m.sensitivityCategory as SensitivityFlags["category"]) ?? null;
   /**
-   * ── `sensitive` IS THE POSITIVE MATCH, AND ONLY THE POSITIVE MATCH ────────────────────────
-   *
-   * Core owns this definition and states it in one line: `const sensitive = category !== null`
-   * (`packages/core/src/sensitive.ts`), directly above the rule that explains why the OTHER four
-   * flags are not it — *"`no_ai` and `no_kb` fail CLOSED on indeterminate … fail-closed is a rule
-   * about disclosure to a model, not a licence to block user actions"*. `no_forward` and
-   * `priority` follow the positive match exactly, so they can only ever agree with `category`;
-   * `no_ai` and `no_kb` are set for the whole INDETERMINATE bucket as well, and that bucket is
-   * ordinary mail we declined to show a model.
-   *
-   * This line used to OR all five together, and that widening is not cosmetic, because the client
-   * treats the field as "render no text at all": `isProtectedMessage` (client-engine) reads
-   * `sensitivity.sensitive` and nothing else, `OhmailEngine.hydrateBody` refuses to fetch a body
-   * for such a message, and the mirror purges any body it already held.
-   *
-   * The size of the error follows from the classifier's own structure rather than from any one
-   * mailbox: `no_ai` and `no_kb` are true for `sensitive` AND for the whole `indeterminate`
-   * bucket, so the OR is a STRICT SUPERSET of the categorised set, and everything in the
-   * difference is by definition mail the classifier did NOT positively classify. Every one of
-   * those was unreadable, and unreadable in the worst way available: the reader surfaces have no
-   * request to wait for, so they sat on "Loading the full message…" for ever.
-   *
-   * So this is not a narrowing for tidiness — it is this projection being brought back to the
-   * definition core already publishes, and the flags it drops remain on the DTO below, where a
-   * caller that genuinely means "was this withheld from the model" reads them by name.
+   * `sensitive` is the POSITIVE match, and only the positive match. Core owns the definition:
+   * `sensitive = category !== null`; `no_ai`/`no_kb` fail CLOSED on the whole INDETERMINATE
+   * bucket — ordinary mail we declined to show a model. This line used to OR all five flags, and
+   * the client treats the field as "render no text at all": `isProtectedMessage` reads
+   * `sensitivity.sensitive` alone, `hydrateBody` refuses the body, the mirror purges any it held.
+   * The OR was a strict superset of the categorised set, so everything in the difference was
+   * unreadable in the worst way — no request to wait for, "Loading the full message…" for ever.
+   * The dropped flags remain on the DTO below, readable by name.
    */
   const sensitivity: SensitivityFlags = {
     sensitive: category !== null,
@@ -249,54 +223,14 @@ export function messageRowToDTO(
 }
 
 /**
- * Materialize MANY messages in SIX queries, whatever the count.
- *
- * The shape that matters is not "faster" but "constant": a page of 500 costs the same number of
- * round-trips as a page of 1, so the sync endpoint's latency stops scaling with the mailbox. A
- * missing id is simply absent from the map, which is the same signal the single-id path gives by
- * returning null, so `SyncService` still emits its tombstone unchanged.
- *
- * THREE became FOUR, then FIVE, then SIX, and the count is in this sentence because CONSTANCY is
- * the property under test. The guard is `search-materialize.test.ts`'s "the SELECT count is the same
- * for one hit and for six", which spies on `db.select` and reds the moment a per-row loop comes
- * back. It is named here by its REAL name: this sentence used to cite `materialize-batch.test.ts`,
- * and `git log --all --diff-filter=A` shows that file was never added on any branch — the pointer
- * was decorative for its whole life, so the count it claimed to protect was protected by nothing.
- *
- * The tag lookup is one `inArray` over `message_tags` keyed by the SAME surviving ids as the
- * other two side tables, which is why it costs one query and not one per message. The FIFTH is
- * the auto-reply flag: one set query over the surviving ids applying `autoReplyByUsWhere`
- * (`packages/db`) — the same fragment `ohbox-tidy` and `rule-retro` apply — so the ledger join
- * and the header belt are stated once and asked once per PAGE, never once per row. The SIXTH is
- * the away responder's answer STAMP for the same page — one `inArray` over `away_replies`, whose
- * `(account_id, message_id)` UNIQUE means at most one row per message and therefore no grouping.
- * Both of the last two are constant in the page size, which is the whole property: a per-row
- * `exists` for either would be the shape this function exists to have ended.
- *
- * `accountId` is on the `messages` predicate, so an id belonging to another account is filtered
- * before it can be assembled — the batch cannot widen what a caller may see. The three side
- * tables are keyed by the message ids that survived that filter, never by the caller's raw
- * input. `message_tags` additionally carries its own `account_id` and it is ALSO filtered on,
- * belt and braces: that column is denormalized, so a bug that ever let it disagree with the
- * message's owner must fail closed rather than leak one account's tag names to another.
- *
- * ── A SOFT-DELETED ROW MATERIALIZES AS ABSENT, BY DEFAULT ──────────────────────────────────
- *
- * `deleted_at IS NULL` is the living-view rule (schema-mail.ts states it beside the column),
- * and this batch is the LIVING-VIEW reader: it feeds `/sync`'s delta prefetch, whose tombstone
- * seam turns "absent from the prefetch" into an `op: "delete"` — and whose own comments, plus
- * the coalesced stale read's entire equivalence argument ("a dead entity's latest change
- * materializes null → tombstone"), always CLAIMED this held. It did not: any writer emitting a
- * `message` update change after a delete — `bubbleUpPass` firing a schedule the delete
- * deliberately leaves standing (`spendResurface` is scoped to `resurfaced` alone) — had that
- * update re-materialize the full DTO, and the mail the user threw away reappeared on every
- * mirror. On a coalesced stale resume it was worse: the update SUPERSEDED the delete tombstone,
- * so the deletion was never delivered at all. Found by the verb-parity harness
- * (`packages/client-engine/test/verb-parity/`, the message_delete × bubbleUpPass scenario).
- *
- * `deleted: "include"` is the receipt reader: a route that has just stamped `deleted_at` still
- * owes its caller the DTO (`MessageService.delete` 500s without it), and an idempotent replay
- * re-serves that stored receipt. Nothing that feeds a mirror may pass it.
+ * Materialize MANY messages in SIX queries, whatever the count — CONSTANT, not fast: a page of
+ * 500 costs the round trips of a page of 1 (`search-materialize.test.ts` pins the SELECT count).
+ * The fifth query is the auto-reply flag (`autoReplyByUsWhere`, once per PAGE); the sixth is the
+ * away answer stamp. `accountId` is on the `messages` predicate; side tables key by SURVIVING
+ * ids; `message_tags` also filters its denormalized `account_id`. A soft-deleted row materializes
+ * as ABSENT by default: an update emitted after a delete used to re-materialize the DTO, and on a
+ * stale resume it SUPERSEDED the delete tombstone. `deleted: "include"` is the receipt reader
+ * only; nothing that feeds a mirror may pass it.
  */
 export interface MaterializeMessagesOpts {
   /** Default `"omit"` — the living-view rule. See the header before passing `"include"`. */
@@ -345,29 +279,14 @@ export async function materializeMessages(
     ));
   const autoReplyIds = new Set(arRows.map((r) => r.id));
   /**
-   * THE AWAY RESPONDER'S ANSWER STAMP — one query per page, on the ORIGINAL, not on the reply.
-   *
-   * Keyed on `owned` for the fifth query's reason (the account filter has already run, and the
-   * receipt reader must carry the same answer the living view does, or a `delete` echo would
-   * disagree with the row the client holds about a field the `update` before it did not change).
-   *
-   * WHICH ROWS COUNT: `outcome in ('sent','unverified')` — the set meaning "the claim is kept and
-   * no second reply will ever be offered", stated in full on `MessageDTO.awayRepliedAt`. That is
-   * the LOAD-BEARING term, and the guard for it is a `throttled` row carrying a `sent_at`: the
-   * schema permits one (the CHECK constrains the outcome alone), so the state is reachable by a
-   * hand repair or a backfill, and it is the only shape in which dropping this term changes an
-   * answer.
-   *
-   * `isNotNull(sent_at)` is a NARROWING, not a second guard, and saying so is the point: `iso()`
-   * answers `null` for a null instant and the projection spreads that straight through, so an
-   * in-set row with no instant produces exactly the same DTO whether the database filtered it or
-   * this map did. Removing the term therefore changes the ROWS CROSSING THE WIRE and no answer —
-   * measured, not assumed — which is why it is documented as narrowing rather than pinned by a
-   * test that could not fail.
-   *
-   * The ledger's `(account_id, message_id)` UNIQUE is why no `distinct` or `max` is needed; the
-   * `account_id` predicate is on the query rather than trusted from the id list, exactly as the
-   * five above have it.
+   * The away responder's answer stamp — one query per page, on the ORIGINAL, not the reply. Keyed
+   * on `owned`: the account filter has already run. Which rows count: `outcome in
+   * ('sent','unverified')` — "the claim is kept and no second reply will ever be offered"; the
+   * guard for the term is a `throttled` row carrying a `sent_at`, reachable by hand repair, the
+   * only shape where dropping it changes an answer. `isNotNull(sent_at)` is a NARROWING, not a
+   * second guard: `iso()` answers `null` for a null instant, so removing it changes the rows
+   * crossing the wire and no answer — measured, which is why it is documented rather than pinned
+   * by a test that could not fail. The ledger's UNIQUE is why no `distinct` is needed.
    */
   const wrRows = await db.select({
     messageId: awayReplies.messageId, sentAt: awayReplies.sentAt,
@@ -401,15 +320,13 @@ export async function materializeMessages(
 
 /**
  * The same six queries as {@link materializeMessages}, in the caller's order.
- *
- * `materializeMessages` is keyed by id and therefore says nothing about sequence, which is
- * exactly right for `getChanges` (the `change_log` page already carries the order). A snapshot
- * page IS an ordered window — newest first, keyset-paged — so it needs the DTOs back in the
- * order it asked for them. Ids the account does not own are absent from the map and are simply
- * skipped here, which preserves the batch's account filter rather than re-implementing it.
- *
- * `opts` passes straight through, so a caller that owes its reader a row it has just written
- * keeps the receipt reader's `deleted: "include"` while still paying one page of round-trips.
+ * `materializeMessages` is keyed by id and says nothing about sequence — right for `getChanges`,
+ * whose `change_log` page carries the order. A snapshot page IS an ordered window (newest first,
+ * keyset-paged), so it needs the DTOs back in the order it asked. Ids the account does not own
+ * are absent from the map and simply skipped, preserving the batch's account filter rather than
+ * re-implementing it. `opts` passes straight through, so a caller that owes its reader a
+ * just-written row keeps the receipt reader's `deleted: "include"` while paying one page of round
+ * trips.
  */
 export async function materializeMessagesInOrder(
   db: Db, accountId: string, ids: readonly string[], opts: MaterializeMessagesOpts = {},
@@ -437,21 +354,14 @@ export async function materializeMessageState(db: Db, accountId: string, id: str
 }
 
 /**
- * ── THE BATCHED SMALL-STATE READERS — one query per TYPE, not one per ROW ──────────────────
- *
- * `SyncService.getChanges` used to route every non-message/thread/folder change through the
- * per-id readers above, one sequential round trip each. That is invisible on a steady-state
- * page (a handful of rows) and dominant on a BACKLOG page: measured on the live serverless
- * path (2026-08-29, a live account, a 1,500-row stale resume), a 500-row page carrying 38
- * `message_state`/`draft` changes spent ~680 ms of its 1,084 ms p50 in that loop — ~18 ms of
- * round trip per row, the exact shape `materializeMessages` and `materializeThreads` were
- * written to end for their types. These are the same fix for the remaining volume types: one
- * `inArray` read per type present on the page, projected by the SAME `xRowToDTO` the per-id
- * reader uses, so the two paths cannot drift.
- *
- * Account scoping is on every predicate exactly as the per-id readers have it; an id the
- * account does not own is simply absent from the map, which the caller reads as the per-id
- * reader's `null` — a delete tombstone.
+ * The batched small-state readers — one query per TYPE, not one per ROW. `getChanges` used to
+ * route every non-message/thread/folder change through the per-id readers, one sequential round
+ * trip each: invisible on a steady-state page, dominant on a BACKLOG page — measured on the live
+ * serverless path, a 500-row page carrying 38 `message_state`/`draft` changes spent ~680 ms of
+ * its 1,084 ms p50 in that loop, ~18 ms per row. Same fix as `materializeMessages`, for the
+ * remaining volume types: one `inArray` read per type present on the page, projected by the SAME
+ * `xRowToDTO` the per-id reader uses, so the paths cannot drift. Account scoping is on every
+ * predicate; an id the account does not own is absent from the map — a delete tombstone.
  */
 export async function materializeMessageStates(
   db: Db, accountId: string, ids: readonly string[],
@@ -487,20 +397,14 @@ export async function materializeApprovals(
 }
 
 /**
- * ONE CHANGE PER CHILD ROW OF THE MESSAGES ON A PAGE — three queries, whatever the page holds.
- *
+ * One change per CHILD row of the messages on a page — three queries, whatever the page holds.
  * `message_state`, a pending `routing_decision` and an `approval` all describe a message, so the
  * snapshot reads them BY PARENT rather than by account: at most `limit` parents is at most
  * `limit` children, and a child can never be delivered without the row it describes. Keyed on
- * `messageId` and not on the child's own id, which is what separates this from the three readers
- * above — those re-materialize a `change_log` row by its entity id.
- *
- * A DECIDED routing decision is history and stays out, exactly as the page-1 read had it: the
- * delta is what carries a decision's outcome.
- *
- * `accountId` is on every predicate beside the `messageId` filter, belt-and-braces with the
- * caller's own scoping: a bug that ever let a page name another account's message must fail
- * closed rather than assemble that account's child state.
+ * `messageId`, not the child's own id — what separates this from the readers above, which
+ * re-materialize a `change_log` row by entity id. A DECIDED routing decision is history and stays
+ * out: the delta carries a decision's outcome. `accountId` is on every predicate beside the
+ * `messageId` filter, belt and braces: a page naming another account's message must fail closed.
  */
 export interface MessageChildChange {
   type: "message_state" | "routing_decision" | "approval";
@@ -631,22 +535,14 @@ export async function materializeThread(db: Db, accountId: string, id: string): 
 }
 
 /**
- * Materialize MANY threads in THREE queries, whatever the count.
- *
- * `materializeThread` is three round trips for ONE thread, and a full snapshot page can reference
- * hundreds of them — well over a thousand sequential round trips, which is the exact shape of the
- * outage `materializeMessages` was written to end. This is the same fix for the same reason: a
- * page of forty threads costs what a page of one costs.
- *
- * The message read is a SINGLE `inArray` over the surviving thread ids ordered date-ascending,
- * then grouped in Postgres's returned order — so each thread's slice is date-ascending exactly as
- * the per-id reader's own `orderBy` produces, and the shared projection cannot see a difference.
- *
- * `accountId` is on the `threads` predicate AND on the `messages` predicate, so a thread id from
- * another account is filtered before it is assembled and cannot pull that account's messages into
- * a DTO. `folder_state` is keyed by the first message of each SURVIVING thread, never by caller
- * input. A missing id is simply absent from the map — the same signal the per-id reader gives by
- * returning null.
+ * Materialize MANY threads in THREE queries, whatever the count. `materializeThread` is three
+ * round trips for ONE thread, and a snapshot page can reference hundreds — the exact outage shape
+ * `materializeMessages` ended. The message read is a single `inArray` over the surviving thread
+ * ids ordered date-ascending, grouped in returned order — each slice matches the per-id reader's
+ * own `orderBy`, so the shared projection cannot see a difference. `accountId` is on the
+ * `threads` AND `messages` predicates, so a foreign thread id is filtered before it can pull
+ * messages into a DTO; `folder_state` is keyed by the first message of each SURVIVING thread. A
+ * missing id is absent from the map.
  */
 export async function materializeThreads(
   db: Db, accountId: string, ids: readonly string[],
@@ -776,21 +672,14 @@ async function materializeFolder(db: Db, accountId: string, id: string): Promise
 }
 
 /**
- * THE ACCOUNT'S SETTINGS ROW — the `"settings"` entity (`change-log.ts` names why it exists).
- *
- * NEVER NULL for the caller's own account, and that is load-bearing: `SyncService.getChanges`
- * reads a null entity as a tombstone and would drain the change to every client as a DELETE —
- * but "no row yet" is a real settings state (every knob at its default, created lazily by the
- * first write), not an absence. So a missing row materializes as the default-shaped DTO, exactly
- * what `GET /consent` reports for the same account.
- *
- * The id is the ACCOUNT id (one row per account); a change row naming any other id is not this
- * account's settings and answers null like every cross-account read here — indistinguishable
- * from missing, which the feed then tombstones harmlessly.
- *
- * The per-mailbox exceptions live on `mailboxes.folders_disabled_at` (spec §17), not on the
- * settings row, and travel here because the client-facing question — "which mailboxes did this
- * account switch off?" — is a settings question wherever the column lives.
+ * The account's settings row — the `"settings"` entity. NEVER NULL for the caller's own account,
+ * and that is load-bearing: `getChanges` reads a null entity as a tombstone and would drain the
+ * change as a DELETE — but "no row yet" is a real settings state (every knob at its default), not
+ * an absence: a missing row materializes as the default-shaped DTO, exactly what `GET /consent`
+ * reports. The id is the ACCOUNT id; any other id answers null, indistinguishable from missing,
+ * tombstoned harmlessly. The per-mailbox exceptions live on `mailboxes.folders_disabled_at` (spec
+ * §17) and travel here because "which mailboxes are switched off?" is a settings question
+ * wherever the column lives.
  */
 export async function materializeSettings(db: Db, accountId: string, id: string): Promise<SettingsDTO | null> {
   if (id !== accountId) return null;

@@ -5,97 +5,25 @@ import { isMailboxDisabledReason, type MailboxDisabledReason } from "./mailbox-e
 import { dialect } from "./dialect/index.js";
 
 /**
- * CLOSE THE APPOINTMENTS AN ORGANIZER IS ABOUT TO STOP BEING ABLE TO KEEP.
- *
- * ── THE STATE THIS EXISTS TO DELETE ────────────────────────────────────────────────────────
- *
- * A pending scheduled send (`drafts.status = 'scheduled'`, `send_at` in the future) is an
- * appointment in ONE organizer's own store. It is not part of the portable profile in
- * `ohmail/_meta` — that document carries screener entries, rules, notify rules, the away
- * responder and tag names, and deliberately no per-message state and no drafts — so it does not
- * travel when a mailbox changes hands.
- *
- * Measured end to end on a real mailbox moved from a standalone install to a managed Cloud
- * account: the appointment was made on the standalone install, the mailbox was handed over, and
- * the standalone was relaunched past the due time. It stood down
- * (`organized_elsewhere:cloud`), `syncUntilQuiet()` returned zero cycles on start and on four
- * further polls, and the scheduled-send pass was never entered once — because that pass lives
- * inside the drain, and the drain is behind the organizer gate. Seventeen minutes past due the
- * row still read `status: 'scheduled'`, `send_error: null`, and the Drafts screen still said
- * **"Sends Tue 14:50"** for a time that had gone. Nothing would ever change it: a pending
- * scheduled send did not travel, was never delivered, and was never reported as failed.
- *
- * ── AND WHY THE EXPIRY DID NOT SAVE IT ─────────────────────────────────────────────────────
- *
- * `SCHEDULED_SEND_EXPIRY_MS` exists precisely so that a day-late appointment is closed with a
- * sentence rather than delivered quietly. It is enforced INSIDE `runScheduledSendPass`, which is
- * inside the drain, which is behind the gate — so the one case where the pass can never run
- * again is the one case the expiry cannot reach. **An expiry enforced inside a pass that may
- * never run is not an expiry.** This function is where that enforcement moves to for the
- * stand-down case: the side that is ceasing to organize closes its own appointments, in the
- * stand-down itself, with no pass involved.
- *
- * ── THE FIX IS "FAIL", NOT "TRAVEL", AND THAT IS A RULING RATHER THAN A SHORTCUT ───────────
- *
- * The alternative was to serialize pending appointments into the travelling profile so the new
- * organizer adopts them. It is rejected on three grounds and the third is the decisive one:
- * the profile document is configuration and would have to start carrying a message's
- * recipients, subject and body; leave-anytime means cancellation is not a migration, so a
- * mailbox changing hands is not a promise that scheduled work follows it; and an adopted
- * appointment is a window in which BOTH the old organizer and the new one hold a live
- * appointment for one message, which is the double-send this whole lease exists to prevent.
- * Closing keeps the invariant trivially: the appointment dies with the organizer that made it,
- * the row's `send_key` goes NULL so neither claim arm can ever find it again, and the person is
- * told, in the Drafts row, that it was not sent and where to schedule it again.
- *
- * ── WHAT IT TOUCHES, AND WHAT IT MUST NOT ──────────────────────────────────────────────────
- *
- * ONLY `status = 'scheduled'`. That status provably has no reservation and no live attempt: the
- * pass's claim flips a row to `'draft'` in the same transaction that takes its row lock, and
- * `SendService.reserve` commits the flip to `'sending'` together with the `outbound_sends`
- * INSERT. So:
- *
- *   'draft' + send_key   the CLAIM WINDOW — an invocation is attempting this send right now, or
- *                        died doing it and the pass's recovery arm replays the SAME key. Clearing
- *                        the key here would either cut the ground from under a live attempt or
- *                        strand the replay.
- *   'sending'            a reservation EXISTS. Closing it would clear the key a `pending`
- *                        reservation is resolved by, and leave the stuck-send alarm paging on a
- *                        row nothing can ever finish.
- *   terminal             the finalizers already spoke.
- *
- * A concurrent claim is arbitrated by the row lock rather than by a check: this UPDATE blocks on
- * a row the claim holds, then re-evaluates `status = 'scheduled'` after the claim commits and
- * correctly matches nothing. The claim wins, and the send it is making is the one the organizer
- * was still entitled to make when it started.
- *
- * ── WHY IT LIVES IN THIS PACKAGE ───────────────────────────────────────────────────────────
- *
- * `upsertDesiredSeen`'s reason, verbatim. Four call sites need it — the sidecar's lease gate and
- * its launch catch-up, the worker's `mayOrganize`, and the reconcile cron's stand-down — and the
- * worker may not import `@trafficflow/services` at runtime (its barrel drags an HTML sanitiser
- * into the worker's boot graph, a hard `ERR_REQUIRE_CYCLE_MODULE` on Node 23; see
- * `apps/worker/package.json` "//services-is-test-only"). Two spellings of "close an appointment
- * a stand-down orphaned" would be two answers to what the person is told. This module reaches
- * `schema-mail.js`, `change-log.js` and `mailbox-errors.js` alone, which keeps it inside the
- * desktop engine's closure rule (`index.ts`'s barrel header).
+ * Close the appointments an organizer is about to stop being able to keep. A pending scheduled
+ * send lives in ONE organizer's own store; the portable profile carries no per-message state, so
+ * it does not travel. Measured: a mailbox handed to Cloud, the standalone relaunched past due —
+ * the scheduled-send pass lives behind the organizer gate, so the row still read `scheduled`
+ * seventeen minutes late; the expiry is enforced inside a pass that may never run again. FAIL,
+ * not TRAVEL: an adopted appointment would let BOTH organizers hold a live appointment for one
+ * message — the double-send the lease prevents. Touches ONLY `status = 'scheduled'`; a concurrent
+ * claim is arbitrated by the row lock. Here because the worker may not import services.
  */
 
 /**
- * WHAT THE DRAFTS ROW QUOTES. Server copy, not a translated key: `drafts.send_error` is a stored
- * sentence and both clients render it verbatim inside their own frame — the webapp's
- * `scheduleFailedNote` ("This message wasn't sent at its scheduled time: {reason}") and the
- * phone's identical one. So these say the CAUSE and the ACTION and never restate the failure.
- *
- * Keyed on the stand-down reason because the CAUSES genuinely differ and the product already
- * distinguishes them in the mailbox strip (`standDown_organized_elsewhere_*`).
- *
- * The ACTION clause is deliberately the same in every member and names no destination. A destination
- * would go stale: the mailbox can come back to this install afterwards ("Organize from this
- * machine"), and a stored sentence saying "schedule it again on ohmail Cloud" would then be
- * standing advice to go somewhere the mailbox no longer is. The cause is written in the past
- * tense for the same reason — it stays true whatever happens to the mailbox next. A `send_error`
- * outlives its own occasion, so every clause in it has to.
+ * What the Drafts row quotes. Server copy, not a translated key: `drafts.send_error` is a stored
+ * sentence both clients render verbatim inside their own frame, so these say the CAUSE and the
+ * ACTION and never restate the failure. Keyed on the stand-down reason: the causes genuinely
+ * differ and the product already distinguishes them. The ACTION clause is the same in every
+ * member and names no destination: a destination would go stale — the mailbox can come back to
+ * this install, and a stored sentence saying "schedule it again on ohmail Cloud" would be
+ * standing advice to go somewhere the mailbox no longer is. The cause is past tense for the same
+ * reason: a `send_error` outlives its own occasion.
  */
 export const STAND_DOWN_SEND_SENTENCES: Record<MailboxDisabledReason, string> = {
   "organized_elsewhere:cloud":
@@ -118,46 +46,28 @@ export const STAND_DOWN_SEND_SENTENCES: Record<MailboxDisabledReason, string> = 
 };
 
 /**
- * WHAT A REMOVED MAILBOX'S DRAFTS ROW QUOTES. Same storage rule as the record above — server
- * copy, written once, quoted verbatim by both clients inside their own frame — and a DIFFERENT
- * sentence because the event is different in the one respect that matters to a reader.
- *
- * Three clauses, and each is load-bearing:
- *
- *  · THE CAUSE, past tense. "was removed" stays true however the mailbox is connected again
- *    later, which a stored sentence has to survive; the stand-down record's header states the
- *    same rule and this is the same discipline applied to a different occasion.
- *  · WHAT WAS **NOT** DONE. A person who has just removed a mailbox is being told, by a draft
- *    they wrote, that something did not happen — and the one thing they will wonder is whether
- *    the message itself is gone from the server. It is not, and nothing about a removal ever
- *    deletes mail from the mailbox. Saying so here is not reassurance nobody asked for; it is
- *    the answer to the question the failure raises.
- *  · THE ACTION, naming no destination. "Connect the mailbox again" is the only true one:
- *    unlike a stand-down there is no other organizer to be sent to, and a sentence pointing at
- *    one would be advice to go somewhere the mailbox is not.
+ * What a REMOVED mailbox's Drafts row quotes — same storage rule (server copy, quoted verbatim by
+ * both clients), a different sentence because the event differs in the one respect that matters.
+ * Three clauses, each load-bearing: the CAUSE, past tense ("was removed" stays true however the
+ * mailbox is connected again later); what was NOT done — the one thing the person will wonder is
+ * whether the message itself is gone from the server, and nothing about a removal ever deletes
+ * mail from the mailbox, so saying so is the answer to the question the failure raises; and the
+ * ACTION, naming no destination — "connect the mailbox again" is the only true one, since unlike
+ * a stand-down there is no other organizer to be sent to.
  */
 export const REMOVED_MAILBOX_SEND_SENTENCE =
   "This mailbox was removed from ohmail, so the scheduled send was not made. "
   + "Nothing was deleted from the mail server. Connect the mailbox again to schedule it.";
 
 /**
- * WHAT A RELEASED MAILBOX'S DRAFTS ROW QUOTES (mail 0088) — the third occasion, and it needed its
- * own sentence for the reason the removal's does.
- *
- * The three differ in the only thing a stored sentence has to get right: WHERE the message can be
- * sent from now.
- *
- *  · a stand-down hands the mailbox to another organizer, so "schedule it again where the mailbox
- *    is organized now" is true and actionable;
- *  · a removal hands it to nobody and takes the credentials with it;
- *  · a RELEASE hands it to nobody and keeps everything. The mailbox is still connected, the mirror
- *    still grows, and the person can organize it here again with one press — so the true sentence
- *    is neither of the other two. Quoting the stand-down's would tell somebody who had just chosen
- *    to stop organizing that another install had claimed their mailbox, which is the exact class of
- *    false statement `MailboxService.delete` clears `disabled_reason` to avoid.
- *
- * Past tense on the cause, for the reason the removal's header gives: the sentence has to survive
- * the mailbox being organized again later, and "was released" does.
+ * What a RELEASED mailbox's Drafts row quotes (mail 0088) — the third occasion, with its own
+ * sentence. The three differ in the only thing a stored sentence must get right: WHERE the
+ * message can be sent from now. A stand-down hands the mailbox to another organizer; a removal
+ * hands it to nobody and takes the credentials; a RELEASE hands it to nobody and keeps everything
+ * — still connected, mirror still growing, one press organizes it here again. Quoting the
+ * stand-down's sentence would tell somebody who chose to stop that another install had claimed
+ * their mailbox — the class of false statement `MailboxService.delete` clears `disabled_reason`
+ * to avoid. Past tense on the cause: the sentence must survive the mailbox being organized again.
  */
 export const RELEASED_ORGANIZER_SEND_SENTENCE =
   "This install stopped organizing this mailbox, so the scheduled send was not made. "
@@ -171,29 +81,14 @@ export interface StandDownSendsInput {
   reason: MailboxDisabledReason;
   now: Date;
   /**
-   * THE SENTENCE, WHEN THE OCCASION IS NOT A STAND-DOWN (mail 0088).
-   *
-   * Omitted, the sentence is looked up from {@link reason}, which is every existing caller and is
-   * the shape this function was written for. Supplied, it REPLACES that lookup — for the one
-   * occasion that shares this function's precondition (`organizer_role = 'reader'`, checked inside
-   * the transaction) and does not share its cause: a deliberate release, where nobody took the
-   * mailbox and there is nowhere to send the person.
-   *
-   * ── WHY A PARAMETER RATHER THAN A FOURTH `reason` MEMBER ──────────────────────────────────
-   *
-   * `MailboxDisabledReason` is a closed set with a CHECK behind it and a column that stores it, and
-   * a release is NOT one of its members — nobody is organizing this mailbox elsewhere, which is
-   * exactly what all three existing members assert. Widening that union to carry a sentence would
-   * put a value in the type that no row may hold and that `reasonFor` can never produce.
-   *
-   * ── AND WHY NOT A SECOND EXPORTED FUNCTION, LIKE THE REMOVAL'S ────────────────────────────
-   *
-   * `closeRemovedMailboxAppointments` is separate because its PRECONDITION is different (a
-   * tombstone, not a reader) and preconditions are what distinguish these paths. A release leaves
-   * a reader, so it shares this precondition exactly — and a third copy of the same guarded UPDATE
-   * would be a third place for the lock order and the fence-inheritance argument to drift.
-   *
-   * The caller still passes a `reason`, and it is still what the log line names.
+   * The sentence, when the occasion is not a stand-down (mail 0088). Omitted, it is looked up
+   * from {@link reason}; supplied, it replaces the lookup — for the one occasion sharing this
+   * function's precondition (`organizer_role = 'reader'`) and not its cause: a deliberate
+   * release. A parameter rather than a fourth `reason` member: `MailboxDisabledReason` is a
+   * closed set with a CHECK, and a release is NOT a member — nobody organizes this mailbox
+   * elsewhere. Not a second exported function like the removal's: a release leaves a READER,
+   * sharing this precondition exactly, and a third copy of the guarded UPDATE would be a third
+   * place for the lock order to drift. The caller still passes a `reason` for the log line.
    */
   sentence?: string;
 }
@@ -204,33 +99,26 @@ export interface StandDownSendsResult {
   /** The drafts that were closed — the log line's evidence, and nothing else reads it. */
   draftIds: string[];
   /**
-   * THE HIGHEST `change_log` SEQ THIS CLOSE EMITTED, or null when it closed nothing.
-   *
-   * The delta contract's `X-Sync-Seq` echo (the delta contract's own rule: every write advances the sequence it echoes) needs a number to echo, and
-   * the seqs exist — `recordChanges` returns them and this used to drop them on the floor. A
-   * caller that answers 204 with no seq leaves the mirror that made the request with no target
-   * to wait for: it converges on the next `/sync` drain or on the NOTIFY, both of which are
-   * later than read-your-writes, and one of which can be missed.
-   *
-   * The HIGHEST of the batch, because that is what the contract echoes and what the wake names.
+   * The highest `change_log` seq this close emitted, or null when it closed nothing. The delta
+   * contract's `X-Sync-Seq` echo needs a number (every write advances the sequence it echoes),
+   * and the seqs exist — `recordChanges` returns them and this used to drop them on the floor. A
+   * caller that answers 204 with no seq leaves the mirror that made the request with no target to
+   * wait for: it converges on the next `/sync` drain or on the NOTIFY, both later than
+   * read-your-writes, one of which can be missed. The HIGHEST of the batch, because that is what
+   * the contract echoes and what the wake names.
    */
   seq: bigint | null;
 }
 
 /**
- * THE UPDATE ITSELF, shared by the two events that end an organizer's right to keep an
- * appointment — a stand-down and a REMOVAL. Private: the precondition is what distinguishes
- * them, and a caller that could pick its own sentence could write one that is not true of
- * either event.
- *
- * Everything the header says about what this touches applies here and is not repeated: only
- * `status = 'scheduled'`, both halves of the bookkeeping cleared so neither claim arm can find
- * the row again, and the change rows written in the same transaction so no mirror observes the
- * closed row without the `draft` update that announces it.
- *
- * It takes a `tx` that ALREADY holds the mailbox row. Both callers read that row `FOR UPDATE`
- * before calling, which is where the lock order (mailbox before draft) is kept — putting the
- * read in here would hide the one ordering decision this module makes.
+ * The UPDATE itself, shared by the two events that end an organizer's right to keep an
+ * appointment — a stand-down and a REMOVAL. Private: the precondition is what distinguishes them,
+ * and a caller that could pick its own sentence could write one true of neither event. Only
+ * `status = 'scheduled'`; both halves of the bookkeeping cleared so neither claim arm can find
+ * the row again; the change rows written in the same transaction so no mirror observes the closed
+ * row without the `draft` update announcing it. Takes a `tx` that ALREADY holds the mailbox row:
+ * both callers read it `FOR UPDATE` first — the lock order (mailbox before draft) is kept there,
+ * and putting the read in here would hide the one ordering decision this module makes.
  */
 async function closeAppointmentsWithSentence(
   // `LedgerTx` and not `Tx`: `recordChanges` allocates change sequence numbers and needs a real
@@ -269,21 +157,14 @@ async function closeAppointmentsWithSentence(
 }
 
 /**
- * Close every pending appointment on ONE mailbox, with the stand-down sentence.
- *
- * Scoped by account AND mailbox: an account may hold several mailboxes and only the one standing
- * down loses its appointments. The account predicate is also what lets the planner use
- * `drafts_account_updated_idx` rather than scanning every live appointment in the database.
- *
- * ONE TRANSACTION with the change rows, so no mirror can ever observe the closed row without the
- * `draft` update that announces it — the phone's Scheduled screen and the webapp's Drafts list
- * both learn this the way they learn every other draft change.
- *
- * THROWS on a database fault, deliberately: the callers are stand-down paths that each have
- * their own logging convention and their own answer to a failed write, and every one of them
- * has a retry — the desktop re-runs this on its next launch while the row still says stood down,
- * and on Cloud the hosted pass refuses a `disabled` mailbox at due time and closes the row
- * itself. Swallowing here would hide the fault from all four of them.
+ * Close every pending appointment on ONE mailbox, with the stand-down sentence. Scoped by account
+ * AND mailbox: only the mailbox standing down loses its appointments, and the account predicate
+ * lets the planner use `drafts_account_updated_idx` rather than scanning every live appointment.
+ * ONE transaction with the change rows, so no mirror observes the closed row without the `draft`
+ * update announcing it. THROWS on a database fault, deliberately: the callers are stand-down
+ * paths with their own logging and their own retry — the desktop re-runs this on its next launch
+ * while the row still says stood down, and on Cloud the hosted pass refuses a `disabled` mailbox
+ * at due time and closes the row itself. Swallowing here would hide the fault from all of them.
  */
 export async function closeStoodDownAppointments(
   db: Tx, input: StandDownSendsInput,
@@ -294,69 +175,16 @@ export async function closeStoodDownAppointments(
   const reason: MailboxDisabledReason =
     isMailboxDisabledReason(input.reason) ? input.reason : "organized_elsewhere:unknown";
   return db.transaction(async (tx) => {
-    // ── THE ROW MUST ACTUALLY BE STOOD DOWN, READ INSIDE THIS TRANSACTION ──────────────────
-    //
-    // Every caller has just decided to stand down, so this looks redundant — and it is not. The
-    // DECISION is process-local; the durable stand-down is a row, and the two can disagree in
-    // exactly one direction that matters. On Cloud, `markMailboxStoodDown` is FENCED: an
-    // instance that read a stand-down verdict and then lost the shard has its lifecycle write
-    // refused, and its close must be refused with it — otherwise a deposed leader cancels an
-    // appointment the successor legitimately accepted after re-organizing the mailbox. Reading
-    // the row is how this write inherits the fence's answer without taking the fence, which it
-    // must not: `lifecycleWhere` also refuses a mailbox that is ALREADY disabled, so a close
-    // gated on the fenced write's own return value would never run for the population this
-    // whole function exists for — an install stood down long before this code existed.
-    //
-    // `FOR UPDATE`, AND THE MAILBOX ROW IS TAKEN BEFORE ANY DRAFT — the order this codebase
-    // already keeps, and the reason it keeps it is written out beside the other pass that locks
-    // this row ("Recorded here so the next reader does not 'fix' the order back").
-    //
-    // The lock is what makes this check MEAN anything. A plain read stood here for one round and
-    // was wrong: it and the UPDATE below take separate snapshots under READ COMMITTED, so a
-    // lifecycle transition committing `connected` between them left the UPDATE running with a
-    // predicate that no longer looked at the mailbox at all — and it would then cancel an
-    // appointment a successor had legitimately accepted. Holding the row instead totally orders
-    // this against every writer of `mailboxes` (the stand-down, the takeover, the re-enable),
-    // which is the whole set of transitions that could make this close wrong.
-    //
-    // It cannot deadlock with scheduling, and that was checked rather than assumed:
-    // `ScheduleService.schedule` locks the DRAFT and only READS the mailbox — it takes no lock on
-    // this row, so there is no cycle to close. (A deadlock argument against this lock stood here
-    // for one round and rested on that premise being false.)
-    //
-    // WHAT THE LOCK DOES NOT EXCLUDE, and why that is acceptable rather than merely accepted.
-    // The residual is one interleaving: a schedule that read the mailbox as connected, has not
-    // yet taken its draft lock when this UPDATE scans past the row, and commits `'scheduled'`
-    // afterwards. (The other order is already safe — this UPDATE blocks on the draft lock the
-    // scheduler holds, then re-evaluates against the committed row and closes it.) Two standing
-    // properties bound it:
-    //
-    //  · on a DESKTOP install the window does not exist. That store serves the engine and the
-    //    app's own requests over a SINGLE connection, so two transactions on it cannot interleave
-    //    at all — and it is the door on which this orphan was observed.
-    //  · on a hosted account the scheduled-send pass is the standing backstop: it claims the due
-    //    row, `SendService.reserve` refuses a mailbox whose row is `disabled`, and the
-    //    appointment is closed with a sentence then.
-    //
-    // So the residual is an appointment reported as failed WHEN IT COMES DUE rather than at the
-    // stand-down — a later honest failure, not the silent one this function exists for. Both
-    // properties are held by tests beside their own code rather than by this comment.
-    //
-    // ── THE PREDICATE IS `organizer_role = 'reader'` (mail 0083), NOT `disabled` + A REASON ──
-    //
-    // It used to read `status='disabled' AND disabled_reason IS NOT NULL`, because that pair WAS
-    // the stand-down: the loser stopped entirely. A loser is now a READER — connected, syncing,
-    // on the roster — so the old predicate matches nothing a stand-down writes any more, and
-    // leaving it would have made this function silently close zero appointments for ever: the
-    // exact orphan it exists to prevent, restored, with the tests still green because they set
-    // up the row the old way.
-    //
-    // The discriminator against a REMOVAL survives the change intact and gets sharper. A removal
-    // is `status='disabled'` with no reason and keeps `organizer_role='organizer'` — nothing
-    // demoted it, the row is simply a tombstone — so the two preconditions are now disjoint on a
-    // column each, rather than on two readings of one. That matters because the sentences differ
-    // in the only thing they must get right: "schedule it again where the mailbox is organized
-    // now" is true of a handover and false about a mailbox nobody organizes.
+    // The row must actually BE stood down, read inside THIS transaction. The decision is
+    // process-local; the durable stand-down is a row, and they can disagree where it matters: on
+    // Cloud the lifecycle write is FENCED — a deposed instance's close must be refused with it,
+    // or it cancels an appointment the successor accepted; reading the row inherits the fence's
+    // answer. `FOR UPDATE`, mailbox before any draft: a plain read stood here one round and was
+    // wrong — separate snapshots under READ COMMITTED. No deadlock with scheduling: the scheduler
+    // locks the DRAFT and only reads the mailbox. The residual — a schedule committing after this
+    // UPDATE — is bounded: a desktop store is one serialized connection, and the hosted pass
+    // refuses a `disabled` mailbox at due time. The predicate is `organizer_role = 'reader'`
+    // (mail 0083): the loser is now a READER; the old predicate would close nothing forever.
     /* THE ROW LOCK THROUGH THE SEAM. On the device store it is the identity, and that is not a
        weakening: the store is reached through ONE serialized connection, so there is no second
        writer for a lock to exclude — a second connection to the same file does not contend, it
@@ -387,34 +215,14 @@ export interface RemovedMailboxSendsInput {
 }
 
 /**
- * Close every pending appointment on a mailbox the USER HAS JUST REMOVED.
- *
- * ── WHY THIS IS NOT `closeStoodDownAppointments` WITH A FOURTH REASON ───────────────────────
- *
- * The two events differ in the only thing the stored sentence has to get right: WHERE the
- * message can be sent from now. A stand-down hands the mailbox to another organizer, so
- * "schedule it again where the mailbox is organized now" is both true and actionable. A removal
- * hands it to NOBODY — the row is a tombstone, the credentials are gone, and there is no
- * "where" to send the reader to. Storing a stand-down sentence on a removal would be the exact
- * class of false statement `MailboxService.delete` already clears `disabled_reason` to avoid:
- * telling somebody another install has claimed a mailbox they themselves disconnected.
- *
- * The PRECONDITION is the mirror image of the stand-down's and is the reason both live here:
- * `disabled` with a reason is a stand-down, `disabled` with none is a removal, and that
- * discriminator is the product's, not this module's (`identity.ts` resurrects a paused mailbox
- * and never a retired one; the census in `packages/db/test` refuses a null-reason write as a
- * stand-down site for the same reason). One module, one spelling of the UPDATE, two
- * preconditions and two sentences — which is what keeps the two events from drifting into two
- * answers about what the person is told.
- *
- * ── IT RUNS INSIDE THE CALLER'S TRANSACTION, AND THAT IS THE POINT ──────────────────────────
- *
- * `MailboxService.delete` already holds this mailbox row `FOR UPDATE` and is, in the same
- * transaction, writing the tombstone and deleting the credentials. Closing the appointments
- * anywhere else would leave a window in which the mailbox has no credentials and a live
- * appointment still points at it. The row read below is therefore a re-read of a row this
- * transaction already owns — free, and it is what makes the function total: it refuses to close
- * anything on a mailbox that is not, at this instant, a removal.
+ * Close every pending appointment on a mailbox the user has just REMOVED. Not the stand-down
+ * close with a fourth reason: the two events differ in WHERE the message can be sent from now — a
+ * stand-down hands the mailbox to another organizer; a removal hands it to NOBODY, and a
+ * stand-down sentence on a removal would claim another install took a mailbox the person
+ * disconnected. The precondition is the mirror image: `disabled` with a reason is a stand-down,
+ * with none a removal. One module, one UPDATE, two preconditions, two sentences. Runs INSIDE the
+ * caller's transaction: `MailboxService.delete` already holds the mailbox row `FOR UPDATE` —
+ * closing anywhere else leaves a window with no credentials and a live appointment.
  */
 export async function closeRemovedMailboxAppointments(
   db: Tx, input: RemovedMailboxSendsInput,

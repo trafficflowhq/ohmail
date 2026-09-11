@@ -28,6 +28,7 @@ import type {
   TrashRowWire,
 } from "../engine.js";
 import type { AttachmentWire, EngineAdapter, MutationOutcome, SyncParams } from "./adapter.js";
+import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -41,28 +42,22 @@ export interface HttpAdapterOptions {
   getCookie?: (name: string) => string | null;
   /** Cookie carrying the CSRF token (contract §1.3). */
   csrfCookieName?: string;
+  /**
+   * The wait a retried READ takes, for a guard that must assert the interval rather than sit
+   * through it. Production leaves it unset and the wrapper uses `setTimeout`.
+   */
+  readWaitFor?: (ms: number) => Promise<void>;
   /** Extra headers on every request (e.g. Authorization for bearer mode). */
   headers?: () => Record<string, string>;
   /**
-   * MAY THIS CLIENT STAGE ATTACHMENT BYTES OUT OF THE SEND REQUEST? **Default: no.**
-   *
-   * A send's attachment bytes normally ride the send request base64-encoded, which is bounded by
-   * whatever request-body limit sits in front of the API. When this is on, a send whose bytes do
-   * not fit that limit instead mints an upload ticket per file (`POST /attachments/staging`), PUTs
-   * the bytes straight at the URL it is given, and sends REFERENCES — so the ceiling becomes the
-   * sending mailbox's own announced limit rather than the transport's.
-   *
-   * ── WHY THE DEFAULT IS `false`, AND WHY THAT IS THE SAFETY PROPERTY ───────────────────────
-   *
-   * This adapter is the transport for the browser app AND for both doors of the desktop app. The
-   * desktop's STANDALONE door talks to an engine in its own process that has no object storage
-   * behind it and no business putting anybody's attachment bytes into hosted storage; its CLOUD
-   * door forwards `POST /drafts/:id/send` verbatim to the hosted API, so the request it forwards
-   * must stay the shape it has always been for a build already installed on somebody's machine.
-   * Both are satisfied by one default: the desktop constructs this adapter with no options at all
-   * on either door, so neither stages, and the browser turns it on explicitly.
-   *
-   * Off, this class behaves exactly as it did — a send is byte-identical, including its body.
+   * May this client stage attachment bytes out of the send request?
+   * Default: no. On, a send whose base64 bytes exceed the request-body
+   * limit mints a ticket per file (`POST /attachments/staging`), PUTs the
+   * bytes at the given URL and sends references — the ceiling becomes the
+   * mailbox's own announced limit. The default is the safety property: this
+   * adapter is both desktop doors' transport — the standalone engine has no
+   * object storage, the cloud door must forward sends byte-identical — and
+   * neither passes options, so neither stages; the browser opts in.
    */
   stageAttachments?: boolean;
 }
@@ -85,17 +80,12 @@ interface WireError {
 
 // ── the two view vocabularies ──────────────────────────────────────────────
 //
-// THERE ARE TWO NAMES FOR EVERY PILE, AND THEY OVERLAP IN EXACTLY ONE PLACE.
-//
-// The client's own vocabulary is {@link OhmailView} — `ohbox`, `reads`, `receipts`, `screener`,
-// `screened`, `spam` — the words the product uses on screen. The server's message-list route
-// speaks a different one, and the only name the two share is `screened`. That single overlap is
-// what makes the mistake so easy to make and so hard to see: a client that puts its OWN word on
-// the wire works for one view out of six and is refused for the rest.
-//
-// So the translation happens HERE, in the wire client, because wire vocabulary is what a wire
-// client is for. Nothing above this file — not the engine, not a surface — should have to know
-// that the server has its own words for the piles.
+// Two names for every pile, overlapping in exactly one place. The client's
+// vocabulary is {@link OhmailView} (`ohbox`, `reads`, `receipts`, `screener`,
+// `screened`, `spam`); the server's message-list route speaks another, and
+// the only shared name is `screened` — so a client that puts its own word on
+// the wire works for one view out of six. The translation happens here, in
+// the wire client: nothing above this file should know the server's words.
 
 /**
  * The server's message-view vocabulary, mirrored from the `MessageView` union its message-list
@@ -112,15 +102,12 @@ export type ServerMessageView =
   | "new_for_you" | "previously_seen";
 
 /**
- * CLIENT VIEW → SERVER VIEW, the one place the two vocabularies meet.
- *
- * `null` means the server has no message-list for that view, which is a real answer rather than a
- * gap: `screener` is a queue of SENDERS waiting at the door, not a pile of mail with a paging
- * cursor behind it. A request for it would be refused, so none is made — the capability reports
- * the same "there is nothing behind this list" it reports for a client with no server at all.
- *
- * Exhaustive by `Record<OhmailView, …>`: adding a view to the client's vocabulary without
- * deciding what the server calls it does not compile.
+ * Client view → server view, the one place the two vocabularies meet.
+ * `null` means the server has no message-list for that view — a real answer:
+ * `screener` is a queue of senders at the door, not a pile of mail with a
+ * paging cursor. A request would be refused, so none is made. Exhaustive by
+ * `Record<OhmailView, …>`: adding a view without deciding what the server
+ * calls it does not compile.
  */
 export const SERVER_VIEW_OF: Record<OhmailView, ServerMessageView | null> = {
   ohbox: "imbox",
@@ -132,73 +119,26 @@ export const SERVER_VIEW_OF: Record<OhmailView, ServerMessageView | null> = {
 };
 
 /**
- * How long the client waits for `GET /messages/:id/attachments` before it stops waiting.
- *
- * ## WHY THERE HAD TO BE ONE AT ALL
- *
- * `fetch` has no default deadline. A request the server accepts and never answers — a dead proxy,
- * a half-open TCP connection, a lambda killed between the handshake and the reply — leaves a
- * promise that neither resolves nor rejects, so `loadAttachments` holds `{state: "loading"}` and
- * the strip renders that as nothing, on purpose, for as long as the tab is open. A REFUSAL is a
- * state the surface can say out loud, and it at least arrives; this is the case where nothing
- * arrives, and before this constant existed the whole path had no bound of any kind: not here,
- * not in the engine, not in the browser. (`DEFAULT_NET_TIMEOUTS` bounds imapflow's sockets inside
- * the worker and is not reachable from a client.)
- *
- * ## WHY TWELVE SECONDS
- *
- * NOT derived from `apps/api-vercel`'s `maxDuration = 60`. That bounds how long our own handler
- * may run and says nothing about the failure this exists for, which happens at the network layer
- * where no server budget applies. The number is chosen against the user instead: the route is
- * `cost: "read"`, one indexed row, and the effect behind it fires on every message OPEN — so the
- * cost of being wrong is 12 s of silence per message against a sick backend. Twelve leaves room
- * for a cold lambda on a slow mobile link (the floor is around 8 s) and is well short of the point
- * where somebody has concluded the app is broken and reloaded it.
+ * How long the client waits for `GET /messages/:id/attachments`. `fetch` has
+ * no default deadline, so a request the server accepts and never answers (a
+ * dead proxy, a half-open connection) left `loadAttachments` in
+ * `{state: "loading"}` for the life of the tab, with no bound anywhere on
+ * the path. Twelve seconds is chosen against the user, not derived from
+ * `maxDuration`: the route is `cost: "read"`, one indexed row, fired on
+ * every message open — 12 s leaves room for a cold lambda on a slow mobile
+ * link (~8 s floor) and stays short of "the app is broken, reload".
  */
 export const ATTACHMENT_LIST_TIMEOUT_MS = 12_000;
 
 /**
- * How long the client waits for `GET /messages/:id/body` before it stops waiting.
- *
- * ## THE SAME SILENCE AS THE ATTACHMENT LIST, ON THE ROUTE THAT SHOWS IT TO EVERY READER
- *
- * The argument on {@link ATTACHMENT_LIST_TIMEOUT_MS} applies here word for word — `fetch` has no
- * default deadline, and a request the server accepts and never answers leaves a promise that
- * neither resolves nor rejects — but the consequence is worse, because this route is what a
- * MESSAGE is. `Engine.hydrateBody` writes `{state: "loading"}` before it asks, the surfaces
- * render that as "Loading the full message…", and the only exits from that state are the two
- * arms of `fetchBodyInto`'s try/catch. Neither runs if the promise never settles.
- *
- * And the spinner is not merely stuck, it is UNRECOVERABLE: `hydrateBody`'s single-flight map is
- * cleared from the request's own `.finally`, so a hung request keeps its entry for the life of
- * the tab, and every later call — INCLUDING the Retry button, which passes `{retry: true}` —
- * short-circuits on `if (inFlight) return inFlight` and joins the promise that is never coming
- * back. No surface offers a control for `loading` either, because `loading` was designed to be a
- * state that ends. This constant is what makes that true.
- *
- * ## WHY TWELVE, AND WHY NOT LONGER — WHICH IS THE HALF THAT LOOKS SETTLED AND IS NOT
- *
- * This was written as 20 s first, on the argument that the route returns a whole html part
- * (`prepareHtmlForStorage` caps it at 256 KiB) and so deserves longer than its sibling. That
- * argument is wrong, and both of its halves are:
- *
- *   - The route is not slow. It is `cost: "read"`, one indexed row, and it holds no IMAP slot —
- *     the same cost class as its sibling, answering in well under a second whenever the server
- *     is answering at all. There is no long tail here for a longer deadline to cover.
- *   - The response is served GZIPPED. 256 KiB of newsletter html is 30–50 KB on the wire, so
- *     even a bad mobile link spends about two seconds in that stream, not eight. The payload
- *     premise does not survive the content encoding.
- *
- * And the two failure modes are ASYMMETRIC, which is what settles it. Timing out early costs one
- * wasted round trip and a Retry that works. Timing out late costs the reader that many seconds of
- * "Loading the full message…" before anything at all is offered — because, per the paragraph
- * above, this deadline is the ONLY thing that makes the state recoverable. The route's importance
- * reads at first like an argument for the long end of the range; it is an argument for the short
- * end.
- *
- * So it is the same figure as its sibling — one number for one cost class, carrying the same room
- * for a cold lambda on a slow link that the docblock above reasons through, rather than a
- * difference resting on a premise gzip erases.
+ * How long the client waits for `GET /messages/:id/attachments`. `fetch`
+ * has no default deadline, so a request the server accepts and never
+ * answers (a dead proxy, a half-open connection) left `loadAttachments` in
+ * `{state: "loading"}` for the life of the tab. Twelve seconds is chosen
+ * against the user, not derived from `maxDuration`: the route is
+ * `cost: "read"`, one indexed row, fired on every message open — 12 s
+ * leaves room for a cold lambda on a slow mobile link (~8 s floor) and
+ * stays short of "the app is broken, reload".
  */
 export const BODY_FETCH_TIMEOUT_MS = 12_000;
 
@@ -212,36 +152,14 @@ export const BODY_FETCH_TIMEOUT_MS = 12_000;
 export const PULL_RING_TIMEOUT_MS = 8_000;
 
 /**
- * NARROW ONE BODY OFF THE WIRE — shared by `GET /messages/:id/body` and by the batch route,
- * because they serve the same stored row and a second narrowing is a second place for it to be
- * wrong. (It already was: this adapter returned `{ text }` and dropped the rest, which is where
- * the html part of every message died — see {@link MessageBodyWire}.)
- *
- * Forward-compatible parsing (§8): a body row that was never ingested answers `text: ""`, and a
- * server that one day stops sending a field must never become `undefined` rendered into the page.
- *
- * ── THE ABSENT `html` CASE IS `null`, NOT `""` ─────────────────────────────────────────────
- *
- * The type test is the whole parse: the endpoint answers `string | null`, an older or partial
- * server answers `undefined`, and all three mean "there is no html to render" to a caller that
- * checks for null. Coercing to `""` instead would make an html-less message indistinguishable
- * from one whose html is an empty document, and the renderer's "fall back to text" branch would
- * then be chosen by a falsy check rather than by a stated absence.
- *
- * NOTHING IS VALIDATED BEYOND THE TYPE, deliberately. The html is hostile bytes and this is the
- * wrong place to decide what is safe in them: a partial sanitization at the adapter would be a
- * second, weaker gate that makes the real one (`MessageBody.tsx`, DOMPurify + a sandboxed frame)
- * impossible to prove on its own. What arrives here is what the sender wrote, and it is treated
- * as such all the way to the one component that knows how.
- *
- * ── AND THE UNSUBSCRIBE POSTURE, NARROWED THE SAME WAY ─────────────────────────────────────
- *
- * The server DERIVES it from the raw headers (which never cross the wire) and sends the enum plus,
- * for `not_one_click` only, the sender's https page. An OLDER server sends neither field, and the
- * correct reading of "the server said nothing" is `"no_header"` (offers no route) and `null` (no
- * link) — never a claim that some route exists. The value is trusted only if it is one of the four
- * known strings; anything else, including a future state this build does not know, reads as
- * `"no_header"`.
+ * How long the client waits for `GET /messages/:id/body` — the same silence
+ * as {@link ATTACHMENT_LIST_TIMEOUT_MS}, on the route that shows a reader
+ * the message, where the stuck spinner is unrecoverable: the single-flight
+ * map clears in the request's own `.finally`, so a hung request keeps its
+ * entry for the tab's life and even Retry joins the promise that never
+ * settles — this deadline makes `loading` a state that ends. Twelve, not
+ * longer: the same read cost class as its sibling, the response is gzipped,
+ * and timing out late costs the reader those seconds with nothing offered.
  */
 function narrowBody(wire: Partial<MessageBodyWire>): MessageBodyWire {
   return {
@@ -282,28 +200,14 @@ interface SendWire {
   message?: string;
 }
 
-function retryAfterMsOf(res: Response): number | null {
-  const raw = res.headers.get("retry-after");
-  if (raw === null) return null;
-  const trimmed = raw.trim();
-  if (trimmed === "") return null;
-  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
-  const when = Date.parse(trimmed);
-  if (Number.isNaN(when)) return null;
-  return Math.max(0, when - Date.now());
-}
-
 /**
- * A 2xx WHOSE BODY WILL NOT PARSE IS AMBIGUITY, NOT A REFUSAL.
- *
- * `res.json()` throwing after a successful status means the SERVER ACTED and we cannot read what
- * it said. The row may exist; the ticket may be minted. Letting the raw `SyntaxError` escape made
- * `dispatch` wrap it as `retryable: false` — a terminal refusal — so the client dropped its
- * Idempotency-Key and the next attempt created a SECOND draft, or told a person "no draft was
- * made" about one that had just been paid for and written.
- *
- * Retryable, under the same key, carrying the response's own status so the give-up ceiling can
- * attribute it. See the send route's equivalent arm for the fuller argument.
+ * A 2xx whose body will not parse is ambiguity, not a refusal: the server
+ * acted and we cannot read what it said — the row may exist, the ticket may
+ * be minted. Letting the raw SyntaxError escape made `dispatch` wrap it as
+ * `retryable: false`, so the client dropped its Idempotency-Key and the next
+ * attempt created a second draft. Retryable, under the same key, carrying
+ * the response's own status so the give-up ceiling can attribute it. See
+ * the send route's equivalent arm.
  */
 async function readJsonOrAmbiguous<T>(res: Response, what: string): Promise<T> {
   try {
@@ -333,6 +237,13 @@ async function readJsonOrAmbiguous<T>(res: Response, what: string): Promise<T> {
 export class HttpAdapter implements EngineAdapter {
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
+  /**
+   * The SAME transport with {@link retryingRead} around it — used for GETs and nothing else.
+   *
+   * Built once in the constructor rather than per call so there is one wrapper per adapter, and
+   * kept beside `fetchImpl` rather than replacing it because the wrapper REFUSES a write.
+   */
+  private readonly readImpl: FetchLike;
   private readonly getCookie: (name: string) => string | null;
   private readonly csrfCookieName: string;
   private readonly extraHeaders: () => Record<string, string>;
@@ -341,19 +252,14 @@ export class HttpAdapter implements EngineAdapter {
   /** Highest X-Sync-Seq observed across mutations — converged once the /sync cursor reaches it. */
   lastSyncSeq: number | null = null;
   /**
-   * `Idempotency-Key → draftId` for in-flight sends.
-   *
-   * A send is TWO requests — create the draft, then send it — and only the second is
-   * idempotent server-side (`POST /drafts` is not `idempotent`-marked, so `withIdempotency`
-   * short-circuits and a replay writes a SECOND draft). Remembering the draft this key
-   * already created means the engine's retry — same key, same envelope — re-sends the same
-   * draft instead of minting another.
-   *
-   * It is in-memory ON PURPOSE and needs no more durability than that: the engine's retry
-   * queue lives in the same object graph and dies on the same reload. The worst case when
-   * the memo is missed is one orphan `drafts` row that nobody sees — NEVER a second
-   * delivery, because `outbound_sends` is UNIQUE on `(accountId, idempotencyKey)` and a
-   * same-key request replays the first reservation's outcome without touching SMTP.
+   * `Idempotency-Key → draftId` for in-flight sends. A send is TWO requests — create the draft, then send it — and
+   * only the second is idempotent server-side (`POST /drafts` is not `idempotent`-marked, so `withIdempotency`
+   * short-circuits and a replay writes a SECOND draft). Remembering the draft this key already created means the
+   * engine's retry — same key, same envelope — re-sends the same draft instead of minting another. It is in-memory ON
+   * PURPOSE and needs no more durability than that: the engine's retry queue lives in the same object graph and dies
+   * on the same reload. The worst case when the memo is missed is one orphan `drafts` row that nobody sees — NEVER a
+   * second delivery, because `outbound_sends` is UNIQUE on `(accountId, idempotencyKey)` and a same-key request
+   * replays the first reservation's outcome without touching SMTP.
    */
   private readonly draftForKey = new Map<string, string>();
   /**
@@ -378,6 +284,9 @@ export class HttpAdapter implements EngineAdapter {
     // receiver requirement), so this default branch only ever ran in a browser and no suite
     // could see it. It made the Cloud client's `/sync` drain die on its first call, silently.
     this.fetchImpl = injected ?? (global!.bind(globalThis) as FetchLike);
+    this.readImpl = retryingRead(this.fetchImpl, {
+      ...(opts.readWaitFor ? { waitFor: opts.readWaitFor } : {}),
+    });
     this.getCookie = opts.getCookie ?? defaultGetCookie;
     this.csrfCookieName = opts.csrfCookieName ?? "tf_csrf";
     this.extraHeaders = opts.headers ?? (() => ({}));
@@ -391,19 +300,19 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * `signal` is OPTIONAL AND UNSET BY DEFAULT, and that is the blast-radius decision.
-   *
-   * This method is shared by every call the client makes — sync drains, bodies, search, the byte
-   * fetches, and every mutation. A deadline installed HERE would bound all of them at one number,
-   * and they do not deserve one number: a `/sync` drain legitimately runs longer than a list read,
-   * a mutation aborted mid-flight is ambiguous in a way a GET never is (`POST /rules` has no
-   * server-side idempotency claim — see `rule_create` below — so abort-then-retry writes a second
-   * rule), and the two `cost: "connection"` byte routes hold a slot in `imap-admission` that a
-   * CLIENT giving up does not hand back, so a deadline there plus the retry it invites
-   * double-counts against the per-mailbox cap and produces a `mailbox_busy` the user caused.
-   *
-   * So the mechanism is here and the POLICY is at the call site. Exactly one caller passes a
-   * signal today: {@link HttpAdapter.listAttachments}, via {@link HttpAdapter.withDeadline}.
+   * `signal` is OPTIONAL AND UNSET BY DEFAULT, and that is the blast-radius decision. This method is shared by every
+   * call the client makes — sync drains, bodies, search, the byte fetches, and every mutation. A deadline installed
+   * HERE would bound all of them at one number, and they do not deserve one number: a `/sync` drain legitimately runs
+   * longer than a list read, a mutation aborted mid-flight is ambiguous in a way a GET never is (`POST /rules` has no
+   * server-side idempotency claim — see `rule_create` below — so abort-then-retry writes a second rule), and the two
+   * `cost: "connection"` byte routes hold a slot in `imap-admission` that a CLIENT giving up does not hand back, so a
+   * deadline there plus the retry it invites double-counts against the per-mailbox cap and produces a `mailbox_busy`
+   * the user caused. So the mechanism is here and the POLICY is at the call site.
+   */
+
+  /**
+   * Exactly one caller passes a signal today: {@link HttpAdapter.listAttachments}, via {@link
+   * HttpAdapter.withDeadline}.
    */
   private async request(method: string, path: string, init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal } = {}): Promise<Response> {
     const headers: Record<string, string> = { ...this.extraHeaders() };
@@ -414,7 +323,10 @@ export class HttpAdapter implements EngineAdapter {
       if (csrf) headers["x-csrf-token"] = csrf;
     }
     try {
-      return await this.fetchImpl(`${this.baseUrl}${path}`, {
+      /* A GET IS THE ONLY THING THAT MAY BE ASKED TWICE. `readImpl` refuses anything else, so the
+         branch is the enforcement and not merely a routing choice — see {@link retryingRead}. */
+      const transport = method === "GET" ? this.readImpl : this.fetchImpl;
+      return await transport(`${this.baseUrl}${path}`, {
         method,
         headers,
         ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
@@ -429,43 +341,24 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * Run one request-and-parse under a deadline, ABORTING it when the deadline fires.
-   *
-   * ## IT IS A RACE *AND* AN ABORT, AND BOTH HALVES ARE LOAD-BEARING
-   *
-   * The ABORT is what makes the sentence true about the socket and not merely about our own
-   * patience: a timeout that left the request running would tell the user it failed while it may
-   * yet succeed — the opposite lie to the silence this exists to end — and would leak one
-   * connection per hung message opened. A real browser cancels on `signal`.
-   *
-   * The RACE is what makes the bound unconditional. A transport that ignores `signal` would
-   * otherwise hang exactly as before, one indirection down, and "a transport that does not answer"
-   * is the entire class this gap is about. Every injected `fetch` in this repo's suites is such a
-   * transport, which is also why abort-only could never have been proven.
-   *
-   * ## WHAT IT WRAPS, AND WHY IT IS NOT JUST `request()`
-   *
-   * The whole method body, `res.json()` included. A deadline that ended when the `Response` object
-   * arrived would miss a server that sends headers and then stalls the body stream — same silence,
-   * one layer in.
-   *
-   * ## THE LOSER'S REJECTION IS SWALLOWED AT MINT TIME
-   *
-   * The abandoned request rejects later — immediately, from the abort we just raised, or eventually
-   * from a proxy giving up — with nobody awaiting it, and an unhandled rejection in a browser is a
-   * console error about a request the app deliberately dropped.
-   *
-   * `Promise.race` ALREADY registers a rejection handler on `attempt`, so the explicit `.catch()`
-   * below is redundant TODAY and no test can distinguish its presence from its absence — stated
-   * plainly rather than dressed up as a guard, because a line nobody has watched fail is not
-   * evidence of anything. It is kept because the swallow is a property of this method and not of
-   * the operator it currently uses: express the bound any other way (a `then` pair, an
-   * `AbortSignal`-driven resolve) and the handler goes away silently along with it.
-   *
-   * The thrown error is `code: "timeout"`, `retryable: true`. Retryable is not a hedge: nothing was
-   * established about the server, the call is a side-effect-free GET, and asking again costs one
-   * indexed row — so the surface must offer the button (`AttachmentStrip`'s failure row reads
-   * exactly this flag).
+   * Run one request-and-parse under a deadline, ABORTING it when the deadline fires. It is a race
+   * AND an abort, both load-bearing: the abort makes the sentence true about the socket (a timeout
+   * that left the request running would say it failed while it may yet succeed, and leak a
+   * connection per hung open); the race makes the bound unconditional — a transport that ignores
+   * `signal` would hang exactly as before, and every injected `fetch` in this repo's suites is such
+   * a transport. It wraps the whole body, `res.json()` included: a deadline ending at the
+   * `Response` would miss a server that sends headers and stalls the stream.
+   */
+
+  /**
+   * The loser's rejection is swallowed at mint time: the abandoned request rejects later with nobody awaiting it, and
+   * an unhandled rejection is a console error about a request the app deliberately dropped. `Promise.race` already
+   * registers a handler on `attempt`, so the explicit `.catch()` is redundant TODAY and no test can distinguish its
+   * presence — stated plainly rather than dressed as a guard. It is kept because the swallow is a property of this
+   * method, not of the operator it currently uses: express the bound any other way and the handler goes away silently
+   * with it. The thrown error is `code: "timeout"`, `retryable: true` — not a hedge: nothing was established about
+   * the server, the call is a side-effect-free GET, and the surface must offer the button (`AttachmentStrip`'s
+   * failure row reads exactly this flag).
    */
   private async withDeadline<T>(timeoutMs: number, run: (signal: AbortSignal | undefined) => Promise<T>): Promise<T> {
     const Ctor = (globalThis as { AbortController?: typeof AbortController }).AbortController;
@@ -509,15 +402,12 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * `Retry-After` as milliseconds, or `null` when the server named no interval.
-   *
-   * RFC 9110 allows both spellings and the API uses the numeric one on the `503 db_busy` its
-   * starved-pool refusal raises; the HTTP-date form is parsed anyway because a proxy in front of
-   * the API may rewrite it, and a misparse here does not merely lose an optimisation — it turns a
-   * server's "wait, I know when" into a failure that counts toward the outbox's give-up ceiling.
-   *
-   * A date in the past clamps to 0 rather than going negative: the server has spoken, and the
-   * answer is "now".
+   * `Retry-After` as milliseconds, or `null` when the server named no interval. RFC 9110 allows both spellings and
+   * the API uses the numeric one on the `503 db_busy` its starved-pool refusal raises; the HTTP-date form is parsed
+   * anyway because a proxy in front of the API may rewrite it, and a misparse here does not merely lose an
+   * optimisation — it turns a server's "wait, I know when" into a failure that counts toward the outbox's give-up
+   * ceiling. A date in the past clamps to 0 rather than going negative: the server has spoken, and the answer is
+   * "now".
    */
 
   private noteSeq(res: Response): number | null {
@@ -542,18 +432,14 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * `POST /sync/pull` — the worker doorbell. See {@link EngineAdapter.requestPull}.
-   *
-   * UNDER A DEADLINE, like the body and attachment reads and for a sharper reason: the ring is
-   * the FIRST await of every pull gesture, so a stalled POST (or a stalled response body) with
-   * no abort would hold the webapp's spinner past its advertised cap and starve the mobile
-   * follow-up drains that are scheduled off this promise — the whole affordance hangs on the
-   * one request that was only ever an accelerant. `fetch` has no timeout of its own; the abort
-   * is the only thing that reclaims the transport.
-   *
-   * The wire carries per-mailbox effective stamps (`mailboxes`) — each mailbox's OWN request
-   * instant at the database's clock, which is the client's honest-settle baseline. `requestedAt`
-   * is the newest of them, kept for logging; a missing field degrades to "nothing to wait for".
+   * `POST /sync/pull` — the worker doorbell. See {@link EngineAdapter.requestPull}. UNDER A DEADLINE, like the body
+   * and attachment reads and for a sharper reason: the ring is the FIRST await of every pull gesture, so a stalled
+   * POST (or a stalled response body) with no abort would hold the webapp's spinner past its advertised cap and
+   * starve the mobile follow-up drains that are scheduled off this promise — the whole affordance hangs on the one
+   * request that was only ever an accelerant. `fetch` has no timeout of its own; the abort is the only thing that
+   * reclaims the transport. The wire carries per-mailbox effective stamps (`mailboxes`) — each mailbox's OWN request
+   * instant at the database's clock, which is the client's honest-settle baseline. `requestedAt` is the newest of
+   * them, kept for logging; a missing field degrades to "nothing to wait for".
    */
   async requestPull(): Promise<{
     requested: number; requestedAt: string;
@@ -578,30 +464,18 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * `GET /sync/snapshot` — CURRENT STATE at one consistent point, instead of replaying the log
-   * from `since=0`. See {@link SyncSnapshotPage} for what the three fields promise.
-   *
-   * It is an OPTIONAL capability on the engine's side and deliberately not a member of
-   * `EngineAdapter`: the FixturesAdapter has no server, and an adapter that lacks this simply
-   * takes the `since=0` path. An adapter WRAPPER must forward it explicitly — see
-   * `SnapshotCapableAdapter` in `engine.ts` for why that is the one thing this shape can get
-   * wrong.
-   *
-   * ## FORWARD-COMPATIBLE PARSING (§8), AND ONE PLACE IT IS STRICT
-   *
-   * `nextCursor` and `window` degrade: a missing `nextCursor` means "last page", which is the
-   * safe reading — the client commits and moves to deltas rather than paging forever against a
-   * server that stopped sending the field. `window` is informational and defaults to zeroes.
-   *
-   * `asOfSeq` does NOT degrade. It is the value the client writes as its `/sync` cursor, and a
-   * missing or non-finite one coerced to 0 would commit a cursor of "0" — indistinguishable from
-   * a cold mirror, so the next drain would re-snapshot forever, or worse would resume deltas from
-   * the beginning of the log while holding a full mirror. A response without a usable `asOfSeq`
-   * is not a snapshot, so it throws and the engine's fallback path is what runs.
-   *
-   * There is no 410 branch: a snapshot is read at the server's own current point and has no
-   * client-supplied cursor to expire. `nextCursor` is the server's opaque paging token and is
-   * echoed back untouched.
+   * `GET /sync/snapshot` — current state at one consistent point, instead of replaying the log from `since=0` (see
+   * {@link SyncSnapshotPage}). Optional on the engine's side and deliberately not a member of `EngineAdapter`: the
+   * FixturesAdapter has no server, and an adapter lacking this takes the `since=0` path; a wrapper must forward it
+   * explicitly (`SnapshotCapableAdapter` in `engine.ts`). Forward-compatible parsing (§8) with one strict field:
+   * `nextCursor` and `window` degrade (missing `nextCursor` means "last page", the safe reading), but `asOfSeq` does
+   * NOT — it becomes the `/sync` cursor, and a missing value coerced to 0 would commit a cold-mirror cursor and
+   * re-snapshot for ever, or resume deltas from the beginning over a full mirror. A response without a usable
+   * `asOfSeq` is not a snapshot: it throws, and the fallback runs.
+   */
+
+  /**
+   * No 410 branch: a snapshot has no client-supplied cursor to expire.
    */
   async snapshot(params: { cursor?: string; limit?: number } = {}): Promise<SyncSnapshotPage> {
     const q = new URLSearchParams();
@@ -632,28 +506,14 @@ export class HttpAdapter implements EngineAdapter {
   // ── bodies ───────────────────────────────────────────────────────────────
 
   /**
-   * `GET /messages/:id/body` — the endpoint that existed, spend-gated and contract-tested,
-   * and had ZERO client callers for the whole of Stage 2. That is the entire reason a live
-   * account rendered one line of every newsletter: the wire `MessageDTO` carries `snippet`
-   * and never `body`, so `m.body ?? m.snippet` had nothing else to reach for.
-   *
-   * The route declares `cost: "read"`, so it is open to an unverified session by the same
-   * argument every read is: a 403 costs the same serverless invocation as the read it refuses,
-   * so gating reads takes nothing off a hostile poller. That is NOT licence to prefetch: the
-   * engine calls this on explicit intent only — a selection, an expand, a Screener row somebody
-   * is deciding about — and never pile-wide. Reads being open because refusing one costs the
-   * same as serving it is not a licence to manufacture requests nobody asked for.
-   *
-   * The text comes back ALREADY REDACTED for a sensitive message and is passed through
-   * untouched: sensitive mail is redacted once, server-side, and a second implementation of
-   * that rule here would be a second place for it to be wrong. This method does not know, and
-   * must not learn, what an OTP looks like.
-   *
-   * A non-2xx THROWS, through the same `rejectionOf` reader every mutation uses, so a 402
-   * from the spend gate arrives with the server's own sentence in it rather than as
-   * `HTTP 402`. The engine turns the throw into a `failed` record and the surface says the
-   * body could not be loaded — which is the one thing the shipped `body ?? snippet` branch
-   * could never say.
+   * `GET /messages/:id/body` — the endpoint that existed, spend-gated and contract-tested, with zero client callers
+   * for the whole of Stage 2: the wire `MessageDTO` carries `snippet` and never `body`, which is the entire reason a
+   * live account rendered one line of every newsletter. The route is `cost: "read"`, open to an unverified session (a
+   * 403 costs the same invocation as the read it refuses) — which is NOT licence to prefetch: the engine calls this
+   * on explicit intent only, never pile-wide. The text comes back ALREADY REDACTED for a sensitive message and passes
+   * through untouched: sensitive mail is redacted once, server-side, and this method must not learn what an OTP looks
+   * like. A non-2xx THROWS through the same `rejectionOf` every mutation uses, so a 402 arrives with the server's own
+   * sentence; the engine turns the throw into a `failed` record and the surface says the body could not be loaded.
    */
   async fetchBody(messageId: string): Promise<MessageBodyWire> {
     // UNDER A DEADLINE — see {@link BODY_FETCH_TIMEOUT_MS} for why this route earns one and what
@@ -669,24 +529,38 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * `GET /messages/bodies?ids=…` — every body a conversation needs, in ONE request.
+   * `GET /drafts/:id` — the draft's text, for a mirror row that arrived without one.
    *
-   * SAME ROUTE as the mirror's keyset page and the same `cost: "read"`; the `ids` parameter is
-   * what selects the mode. The server answers ONLY ids this account owns and omits the rest
-   * silently, so the response is not an existence oracle — which is why the rows carry their own
-   * `messageId` and the engine matches on it rather than on position.
-   *
-   * UNDER THE SAME DEADLINE AS `fetchBody`, and for the same reason: this call is what a thread
-   * IS, the engine writes `loading` markers before it, and a request the server accepts and never
-   * answers would leave every one of those markers as a permanent spinner
-   * ({@link BODY_FETCH_TIMEOUT_MS} — the state is only recoverable because the deadline exists).
-   * One batch is one round trip, so it earns the same twelve seconds one body does rather than a
-   * multiple of it.
-   *
-   * A non-2xx THROWS, through the same `rejectionOf` reader everything else uses; the engine turns
-   * that into a `failed` record for each id in the batch. An unrecognised payload narrows to an
-   * empty list rather than throwing, so the engine's per-id fallback covers a server that does not
-   * understand the parameter — the old behaviour, not an empty thread.
+   * The same route the AI-draft purchase reads back, and the same `cost: "read"`. Under the body
+   * fetch's deadline, because compose is waiting on it before it will show the editor; a refusal
+   * throws through `rejectionOf` so "the server said no" cannot be mistaken for "the draft is
+   * empty". A body the server omits is `null` — the one answer that means "no text of record".
+   */
+  async fetchDraftBody(draftId: string): Promise<string | null> {
+    return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
+      const res = await this.request("GET", `/drafts/${encodeURIComponent(draftId)}`, { signal });
+      if (!res.ok) throw await this.rejectionOf(res);
+      const wire = (await res.json()) as { body?: unknown };
+      return typeof wire.body === "string" ? wire.body : null;
+    });
+  }
+
+  /**
+   * `GET /messages/bodies?ids=…` — every body a conversation needs, in ONE request. SAME ROUTE as the mirror's keyset
+   * page and the same `cost: "read"`; the `ids` parameter is what selects the mode. The server answers ONLY ids this
+   * account owns and omits the rest silently, so the response is not an existence oracle — which is why the rows
+   * carry their own `messageId` and the engine matches on it rather than on position. UNDER THE SAME DEADLINE AS
+   * `fetchBody`, and for the same reason: this call is what a thread IS, the engine writes `loading` markers before
+   * it, and a request the server accepts and never answers would leave every one of those markers as a permanent
+   * spinner ({@link BODY_FETCH_TIMEOUT_MS} — the state is only recoverable because the deadline exists). One batch is
+   * one round trip, so it earns the same twelve seconds one body does rather than a multiple of it.
+   */
+
+  /**
+   * A non-2xx THROWS, through the same `rejectionOf` reader everything else uses; the engine turns that into a
+   * `failed` record for each id in the batch. An unrecognised payload narrows to an empty list rather than throwing,
+   * so the engine's per-id fallback covers a server that does not understand the parameter — the old behaviour, not
+   * an empty thread.
    */
   async fetchBodies(messageIds: string[]): Promise<MessageBodyBatchWire[]> {
     const ids = messageIds.map((id) => encodeURIComponent(id)).join(",");
@@ -776,22 +650,20 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * `GET /search?address=<addr>&direction=from` — every message in the archive FROM one address.
-   *
-   * **`direction=from` IS ALWAYS SENT, EXPLICITLY, and that is the opposite of the `sort`
-   * decision one method up.** `sort=relevance` is left off the wire because it is the server's
-   * default and omitting it asks an older deploy the question it always answered. There is no
-   * such default here: a deploy that predates the address arm ignores an unknown `address` and
-   * runs a TEXT search for the empty string, which answers `200` with an empty result — a client
-   * that read that as "the archive holds nothing from this person" would state it on screen.
-   * Sending the parameter does not fix that (nothing can, from this side), but the value is
-   * required by the route on every deploy that HAS the arm, and the route refuses an absent or
-   * unknown direction rather than assuming one, so no build of this client can be answered a
-   * different question than it asked.
-   *
-   * The address is NOT lowercased here. The server compares `lower(from_address) = lower($1)`,
-   * so the case-folding is one rule in one place; folding it a second time on the client would
-   * be a second place for the two to disagree about what an address is.
+   * `GET /search?address=<addr>&direction=from` — every message in the archive FROM one address. **`direction=from`
+   * IS ALWAYS SENT, EXPLICITLY, and that is the opposite of the `sort` decision one method up.** `sort=relevance` is
+   * left off the wire because it is the server's default and omitting it asks an older deploy the question it always
+   * answered. There is no such default here: a deploy that predates the address arm ignores an unknown `address` and
+   * runs a TEXT search for the empty string, which answers `200` with an empty result — a client that read that as
+   * "the archive holds nothing from this person" would state it on screen.
+   */
+
+  /**
+   * Sending the parameter does not fix that (nothing can, from this side), but the value is required by the route on
+   * every deploy that HAS the arm, and the route refuses an absent or unknown direction rather than assuming one, so
+   * no build of this client can be answered a different question than it asked. The address is NOT lowercased here.
+   * The server compares `lower(from_address) = lower($1)`, so the case-folding is one rule in one place; folding it a
+   * second time on the client would be a second place for the two to disagree about what an address is.
    */
   async searchAddressServer(
     address: string, opts: ServerAddressOpts = {},
@@ -811,37 +683,20 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * `GET /messages?view=&cursor=` — one keyset page of a view, oldest-ward.
-   *
-   * The route this reaches has existed since Stage 2 and, like `/search` and
-   * `/messages/:id/body` before it, had no client caller: the mirror held the whole mailbox, so
-   * there was never anything past the end of a list to ask for. A windowed client changes that —
-   * see `StorePolicy` in `engine.ts` — and this is the only way back to the mail it chose not to
-   * keep.
-   *
-   * OPTIONAL on the engine's side and deliberately not a member of `EngineAdapter`, for the reason
-   * `snapshot` and `searchServer` are not: a client with no server, or one holding the whole
-   * mailbox already, must read as "there is nothing beyond this list" rather than as broken. An
-   * adapter WRAPPER must forward it explicitly.
-   *
-   * `cursor` is the server's own opaque keyset token, echoed back untouched — it is not a `/sync`
-   * cursor and the two must never be conflated. Forward-compatible parsing (§8): a missing or
-   * empty `nextCursor` means "last page", which is the safe reading, and a missing `items` is an
-   * empty page rather than a crash. A non-2xx THROWS through `rejectionOf`, so a 402 from the
-   * spend gate arrives carrying the server's own sentence.
-   *
-   * ── THE VIEW NAME IS TRANSLATED, NOT FORWARDED ──────────────────────────────────────────────
-   *
-   * Through {@link SERVER_VIEW_OF}, for the reason set out where that table is declared: the
-   * client and the server have different words for the same six piles and share exactly one of
-   * them. Putting the client's word on the wire is not a mismatch that fails loudly — five of the
-   * six views are refused with a validation error whose text names the server's internal
-   * vocabulary, and the sixth works, so it reads as an intermittent fault rather than a wrong
-   * name.
-   *
-   * A view the server has no list for resolves `null` — the same "there is nothing behind this
-   * list" a client with no server at all reports, and deliberately not a request that would be
-   * refused nor an error a surface would have to render.
+   * `GET /messages?view=&cursor=` — one keyset page of a view, oldest-ward. Mounted since Stage 2 with no caller: the
+   * mirror held the whole mailbox, so nothing was ever past the end of a list; a windowed client changes that
+   * (`StorePolicy`), and this is the only way back to the mail it chose not to keep. Optional on the engine's side,
+   * not a member of `EngineAdapter` — a client with no server must read as "nothing beyond this list", not broken; a
+   * wrapper must forward it explicitly. `cursor` is the server's opaque keyset token, never a `/sync` cursor; a
+   * missing `nextCursor` means "last page" and a missing `items` is an empty page; a non-2xx throws through
+   * `rejectionOf`.
+   */
+
+  /**
+   * The view name is TRANSLATED, not forwarded ({@link SERVER_VIEW_OF}): the client and server share exactly one of
+   * six pile words, and the mismatch does not fail loudly — five views are refused with internal vocabulary and the
+   * sixth works, reading as an intermittent fault. A view the server has no list for resolves `null` — the same
+   * "nothing behind this list" a serverless client reports.
    */
   async listMessages(
     view: OhmailView | "folder",
@@ -887,21 +742,19 @@ export class HttpAdapter implements EngineAdapter {
   // ── Trash ────────────────────────────────────────────────────────────────
 
   /**
-   * `GET /messages?view=trash&cursor=` — one keyset page of mail this account deleted in ohmail.
-   *
-   * `view=trash` is passed as the literal and NOT through {@link SERVER_VIEW_OF}: that table maps
-   * the client's six pile names onto the server's, and Trash is not one of them — it is the
-   * provider's own folder, and both ends already spell it the same way. Putting it in that table
-   * would invite the next reader to think Trash is a seventh pile.
-   *
-   * The rows in this page are TOMBSTONED on the server's side (every other list excludes
-   * `deleted_at`), so `trashedAt` and `restoreTo` ride along per item. Both are read
-   * forward-compatibly (§8) — a server that predates them sends neither, and the engine's type
-   * has them optional, so the view falls back to the message's own date and to the inbox, which
-   * is what those two values MEAN when nothing said otherwise.
-   *
-   * A non-2xx THROWS through `rejectionOf`, exactly as `listMessages` does, so a 402 from the
-   * spend gate arrives carrying the server's own sentence.
+   * `GET /messages?view=trash&cursor=` — one keyset page of mail this account deleted in ohmail. `view=trash` is
+   * passed as the literal and NOT through {@link SERVER_VIEW_OF}: that table maps the client's six pile names onto
+   * the server's, and Trash is not one of them — it is the provider's own folder, and both ends already spell it the
+   * same way. Putting it in that table would invite the next reader to think Trash is a seventh pile. The rows in
+   * this page are TOMBSTONED on the server's side (every other list excludes `deleted_at`), so `trashedAt` and
+   * `restoreTo` ride along per item. Both are read forward-compatibly (§8) — a server that predates them sends
+   * neither, and the engine's type has them optional, so the view falls back to the message's own date and to the
+   * inbox, which is what those two values MEAN when nothing said otherwise.
+   */
+
+  /**
+   * A non-2xx THROWS through `rejectionOf`, exactly as `listMessages` does, so a 402 from the spend gate arrives
+   * carrying the server's own sentence.
    */
   async listTrash(opts: { cursor?: string; limit?: number } = {}): Promise<ListTrashWire | null> {
     const q = new URLSearchParams({ view: "trash" });
@@ -917,18 +770,14 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * `POST /messages/:id/restore` — put one deleted message back where it was.
-   *
-   * The `Idempotency-Key` is the caller's, when it has one. The route is `idempotent`-marked, so a
-   * replay under the same key is answered with the first response — a client whose first response
-   * was lost after the commit used to meet the state check and be told 409 `not_in_trash` about a
-   * restore the server was already committed to. A second PRESS is a different intent with a
-   * different key and still meets that check. No key ⇒ no header, and the request is what it was.
-   *
-   * `restoreTo` is the SERVER's answer, which may not equal the row's rendered one — the origin
-   * folder can disappear between the page and the press — so it is read off the response rather
-   * than assumed. `pending` defaults true when absent: the honest reading of a missing field here
-   * is "the mail server has not done it yet", never "it is done".
+   * `POST /messages/:id/restore` — put one deleted message back where it was. The `Idempotency-Key` is the caller's,
+   * when it has one. The route is `idempotent`-marked, so a replay under the same key is answered with the first
+   * response — a client whose first response was lost after the commit used to meet the state check and be told 409
+   * `not_in_trash` about a restore the server was already committed to. A second PRESS is a different intent with a
+   * different key and still meets that check. No key ⇒ no header, and the request is what it was. `restoreTo` is the
+   * SERVER's answer, which may not equal the row's rendered one — the origin folder can disappear between the page
+   * and the press — so it is read off the response rather than assumed. `pending` defaults true when absent: the
+   * honest reading of a missing field here is "the mail server has not done it yet", never "it is done".
    */
   async restoreFromTrash(
     messageId: string, opts: { idempotencyKey?: string } = {},
@@ -948,28 +797,19 @@ export class HttpAdapter implements EngineAdapter {
   // ── attachments ──────────────────────────────────────────────────────────
 
   /**
-   * `GET /messages/:id/attachments` — the metadata read, no bytes, no IMAP connection.
-   *
-   * The route declares `cost: "read"`, unlike the two byte methods below, whose routes declare
-   * `cost: "connection"` because serving them opens a socket to the user's mail
-   * server. That difference is the whole reason metadata is a separate call: the strip can render
-   * names, types and sizes for every part of a message without anything reaching IMAP.
-   *
-   * Forward-compatible parsing (§8): every field is guarded, because a row that predates a column
-   * or a server that stops sending one must degrade to a rendered fallback rather than put
-   * `undefined` on the screen. `inline` defaults FALSE-ish per row and is filtered in the engine.
-   *
-   * ## THE ONLY BOUNDED CALL IN THIS FILE
-   *
-   * {@link ATTACHMENT_LIST_TIMEOUT_MS} via {@link HttpAdapter.withDeadline}, and it is the only
-   * one for a reason rather than by omission — see `request()` for the three arguments against a
-   * blanket deadline. This call earns one because it is the cheapest thing to abandon in the whole
-   * protocol: a GET, `cost: "read"`, one indexed row, no server-side effect and no IMAP slot. A
-   * request we walk away from costs nothing, and a retry after one is unambiguous.
-   *
-   * It is also the one whose silence is total. The engine holds `{state: "loading"}` and the strip
-   * renders that as nothing (deliberately: a skeleton on every message open would be noise), so a
-   * hang here draws a paperclip over an empty message for as long as the tab lives.
+   * `GET /messages/:id/attachments` — the metadata read, no bytes, no IMAP connection. The route is `cost: "read"`,
+   * unlike the two byte methods below (`cost: "connection"` — serving them opens a socket to the user's mail server);
+   * that difference is why metadata is a separate call. Forward-compatible parsing (§8): every field guarded, so a
+   * row predating a column degrades to a rendered fallback rather than `undefined` on screen; `inline` defaults
+   * false-ish and is filtered in the engine.
+   */
+
+  /**
+   * The only bounded call in this file ({@link ATTACHMENT_LIST_TIMEOUT_MS} via {@link HttpAdapter.withDeadline}), for
+   * a reason rather than by omission — see `request()` for the arguments against a blanket deadline: this call is the
+   * cheapest thing to abandon in the protocol (a GET, one indexed row, no effect, no IMAP slot), and its silence is
+   * total — the strip renders `loading` as nothing, so a hang draws a paperclip over an empty message for as long as
+   * the tab lives.
    */
   async listAttachments(messageId: string): Promise<AttachmentWire[]> {
     return this.withDeadline(ATTACHMENT_LIST_TIMEOUT_MS, async (signal) => {
@@ -993,18 +833,13 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * `GET /attachments/:id` — the bytes, live from the user's IMAP mailbox.
-   *
-   * ## The response is TWO different content types and the branch order matters
-   *
-   * This route is `raw`: on success it answers `application/octet-stream` with the file, but on
-   * failure it answers the ordinary JSON error envelope. So `res.ok` has to be checked BEFORE
-   * `blob()` — reading the body as a Blob first would turn a 413's explanatory JSON into a
-   * "file" the surface would happily hand the user as a download named after their PDF.
-   *
-   * `rejectionOf` carries the server's `code` through, which is what lets the engine tell the size
-   * ceiling (`payload_too_large` → the `too_large` state, a sentence about the limit) apart from
-   * a mail server that is simply down (`upstream_unavailable` → `failed`, a retry is reasonable).
+   * `GET /attachments/:id` — the bytes, live from the user's IMAP mailbox. ## The response is TWO different content
+   * types and the branch order matters This route is `raw`: on success it answers `application/octet-stream` with the
+   * file, but on failure it answers the ordinary JSON error envelope. So `res.ok` has to be checked BEFORE `blob()` —
+   * reading the body as a Blob first would turn a 413's explanatory JSON into a "file" the surface would happily hand
+   * the user as a download named after their PDF. `rejectionOf` carries the server's `code` through, which is what
+   * lets the engine tell the size ceiling (`payload_too_large` → the `too_large` state, a sentence about the limit)
+   * apart from a mail server that is simply down (`upstream_unavailable` → `failed`, a retry is reasonable).
    */
   async fetchAttachment(attachmentId: string): Promise<Blob> {
     const res = await this.request("GET", `/attachments/${encodeURIComponent(attachmentId)}`);
@@ -1090,38 +925,28 @@ export class HttpAdapter implements EngineAdapter {
         const res = await this.request("POST", `/screener/${m.senderId}`, {
           body: {
             decision: m.decision,
-            // ── THE DESTINATION, TRANSLATED TO THE SERVER'S VOCABULARY ────────────────────
-            //
-            // `dest` is a VIEW on this side (`reads`) and a FOLDER on the wire
-            // (`ohmail/Reads`), because every other endpoint that names a place already takes
-            // a folder: `POST /messages/:id/move` takes `{folder}` and `POST /rules` takes
-            // `{destination}`. A second spelling reachable only here is a translation somebody
-            // has to remember; this is the one line that does it.
-            //
-            // OMITTED when absent rather than sent as `null`: the server reads an absent
-            // `dest` as the two-folder default it has always had, which is what keeps a client
-            // that predates this field working unchanged.
+            // THE DESTINATION, TRANSLATED TO THE SERVER'S VOCABULARY: `dest` is a VIEW on this side (`reads`) and a
+            // FOLDER on the wire (`ohmail/Reads`), because every other endpoint that names a place already takes a
+            // folder: `POST /messages/:id/move` takes `{folder}` and `POST /rules` takes `{destination}`. A second
+            // spelling reachable only here is a translation somebody has to remember; this is the one line that does
+            // it. OMITTED when absent rather than sent as `null`: the server reads an absent `dest` as the two-folder
+            // default it has always had, which is what keeps a client that predates this field working unchanged.
             ...(m.dest ? { dest: FOLDER_OF_VIEW[m.dest] } : {}),
             ...(m.scope ? { scope: m.scope } : {}),
           },
           idempotencyKey: opts.idempotencyKey,
         });
         if (!res.ok) throw await this.rejectionOf(res);
-        // Response is { messageId, appliedFolder, createdRuleId } — the moved
-        // held mail + promoted rule arrive authoritatively via /sync.
-        //
-        // ── EXCEPT ON A MAILBOX THIS ACCOUNT DOES NOT ORGANIZE ────────────────────────────
-        //
-        // There the server answers `202 { pending: true, requestId, holder }`: the decision is
-        // recorded for the install that DOES organize the mailbox, and nothing has been filed.
-        // That answer has to reach the caller, because nothing else will ever mention it — a
-        // queued decision writes no `change_log` row, so the drain below carries nothing, the
-        // optimistic overlay is dropped on confirm, and the sender comes back looking undecided.
-        //
-        // READ DEFENSIVELY, and a body this code cannot parse is simply not a queued decision:
-        // the shapes that reach here are a 200 with a decision result, a 200 from an older
-        // server, and this. Guessing `pending` from anything less than the flag itself would
-        // withhold a filing that did happen.
+        // Response is { messageId, appliedFolder, createdRuleId } — the moved held mail + promoted rule arrive
+        // authoritatively via /sync. EXCEPT ON A MAILBOX THIS ACCOUNT DOES NOT ORGANIZE: There the server answers
+        // `202 { pending: true, requestId, holder }`: the decision is recorded for the install that DOES organize the
+        // mailbox, and nothing has been filed. That answer has to reach the caller, because nothing else will ever
+        // mention it — a queued decision writes no `change_log` row, so the drain below carries nothing, the
+        // optimistic overlay is dropped on confirm, and the sender comes back looking undecided. READ DEFENSIVELY,
+        // and a body this code cannot parse is simply not a queued decision: the shapes that reach here are a 200
+        // with a decision result, a 200 from an older server, and this.
+
+        // Guessing `pending` from anything less than the flag itself would withhold a filing that did happen.
         const decided = await res.json().catch(() => null) as
           { pending?: unknown; holder?: { name?: unknown } | null } | null;
         const seq = this.noteSeq(res);
@@ -1158,20 +983,18 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       case "mark_seen": {
-        // ONE capped batch request — `PATCH /messages { ids, unread }`. The per-message loop
-        // `feed_mark_seen` runs above is what this replaces: N requests meant N transactions and
-        // N chances to leave a selection half-flipped, and it could not carry one
-        // Idempotency-Key for one user intent.
-        //
-        // No echo is turned into changes. The route emits one `change_log` row per message at
-        // DISTINCT seqs, and `X-Sync-Seq` can only carry the last of them, so fabricating N
-        // changes at one seq would write the mirror's cursor past deltas it never applied. The
-        // engine's `dispatch` sees `changes: []` and pulls the authoritative drain instead —
-        // the same contract `triage_set` and `screener_decide` already use, and the overlay
-        // holds the user's view steady until it lands.
-        // `via` travels when the surface set it: a glance-labelled read must reach the server AS
-        // a glance, so it marks read without spending a resurface pin (`MessageService.markSeen`).
-        // Deliberate reads (no `via`) keep answering pins exactly as before.
+        // ONE capped batch request — `PATCH /messages { ids, unread }`. The per-message loop `feed_mark_seen` runs
+        // above is what this replaces: N requests meant N transactions and N chances to leave a selection
+        // half-flipped, and it could not carry one Idempotency-Key for one user intent. No echo is turned into
+        // changes. The route emits one `change_log` row per message at DISTINCT seqs, and `X-Sync-Seq` can only carry
+        // the last of them, so fabricating N changes at one seq would write the mirror's cursor past deltas it never
+        // applied. The engine's `dispatch` sees `changes: []` and pulls the authoritative drain instead — the same
+        // contract `triage_set` and `screener_decide` already use, and the overlay holds the user's view steady until
+        // it lands.
+
+        // `via` travels when the surface set it: a glance-labelled read must reach the server AS a glance, so it
+        // marks read without spending a resurface pin (`MessageService.markSeen`). Deliberate reads (no `via`) keep
+        // answering pins exactly as before.
         const res = await this.request("PATCH", "/messages", {
           body: { ids: m.messageIds, unread: m.unread, ...(m.via ? { via: m.via } : {}) },
           idempotencyKey: opts.idempotencyKey,
@@ -1184,24 +1007,21 @@ export class HttpAdapter implements EngineAdapter {
         return this.mailSend(m, opts.idempotencyKey);
 
       /**
-       * THIS CASE IS WHERE TAGS REACH THE WIRE. It threw `UnsupportedMutationError` until it
-       * existed, which made a fully-built tag UI do nothing on every real account: the picker,
-       * the `t` shortcut and the bulk verb all called `mutate`, the optimistic effect painted
-       * the tag on the row, and the adapter then rejected it — so the overlay rolled back and
-       * the tag vanished, with no error a user could see. Fixtures served it in place and
-       * stayed green throughout.
-       *
-       * THE BODY IS A DELTA, NOT `m.labels`. The mutation carries a full next-labels array
-       * (filled by `Engine.enrich`) for the OPTIMISTIC effect, and sending that array to the
-       * server would be a read-modify-write: two concurrent toggles of DIFFERENT tags on one
-       * message each compute their array from the same starting state, and whichever request
-       * lands second silently erases the other's tag. So the local effect uses the array and
-       * the wire uses `{ tagId, assigned }` — one row, idempotent in both directions
-       * (`INSERT … ON CONFLICT DO NOTHING` / `DELETE`), and immune to that race.
-       *
-       * No echo is turned into changes, matching `triage_set` and `mark_seen`: the route emits
-       * a `message` update, `dispatch` sees `changes: []` and pulls the authoritative drain,
-       * and the overlay holds the user's view steady until it lands.
+       * THIS CASE IS WHERE TAGS REACH THE WIRE. It threw `UnsupportedMutationError` until it existed, which made a
+       * fully-built tag UI do nothing on every real account: the picker, the `t` shortcut and the bulk verb all
+       * called `mutate`, the optimistic effect painted the tag on the row, and the adapter then rejected it — so the
+       * overlay rolled back and the tag vanished, with no error a user could see. Fixtures served it in place and
+       * stayed green throughout. THE BODY IS A DELTA, NOT `m.labels`. The mutation carries a full next-labels array
+       * (filled by `Engine.enrich`) for the OPTIMISTIC effect, and sending that array to the server would be a
+       * read-modify-write: two concurrent toggles of DIFFERENT tags on one message each compute their array from the
+       * same starting state, and whichever request lands second silently erases the other's tag.
+       */
+
+      /**
+       * So the local effect uses the array and the wire uses `{ tagId, assigned }` — one row, idempotent in both
+       * directions (`INSERT … ON CONFLICT DO NOTHING` / `DELETE`), and immune to that race. No echo is turned into
+       * changes, matching `triage_set` and `mark_seen`: the route emits a `message` update, `dispatch` sees `changes:
+       * []` and pulls the authoritative drain, and the overlay holds the user's view steady until it lands.
        */
       case "tag_assign": {
         const res = await this.request("POST", `/messages/${encodeURIComponent(m.messageId)}/tags`, {
@@ -1217,20 +1037,19 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       /**
-       * THE TAG CRUD REACHES THE WIRE. `POST /tags`, `PATCH /tags/:id` and `DELETE /tags/:id`
-       * have been mounted and contract-tested since the tags backend landed, with no caller —
-       * the same "built, tested, unreachable" shape the rules CRUD below was in, and the one
-       * `tag_assign`'s own comment in `types.ts` records for `tag_assign` itself.
-       *
-       * ── THE ID IS NOT SENT, AND THAT IS THE `rule_create` PRECEDENT, NOT AN OVERSIGHT ────
-       *
-       * `POST /tags` takes `{ name, hue? }` and the database mints the id (`TagsService.create`
-       * inserts without one). So the optimistic row's `tagId` is a CLIENT-LOCAL name for a row
-       * that does not exist yet, exactly as `rule_create`'s `ctx.uuid()` is: the overlay is
-       * deleted the moment the mutation confirms, and the server's own row arrives in the
-       * `create` change returned here. The two ids never have to agree because they never
-       * coexist. Sending the client's id would be worse than useless — the server ignores it,
-       * and a reader of this code would believe the row was created under it.
+       * THE TAG CRUD REACHES THE WIRE. `POST /tags`, `PATCH /tags/:id` and `DELETE /tags/:id` have been mounted and
+       * contract-tested since the tags backend landed, with no caller — the same "built, tested, unreachable" shape
+       * the rules CRUD below was in, and the one `tag_assign`'s own comment in `types.ts` records for `tag_assign`
+       * itself. THE ID IS NOT SENT, AND THAT IS THE `rule_create` PRECEDENT, NOT AN OVERSIGHT: `POST /tags` takes `{
+       * name, hue? }` and the database mints the id (`TagsService.create` inserts without one). So the optimistic
+       * row's `tagId` is a CLIENT-LOCAL name for a row that does not exist yet, exactly as `rule_create`'s
+       * `ctx.uuid()` is: the overlay is deleted the moment the mutation confirms, and the server's own row arrives in
+       * the `create` change returned here. The two ids never have to agree because they never coexist.
+       */
+
+      /**
+       * Sending the client's id would be worse than useless — the server ignores it, and a reader of this code would
+       * believe the row was created under it.
        */
       case "tag_create": {
         const res = await this.request("POST", "/tags", {
@@ -1374,41 +1193,27 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       /**
-       * THE RULES CRUD REACHES THE WIRE. `DELETE /rules/:id` and `PATCH /rules/:id` have been
-       * mounted and contract-tested since the rules backend landed, with no caller anywhere in
-       * the product until this case existed.
-       *
-       * ── A 204 CARRIES NO BODY, SO THERE IS NOTHING TO ECHO ────────────────────────────────
-       *
-       * `DELETE` answers `204` with `X-Sync-Seq` and no JSON at all, so `changes: []` is not
-       * the "we chose not to echo" of `tag_assign` — there is literally no DTO. `dispatch`
-       * turns an empty `changes` into an immediate `syncOnce()`, which pulls the
-       * authoritative `rule` delete at its real seq; the optimistic tombstone holds the row
-       * off the screen until it lands. `PATCH` DOES return the updated `RuleDTO`, and it is
-       * echoed, because a rule is one row at one seq — the objection that stops `mark_seen`
-       * from echoing (N changes at one seq would move the cursor past deltas the mirror never
-       * applied) does not arise for a single entity.
-       *
-       * ── A 404 ON A DELETE IS THE OUTCOME THAT WAS ASKED FOR ───────────────────────────────
-       *
-       * `RulesService.remove` throws `not_found` when the UPDATE matches zero rows, and every
-       * rule lookup is scoped to the calling account, so an id belonging to somebody else is
-       * indistinguishable from a missing one — 404 therefore means exactly "no such rule on
-       * this account", which is the state a revoke is trying to reach. Three ordinary paths
-       * produce it: a second tab that revoked first, a queued retry after a response was lost
-       * in transit (the `Idempotency-Key` covers the write, not the reply), and a double-click.
-       * Treating it as a rejection would roll the optimistic tombstone back — the revoked rule
-       * REAPPEARS on screen — and then the next drain would remove it again. The user watches
-       * their own successful action fail and then un-fail.
-       *
-       * So it is swallowed HERE and not at the call site, because every caller is equally
-       * right to be told the rule is gone, and because HTTP already says DELETE is idempotent.
-       * `seq: null` is honest about what it is: nothing was written this time, so there is no
-       * sequence number to converge on, and the drain that follows reconciles from the cursor.
-       *
-       * NOTHING ELSE is swallowed. A 403, a 429 and a 500 all still throw — the first two
-       * because the user genuinely may not do this, the last because the rule may well still
-       * be there.
+       * The rules CRUD reaches the wire — `DELETE /rules/:id` and `PATCH /rules/:id`, mounted and
+       * contract-tested since the rules backend landed, with no caller until this case. A 204
+       * carries no body, so `changes: []` is not a chosen no-echo — there is literally no DTO;
+       * `dispatch` turns it into an immediate `syncOnce()`, and the optimistic tombstone holds the
+       * row off screen until the authoritative delete lands. `PATCH` does return the updated
+       * `RuleDTO` and is echoed: one row at one seq, so the `mark_seen` objection does not arise.
+       */
+
+      /**
+       * A 404 on a delete is the outcome that was asked for: `RulesService.remove` throws `not_found` on zero rows,
+       * and every lookup is account-scoped, so 404 means exactly "no such rule on this account" — the state a revoke
+       * is trying to reach. Three ordinary paths produce it: a second tab that revoked first, a queued retry whose
+       * reply was lost, a double-click. Treating it as a rejection rolls the tombstone back — the revoked rule
+       * REAPPEARS, then the next drain removes it again: the user watches their own action fail and un-fail.
+       * Swallowed HERE and not at the call site, because every caller is equally right to be told the rule is gone,
+       * and HTTP already says DELETE is idempotent; `seq: null` is honest — nothing was written this time.
+       */
+
+      /**
+       * Nothing else is swallowed: 403, 429 and 500 all still throw — the first two because the user genuinely may
+       * not, the last because the rule may well still be there.
        */
       case "rule_delete": {
         const res = await this.request("DELETE", `/rules/${encodeURIComponent(m.ruleId)}`, {
@@ -1434,45 +1239,24 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       /**
-       * `POST /rules` — MOUNTED SINCE §5.6 AND CALLED BY NOTHING.
-       *
-       * The rules surface reached DELETE and PATCH; nothing in the product had ever
-       * created a rule except the Screener's own endpoint, server-side. This is the case that
-       * makes "rule this sender" reachable from the Ohbox, the Reads and the Receipts — where
-       * `POST /screener/:id` answers 404 because the mail has left the gate.
-       *
-       * ── THE BODY IS THREE FIELDS, AND `priority` IS DELIBERATELY NOT ONE ──────────────────
-       *
-       * `CreateRuleBody` also takes `priority` and `enabled`. Neither is sent: `validPriority`
-       * defaults to 0 and `enabled` defaults to true, which is what the optimistic row claims,
-       * and a client that asserted a ranking would be choosing precedence on the user's behalf
-       * (`core/src/rules.ts#compareRules` ranks priority FIRST) from a sheet that offers no such
-       * control.
-       *
-       * ── THE ECHO, AND WHY IT IS SAFE HERE ────────────────────────────────────────────────
-       *
-       * 201 returns the created `RuleDTO` and `X-Sync-Seq`, so the real row is applied straight
-       * away — the same reasoning `rule_update` uses: one entity at one seq, so echoing cannot
-       * move the cursor past deltas the mirror never applied (the objection that stops
-       * `mark_seen`). A missing or non-finite header degrades to `changes: []` and `dispatch`
-       * pulls the authoritative drain instead.
-       *
-       * ── THE KEY IS HONOURED NOW, AND THIS PARAGRAPH USED TO SAY IT WAS NOT ────────────────
-       *
-       * It said: *"the route does NOT honour it: `POST /rules` carries no
-       * `options: { idempotent: true }`"*, so a retryable failure replayed by `flushPending`
-       * (`apps/webapp/app/shell/mail-send.ts` drains the whole queue) wrote a SECOND identical
-       * rule. That was true when this verb first shipped and is not true now: the route marks
-       * the POST `idempotent`, AND — the half that marking alone would not have supplied —
-       * `RulesService.create` claims the key with `claimIdempotencyKey` INSIDE its own insert
-       * transaction, storing the verbatim 201. `withIdempotency` only EXPOSES
-       * `deps.idempotency`; a claim outside the mutation's transaction still lets the concurrent
-       * case (both lookups miss in autocommit) mint two rows, which is why the service does it
-       * and not the middleware.
-       *
-       * So a replayed key now hands back the FIRST rule, and the same key aimed at a different
-       * body is a 409 rather than a silent second rule. Nothing on this line changed for that to
-       * become true — the key was already being forwarded against the day the claim landed.
+       * `POST /rules` — mounted since §5.6 and called by nothing: only the Screener's own endpoint ever created a
+       * rule. This case makes "rule this sender" reachable from the Ohbox, Reads and Receipts, where `POST
+       * /screener/:id` answers 404 because the mail has left the gate. The body is three fields, and `priority` is
+       * deliberately not one: `validPriority` defaults to 0 and `enabled` to true — what the optimistic row claims —
+       * and a client asserting a ranking would be choosing precedence (`compareRules` ranks priority FIRST) from a
+       * sheet that offers no such control. The echo is safe here: 201 returns the created `RuleDTO` with `X-Sync-Seq`
+       * — one entity at one seq, so echoing cannot move the cursor past deltas the mirror never applied (the
+       * objection that stops `mark_seen`); a missing header degrades to `changes: []` and `dispatch` pulls the drain.
+       */
+
+      /**
+       * The key is honoured now, and this paragraph used to say it was not: a retryable failure replayed by
+       * `flushPending` once wrote a second identical rule. The route now marks the POST `idempotent`, AND — the half
+       * marking alone would not supply — `RulesService.create` claims the key with `claimIdempotencyKey` INSIDE its
+       * own insert transaction, storing the verbatim 201 (a claim outside the transaction still lets the concurrent
+       * case mint two rows, which is why the service does it and not the middleware). A replayed key hands back the
+       * FIRST rule; the same key with a different body is a 409, never a silent second rule. Nothing on this line
+       * changed for that to become true — the key was already being forwarded against the day the claim landed.
        */
       case "rule_create": {
         const res = await this.request("POST", "/rules", {
@@ -1508,34 +1292,18 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       /**
-       * AUTOSAVE — `POST /drafts` on a create, `PUT /drafts/:id` on an update.
-       *
-       * Both routes have been mounted since the drafts backend landed; `POST` had exactly one
-       * caller ({@link HttpAdapter.mailSend}, on its way to sending) and `PUT` had none at all —
-       * the "built, tested, unreachable" shape this file keeps finding. A compose that saves
-       * itself is what they were for.
-       *
-       * ── THE CREATE RETURNS ITS ID, AND THAT IS THE POINT ────────────────────────────────
-       *
-       * `entityId` carries the server's id back so the surface can adopt it: the next autosave
-       * PUTs the same row, and the send sends it. Without it, every two seconds of typing would
-       * be a new `drafts` row and pressing Send would leave a heap of abandoned twins behind.
-       * The echo also goes into `changes` so the mirror holds the real row immediately, under
-       * the real id — the optimistic overlay was under a client-local one and is dropped at the
-       * same moment.
-       *
-       * ── ONE OF `body` / `html`, NEVER BOTH ─────────────────────────────────────────────
-       *
-       * Identical to the send path and for the identical reason: `DraftsService` derives the
-       * text/plain alternative from the sanitized markup and refuses a request carrying a `body`
-       * beside it, so a client that sent both would be asserting what plaintext readers see.
-       *
-       * ── NO `Idempotency-Key` REPLAY IS RELIED ON ───────────────────────────────────────
-       *
-       * The key is forwarded (both routes are unmarked, so the middleware returns early), and a
-       * retry of an autosave is harmless either way: a PUT is set-to-a-value, and a duplicated
-       * POST would leave one extra empty-ish draft rather than a duplicated effect. Nothing here
-       * sends anything.
+       * Autosave — `POST /drafts` on a create, `PUT /drafts/:id` on an update; both mounted since the drafts backend
+       * landed, one with a single caller and one with none. The create returns its id, and that is the point:
+       * `entityId` lets the surface adopt it, so the next autosave PUTs the same row and the send sends it — without
+       * it, every two seconds of typing is a new `drafts` row. The echo also goes into `changes`, so the mirror holds
+       * the real row under the real id while the client-local overlay drops. One of `body`/`html`, never both —
+       * identical to the send path: `DraftsService` derives the plain half from the sanitized markup and refuses a
+       * request asserting what plaintext readers see.
+       */
+
+      /**
+       * No `Idempotency-Key` replay is relied on: the key is forwarded, and a retried autosave is harmless either way
+       * — a PUT is set-to-a-value, a duplicated POST leaves one empty-ish draft. Nothing here sends.
        */
       case "draft_save": {
         const fields = {
@@ -1629,21 +1397,19 @@ export class HttpAdapter implements EngineAdapter {
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
         /**
-         * THE TOMBSTONE IS ECHOED, and `rule_delete` next door deliberately does not do this —
-         * so the difference is worth the paragraph.
-         *
-         * An empty `changes` sends the engine to the authoritative drain, which is correct
-         * whenever the drain can express what happened. A BOOTSTRAP cannot: `GET /sync/snapshot`
-         * emits every live row as `op: "create"` and has no way to say "and this one is gone",
-         * and it fixes the delta cursor at the CURRENT high water — so a delete that happened
-         * before the snapshot is skipped by the delta that follows it. Any drain that bootstraps
-         * therefore loses the tombstone, the optimistic overlay is dropped when this resolves,
-         * and the draft the reader just discarded comes back on screen and stays.
-         *
-         * Echoing it makes the removal a read-your-writes fact that does not depend on which
-         * path the next drain takes. Measured, not reasoned: the mirror really did keep the row
-         * (`mail-send.test.ts`, "draft_discard removes the row"), and the delete really was in
-         * `change_log` the whole time.
+         * THE TOMBSTONE IS ECHOED, and `rule_delete` next door deliberately does not do this — so the difference is
+         * worth the paragraph. An empty `changes` sends the engine to the authoritative drain, which is correct
+         * whenever the drain can express what happened. A BOOTSTRAP cannot: `GET /sync/snapshot` emits every live row
+         * as `op: "create"` and has no way to say "and this one is gone", and it fixes the delta cursor at the
+         * CURRENT high water — so a delete that happened before the snapshot is skipped by the delta that follows it.
+         * Any drain that bootstraps therefore loses the tombstone, the optimistic overlay is dropped when this
+         * resolves, and the draft the reader just discarded comes back on screen and stays. Echoing it makes the
+         * removal a read-your-writes fact that does not depend on which path the next drain takes.
+         */
+
+        /**
+         * Measured, not reasoned: the mirror really did keep the row (`mail-send.test.ts`, "draft_discard removes the
+         * row"), and the delete really was in `change_log` the whole time.
          */
         return {
           changes: seq === null ? [] : [{
@@ -1663,18 +1429,13 @@ export class HttpAdapter implements EngineAdapter {
        * state), and the echo goes to the drain like the draft verbs above it.
        */
       /**
-       * ANSWER FOR AN UNCONFIRMED SEND — `POST /drafts/:id/resolve`.
-       *
-       * The echo is turned into a `draft` update rather than left to the drain, on
-       * {@link draft_schedule_cancel}'s terms: the row's whole visible identity changes (it
-       * either leaves the Drafts list as `sent` or becomes an ordinary draft), and a reader who
-       * has just pressed "It didn't arrive" must find Discard working immediately rather than on
-       * whatever the next drain happens to be.
-       *
-       * A REPEAT IS NOT AN ERROR HERE and the request is not marked idempotent, because the
-       * server's transition is a compare-and-swap on `unverified`: the second call finds nothing
-       * to move and answers 200 with the row as it stands. So a double-tap converges without a
-       * stored response, exactly as the schedule verbs do.
+       * ANSWER FOR AN UNCONFIRMED SEND — `POST /drafts/:id/resolve`. The echo is turned into a `draft` update rather
+       * than left to the drain, on {@link draft_schedule_cancel}'s terms: the row's whole visible identity changes
+       * (it either leaves the Drafts list as `sent` or becomes an ordinary draft), and a reader who has just pressed
+       * "It didn't arrive" must find Discard working immediately rather than on whatever the next drain happens to
+       * be. A REPEAT IS NOT AN ERROR HERE and the request is not marked idempotent, because the server's transition
+       * is a compare-and-swap on `unverified`: the second call finds nothing to move and answers 200 with the row as
+       * it stands. So a double-tap converges without a stored response, exactly as the schedule verbs do.
        */
       case "draft_resolve": {
         const res = await this.request("POST", `/drafts/${encodeURIComponent(m.draftId)}/resolve`, {
@@ -1717,61 +1478,40 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * SENDING IS TWO REQUESTS: `POST /drafts` then `POST /drafts/:id/send`.
-   *
-   * There is no compose-and-send endpoint and adding one is a server change; composing from
-   * the two that exist is safe because ALL the danger lives in the second. The send route is
-   * deliberately not `idempotent`-marked — `SendService` owns the reservation itself and
-   * reads `Idempotency-Key` directly — so the key this adapter forwards is what makes a
-   * retry replay instead of re-deliver.
-   *
-   * ── THE BODY IS EXACTLY WHAT THE USER TYPED ────────────────────────────────────────────
-   *
-   * No quoted original, and that is a decision rather than an omission of convenience.
-   * Quoting would put the PARENT's body into outgoing mail, and a message the pipeline
-   * marked sensitive carries `no_forward` with its stored body redacted — a client-side
-   * quote block is exactly the seam through which an OTP leaves the account.
-   * The editor still SHOWS the conversation, because that is the author's context, not the
-   * payload. A quote block that could be trusted to redact would be a feature in its own right;
-   * until there is one, this sends what was typed and nothing else.
-   *
-   * ── `inReplyToMessageId` IS THE ONLY FORK BETWEEN A REPLY AND A COMPOSE ────────────────
-   *
-   * `m.inReplyTo` is written straight through, `null` included, and that null is what makes a
-   * compose a new conversation: `SendService.reserve` mints `In-Reply-To`/`References` only
-   * inside `if (d.inReplyToMessageId)`. Nothing else in this method behaves differently for
-   * the two callers, which is the point of there being one method.
-   *
-   * ── READING THE OUTCOME ────────────────────────────────────────────────────────────────
-   *
-   * `rejectionOf` is not used here and must not be: the send route answers `{status,
-   * message}` at both 200 and 409, never the `{error:{…}}` envelope, so the generic reader
-   * would report `HTTP 409` with a null code and — worse — would treat the 200 `unverified`
-   * answer as a success. A 200 from this endpoint is INSPECTED, never trusted.
+   * Sending is two requests: `POST /drafts` then `POST /drafts/:id/send`. There is no compose-and-send endpoint, and
+   * composing from the two that exist is safe because ALL the danger lives in the second — the send route is
+   * deliberately not `idempotent`-marked (`SendService` owns the reservation and reads `Idempotency-Key` directly),
+   * so the forwarded key is what makes a retry replay instead of re-deliver. The body is exactly what the user typed:
+   * no quoted original — quoting would put the PARENT's body into outgoing mail, and a sensitive message's
+   * client-side quote block is exactly the seam an OTP leaves through; the editor still SHOWS the conversation, which
+   * is the author's context, not the payload.
+   */
+
+  /**
+   * `inReplyToMessageId` is the only fork between a reply and a compose (`null` is what makes a compose a new
+   * conversation — the server mints threading headers only inside `if (d.inReplyToMessageId)`). `rejectionOf` is not
+   * used here and must not be: this route answers `{status, message}` at both 200 and 409, and the generic reader
+   * would treat the 200 `unverified` answer as a success. A 200 from this endpoint is INSPECTED, never trusted.
    */
   private async mailSend(
     m: Extract<EngineMutation, { kind: "mail_send" }>,
     idempotencyKey: string,
   ): Promise<MutationOutcome> {
     /**
-     * ── THE MESSAGE MAY ALREADY BE A ROW ──────────────────────────────────────────────────
-     *
-     * A compose autosaves through `draft_save`, so by the time Send is pressed the account
-     * usually already holds this message. `m.draftId` names it, and then this method PUTs the
-     * final text and sends THAT row — one draft from the first keystroke to delivery, instead of
-     * an abandoned twin left behind by every send.
-     *
-     * The PUT is not optional and the reason is the debounce: autosave settles two seconds after
-     * the last keystroke, so the last thing typed may not have reached the row. Sending without
-     * writing the mutation's own fields first would deliver a message that is not the one on
-     * screen — the kind of defect nobody finds twice, because they stop trusting the product.
-     *
-     * A FAILED PUT DOES NOT STOP THE SEND. The row is already there and its stored text is at
-     * most a couple of seconds stale; refusing to send somebody's message because a settings-
-     * shaped write blipped would be the worse failure, and the send route reads the row it finds.
-     * The staleness is bounded by the debounce and by the fact that the composer wrote on every
-     * pause; a network that cannot take a PUT is unlikely to take the send either, and that
-     * failure IS reported.
+     * THE MESSAGE MAY ALREADY BE A ROW: A compose autosaves through `draft_save`, so by the time Send is pressed the
+     * account usually already holds this message. `m.draftId` names it, and then this method PUTs the final text and
+     * sends THAT row — one draft from the first keystroke to delivery, instead of an abandoned twin left behind by
+     * every send. The PUT is not optional and the reason is the debounce: autosave settles two seconds after the last
+     * keystroke, so the last thing typed may not have reached the row. Sending without writing the mutation's own
+     * fields first would deliver a message that is not the one on screen — the kind of defect nobody finds twice,
+     * because they stop trusting the product. A FAILED PUT DOES NOT STOP THE SEND.
+     */
+
+    /**
+     * The row is already there and its stored text is at most a couple of seconds stale; refusing to send somebody's
+     * message because a settings- shaped write blipped would be the worse failure, and the send route reads the row
+     * it finds. The staleness is bounded by the debounce and by the fact that the composer wrote on every pause; a
+     * network that cannot take a PUT is unlikely to take the send either, and that failure IS reported.
      */
     let draftId = this.draftForKey.get(idempotencyKey) ?? m.draftId;
     if (draftId && !this.draftForKey.has(idempotencyKey)) {
@@ -1877,19 +1617,18 @@ export class HttpAdapter implements EngineAdapter {
       const draft = await readJsonOrAmbiguous<{ id?: string; bcc?: unknown }>(created, "draft create");
       if (!draft.id) {
         /**
-         * ── AN UNREADABLE CREATE IS AMBIGUOUS, AND THE CREATE IS NOT IDEMPOTENT ──────────────
-         *
-         * The old sentence here said ohmail would "ask again under the same key". It does not,
-         * because `POST /drafts` IGNORES the idempotency key — as the comment on the request
-         * itself records. So the retry issued a second create and the server, which had already
-         * committed the first one, wrote another: a duplicate draft on every autosave, and on a
-         * send an orphaned first draft with the message going out under the second.
-         *
-         * The key is remembered as having attempted a create, so the next attempt under it does
-         * not POST again. The refusal is still retryable — a person may press Try again — but it
-         * comes back through the branch below, which refuses rather than repeating the create.
-         * Reporting failure instead would be worse: it says no draft was made about one that may
-         * have been written.
+         * AN UNREADABLE CREATE IS AMBIGUOUS, AND THE CREATE IS NOT IDEMPOTENT: The old sentence here said ohmail
+         * would "ask again under the same key". It does not, because `POST /drafts` IGNORES the idempotency key — as
+         * the comment on the request itself records. So the retry issued a second create and the server, which had
+         * already committed the first one, wrote another: a duplicate draft on every autosave, and on a send an
+         * orphaned first draft with the message going out under the second. The key is remembered as having attempted
+         * a create, so the next attempt under it does not POST again. The refusal is still retryable — a person may
+         * press Try again — but it comes back through the branch below, which refuses rather than repeating the
+         * create.
+         */
+
+        /**
+         * Reporting failure instead would be worse: it says no draft was made about one that may have been written.
          */
         this.createAttempted.add(idempotencyKey);
         throw new MutationRejectedError(
@@ -1898,20 +1637,17 @@ export class HttpAdapter implements EngineAdapter {
           { code: "unreadable_response", status: created.status, retryable: true, retryAfterMs: retryAfterMsOf(created) },
         );
       }
-      // ── VERSION-SKEW GUARD: a dropped Bcc must NEVER become a silent send ──────────────────
-      //
-      // `bcc` is the newest field on `POST /drafts`. An API that predates it does not 400 an
-      // unknown key — `DraftsService` reads named fields and ignores the rest — it stores the draft
-      // WITHOUT the blind recipients and echoes a DTO with no `bcc` array. If this client then went
-      // on to `/send`, the mail would leave addressed to To/Cc only and the sender would believe
-      // three people were blind-copied who never were. That is a correctness failure the user
-      // cannot see, so it is caught HERE, before the irreversible second request: a server that
-      // accepted bcc echoes the array (possibly empty); one that did not omits the key entirely.
-      //
-      // Only fires when bcc was actually asked for — a plain or To/Cc-only send is unaffected and
-      // still works against any server. The draft the old API stored is an orphan (the same cost
-      // the create-lost path already documents), never a wrong delivery. Non-retryable: retrying
-      // the same key against the same old API repeats the same drop.
+      // VERSION-SKEW GUARD: a dropped Bcc must NEVER become a silent send: `bcc` is the newest field on `POST
+      // /drafts`. An API that predates it does not 400 an unknown key — `DraftsService` reads named fields and
+      // ignores the rest — it stores the draft WITHOUT the blind recipients and echoes a DTO with no `bcc` array. If
+      // this client then went on to `/send`, the mail would leave addressed to To/Cc only and the sender would
+      // believe three people were blind-copied who never were. That is a correctness failure the user cannot see, so
+      // it is caught HERE, before the irreversible second request: a server that accepted bcc echoes the array
+      // (possibly empty); one that did not omits the key entirely. Only fires when bcc was actually asked for — a
+      // plain or To/Cc-only send is unaffected and still works against any server.
+
+      // The draft the old API stored is an orphan (the same cost the create-lost path already documents), never a
+      // wrong delivery. Non-retryable: retrying the same key against the same old API repeats the same drop.
       if (m.bcc && m.bcc.length > 0 && !Array.isArray(draft.bcc)) {
         this.draftForKey.delete(idempotencyKey);
         throw new MutationRejectedError(
@@ -1987,18 +1723,14 @@ export class HttpAdapter implements EngineAdapter {
       };
     }
 
-    // ATTACHMENTS AND `forwardOf` RIDE THE SEND, not the draft. Attachment bytes are base64 on this
-    // one request; the server decodes them, caps the total, hands them to the transport, and stores
-    // none of them. `forwardOf` is just the original's id — the server reads the original, refuses a
-    // no_forward one, builds the quoted MIME and streams its attachments. Omitted when neither is
-    // set, so a plain send stays the bodyless request it has always been.
-    //
-    // ── …UNLESS THEY DO NOT FIT, AND THIS CLIENT IS ALLOWED TO STAGE ─────────────────────────
-    //
-    // See {@link HttpAdapter.stagedIdsFor}. The threshold, not "always", is the decision: under
-    // the inline ceiling the request is byte-identical to the one this client has always sent, so
-    // the overwhelming majority of sends gain no new failure mode, and the staged path exists for
-    // exactly the sends that are impossible without it.
+    // ATTACHMENTS AND `forwardOf` RIDE THE SEND, not the draft. Attachment bytes are base64 on this one request; the
+    // server decodes them, caps the total, hands them to the transport, and stores none of them. `forwardOf` is just
+    // the original's id — the server reads the original, refuses a no_forward one, builds the quoted MIME and streams
+    // its attachments. Omitted when neither is set, so a plain send stays the bodyless request it has always been.
+    // …UNLESS THEY DO NOT FIT, AND THIS CLIENT IS ALLOWED TO STAGE: See {@link HttpAdapter.stagedIdsFor}. The
+    // threshold, not "always", is the decision: under the inline ceiling the request is byte-identical to the one
+    // this client has always sent, so the overwhelming majority of sends gain no new failure mode, and the staged
+    // path exists for exactly the sends that are impossible without it.
     const sendBody: {
       attachments?: typeof m.attachments;
       stagedAttachmentIds?: string[];
@@ -2038,24 +1770,20 @@ export class HttpAdapter implements EngineAdapter {
     }
 
     if (wire.status === "unverified") {
-      // AMBIGUOUS, and it stays ambiguous: SMTP threw AND the Sent-folder probe found
-      // nothing. Non-retryable because the server will replay this same answer for this key
-      // forever; the user decides whether to compose a fresh send, with the warning on
-      // screen. An automatic resend here would be the second delivery this whole path is
-      // built to make impossible: one press is one delivery.
-      //
-      // ── THE ROW GOES OUT WITH THE REFUSAL, AND IT IS READ OFF *BEFORE* THE FORGETTING ───────
-      //
-      // `draftId` at this point is the row this send was about — the caller's, or the one created
-      // for it a few lines above when the press carried none. The second case is the one that
-      // mattered: the server marked THAT row `unverified`, this client was never told which row it
-      // was, and it therefore sat in Drafts looking like an ordinary draft. Opening it took the
-      // recovery door and one press delivered the message a second time (measured live, recipient
-      // total 2). Naming it here is what lets the durable send record park the message.
-      //
-      // Read before `draftForKey.delete`, deliberately: `draftId` is a local, but the ORDER of
-      // these two statements is the thing a later edit would get wrong, and a refusal that names
-      // no row is indistinguishable from one whose row nobody created.
+      // AMBIGUOUS, and it stays ambiguous: SMTP threw AND the Sent-folder probe found nothing. Non-retryable because
+      // the server will replay this same answer for this key forever; the user decides whether to compose a fresh
+      // send, with the warning on screen. An automatic resend here would be the second delivery this whole path is
+      // built to make impossible: one press is one delivery. THE ROW GOES OUT WITH THE REFUSAL, AND IT IS READ OFF
+      // *BEFORE* THE FORGETTING: `draftId` at this point is the row this send was about — the caller's, or the one
+      // created for it a few lines above when the press carried none. The second case is the one that mattered: the
+      // server marked THAT row `unverified`, this client was never told which row it was, and it therefore sat in
+      // Drafts looking like an ordinary draft.
+
+      // Opening it took the recovery door and one press delivered the message a second time (measured live, recipient
+      // total 2). Naming it here is what lets the durable send record park the message. Read before
+      // `draftForKey.delete`, deliberately: `draftId` is a local, but the ORDER of these two statements is the thing
+      // a later edit would get wrong, and a refusal that names no row is indistinguishable from one whose row nobody
+      // created.
       const unverifiedRow = draftId;
       this.draftForKey.delete(idempotencyKey);
       throw new MutationRejectedError(
@@ -2072,21 +1800,17 @@ export class HttpAdapter implements EngineAdapter {
     }
 
     if (wire.status === "queued") {
-      // THE SERVER HAS IT. It reserved the send, stopped waiting for the submission at its own
-      // attempt ceiling, and kept the key — so the envelope may or may not have reached the mail
-      // server, and the reservation is what decides which.
-      //
-      // Retryable, and `draftForKey` is deliberately NOT cleared, for the same reason as
-      // `in_flight` below: the outbox replays this mutation under the SAME Idempotency-Key, which
-      // is the only thing that makes a retry safe. `resumeExisting` answers `in_flight` while the
-      // attempt could still be alive and runs verify-by-Sent once it provably is not; a fresh key
-      // would be a second delivery.
-      //
-      // Its own code rather than `send_in_flight`, and the distinction is load-bearing on screen:
-      // this one means the server ACCEPTED the send, so the compose surface may close and say so.
-      // A transport rejection means the request may never have arrived, and that surface must
-      // stay open. Telling the two apart is what stops "Accepted" being said about a request
-      // nobody received.
+      // THE SERVER HAS IT. It reserved the send, stopped waiting for the submission at its own attempt ceiling, and
+      // kept the key — so the envelope may or may not have reached the mail server, and the reservation is what
+      // decides which. Retryable, and `draftForKey` is deliberately NOT cleared, for the same reason as `in_flight`
+      // below: the outbox replays this mutation under the SAME Idempotency-Key, which is the only thing that makes a
+      // retry safe. `resumeExisting` answers `in_flight` while the attempt could still be alive and runs
+      // verify-by-Sent once it provably is not; a fresh key would be a second delivery. Its own code rather than
+      // `send_in_flight`, and the distinction is load-bearing on screen: this one means the server ACCEPTED the send,
+      // so the compose surface may close and say so.
+
+      // A transport rejection means the request may never have arrived, and that surface must stay open. Telling the
+      // two apart is what stops "Accepted" being said about a request nobody received.
       throw new MutationRejectedError(
         wire.message ?? "This send was accepted and is still being handed to your mail server.",
         {
@@ -2116,47 +1840,24 @@ export class HttpAdapter implements EngineAdapter {
     }
 
     /**
-     * ── AN UNREADABLE ANSWER ON THIS ROUTE IS AMBIGUITY, NOT FAILURE ─────────────────────────
-     *
-     * Reached when the status says the server ACTED — `res.ok` (the route answers `sent` and
-     * `unverified` at 200, `queued` at 202) or 409 (`failed`/`in_flight`) — but `wire.status` is
-     * none of the five it speaks. A truncated body, a proxy that rewrote it, a 200 that never
-     * finished writing.
-     *
-     * The old fall-through handed this to the generic envelope below, where
-     * `retryable ?? (status >= 500 || status === 429)` reads 200/202/409 as NOT retryable. That
-     * became `dispatch`'s refusal arm → `rolled_back` → the composer unlocking on a send whose
-     * reservation may be committed and whose SMTP may have completed. The next press mints a
-     * FRESH key, and on the mobile path there is no `draftId`, so the server's 409 guard
-     * (`send-service.ts` — it protects a NAMED draft) cannot see it: a second `POST /drafts` and
-     * a second delivery of the same message.
-     *
-     * So: retryable, under the SAME key, with `draftForKey` KEPT. The same-key replay is not a resend — `resumeExisting`
-     * on the server verifies by reservation and by Sent before it does anything — which is why
-     * retrying is the safe act here and giving up is the dangerous one.
-     *
-     * `send_queued` at 202 and `send_in_flight` otherwise, so it lands in the vocabulary the
-     * ceiling already exempts as a modelled wait rather than spending a life on ambiguity.
-     *
-     * ── AND A TYPED REFUSAL IS NOT AMBIGUITY, WHICH THIS GUARD COULD NOT SEE ─────────────────
-     *
-     * The condition below asked only whether `wire.status` is one of the five, and a `ServiceError`
-     * from `reserve` has no `status` field at all — it rides the ordinary `{error:{code,message}}`
-     * envelope. So every typed 409 landed here and was rewritten into a retryable
-     * `send_in_flight`, which is wrong twice over: the surface says "a send is already in progress"
-     * about a request the server refused outright, and `retryable: true` puts a refusal that is
-     * terminal BY CONSTRUCTION back on the outbox, to be replayed under the same key and refused
-     * identically for as long as the condition holds.
-     *
-     * It is not hypothetical: `mailbox_disabled` is thrown at 409 by `SendService.reserve`, and
-     * `SendStatus` has its own sentence keyed on that code precisely because the screen showing it
-     * also holds the control that fixes it. That code could not arrive — so a mailbox that cannot
-     * send reported a send in progress, and the outbox kept asking.
-     *
-     * An envelope with a `code` is a READ answer, not an unread one, so it belongs to the branch
-     * below. The guard keeps its whole original case — a truncated body, a proxy rewrite, a 200
-     * that never finished writing carry no `error.code` — and stops claiming the ones the server
-     * named.
+     * An unreadable answer on this route is AMBIGUITY, not failure. Reached when the status says the server acted
+     * (`res.ok`, or 409) but `wire.status` is none of the five it speaks — a truncated body, a proxy rewrite. The old
+     * fall-through read 200/202/409 as not-retryable → `rolled_back` → the composer unlocking on a send whose
+     * reservation may be committed; the next press mints a FRESH key, and on the mobile path there is no `draftId`
+     * for the server's 409 guard to see — a second delivery. So: retryable, under the SAME key, `draftForKey` KEPT —
+     * the same-key replay verifies by reservation and by Sent before doing anything, which is why retrying is the
+     * safe act and giving up the dangerous one. `send_queued` at 202, `send_in_flight` otherwise — the vocabulary the
+     * ceiling already exempts as a modelled wait.
+     */
+
+    /**
+     * A typed refusal is NOT ambiguity, which this guard could not see: a `ServiceError` from `reserve` has no
+     * `status` field — it rides the ordinary `{error:{code,message}}` envelope — so every typed 409 landed here and
+     * was rewritten into a retryable `send_in_flight`: wrong twice, saying "a send is already in progress" about an
+     * outright refusal, and putting a terminal-by-construction refusal back on the outbox to be replayed and refused
+     * for ever. Not hypothetical: `mailbox_disabled` is thrown at 409, and `SendStatus` has its own sentence keyed on
+     * that code — which could not arrive. An envelope with a `code` is a READ answer and belongs to the branch below;
+     * the guard keeps its original case (no `error.code`) and stops claiming the ones the server named.
      */
     const envelopeCode = (wire as WireError).error?.code;
     if (
@@ -2214,36 +1915,19 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * STAGE THIS SEND'S ATTACHMENT BYTES, or answer `null` for "send them inline as always".
-   *
-   * ── WHEN IT STAGES ────────────────────────────────────────────────────────────────────────
-   *
-   * Three conditions, all required: the host asked for staging
-   * ({@link HttpAdapterOptions.stageAttachments}), the send has files, and their total exceeds
-   * {@link SEND_INLINE_MAX_TOTAL_BYTES} — the ceiling the inline transport can carry.
-   *
-   * The THRESHOLD rather than "always" is a deliberate choice and worth defending. Staging every
-   * send would route the common case — one small file — through two extra network round trips and
-   * a storage dependency it does not need, adding a failure mode to sends that work today for no
-   * gain. Under the ceiling the request this method leaves alone is byte-for-byte the request this
-   * client has always sent, which is also the shape the server must keep accepting for already
-   * installed desktop builds; keeping the live path and the compatibility path THE SAME path is
-   * worth more than routing uniformity.
-   *
-   * ── ALL OR NOTHING ────────────────────────────────────────────────────────────────────────
-   *
-   * Every file is staged or none is. A mixed send is legal on the wire and would be strictly
-   * worse here: the server keeps the strict request-body surface for any send carrying an inline
-   * attachment (that half really did ride the body), so a mix would be capped as if nothing had
-   * been staged — the send would be refused for exactly the reason staging exists to remove.
-   *
-   * ── A FAILURE IS A REFUSAL, NOT A FALLBACK ────────────────────────────────────────────────
-   *
-   * There is no inline fallback from here, and that is the honest behaviour rather than a missing
-   * feature: this path only runs when the total is ALREADY over what the inline transport can
-   * carry, so falling back would produce a request the server refuses — a second, more confusing
-   * failure in place of the real one. Retryability follows the status, so a blip retries and a
-   * deployment with no storage configured does not.
+   * Stage this send's attachment bytes, or answer `null` for "send them inline as always". Three conditions, all
+   * required: the host asked ({@link HttpAdapterOptions.stageAttachments}), the send has files, and their total
+   * exceeds {@link SEND_INLINE_MAX_TOTAL_BYTES}. The threshold rather than "always" is deliberate: staging every send
+   * routes the common case through two extra round trips and a storage dependency for no gain, and under the ceiling
+   * the request left alone is byte-for-byte what this client has always sent — the shape the server must keep
+   * accepting for installed desktop builds. All or nothing: the server keeps the strict body cap for any send
+   * carrying an inline attachment, so a mixed send would be refused for exactly the reason staging exists to remove.
+   */
+
+  /**
+   * A failure is a refusal, not a fallback: this path only runs when the total is already over what inline can carry,
+   * so falling back would produce a request the server refuses — a second, more confusing failure in place of the
+   * real one.
    */
   private async stagedIdsFor(
     m: Extract<EngineMutation, { kind: "mail_send" }>,
@@ -2267,26 +1951,21 @@ export class HttpAdapter implements EngineAdapter {
     for (const [index, file] of files.entries()) {
       const bytes = base64ToBytes(file.contentBase64);
       const minted = await this.request("POST", "/attachments/staging", {
-        // ── THE UPLOAD TICKET'S KEY, DERIVED AND NOT MINTED ──────────────────────────────────
-        //
-        // A mint writes a durable row and a grant to put bytes in the server's storage, so a
-        // retry after a lost response would otherwise mint a second ticket and upload a second
-        // copy — a duplicate the client cannot see, on every attempt, for as long as the send
-        // keeps failing. The server's answer to that is to make the ticket's identity the key
-        // it was minted under, and this is the client's half of it.
-        //
-        // The key is the SEND's own idempotency key plus the file's position. Both halves are
+        // THE UPLOAD TICKET'S KEY, DERIVED AND NOT MINTED: A mint writes a durable row and a grant to put bytes in
+        // the server's storage, so a retry after a lost response would otherwise mint a second ticket and upload a
+        // second copy — a duplicate the client cannot see, on every attempt, for as long as the send keeps failing.
+        // The server's answer to that is to make the ticket's identity the key it was minted under, and this is the
+        // client's half of it. The key is the SEND's own idempotency key plus the file's position. Both halves are
         // load-bearing:
-        //
-        //  · the send key is already durable and is RESUMED on a retry rather than re-minted
-        //    (the send lock is persisted with the compose lane), so this key is stable across a
-        //    reload, a crash, and a fresh tab. Minting one here — a random per attempt, or one
-        //    held in a field — would be the defect this closes, one layer up;
-        //  · the INDEX is what keeps two attachments distinct. Without it, the same file
-        //    attached twice would resolve to one ticket and the send route — which walks the
-        //    DISTINCT ids — would deliver one copy of a file the composer showed twice. A
-        //    message that quietly leaves without something the sender attached is a wrong send,
-        //    and it is the worse failure of the two.
+
+        // · the send key is already durable and is RESUMED on a retry rather than re-minted (the send lock is
+        //   persisted with the compose lane), so this key is stable across a reload, a crash, and a fresh tab.
+        //   Minting one here — a random per attempt, or one held in a field — would be the defect this closes, one
+        //   layer up;
+        // · the INDEX is what keeps two attachments distinct. Without it, the same file attached twice would
+        //   resolve to one ticket and the send route — which walks the DISTINCT ids — would deliver one copy of a
+        //   file the composer showed twice. A message that quietly leaves without something the sender attached is a
+        //   wrong send, and it is the worse failure of the two.
         idempotencyKey: `${sendKey}:att:${index}`,
         body: {
           mailboxId: m.mailboxId,
@@ -2351,17 +2030,14 @@ export class HttpAdapter implements EngineAdapter {
 }
 
 /**
- * THE CEILING THE INLINE TRANSPORT CAN CARRY, in raw attachment bytes.
- *
- * A fact about the REQUEST PIPELINE, not about mail: inline bytes travel base64 on one JSON
- * request, so their total has to clear the hosted API's serverless body limit (~4.5 MB) with room
- * for the envelope and the ~1.33× base64 inflation. 3 MB of raw bytes encodes to about 4 MB.
- *
- * It is the same number as `SEND_ATTACHMENT_MAX_TOTAL_BYTES` (the send service's) and
- * `COMPOSE_ATTACH_MAX_TOTAL_BYTES` (the compose form's), and the three are pinned to each other by
- * the repository's `compose-attach-cap-parity` suite. Three copies because the three live in
- * bundles that may not import each other; one value because a client that staged at a different
- * threshold than the server refuses at would send a request nothing accepts.
+ * THE CEILING THE INLINE TRANSPORT CAN CARRY, in raw attachment bytes. A fact about the REQUEST PIPELINE, not about
+ * mail: inline bytes travel base64 on one JSON request, so their total has to clear the hosted API's serverless body
+ * limit (~4.5 MB) with room for the envelope and the ~1.33× base64 inflation. 3 MB of raw bytes encodes to about 4
+ * MB. It is the same number as `SEND_ATTACHMENT_MAX_TOTAL_BYTES` (the send service's) and
+ * `COMPOSE_ATTACH_MAX_TOTAL_BYTES` (the compose form's), and the three are pinned to each other by the repository's
+ * `compose-attach-cap-parity` suite. Three copies because the three live in bundles that may not import each other;
+ * one value because a client that staged at a different threshold than the server refuses at would send a request
+ * nothing accepts.
  */
 export const SEND_INLINE_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
 

@@ -3,70 +3,25 @@ import { isCorroboratedCounterparty, type CounterpartyEvidence } from "./sender-
 import type { RepoPort } from "./ports.js";
 import type { EmailAddress } from "./types.js";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THREADING
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   ── WHAT WAS WRONG ─────────────────────────────────────────────────────────────────────────
-
-   `messages.thread_id` was NULL on every row of the seeded test world and the `threads`
-   table was empty. `ThreadService` can rename, mute and merge a thread and `materializeThread`
-   can render one, but NOTHING in the product had ever created one — the column and the table
-   were declared early and never written. So the threaded-conversation journey failed by
-   construction: no conversation was reachable from any message, and the inline reply rendered
-   a one-entry conversation list.
-
-   ── THE KEY IS THE HEADER CHAIN, AND ONLY THE HEADER CHAIN ─────────────────────────────────
-
-   `In-Reply-To` first, then `References` RIGHT TO LEFT — nearest ancestor first — matched
-   against `messages.message_id_header`, ACCOUNT-SCOPED. A hit adopts that message's thread.
-
-   **There is no subject fallback and there must never be one.** A false merge is worse than an
-   unmerged singleton: "Re: invoice" from two unrelated senders is one of the most common
-   subjects in any real mailbox, and merging them puts one correspondent's mail inside another
-   conversation — visible, wrong, and not undoable by the user without a thread split we do not
-   have. An unmerged singleton is merely a conversation that reads as two. `threading.test.ts`
-   carries a guard for this that exists to fail a future "improvement", not to describe a bug.
-
-   ── ACCOUNT SCOPING IS A SECURITY BOUNDARY HERE, NOT A TIDINESS RULE ───────────────────────
-
-   A Message-ID is chosen by whoever sends the mail. Anyone can send you a message carrying
-   `In-Reply-To: <a-header-they-guessed>`; if the lookup were not scoped to the account, a
-   stranger could name another account's Message-ID and have their mail adopt that account's
-   thread — which `materializeThread` then renders as one conversation. Account isolation is
-   absolute, so the account predicate is in every statement and in the leading column
-   of `messages_account_message_id_header_idx`, and `threading.test.ts` mutation-tests it.
-
-   ── THE ANCHOR IS THE LEFTMOST REFERENCE, WHICH IS WHY OUT-OF-ORDER INGEST CONVERGES ───────
-
-   IMAP hands messages over in UID order, which is arrival order at the server, which is not
-   conversation order: a reply can be ingested before the mail it replies to (a backfill of a
-   folder the user filed by hand, a re-sync after UIDVALIDITY changed, two mailboxes of one
-   account draining in parallel). So a parent lookup MISS cannot mean "start a new
-   conversation" — it has to mean "find or create the conversation this message belongs to".
-
-   That is what `rootMessageIdHeader` is: the leftmost (oldest) entry of `References`, else
-   `In-Reply-To`, else the message's own Message-ID. For a chain A <- B <- C <- D arriving as
-   D, B, A, C every single message derives `a` — D's References are [A,B,C], B's are [A], A is
-   its own root, C hits B directly — so all four converge on one `threads` row through the
-   `(account_id, root_message_id_header)` unique index. Anchored on the RIGHTMOST reference the
-   same four would derive `c`, `a`, `a`, `b` and split one conversation into three.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * Threading: at ingest, thread identity is the header chain and ONLY the header chain —
+ * `In-Reply-To` first, then `References` right to left, ACCOUNT-SCOPED; a hit adopts that thread.
+ * No subject fallback, ever: "Re: invoice" from two unrelated senders is common and a false merge
+ * is not undoable — `threading.test.ts` guards this and mutation-tests the account predicate.
+ * Scoping is a security boundary: a Message-ID is sender-chosen, so an unscoped lookup would let
+ * a stranger's `In-Reply-To` adopt another account's thread. The anchor is the LEFTMOST reference
+ * (else `In-Reply-To`, else own id), so out-of-order ingest converges on one `threads` row via
+ * the `(account_id, root_message_id_header)` unique index.
+ */
 
 /**
- * The longest message-id this code will look up or store, in bytes.
- *
- * **This is a wedge guard, not tidiness.** `threads_account_root_header_uq` and
- * `messages_account_message_id_header_idx` are btree indexes, and a btree index tuple cannot
- * exceed roughly 2704 bytes — Postgres raises `54000 index row size … exceeds maximum` on the
- * INSERT. `References` tokens are chosen by whoever sent the mail, so without a cap ONE hostile
- * message carrying a 3 KB reference aborts the persist transaction, the sync cursor never
- * advances (that is the pipeline's crash-safe design), and the worker re-plans the same message
- * for ever. The mailbox stops syncing and the cause is a header.
- *
- * 998 is RFC 5322's line-length limit, so no legitimately authored `msg-id` can exceed it, and
- * an over-long token is dropped rather than truncated — a truncated id would be a DIFFERENT id
- * that could collide with someone else's.
+ * The longest message-id this code will look up or store, in bytes. A wedge guard: the two btree
+ * indexes cap a tuple at roughly 2704 bytes and Postgres raises `54000` on the INSERT —
+ * `References` tokens are sender-chosen, so without a cap ONE hostile 3 KB reference aborts the
+ * persist transaction, the sync cursor never advances, and the worker re-plans the same message
+ * for ever: the mailbox stops syncing because of a header. 998 is RFC 5322's line-length limit,
+ * so no legitimately authored `msg-id` exceeds it; an over-long token is DROPPED, not truncated —
+ * a truncated id is a DIFFERENT id that could collide.
  */
 export const MAX_MESSAGE_ID_BYTES = 998;
 
@@ -77,17 +32,13 @@ export function isStorableMessageId(id: string): boolean {
 
 /**
  * Every message-id (RFC 5322) in a header's raw values, normalized the way
- * `messages.message_id_header` is stored: bracket-free, lowercased, in order, deduped, and
- * capped at {@link MAX_MESSAGE_ID_BYTES}.
- *
- * Angle-bracketed tokens are extracted FIRST when any are present, because that is the only
- * form that survives a value containing whitespace, and `References` is by definition a
- * whitespace-separated list that may be folded across several header lines (hence
- * `string[]`, not `string` — `normalizeMime` keeps every occurrence).
- *
- * A value with no brackets at all — some senders emit a bare `In-Reply-To: id@host` — falls
- * back to splitting on whitespace and commas rather than being dropped, since
- * {@link normalizeMessageId} already accepts the bare form.
+ * `messages.message_id_header` is stored: bracket-free, lowercased, in order, deduped, capped at
+ * {@link MAX_MESSAGE_ID_BYTES}. Angle-bracketed tokens are extracted FIRST when present — the
+ * only form that survives a value containing whitespace, and `References` is a
+ * whitespace-separated list that may be folded across lines (hence `string[]`: `normalizeMime`
+ * keeps every occurrence). A value with no brackets (some senders emit a bare `In-Reply-To:
+ * id@host`) falls back to splitting on whitespace and commas, since {@link normalizeMessageId}
+ * accepts the bare form.
  */
 export function parseMessageIds(values: readonly string[] | undefined): string[] {
   if (!values || values.length === 0) return [];
@@ -166,15 +117,12 @@ export interface ThreadResolutionInput {
   subject: string;
   /**
    * The addresses this message contributes to the conversation, unioned by lowercased address.
-   *
-   * The CALLER decides, because the two callers genuinely know different things. Ingest has the
-   * parsed message and passes sender + recipients. The backfill has only what was persisted, and
-   * `insertMessage` writes `messages.to_addresses` only from the recipients slice onward — every
-   * row that predates it carries the column's `'[]'` default — so it passes the sender alone. That
-   * asymmetry is real and is recorded here rather than hidden: a conversation resolved by the
-   * backfill over OLD rows lists fewer participants than the same conversation would have if it
-   * were ingested today. Newly ingested mail has the recipients on the row, so the gap stops
-   * growing; it is not retroactively closed, and closing it would need the raw bytes.
+   * The CALLER decides because the two callers know different things: ingest has the parsed
+   * message and passes sender + recipients; the backfill has only what was persisted, and rows
+   * predating the recipients slice carry `to_addresses`' `'[]'` default, so it passes the sender
+   * alone. A conversation resolved by the backfill over OLD rows therefore lists fewer
+   * participants than the same conversation ingested today; newly ingested mail has the
+   * recipients, so the gap stops growing — closing it retroactively would need the raw bytes.
    */
   participants: EmailAddress[];
   date: Date | null;
@@ -197,22 +145,14 @@ export interface ThreadResolution {
   /** A header candidate named an already-ingested message of this account. */
   parentFound: boolean;
   /**
-   * The delta rows this resolution OWES, in the order they must be appended — and deliberately
-   * NOT written by {@link resolveThread} itself.
-   *
-   * ── THIS IS A LOCK-ORDER FIX, NOT AN API PREFERENCE ────────────────────────────────────
-   *
-   * `recordChange` → `allocateSeq` takes the account's `account_sync_state` ROW LOCK and holds
-   * it to COMMIT. So a transaction that records one change excludes every other
-   * change-recording transaction for that account for the rest of its life. If the resolver
-   * recorded as it went, a 100-row backfill batch would take the seq lock on its first row and
-   * then go on to lock a NEW `threads` row on its second — while a concurrent ingest holds that
-   * `threads` row and waits for the seq lock. That is a genuine cycle, and Postgres resolves it
-   * by aborting one side with 40P01.
-   *
-   * Handing the rows back moves every `recordChange` to the END of the caller's transaction, so
-   * ingest and backfill both acquire ALL of their `threads` locks BEFORE the seq lock. One
-   * order, no cycle, and the batch size stays where the ruling put it.
+   * The delta rows this resolution OWES, in the order they must be appended — deliberately NOT
+   * written by {@link resolveThread} itself. A lock-order fix: `recordChange` → `allocateSeq`
+   * takes the account's `account_sync_state` row lock and holds it to COMMIT. A resolver that
+   * recorded as it went would take the seq lock on its first row and a NEW `threads` row lock on
+   * its second, while a concurrent ingest holds that `threads` row and waits for the seq lock — a
+   * genuine cycle Postgres aborts with 40P01. Handing the rows back moves every `recordChange` to
+   * the END of the caller's transaction, so ingest and backfill both acquire ALL `threads` locks
+   * BEFORE the seq lock: one order, no cycle.
    */
   changes: ThreadChange[];
 }
@@ -225,27 +165,14 @@ export interface ThreadChange {
 }
 
 /**
- * Resolve, persist and announce the thread for ONE message. Pure DB — no network — and it must
- * only ever be called inside the caller's transaction: every write here and every
- * `change_log` row it records commit together or not at all.
- *
- * ── THE THREE OUTCOMES ─────────────────────────────────────────────────────────────────────
- *
- *  1. A candidate names an ingested message WITH a thread ⇒ adopt it. Nothing is created.
- *  2. A candidate names an ingested message with NO thread ⇒ there is nothing to adopt, so fall
- *     through to the anchor. The parent is left alone — see below.
- *  3. No candidate hits ⇒ find-or-create from the anchor. This is a MISS, not a new
- *     conversation: an out-of-order sibling may already have created the row. See the header.
- *
- * ── WHY OUTCOME 2 DOES NOT REACH OVER AND FILE THE PARENT ──────────────────────────────────
- *
- * It is tempting, and it would be the only place ingest writes to a `messages` row it did not
- * just insert — which is a lock-order inversion against the backfill's `FOR UPDATE` page and
- * therefore a deadlock. It is also unnecessary, because the anchor is DETERMINISTIC: the parent
- * derives the same `rootMessageIdHeader` its child just derived (leftmost References, else
- * In-Reply-To, else its own id — a prefix relationship along one chain), so when the backfill
- * reaches it, `ON CONFLICT` puts it in the thread the child already created. Convergence
- * without a write, which is the whole reason the anchor exists.
+ * Resolve, persist and announce the thread for ONE message. Pure DB, only ever inside the
+ * caller's transaction: its writes and `change_log` rows commit together. Three outcomes: (1) a
+ * candidate message HAS a thread — adopt it; (2) a candidate exists with NO thread — fall through
+ * to the anchor, parent left alone; (3) no candidate — find-or-create from the anchor (a MISS —
+ * an out-of-order sibling may have created the row). Outcome 2 does not file the parent: a
+ * lock-order inversion against the backfill's `FOR UPDATE` page, and unnecessary — the parent
+ * derives the same `rootMessageIdHeader` its child derived, so `ON CONFLICT` converges without a
+ * write.
  */
 export async function resolveThread(
   repo: RepoPort,
@@ -296,20 +223,14 @@ export async function resolveThread(
 }
 
 /**
- * The reply and forward subject prefixes the localized mail clients emit — ONE table, because
- * the cost of a per-incident list was measured in production: a thread created from a German
- * Outlook forward kept its "WG:" prefix in the thread name while the same client's replies
- * ("AW:") were
- * stripped, so one conversation's name kept a prefix its siblings lost. The set below is the
- * documented Outlook/Thunderbird localization table, not the languages we have happened to see.
- *
- * Longest token first, so the regex alternation never stops at a prefix of a longer token.
- * The one- and two-letter entries ("R:" it-reply, "I:" it-forward, "PD:" pl-forward) look like
- * false-positive bait, but the anchor requires the token to be the ENTIRE word before the
- * colon — "Item:", "Reserve:", "Password:" and an "R" followed by a digit all survive, and
- * the test table pins them. "WG:" is genuinely ambiguous in German (Wohngemeinschaft), and the forward reading
- * still wins: this function only NAMES a thread at create, so the worst case is a flat-share
- * ad losing two letters, never a merge.
+ * The reply and forward subject prefixes localized mail clients emit — ONE table: a German
+ * Outlook forward once kept its "WG:" prefix in the thread name while the same client's "AW:"
+ * replies were stripped. The set is the documented Outlook/Thunderbird localization table.
+ * Longest token first, so the alternation never stops at a prefix of a longer token. The short
+ * entries ("R:", "I:", "PD:") are safe because the token must be the ENTIRE word before the colon
+ * — "Item:" and "Password:" survive; the test table pins them. "WG:" is ambiguous in German
+ * (Wohngemeinschaft) and the forward reading still wins: this only NAMES a thread at create, so
+ * the worst case is a flat-share ad losing two letters, never a merge.
  */
 const SUBJECT_PREFIX_TOKENS = [
   "doorst",           // nl forward (kept with its reply sibling "antw" for reviewability)
@@ -377,59 +298,24 @@ export function baseSubject(subject: string): string {
   }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE CONVERSATION-JOIN RULE — merge-time evidence, NOT ingest identity
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   Everything above this line stands unchanged: at ingest, thread identity is the header chain
-   and only the header chain, and `threading.test.ts`'s "no subject fallback" guard keeps it so.
-
-   This section exists for the conversation the header chain STRUCTURALLY cannot join, observed
-   in production: the user mails a correspondent; the correspondent's reply lands in ANOTHER of
-   the user's mailboxes (an old provider, a second address); the user FORWARDS that reply to
-   themselves here. A forward is composed as a fresh message — no `In-Reply-To`, no
-   `References` — so the mailbox now holds two header chains that are disjoint by construction:
-   the original outbound message, and the forward plus everything that replies to it. Every
-   member of both chains was threaded CORRECTLY under the rule above, and one human conversation
-   still renders as two threads. No candidate lookup, no anchor choice and no arrival order can
-   close that gap, because the joining evidence never arrives in a header — it accumulates
-   across MESSAGES: same account, same base subject, the same non-self correspondent on both
-   sides, close together in time, and the later chain's first message announcing itself as a
-   reply or forward.
-
-   So the join is a DEFERRED MERGE DECISION, taken by the worker's thread-join heal
-   (`apps/worker/src/thread-join-heal.ts`) over settled rows — the same act as the user's own
-   `POST /threads/merge`, decided by evidence instead of a click. It is deliberately NOT an
-   ingest fallback: at the moment the forward arrives, the evidence is not yet complete (a
-   self-to-self forward names no counterparty), and the module header's lock-order and
-   false-merge arguments against subject matching INSIDE `resolveThread` all still hold.
-
-   ── WHY THESE GUARDS, AGAINST THE FALSE-MERGE MACHINE ──────────────────────────────────────
-
-   "Re: invoice" from two unrelated senders is the canonical false merge. It fails guard 4:
-   the only address the two threads share is the account's own, and the account's own addresses
-   are subtracted before the overlap is tested. A stranger naming a trusted colleague in `Cc`
-   fails it too, and that is the second half of guard 4: the `To` and `Cc` of somebody else's
-   mail are that sender's claim about who else is involved, so they are not counterparty
-   evidence — without that rule one message could graft its thread onto any conversation whose
-   participant the sender could name (`sender-headers.ts` carries the rule and its limits). Two unprefixed "Weekly report" mails from the
-   same sender fail guard 3: neither thread's first message CLAIMS to continue anything. A
-   reply to a genuinely old conversation fails guard 5's window. Every guard must pass; any
-   failure keeps the threads apart, and an unmerged split remains the recoverable direction —
-   the heal re-evaluates, while a false merge has no split to undo it.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * The conversation-join rule — merge-time evidence, NOT ingest identity. For the conversation the
+ * header chain STRUCTURALLY cannot join: the user FORWARDS a reply that landed in another of
+ * their mailboxes — a forward carries no `In-Reply-To`/`References`, so one human conversation is
+ * two disjoint chains. The join is a DEFERRED MERGE taken by the worker's thread-join heal, on
+ * evidence: same base subject, the same non-self correspondent on both sides, close in time, the
+ * later chain claiming reply/forward. "Re: invoice" from strangers fails the counterparty guard
+ * (own addresses subtracted; a sender's To/Cc is a claim, not evidence — `sender-headers.ts`).
+ * Every guard must pass; a split is recoverable, a false merge has no undo.
+ */
 
 /**
- * The subset of {@link SUBJECT_PREFIX_TOKENS} precise enough to be MERGE EVIDENCE.
- *
- * Two tables, deliberately, because the two consumers price a false positive differently.
- * The NAMING table above is tuned for recall and says so: "WG:" is genuinely ambiguous in
- * German (Wohngemeinschaft) and stays in it because the worst case there is a flat-share ad
- * losing two letters — never a merge. This table is the other side of that sentence: here a
- * false positive IS a merge, irreversible, so every token that reads as an ordinary word or
- * abbreviation with a colon after it ("WG: Zimmer", "VS: proposal", "RES: table for two",
- * "TR: …", the one-letter Italian pair) is excluded. What stays is unmistakably mail-client
- * output. The recall this gives up is the recoverable direction: a Finnish or Portuguese
+ * The subset of {@link SUBJECT_PREFIX_TOKENS} precise enough to be MERGE EVIDENCE. Two tables,
+ * deliberately: the NAMING table is tuned for recall — "WG:" stays there because its worst case
+ * is a flat-share ad losing two letters. Here a false positive IS a merge, irreversible, so every
+ * token that reads as an ordinary word with a colon ("WG: Zimmer", "VS: proposal", "RES: table
+ * for two", "TR: …", the one-letter Italian pair) is excluded; what stays is unmistakably
+ * mail-client output. The recall given up is the recoverable direction: a Finnish or Portuguese
  * continuation stays split until a header or an unambiguous prefix joins it.
  */
 const CONTINUATION_PREFIX_TOKENS = [
@@ -490,16 +376,12 @@ export type ConversationJoinVerdict =
 
 /**
  * Decide whether two threads of ONE account are the same conversation. Pure — the heal derives
- * the facts, this decides. `earlier`/`later` are by first-message date; a caller that passes
- * them reversed gets `"order"`, not a silently inverted decision.
- *
- * `selfAddresses` are the account's own addresses (lowercased): subtracting them is what turns
- * "both threads mention the account holder" — true of every pair of threads in the account —
- * into "both threads involve the same OTHER party", which is the evidence. The caller decides
- * what "own" means, and the heal deliberately passes MORE than the mailbox rows: an imported
- * history carries the account holder's former identities, so it also subtracts every address
- * measured as a ubiquitous author in the account (see the heal's ubiquity constants). Widening
- * this set only ever starves a join — the recoverable direction — never forges one.
+ * the facts, this decides; `earlier`/`later` are by first-message date, and a reversed pair gets
+ * `"order"`, not a silently inverted decision. `selfAddresses` are the account's own lowercased
+ * addresses: subtracting them turns "both threads mention the account holder" — true of every
+ * pair — into "both threads involve the same OTHER party". The heal passes MORE than the mailbox
+ * rows (an imported history carries former identities, plus measured-ubiquitous authors);
+ * widening the set only ever starves a join — the recoverable direction — never forges one.
  */
 export function conversationJoinVerdict(
   earlier: ConversationJoinFacts,

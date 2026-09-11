@@ -18,36 +18,14 @@ const NUL = "\u0000";
 const NUL_GLOBAL = /\u0000/g;
 
 /**
- * ── U+0000 IS THE ONE CODE POINT POSTGRES `text` CANNOT HOLD ─────────────────────────────────
- *
- * PostgreSQL stores `text`/`varchar` as UTF-8 with no length prefix, so the zero byte is the one
- * value it must reserve; a parameter containing it is refused, and jsonb refuses `\u0000` inside
- * a string as well. There is no encoding, column type, or driver setting that admits it.
- *
- * Every string this module returns is attacker-controlled and every one of them can carry a NUL.
- * Verified against the installed mailparser 3.9.14 — all of these came back with the NUL intact:
- *
- *   · `subject` from the encoded word `=?utf-8?B?YQBi?=`   (base64 of `a<NUL>b`)
- *   · `from.value[0].name` from the same encoded word in a display name
- *   · `text` and `html` from a base64-encoded body part
- *   · the html→text conversion of that body
- *   · `attachments[].filename` from an encoded word in `Content-Disposition`
- *   · `subject`, `headerLines[].line` and `text` from a LITERAL 0x00 byte on the wire
- *
- * So the scrub is applied to ALL of them, HERE, at the parse — not at the writes. Late
- * normalisation is its own bug: {@link canonicalId} hashes `textBody` to derive the dedup key,
- * `pipeline.ts` slices the snippet out of the same string, and `prepareHtmlForStorage` truncates
- * the html. Scrub after any of those and the stored body no longer hashes to the stored dedup
- * key — the same message re-arrives as a new one on every sync (a convergence break),
- * which is worse than the INSERT failure this prevents.
- *
- * Only U+0000. Unpaired surrogates are the other class Postgres cannot encode, and they need no
- * handling here: node's own UTF-8 encoder replaces them on the way out —
- * `Buffer.from("a\uD800b", "utf8")` is measured as `61 ef bf bd 62` — so the driver cannot emit
- * an invalid sequence. `Buffer.from("a\u0000b", "utf8")` is `61 00 62`; the NUL goes to the wire.
- *
- * `includes` before `replace` so the overwhelmingly common path returns the SAME string rather
- * than allocating a copy of a multi-megabyte html body.
+ * U+0000 is the one code point Postgres `text` cannot hold; jsonb refuses `\u0000` too. Every
+ * string this module returns is attacker-controlled and every one can carry a NUL — verified
+ * against mailparser 3.9.14 across subject, display name, bodies, filenames and literal wire
+ * bytes. The scrub is applied to ALL of them HERE, at the parse, not at the writes: `canonicalId`
+ * hashes `textBody`, and a post-hash scrub means the stored body no longer hashes to the stored
+ * dedup key — the same message re-arrives as new on every sync. Only U+0000: unpaired surrogates
+ * are replaced by node's own UTF-8 encoder (measured). `includes` before `replace`, so the common
+ * path returns the SAME string rather than copying a multi-megabyte body.
  */
 function scrubNul(s: string): string {
   return s.includes(NUL) ? s.replace(NUL_GLOBAL, NUL_REPLACEMENT) : s;
@@ -61,29 +39,14 @@ function toAddr(a: { name?: string; address?: string }): EmailAddress {
 }
 
 /**
- * Map one mailparser attachment node to our persisted metadata. `partId` is not in
- * the @types but mailparser sets it on the node (the MIME body-part number IMAP
- * fetch needs); we read it via a narrow cast. `sizeBytes` prefers the decoded
- * content length, falling back to the declared size. NEVER carries `content`
- * (the bytes) forward — only metadata is stored (§13.2/§14).
- *
- * All four strings go through {@link scrubNul}, `partId` included. That one is provably numeric
- * today — mailparser builds it from boundary counters — but "provably numeric" is a fact about
- * mailparser's internals, not a term of our contract, and a trust boundary that scrubs three of
- * four fields is a boundary someone has to re-audit. `sizeBytes` and `inline` are not strings.
- *
- * ── `contentSha256` IS COMPUTED HERE BECAUSE HERE IS THE ONLY PLACE IT CAN BE ─────────────────
- *
- * `a.content` is the DECODED bytes, already resident: `simpleParser` accumulates every attachment
- * chunk and `Buffer.concat`s it, which is the 3.5× memory cost {@link MAX_RAW_MESSAGE_BYTES}
- * exists to bound. Two lines below, that Buffer's `.length` is read and the bytes are thrown
- * away, because §13.2/§14 forbid persisting them. So the digest is free at this exact moment and
- * unobtainable at any later one — a batch job over the `attachments` table has no content column
- * to hash, which is one of the four reasons the ruling prohibits backfilling fingerprints.
- *
- * `sha256` and not the size: `sizeBytes` was already in play and it is trivially collidable —
- * two different PDFs of the same length, same name, same type are one logical message under a
- * size-only tuple, and the second is filed as a duplicate and never shown.
+ * Map one mailparser attachment node to persisted metadata. `partId` is not in the @types but
+ * mailparser sets it (the MIME part number IMAP fetch needs); read via a narrow cast and scrubbed
+ * like the rest — "provably numeric" is a fact about mailparser's internals, not our contract.
+ * NEVER carries `content` forward (§13.2/§14). `contentSha256` is computed here because here is
+ * the only place it can be: `a.content` is the decoded bytes, already resident, thrown away two
+ * lines below — free at this moment, unobtainable later, one reason the ruling prohibits
+ * backfilling fingerprints. `sha256` and not the size: two different PDFs of the same length
+ * would be one logical message, the second filed as a duplicate and never shown.
  */
 function toAttachmentMeta(a: Attachment): AttachmentMeta {
   const contentLen = Buffer.isBuffer(a.content) ? a.content.length : undefined;
@@ -109,73 +72,28 @@ function toAttachmentMeta(a: Attachment): AttachmentMeta {
 }
 
 /**
- * ── WHAT "THIS MESSAGE HAS AN ATTACHMENT" HAS TO MEAN, AND WHY IT IS `!inline` ───────────────
- *
- * A part the user could DOWNLOAD — not "a part exists". The two are different claims, and on a
- * large mailbox the difference was over 40% of the messages a naive check would flag: many
- * carried a part with `inline = false` (a real file), while the rest were **newsletter logos,
- * signature images and tracking pixels** — mail with nothing whatsoever to download.
- *
- * `!inline` and not a new predicate of this function's own, because `inline = false` is ALREADY
- * the server's definition of a real file: `attachments-service.ts:322` (`GET /files`) and `:359`
- * and `:370` (download-all) all select `eq(attachments.inline, false)`. Deriving the flag from
- * anything else would put a second definition of "file" in the codebase and guarantee that the
- * badge and the download eventually disagree again — which is precisely the defect. This is the
- * one predicate, exported, and both writers of the pair go through it.
- *
- * ── AND WHAT IT DOES NOT MEAN: "THERE IS NO IMAGE HERE" ──────────────────────────────────────
- *
- * A `cid:` part is not nothing. `keepCidLinks` keeps its reference in the html and its row keeps
- * `content_id` precisely so a client can resolve it through `GET /attachments/:id` (see
- * {@link normalizeMime}'s header, and a test pins that behaviour). The mail renderer resolves
- * those references from the part's own bytes and draws them in place. So this flag going false
- * for a newsletter is the CORRECT answer to "is there a file to download" and says nothing at
- * all about whether the message has pictures in it.
- *
- * ── WHAT SETS `inline`, STATED HERE BECAUSE IT IS NOT WHAT MOST READERS ASSUME ────────────────
- *
- * `toAttachmentMeta` maps it from mailparser's `related`, and mailparser 3.9.14
- * (`lib/mail-parser.js:903-913`) sets that iff the part carries a **Content-ID header** AND some
- * ancestor node is **`multipart/related`**. It is NOT the Content-Disposition, and it is NOT a
- * scan of the html for a matching `cid:`.
- *
- * Ignoring the disposition is deliberate and is the RIGHT rule: an embedded image referenced by
- * the body is embedded even when it declares `Content-Disposition: attachment`, and mailparser
- * does surface `contentDisposition` for anyone tempted to reach for it.
- *
- * The `related` signal alone had a residual: a cid part under `multipart/mixed` rather than
- * `multipart/related` was NOT marked inline, so a signature logo from a sender who nests it
- * that way still counted as a file. {@link normalizeMime} closes it with a second signal —
- * a part whose `Content-ID` the html body actually names in a `cid:` reference is promoted to
- * inline (see {@link referencesCid}) — which is the same principle as ignoring the disposition,
- * read off the body instead of the tree: WHAT THE HTML PAINTS IS EMBEDDED, wherever it sits.
- *
- * What deliberately stays a FILE: a part carrying a `Content-ID` that nothing references. An
- * unreferenced part is painted by no rendering, so classifying it inline would leave it
- * reachable from nowhere — a photo a sender attached with a gratuitous Content-ID would simply
- * vanish from the product. Unreferenced and standalone means downloadable, whatever its headers
- * hint. And a `Content-Disposition: inline` on its own reclassifies NOTHING, in either
- * direction: Apple Mail ships real PDFs as `inline; filename=…`, so a disposition-based rule
- * hides exactly the files people mean to send.
+ * What "this message has an attachment" means: a part the user could DOWNLOAD, not "a part
+ * exists" — the difference was over 40% of flagged messages: logos, signature images, tracking
+ * pixels. `!inline` and not a new predicate: `inline = false` is ALREADY the server's definition
+ * of a real file (the `GET /files` and download-all queries select on it). It does NOT mean "no
+ * image here": a `cid:` part keeps its reference and row. What sets `inline`: mailparser's
+ * `related` — a Content-ID under a `multipart/related` ancestor, NOT the Content-Disposition
+ * (Apple Mail ships real PDFs as inline). The `mixed`-nested residual is closed by a second
+ * signal: a part the html actually names is promoted; an unreferenced part stays a FILE.
  */
 export function isRealFile(a: AttachmentMeta): boolean {
   return !a.inline;
 }
 
 /**
- * Does this html body reference the part carrying this `Content-ID`, as a `cid:` URL?
- *
- * A SUBSTRING check, exact and case-sensitive, on purpose:
- *
- *   · `cid:<contentId>` is the literal token a renderer resolves — `src="cid:logo@corp"`,
- *     `url(cid:logo@corp)` — so the substring IS the reference, not a heuristic for one.
- *   · Case-sensitive because RFC 5322 makes a msg-id's `id-left` case-significant, and the two
- *     error directions are not symmetric. A missed match leaves a logo listed as a file beside
- *     a blank box — the long-standing status quo, cosmetic. A false match reclassifies a REAL
- *     file as inline, which drops it from the Files list and download-all: data loss. So the
- *     comparison only ever errs toward the cosmetic direction.
- *
- * `contentId` arrives with its angle brackets already stripped ({@link toAttachmentMeta}).
+ * Does this html body reference the part carrying this `Content-ID`, as a `cid:` URL? A SUBSTRING
+ * check, exact and case-sensitive, on purpose: `cid:<contentId>` is the literal token a renderer
+ * resolves, so the substring IS the reference. Case-sensitive because RFC 5322 makes `id-left`
+ * case-significant and the two error directions are not symmetric: a missed match leaves a logo
+ * listed as a file beside a blank box — cosmetic, the long-standing status quo; a false match
+ * reclassifies a REAL file as inline, dropping it from the Files list and download-all — data
+ * loss. The comparison only ever errs toward the cosmetic direction. `contentId` arrives with its
+ * angle brackets already stripped.
  */
 export function referencesCid(html: string | null, contentId: string | null): boolean {
   if (!html || !contentId) return false;
@@ -194,74 +112,26 @@ function addrList(field: AddressObject | AddressObject[] | undefined): EmailAddr
 }
 
 /**
- * ── THE HARD PER-MESSAGE BYTE CEILING, AND WHY IT IS 64 MiB ──────────────────────────────────
- *
- * Measured here against mailparser 3.9.14, one message with one base64 attachment:
- *
- *   raw 85.3 MB  →  521 ms, +298.7 MB of EXTERNAL (Buffer) memory, +170.8 MB RSS
- *
- * ≈3.5× the raw bytes, because `simpleParser` accumulates every decoded attachment chunk and
- * then `Buffer.concat`s it into `attachment.content` — which {@link toAttachmentMeta} reads a
- * length off and throws away. The worker container's limit is 1 000 000 000 B and the crash-loop
- * that forced this ceiling happened just under it, so ~3.5× is the number that matters.
- *
- * 64 MiB, for three reasons that each stand alone:
- *
- *   · It is 2× {@link DEFAULT_SYNC_BATCH_MAX_BYTES} (32 MiB). Nothing this large reaches us
- *     except through the adapter's documented anti-stall rule — "the first message is always
- *     admitted, however large" — so the ceiling can only ever fire on a message the batch
- *     budget already treats as exceptional.
- *   · It is above what mainstream providers accept inbound (Gmail ~50 MB, Exchange Online 36 MB
- *     by default, iCloud/Yahoo ≤ 25 MB attachments ⇒ ~34 MB on the wire once base64'd), so it
- *     does not refuse mail a user's own mailbox would hold.
- *   · At the ceiling the measured parse peak is ≈235 MB, under a quarter of the container limit.
- *
- * Above it, the alternative to refusing ONE message is risking a SIGKILL of the shared worker,
- * which stops every mailbox rather than one. That is the trade, stated so it can be argued with.
- *
- * What this is NOT: it is defence in depth, not the primary fix. The raw bytes are already
- * resident by the time this runs — `ImapAdapter.fetchCapped` pulled `source: true` before
- * `normalizeMime` was called. The primary fix is an RFC822.SIZE ceiling BEFORE that fetch, in
- * `packages/core/src/adapters/imap.ts`, and it is owed.
- *
- * Two amplifiers this ceiling is deliberately NOT aimed at, because measurement said they are
- * not amplifiers: 200 000 flat MIME parts (11.1 MB raw) parse in 108 ms for +38.5 MB RSS, and
- * 5 000 levels of multipart nesting parse without a stack overflow. A part-count or depth guard
- * would be an unmeasured heuristic whose false positive wedges a real mailbox — see
- * {@link MimeTooLargeError} on why any rejection is currently expensive.
+ * The hard per-message byte ceiling, and why it is 64 MiB. Measured: raw 85.3 MB → +298.7 MB of
+ * external Buffer memory, ≈3.5x the raw bytes — and the crash-loop that forced this happened just
+ * under the worker container's limit. 64 MiB: 2x `DEFAULT_SYNC_BATCH_MAX_BYTES`, so it fires only
+ * on a message the batch budget already treats as exceptional; above what mainstream providers
+ * accept inbound; parse peak at the ceiling is under a quarter of the container limit. Defence in
+ * depth — the raw bytes are already resident when this runs; the pre-fetch RFC822.SIZE ceiling is
+ * the primary fix. Part-count and depth guards are absent: measured non-amplifiers, and an
+ * unmeasured heuristic's false positive wedges a real mailbox.
  */
 export const MAX_RAW_MESSAGE_BYTES = 64 * 1024 * 1024;
 
 /**
- * The ceiling on the html mailparser will convert to text, in UTF-16 CODE UNITS — mailparser
- * compares `node.textContent.length`, so code units is what the option means, and CPU tracks
- * code units more closely than bytes anyway.
- *
- * ── THIS IS THE CPU BOUND, AND THE SIZE CEILING DOES NOTHING FOR IT ──────────────────────────
- *
- * `htmlToText` is superlinear in nesting depth. Measured, html-only messages of `<div>` nests:
- *
- *   depth   1 000  ·  11 KB html  →  resolves, 17 ms
- *   depth  20 000  · 220 KB html  →  `Error: Failed to parse HTML`, 365 ms
- *   depth 100 000  · 1.1 MB html  →  `Error: Failed to parse HTML`, 6 179 ms
- *   depth 400 000  · 4.4 MB html  →  `Error: Failed to parse HTML`, 98 514 ms
- *
- * 4.4 MB of attacker bytes for 98 seconds of the SHARED worker, and every one of those is far
- * under {@link MAX_RAW_MESSAGE_BYTES} — a byte ceiling cannot see this attack. With the option
- * set to 1 MiB the same 1.1 MB message is refused in 4 ms instead of 6 179: a 1 500× reduction.
- *
- * Note what mailparser does when the limit is hit, because it decides the design: it EMITS an
- * error, which `simpleParser` turns into a rejected promise, and it drops the html. So the
- * option alone converts a slow message into a lost one. {@link normalizeMime} therefore treats
- * that rejection as a retry signal and re-parses once with `skipHtmlToText: true` (measured
- * 4 ms), which keeps the html and gives up only the derived text.
- *
- * 1 MiB and not less: production's largest html body after `data:` stripping was 441 692 bytes
- * (`html-storage.ts`), so 1 MiB sits above every html this system has ever measured and no real
- * message loses its text rendition. A normal — unnested — 1 MB html body converts in 32 ms.
- *
- * The residual, stated plainly: maximally-nested html just UNDER the limit still costs ~5.5 s.
- * Bounding that needs a depth or wall-clock budget, and mailparser exposes neither. Owed.
+ * The ceiling on the html mailparser will convert to text, in UTF-16 code units. The CPU bound,
+ * which the size ceiling cannot see: `htmlToText` is superlinear in nesting depth — measured, a
+ * 4.4 MB `<div>` nest cost 98 seconds of the SHARED worker; at 1 MiB the same class is refused in
+ * milliseconds. mailparser EMITS an error at the limit and drops the html, so the option alone
+ * turns a slow message into a lost one — {@link normalizeMime} treats the rejection as a retry
+ * signal and re-parses once with `skipHtmlToText: true`, keeping the html and giving up only the
+ * derived text. 1 MiB sits above every html this system has measured. Residual: maximally-nested
+ * html just under the limit still costs ~5.5 s. Owed.
  */
 export const MAX_HTML_TO_TEXT_CHARS = 1024 * 1024;
 
@@ -278,16 +148,13 @@ export class MimeTooLargeError extends Error {
 
 /**
  * Anything mailparser refused. Wrapped, because the caller's job is to CLASSIFY the failure.
- *
- * `normalizeMime`'s contract is: a usable {@link NormalizedMessage}, or one of this module's two
- * typed errors. Never a bare `TypeError`/`RangeError`/`Error("Failed to parse HTML")` — the
- * worker cannot tell those apart from a bug in our own code, and `apps/worker/src/sync.ts`
- * advances the folder cursor only once a whole batch commits, so an unclassifiable throw is not
- * a lost message, it is a permanently stopped mailbox.
- *
- * Both of these errors are DETERMINISTIC in the raw bytes: the same source fails the same way
- * every time. That is what makes them safe for a quarantine record to treat as permanent, and it
- * is the property to preserve if this wrapping is ever widened.
+ * `normalizeMime`'s contract is a usable {@link NormalizedMessage} or one of this module's two
+ * typed errors — never a bare `TypeError`/`RangeError`: the worker cannot tell those from a bug
+ * in our own code, and `sync.ts` advances the folder cursor only once a whole batch commits, so
+ * an unclassifiable throw is not a lost message, it is a permanently stopped mailbox. Both errors
+ * are DETERMINISTIC in the raw bytes — the same source fails the same way every time — which is
+ * what makes them safe for a quarantine record to treat as permanent, and the property to
+ * preserve if this wrapping is ever widened.
  */
 export class MimeParseError extends Error {
   readonly name = "MimeParseError";
@@ -318,16 +185,11 @@ const PARSE_OPTIONS = {
 } as const;
 
 /**
- * How big `raw` is in BYTES.
- *
- * Bytes and not `raw.length`, which on a string counts UTF-16 code units — a 2× undercount on
- * emoji and astral text, the same "a char-based cap is a 4x lie" mistake `html-storage.ts`
- * documents. `Buffer.byteLength` on a Buffer is just `.length`, so one call covers both inputs.
- *
- * The type guard is not defensive noise: the signature says `Buffer | string`, but this is called
- * from a sync loop that hands over whatever an IMAP server returned (`m.source`), and
- * `Buffer.byteLength(undefined)` throws a bare `TypeError` — the one shape
- * {@link MimeParseError} exists to keep out of the worker's lap.
+ * How big `raw` is in BYTES — not `raw.length`, which on a string counts UTF-16 code units, a 2x
+ * undercount on emoji and astral text. `Buffer.byteLength` on a Buffer is just `.length`, so one
+ * call covers both inputs. The type guard is not defensive noise: this is called from a sync loop
+ * that hands over whatever an IMAP server returned, and `Buffer.byteLength(undefined)` throws a
+ * bare `TypeError` — the one shape {@link MimeParseError} exists to keep out of the worker's lap.
  */
 function rawByteLength(raw: Buffer | string): number {
   if (Buffer.isBuffer(raw)) return raw.length;
@@ -338,45 +200,14 @@ function rawByteLength(raw: Buffer | string): number {
 }
 
 /**
- * ── `keepCidLinks: true` IS THE FIX FOR THE STORAGE OUTAGE. DO NOT REMOVE IT. ──
- *
- * With this option absent (the default), `simpleParser` calls `updateImageLinks` and rewrites
- * every `cid:` reference in the html into `'data:' + contentType + ';base64,' +
- * content.toString('base64')` — mailparser 3.9.14, `lib/simple-parser.js:95-98`. That is the
- * WHOLE ATTACHMENT, base64-expanded by 33%, pasted into `message_bodies.html`.
- *
- * It filled a half-gigabyte database from ONE ordinary mailbox. The shape before the fix, from a
- * representative mailbox: the inline attachment parts were together comparable in size to the
- * whole of `message_bodies.html`, because each one had been pasted into a body as well as
- * stored as a part. A small minority of html rows — those containing `;base64,` — held the
- * overwhelming majority of all html bytes. And the bytes barely compressed, because base64 of an
- * already-compressed JPEG or PNG is incompressible, so pglz gave up and stored hundreds of rows
- * verbatim.
- *
- * It is a store-no-bytes violation before it is a sizing problem. That invariant says on-demand
- * attachment fetch and gated send "store no bytes", and
- * `packages/api/src/routes/attachments.ts` implements exactly that — bytes are fetched from
- * IMAP when asked for and never persisted. Inlining them into the body was storing the very
- * bytes the design refuses to store, through a side door.
- *
- * What the option changes and what it does NOT: `keepCidLinks` makes `simpleParser` return
- * BEFORE `updateImageLinks`, so the html keeps its original `cid:` references and the
- * `attachments` array is untouched — `contentId` and `inline` are still populated exactly as
- * before (see {@link toAttachmentMeta}), which is what lets a client resolve a `cid:` through
- * `GET /attachments/:id`. `packages/core/src/privacy/tracker-blocker.ts` already leaves `cid:`
- * URIs alone, deliberately, because an embedded part cannot phone home.
- *
- * This stops us MANUFACTURING the bloat. It says nothing about a sender who writes a `data:`
- * URI into their own html, which is why {@link prepareHtmlForStorage} exists as the second
- * line and why the `message_bodies_html_cap` CHECK constraint exists as the third.
- *
- * ── THE CONTRACT, WHICH IS WHAT MAKES THIS SAFE TO CALL ON HOSTILE BYTES ─────────────────────
- *
- * `raw` is entirely attacker-controlled: anyone who knows the address can choose every byte.
- * This function resolves with a usable {@link NormalizedMessage}, or rejects with
- * {@link MimeTooLargeError} or {@link MimeParseError} — nothing else. No `TypeError`, no
- * `RangeError`, no bare `Error` from a dependency. See {@link MimeParseError} for why the
- * distinction is load-bearing rather than tidy.
+ * `keepCidLinks: true` is the fix for the storage outage. Do not remove it. With the option
+ * absent, `simpleParser` rewrites every `cid:` reference into a `data:` URI holding the whole
+ * attachment base64-expanded, pasted into `message_bodies.html` — a half-gigabyte database from
+ * one mailbox. A store-no-bytes violation before a sizing problem: inlining stored the very bytes
+ * the on-demand design refuses to store. The option makes `simpleParser` return BEFORE the
+ * rewrite: the html keeps its `cid:` references, `contentId`/`inline` populated as before. A
+ * sender's own `data:` URI is {@link prepareHtmlForStorage}'s job. `raw` is attacker-controlled;
+ * this resolves with a usable message or rejects with one of the two typed errors — nothing else.
  */
 export async function normalizeMime(raw: Buffer | string): Promise<NormalizedMessage> {
   const bytes = rawByteLength(raw);
@@ -404,47 +235,16 @@ export async function normalizeMime(raw: Buffer | string): Promise<NormalizedMes
     }
   }
 
-  // Build a lowercased header-name -> raw-values map from the raw header lines.
-  // (parsed.headers folds `List-*` into a structured `list` object, dropping the
-  // literal `list-unsubscribe` key we rely on, so we read the raw lines instead.)
-  //
-  // ── `Object.create(null)` IS A SECURITY FIX, NOT A STYLE PREFERENCE ───────────────────────
-  //
-  // `__proto__` and `constructor` are valid RFC 5322 extension header names, mailparser 3.9.14
-  // preserves both in `parsed.headerLines` (verified against the installed version), and every
-  // byte here arrives from whoever knows the user's address. On a plain `{}` the sequence is:
-  //
-  //   headers["__proto__"]  →  the INHERITED Object.prototype  →  not nullish  →  `??=` does
-  //   not install an array  →  `.push(value)` throws
-  //   `TypeError: headers[name].push is not a function`
-  //
-  // That exception leaves `normalizeMime`, and `apps/worker/src/sync.ts` has no per-message
-  // catch and only advances the folder cursor once a whole batch commits — so a five-byte
-  // header stops ALL later mail for that mailbox, forever, with no user interaction.
-  //
-  // ── AND WHY `Object.hasOwn` IS DELIBERATELY *NOT* ALSO USED HERE ──────────────────────────
-  //
-  // The obvious belt-and-braces spelling is `if (!Object.hasOwn(headers, name)) headers[name] =
-  // []` on top of the null prototype. It was written, mutation-tested, and REMOVED, because on
-  // a plain `{}` it does not degrade to the throw — it degrades to silent prototype pollution.
-  // Measured on node 23.6.1: `h["__proto__"] = []` invokes the `__proto__` SETTER, so the
-  // object's prototype becomes the attacker's array and
-  //
-  //   JSON.stringify(h) === "{}"      the header VANISHES from what we persist to jsonb
-  //   Object.keys(h)    === []        …and from anything that enumerates
-  //   h["length"] === 1, h["0"] === "attacker"   attacker values answer unrelated lookups
-  //
-  // A rule of kind `header` matching `length` or `0` would then be truthy for that message
-  // (`packages/core/src/rules.ts:109` decides with `Boolean(msg.headers[r.match]`)). Keeping a
-  // line that converts a loud crash into quiet corruption is worse than not having it, so the
-  // null prototype stands alone and a test pins the prototype itself — writing `{}` here is red
-  // on that test whatever the append looks like.
-  //
-  // Scope of the guarantee, so nobody assumes more: it holds for the map this function BUILDS.
-  // It does not survive a database round trip — `packages/core/src/adapters/drizzle-repo.ts`
-  // rebuilds `message_bodies.headers` with `JSON.parse`, which inherits from Object.prototype
-  // again, and the worker's kickstart pass feeds that map back into `evaluateRules`. That
-  // residue is tracked separately, not closed here.
+  // A lowercased header-name → raw-values map from the raw header lines (parsed.headers folds
+  // `List-*` into a structured object, dropping the literal key). `Object.create(null)` is a
+  // SECURITY FIX: `__proto__` is a valid extension header name, mailparser preserves it, and on a
+  // plain `{}` the lookup finds the inherited prototype, `??=` installs nothing, `.push` throws —
+  // and `sync.ts` has no per-message catch, so a five-byte header stops ALL later mail for that
+  // mailbox. `Object.hasOwn` belt-and-braces was written, mutation-tested and REMOVED: on a plain
+  // `{}` it degrades to silent prototype pollution — the SETTER fires, the header vanishes from
+  // what is persisted, attacker values answer unrelated lookups. The null prototype stands alone;
+  // a test pins the prototype itself. Scope: it holds for the map this function BUILDS — it does
+  // not survive a database round trip; that residue is tracked separately.
   const headers: Record<string, string[]> = Object.create(null);
   for (const { key, line } of parsed.headerLines) {
     // Both halves are scrubbed: a literal 0x00 on the wire survives into `headerLines[].line`
@@ -464,32 +264,28 @@ export async function normalizeMime(raw: Buffer | string): Promise<NormalizedMes
   const fromObj = parsed.from?.value?.[0];
   const attachments = (parsed.attachments ?? []).map(toAttachmentMeta);
 
-  // ── A PART THE HTML PAINTS IS INLINE, WHEREVER IT SITS IN THE MIME TREE ────────────────────
-  //
-  // mailparser's `related` only marks a cid part under `multipart/related`; a signature logo
-  // nested under `multipart/mixed` arrived with `inline: false` and was listed as a file the
-  // reader could download — beside a body that draws that same picture. The body's own `cid:`
-  // reference is the second signal ({@link referencesCid}), and it runs HERE because this is the
-  // one moment both sides of the question are in hand: the decoded html (scrubbed, the exact
-  // string the renderer will resolve against) and the parts. Promotion only — a `related` part
-  // never loses its flag for going unreferenced, because `related` is already the tree saying
-  // "embedded" and demoting on a failed text scan would move real newsletters' logos into the
-  // Files list on a formatting quirk.
+  // A part the html paints is inline, wherever it sits in the MIME tree. mailparser's `related`
+  // only marks a cid part under `multipart/related`; a signature logo nested under
+  // `multipart/mixed` arrived `inline: false` and was listed as a downloadable file beside a body
+  // that draws the same picture. The body's own `cid:` reference is the second signal ({@link
+  // referencesCid}), and it runs HERE because this is the one moment both sides are in hand: the
+  // decoded, scrubbed html — the exact string the renderer resolves against — and the parts.
+  // Promotion only: a `related` part never loses its flag for going unreferenced, because
+  // `related` is already the tree saying "embedded", and demoting on a failed text scan would
+  // move real newsletters' logos into the Files list on a formatting quirk.
   for (const a of attachments) {
     if (!a.inline && referencesCid(html, a.contentId)) a.inline = true;
   }
 
-  // ── WHAT THE FALLBACK PARSE HASHES, AND WHY IT IS NOT `text` ──────────────────────────────
-  //
-  // `skipHtmlToText` leaves `parsed.text` as the empty string, so on that path `canonicalId`
-  // would hash "" for EVERY such message. `dedupKey` falls back to `body:<hash>` when a message
-  // carries no Message-ID, and a shared hash there means the second such message is filed as a
-  // duplicate of the first — real mail silently dropped, which is worse than the CPU burn the
-  // limit exists to stop. So this path hashes the html, which is real content and is stable:
-  // the same raw bytes always take the same branch, so a message dedups against itself on every
-  // later sync. `textBody` stays honestly empty rather than being filled with an invented
-  // rendition — a second text extraction, differing from mailparser's, would show up in the
-  // snippet and the search vector and belongs in a change that can measure it.
+  // What the fallback parse hashes, and why it is not `text`: `skipHtmlToText` leaves
+  // `parsed.text` empty, so on that path `canonicalId` would hash "" for EVERY such message — and
+  // `dedupKey` falls back to `body:<hash>` when a message carries no Message-ID, so a shared hash
+  // means the second such message is filed as a duplicate of the first: real mail silently
+  // dropped, worse than the CPU burn the limit stops. So this path hashes the html, which is real
+  // content and stable — the same raw bytes always take the same branch, so a message dedups
+  // against itself on every later sync. `textBody` stays honestly empty rather than being filled
+  // with an invented rendition: a second text extraction would show up in the snippet and the
+  // search vector, and belongs in a change that can measure it.
   const bodyForCanonical = htmlToTextRefused ? (html ?? text) : text;
   return {
     canonical: canonicalId(parsed.messageId ? scrubNul(parsed.messageId) : null, bodyForCanonical),
@@ -529,47 +325,14 @@ export interface ParsedAddressHeaders {
 }
 
 /**
- * ── RE-READING WHO A STORED MESSAGE IS FROM AND TO, FROM ITS STORED HEADERS ─────────────────
- *
- * The columns `messages.from_name` (mail 0057), `to_addresses` and `cc_addresses` were each
- * added after the rows that need them, and every one of those rows still holds the header the
- * value came from — `message_bodies.headers` keeps the RAW line values, so `from` on a message
- * ingested a year before the column reads `"Papierwerk Studio <hello@papierwerk.example>"`
- * whatever the `messages` row says. This function is how a historical row is re-read.
- *
- * ── IT IS THE INGEST PARSE, NOT A SECOND ONE, AND THAT IS THE WHOLE POINT ───────────────────
- *
- * A backfill that disagreed with ingest would leave two populations of rows whose names came
- * from different rules, which is worse than one population with no names at all — the disagreement
- * is invisible, and it is invisible per row. So this shares every piece that decides a value:
- * `simpleParser` under the same {@link PARSE_OPTIONS}, then {@link toAddr}/`addrList`, which are
- * the same functions {@link normalizeMime} maps its own `parsed.from/to/cc` through. Nothing
- * about an address is re-implemented here — the lowercasing, the NUL scrub, the empty-name→null
- * collapse and the RFC 5322 group/comment handling all stay in one place.
- *
- * That equivalence is pinned by a test rather than by this paragraph: for a corpus of raw
- * messages, `parseStoredAddressHeaders(normalizeMime(raw).headers)` deep-equals the `from`/`to`/`cc`
- * that same `normalizeMime` returned. It is the round trip through the stored representation that
- * is under test, which is exactly what a backfill does.
- *
- * `from` is `null` where `normalizeMime` yields `{ name: null, address: "" }` — the one shape
- * difference, and it is deliberate: a caller filling a column has to be able to tell "the parse
- * found nobody" from "the parse found someone anonymous", and the sentinel empty address cannot.
- *
- * ── WHY THE VALUES ARE RE-FOLDED BEFORE THEY GO BACK IN ────────────────────────────────────
- *
- * A stored value can contain a raw newline: `headerLines[].line` carries the header as it arrived,
- * folding included, and only the ends were trimmed. Written back verbatim, a fold whose
- * continuation lost its leading whitespace — or a value a sender crafted with a bare LF — would
- * start a NEW header in the block this function builds, which is header injection into our own
- * re-parse. Every newline not already followed by WSP therefore gets one, which is precisely
- * RFC 5322 folding and reproduces the original unfolded value.
- *
- * The result is decoded, not raw. A display name that is not plain ASCII arrives as an RFC 2047
- * encoded-word (`=?UTF-8?Q?…?=`), and only a real parser turns that back into text — so a
- * backfill that read the stored line directly would write the encoding into the column and show it
- * to the reader. On a mailbox with any non-English correspondents that is a large minority of the
- * rows, not an edge case, which is why this goes through the parser rather than a regex.
+ * Re-reading who a stored message is from and to, from its stored headers — the address columns
+ * were added after the rows that need them, and every row still holds the raw header line. The
+ * INGEST parse, not a second one: a backfill disagreeing with ingest leaves two populations whose
+ * names came from different rules — so this shares every deciding piece (`simpleParser` under the
+ * same options, the same `toAddr`/`addrList`), pinned by a round-trip test. `from` is `null`
+ * where ingest yields the anonymous sentinel. Values are re-folded before going back in: a stored
+ * value can carry a raw newline, and written back verbatim it would start a NEW header —
+ * injection into our own re-parse. Decoded, never raw: an encoded-word must not reach the column.
  */
 export async function parseStoredAddressHeaders(
   stored: StoredAddressHeaders,

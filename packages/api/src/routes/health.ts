@@ -11,117 +11,36 @@ import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
 
 /**
- * `GET /health` — the API host's liveness + identity endpoint.
- *
- * `public` (no credential: a probe has none), `anonymous` (see below) and `raw` (the reduced
- * pipeline: no JSON envelope, no CSRF, no idempotency). Because `raw` means there is NO
- * `withErrorEnvelope` above it, this handler must never throw — an unhandled rejection here
- * would surface as the platform's own 500 page, i.e. a health endpoint whose failure mode is
- * unreadable. Everything is therefore inside one try/catch.
- *
- * `anonymous` is what makes the two claims below actually TRUE. While `/health` ran the
- * normal pipeline, `withSession` resolved any credential that happened to be presented, so a
- * probe carrying an ambient browser cookie cost a second query ("one round trip" held only
- * for anonymous callers) and — far worse — that query ran OUTSIDE this try/catch: with the
- * database down, a cookie-bearing request got the host's generic 500 instead of the
- * controlled `database_unreachable` 503. The endpoint failed hardest in the only situation it
- * exists for.
- *
- * **It must not lie in either direction** (the rule the worker's health server already
- * obeys). Four verdicts, each chosen so a probe can be trusted:
- *
- *  • database unreachable ⇒ **503** `database_unreachable`. Answering 200 would keep a dead
- *    deployment in rotation.
- *  • database reachable but the SCHEMA is not the application's ⇒ **503** `schema_incomplete`.
- *    A reachable VIRGIN database used to answer `200 {ok:true, pgTrgm:false}` while every
- *    single application query would fail on a missing table — the deployment was "healthy"
- *    and totally non-functional. The lexical-degradation argument below only holds once the
- *    base schema is known to be there, so the schema check comes first.
- *  • `pg_trgm` missing on a migrated database ⇒ **200 with `pgTrgm: false`**. That IS
- *    degradation, not death: `SearchService` falls back to its lexical arm. The flag is the
- *    tripwire for that state — `ensureSearchExtensions` lives outside the migrator, so
- *    "migrated but no `pg_trgm`" is a state no test can catch and only a real deployment can
- *    report.
- *  • a KEK fault, or a production deployment with no build identity ⇒ **503** with the
- *    reason. Neither darkens the host (`/health` is the only thing that can TELL an operator
- *    the KEK is wrong), but neither may be reported as healthy.
- *
- * **One round trip.** The `SELECT 1`, the `pg_trgm` probe and the schema probe are the SAME
- * statement, so `dbLatencyMs` is a genuine measurement of one query and a probe never costs
- * more than one. `to_regprocedure('word_similarity(text,text)')` is deliberately the SAME
- * check `SearchService.hasTrgm` uses — it asserts the FUNCTION the fuzzy arm calls is
- * resolvable, which is a stronger claim than a row in `pg_extension`.
- *
- * **`cookieAuth` reports the cookie/bearer host split for THIS request** — `true` when the hostname the
- * request arrived on is a cookie surface (`api.ohmail.app` behind the webapp's rewrite),
- * `false` on the bearer-only surfaces (`api.ohmail.app`, the deployment URL, anything
- * unrecognised). One deployment serves both, so the flag is a property of the REQUEST, and
- * without it the only way to find out which side a host landed on is to attempt a login and
- * watch it silently not stick. It echoes no allow-list and no configuration — just the verdict
- * a caller could determine anyway by presenting a cookie — and it is what makes the DNS flip
- * verifiable in one `curl`.
- *
- * **`alertSinks` / `alertPasses` are the worker's boot announcement in this host's idiom.** The
- * worker names its pager arms in its startup line and warns when there is exactly one; a
- * serverless host has no startup line, so until now the per-arm delivery health lived only on
- * the authenticated `/internal/alerts` response — and this host is the ONLY observer of a dead
- * worker, so its arms going quiet is the version of the fault that coincides with the outage
- * they exist to report. Same key, same shape and the same closed codes the worker publishes, so
- * the two are a literal JSON diff. Names, codes and counts only: a sink's own error sentence is
- * unbounded vendor text and stays in the log line. See `HealthConfig.alertSinks`, and
- * `AlertSinkSummary.passes` for why the counts are published with an instance-scoped pass count
- * beside them.
- *
- * **Nothing else environmental is echoed.** `kek` is the ring IDENTITY from
- * `kekEnvIdentity()` — a fingerprint plus two integers, never key material — and it is the
- * same object the worker publishes, nested under the same `kek` key on both hosts, so
- * comparing them is a literal JSON diff. A database error is reported as a fixed
- * `database_unreachable` plus the driver's error CODE; the driver's message can carry the
- * host and role from the connection string and is therefore never forwarded.
+ * `GET /health` — liveness + identity. `public` (a probe has no credential), `anonymous` (an
+ * ambient cookie once cost a query outside this try/catch, turning a database outage into a
+ * generic 500), `raw` (no envelope above — this handler never throws). It must not lie in either
+ * direction: database unreachable ⇒ 503 `database_unreachable`; schema incomplete ⇒ 503
+ * `schema_incomplete`; missing `pg_trgm` ⇒ 200 with `pgTrgm: false`; a KEK fault or no build
+ * identity in production ⇒ 503 with the reason. One round trip: the probes are one statement.
+ * `cookieAuth` reports this request's cookie/bearer split; `alertSinks`/`alertPasses` mirror the
+ * worker's keys. A database error forwards the code, never the driver's message.
  */
 
 /**
- * The columns whose presence means "this database carries THIS application's schema".
- *
- * Deliberately `(table, column)` pairs and not a table-name list: a column is what a query
- * actually reads, and a migration that only ALTERs (`0017_enrollment` added `sessions.scope`)
- * is invisible to a table-only probe. The set covers the tables every request path touches
- * plus the newest migration's own marker, so a virgin database, a half-applied migration run,
- * and a database from BEFORE the current release all fail it.
- *
- * {@link MAIL_SCHEMA_MARKER_JOURNAL_TAG} and {@link CLOUD_SCHEMA_MARKER_JOURNAL_TAG} pin which
- * migration each half's list was last reconciled against, and a test asserts each is still the
- * newest entry in ITS OWN journal. That is what stops these lists from silently
- * ageing — it is why `0018_billing` could not land without someone deciding what its marker is
- * (the billing ledger's dedup identity, chosen because it is the column the
- * metering paths actually write through). After the split it also means a migration added to one
- * journal cannot be excused by the other journal's tag being current.
- *
- * **Deployment ORDER is a consequence, not a detail.** An API build carrying a new marker
- * answers `503 schema_incomplete` against a database that has not run the matching migration.
- * The migration runner must therefore reach the target database BEFORE that build deploys — it
- * picks up new journal entries automatically and verifies them entry-by-entry, per journal.
+ * The columns whose presence means "this database carries this application's schema". `(table,
+ * column)` pairs, not table names: a column is what a query reads, and an ALTER-only migration is
+ * invisible to a table probe. The set covers the tables every request path touches plus the
+ * newest migration's marker, so a virgin database, a half-applied run, and a pre-release database
+ * all fail. The journal tags pin which migration each half's list was last reconciled against,
+ * asserted by a test to be the newest entry in its own journal. Deployment order follows: a build
+ * carrying a new marker answers 503 until the migration runner has reached the database.
  */
 export type SchemaMarker = readonly [table: string, column: string];
 
 /**
- * ── SPLIT BY JOURNAL (stage 3), because the two halves now fail INDEPENDENTLY ──
- *
- * The database package's single migration journal became two: the mail-domain journal
- * (bookkeeping in `drizzle_mail`) and the hosted-service journal (bookkeeping in
- * `drizzle_cloud`), which a local install never runs. Two journals
- * are two transactions, so **mail-committed / cloud-failed is a reachable state** — and it is
- * exactly the state this probe must report honestly. A single flat marker list would still catch
- * it (a missing cloud column is a missing marker either way); what it could not do is stay
- * anchored, because "the newest migration" is now two facts, and one list pinned to one tag ages
- * silently against the other half.
- *
- * So the list is two lists, each pinned to the newest entry of ITS OWN journal, and each asserted
- * against that journal by a test. The exported {@link SCHEMA_MARKERS} is their
- * concatenation — the probe SQL, the totals and the published body are computed from it, so the
- * split changed the bookkeeping and nothing a caller can see. No count is written down here on
- * purpose: {@link EXPECTED_MARKERS} derives it, and a number in prose ages the moment a
- * migration lands.
+ * Split by journal, because the two halves fail independently: the mail-domain journal and the
+ * hosted-service journal (which a local install never runs) are two transactions, so
+ * mail-committed / cloud-failed is a reachable state this probe must report honestly. A single
+ * flat list would still catch it; what it could not do is stay anchored — "the newest migration"
+ * is now two facts, and one list pinned to one tag ages silently against the other half. So two
+ * lists, each pinned to the newest entry of its own journal, each asserted by a test. {@link
+ * SCHEMA_MARKERS} is their concatenation, so the split changed bookkeeping and nothing a caller
+ * sees. No count in prose: {@link EXPECTED_MARKERS} derives it.
  */
 
 /**
@@ -158,17 +77,11 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // A missing column must be a LOUD 503, never a gate that silently reads "verified" for
   // everyone.
   ["users", "email_verified_at"],
-  // mail 0023_mailbox_failure_reason — WHY a mailbox failed. One marker for four columns, on
-  // the usual rule: probe the column a QUERY actually reads, and `error_code` is the one both
-  // `MailboxService.toDTO` and the admin console project.
-  //
-  // It earns a marker for a reason the other entries do not share. Nothing on this table is
-  // read to make a DECISION, so an absent column cannot mis-route mail — but
-  // `MailboxService.list` selects WHOLE ROWS, so an API deployed ahead of this migration
-  // answers Postgres 42703 on the mailbox panel and on the connect flow, and Vercel serves
-  // that traffic whatever `/health` says. The marker does not gate the traffic; it makes the
-  // deployment name the missing migration instead of leaving a 500 nobody can attribute. It is
-  // the NEWEST entry in the mail journal.
+  // mail 0023_mailbox_failure_reason — why a mailbox failed. One marker for four columns;
+  // `error_code` is the one both `MailboxService.toDTO` and the console project. It earns a
+  // marker because `MailboxService.list` selects whole rows, so an API ahead of this migration
+  // answers 42703 on the mailbox panel and the connect flow — the marker makes the deployment
+  // name the missing migration instead of a 500 nobody can attribute.
   ["mailboxes", "error_code"],
   // mail 0024_flag_state — the read-state desired-state table. One marker for the
   // whole table, and `desired_seen` is the column a QUERY reads: it is what `PATCH /messages`
@@ -190,171 +103,90 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // gate that traffic; it makes the deployment name the missing migration instead of leaving a
   // 500 nobody can attribute. It is the NEWEST entry in the mail journal.
   ["mailboxes", "kickstart_at"],
-  // mail 0026_thread_resolution — the conversation's root Message-ID, and the find-or-create
-  // conflict anchor threading at ingest is built on. One nullable column on
-  // `threads`, and it earns a marker for the `mailboxes.error_code` reason: nothing reads it to
-  // make a product decision, but `materializeThread` reads `select().from(threads)`, which
-  // drizzle expands into an explicit column list from the TS schema — so an API deployed ahead
-  // of this migration answers Postgres 42703 on `GET /threads/:id` and on every `/sync` page
-  // that materializes a thread, which is the read path the whole slice exists to populate.
-  //
-  // Its companion unique index `threads_account_root_header_uq` is deliberately NOT in
-  // `SCHEMA_INDEX_MARKERS`. `mailboxes_active_address_uq` is there because its absence is
-  // SILENT; this one's absence makes `ON CONFLICT (account_id, root_message_id_header)` raise
-  // 42P10 on the first message ingested, so there is no false positive for a marker to catch.
+  // mail 0026_thread_resolution — the conversation's root Message-ID, the threading conflict
+  // anchor. One nullable column on `threads`; `materializeThread` reads `select().from(threads)`,
+  // so an API ahead of the migration 42703s `GET /threads/:id` and every `/sync` page that
+  // materializes a thread. Its unique index `threads_account_root_header_uq` is deliberately not
+  // in `SCHEMA_INDEX_MARKERS`: its absence makes `ON CONFLICT` raise 42P10 on the first ingested
+  // message — loud, so there is no false positive for a marker to catch.
   ["threads", "root_message_id_header"],
-  // mail 0027_organizer_lease — the two columns the organizer lease needs, so that exactly one
-  // installation organizes a mailbox at a time. One marker for both, on `disabled_reason`, and it
-  // earns one for the `mailboxes.error_code` reason plus a sharper one of its own.
-  //
-  // The generic half: `MailboxService.list` selects WHOLE ROWS through the drizzle schema, so an
-  // API deployed ahead of this migration answers Postgres 42703 on the mailbox panel and on the
-  // connect flow. The sharper half: the WORKER writes this column at every stand-down, and a
-  // worker deployed ahead of the migration cannot record WHY it stopped organizing a mailbox —
-  // it would disable the mailbox and leave the reason nowhere, which is precisely the opaque
-  // state 0023 exists to end. The deploy order is migration → API → worker for that reason, and
-  // this marker is what makes getting it wrong say so. It is the NEWEST entry in the mail
-  // journal.
+  // mail 0027_organizer_lease — the two columns the organizer lease needs (one organizer per
+  // mailbox). One marker on `disabled_reason`. Generic half: `MailboxService.list` selects whole
+  // rows, so a too-early API 42703s the mailbox panel. Sharper half: the worker writes this
+  // column at every stand-down, and a worker ahead of the migration cannot record why it stopped
+  // organizing — the opaque state 0023 exists to end. Deploy order: migration → API → worker, and
+  // this marker is what makes getting it wrong say so.
   ["mailboxes", "disabled_reason"],
-  // mail 0028_message_instances — PHYSICAL identity, the set of IMAP locators one logical message
-  // occupies. One marker for the whole table, on `is_primary`, which is the column
-  // every query here filters on: the primary lookup, the vanished-primary probe that decides whether
-  // a placement may be adopted, and the join `listKnownLocators` builds the known-set from.
-  //
-  // It earns a marker for BOTH reasons on this list. The generic one: `MessageService` selects whole
-  // rows through the drizzle schema, so an API deployed ahead of this migration answers Postgres
-  // 42703 wherever the schema is expanded. The sharper one is the WORKER's: without the table
-  // `listKnownLocators` 42P01s on every sync cycle, which stops ingest for every mailbox — and
-  // `primaryInstanceVanished` is what supplies the adoption evidence, so a partially-migrated
-  // database is one where the consent boundary cannot be evaluated at all. That has to be a loud
-  // 503 naming the migration, never a cycle that quietly decides it has no evidence. It was the
-  // newest entry in the mail journal until 0029 landed below — the marker stays, because a marker
-  // earns its place by naming a column a query reads, not by being last.
+  // mail 0028_message_instances — physical identity: the IMAP locators one logical message
+  // occupies. One marker on `is_primary`, the column every query filters on (the primary lookup,
+  // the vanished-primary probe, the `listKnownLocators` join). Both reasons apply:
+  // `MessageService` selects whole rows (42703 wherever the schema expands), and without the
+  // table `listKnownLocators` 42P01s on every sync cycle — stopping ingest for every mailbox, and
+  // leaving the consent boundary unevaluable. That is a loud 503 naming the migration, never a
+  // cycle that quietly decides it has no evidence.
   ["message_instances", "is_primary"],
-  // mail 0029_mailbox_sync_block — WHY a `connected` mailbox is not being synced. One marker for
-  // both columns, on `sync_blocked_reason`, and it earns one for the generic reason plus the
-  // sharpest version yet of the worker's.
-  //
-  // The generic half, as for every `mailboxes` column on this list: `MailboxService.list` selects
-  // WHOLE ROWS through the drizzle schema, so an API deployed ahead of this migration answers
-  // Postgres 42703 on the mailbox panel and on the connect flow.
-  //
-  // The sharp half: THE WORKER IS THE ONLY WRITER OF THIS COLUMN, and the column exists to end a
-  // 32-minute silence. A worker deployed ahead of the migration fails every one of those writes —
-  // best-effort by design, so it logs and keeps syncing — and the observable result is that a
-  // mailbox nothing is serving reads as a healthy `connected` mailbox: the exact defect this
-  // migration was written to remove, reintroduced by a deploy-ordering mistake and invisible in the
-  // product. The deploy order is migration → API → worker; this marker is what makes getting it
-  // wrong say `503 schema_incomplete` and name the migration.
+  // mail 0029_mailbox_sync_block — why a `connected` mailbox is not being synced. One marker for
+  // both columns, on `sync_blocked_reason`. Generic half: whole-row selects 42703 the mailbox
+  // panel. Sharp half: the worker is the only writer, and its writes are best-effort by design —
+  // a worker ahead of the migration logs and keeps syncing, so a mailbox nothing serves reads as
+  // healthy `connected`: the exact defect the migration removes, reintroduced by deploy order and
+  // invisible in the product. Order: migration → API → worker; the marker makes getting it wrong
+  // say `503 schema_incomplete`.
   ["mailboxes", "sync_blocked_reason"],
-  // mail 0030_sensitive_rescreen — the marker for the one-time re-evaluation of mail that the
-  // pipeline's sensitivity override had already misrouted into the Ohbox. The override applied
-  // before the sender was checked against `contacts`, so most of what it caught was ordinary mail
-  // from senders the account had never corresponded with.
-  //
-  // It earns a marker for the generic `mailboxes` reason and ONLY that one, which is worth saying
-  // plainly because every entry above it since 0027 has also carried a worker-side argument and
-  // this one deliberately does not: `MailboxService.list` selects WHOLE ROWS through the drizzle
-  // schema, so an API deployed ahead of this migration answers Postgres 42703 on the mailbox
-  // panel and on the connect flow. There is no worker half — the pass lives in
-  // `packages/services`, which the sync worker is forbidden by its own dependency test from
-  // importing, so no worker binary reads or writes this column and no worker-first deploy can get
-  // it wrong. The deploy order is migration → API. It is the NEWEST entry in the mail journal.
+  // mail 0030_sensitive_rescreen — the one-time re-evaluation of mail the sensitivity override
+  // misrouted into the Ohbox. It earns a marker for the generic `mailboxes` whole-row reason and
+  // only that one — worth saying because every entry above it since 0027 also carried a
+  // worker-side argument: there is no worker half here. The pass lives in `packages/services`,
+  // which the sync worker is forbidden by its own dependency test from importing, so no worker
+  // binary touches this column. Deploy order: migration → API. It is the newest entry in the mail
+  // journal.
   ["mailboxes", "sensitive_rescreen_at"],
-  // mail 0031_tags — TAGS, the account's own labels keyed by message. TWO markers, one per
-  // new table, and the pair is deliberate rather than the usual one-marker-per-migration.
-  //
-  // `tags.id` alone would not catch the failure that actually matters. The two tables are created
-  // by separate statements, and it is `message_tags` that the SYNC path reads on every page:
-  // `materializeMessages` now issues a fourth query against it to fill `MessageDTO.labels`. An API
-  // deployed against a database that has `tags` but not `message_tags` would therefore answer
-  // Postgres 42P01 on every message list and every `/sync` drain — not a tag-shaped degradation, a
-  // total one, because the batch materializer is the single path every view's messages come
-  // through. Probing only the parent table would let exactly that database report healthy.
-  //
-  // `message_tags.tag_id` is the column probed rather than `message_id`, because it is the one
-  // carrying the FK to the table created in the same migration: a catalog where that column exists
-  // is one where both `CREATE TABLE`s ran.
-  //
-  // The deploy order is migration → API, with no worker half at all — nothing in the sync worker
-  // reads or writes either table, and nothing here opens an IMAP connection, because a tag is
-  // ours and is never an IMAP folder. It is the NEWEST entry in the mail journal.
+  // mail 0031_tags — two markers, one per new table, deliberately. `tags.id` alone would not
+  // catch the failure that matters: the tables are created by separate statements, and
+  // `message_tags` is what the sync path reads on every page — `materializeMessages` queries it
+  // to fill `MessageDTO.labels`, so a database holding only the parent would 42P01 every message
+  // list and every `/sync` drain while a single `tags.id` marker reported healthy.
+  // `message_tags.tag_id` is probed because it carries the FK to the sibling table: a catalog
+  // where it exists ran both CREATEs. Deploy order: migration → API, no worker half — a tag is
+  // ours, never an IMAP folder.
   ["tags", "id"],
   ["message_tags", "tag_id"],
-  // mail 0033_workflow_run_claim — WHEN the `running` claim was last asserted, which is what lets
-  // a crashed run be reaped and resumed.
-  //
-  // The generic reason for a marker is that a query would 42703; the sharp reason here is WHO
-  // swallows it. The reaper's claim `UPDATE` names this column, so a WORKER deployed ahead of the
-  // migration raises 42703 on every drain — and the cycle's per-account `try/catch` catches it,
-  // logs one line under a workflow-shaped name, and carries on. Workflow automation would simply
-  // stop, silently, with nothing attributing it to a migration. This marker turns that into a
-  // deployment that refuses and names the file to run.
-  //
-  // Deploy order is migration → API → worker, the same order `0027_organizer_lease` states above
-  // and for the same reason.
+  // mail 0033_workflow_run_claim — when the `running` claim was last asserted, which is what lets
+  // a crashed run be reaped and resumed. The sharp reason is who swallows the failure: the
+  // reaper's claim UPDATE names this column, and the cycle's per-account try/catch catches the
+  // 42703, logs one line and carries on — workflow automation simply stops, silently, attributed
+  // to nothing. The marker turns that into a deployment that refuses and names the file to run.
+  // Deploy order: migration → API → worker (0027's reasoning).
   ["workflow_runs", "claimed_at"],
-  // mail 0034_rule_retro — the four columns that make a new rule reach mail already on disk.
-  // ONE marker, and `retro_requested_at` is the column because it is the one a QUERY
-  // reads: it is written by `RulesService.create` on the DEFAULT path — retroactive apply is the
-  // product's default, not an option the user has to find — and it is the whole of the worker
-  // pass's owed-work predicate.
-  //
-  // `materializeRule` and `RulesService.list` select WHOLE ROWS through the drizzle schema, so an
-  // API deployed ahead of this migration answers Postgres 42703 on every rule creation and on the
-  // entire rules surface, which is now a default-on path rather than a corner of Settings. Unlike
-  // 0030 there IS a worker half — the retro pass in the sync worker reads and writes all four
-  // columns — so the deploy order is migration → API → worker, and a worker running ahead of the
-  // migration fails its owed probe per account, moves no mail and marks nothing.
-  //
+  // mail 0034_rule_retro — the columns that make a new rule reach mail already on disk. One
+  // marker on `retro_requested_at`: written by `RulesService.create` on the default path
+  // (retroactive apply is the default) and the whole of the worker pass's owed-work predicate.
+  // `materializeRule` and `RulesService.list` select whole rows, so a too-early API 42703s every
+  // rule creation and the whole rules surface. The retro pass reads and writes all four columns,
+  // so the deploy order is migration → API → worker; a worker ahead of the migration fails its
+  // owed probe, moves no mail and marks nothing.
   ["rules", "retro_requested_at"],
   // mail 0035_account_settings — per-account settings, the first durable home for a preference.
-  // ONE marker, and `seed_confirmed_at` is the column because it is the one a QUERY reads: the
-  // onboarding surface asks "has this account been through the sent-mail seed review?" on every
-  // load, and the seed's own confirm writes it.
-  //
-  // The whole table is new, so an API deployed ahead of this migration answers Postgres 42P01 —
-  // relation does not exist — on the consent surface rather than a missing-column error, and the
-  // drizzle schema selects whole rows, so it fails for reads as well as writes. There is no
-  // worker half: nothing in the sync loop reads this table, so the deploy order is the ordinary
-  // migration → API, with no third step to get wrong.
-  //
-  // A marker on a NULLABLE column is deliberate and is the same choice `0025_mailbox_kickstart`
-  // made: the probe asks whether the COLUMN EXISTS, never whether anything has been written to
-  // it. Every account starts with no row at all, and that is the correct state.
-  //
+  // One marker on `seed_confirmed_at`, the column the onboarding surface asks about on every load
+  // and the seed's confirm writes. A whole new table, so a too-early API answers 42P01 on the
+  // consent surface, and the drizzle schema selects whole rows so reads fail too. No worker half;
+  // deploy order migration → API. A marker on a nullable column is deliberate: the probe asks
+  // whether the column exists, never whether anything has been written — every account starts
+  // with no row, and that is the correct state.
   ["account_settings", "seed_confirmed_at"],
-  // mail 0036_sensitive_fp_backfill — the one-shot marker for repairing the bodies a classifier
-  // FALSE POSITIVE stored redacted, with their sender HTML thrown away. One nullable column on
-  // `mailboxes`, and it earns a marker for the generic reason plus a worker one.
-  //
-  // The generic half, as for every `mailboxes` column on this list: `MailboxService.list` selects
-  // WHOLE ROWS through the drizzle schema, so an API deployed ahead of this migration answers
-  // Postgres 42703 on the mailbox panel and on the connect flow — a total failure of that surface
-  // caused by a column nothing on it reads.
-  //
-  // The worker half, which `0030_sensitive_rescreen` explicitly did NOT have: that pass is
-  // CLI-only and reads stored rows, so no worker binary ever touched its column. This one lives
-  // in the worker's cycle, because repairing a body means re-reading the message from the mail
-  // server and only the worker holds a connection to it. So a worker deployed ahead of the
-  // migration raises 42703 on the marker read, logs it per mailbox and repairs nothing — no
-  // damage, but also no repair, and nothing that would attribute the silence to a deploy order.
-  // The order is migration → API → worker.
-  //
+  // mail 0036_sensitive_fp_backfill — repairing bodies a classifier false positive stored
+  // redacted. Generic half: whole-row `mailboxes` selects 42703 the mailbox panel and the connect
+  // flow. Worker half — which 0030 explicitly did not have: repairing a body means re-reading the
+  // message from the mail server, and only the worker holds that connection, so a worker ahead of
+  // the migration 42703s the marker read, logs per mailbox and repairs nothing — no damage, no
+  // repair, and nothing attributing the silence to deploy order. Order: migration → API → worker.
   ["mailboxes", "sensitive_fp_backfill_at"],
-  // mail 0037_draft_html — the rich half of a draft. One nullable column on `drafts`, and it
-  // earns a marker on the generic rule with a second consumer that makes it sharper than the
-  // `mailboxes` entries above.
-  //
-  // The generic half: `materializeDraft` selects the row through the drizzle schema, so an API
-  // deployed ahead of this migration answers Postgres 42703 on every draft read. The sharper
-  // half is that `SendService.reserve` reads the SAME row to build the envelope, so the failure
-  // is not confined to a panel nobody has open — compose and reply both stop being able to send
-  // at all, from a column that a plain-text send never looks at. That is a deployment which must
-  // name the missing migration rather than 500 on the one action the product exists to perform.
-  //
-  // No worker half: nothing in the sync worker reads or writes `drafts`. The order is migration →
-  // API, with no third step to get wrong.
+  // mail 0037_draft_html — the rich half of a draft. One nullable column on `drafts`, with a
+  // second consumer that makes it sharper than the `mailboxes` entries: `materializeDraft`
+  // selects the row (42703 on every draft read), and `SendService.reserve` reads the same row to
+  // build the envelope — so compose and reply both stop being able to send at all, from a column
+  // a plain-text send never looks at. No worker half: nothing in the sync worker reads `drafts`.
+  // Order: migration → API.
   ["drafts", "html"],
   // mail 0045_draft_bcc — the Bcc recipients of a draft. One jsonb column on `drafts`, the twin of
   // `cc`, and it earns a marker for the same sharper reason `html` does. `materializeDraft` selects
@@ -363,177 +195,78 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // out compose and reply both, from a column a bcc-less send never looks at. The order is
   // migration → API, no worker half.
   ["drafts", "bcc"],
-  // mail 0038_initial_import_completed — WHEN a mailbox's first import actually finished: the
-  // per-mailbox floor the client reads as `IS NULL ⇒ still importing`. One nullable column on
-  // `mailboxes`, and it earns a marker for the generic reason plus a worker one.
-  //
-  // The generic half, as for every `mailboxes` column on this list: `MailboxService.list` selects
-  // WHOLE ROWS through the drizzle schema, so an API deployed ahead of this migration answers
-  // Postgres 42703 on the mailbox panel and on the connect flow.
-  //
-  // The worker half: the sync worker stamps this column on the first no-backlog cycle, so a
-  // worker deployed ahead of the migration raises 42703
-  // on the write. It is best-effort inside the cycle's success path and never fails the cycle, so
-  // nothing is lost — no stamp is written and the first no-backlog cycle after the migration does
-  // the whole job. The order is migration → API → worker.
-  //
-  // The order is migration → API → worker.
+  // mail 0038_initial_import_completed — when a mailbox's first import actually finished; the
+  // client reads `IS NULL` as still importing. Generic half: whole-row `mailboxes` selects 42703
+  // the panel and connect flow. Worker half: the worker stamps this column on the first
+  // no-backlog cycle, best-effort inside the success path, so a worker ahead of the migration
+  // loses only the stamp — the first no-backlog cycle after the migration does the whole job.
+  // Order: migration → API → worker.
   ["mailboxes", "initial_import_completed_at"],
-  // mail 0039_mailbox_retry_after — WHEN the leader may next attach a quarantined mailbox, made
-  // durable so somebody other than the worker can change the answer. One nullable column on
-  // `mailboxes`, and it earns a marker for the generic reason plus a worker one, with the
-  // deploy order REVERSED from its neighbour above.
-  //
-  // The generic half, as for every `mailboxes` column on this list: `MailboxService.list` selects
-  // WHOLE ROWS through the drizzle schema, so an API deployed ahead of this migration answers
-  // Postgres 42703 on the mailbox panel and on the connect flow.
-  //
-  // The worker half, and why the order is migration → WORKER → API rather than the 0038 shape:
-  // the worker is the column's only writer AND its only reader-for-a-decision, and the API deploy
-  // is the one that flips `resync_mailbox` to `available: true` in the actions catalog. That flag
-  // is a public claim — an operator clicking release against a worker that does not yet honour
-  // the column would get a button reporting success it cannot achieve. So the worker must be able
-  // to obey before the console offers the button. A worker deployed ahead of the migration fails
-  // the write, logs it and falls back to the in-memory backoff, which is the pre-0039 behaviour
-  // exactly; that is what the runtime `persisted` flag is for and why this is not a crash.
-  //
-  // No CHECK marker, on 0030's rule (a timestamp closes no set), and no INDEX marker: the column
-  // is read per mailbox on a roster pass that has the row in hand, never filtered on.
-  //
+  // mail 0039_mailbox_retry_after — when the leader may next attach a quarantined mailbox,
+  // durable so somebody other than the worker can change the answer. Generic half as usual
+  // (whole-row selects). The worker half reverses the order — migration → WORKER → API: the
+  // worker is the column's only writer and only decision reader, and the API deploy is what flips
+  // `resync_mailbox` to `available: true` in the actions catalog — the console must not offer a
+  // release the worker cannot honour. A worker ahead of the migration falls back to the in-memory
+  // backoff (the pre-0039 behaviour; the runtime `persisted` flag reports it). No CHECK marker (a
+  // timestamp closes no set), no INDEX marker.
   ["mailboxes", "retry_after"],
   // mail 0040_auto_suggest — the auto-suggest opt-in, one nullable column on `account_settings`.
-  //
-  // It earns a marker for the whole-row-select reason and for nothing else. `consentSettings`
-  // (`services/src/consent-seed.ts`) does a bare `select().from(accountSettings)`, so drizzle
-  // enumerates every column this schema knows about: an API deployed AHEAD of the migration
-  // answers Postgres 42703 on `GET /consent`, which the app shell fetches once per tab. The
-  // failure is therefore the consent surface, not the one feature the column is for — the same
-  // shape as `rules.retro_requested_at` above, and the reason a nullable column nobody has
-  // written to still owes a probe.
-  //
-  // There is NO worker half. Nothing in the sync loop reads `account_settings`, and the flag's
-  // only consumer is the Screener surface in a browser, so the deploy order is the ordinary
-  // migration → API with no third step. A webapp deployed ahead of the API simply never sees the
-  // field and reads absent as OFF, which is the default it would have taken anyway.
-  //
-  // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker: the column is
-  // read off a row already fetched by primary key, and nothing filters on it.
-  //
+  // It earns a marker for the whole-row-select reason alone: `consentSettings` does
+  // `select().from(accountSettings)`, so a too-early API 42703s `GET /consent`, which the shell
+  // fetches once per tab — the failure is the consent surface, not the feature. No worker half
+  // (the flag's only consumer is a browser, which reads absent as OFF). No CHECK marker (a
+  // timestamp closes no set), no INDEX marker (read off a row fetched by primary key).
   ["account_settings", "auto_suggest_at"],
-  // mail 0041_message_failures — the DURABLE per-message failure ledger, which is what makes a
-  // message the sync loop could not ingest recoverable instead of lost. A whole new table, so a
-  // database missing it answers Postgres 42P01 (relation does not exist) rather than 42703.
-  //
-  // `next_attempt_at` is the column probed rather than `uid` or `code`, on this list's usual rule:
-  // probe the column a QUERY actually reads to make a decision. The retry probe's whole predicate
-  // is `resolved_at IS NULL AND (next_attempt_at <= now() OR attempted_version IS DISTINCT FROM
-  // <build>)`, and a catalog where that column exists is one where the CREATE TABLE ran.
-  //
-  // The WORKER half is the sharp one and it is unlike every other entry above. The worker is this
-  // table's only reader and only writer, and its terminal-skip path treats a failed durable write
-  // as a REFUSAL TO SKIP — the folder's cursor is held and the cycle fails. So a worker deployed
-  // ahead of the migration does not lose mail; it stops organizing the mailbox and quarantines it
-  // loudly, which is a visible outage rather than a silent one. That is the correct direction and
-  // it is the entire reason the write is not best-effort, but it is still an outage, so the deploy
-  // order is migration → API → worker and this marker is what makes getting it wrong say
-  // `503 schema_incomplete` and name the file to run.
-  //
-  // The API half is the generic one, and it is weak on purpose: nothing in `packages/api` reads or
-  // writes this table, and nothing may — a staff read of these rows is a delivery oracle (see the
-  // schema's own note). The marker is here because `/health` is the deployment's own statement about
-  // whether the schema it was built against is present, and a table only the worker touches is
-  // exactly the kind that goes missing unnoticed.
-  //
-  // No INDEX marker: the partial `message_failures_due_idx` is a cost object, and its absence makes
-  // the retry probe slow rather than wrong, which `SCHEMA_INDEX_MARKERS` explicitly reserves itself
-  // for the opposite of (`mailboxes_active_address_uq` is there because its absence is SILENT). No
-  // CHECK marker either, and this one is a closer call than 0030's rule: `message_failures_code_closed`
-  // IS a privacy boundary, so it would qualify on `mailboxes_disabled_reason_closed`'s reasoning —
-  // but it is created INSIDE the `CREATE TABLE`, so a database that has the table has the CHECK, and
-  // the column marker above already covers both. A separate marker could only ever fail together
-  // with it.
-  //
-  // It is the NEWEST entry in the mail journal.
+  // mail 0041_message_failures — the durable per-message failure ledger; a whole new table, so
+  // absence answers 42P01. `next_attempt_at` is probed: the retry probe's predicate reads it. The
+  // worker half is sharp and unlike the entries above: the worker is the table's only reader and
+  // writer, and its terminal-skip path treats a failed durable write as a refusal to skip — the
+  // cursor is held and the mailbox quarantined loudly, a visible outage rather than lost mail.
+  // The API half is deliberately weak: nothing in `packages/api` reads this table, and nothing
+  // may — a staff read of these rows is a delivery oracle. No INDEX marker (the partial index is
+  // a cost object: slow, not wrong) and no CHECK marker (`message_failures_code_closed` is
+  // created inside the CREATE TABLE, so it can only fail with the column). Order: migration → API
+  // → worker.
   ["message_failures", "next_attempt_at"],
-  // mail 0042_screening_preference — the editable Ohbox preference. Two additive nullable columns on
-  // `account_settings`, and it earns a marker for the whole-row-select reason — the same shape as
-  // `account_settings.auto_suggest_at` (0040) one feature over.
-  //
-  // `ohbox_policy` is the column probed rather than `ohbox_bar`, on this list's usual rule: probe the
-  // column a QUERY reads to make a DECISION. The worker resolves this column per account and threads
-  // it into the routing engine, so a database missing it makes the screening-preference read
-  // 42703 — and `consentSettings`/`getScreeningPreference` do a bare `select().from(accountSettings)`,
-  // so drizzle enumerates every column this schema knows about and the CONSENT surface, not just this
-  // feature, is what fails. There is no worker half in the same sense as 0041: the worker READS the
-  // column but a read that 42703s degrades to the lenient default (absent-config-selects-safe), so a
-  // worker ahead of the migration organises mail under `people_and_replied` rather than crashing —
-  // the safe direction. The API is where the whole-row select bites, so the deploy order is the
-  // ordinary migration → API.
-  //
-  // No CHECK marker (0030's rule: an enum/length CHECK closes a set the column marker already implies)
-  // and no INDEX marker: the row is fetched by primary key and nothing filters on either column.
+  // mail 0042_screening_preference — the editable Ohbox preference, two nullable columns on
+  // `account_settings`. `ohbox_policy` is probed (the column the worker resolves per account into
+  // the routing engine); `consentSettings`/`getScreeningPreference` select whole rows, so the
+  // consent surface is what fails on a too-early API. The worker's read degrades to the lenient
+  // default on 42703 (absent-config-selects-safe), so a worker ahead of the migration organizes
+  // under `people_and_replied` rather than crashing — the safe direction. Order: migration → API.
+  // No CHECK marker, no INDEX marker (row fetched by primary key).
   ["account_settings", "ohbox_policy"],
-  // mail 0043_ohbox_tidy — the resumable, re-armable marker for the Ohbox backlog re-route pass.
-  // Three additive nullable columns on `account_settings`, and it earns a marker for the same
-  // whole-row-select reason as 0040/0042 one and two features over.
-  //
-  // `ohbox_tidy_requested_at` is the column probed rather than the other two, on this list's usual
-  // rule: probe the column a QUERY reads to make a DECISION. `requested_at IS NOT NULL` is half the
-  // owed predicate the worker evaluates every cycle. The API reaches all three through the bare
-  // `select().from(account_settings)` that `getScreeningPreference` issues, so a database missing
-  // them 42703s the SCREENING surface, not just this feature. The worker half is the safe kind: a
-  // worker ahead of the migration fails its owed probe on the missing column, so no mail moves and
-  // nothing is marked — visible, not silent. Deploy order: migration → worker (and API).
-  //
-  // No CHECK marker (0030's rule); the INDEX this migration also creates is on `change_log`, not
-  // here, and joins `SCHEMA_INDEX_MARKERS` below because its absence is SILENT. It was the newest
-  // mail entry until 0044 added the dormancy-dial ceiling — whose marker is a CHECK, so it lives in
-  // `SCHEMA_CHECK_MARKERS` rather than here, and `MAIL_SCHEMA_MARKER_JOURNAL_TAG` moved to it.
+  // mail 0043_ohbox_tidy — the resumable, re-armable marker for the Ohbox backlog re-route pass;
+  // three nullable columns on `account_settings`. `ohbox_tidy_requested_at` is probed:
+  // `requested_at IS NOT NULL` is half the owed predicate the worker evaluates every cycle, and
+  // the whole-row `consentSettings` select means a too-early API 42703s the screening surface.
+  // The worker half is the safe kind: a worker ahead of the migration fails its owed probe, so no
+  // mail moves and nothing is marked — visible, not silent. The INDEX this migration also creates
+  // is on `change_log` and joins `SCHEMA_INDEX_MARKERS` because its absence is silent.
   ["account_settings", "ohbox_tidy_requested_at"],
-  // mail 0046_screener_auto_apply — the opt-in Screener auto-apply flag. One additive nullable
-  // column on `account_settings`, and it earns a marker for the same whole-row-select reason as
-  // `auto_suggest_at` (0040) three features over: `consentSettings` and `getScreeningPreference`
-  // reach this row, so a database missing the column 42703s the CONSENT and SCREENING surfaces, not
-  // just this feature. The worker READS the column every cycle (the opt-in probe of the auto-apply
-  // pass), but a read that 42703s degrades to OFF (absent-config-selects-safe), so a worker ahead
-  // of the migration moves nothing — the safe direction. Deploy order: migration → API (and worker).
-  //
-  // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker: read off a row
-  // fetched by primary key, never filtered on. It was the NEWEST entry in the mail journal until
-  // 0047 added the read-order column below.
+  // mail 0046_screener_auto_apply — the opt-in Screener auto-apply flag, one nullable column on
+  // `account_settings`, on the whole-row-select reason: `consentSettings` and
+  // `getScreeningPreference` reach this row, so a missing column 42703s the consent and screening
+  // surfaces, not just the feature. The worker reads the column every cycle, but a read that
+  // 42703s degrades to OFF (absent-config-selects-safe), so a worker ahead of the migration moves
+  // nothing — the safe direction. Order: migration → API (and worker). No CHECK marker, no INDEX
+  // marker.
   ["account_settings", "screener_auto_apply_at"],
-  // mail 0047_read_order — WHEN a message stopped being unread, which is what the client's
-  // "Earlier" group is sorted by. One additive nullable column on `messages`.
-  //
-  // It is the STRONGEST whole-row-select case on this list, and that is why a column whose only
-  // consumer is a client-side sort is here at all. `messages` is projected through
-  // `select().from(messages)`, so drizzle enumerates every column this schema knows about on the
-  // message list, the single read, the delta feed and the bootstrap snapshot alike. An API
-  // deployed ahead of this migration therefore answers Postgres 42703 on the ENTIRE read surface —
-  // every view empty, every sync drain failing — from a column no view actually reads. Every other
-  // whole-row entry above takes out one panel; this one takes out the mail.
-  //
-  // No worker half: nothing in the sync worker reads or writes it. The flag adoption that stamps
-  // it on an externally-set `\Seen` runs in the same process as the API's own writers, through the
-  // same schema. Deploy order: migration → API.
-  //
-  // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker — deliberately,
-  // and stated here rather than left to be inferred. Nothing filters or pages on the column: the
-  // sort runs on the client over the window it already holds, and the server's keyset stays
-  // `(date, id)`. A permanent index maintained by every read of every message, serving no query,
-  // is a write cost with no reader.
+  // mail 0047_read_order — when a message stopped being unread, the sort key of the client's
+  // "Earlier" group. The strongest whole-row-select case on this list, which is why a column
+  // whose only consumer is a client-side sort is here at all: `messages` is projected through
+  // `select().from(messages)` on the message list, the single read, the delta feed and the
+  // bootstrap snapshot — a too-early API 42703s the entire read surface, every view empty, from a
+  // column no view reads. No worker half. No CHECK marker, and no INDEX marker deliberately:
+  // nothing filters or pages on the column — the sort runs on the client, and a permanent index
+  // serving no query is a write cost with no reader.
   ["messages", "last_read_at"],
-  // mail 0048_remote_images_default — the remote-images OPT-OUT. One additive nullable column on
-  // `account_settings`, and it earns a marker for the same whole-row-select reason as
-  // `auto_suggest_at` (0040) and `screener_auto_apply_at` (0046): `consentSettings` does
-  // `select().from(accountSettings)`, so an API deployed ahead of the migration answers Postgres
-  // 42703 on `GET /consent` AND on `PATCH /consent/settings` — the whole consent surface, which
-  // onboarding runs through, not just this feature.
-  //
-  // No worker half: nothing in the sync worker reads or writes it. Deploy order: migration → API.
-  //
-  // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker — the column is
-  // read off a row fetched by primary key and nothing filters on it.
+  // mail 0048_remote_images_default — the remote-images opt-out, one nullable column on
+  // `account_settings`, on the whole-row-select reason: `consentSettings` selects the row, so a
+  // too-early API 42703s `GET /consent` and `PATCH /consent/settings` — the whole consent
+  // surface, which onboarding runs through. No worker half; order migration → API. No CHECK
+  // marker (a timestamp closes no set), no INDEX marker (read off a row fetched by primary key).
   ["account_settings", "block_remote_images_at"],
   // mail 0072_tracking_pixels_optout — the opt-out of pixel BLOCKING (NULL = blocked, the default).
   // One additive nullable column on `account_settings`, and it earns a marker for exactly the
@@ -586,17 +319,13 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // pass that writes the column.
   ["mailboxes", "sensitive_rescreen_cursor"],
   ["mailboxes", "sensitive_rescreen_started_at"],
-  // mail 0077_send_later — the draft's appointment (`send_at` + `send_key` + `send_error`, with
-  // `status = 'scheduled'`; NULL = no appointment / no failure, every existing row). It earns a
-  // marker for the whole-row-select reason `mailboxes.error_code` established, one table over:
-  // `materializeDraft` selects whole `drafts` rows — the `/drafts` CRUD, the schedule verbs AND
-  // every `draft` change on the `/sync` drain re-materialize through it — so an API deployed
-  // ahead of the migration 42703s the entire drafts surface, not just scheduling. `send_at` is
-  // probed as the column the worker's due scan filters on. The worker half is the safe kind — a
-  // worker ahead of the migration never reaches the columns (its read lives in the scheduled-send
-  // pass this same change introduces). No CHECK marker (0030's rule: a timestamp closes no set,
-  // and the status vocabulary is the service's). No INDEX marker: the due-scan index's absence is
-  // a slow scan over near-zero rows, not a wrong answer. Deploy order: migration → API → worker.
+  // mail 0077_send_later — the draft's appointment (`send_at` + `send_key` + `send_error`,
+  // `status = 'scheduled'`; NULL = no appointment). Whole-row reason one table over:
+  // `materializeDraft` selects whole `drafts` rows — the CRUD, the schedule verbs and every
+  // `draft` sync change re-materialize through it — so a too-early API 42703s the entire drafts
+  // surface. `send_at` is probed as the column the worker's due scan filters on; a worker ahead
+  // of the migration never reaches the columns. No CHECK marker, no INDEX marker (a slow scan
+  // over near-zero rows, not a wrong answer). Order: migration → API → worker.
   ["drafts", "send_at"],
   // mail 0074_folder_ops — the user-commanded folder verbs' command table (create / rename /
   // delete; FOLDERS-SPEC.md stage 2). A whole NEW table, probed by its primary key: the API's
@@ -615,65 +344,32 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // consent read 42703s too. No worker half, no CHECK, no INDEX — read through account-scoped
   // mailbox selects only. Deploy order: migration → API.
   ["mailboxes", "signature"],
-  // mail 0049_mailbox_sync_requested_at — the enforced-sync doorbell. One additive nullable
-  // timestamptz on `mailboxes`, and it earns a marker on the whole-row-select rule its OWN
-  // migration already states: *"`MailboxService.list` selects whole rows, so
-  // `["mailboxes","sync_requested_at"]` joins the mail schema markers for a clean 503 on a too-early
-  // API."* It was not added when the migration landed, so the marker list, the tag below and four
-  // censuses in `packages/db/test` were all stale on the default branch at once — recorded in
-  // `journal-split.test.ts`'s `0049` census entry rather than quietly fixed.
-  //
-  // The API also WRITES this column beside the send/move finalize, but that write is deliberately
-  // best-effort and caught, so the failure a too-early API produces is not the stamp — it is
-  // `select().from(mailboxes)` answering 42703, which takes out the mailbox list and every read that
-  // resolves a mailbox. That is the whole-row case, and it is why the marker is the column a query
-  // ENUMERATES rather than the one a feature reads.
-  //
-  // The worker half is the safe kind: a worker ahead of the migration fails its kick scan on the
-  // missing column, so no out-of-band cycle runs and the product falls back to poll-only latency —
-  // visible, not silent. Deploy order: migration → API → worker.
-  //
-  // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker — the scan is a
-  // short `IS NOT NULL` probe over a table with one row per connected mailbox.
+  // mail 0049_mailbox_sync_requested_at — the enforced-sync doorbell, on the whole-row-select
+  // rule its own migration states. It was added two migrations late — the marker list, the tag
+  // and four censuses were stale at once, recorded in `journal-split.test.ts`'s 0049 entry rather
+  // than quietly fixed. The failure a too-early API produces is not the stamp (that write is
+  // best-effort and caught) but `select().from(mailboxes)` answering 42703, taking out the
+  // mailbox list. The worker half is safe: a failed kick scan degrades to poll-only latency —
+  // visible, not silent. Order: migration → API → worker. No CHECK, no INDEX marker.
   ["mailboxes", "sync_requested_at"],
-  // mail 0050_rule_subject_contains — the second term on a sender rule. One additive nullable text
-  // column on `rules`, and it is the SECOND-strongest whole-row case on this list after
-  // `messages.last_read_at`, for a reason worth stating: `rules` is read by
-  // `select().from(rules)` in BOTH halves of the product. `materializeRule` serves `GET /rules`, the
-  // rule DTO on every `/sync` delta and the 201 of every rule the sender sheet writes; and
-  // `drizzle-repo.ts#listRules` is what the ROUTER consults on arrival. So an API deployed ahead of
-  // this migration answers 42703 on the rules surface AND makes every routing decision fail — not a
-  // panel, the organizing.
-  //
-  // The worker reads the column through the same `listRules`, and there the failure is NOT the safe
-  // kind: a retro pass or an ingest that 42703s stops filing mail rather than degrading to a
-  // lenient default. Deploy order is therefore migration → API → worker, and the migration arrow is
-  // load-bearing for once.
+  // mail 0050_rule_subject_contains — the second term on a sender rule; the second-strongest
+  // whole-row case after `messages.last_read_at`: `rules` is enumerated by `materializeRule` (the
+  // rules surface, the `/sync` delta, every created rule's 201) and by
+  // `drizzle-repo.ts#listRules`, which the router consults on arrival — a too-early API 42703s
+  // the surface and stops filing mail. The worker reads the column through the same `listRules`,
+  // and there the failure is not the safe kind: a retro pass or ingest that 42703s stops
+  // organizing rather than degrading. Order: migration → API → worker, the first arrow
+  // load-bearing.
   ["rules", "subject_contains"],
-  // mail 0052_away_responder — the responder's `audience` column, and it is the SHARPEST kind of
-  // marker on this list: a column whose absence would not merely 42703 a surface, it would 42703
-  // the surface that CONFIGURES an outbound-mail feature.
-  //
-  // `AwayResponderService` does `select().from(awayResponders)` and its `put` returns the inserted
-  // row, so both `/away-responder` endpoints go dark on an API deployed ahead of the migration —
-  // meaning somebody who is already away cannot turn their responder OFF, which is the one direction
-  // of that control that is urgent. `audience` is probed rather than the new table, on this list's
-  // usual rule: probe the column a QUERY reads to make a DECISION, and this is the column that
-  // decides whether a stranger gets answered.
-  //
-  // The WORKER half is the third deploy step and the safe kind: the pass reads this row and writes
-  // `away_responder_sent`, so a worker ahead of the migration throws 42703/42P01 inside the pass,
-  // which its own try/catch logs — no reply is sent, which is the direction to fail. Deploy order:
-  // migration → API → worker.
-  //
-  // No INDEX marker (the two indexes this migration creates are on the new table, whose absence is
-  // a loud 42P01 inside the pass and not a silent slowdown) and no CHECK marker, even though
-  // `away_responders_audience_closed` is exactly the kind of constraint 0029 and 0037 earned one
-  // for. The reason is that this CHECK cannot be half-applied in a way anybody would survive: the
-  // column arrives NOT NULL with a DEFAULT in the statement before it, so a database that took the
-  // column and not the CHECK still resolves every existing and every new row to `screened_in` — the
-  // NARROW member — and the service's own closed-set validator refuses the other one at the
-  // boundary. A missing CHECK here costs a defence in depth, not an audience.
+  // mail 0052_away_responder — the responder's `audience` column, the sharpest kind of marker
+  // here: its absence 42703s the surface that configures an outbound-mail feature.
+  // `AwayResponderService` selects whole rows and `put` returns the inserted row, so both
+  // `/away-responder` endpoints go dark — somebody already away could not turn their responder
+  // off, the one urgent direction. `audience` is probed as the column that decides whether a
+  // stranger gets answered. The worker half is safe: a 42703 inside the pass is caught and sends
+  // nothing. No CHECK marker: the column arrives NOT NULL with a DEFAULT in the prior statement,
+  // so a database that took the column without the CHECK still resolves every row to
+  // `screened_in`, the narrow member, and the service's closed-set validator refuses the rest.
   ["away_responders", "audience"],
   // mail 0052_rule_body_contains — the third term on a sender rule. One additive nullable text
   // column on `rules`, and the whole-row case is 0050's verbatim, because it is the SAME
@@ -683,21 +379,12 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // worker half is likewise NOT the safe kind — a routing read that 42703s stops filing mail —
   // so the order stays migration → API → worker with the first arrow load-bearing.
   ["rules", "body_contains"],
-  // mail 0053_account_locale — the interface language. One additive nullable text column on
-  // `account_settings`, and it earns a marker for the same whole-row-select reason as
-  // `auto_suggest_at` (0040), `screener_auto_apply_at` (0046) and `block_remote_images_at` (0048):
-  // `consentSettings` does `select().from(accountSettings)`, so an API deployed ahead of the
-  // migration answers Postgres 42703 on `GET /consent` AND on `PATCH /consent/settings` — the whole
-  // consent surface, which onboarding runs through, and which the mail client calls once per tab.
-  // The cost of the 42703 is therefore not "the language setting is unavailable"; it is that the
-  // dormancy window, the auto-suggest flag and the remote-images opt-out all stop arriving, and the
-  // client falls back to its safe resting values on every load.
-  //
-  // No worker half: nothing in the sync worker reads or writes it. Deploy order: migration → API.
-  //
-  // A CHECK marker as well, unlike the three timestamps beside it, and the difference is 0030's
-  // rule read the right way round: a timestamp closes no set, but this column DOES close one, and
-  // it closes it over free text. See `account_settings_locale_supported` below.
+  // mail 0053_account_locale — the interface language, on the `account_settings` whole-row-select
+  // reason: a too-early API 42703s the whole consent surface, so the dormancy window, the
+  // auto-suggest flag and the remote-images opt-out all stop arriving and the client falls back
+  // to its resting values on every load. No worker half; order migration → API. A CHECK marker as
+  // well, unlike the timestamps beside it — this column closes a set over free text: see
+  // `account_settings_locale_supported` below.
   ["account_settings", "locale"],
   // mail 0082_theme_face — the account-wide appearance face. One additive nullable text column
   // on `account_settings`, and it earns a marker on 0053's whole-row-select argument verbatim:
@@ -707,29 +394,16 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // Deploy order: migration → API. A CHECK marker as well, 0053's reason: the column closes a
   // set over free text. See `account_settings_theme_face_supported` below.
   ["account_settings", "theme_face"],
-  // mail 0083_organizer_role — THE ORGANIZING ROLE, SPLIT OFF THE CONNECTION, plus the
-  // onboarding state and the first-pull denominator. FIVE markers for a nine-column migration,
-  // on this list's standing rule: probe the column a QUERY actually reads, once per table facet.
-  // A partial 0083 is not reachable — one migration, one transaction — so five probes and nine
-  // probes detect exactly the same fault, and the five name the five decisions:
-  //
-  //  · `mailboxes.organizer_role` is read by the GATE, by `loadEnabledMailboxes`' roster, by
-  //    every service write door's refusal and by `MailboxDTO`. It is also the column whose
-  //    absence is worst: an API ahead of this migration 42703s the mailbox panel and the connect
-  //    flow (`MailboxService` selects whole rows), and a WORKER ahead of it cannot tell an
-  //    organizer from a reader at all — which is the one state that has two organizers in it.
-  //  · `mailboxes.organize_consented_at` is the ceremony's own record and the first unmet
-  //    condition onboarding resolves. Its own marker rather than riding on the role's, because
-  //    the two answer different questions and a future migration may move one without the other.
-  //  · both `account_settings` columns, on 0053's whole-row-select argument verbatim:
-  //    `consentSettings` does `select().from(accountSettings)`, so an API deployed ahead of the
-  //    migration 42703s `GET /consent` AND `PATCH /consent/settings` — the entire consent
-  //    surface, not merely the window mode.
-  //  · `mailbox_folders.server_exists`, written by every cycle's SELECT and read by the import
-  //    strip's denominator. `buildCursor` selects whole rows of this table.
-  //
-  // Deploy order is migration → API → worker, 0027's exact reasoning: the API selects whole rows
-  // and the WORKER is the process that starts writing the role. Four CHECK markers below.
+  // mail 0083_organizer_role — the organizing role split off the connection, plus onboarding
+  // state and the first-pull denominator. Five markers for a nine-column migration (one migration
+  // is one transaction, so five probes detect what nine would; the five name the five decisions):
+  // `mailboxes.organizer_role` — read by the gate, the roster, every write door's refusal and
+  // `MailboxDTO`; worst absence, since a worker ahead of it cannot tell an organizer from a
+  // reader, the one state with two organizers in it. `mailboxes.organize_consented_at` — the
+  // ceremony's own record, its own marker because the two answer different questions. Both
+  // `account_settings` columns on 0053's whole-row argument. `mailbox_folders.server_exists` —
+  // written by every cycle, read by the import strip; `buildCursor` selects whole rows. Order:
+  // migration → API → worker. Four CHECK markers below.
   ["mailboxes", "organizer_role"],
   ["mailboxes", "organize_consented_at"],
   ["account_settings", "onboarding_completed_at"],
@@ -742,142 +416,68 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // nullable instant closing no set, so there is no second catalog object to probe (0030's rule).
   ["accounts", "ai_answered_at"],
   ["mailbox_folders", "server_exists"],
-  // mail 0054_auto_unsubscribe_optout — the switch for auto-unsubscribe on screen-out, stored as
-  // the opt-out. The fifth `account_settings` marker, on the whole-row-select argument every one
-  // above it makes: `consentSettings` does `select().from(accountSettings)`, so an API deployed
-  // ahead of the migration answers Postgres 42703 on `GET /consent` AND on `PATCH
-  // /consent/settings` — the entire consent surface, not merely this switch.
-  //
-  // It is sharper than the three timestamps beside it in one respect worth naming, because it is
-  // the reason this marker is not optional: `UnsubscribeService.onScreenOut` reads this column in
-  // the same request that decides whether to send a one-click unsubscribe. A too-early API would
-  // throw 42703 there — inside a path whose whole contract is that it never throws at its caller,
-  // so the screen-out would still commit and the read would be swallowed as a skip. That failure
-  // is silent by construction; the 503 in front of it is what makes it loud.
-  //
-  // No worker half: nothing in the sync worker reads or writes it. Deploy order: migration → API.
-  //
-  // No CHECK marker (0030's rule: a timestamp closes no set) and no INDEX marker — the column is
-  // read off a row fetched by primary key and nothing filters on it.
+  // mail 0054_auto_unsubscribe_optout — the auto-unsubscribe opt-out, fifth `account_settings`
+  // marker on the whole-row argument (the whole consent surface fails, not this switch). Sharper
+  // in one respect: `UnsubscribeService.onScreenOut` reads the column in the request that decides
+  // whether to send a one-click unsubscribe, inside a path contracted never to throw at its
+  // caller — so a too-early 42703 is swallowed as a skip and the feature silently turns itself
+  // off. The 503 in front is what makes that loud. No worker half; no CHECK, no INDEX marker.
   ["account_settings", "block_auto_unsubscribe_at"],
-  // mail 0055_mailbox_smtp_max_size — what the sending server said it will accept (RFC 1870 `SIZE`),
-  // recorded per mailbox by the connect-time SMTP probe. One additive nullable `bigint` on
-  // `mailboxes`, and it earns a marker on the same whole-row-select rule `sync_requested_at` (0049)
-  // does one column over — but with a second reader that makes it sharper than the mailbox list.
-  //
-  // `MailboxService.list` does `select().from(mailboxes)`, so a too-early API 42703s the mailbox
-  // panel and every read that resolves a mailbox. `SendService.reserve` enumerates the row too, in
-  // the transaction that reserves an idempotent send — so the same missing column takes out SENDING,
-  // and it does so BEFORE the reservation commits, which is the safe half of an unsafe failure: the
-  // user cannot send, and no draft is stranded out of `draft` while they cannot.
-  //
-  // No worker half: nothing in the sync worker reads or writes it. Deploy order: migration → API.
-  //
-  // No CHECK marker (a size closes no set — 0030's rule, and the positivity that matters is applied
-  // where the value is read) and no INDEX marker: the column is read off a row already fetched by
-  // primary key and is never a predicate.
+  // mail 0055_mailbox_smtp_max_size — the sending server's RFC 1870 `SIZE`, recorded by the
+  // connect-time SMTP probe. Two whole-row readers: `MailboxService.list` (the panel and every
+  // mailbox resolution) and `SendService.reserve`, which enumerates the row inside the
+  // reservation transaction — so the same missing column takes out sending, before the
+  // reservation commits (nothing stranded out of `draft`, but a user who cannot send). No worker
+  // half; order migration → API. No CHECK marker (a size closes no set), no INDEX marker.
   ["mailboxes", "smtp_max_size_bytes"],
   // mail 0056 — `account_settings.screening_baseline_at`, the instant the dormancy window is
-  // measured back from. It earns a marker on the whole-row-select rule the four flags above it
-  // follow: `consentSettings` does `select().from(account_settings)`, so an API ahead of the
-  // migration answers Postgres 42703 on `GET /consent` — the route the shell fetches at boot to
-  // learn the window it partitions the mirror with. Without a marker that is a client that renders
-  // its Screener over the raw mirror and cannot say why.
-  //
-  // The WORKER reads the same column to resolve the router's cutoff, and a worker ahead of the
-  // migration degrades to "no cutoff" (`screeningFor` catches the read and returns the lenient
-  // value without caching it), which is the pre-0056 routing — the safe direction, and the same
-  // absent-config-selects-safe rule `ohbox_policy` states.
-  //
-  // No CHECK marker: any instant is a legal baseline (0040's rule). No INDEX marker: read off a
-  // row already fetched by primary key, never a predicate.
+  // measured back from, on the whole-row rule: a too-early API 42703s `GET /consent`, the boot
+  // fetch the shell partitions its mirror from — a client drawing the Screener over the raw
+  // mirror with no way to say why. The worker reads the same column and degrades safely:
+  // `screeningFor` catches the read and returns the lenient value without caching it, the
+  // pre-0056 routing. No CHECK marker (any instant is a legal baseline), no INDEX marker.
   ["account_settings", "screening_baseline_at"],
   // mail 0057_message_from_name — the From header's display name, the sender's half of the
-  // recipients repair (`to_addresses`/`cc_addresses` carry theirs inside the jsonb pairs). One
-  // additive nullable text column on `messages`, and it earns a marker on the whole-row-select
-  // rule at its widest reach: `materializeMessages` and the single message read select whole
-  // `messages` rows, so an API deployed ahead of the migration answers Postgres 42703 on the
-  // message list, the single read, the delta feed AND the bootstrap snapshot — the entire mail
-  // surface, not one panel.
-  //
-  // The WORKER half is not the safe kind, deliberately: `insertMessage` names the column
-  // unconditionally, so a worker ahead of the migration fails ingest with the same 42703 into
-  // the cycle's ordinary quarantine — loud — rather than silently dropping the name, which is
-  // the defect the column exists to end. Deploy order: migration → API → worker.
-  //
-  // No CHECK marker (a sender-chosen display name closes no set) and no INDEX marker: the column
-  // is projected off rows already fetched by primary key or by the existing `from_address`
-  // indexes, and it is never a predicate.
+  // recipients repair. The whole-row argument at its widest: `materializeMessages` and the single
+  // read select whole `messages` rows, so a too-early API 42703s the entire mail surface. The
+  // worker half fails loud, deliberately: `insertMessage` names the column unconditionally, so a
+  // worker ahead of the migration fails ingest into the ordinary quarantine rather than silently
+  // dropping names — the defect the column ends. Order: migration → API → worker. No CHECK, no
+  // INDEX marker.
   ["messages", "from_name"],
-  // mail 0058_reconcile_backoff — the reconciler's bounded retry. FOUR columns land (`attempts`
-  // and `next_attempt_at` on both `folder_state` and `flag_state`) and one marker probes them, on
-  // this list's usual rule: probe the column a QUERY reads. `next_attempt_at` on `folder_state` is
-  // the one the pending-move query filters on, and the four are created by a single migration
-  // inside a single transaction, so no state exists in which one is present and another is not.
-  //
-  // It earns a marker for the widest form of the whole-row-select argument: `materializeMessages`
-  // does `select().from(folder_state)` for the message list, the single read and the bootstrap
-  // snapshot, so an API deployed ahead of this migration answers Postgres 42703 across the mail
-  // surface. The marker makes that a 503 naming this file rather than an unattributable 500.
-  //
-  // The WORKER half is loud too: the reconcile pass filters and writes both columns, so a worker
-  // ahead of the migration 42703s into the cycle's ordinary quarantine instead of silently filing
-  // nothing. Deploy order: migration → API → worker.
-  //
-  // No CHECK marker (any instant is a legal next attempt, and `attempts` closes no set — it is a
-  // count). No INDEX marker: the migration deliberately adds none, because the predicate joins a
-  // scan that is already bounded by one mailbox's pending set.
+  // mail 0058_reconcile_backoff — the reconciler's bounded retry. Four columns land (`attempts` +
+  // `next_attempt_at` on `folder_state` and `flag_state`) in one transaction, one marker:
+  // `folder_state.next_attempt_at`, the column the pending-move query filters on. Whole-row
+  // argument: `materializeMessages` selects whole `folder_state` rows across the mail surface.
+  // The worker half is loud too — the reconcile pass filters and writes the pair, 42703 into the
+  // cycle's quarantine. Order: migration → API → worker. No CHECK marker (an instant closes no
+  // set; `attempts` is a count), no INDEX marker (the migration adds none, by design).
   ["folder_state", "next_attempt_at"],
-  // mail 0059_pairing_tokens — the pairing-token lifecycle's table, one marker for a whole new
-  // table on 0035's rule (42P01, not 42703: the relation itself is missing ahead of the
-  // migration). `token_hash` is the column because it is the one the redeem's single atomic
-  // UPDATE names in its WHERE — the statement the ceremony's single-use guarantee lives in —
-  // and the mint writes it in the same breath. A database carrying the table without it is one
-  // where redemption cannot be judged at all, which is the exact state this probe exists to
-  // name. The surface a stale deployment loses is `/pair*` on the self-host composition only;
-  // the marker turns that into a 503 naming this file. No worker half: nothing in the sync
-  // loop touches this table. Deploy order: migration → API, no third step.
-  //
-  // No CHECK marker for `pairing_tokens_grant_check`, on 0032's rule inverted-and-repeated: the
-  // migration DOES close a set, but every writer of `grant` is a literal in `pairing.ts` behind
-  // a closed TS union, the redeem names the grant as a conjunct of its own WHERE (so an absent
-  // CHECK cannot let a token be spent as the other kind), and an unconstrained hand-planted
-  // value can only produce a row no reader matches. No INDEX marker: the UNIQUE on `token_hash`
-  // is the redeem's own lookup, and its absence is loud at the first duplicate-free mint —
-  // `mailboxes_active_address_uq`'s counter-rule does not apply because nothing here does
-  // `ON CONFLICT`.
+  // mail 0059_pairing_tokens — the pairing-token table; a whole new table, so absence is 42P01
+  // (the `/pair*` surface, self-host composition only). `token_hash` is probed: the redeem's
+  // single atomic UPDATE names it in its WHERE — the ceremony's single-use guarantee. No worker
+  // half; order migration → API. No CHECK marker for the grant CHECK (every writer is a literal
+  // behind a closed TS union, and the redeem names the grant in its own WHERE), no INDEX marker
+  // (the UNIQUE on `token_hash` is the redeem's lookup; its absence is loud).
   ["pairing_tokens", "token_hash"],
   // mail 0060_refresh_tokens — the rotating-refresh store, moved to the shared half for the
-  // desktop-as-host tier's paired devices (Phase 3). One marker for the whole table, on
-  // 0035's rule. `family_id` is the column because the family-revocation sweep predicates on it
-  // — the statement reuse detection's whole guarantee lives in — and NOT `token_hash`, which is
-  // true but is the same column NAME the `pairing_tokens` probe above already reads; a second
-  // marker on one name tells an operator less than two names. A subtlety this entry owns: on a
-  // HOSTED or self-host database the table predates the migration (cloud 0000 created it), so
-  // this probe passes there whether or not mail 0060 has run — which is the honest answer,
-  // because the question a marker asks is "does the schema this deployment queries exist", not
-  // "which journal built it". The store that can genuinely lack the table is a mail-only
-  // desktop database, and there the engine migrates at boot and this names the migration if it
-  // has not. No CHECK marker (nothing here closes a set), no INDEX marker (the UNIQUE on
-  // `token_hash` is the rotation's claim lookup and its absence is loud). It was the newest
-  // entry in the mail journal until 0062 landed the storage accounting below.
+  // desktop-host tier's paired devices. One marker on `family_id`: the family-revocation sweep
+  // predicates on it — reuse detection's whole guarantee — and not `token_hash`, which duplicates
+  // the name the `pairing_tokens` probe already reads. A subtlety this entry owns: on hosted
+  // databases the table predates the migration (cloud 0000 created it), so the probe passes there
+  // regardless — the honest answer, since a marker asks "does the schema this deployment queries
+  // exist", not "which journal built it". The store that can lack it is a mail-only desktop
+  // database, which migrates at boot. No CHECK, no INDEX marker.
   ["refresh_tokens", "family_id"],
-  // mail 0062_storage_accounting, marker ONE of two — the per-account stored-body byte counter,
-  // a whole new table on 0035's rule (42P01 ahead of the migration). `bytes` is the column
-  // because it is the one every statement names: the ingest reserve's conditional UPDATE (where
-  // the managed cap's decline decision lives), the repair passes' clamped deltas, and the
-  // billing status route's usage read. The WORKER half fails loud — `insertMessageBody` now
-  // reserves unconditionally, so a worker ahead of the migration fails ingest into the ordinary
-  // quarantine rather than storing uncounted bodies. The API half is the settings read
-  // (`subscriptionStatus`), which would 42703 the whole billing card. Deploy order: migration →
-  // API → worker, and the backfill re-run after the worker deploy is the runbook's, not a
-  // marker's, concern.
-  //
-  // No CHECK marker for `account_storage_bytes_nonneg`, on 0030's rule extended one step: the
-  // CHECK arrives in the SAME migration statement block as the table, so a database carrying
-  // the table without it is not a state the journal can produce — the column probe already
-  // implies it, and every app-side decrement is `GREATEST(0, …)`-clamped besides. No INDEX
-  // marker: one row per account, fetched by primary key.
+  // mail 0062_storage_accounting, marker one of two — the per-account stored-body byte counter, a
+  // whole new table (42P01 ahead of the migration). `bytes` is the column every statement names:
+  // the ingest reserve's conditional UPDATE (the managed cap's decline decision), the repair
+  // passes' clamped deltas, the billing status read. The worker half fails loud —
+  // `insertMessageBody` reserves unconditionally, so ingest fails into quarantine rather than
+  // storing uncounted bodies; the API half is the settings read, which would 42703 the billing
+  // card. Order: migration → API → worker. No CHECK marker (the CHECK arrives in the same
+  // statement block as the table; every app-side decrement is clamped besides), no INDEX marker
+  // (one row per account, fetched by primary key).
   ["account_storage", "bytes"],
   // mail 0062, marker TWO — the withheld-body marker column. It earns its own probe on the
   // whole-row-select rule at its widest for this table: `getBody` does
@@ -887,29 +487,15 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // features). No CHECK marker for `message_bodies_withheld_reason` (0030's rule: a closed-set
   // CHECK the column marker already implies — same migration, same transaction).
   ["message_bodies", "withheld_reason"],
-  // mail 0063_smtp_size_probe_stamp — WHEN the `SIZE` back-fill last dialled a mailbox's submission
-  // server. Two columns land (`smtp_size_probed_at` and `smtp_size_probe_code`) in one migration
-  // inside one transaction, so one marker probes them on this list's usual rule — and the one named
-  // here is the column the SELECTION filters on, which is the statement whose absence changes
-  // behaviour rather than merely reading it.
-  //
-  // It earns a marker on the whole-row-select argument at its sharpest for this table, the same one
-  // `smtp_max_size_bytes` (0055) makes two entries up: `MailboxService.list` does
-  // `select().from(mailboxes)`, so a too-early API 42703s the mailbox panel and every read that
-  // resolves a mailbox, AND `SendService.reserve` enumerates the row inside the transaction that
-  // reserves an idempotent send — so the same missing column takes out SENDING, before the
-  // reservation commits.
-  //
-  // No worker half: the sync host neither reads nor writes either column (its own arm of the
-  // back-fill deliberately does not stamp — a host that cannot reach submission ports would
-  // suppress the host that can), and it selects a narrow projection rather than whole rows. Deploy
-  // order: migration → API, no third step.
-  //
-  // The CHECK gets its own entry in `SCHEMA_CHECK_MARKERS` rather than riding on this one, on
-  // 0027's rule: a missing column is loud on the first read, while a column present WITHOUT its
-  // constraint accepts whatever a write site lets through and says nothing — and what this
-  // constraint keeps out is a third party's SMTP response line. No INDEX marker: the migration
-  // deliberately adds none.
+  // mail 0063_smtp_size_probe_stamp — when the SIZE back-fill last dialled a mailbox's submission
+  // server. Two columns land in one transaction; the marker names the column the selection
+  // filters on. The whole-row argument at its sharpest for this table (0055's, two entries up):
+  // `MailboxService.list` and `SendService.reserve` both enumerate the row, so the missing column
+  // takes out the panel and sending. No worker half: the sync host neither reads nor writes
+  // either column (its own back-fill arm deliberately does not stamp — a host that cannot reach
+  // submission ports must not suppress the one that can). Order: migration → API. The CHECK gets
+  // its own entry in `SCHEMA_CHECK_MARKERS`: what it keeps out is a third party's SMTP response
+  // line, and a missing constraint is silent.
   ["mailboxes", "smtp_size_probed_at"],
   // mail 0064_device_sync_stamp — WHEN a device's `/sync` read last reached the horizon. It
   // earns a marker on the whole-row-select rule: `SessionLifecycle.listDevices` does
@@ -954,46 +540,24 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // nor writes the column. Deploy order: migration → API, no third step.
   ["sessions", "last_synced_at"],
   // mail 0087_away_reply_throttle — the per-person throttle, the reply ledger and the enablement
-  // instant. `away_responders.throttle` is the probe, and it is the COLUMN rather than either new
-  // table because the column is the half that can be missed silently: a database without
-  // `away_replies` or `away_sender_state` answers 42P01 the first time the pass runs, which the
-  // pass's own try/catch logs loudly and which sends nothing. A database that took the two tables
-  // and not this column is the quiet one — the pass would read an absent `throttle` and have to
-  // resolve it to SOME member, and the member it fell through to would decide how often a stranger
-  // is answered.
-  //
-  // `AwayResponderService` selects whole rows (`select().from(awayResponders)`), so an API ahead of
-  // the migration 42703s both `GET` and `PUT /away-responder` — the settings pane and the Ohbox
-  // notice, not just the pass. Deploy order: migration → API → worker, the first arrow
-  // load-bearing exactly as 0051's entry states it.
-  //
-  // No CHECK marker, for 0051's own reason one screen up: the column arrives NOT NULL with a
-  // DEFAULT in the statement before the constraint, so a database that took the column and not the
-  // CHECK still resolves every row to `per_day` — the default — and the service's closed-set
-  // validator refuses anything else at the boundary. A missing CHECK costs a defence in depth, not
-  // a delivery rate.
+  // instant. `away_responders.throttle` is the probe, the column rather than either new table
+  // because the column is the half missable silently: a database without the tables 42P01s loudly
+  // the first pass, but one that took the tables and not this column would read an absent
+  // `throttle` and fall through to some member — which decides how often a stranger is answered.
+  // `AwayResponderService` selects whole rows, so a too-early API 42703s both `/away-responder`
+  // endpoints. Order: migration → API → worker. No CHECK marker: the column arrives NOT NULL with
+  // a DEFAULT, so every row resolves to `per_day` and the service's closed-set validator refuses
+  // the rest.
   ["away_responders", "throttle"],
   // mail 0088_symmetric_takeover — the notice's two instants, the release request and the
-  // reader's request queue. TWO markers for a four-object migration, on this list's standing
-  // rule: probe the column a QUERY actually reads, once per table facet. One migration is one
-  // transaction, so a partial 0088 is not reachable and two probes detect exactly what four
-  // would; the two name the two decisions.
-  //
-  //  · `mailboxes.organizer_event_at` is the whole notice. `MailboxService` selects WHOLE ROWS,
-  //    so an API deployed ahead of the migration answers Postgres 42703 on the mailbox panel and
-  //    on the connect flow — `mailboxes.error_code`'s argument, unchanged. It is also the column
-  //    whose absence is worst on the WORKER side, and there the failure is quiet rather than
-  //    loud: every writer of the (role, state, holder) triple stamps it, so a worker ahead of the
-  //    migration would fail its stand-down write and leave the row saying `organizer` about a
-  //    mailbox it has stopped organizing. `release_requested_at` rides this marker — it is added
-  //    by the same statement group and read by the same whole-row selects.
-  //  · `organizer_requests.state` is the queue's own facet. A database without the TABLE answers
-  //    42P01 the first time a reader appends, which is loud; a database that took the table and
-  //    not the CHECK is the quiet one, and that is what the CHECK marker below covers. The column
-  //    marker is here so the table's absence names this migration rather than surfacing as a
-  //    relation error inside a cycle.
-  //
-  // Deploy order is migration → API → worker, 0083's exact reasoning. Two CHECK markers below.
+  // reader's request queue. Two markers for a four-object migration (one transaction, so two
+  // probes detect what four would): `mailboxes.organizer_event_at` — whole-row selects 42703 the
+  // mailbox panel, and on the worker side the failure is quiet: every writer of the (role, state,
+  // holder) triple stamps it, so a worker ahead of the migration fails its stand-down write and
+  // leaves the row saying `organizer` about a mailbox it stopped organizing
+  // (`release_requested_at` rides this marker). `organizer_requests.state` — the queue's own
+  // facet; the table's absence 42P01s loudly, and the took-the-table-not-the-CHECK case is the
+  // CHECK marker's below. Order: migration → API → worker.
   ["mailboxes", "organizer_event_at"],
   ["organizer_requests", "state"],
   // mail 0089_organizer_capability — the fifth holder column, `organized_by_capabilities`: what
@@ -1004,103 +568,57 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `reason: "organizer_outdated"` regardless of the true holder, because a column that cannot
   // be read reads as "we have not looked". Deploy order: migration → API → worker, unchanged.
   ["mailboxes", "organized_by_capabilities"],
-  // mail 0090_request_key — ONE column, because the migration adds one.
-  //
-  // `organizer_requests.refused_reason` is what an organizer says when it declines a decision made
-  // on another install, and the row is selected whole by the reader's own cycle — so a worker
-  // ahead of this migration raises Postgres 42703 on every settle pass while `/health` would
-  // otherwise certify the schema fine.
-  //
-  // The migration's own name promises a key column that is NOT here and must not be probed for:
-  // the signing key is derived from the mailbox password at use and never stored (see the
-  // migration's header). Probing a column the migration does not create would fail on a correctly
-  // migrated database, which is the same lie as missing a marker, pointed the other way.
-  //
-  // The widened `state` CHECK gets no marker of its own — `organizer_requests.state` is already
-  // probed above, and a CHECK that gained a member cannot be detected by reading a column name.
+  // mail 0090_request_key — one column, because the migration adds one.
+  // `organizer_requests.refused_reason` is what an organizer says when it declines a decision
+  // made on another install; the reader's own cycle selects the row whole, so a worker ahead of
+  // the migration 42703s every settle pass while `/health` would otherwise certify the schema
+  // fine. The migration's name promises a key column that is not here and must not be probed for:
+  // the signing key is derived from the mailbox password at use and never stored — probing for it
+  // would fail on a correctly migrated database. The widened `state` CHECK gets no marker: the
+  // column is already probed, and a CHECK that gained a member cannot be detected by reading a
+  // column name.
   ["organizer_requests", "refused_reason"],
-  // mail 0092_organizer_install_id — ONE column, because the migration adds one.
-  //
-  // `mailboxes.organized_by_install_id` is WHICH install holds the claim, beside the four columns
-  // above that say what sort of thing holds it. It is probed for the same reason
-  // `organized_by_capabilities` is: the row is selected WHOLE by the mailbox panel and by the
-  // reader's own cycle, so an API ahead of the migration raises Postgres 42703 on the panel and a
-  // worker ahead of it cannot write the holder at all.
-  //
-  // The consequence is worse than a 42703, and it is why this marker exists rather than being
-  // waved off as "one nullable column": the release arm compares this column against the install
-  // asking, and a NULL reads as "we cannot say it is ours", which REFUSES the hand-back. A
-  // database certified healthy while missing it therefore serves a mailbox whose owner is told,
-  // truthfully as far as the row knows, that they cannot stop Cloud organizing it.
+  // mail 0092_organizer_install_id — which install holds the claim, beside the columns that say
+  // what sort of thing holds it. Probed because the row is selected whole by the mailbox panel
+  // and the reader's cycle. The consequence is worse than a 42703: the release arm compares this
+  // column against the install asking, and a NULL reads as "we cannot say it is ours", which
+  // refuses the hand-back — a database certified healthy while missing it serves a mailbox whose
+  // owner is told they cannot stop Cloud organizing it.
   ["mailboxes", "organized_by_install_id"],
-  // mail 0093_outbound_send_fingerprints — the account's claim on the CONTENT of a send, and the
-  // probe is one column because probing a column of a table proves the table.
-  //
-  // Its absence is the loud kind rather than the silent kind, and it is worth saying which: the
-  // send path INSERTs here inside the reserve transaction on every send, so an API ahead of this
-  // migration raises Postgres 42P01 on the first press and nobody can send at all. That is a
-  // marker earning its place at the noisy end of this list — the point is not that the failure is
-  // subtle, it is that `/health` must not certify a database the send path cannot use.
-  //
-  // The UNIQUE constraint gets no marker of its own and the CHECK does: see
-  // `outbound_send_fingerprints_hex` in SCHEMA_CHECK_MARKERS. The uniqueness is what the INSERT
-  // itself names in its `ON CONFLICT` target, so a database missing it fails loudly on the first
-  // duplicate rather than quietly admitting one.
+  // mail 0093_outbound_send_fingerprints — the account's claim on the content of a send; probing
+  // a column of a table proves the table. Its absence is the loud kind: the send path INSERTs
+  // here inside the reserve transaction on every send, so a too-early API 42P01s the first press
+  // and nobody can send — the point is that `/health` must not certify a database the send path
+  // cannot use. The UNIQUE gets no marker (the INSERT names it in its `ON CONFLICT` target, so
+  // absence fails loudly at the first duplicate-free mint); the CHECK does — see
+  // `outbound_send_fingerprints_hex`.
   ["outbound_send_fingerprints", "fingerprint"],
-  // mail 0094_request_kinds_moves_profile — ONE column, on the NEW table.
-  //
-  // `mailbox_profile_mirror.doc` is the configuration document an install that only READS a
-  // mailbox caches from `ohmail/_meta`. Probing a column on a new table probes the table: a
-  // missing relation and a missing column both raise 42P01/42703, and this list's whole job is to
-  // make an API ahead of its database say `503 schema_incomplete` and name the file instead.
-  //
-  // WHY THE TABLE IS WORTH A MARKER even though its absence degrades quietly. A reader's settings
-  // pane reads this table to render the holder's configuration, and a database missing it does
-  // not fail loudly — the pane would render "no profile from <holder> yet", which is a REAL state
-  // it must also render when the reader simply has not read a document. So the two are
-  // indistinguishable to a person, and an operator would be looking at a mailbox reporting a
-  // healthy schema and a settings screen that stays permanently empty. That is precisely the
-  // "certified healthy while a thing is missing" shape the marker census exists for.
-  //
-  // The WIDENED `kind` CHECK gets no marker of its own, on `organizer_requests.state`'s rule
-  // stated a few lines above: `organizer_requests.kind` is already probed, and a CHECK that
-  // gained a member cannot be detected by reading a column name. Its absence surfaces as a
-  // refused INSERT at the write site rather than as a silent read, which is the failure mode
-  // that reports itself.
+  // mail 0094_request_kinds_moves_profile — one column, on the new table.
+  // `mailbox_profile_mirror.doc` is the configuration document a read-only install caches from
+  // `ohmail/_meta`; probing a column on a new table probes the table. Worth a marker even though
+  // its absence degrades quietly: the reader's settings pane renders "no profile from <holder>
+  // yet", a real state it must also render when nothing has been read — indistinguishable to a
+  // person, so an operator would see a healthy schema and a permanently empty screen. The widened
+  // `kind` CHECK gets no marker (`organizer_requests.kind` is already probed, and a CHECK that
+  // gained a member cannot be detected by name; its absence surfaces as a refused INSERT, which
+  // reports itself).
   ["mailbox_profile_mirror", "doc"],
-  // mail 0095_outbound_send_resolution — the resolution columns on the send ledger.
-  //
-  // The migration adds TWO columns (`outbound_sends.resolved_by`, `.resolved_at`) and makes
-  // `draft_id` nullable `ON DELETE SET NULL`. `resolved_by` is the probe, and one column is the
-  // whole probe here for `organized_by_capabilities`' reason and one of its own.
-  //
-  // It is read whole, on the send door itself. `SendService`'s replay branch selects the
-  // reservation with a bare `select()` under `FOR UPDATE` — every same-key retry — so an API
-  // ahead of this migration raises Postgres 42703 on the replay gate that exists to stop a
-  // second copy of a message being delivered. `DraftsService.resolve` writes both columns in one
-  // UPDATE, so the resolve verb 42703s there too, which is the surface a person presses.
-  //
-  // `resolved_at` gets no marker of its own, and the FOREIGN KEY change CANNOT get one: the
-  // constraint is dropped and re-added under the SAME name
-  // (`outbound_sends_draft_id_drafts_id_fk`), so `pg_constraint` reads identically before and
-  // after and a name probe cannot tell the two apart. So this marker answers "this database is
-  // from before 0095", not "every statement of 0095 ran" — which is the question `/health` is
-  // asked, because the hazard it exists to catch is an API ahead of its database. Named here
-  // rather than waved off, since the FK is the half that turns a discard into a 23503.
+  // mail 0095_outbound_send_resolution — the resolution columns on the send ledger. Two columns
+  // land; `resolved_by` is the probe: `SendService`'s replay branch selects the reservation whole
+  // under `FOR UPDATE` on every same-key retry, so a too-early API 42703s the replay gate that
+  // stops a second copy being delivered, and `DraftsService.resolve` writes both columns in one
+  // UPDATE. The FK change cannot get a marker: dropped and re-added under the same name,
+  // `pg_constraint` reads identically — so this marker answers "this database is from before
+  // 0095", which is the question `/health` is asked. Named rather than waved off, since the FK is
+  // the half that turns a discard into a 23503.
   ["outbound_sends", "resolved_by"],
-  // mail 0096_away_piles — TWO columns, because the migration adds two, and BOTH are read on a
-  // path that selects them by name.
-  //
-  // `away_responders.piles` is WHICH PILES the away responder answers. The pass's probe selects it
-  // by name for every live responder, so an API or a send clock ahead of the migration raises
-  // Postgres 42703 on every away cycle — and the settings pane's `PUT` writes it, so the save that
-  // turns a responder OFF fails too, which is the one save nobody may be prevented from making.
-  //
-  // The consequence of certifying a database without it is worse than a 42703 and is why this is a
-  // marker rather than "one column with a default": the column IS the scope. A build that reads it
-  // as absent has no scope to apply, and the branch an away pass falls through to when it cannot
-  // tell which piles were chosen is the branch that sends mail — to exactly the correspondents
-  // this migration exists to stop answering.
+  // mail 0096_away_piles — two columns, both read by name. `away_responders.piles` is which piles
+  // the responder answers: the pass's probe selects it per live responder (42703 on every away
+  // cycle ahead of the migration), and the settings `PUT` writes it — the save that turns a
+  // responder off fails too, the one save nobody may be prevented from making. Certifying a
+  // database without it is worse than the 42703: the column IS the scope, and the branch a pass
+  // falls through to when it cannot tell which piles were chosen is the branch that sends mail —
+  // to exactly the correspondents this migration stops answering.
   ["away_responders", "piles"],
   // `away_sender_state.undeliverable_at` is the record that a bounce came back for an earlier
   // reply. Probed for the same reason: the candidate query reads it in a correlated EXISTS by
@@ -1109,84 +627,51 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // to a dead address once per throttle interval, each attempt returning a bounce into this
   // account's own Ohbox. That is the state this migration was written to end.
   ["away_sender_state", "undeliverable_at"],
-  // mail 0097_folder_state_last_error_class — ONE column, because the migration adds one. It was
-  // the newest entry until 0098 landed below it; the tag is single-valued, so the claim moves with
-  // it rather than standing in two places.
-  //
-  // `folder_state.last_error_class` is WHY the mail server refused a filing, as one of four words
-  // this codebase chose. It is probed because the API READS it: the mailbox projection selects it
-  // in the filtered aggregate that reports what a mailbox still owes, so an API ahead of the
-  // migration raises Postgres 42703 on `GET /mailboxes` — which the shell polls every thirty
-  // seconds for its status line, on every open tab.
-  //
-  // That is the whole cost and it is enough: a route the whole product's status depends on would
-  // fail for every account until the migration landed, and a database certified healthy without
-  // this marker is a database that lets that deploy through. The CHECK that closes the column to
-  // the four words gets no marker of its own — a constraint that gained a set cannot be detected
-  // by reading a column name, the same rule the refusal vocabulary above records.
+  // mail 0097_folder_state_last_error_class — one column: why the mail server refused a filing,
+  // one of four words. Probed because the API reads it: the mailbox projection selects it in the
+  // filtered aggregate reporting what a mailbox owes, so a too-early API 42703s `GET /mailboxes`
+  // — polled every thirty seconds by the shell's status line on every open tab. The CHECK closing
+  // the column to the four words gets no marker: a constraint that gained a set cannot be
+  // detected by reading a column name.
   ["folder_state", "last_error_class"],
-  // mail 0098_signature_html — ONE column, because the migration adds one.
-  //
-  // `mailboxes.signature_html` is the markup half of a mailbox's signature. It is probed for a
-  // sharper reason than the holder columns above: `mailboxSignatures`' twin
-  // (`mailboxSignatureHtmls`) SELECTS THIS COLUMN BY NAME on every `GET /consent`, so an API
-  // ahead of the migration raises Postgres 42703 on the settings read that every client makes at
-  // boot — not on a panel somebody may never open. A database certified healthy while missing it
-  // therefore serves an account that cannot load its own settings at all.
-  //
-  // The derived text half needs no marker of its own: `mailboxes.signature` predates the split
-  // and is probed by nothing here for the same reason nothing else pre-split is.
+  // mail 0098_signature_html — one column: the markup half of a mailbox's signature. Probed for a
+  // sharper reason than the holder columns: `mailboxSignatureHtmls` selects this column by name
+  // on every `GET /consent` — the settings read every client makes at boot, not a panel somebody
+  // may never open. A database certified healthy while missing it serves an account that cannot
+  // load its own settings. The derived text half needs no marker: `mailboxes.signature` predates
+  // the split.
   ["mailboxes", "signature_html"],
-  // mail 0099_folder_state_trashed_from — ONE column, because the migration adds one.
-  // It was the newest entry until 0102 landed behind it, and 0102 adds no column at all: it
-  // widens a CHECK, so its prober is `MAIL_CHECK_DEFINITION_MARKERS` and the tag's "newest"
-  // sentence now sits there. `MAIL_SCHEMA_MARKER_JOURNAL_TAG` is single-valued, so the sentence
-  // moves with the tag rather than standing in two places — leaving both would have shipped a
-  // false claim with every gate green.
-  //
-  // `folder_state.trashed_from` is the folder a delete moved a message OUT of — the only durable
-  // record of where a deleted message came from, and therefore the only thing a restore has to
-  // aim at. It is probed because the API SELECTS IT BY NAME on two doors: the Trash list reads it
-  // per row to resolve each row's destination, and the restore reads it to decide where the
-  // message goes. An API ahead of the migration raises Postgres 42703 on both — so a database
-  // certified healthy without it serves an account whose Trash screen cannot load and whose
-  // Restore button cannot work, which is the whole of the feature.
+  // mail 0099_folder_state_trashed_from — one column: the folder a delete moved a message out of,
+  // the only durable record of where it came from and the only thing a restore can aim at. Probed
+  // because the API selects it by name on two doors: the Trash list resolves each row's
+  // destination from it, the restore decides where the message goes. A too-early API 42703s both
+  // — an account whose Trash screen cannot load and whose Restore cannot work. It was the newest
+  // entry until 0102, which adds no column (it widens a CHECK, so its prober is
+  // `MAIL_CHECK_DEFINITION_MARKERS` and the tag's "newest" sentence sits there — the tag is
+  // single-valued, so the sentence moves with it).
   ["folder_state", "trashed_from"],
 ] as const;
 
-/* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
- *
- * It is a list of Cloud table and column NAMES — the staff directory's stored password, the staff
- * session store's token digest, the billing ledger's dedup column — and this module is mounted by
- * the LOCAL route table (`routes/local.ts`), which is bundled into the shipped desktop engine. So the
- * engine artifact carried the hosted half's schema vocabulary as live data, not as prose — the
- * engine build's own leak count found it, and it was the last real occurrence once the barrel
- * split had closed the import edges.
- *
- * A local install never needs them — it declares `schemaTier: "mail"` and probes
- * {@link MAIL_SCHEMA_MARKERS} — so the hosted set now arrives the same way the tier does, through
- * {@link HealthConfig}. A host that claims the full tier and supplies no set gets a fault rather
- * than a narrower probe: see the `schema_tier_unconfigured` branch below. */
+/**
+ * The cloud half of the marker census moved to `./health-cloud.js`. It is a list of Cloud table
+ * and column names, and this module is mounted by the local route table bundled into the shipped
+ * desktop engine — so the artifact carried the hosted half's schema vocabulary as live data; the
+ * engine build's own leak count found it, the last real occurrence once the barrel split closed
+ * the import edges. A local install declares `schemaTier: "mail"` and probes {@link
+ * MAIL_SCHEMA_MARKERS}; the hosted set arrives through {@link HealthConfig}, and a host claiming
+ * the full tier with no set gets a fault rather than a narrower probe (the
+ * `schema_tier_unconfigured` branch below).
+ */
 
 /**
- * INDEX markers — the migrations whose whole content is an index, which a column probe cannot
- * see and which therefore need their own.
- *
- * `information_schema.columns` is blind to indexes, so before this list a migration that
- * creates only one was invisible to `/health`: the deployment certified `schemaOk: true` on a
- * database the fix was missing from.
- *
- * That is not cosmetic. `mailboxes_active_address_uq` is the ONLY thing standing between
- * `POST /mailboxes` and two rows for one address — `MailboxService.create` performs no
- * pre-check, so its 409 is entirely contingent on this index raising 23505. Absent it, two
- * calls both commit, the worker rosters two IMAP runtimes for one physical mailbox, and two
- * reconcile passes issue competing moves against the same real folders. A health gate that
- * says "fine" to that database is a false positive on the invariant the product rests on.
- *
- * Counted into the SAME `found`/`expected` totals as the column markers, deliberately: the
- * `/health` body may not gain a key — its consumers type `schemaMarkers` as
- * `{found, expected, through}` — so a second pair of numbers would be a contract change for
- * no gain. The totals simply get bigger.
+ * Index markers — migrations whose whole content is an index, which a column probe cannot see:
+ * `information_schema.columns` is blind to indexes, so such a migration used to be invisible to
+ * `/health` and the deployment certified `schemaOk: true` on a database the fix was missing from.
+ * Not cosmetic: `mailboxes_active_address_uq` is the only thing between `POST /mailboxes` and two
+ * rows for one address — `create` performs no pre-check, so its 409 is entirely contingent on the
+ * index raising 23505; absent it, the worker rosters two IMAP runtimes for one physical mailbox.
+ * Counted into the same `found`/`expected` totals as the column markers: the `/health` body may
+ * not gain a key.
  */
 export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
   "mailboxes_active_address_uq",   // mail 0021_mailbox_address_unique
@@ -1221,24 +706,14 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
 ];
 
 /**
- * CHECK-CONSTRAINT markers — invisible to BOTH probes above, and for the same reason the index
- * list had to exist.
- *
- * `information_schema.columns` cannot see a constraint and `pg_indexes` cannot see one either,
- * so mail `0022`, whose entire content is one CHECK, would have been a migration `/health`
- * certified as applied on a database that never took it. That is the precise false positive
- * `SCHEMA_INDEX_MARKERS` was written to end, arriving a second time through a third catalog.
- *
- * `message_bodies_html_cap` earns its place on the same test as the others — what breaks
- * without it. It is the last of three defences against a storage outage caused by unbounded
- * stored HTML, and the only one that lives in the database rather than in the worker's code.
- * A deployment whose
- * `message_bodies` has no cap will re-bloat silently under any regression in
- * `packages/core/src/html-storage.ts` or `mime.ts`, and the first symptom is Postgres refusing
- * writes for the whole project. A 503 naming the missing migration is enormously cheaper.
- *
- * Counted into the SAME `found`/`expected` totals as the other two lists — see
- * {@link SCHEMA_INDEX_MARKERS} for why the published body may not grow a key.
+ * CHECK-constraint markers — invisible to both probes above, for the reason the index list
+ * exists: `information_schema.columns` cannot see a constraint and `pg_indexes` cannot either, so
+ * mail 0022, whose entire content is one CHECK, would have been certified applied on a database
+ * that never took it. `message_bodies_html_cap` earns its place on what breaks without it: the
+ * last of three defences against unbounded stored HTML and the only one living in the database —
+ * without it `message_bodies` re-bloats silently under any regression in
+ * `html-storage.ts`/`mime.ts`, and the first symptom is Postgres refusing writes for the whole
+ * project. Counted into the same totals as the other lists.
  */
 export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   "message_bodies_html_cap",       // mail 0022_message_body_html_cap
@@ -1278,19 +753,14 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // can regress; the CHECK is the one layer that holds for every writer, and this marker is what makes
   // a deploy against a database missing 0044 say `503 schema_incomplete` and name the file to run.
   "account_settings_dormancy_days_max",
-  // mail 0050_rule_subject_contains — the constraint that makes NULL the ONLY representation of "this
-  // rule has no subject term". It is listed on 0027's rule (the column and the CHECK fail
-  // DIFFERENTLY, and only one of them is loud) and it is the sharpest instance of it in this list,
-  // because what the CHECK forbids is not an oversized value but an AMBIGUOUS one.
-  //
-  // Without the constraint, `''` and `'   '` are storable, and every reader has to decide
-  // independently whether they mean "absent" — `core/src/rules.ts#matches`, the specificity rank in
-  // `compareRules`, the `ORDER BY` in `drizzle-repo.ts#listRules`, and the client's rule list. They
-  // agree today. The first one that stops agreeing produces a rule that MATCHES EVERY SUBJECT while
-  // its row reads as specific: mail the user split by subject silently re-collapses into one pile,
-  // and nothing raises. `RulesService` refuses the same shapes with a 400, but that refusal is code
-  // and can regress; the CHECK is the layer that holds for every writer, including the retro pass
-  // and any future importer.
+  // mail 0050_rule_subject_contains — the constraint making NULL the only representation of "no
+  // subject term". Listed on 0027's rule (the column and the CHECK fail differently, only one
+  // loud) and its sharpest instance: what the CHECK forbids is an ambiguous value, not an
+  // oversized one. Without it `''` and `' '` are storable, and every reader decides independently
+  // whether they mean absent — the first one that stops agreeing produces a rule matching every
+  // subject while its row reads as specific, and nothing raises. `RulesService` refuses the same
+  // shapes with a 400, but that is code and can regress; the CHECK holds for every writer, the
+  // retro pass and any future importer included.
   "rules_subject_contains_nonempty",
   // mail 0052_rule_body_contains — the same constraint for the third term, on 0050's argument
   // verbatim: what it forbids is the AMBIGUOUS value, `''` and `'   '`, whose first
@@ -1300,19 +770,14 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // definitions equal up to the column name. It was the newest entry here until mail 0053's locale
   // set landed below it.
   "rules_body_contains_nonempty",
-  // mail 0053_account_locale — the closed set behind `account_settings.locale`. Listed on 0027's
-  // rule (the column and the CHECK fail DIFFERENTLY, and only one of them is loud) and it is the
-  // clearest case of it in this list, because the loud/silent asymmetry is total: a missing COLUMN
-  // 42703s the whole consent surface on the next request, while a column present WITHOUT its
-  // constraint accepts any string a writer lets through — and every consumer of a wrong value
-  // DEGRADES SILENTLY. `loadCatalog` falls back to English for a locale it cannot load, the server
-  // render falls back to English, `normalizeLocale` answers null, and the row in Settings shows the
-  // default. So a stored `'fr'`, `'de_DE'` or `''` produces an account whose language setting simply
-  // does not work, with no error in any log and nothing to grep for. The service validates the same
-  // set with a 400, but that is code and can regress; the CHECK is the layer that holds for a
-  // hand-run UPDATE, a future admin tool and any importer.
-  //
-  // It was the newest entry here until mail 0063's probe-code set landed below it.
+  // mail 0053_account_locale — the closed set behind `account_settings.locale`. The clearest
+  // loud/silent asymmetry in this list: a missing column 42703s the whole consent surface on the
+  // next request, while a column present without its constraint accepts any string — and every
+  // consumer of a wrong value degrades silently (`loadCatalog` falls back to English, the server
+  // render falls back, `normalizeLocale` answers null), so a stored `'fr'` or `''` is a language
+  // setting that simply does not work, with nothing to grep for. The service validates the same
+  // set with a 400; the CHECK is the layer that holds for a hand-run UPDATE, a future admin tool
+  // and any importer.
   "account_settings_locale_supported",
   // mail 0082_theme_face — the closed set behind `account_settings.theme_face`. Listed on
   // 0027's rule (the column and the CHECK fail DIFFERENTLY, and only one is loud), with
@@ -1322,56 +787,37 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // work" leaves no error in any log. The service validates the same set with a 400, but that
   // is code and can regress; the CHECK holds for a hand-run UPDATE and any importer.
   "account_settings_theme_face_supported",
-  // mail 0083_organizer_role — the FOUR closed sets this migration adds. Listed on 0027's rule
-  // (the column and the CHECK fail DIFFERENTLY, and only one of them is loud), and two of them
-  // have the privacy edge that rule was written for:
-  //
-  //  · `mailboxes_organizer_role_closed` is the strongest constraint in this list, because the
-  //    state it makes unrepresentable is TWO ORGANIZERS ON ONE MAILBOX. A value outside the set
-  //    is read as `reader` by `readOrganizerRole` (which fails safe), but nothing stops a
-  //    hand-run UPDATE or an importer writing one, and the CHECK is the layer that holds when
-  //    the code does not.
-  //  · `mailboxes_organized_by_kind_closed` closes the same kinds `disabled_reason` does,
-  //    for `disabled_reason`'s own reason: the value is derived from ANOTHER INSTALL'S CLAIM —
-  //    a header a foreign writer chose — and it is read by the account's own user. The write
-  //    site is allowlisted; the constraint is the half that survives a call site nobody has
-  //    written yet. (`organized_by_name` deliberately has no CHECK: free text closes no set, and
-  //    its bound is `ORGANIZED_BY_NAME_MAX` at the write site, `signature`'s exact rule.)
-  //  · `mailboxes_organizer_state_closed` and `account_settings_screening_scope_closed` are
-  //    0053's silent-degradation shape: a value outside either set renders as "we have not
-  //    looked" and as the default window respectively — a setting that simply does not work,
-  //    with no error in any log and nothing to grep for.
+  // mail 0083_organizer_role — the four closed sets this migration adds, listed on 0027's rule
+  // (the column and the CHECK fail differently, only one loud). `mailboxes_organizer_role_closed`
+  // is the strongest here: the state it makes unrepresentable is two organizers on one mailbox —
+  // a value outside the set is read as `reader` (fail-safe), but nothing stops a hand-run UPDATE,
+  // and the CHECK holds when the code does not. `mailboxes_organized_by_kind_closed` closes a
+  // value derived from another install's claim — a header a foreign writer chose, read by the
+  // account's own user (`organized_by_name` deliberately has no CHECK: free text closes no set;
+  // its bound is at the write site). The other two are 0053's silent-degradation shape: a value
+  // outside either set renders as "we have not looked" / the default window — a setting that does
+  // not work, with nothing to grep for.
   "mailboxes_organizer_role_closed",
   "mailboxes_organized_by_kind_closed",
   "mailboxes_organizer_state_closed",
   "account_settings_screening_scope_closed",
-  // mail 0063_smtp_size_probe_stamp — the closed set behind `mailboxes.smtp_size_probe_code`.
-  // Listed on 0027's rule (the column and the CHECK fail DIFFERENTLY, and only one of them is
-  // loud), and its origin is the sharpest on this list: the value stored there is derived from an
-  // SMTP AUTH failure, and nodemailer's message for one embeds the submission server's own response
-  // line — third-party text that routinely contains the username and can contain an echoed
-  // credential. The whole `code`-not-message rule in `SmtpSizeFailure` exists to keep that off a
-  // log drain; this constraint is the half of it that also keeps it out of a `mailboxes` row.
-  //
-  // The write site takes a `SmtpSizeProbeCode`, so the compiler refuses free text today. That is
-  // code and code regresses — `error_detail` had exactly one write-site guard and a server's
-  // bracket atom walked through it into a column an operator reads. It is the NEWEST entry in the
-  // mail journal.
+  // mail 0063_smtp_size_probe_stamp — the closed set behind `mailboxes.smtp_size_probe_code`, and
+  // the sharpest origin in this list: the stored value derives from an SMTP AUTH failure, and
+  // nodemailer's message embeds the submission server's own response line — third-party text that
+  // routinely contains the username and can echo a credential. The code-not-message rule in
+  // `SmtpSizeFailure` keeps that off a log drain; this constraint keeps it out of a `mailboxes`
+  // row. The write site takes a `SmtpSizeProbeCode`, so the compiler refuses free text today —
+  // and that is code, and code regresses: `error_detail` had exactly one write-site guard and a
+  // server's bracket atom walked through it.
   "mailboxes_smtp_size_probe_code_closed",
-  // mail 0088_symmetric_takeover — the TWO closed sets on `organizer_requests`. Listed on 0027's
-  // rule (the column and the CHECK fail DIFFERENTLY, and only one is loud), and both have 0053's
-  // silent-degradation shape with a sharper edge than most of this list:
-  //
-  //  · `organizer_requests_kind_closed` decides WHICH APPLIER RUNS on the organizer's side of a
-  //    handover. The value arrives out of an RFC822 header another install wrote, so it is
-  //    untrusted by construction; a member outside the set would be resolved by whichever branch
-  //    the drain falls through to, and the branches in that drain move somebody's mail. The write
-  //    site takes a typed literal, so the compiler refuses free text today — and that is code,
-  //    and code regresses.
-  //  · `organizer_requests_state_closed` is the queue's own progress. A value outside the set
-  //    matches none of the four reads, so the request is neither handed over, nor applied, nor
-  //    expired: it simply stops moving, with no error in any log and nothing to grep for. That is
-  //    the exact silence 0053's entry describes.
+  // mail 0088_symmetric_takeover — the two closed sets on `organizer_requests`, 0053's
+  // silent-degradation shape with a sharper edge. `organizer_requests_kind_closed` decides which
+  // applier runs on the organizer's side of a handover; the value arrives out of an RFC822 header
+  // another install wrote — untrusted by construction — and a member outside the set would be
+  // resolved by whichever branch the drain falls through to, and those branches move somebody's
+  // mail. `organizer_requests_state_closed` is the queue's own progress: a value outside the set
+  // matches none of the four reads, so the request is neither handed over, applied, nor expired —
+  // it stops moving, with nothing to grep for.
   "organizer_requests_state_closed",
   "organizer_requests_kind_closed",
   // mail 0091_request_refusal_closed — the closed set behind `organizer_requests.refused_reason`.
@@ -1399,69 +845,26 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
 ];
 
 /**
- * A CHECK marker probed by its DEFINITION, not merely by its name.
- *
- * `[conname, definitionSubstring]` — the constraint must exist AND `pg_get_constraintdef` must
- * contain the substring, case-sensitively.
- *
- * ── WHY A THIRD KIND OF CHECK MARKER EXISTS AT ALL ──────────────────────────────────────────
- *
- * {@link SCHEMA_CHECK_MARKERS} probes for a NAME, which is exactly right when the migration
- * CREATES the constraint: absent name, absent migration. It is blind to the other shape a
- * constraint migration takes — **replacing** a constraint under its existing name, which is the
- * only way PostgreSQL lets a CHECK be amended (`DROP … IF EXISTS` then `ADD` under the same
- * name). Both names are then present on a database that never took the migration, the count
- * matches, `/health` answers `schemaOk: true`, and the host stays in rotation while the
- * constraint it is relying on still holds the OLD rule.
- *
- * Cloud `0011_trial_credits` is that shape and is the reason this list exists: it teaches the
- * ledger's sign and source rules the word `trial_grant` and adds no column, no index and no new
- * name. Deployed against a database still on `0010`, every trial grant is rejected by a CHECK
- * from inside the webhook's transaction — the subscription mirror rolls back with it, every
- * retry 500s for three days, and the account gets neither its mirrored trial nor the allowance
- * the product advertises. Health, meanwhile, reports the schema as complete.
- *
- * ── AND WHY A SUBSTRING RATHER THAN THE WHOLE DEFINITION ────────────────────────────────────
- *
- * `pg_get_constraintdef` renders a normalized form, not the SQL that was typed: literals acquire
- * `::character varying` casts, `IN (…)` becomes `= ANY (ARRAY[…])`, and the exact spelling is a
- * PostgreSQL version's business rather than this repository's. Pinning the whole string would be
- * a probe that fails on a server upgrade. A substring naming the VOCABULARY the migration added
- * survives that and still cannot be satisfied by the old definition, which is the whole question.
+ * A CHECK marker probed by its definition, not merely its name: `[conname, definitionSubstring]`
+ * — the constraint must exist and `pg_get_constraintdef` must contain the substring. {@link
+ * SCHEMA_CHECK_MARKERS} probes names, blind to a constraint replaced under its existing name —
+ * the only way PostgreSQL amends a CHECK: both names then exist on a never-migrated database, and
+ * the host serves under the old rule while `/health` says `schemaOk: true`. Cloud 0011 is that
+ * shape and the reason this list exists. A substring, not the whole definition:
+ * `pg_get_constraintdef` is normalized and version-dependent; the added vocabulary survives
+ * upgrades and the old definition cannot satisfy it.
  */
 export type CheckDefinitionMarker = readonly [conname: string, definitionSubstring: string];
 
 /**
- * A FUNCTION marker probed by its BODY — the fifth marker class, and the last catalog the other
- * four cannot reach.
- *
- * `[proname, bodySubstring]` — a `public` function of that name must exist AND its `pg_proc.prosrc`
- * must contain the substring, case-sensitively.
- *
- * ── THE SHAPE THIS EXISTS FOR ───────────────────────────────────────────────────────────────
- *
- * {@link CheckDefinitionMarker} closed the constraint-REPLACEMENT blind spot. A trigger FUNCTION
- * replacement is the same defect one catalog over, and strictly worse: `CREATE OR REPLACE
- * FUNCTION` changes no name anywhere, creates no column and no index, and lives in `pg_proc` —
- * which `information_schema.columns`, `pg_indexes` and `pg_constraint` all cannot see. Cloud
- * `0013_ledger_integrity` named this gap in its own header and worked around it by riding the
- * index it happened to create beside the two replaced functions. Cloud `0014_ledger_trial_source`
- * has NOTHING beside it — a replaced function body is its entire content — so the workaround runs
- * out and the class has to exist.
- *
- * What a missing entry costs is the usual one, in the usual silent direction: deployed against a
- * database on the older function body, every layer reports healthy and the invariant the newer
- * body enforces is simply not enforced. Nothing 500s, no query is wrong, and the first evidence is
- * a row that should have been impossible.
- *
- * ── WHY `prosrc` AND NOT `pg_get_functiondef` ───────────────────────────────────────────────
- *
- * `pg_get_functiondef` re-renders the whole `CREATE FUNCTION` statement, so its preamble is a
- * PostgreSQL version's business — the same objection {@link CheckDefinitionMarker} answers by
- * taking a substring. `prosrc` is the body EXACTLY as it was written, stored verbatim for a
- * `plpgsql` function, so a substring of the migration's own text is a stable needle. Pick the
- * predicate the migration ADDED, for the same reason the constraint markers pick added
- * vocabulary: it must be unsatisfiable by the body it replaced.
+ * A FUNCTION marker probed by its body — the fifth marker class, the last catalog the other four
+ * cannot reach: `[proname, bodySubstring]` against `pg_proc.prosrc`. A trigger-function
+ * replacement is the constraint-replacement defect one catalog over, and worse: `CREATE OR
+ * REPLACE FUNCTION` changes no name, no column, no index. Cloud 0013 rode the index it happened
+ * to create; cloud 0014's entire content is a replaced function body, so the class has to exist.
+ * A missing entry costs the silent direction: every layer reports healthy and the newer body's
+ * invariant is not enforced. `prosrc`, not `pg_get_functiondef`: the body exactly as written —
+ * pick the predicate the migration added.
  */
 export type FunctionDefinitionMarker = readonly [proname: string, bodySubstring: string];
 
@@ -1469,43 +872,24 @@ export type FunctionDefinitionMarker = readonly [proname: string, bodySubstring:
  * derives from. {@link MAIL_EXPECTED_MARKERS} below is what this module can compute on its own. */
 
 /**
- * THE SAME PROBE FOR A HOST THAT ONLY EVER RAN THE MAIL JOURNAL.
- *
- * A desktop install migrates `MAIL_JOURNAL` alone — it has no billing ledger, no passkey
- * challenge store and no staff directory, and it should not: those tables belong to a service it
- * has no account with. Probed against the full set it reports `schema_incomplete` on every
- * request, for ever, which is the OPPOSITE of what that answer means. It is not an unmigrated
- * database; it is a complete one of a different shape.
- *
- * Two lists rather than a flag inside the probe, because the honest statement is "this host
- * expects THESE markers" and the count has to be derived from the same list that was asked for.
- * The index and check markers are unsplit deliberately: every one of them names a mail table, so
- * a local install is expected to have all of them, and if a Cloud-only index is ever added to
- * that list this constant is where the split has to happen — loudly, rather than by a filter that
- * silently drops it.
+ * The same probe for a host that only ever ran the mail journal. A desktop install migrates
+ * `MAIL_JOURNAL` alone — no billing ledger, no passkey challenge store, no staff directory, and
+ * it should not have them. Probed against the full set it reports `schema_incomplete` forever,
+ * the opposite of what that answer means: not an unmigrated database, a complete one of a
+ * different shape. Two lists rather than a flag inside the probe: the honest statement is "this
+ * host expects these markers", and the count derives from the list that was asked. The index and
+ * check markers are unsplit deliberately — every one names a mail table — and if a Cloud-only
+ * entry is ever added, this constant is where the split happens, loudly.
  */
 /**
- * The MAIL constraints probed by DEFINITION — see {@link CheckDefinitionMarker} for the shape and
- * the blind spot it closes. The first mail migration of the REPLACEMENT kind is what created this
- * list; until 0101 every entry of that kind named a Cloud table.
- *
- * `away_responders_piles_closed` was created by mail 0096 over `{INBOX, ohmail/Reads}` and is
- * REPLACED by 0101 over four members. The name is identical on both databases, so
- * {@link SCHEMA_CHECK_MARKERS} cannot tell them apart: a host still on 0096 would be certified
- * `schemaOk: true` while the constraint refuses every scope the settings pane now offers — a save
- * the person is told succeeded, rejected by the database from inside the write's transaction.
- *
- * `mailboxes_sync_blocked_reason_closed` is the SECOND, from mail 0102, and it is the same shape
- * one migration later: the closed set on `mailboxes.sync_blocked_reason` gains a fourth member,
- * so the constraint is dropped and re-added under its existing name. That name is already in
- * {@link SCHEMA_CHECK_MARKERS} too, and satisfied by the three-member definition, so a
- * name-presence probe cannot tell an 0101 database from an 0102 one. What a missing entry costs
- * is the usual silent direction: against a three-member database the worker's soft-block write is
- * refused by the CHECK at the one moment it exists to record, and the mailbox keeps reading as an
- * ordinary connected one.
- *
- * The needle in both is the VOCABULARY the migration adds and its predecessor cannot contain, for
- * the reason {@link CheckDefinitionMarker} gives about `pg_get_constraintdef`'s normalized form.
+ * The MAIL constraints probed by definition — see {@link CheckDefinitionMarker}.
+ * `away_responders_piles_closed` was created by 0096 over two members and replaced by 0101 over
+ * four; the name is identical on both databases, so a name probe certifies a 0096 host while the
+ * constraint refuses every scope the settings pane offers — a save the person is told succeeded,
+ * rejected inside the write's transaction. `mailboxes_sync_blocked_reason_closed` is the same
+ * shape from 0102: a fourth member under the existing name, and against a three-member database
+ * the worker's soft-block write is refused at the one moment it exists to record. The needle in
+ * both is the vocabulary the migration adds.
  */
 export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
   ["away_responders_piles_closed", "ohmail/Screener"],
@@ -1526,495 +910,14 @@ export const MAIL_EXPECTED_MARKERS =
   MAIL_CHECK_DEFINITION_MARKERS.length;
 
 /**
- * The newest entry of the MAIL journal, which {@link MAIL_SCHEMA_MARKERS} is reconciled to.
- *
- * `0026_thread_resolution` adds one column and two indexes, `0025_mailbox_kickstart` one column,
- * and `0024_flag_state` a whole TABLE — all of which a `(table, column)` probe sees the ordinary
- * way, one entry in {@link MAIL_SCHEMA_MARKERS} naming the column a query actually reads.
- * `0023_mailbox_failure_reason` adds four columns and is probed the same way; the two before that
- * could not be — `0021_mailbox_address_unique` creates only an index and
- * `0022_message_body_html_cap` only a CHECK, so they are probed by
- * {@link SCHEMA_INDEX_MARKERS} and {@link SCHEMA_CHECK_MARKERS} through two other catalogs. All
- * six ARE probed; only the mechanism differs. Unlike
- * {@link CLOUD_SCHEMA_MARKER_JOURNAL_TAG}'s data backfill, which genuinely has nothing to probe.
- *
- * `0027_organizer_lease` is probed TWICE and neither is redundant: `mailboxes.disabled_reason`
- * in {@link MAIL_SCHEMA_MARKERS}, because `MailboxService` selects whole rows and an API ahead of
- * the migration answers 42703 on the mailbox panel; and `mailboxes_disabled_reason_closed` in
- * {@link SCHEMA_CHECK_MARKERS}, because a column whose CHECK never landed is a privacy boundary
- * that is silently absent rather than loudly broken.
- *
- * `0029_mailbox_sync_block` is probed twice for exactly those two reasons — and this pin is the
- * reason anyone noticed. The change that shipped the migration and the column marker left this
- * constant at `0028_message_instances`, so the anti-drift gate went on approving a database from
- * before the migration that exists to end a 32-minute silence. The gate is not decoration: it
- * failed, named this line, and was the only thing that did — a deployed API reporting
- * `through 0028` reads as a stale alias, which is how it was misfiled for a day.
- *
- * `0030_sensitive_rescreen` is probed ONCE, by `mailboxes.sensitive_rescreen_at`, and the reason
- * it does not also earn a {@link SCHEMA_CHECK_MARKERS} entry is the reason 0027 and 0029 did: a
- * CHECK is probed separately when the migration HAS one, because a column whose constraint never
- * landed is silently absent rather than loudly broken. This migration adds a timestamp and closes
- * no set, so there is no second catalog object to probe and a second marker would be a number
- * that means nothing.
- *
- * `0031_tags` is probed TWICE — `tags.id` and `message_tags.tag_id` — and that is the first pair
- * on this list. It creates two tables in two statements, and the one the read path depends on is
- * the child: `materializeMessages` queries `message_tags` on every page, so a database holding
- * only the parent would 42P01 every message list while a single `tags.id` marker reported healthy.
- * One marker per CATALOG OBJECT a query touches, which is the same rule as always — this
- * migration is simply the first here to add more than one.
- *
- * Its unique index `tags_account_name_uq` is NOT in `SCHEMA_INDEX_MARKERS`, on 0026's rule: an
- * absent unique index here is not silent, because `create`'s `ON CONFLICT DO NOTHING` would stop
- * refusing duplicate names and the 409 path has a test that fails loudly. `mailboxes_active_address_uq`
- * is listed there because ITS absence is silent; this one's is not.
- *
- * `0032_unsubscribe_records` is probed ONCE, by `unsubscribe_records.list_key`, and the column is
- * chosen rather than `id` on the standing rule — probe the column a QUERY actually reads.
- * `list_key` is the one every statement in `UnsubscribeService` names: the claim inserts it, the
- * unique index that makes the claim at-most-once is built on it, and the repeat check reads it.
- * A database carrying an `unsubscribe_records` table without it is one where the idempotency key
- * does not exist, which is the single failure this whole table was added to prevent.
- *
- * Its unique index `unsubscribe_records_mailbox_list_uq` is NOT in `SCHEMA_INDEX_MARKERS`, and
- * this is the case where that decision was genuinely close. It follows `mailboxes_active_address_uq`
- * logic more than `tags_account_name_uq`'s: without the index the claim's `ON CONFLICT DO NOTHING`
- * raises Postgres 42P10 ("no unique or exclusion constraint matching the ON CONFLICT
- * specification") rather than silently succeeding — so the absence is LOUD, at the first
- * unsubscribe, and there is no window in which duplicate requests go out believing themselves
- * unique. A marker would be a number that cannot catch anything the first claim does not.
- *
- * There is no CHECK marker for `unsubscribe_records_state_closed` on 0030's rule inverted: the
- * migration DOES close a set, but every writer of `state` is a literal in one file and an absent
- * CHECK cannot mis-route mail or send a request — it can only let a typo persist a state no
- * reader handles, which the closed TS union already refuses at compile time.
- *
- * `0034_rule_retro` is probed ONCE, by `rules.retro_requested_at`, and the column is chosen on
- * the standing rule — probe the column a QUERY actually reads. `RulesService.create` writes it on
- * the DEFAULT path, since retroactive apply is the default, and `materializeRule` selects whole
- * rows through the drizzle schema, so an API deployed ahead of this migration answers Postgres
- * 42703 on every rule creation and on the whole rules surface. That is a 503 naming the
- * migration, not a 500 nobody can attribute.
- *
- * Its index `messages_account_from_addr_idx` IS in `SCHEMA_INDEX_MARKERS`, and it is the clearest
- * case on that list since `mailboxes_active_address_uq`. Absent, nothing raises and no test fails:
- * the retro pass returns the RIGHT rows, computed by a sequential scan over every message in the
- * account, once per page, once per cycle, per owed rule. The symptom is a worker whose cycle
- * quietly stops finishing — which is the exact silence that list exists for, and the opposite of
- * `tags_account_name_uq`, whose absence is loud. Its domain sibling
- * `messages_account_from_domain_idx` is not listed on the one-marker-per-migration economy: the
- * two are created by the same statement group and no database can have one without the other.
- *
- * `0035_account_settings` is probed ONCE, by `account_settings.seed_confirmed_at` — see the
- * marker itself for why that column and not `account_id`.
- *
- * `0036_sensitive_fp_backfill` is probed ONCE, by `mailboxes.sensitive_fp_backfill_at`, and it
- * is the first `mailboxes` marker since 0029 to carry a WORKER argument as well as the generic
- * one — worth saying because the entry directly comparable to it, `0030_sensitive_rescreen`,
- * makes a point of having no worker half. The difference is where the evidence lives: 0030's
- * pass re-decides stored rows and needs no mail server, while this one cannot decide anything
- * without re-reading the original message, so it has to run where the IMAP connection is. That
- * puts the worker back in the deploy order.
- *
- * It adds no CHECK marker, on 0030's rule: it closes no set, so there is no second catalog
- * object to probe and a second marker would be a number that means nothing. It adds no index
- * marker either, and that is a decision rather than an omission — the migration creates no
- * index, because the query it serves runs once per mailbox for the life of that mailbox and a
- * permanent partial index maintained by every sensitive ingest is a worse trade than the scans
- * it would save. The reasoning is in the migration; what belongs here is that its absence from
- * `SCHEMA_INDEX_MARKERS` is not an oversight.
- *
- * `0037_draft_html` is probed TWICE — `drafts.html` in the column list and `drafts_html_cap` in
- * `SCHEMA_CHECK_MARKERS` — and it is only the second migration to earn a CHECK marker beside its
- * column since 0029. The reason is stated at each marker; the part worth having here is why the
- * pair is not redundant. The column's absence is LOUD (42703 on the first draft read) and the
- * constraint's absence is SILENT, so one probe cannot stand for the other: a database that took
- * half of this migration would answer every request correctly while accepting a draft of any
- * size at all.
- *
- * It adds no INDEX marker, and that is a decision rather than an omission — the migration
- * creates no index. `drafts` is already covered by `drafts_account_updated_idx` from 0012, and
- * nothing queries on the new column: `html` is projected, never filtered.
- *
- * `0038_initial_import_completed` is probed ONCE, by `mailboxes.initial_import_completed_at`. It
- * carries the generic `mailboxes` argument (a whole-row select 42703s an API deployed ahead of
- * it) AND a worker one — `stampInitialImportComplete` writes the column, so the deploy order is
- * migration → API → worker, the same shape 0036 has. No CHECK marker, on 0030's rule (a timestamp
- * closes no set), and no INDEX marker: the column is projected, never filtered.
- *
- * `0039_mailbox_retry_after` is probed ONCE, by `mailboxes.retry_after`, and it is the first
- * `mailboxes` column on this list whose deploy order runs migration → WORKER → API. Every other
- * one goes API-then-worker because the API's whole-row select is the loud failure; this one is
- * the other way round because the API deploy is what makes `resync_mailbox` `available: true` in
- * the actions catalog, and the worker has to be able to honour a release before the console
- * offers the button. No CHECK marker (0030's rule) and no INDEX marker: the roster pass reads it
- * off a row it already has, and nothing filters on it.
- *
- * `0040_auto_suggest` is probed ONCE, by `account_settings.auto_suggest_at`, and it is the second
- * marker this table has earned. The argument is not the feature — the flag's only reader is a
- * browser, which reads absent as OFF and degrades to the pre-migration behaviour — it is that
- * `consentSettings` selects WHOLE ROWS, so an API deployed ahead of the migration 42703s `GET
- * /consent` for every account. The blast radius of the missing column is therefore a surface that
- * does not use it, which is the whole reason a nullable, unwritten column is on this list at all.
- * No CHECK marker (0030's rule) and no INDEX marker: read off a row already fetched by primary
- * key, never filtered on. No worker half, so no third deploy step.
- *
- * `0041_message_failures` is probed ONCE, by `message_failures.next_attempt_at`, and it is the
- * first entry on this list whose API half is the WEAK one. Nothing in `packages/api` reads or
- * writes that table and nothing may — a staff read of those rows is a delivery oracle — so there is
- * no whole-row select to 42703 and no surface to break. The marker is here for the worker: the
- * worker is the table's only reader and only writer, and a worker deployed ahead of the migration
- * refuses to skip a message it cannot record, which holds the folder's cursor and quarantines the
- * mailbox. Safe, and still an outage, so the order is migration → API → worker. No INDEX marker
- * (the partial index is a cost object; its absence is slow, not wrong) and no CHECK marker, because
- * `message_failures_code_closed` is created INSIDE the `CREATE TABLE` and could only ever fail
- * together with the column above.
- *
- * `0045_draft_bcc` is probed ONCE, by `drafts.bcc`, the twin of the `drafts.html` marker and for
- * the same sharper reason: `materializeDraft` and `SendService.reserve` both select WHOLE `drafts`
- * rows, so an API deployed ahead of the migration 42703s every draft read AND the send path —
- * compose and reply both dark, from a column a bcc-less send never reads. No CHECK marker (the
- * column is a plain jsonb default, no constraint) and no INDEX marker. No worker half: nothing in
- * `apps/worker` reads `drafts`, so the order is migration → API with no third step.
- *
- * `0046_screener_auto_apply` is probed ONCE, by `account_settings.screener_auto_apply_at`, the twin
- * of the `auto_suggest_at` marker and for the same whole-row-select reason: `consentSettings`
- * selects WHOLE `account_settings` rows, so an API deployed ahead of the migration 42703s `GET
- * /consent` for every account, from a column the consent surface never itself reads. Unlike the two
- * `drafts` markers there IS a worker half — the auto-apply pass probes the column each cycle — but
- * that read degrades to OFF on 42703, so the worker never blocks on it; the order is still
- * migration → API (and worker).
- *
- * `0047_read_order` is probed ONCE, by `messages.last_read_at`, and it is the first `messages`
- * column on this list since 0028. The whole-row-select argument every `account_settings` entry
- * above makes is the same argument, one order of magnitude larger: `messages` is the table every
- * read surface projects, so an API ahead of this migration 42703s the message list, the single
- * read, the delta feed and the snapshot — not a panel, the mail. No CHECK marker (a timestamp
- * closes no set) and no INDEX marker, because nothing filters or pages on the column; the sort it
- * feeds runs on the client. No worker half, so the order is migration → API.
- *
- * `0048_remote_images_default` is probed ONCE, by `account_settings.block_remote_images_at` — the
- * third `account_settings` marker, on the same whole-row-select argument as `auto_suggest_at` and
- * `screener_auto_apply_at`. It is slightly sharper than either: this column is written through
- * `PATCH /consent/settings` as well as read through `GET /consent`, so an API ahead of the
- * migration 42703s both directions of the consent surface. No worker half, no CHECK marker, no
- * INDEX marker. The order is migration → API — and note that this is the one column here whose
- * ROLLBACK is not safe in the usual direction: dropping it returns every opted-out account to
- * auto-loading, so the API goes back before the column does. See the migration.
- *
- * `0049_mailbox_sync_requested_at` is probed ONCE, by `mailboxes.sync_requested_at`, on the
- * whole-row-select rule its own migration file already states. **It was added two migrations late**
- * — the migration landed with no marker, no tag bump and no census bump, so this probe would have
- * approved a database predating it for as long as nobody looked. The failure it now catches is not
- * the doorbell (that write is caught and best-effort, deliberately) but `select().from(mailboxes)`
- * answering 42703, which takes out the mailbox list and every read that resolves a mailbox. Worker
- * half is safe (a failed kick scan degrades to poll-only). No CHECK, no INDEX marker.
- *
- * `0050_rule_subject_contains` is probed TWICE — by `rules.subject_contains` AND by the
- * `rules_subject_contains_nonempty` CHECK — and it is the only mail entry with both halves since
- * 0027. The column half is the second-strongest whole-row case on the list after
- * `messages.last_read_at`: `rules` is enumerated by `materializeRule` (the rules surface, the
- * `/sync` delta, the 201 of every rule the sender sheet writes) AND by
- * `drizzle-repo.ts#listRules`, which is what the ROUTER consults on arrival — so a too-early API
- * both 42703s the surface and stops filing mail. The CHECK half is listed separately because the
- * two fail differently and only one is loud: a column present without its constraint accepts `''`,
- * which is a rule matching EVERY subject while its row reads as specific. Worker half is NOT the
- * safe kind (a routing read that 42703s stops organizing rather than degrading), so the order is
- * migration → API → worker with the first arrow load-bearing.
- *
- * `0051_away_responder` is probed ONCE, by `away_responders.audience` — the first marker on this
- * list belonging to a feature that SENDS MAIL. `AwayResponderService` selects whole rows and `put`
- * returns the inserted one, so an API ahead of the migration 42703s both `/away-responder`
- * endpoints: somebody already away could not turn their responder off. The worker half is real and
- * is the third step (the pass reads this row and writes `away_responder_sent`), and it fails in the
- * safe direction — a 42703 inside the pass is caught, logged and sends nothing. No INDEX marker and
- * no CHECK marker; the marker beside the column says why the CHECK does not need one.
- *
- * `0052_rule_body_contains` is probed TWICE — by `rules.body_contains` AND by the
- * `rules_body_contains_nonempty` CHECK — on `0050`'s two-halves argument verbatim: it is the same
- * `rules` table both product halves enumerate, and the same ambiguous-value CHECK whose absence
- * fails silently. One sharpening: without its constraint a stored `''` is a rule matching EVERY
- * MESSAGE, not every subject, because every message has a body to substring. Same deploy order,
- * same load-bearing first arrow.
- *
- * `0053_account_locale` is probed TWICE — by `account_settings.locale` AND by the
- * `account_settings_locale_supported` CHECK — and it is the fourth mail entry with both halves. The
- * column half is the `account_settings` whole-row case for the fourth time (`consentSettings` selects
- * the row, so a too-early API 42703s the entire consent surface and not merely this preference). The
- * CHECK half is the sharpest silent-failure case on that list: every reader of an unsupported locale
- * degrades to English on purpose, so a column without its constraint yields an account whose language
- * setting does not work and logs nothing anywhere. No worker half at all — nothing in the sync loop
- * reads it — and no INDEX marker, since the column is read off a row fetched by primary key and is
- * never a predicate.
- *
- * `0054_auto_unsubscribe_optout` is probed ONCE, by `account_settings.block_auto_unsubscribe_at` —
- * the fifth `account_settings` marker, on the same whole-row-select argument as the four before
- * it, and the one whose too-early failure is the QUIETEST on this list. The column is read by
- * `UnsubscribeService.onScreenOut`, whose contract is that it never throws at its caller, so a
- * 42703 there is caught and counted as a skip: the screen-out commits, the unsubscribe silently
- * stops happening, and nothing anywhere says so. A `503 schema_incomplete` in front of the whole
- * API is a better outcome than a feature that turns itself off without a log line. No CHECK marker
- * (a timestamp closes no set), no INDEX marker (read off a row fetched by primary key, never a
- * predicate) and no worker half — nothing in the sync loop reads it.
- *
- * `0055_mailbox_smtp_max_size` is probed ONCE, by `mailboxes.smtp_max_size_bytes` — the sending
- * server's own `SIZE` announcement, recorded by the connect-time SMTP probe. Two whole-row readers
- * rather than one, which is what makes it the sharpest `mailboxes` marker: `MailboxService.list`
- * enumerates the row (so a too-early API 42703s the mailbox panel and every mailbox resolution) and
- * `SendService.reserve` enumerates it inside the transaction that reserves a send, so the same
- * missing column takes out SENDING. That second failure is the safe half of an unsafe one — it
- * happens before the reservation commits, so nothing is stranded out of `draft` — but it is still a
- * user who cannot send, which is why the 503 in front of it is worth more than the diagnosis
- * afterwards. No CHECK marker (a size closes no set) and no INDEX marker (read off a row fetched by
- * primary key, never a predicate); no worker half — nothing in the sync loop reads it.
- *
- * `0056_screening_baseline` is probed ONCE, by `account_settings.screening_baseline_at` — the
- * sixth `account_settings` marker, on the whole-row-select argument all five before it make
- * (`consentSettings` does `select().from(account_settings)`). What distinguishes it is that it has
- * a WORKER half as well as an API one, and the two fail in opposite directions. The API's failure
- * is loud: `GET /consent` is the boot fetch the shell partitions its mirror from, so a 42703 there
- * is a client drawing the Screener over the raw mirror. The worker's is silent by construction —
- * `screeningFor` catches the read, logs, and returns the lenient value WITHOUT caching it, so a
- * worker ahead of the migration routes exactly as it did before this column existed. That is the
- * intended degradation and not a reason to skip the marker: the 503 in front of the API is what
- * makes the window visible instead of merely survivable. No CHECK marker (any instant is a legal
- * baseline), no INDEX marker (read off a row fetched by primary key, never a predicate).
- *
- * `0057_message_from_name` is probed ONCE, by `messages.from_name` — the From header's display
- * name, the sender's half of the recipients repair. The whole-row-select argument at its widest:
- * `materializeMessages` and the single message read select whole `messages` rows, so an API ahead
- * of the migration 42703s the message list, the single read, the delta feed and the bootstrap
- * snapshot — the entire mail surface. The WORKER half fails loud, not silent: `insertMessage`
- * names the column unconditionally, so a worker ahead of the migration fails ingest with the same
- * 42703 into the cycle's ordinary quarantine rather than dropping names on the floor, which is
- * the defect this column ends. Deploy order: migration → API → worker. No CHECK marker (a
- * sender-chosen display name closes no set), no INDEX marker (projected off rows already fetched;
- * never a predicate).
- *
- * `0058_reconcile_backoff` is probed ONCE, by `folder_state.next_attempt_at`, for four columns —
- * `attempts` and `next_attempt_at` on `folder_state` and on `flag_state`, all created by one
- * migration in one transaction, so a state where one exists without the others is unreachable. The
- * probed column is the one the pending-move query FILTERS on. Widest whole-row-select argument
- * again: `materializeMessages` selects whole `folder_state` rows for the message list, the single
- * read and the bootstrap snapshot, so an API ahead of the migration 42703s the mail surface; the
- * worker half is equally loud, because the reconcile pass both filters and writes the pair. Deploy
- * order: migration → API → worker. No CHECK marker (an instant closes no set and `attempts` is a
- * count), no INDEX marker (the migration adds none, by design).
- *
- * `0059_pairing_tokens` is probed ONCE, by `pairing_tokens.token_hash` — a whole new table, so
- * the failure ahead of the migration is 42P01 on the pairing surface (self-host composition
- * only; no other table mounts `/pair*`). The probed column is the one the redeem's single
- * atomic UPDATE names in its WHERE, which is where the ceremony's single-use guarantee lives.
- * No worker half: nothing in the sync loop reads or writes it. Deploy order: migration → API,
- * no third step. No CHECK marker for the grant CHECK (every writer is a literal behind a closed
- * TS union, and the redeem names the grant in its own WHERE, so an absent CHECK cannot mis-spend
- * a token), no INDEX marker (the UNIQUE on `token_hash` is the redeem's lookup and its absence
- * is loud, not silent).
- *
- * `0060_refresh_tokens` is probed ONCE, by `refresh_tokens.family_id` — the column the
- * family-revocation sweep predicates on. The table is old on hosted databases (cloud 0000) and
- * new only on mail-only desktop stores, so the probe's real subject is the desktop tier; the
- * marker entry above carries the nuance.
- *
- * `0061_web_sessions_deviceless` is probed by NOTHING, and that absence is a decision, not a
- * gap: it is a DATA backfill (auto-minted "Web" device rows detached from their sessions —
- * DEVICES) that creates no table, no column, no index and no constraint, so a database before
- * and after it is SCHEMA-IDENTICAL and there is no object a probe could select. The anti-drift
- * gate (`health.test.ts`: "each marker tag is still the NEWEST entry in its own journal")
- * exists to force exactly this sentence to be written when a migration lands; what it cannot
- * force — the census being unable to see data — the deploy runbook carries instead (applied to
- * prod before the API alias, re-run idempotently after). The one behavioral consequence of a
- * missed apply is cosmetic and self-healing: the Devices pane groups legacy "Web" rows as
- * named devices until the statements run.
- *
- * `0062_storage_accounting` is probed TWICE — `account_storage.bytes` (a whole new table) and
- * `message_bodies.withheld_reason` (the widest whole-row-select on the reading surface) — the
- * entries in {@link MAIL_SCHEMA_MARKERS} carry both arguments. Its backfill is data and, like
- * 0061's, belongs to the runbook: re-run once after the worker deploy, because the OLD worker
- * keeps ingesting uncounted bodies between the pre-alias migration and its own restart, and the
- * backfill's `ON CONFLICT … DO UPDATE` recomputes rather than preserves.
- *
- * `0063_smtp_size_probe_stamp` is probed TWICE, and the pair is 0027's exactly: `mailboxes
- * .smtp_size_probed_at` in {@link MAIL_SCHEMA_MARKERS}, because `MailboxService.list` and
- * `SendService.reserve` select whole rows and a too-early API 42703s the mailbox panel and the
- * send reservation; and `mailboxes_smtp_size_probe_code_closed` in {@link SCHEMA_CHECK_MARKERS},
- * because the code column's constraint is what keeps a submission server's own AUTH response line
- * out of a row an operator reads, and a constraint that never landed is silently absent rather
- * than loudly broken. Two columns, one column marker: they land in one statement block inside one
- * transaction, so no database can hold one without the other, and the one named is the column the
- * pass's SELECTION filters on. It has no data statement and no index, so there is nothing left for
- * the runbook to carry.
- *
- * `0064_device_sync_stamp` is probed as `devices.last_synced_at` (its entry carries the
- * whole-row-select argument). Its landing did not bump this tag — the anti-drift gate was red
- * from that commit until 0065's markers landed, which is exactly the drift the gate exists to
- * catch; recorded here rather than silently healed.
- *
- * `0065_junk_trash_delete` is probed TWICE — `mailboxes.trash_folder` (the delete refusal's
- * read, plus `MailboxService.list`'s whole-row select) and `messages.deleted_at` (the snapshot
- * bootstrap and search predicates). The widened `message_bodies_withheld_reason` CHECK rides
- * the same migration transaction as the columns, so the column probes imply it (0030's rule).
- * No data statement, no index; deploy order migration → worker → API is the file's own header.
- *
- * `0066_folders_enabled` is probed as `account_settings.folders_enabled_at` — the whole-row
- * `consentSettings` select means a too-early API takes out the entire consent surface, and the
- * marker names the migration instead. One column, no CHECK, no index, no worker half.
- *
- * `0069_folders_enabled_reissue` re-runs 0066's one idempotent statement from above the
- * journal maximum (0066's original position was skippable on databases that migrated between
- * two lanes' landings — `REISSUED_ORIGINALS` in packages/db/src/baseline.ts carries the whole
- * account, including why the file is a byte copy). Same column, so the 0066 marker covers it.
- *
- * `0070_session_sync_stamp` is probed as `sessions.last_synced_at` — the per-SESSION sync
- * horizon (0064's twin for deviceless installs). The whole-row-select blast radius is the
- * AUTH surface: `rotateRefresh`, `listDevices` and `requireStepUp` all
- * `select().from(sessions)`, so a too-early API 42703s token refresh itself. One column, no
- * CHECK, no index, no worker half.
- *
- * `0071_withheld_provenance_index` adds no column and is probed as the INDEX
- * `message_bodies_withheld_idx` (in `SCHEMA_INDEX_MARKERS`, not here): the partial index the
- * worker's `junk_filed` convergence pass reads husks by. Its absence is the silent kind — a slow
- * cycle, never a 42703 — which is exactly the class the index list exists for.
- *
- * `0072_tracking_pixels_optout` is probed as `account_settings.load_tracking_pixels_at` — the
- * opt-out of pixel blocking, one nullable column read by the whole-row `consentSettings` select.
- *
- * `0073_mailbox_folders_optout` is probed as `mailboxes.folders_disabled_at` — the per-mailbox
- * "Use folders" exception stamp, one nullable column read by the whole-row `MailboxService.list`
- * select and the `listUserFolders` join.
- *
- * `0074_folder_ops` is probed as the TABLE `folder_ops` (its `id` column) — the user-commanded
- * folder verbs' command table (create / rename / delete). The /folders verbs INSERT into it and
- * every folder materializer LEFT JOINs it for the pending-op marker, so a too-early API 42704s
- * the folder reads of every "Use folders" account.
- *
- * `0075_mailbox_signature` is probed as `mailboxes.signature` — the per-mailbox signature
- * text, one nullable column read by the whole-row `MailboxService.list` select and by name in
- * `mailboxSignatures` (the `GET /consent` map).
- *
- * `0076_junk_sweep_request` is probed as `mailboxes.junk_sweep_requested_at` — the one-time
- * Quarantine→Junk sweep's command stamp, one nullable column read by the whole-row
- * `MailboxService.list` select and by name in the sweep preview (`GET /screener/junk/sweep`).
- *
- * `0077_send_later` is probed as `drafts.send_at` — Send later's appointment, three nullable
- * columns read by the whole-row `materializeDraft` select (the drafts CRUD, the schedule verbs
- * and every `draft` `/sync` change) and by name in the worker's due scan.
- *
- * `0078_inbound_quiet` is probed as BOTH its columns — `mailboxes.inbound_quiet_since` and
- * `mailboxes.inbound_quiet_dismissed_at`, the forwarding-detection notice's evidence pair —
- * each read by the whole-row `MailboxService.list` select; the dismissal route writes the
- * second by name.
- *
- * `0079_erasure_fence` is probed as `accounts.erased_at` — the durable erasure marker every
- * settings writer reads FOR SHARE at the top of its transaction (`erasure-fence.ts`), so an API
- * ahead of it 42703s the whole consent-write surface.
- *
- * `0080_sessions_access_token_hash_idx` is probed as `sessions_access_token_hash_idx` — in
- * {@link SCHEMA_INDEX_MARKERS}, not here, because its whole content is an index and
- * `information_schema.columns` is blind to those.
- *
- * `0081_sensitive_rescreen_cursor` is probed as BOTH its columns —
- * `mailboxes.sensitive_rescreen_cursor` and `mailboxes.sensitive_rescreen_started_at`, the
- * one-time re-screen's durable resume point and the instant of the walk it belongs to (the
- * window its completion check looks back over). Two markers for a two-column migration, as
- * `0078_inbound_quiet` above. They are columns on `mailboxes`, and `MailboxService` selects whole
- * rows, so an API ahead of them 42703s the mailbox list rather than only the operator pass.
- *
- * `0083_organizer_role` is probed as FIVE columns and FOUR CHECKs — see both lists' own entries
- * for why five and not nine. The object `health.test.ts` names as its proof is
- * `mailboxes_organizer_role_closed`: the CHECK rather than the column, 0082's rule, because the
- * constraint is the stronger probe of the two.
- *
- * `0084_ai_answered` is probed as `accounts.ai_answered_at`.
- *
- * `0085_heal_disabled_readers` and `0086_heal_reader_address_wide` are DATA-ONLY and get no marker
- * — no column, no constraint, nothing to probe. `health.test.ts` skips such entries by reading
- * their statements, which is why the tag below skips over them too.
- *
- * `0087_away_reply_throttle` is probed as `away_responders.throttle` — see that marker's own entry
- * for why the column and not either of the two tables the migration creates.
- *
- * `0088_symmetric_takeover` is probed as TWO columns and TWO CHECKs —
- * `mailboxes.organizer_event_at` (the notice, and the column whose absence is quiet on the worker
- * side) and `organizer_requests.state`, plus both of that table's closed sets. See each list's own
- * entry for why two columns and not four.
- *
- * `0089_organizer_capability` is probed as `mailboxes.organized_by_capabilities` — the fifth
- * holder column, a single additive nullable field, so one column is the whole probe.
- *
- * `0090_request_key` is probed as `organizer_requests.refused_reason` — one additive nullable
- * column, so one column is the whole probe. Its NAME promises a key column that the migration
- * deliberately does not create (the signing key is derived, never stored), and probing for one
- * would fail against a correctly migrated database.
- *
- * `0091_request_refusal_closed` adds NO column — it closes the set behind the column 0090 added —
- * so it is probed by its CHECK alone, in `SCHEMA_CHECK_MARKERS`. That is the whole of it, and it is
- * the case those lists exist for: a database with the column and without the constraint accepts
- * whatever a write site lets through and says nothing.
- *
- * `0092_organizer_install_id` is probed as `mailboxes.organized_by_install_id` — the sixth holder
- * column, one additive nullable field, so one column is the whole probe. It had a marker and no
- * paragraph here, which is half of what this docblock is for; the enumeration is completed rather
- * than left with a gap between 0091 and 0093.
- *
- * `0093_outbound_send_fingerprints` creates a TABLE, and is probed by BOTH halves: the column
- * `outbound_send_fingerprints.fingerprint` (which proves the table, since a column probe on a
- * missing table fails) and the CHECK `outbound_send_fingerprints_hex`. Two markers and not one,
- * because they answer different questions — the column is what the send path 42P01s on when it is
- * absent, and the CHECK is what the operator console's isolation sweep reads when it classifies
- * that column as refused-by-constraint rather than as free text.
- *
- * `0094_request_kinds_moves_profile` creates a TABLE and WIDENS a CHECK, and gets ONE marker:
- * `mailbox_profile_mirror.doc`, the settings document an install that only READS a mailbox
- * caches from the mailbox itself. The column proves the table, for the reason the entry above
- * gives. The widened `organizer_requests.kind` CHECK gets no marker of its own: a CHECK that
- * gained a member cannot be detected by reading a column name, and its absence surfaces as a
- * refused INSERT at the write site rather than as a silent read. The list entry's own comment
- * carries the argument for why a table whose absence degrades QUIETLY earns a marker at all.
- *
- * `0095_outbound_send_resolution` is probed as `outbound_sends.resolved_by` — one of the two
- * columns it adds, because the send door selects the reservation row WHOLE on its replay branch
- * and the resolve verb writes both columns in one UPDATE. Its FK change is unprobeable by
- * construction (dropped and re-added under the same name), which that marker's entry records.
- *
- * `0098_signature_html` is probed as `mailboxes.signature_html` — the signature's markup half, one
- * additive nullable field.
- *
- * `0099_folder_state_trashed_from` is probed as `folder_state.trashed_from` — where a delete moved
- * a message out of, one additive nullable field, and the operand of both Trash doors. It was
- * the newest PROBEABLE entry, and the tag below, until this migration landed behind it; mail
- * 0100 and 0101 landed between the two and moved neither.
- *
- * `0102_sync_blocked_reason_read_limited` is probed by CONSTRAINT DEFINITION and not by a column,
- * because it adds none: it widens `mailboxes_sync_blocked_reason_closed` to a fourth member. That
- * constraint's NAME is already probed by {@link SCHEMA_CHECK_MARKERS} and is satisfied by the old
- * three-member definition, so the entry that distinguishes the two databases is the one in
- * {@link MAIL_CHECK_DEFINITION_MARKERS}. **It is the newest entry, so it is also the tag below** —
- * and it is the first mail tag whose prober is not a `(table, column)` pair, which is why the
- * paragraph above no longer carries that sentence.
- *
- * `0100_reader_window_peer_restamp` gets NO marker and does NOT move the tag. It changes no
- * schema: one DML statement over `folder_state.last_set_by`, a column that has existed for many
- * migrations, so there is nothing a marker could read that a database without it would fail. That
- * is mail 0061's rule (see its entry in `baseline-adoption.test.ts`: a data-only migration is
- * unprobeable and carries no marker), and advancing the tag to it anyway is precisely the lie the
- * paragraph below records — `/health` would certify a 0099 database as being through 0100.
- *
- * The "newest" sentence is the one this docblock keeps getting wrong, and it now says which KIND
- * of newest it means. It stood on `0081` and then on `0083` while the tag had already moved to
- * `0084`, so the file asserted "newest" of three different entries at once. If you add a marker,
- * move the sentence; if you add a data-only migration, add an entry like 0100's and leave both
- * the sentence and the tag where they are.
- *
- * **THE FIRST VERSION OF THIS BUMPED THE TAG AND ADDED NO MARKER, on the stated ground that "the
- * census probes COLUMNS". That ground is false and the mistake is recorded rather than quietly
- * corrected, because it is the exact failure `SCHEMA_INDEX_MARKERS` was created to prevent** —
- * see its own docblock, which says a database missing an index-only migration was certified
- * `schemaOk: true`. Advancing `through` to 0080 while probing nothing 0080 added would have made
- * `/health` certify a 0079 database as being through 0080: a WORSE lie than the stale tag it was
- * fixing, and one no test would have caught, because the expected count is derived from these
- * lists and would have moved in step with the omission.
+ * The newest entry of the MAIL journal, which {@link MAIL_SCHEMA_MARKERS} is reconciled to; a
+ * test asserts the tag is the newest entry in its own journal. The rules (each marker's entry
+ * argues its migration): probe the column a query reads, once per table facet; index-only and
+ * CHECK-only migrations are probed through their own lists; a replaced definition through the
+ * definition markers; a DATA-ONLY migration is unprobeable, gets no marker, and must not move the
+ * tag — advancing `through` while probing nothing the migration added is a worse lie than a stale
+ * tag, and shipped once (recorded in `SCHEMA_INDEX_MARKERS`' docblock). Add a marker: move this
+ * sentence with the tag. Add a data-only migration: leave both.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
@@ -2029,42 +932,27 @@ export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0103_organizer_kind_mobile";
  * reason: it interpolates the cloud tag. */
 
 /**
- * ONE ROUND TRIP, run once and read twice.
- *
- * `GET /admin/overview` has to publish the SAME `ApiHealth` a probe would see — the console's
- * whole claim is that it renders what `/health` says, not a second opinion — and the only way
- * for two endpoints to agree about that is for them to execute the same statement and the same
- * verdict. A copy of this SQL in `admin-service.ts` would drift on the first schema marker
- * anybody adds, and the drift would be invisible: both endpoints would keep answering 200.
- *
- * It returns the RAW probe rather than a rendered body because the two callers need different
- * shapes: `/health` has a published body this refactor may not alter by a single key, and the
- * console needs `ApiHealth`. The rendering therefore stays with each caller; only the query
- * and the fault ordering are shared.
+ * One round trip, run once and read twice. `GET /admin/overview` has to publish the same
+ * `ApiHealth` a probe would see — the console's claim is that it renders what `/health` says, not
+ * a second opinion — and the only way for two endpoints to agree is to execute the same statement
+ * and the same verdict; a copy of this SQL in `admin-service.ts` would drift on the first schema
+ * marker added, invisibly, both endpoints still 200. It returns the raw probe rather than a
+ * rendered body because the two callers need different shapes: `/health` has a published body
+ * this may not alter by a single key, and the console needs `ApiHealth` — the rendering stays
+ * with each caller.
  */
 export type HealthProbe =
   | { kind: "unreachable"; dbLatencyMs: number; errorCode: string | null }
   | { kind: "empty"; dbLatencyMs: number }
   /**
-   * REACHABLE, AND THE SCHEMA CENSUS DOES NOT APPLY TO THIS STORE.
-   *
-   * The census below reads five Postgres catalogs — `information_schema.columns`, `pg_indexes`,
-   * `pg_constraint`, `pg_get_constraintdef` and `pg_proc`. A device store has none of them; its
-   * catalog is `sqlite_master` and `pragma table_info`, which is a different question rather than a
-   * different spelling, and its schema is guaranteed by a different journal run by a different
-   * migrator.
-   *
-   * ── WHY THIS ARM EXISTS RATHER THAN THE STORE READING AS UNREACHABLE ──────────────────────
-   *
-   * It read as unreachable, and that was measured on a working phone: `/health` answered 503
-   * `database_unreachable` with `dbLatencyMs: 0` while the very same composition answered `/hello`
-   * 200 and served mail. The census statement throws on the device store, the `catch` below owns
-   * every failure, and "the query did not run" is indistinguishable there from "the database is
-   * gone". A person would be shown a false state about their own mail, which is the one thing a
-   * health endpoint must never do.
-   *
-   * So liveness is asked FIRST and asked in a way both stores answer, and the census runs only
-   * where its catalogs exist. `ok` on this arm means what it says: the store answered.
+   * Reachable, and the schema census does not apply to this store. The census reads five Postgres
+   * catalogs; a device store has none of them — its catalog is `sqlite_master`, a different
+   * question, and its schema is guaranteed by a different journal run by a different migrator.
+   * This arm exists because the store read as unreachable, measured on a working phone: `/health`
+   * answered 503 `database_unreachable` while the same composition served mail — the census
+   * statement throws on the device store, and "the query did not run" was indistinguishable from
+   * "the database is gone". Liveness is asked first, in a way both stores answer; the census runs
+   * only where its catalogs exist. `ok` on this arm means the store answered.
    */
   | { kind: "live"; dbLatencyMs: number }
   | { kind: "probed"; dbLatencyMs: number; pgTrgm: boolean; schemaOk: boolean; markersFound: number };
@@ -2102,31 +990,23 @@ export async function probeDatabase(
 ): Promise<HealthProbe> {
   const started = Date.now();
   /**
-   * ── THE DEVICE STORE'S ARM, AND IT IS DELIBERATELY *BEFORE* EVERYTHING ELSE ───────────────
-   *
-   * The Postgres path below is left byte-for-byte as it was, including its single statement and
-   * what `dbLatencyMs` therefore measures. That is not tidiness: the hosted `/health` body is
-   * published and its test must stay identical, so the safest possible shape for this change is
-   * one that does not execute a line of new code on a Postgres host. This branch returns before
-   * any of it.
-   *
-   * `select 1` and nothing else, through the dialect seam so it renders on either store. The
-   * question is "does the store answer", which is the only question a health endpoint can ask a
-   * store whose schema it cannot census.
+   * The device store's arm, deliberately before everything else. The Postgres path below stays
+   * byte-for-byte as it was, including its single statement and what `dbLatencyMs` measures: the
+   * hosted `/health` body is published and its test must stay identical, so the safest shape is
+   * one that executes no new code on a Postgres host — this branch returns before any of it.
+   * `select 1` and nothing else, through the dialect seam so it renders on either store: "does
+   * the store answer" is the only question a health endpoint can ask a store whose schema it
+   * cannot census.
    */
   /**
-   * ── THE TEST IS "IS IT THE DEVICE STORE", NOT "IS IT NOT POSTGRES", AND THE CONTROL SAID SO ──
-   *
-   * Written first as `dialectOf(db) !== "pg"`, which fails on an UNBRANDED handle — `dialectOf`
+   * The test is "is it the device store", not "is it not Postgres", and the control said so:
+   * written first as `dialectOf(db) !== "pg"`, which fails on an unbranded handle — `dialectOf`
    * refuses one by design — and the hosted `/health` suite hands this function hand-built fakes
-   * that carry no brand. Six of its cases went red, which is precisely what that suite is for:
-   * it is the control that says whether Postgres behaviour moved, and it said yes.
-   *
-   * So the Postgres path is the DEFAULT and only a handle that positively identifies itself as the
-   * device store takes the branch below. Fail-open is the right direction here because of what the
-   * decision actually is — whether to ask five Postgres catalogs a question — and because an
-   * unbranded handle reaching a store at all is a violation the seam refuses in its own right
-   * (every factory that opens one brands it).
+   * carrying no brand; six of its cases went red, which is what that suite is for. So the
+   * Postgres path is the default, and only a handle that positively identifies itself as the
+   * device store takes the branch. Fail-open is right here: the decision is whether to ask five
+   * Postgres catalogs a question, and an unbranded handle reaching a store at all is a violation
+   * the seam refuses in its own right.
    */
   let deviceStore = false;
   try {
@@ -2375,17 +1255,13 @@ export const healthRoutes: Route[] = [
       // legitimately unmetered one. Emitted on every branch, like dbProvider and for its reason.
       const entitlements = injected?.entitlements ?? null;
 
-      // THE PAGER'S ARMS — the worker's boot announcement, in the idiom a serverless host has.
-      //
-      // A memory read (`HealthConfig.alertSinks` says why it is a capability and not a value), so
-      // it costs no round trip and is published on EVERY branch below, beside `dbProvider` and
-      // `entitlements`: a host that cannot reach its database is exactly when "does this deployment
-      // still have a way to page anybody?" is worth the most.
-      //
-      // Two keys, from one call. `alertSinks` is the same key, the same shape and the same closed
-      // codes the worker's `/health` publishes, so the two are a literal JSON diff — the property
-      // the `kek` object was given for the same reason. `alertPasses` is what stops the counters
-      // from lying on a cold instance; see `AlertSinkSummary.passes`.
+      // The pager's arms — the worker's boot announcement, in the idiom a serverless host has. A
+      // memory read (`HealthConfig.alertSinks` says why it is a capability), so it costs no round
+      // trip and is published on every branch below, beside `dbProvider` and `entitlements`: a
+      // host that cannot reach its database is exactly when "can this deployment still page
+      // anybody?" is worth most. Two keys from one call: `alertSinks` is the same key, shape and
+      // closed codes the worker publishes, so the two are a literal JSON diff; `alertPasses` is
+      // what stops the counters lying on a cold instance.
       let pager: Record<string, unknown> = {};
       if (injected?.alertSinks) {
         try {
@@ -2451,16 +1327,13 @@ export const healthRoutes: Route[] = [
       }
 
       /**
-       * THE DEVICE STORE ANSWERED, and there is no schema census to report for it.
-       *
-       * `schemaOk` and the marker counts are Postgres-catalog readings, so they are ABSENT here
-       * rather than reported as zero — a `found: 0, expected: 47` body would read as a broken
-       * schema on a store whose schema is fine, which is the false state this arm exists to stop
-       * being shown. `pgTrgm` is absent for the same reason: it names a Postgres extension.
-       *
-       * The key faults that are NOT store-shaped still apply, which is why this goes through
-       * `healthFault` rather than returning 200 flat: a missing install key or a broken build is
-       * as wrong on a phone as anywhere else.
+       * The device store answered, and there is no schema census to report for it. `schemaOk` and
+       * the marker counts are Postgres-catalog readings, so they are absent rather than zero — a
+       * `found: 0, expected: 47` body would read as a broken schema on a store whose schema is
+       * fine, the false state this arm exists to stop being shown; `pgTrgm` is absent for the
+       * same reason. The key faults that are not store-shaped still apply, which is why this goes
+       * through `healthFault` rather than returning 200 flat: a missing install key or a broken
+       * build is as wrong on a phone as anywhere else.
        */
       if (probe.kind === "live") {
         const liveFault = healthFault({

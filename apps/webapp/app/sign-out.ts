@@ -16,55 +16,14 @@ import { DELETE_INTENTS_PREFIX } from "./shell/delete-intents";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 
 /**
- * THE ONE CORRECT WAY TO SIGN OUT OF THE WEB CLIENT.
- *
- * `POST /auth/logout` revokes the session server-side and clears the cookies. It does NOT
- * touch the browser, and the browser is where the mail is: `IndexedDbMirrorStore` has
- * persisted every message, thread, tag and screener decision that ever came down `/sync`
- * into a database on this origin. A sign-out that leaves it there leaves a readable copy of
- * the mailbox on a machine the user has just declared they are done with — which on a
- * shared or borrowed computer is the whole point of signing out.
- *
- * The mirror being account-scoped (see `packages/client-engine/src/idb.ts`) closes the
- * cross-account READ: the next person to sign in opens a different database. This closes
- * the other half — what is left behind at rest.
- *
- * ── ORDER, AND WHY IT IS THIS WAY ROUND ─────────────────────────────────────────────────
- *
- * The server call goes first because it is the one that can fail in a way worth reporting,
- * and the wipe runs REGARDLESS of whether it succeeded. A logout whose network call failed
- * is still a user who asked to be signed out of this browser; refusing to clear local mail
- * because the server was unreachable would be the wrong way round.
- *
- * ── THE NAME GOES WITH THE MAIL, IN ONE ACT ─────────────────────────────────────────────
- *
- * The shell opens a mirror on its first render from a remembered account id in a cookie, before
- * the server has confirmed anything (`shell/owner-cookie.ts`). That is safe precisely because
- * the two facts stay together: the name is only ever present while the mail it names is.
- *
- * Splitting them is what would be unsafe, and only one of the two halves is under our control
- * here. `POST /auth/logout` clears the cookie server-side, and that is the authoritative clear —
- * but it is also the half that fails when the network does, and a person on a borrowed machine
- * asking to be signed out is asking whether or not the server answers. So the cookie is cleared
- * in the same `finally` as the wipe: after this returns, this browser holds neither the mail nor
- * the name, however the request went.
- *
- * The order inside the `finally` does not matter — nothing renders between them — but the
- * pairing does, and it is why both live on this one line rather than at two call sites.
- *
- * ── AND IT REPORTS WHAT IT COULD NOT TAKE BACK ──────────────────────────────────────────
- *
- * This used to answer `void`, which made the header's claim above unfalsifiable: an IndexedDB
- * delete is BLOCKED while any other connection holds the database open, `clearAllMirrors`
- * resolved on that, and the pane navigated away. Our own page yields its handle; a SECOND TAB
- * on the mailbox does not. So signing out of tab A with tab B open said "signed out" and left
- * the whole mirror on disk — on exactly the borrowed machine this exists for. The result names
- * what survived, and the pane says so instead of leaving.
- *
- * The server call, the cookie and the localStorage sweep are all unconditional and stay in the
- * `finally`: those halves always land, and the user asked for them however the wipe went.
- *
- * The sign-out guard asserts that any call to `auth.logout` in this app goes through here.
+ * The one correct way to sign out of the web client. `POST /auth/logout` revokes the session and clears
+ * cookies; the browser is where the mail is, and a sign-out that leaves the mirror behind leaves a
+ * readable mailbox on a machine the user just said they are done with. The server call goes first (the
+ * failure worth reporting) and the wipe runs REGARDLESS. The name goes with the mail in one act:
+ * the `tf_owner` cookie is cleared in the same `finally` as the wipe. It reports what it could not take back: an
+ * IndexedDB delete is BLOCKED while another tab holds the database, so tab A once said "signed out"
+ * leaving the mirror on disk while tab B was open — the result names what survived and the pane says so.
+ * The sign-out guard asserts every `auth.logout` call goes through here.
  */
 export interface SignOutResult {
   /** True only when this browser is verifiably holding no mirror any more. */
@@ -106,27 +65,14 @@ export async function forgetThisBrowser(
   opts: {
     revokeWake?: boolean;
     /**
-     * TRUE when the server MAY STILL HOLD THIS SESSION — the logout was refused, or never
-     * reached anybody. Only `signOut` passes it, and only from its own `serverRefused`.
-     *
-     * ── WHY IT CHANGES WHAT IS WRITTEN, RATHER THAN WHETHER ────────────────────────────────
-     *
-     * The local half runs whatever the server said, and that is right: somebody on a borrowed
-     * machine asking to be signed out is asking whether or not the network answers. Erasing the
-     * OWNER MARKER as part of it was the mistake, and only in this one case.
-     *
-     * The marker is the one thing on this origin that says whose session the browser holds, and
-     * a mailbox window open for a DIFFERENT account reads it before every request. Absence is
-     * read as silence — a legitimate session whose marker was dropped — so clearing it while an
-     * HttpOnly session was still live handed that window a permission it should never have had:
-     * it went on syncing, reading and mutating through the session this sign-out had just failed
-     * to revoke, into a mirror named for somebody else.
-     *
-     * So this path writes {@link OWNER_SIGNED_OUT} instead of erasing. Absence still means
-     * silence; the marker means "a session may still exist and it is not this browser's to
-     * use", which the sync gate reads as a contradiction until a fresh check names an owner.
-     * It is not an account id and `readOwner` never hands it back as one, so nothing downstream
-     * can name a mirror or a storage key with it.
+     * TRUE when the server may still hold this session — the logout was refused or never reached anybody;
+     * only `signOut` passes it. It changes what is WRITTEN, not whether: the local half runs whatever the
+     * server said. Erasing the `tf_owner` marker was the mistake, in this one case: the marker is the one
+     * thing on this origin saying whose session the browser holds, absence is read as silence, and
+     * clearing it while an HttpOnly session was live handed a window open for a DIFFERENT account
+     * permission to keep syncing through the unrevoked session. This path writes {@link OWNER_SIGNED_OUT}
+     * instead: "a session may still exist and it is not this browser's to use" — read as a contradiction
+     * by the sync gate. Not an account id; `readOwner` never hands it back as one.
      */
     serverHeld?: boolean;
   } = {},
@@ -137,45 +83,26 @@ export async function forgetThisBrowser(
   if (opts.serverHeld) markSignedOutPending();
   else forgetOwner();
   /*
-   * ── AND THE CLOUD CLIENT, WHICH IS WHERE THIS GOT IT EXACTLY BACKWARDS ──────────────────
-   *
-   * A CONFIRMED sign-out returns the client to public: there is no session left to be wrong
-   * about, the next screen is `/login`, and leaving a binding in place would refuse every read
-   * the sign-in that follows needs to make.
-   *
-   * A REFUSED one is the opposite, and this line used to do the same thing for both. Sign-out
-   * wrote the safe marker — the whole point of which is that another window stops trusting a
-   * session the server would not revoke — and then unbound the client one line later, which
-   * turned the boundary off for every settings pane mounted afterwards. The sequence the marker
-   * exists to stop was waved through by its own remedy.
-   *
-   * So a refused sign-out BLOCKS: account surfaces refuse, and only the ceremony still goes out,
-   * which is what leaves the logout retryable and the front door open.
+   * And the Cloud client, which is where this got it exactly backwards. A CONFIRMED sign-out
+   * returns the client to public: no session is left to be wrong about, and a standing binding
+   * would refuse every read the next sign-in needs. A REFUSED one is the opposite, and this line
+   * used to do the same for both: sign-out wrote the safe marker — whose whole point is that
+   * another window stops trusting the unrevoked session — and then unbound the client one line
+   * later, turning the boundary off for every pane mounted afterwards. So a refused sign-out
+   * BLOCKS: account surfaces refuse, only the ceremony still goes out — the logout stays retryable
+   * and the front door open.
    */
   if (opts.serverHeld) blockApiOwner();
   else bindApiOwner(null);
   /*
-   * ── THE WAKE REGISTRATION GOES FIRST, BEFORE THE ID THAT NAMES IT IS SWEPT ──────────────
-   *
-   * This browser is the only party that knows which push row is its own: the server's sign-out
-   * prune is DEVICE-scoped and a browser ceremony mints no device row, so nothing on the server
-   * side names THIS browser rather than every deviceless registration on the account. The id we
-   * kept is that name, and it lives in the very keys swept a few lines below — so the revoke has
-   * to happen while it is still readable. See `revokeWakeRegistration` for the three halves and
-   * why none of them puts a sentence on screen.
-   *
-   * On the ERASURE door the server rows went with the account, so what this does there is drop
-   * the browser's own subscription and stop the worker being able to draw.
-   *
-   * ── AND `signOut` OPTS OUT, WHICH IS NOT A TIDINESS POINT ───────────────────────────────
-   *
-   * FOUND BY REVIEW. `signOut` has already revoked, with a LIVE session; by the time it reaches
-   * here `auth.logout()` has revoked that session. Running the revoke again would re-register the
-   * service worker and re-issue `DELETE /push/subscriptions/:id` against a dead credential — and
-   * the API client reads the 401 as recoverable, so it burns an `/auth/refresh` round trip before
-   * failing. That is two more network awaits on the flaky-network sign-out, which is exactly the
-   * case the budget above exists for. The second call is skipped rather than the call site
-   * removed, so the erasure door keeps its own revoke and neither door can be forgotten.
+   * The wake registration goes first, before the id that names it is swept. This browser is the only party that knows
+   * which push row is its own (the server's prune is device-scoped and a browser ceremony mints no device row), and
+   * the id lives in the very keys swept below — so the revoke runs while it is still readable
+   * (`revokeWakeRegistration` for the three halves). On the erasure door the server rows went with the account, so
+   * this drops the browser's own subscription. `signOut` opts out (found by review): by here `auth.logout()` has
+   * revoked the session, so running the revoke again would issue a DELETE against a dead credential — and the client
+   * reads the 401 as recoverable, burning an `/auth/refresh` round trip on the flaky-network sign-out. The second
+   * call is skipped rather than the site removed, so the erasure door keeps its own revoke.
    */
   if (opts.revokeWake !== false) await revokeWakeRegistration();
   // The boot caches: the account's dormancy window, screening baseline and own addresses,
@@ -184,19 +111,15 @@ export async function forgetThisBrowser(
   // whatever an earlier account left behind.
   const boot = clearBootCaches();
   const survivors = [...boot.survivors];
-  // THE DURABLE-DECISION STORES, which are mail and are NOT in the mirror.
-  //
-  // The durability slice moved three user decisions out of memory and onto disk so they survive
-  // a crash — the send lanes, the Screener's intent journal, and the compose scratch buffer. All
-  // three are `localStorage`, all three are owner-keyed, and none of them starts with the
-  // boot-cache prefix, so that sweep never touched them. An unfinished message is mail text,
-  // readable on a shared machine; a journalled Screener decision would replay on a later
-  // sign-in; a send lane would outlive the session whose key it holds.
-  //
-  // Scoping a key to an account is not by itself what makes a sign-out reach it. The compose
-  // scratch was already account-scoped for exactly this purpose and the sweep was simply never
-  // told about it; the reply buffers are keyed by message id and lane, so they were never
-  // account-scoped at all.
+  // The durable-decision stores, which are mail and are NOT in the mirror:
+  // the send lanes, the Screener's intent journal, and the compose scratch
+  // buffer — all `localStorage`, all owner-keyed, none under the boot-cache
+  // prefix, so that sweep never touched them. An unfinished message is mail
+  // text readable on a shared machine; a journalled Screener decision would
+  // replay on a later sign-in; a send lane would outlive the session whose
+  // key it holds. Scoping a key to an account is not what makes a sign-out
+  // reach it: the compose scratch was account-scoped and the sweep was
+  // simply never told; the reply buffers are keyed by message id and lane.
   const durable = dropLocalStorageKeys([
     SEND_LOCKS_PREFIX,
     SCREENER_INTENTS_PREFIX,
@@ -232,18 +155,16 @@ export async function forgetThisBrowser(
     // `ohmail.theme` — a browser's look, not account data (the census names them).
     "ohmail.face.account",
     "ohmail.faceOffer",
-    // THE PUSH ROW'S ID AND THE ENDPOINT IT WAS MINTED FOR, both session-bound (see
-    // `NOTIFICATION_SUBSCRIPTION_PREFIX`). Swept UNCONDITIONALLY, even when the revoke above
-    // could not delete the row, and that is deliberate rather than careless: after a sign-out
-    // there is no credential left to retry the delete with — the account-scoped `DELETE` would
-    // 404 for whoever signs in next — so keeping the id buys no retry and costs the next
-    // account its notifications, because `syncWebPush` reads a stored id as "this browser is
-    // already registered" and never announces the new endpoint. The row a failed delete leaves
-    // behind is collected by the sender's prune-on-404/410 once the local unsubscribe has made
-    // the endpoint dead.
-    //
-    // The SWITCHES (`ohmail.notifications.channels`) are not here: they are this install's
-    // preference, like `ohmail.theme` and `ohmail.face`, and the census names them.
+    // The push row's id and the endpoint it was minted for, both
+    // session-bound. Swept UNCONDITIONALLY, even when the revoke could not
+    // delete the row — deliberate: after a sign-out there is no credential
+    // to retry the delete with (the account-scoped DELETE would 404 for the
+    // next signer-in), so keeping the id buys no retry and costs the next
+    // account its notifications — `syncWebPush` reads a stored id as
+    // "already registered" and never announces the new endpoint. The row a
+    // failed delete leaves is collected by the sender's prune-on-404/410
+    // once the local unsubscribe kills the endpoint. The SWITCHES are not
+    // here: a per-install preference, like `ohmail.theme`.
     NOTIFICATION_SUBSCRIPTION_PREFIX,
   ]);
   survivors.push(...durable.survivors);
@@ -251,22 +172,14 @@ export async function forgetThisBrowser(
   // gone and keeps the ones it did not), so it is deliberately NOT in the prefix sweep above —
   // dropping it there would throw away the only record of a mirror this browser could not delete.
   /*
-   * ── THE FIRST `sessionStorage` ENTRY THIS SWEEP COVERS ──────────────────────────────────
-   *
-   * Every store above is `localStorage`. The in-flight Microsoft device-code ceremony keeps its
-   * HANDLE in `sessionStorage` instead — per tab, matching a fifteen-minute grant's lifetime far
-   * better than a store that outlives the browser — so none of the prefix sweeps reaches it, and a
-   * tab signed out and reused by another account within that window would still be holding the
-   * previous account's record.
-   *
-   * The record carries no credential: the `device_code` that redeems the grant never leaves the
-   * server, and this is a lookup handle whose every use is re-checked against the session's own
-   * account. The reader ALSO refuses a record whose stored account id is not the signed-in one, and
-   * that check — not this line — is what makes another account's code unrenderable. This is the
-   * tidy-up: the residue should not sit in a shared machine's tab until somebody opens the pane.
-   *
-   * Wrapped, like every other accessor here: a private window or a browser refusing site data can
-   * make the accessor itself throw, and a sign-out must not fail because a storage read did.
+   * The first `sessionStorage` entry this sweep covers: the in-flight Microsoft device-code
+   * ceremony keeps its HANDLE there — per tab, matching a fifteen-minute grant far better than a
+   * store that outlives the browser — so no prefix sweep reaches it, and a tab reused by another
+   * account within the window still held the previous account's record. The record carries no
+   * credential (the `device_code` never leaves the server) and the reader refuses a record whose
+   * account id is not the signed-in one — that check, not this line, makes another account's code
+   * unrenderable; this is the tidy-up. Wrapped like every accessor here: a private window can make
+   * the accessor itself throw, and a sign-out must not fail on a storage read.
    */
   /*
    * AND THE HALF OF `COMPOSE_ROW_PREFIX` THAT IS NOT IN A JAR. A browser refusing this app its
@@ -300,38 +213,28 @@ export async function signOut(owner?: string): Promise<SignOutResult> {
   // one thing the caller cannot find out any other way.
   let serverRefused: string | null = null;
   /*
-   * ── BEFORE `auth.logout()`, AND THE ORDER IS THE WHOLE FIX ──────────────────────────────
-   *
-   * `DELETE /push/subscriptions/:id` is authenticated by the session this call is about to
-   * revoke. After the logout it answers 401 for ever: the row stays, the sender goes on POSTing
-   * a wake to this browser's endpoint, and — because the endpoint keeps answering 2xx while the
-   * subscription lives — its prune-on-404/410 never fires either. So the registration is taken
-   * down while there is still a credential that can take it down.
-   *
-   * It runs BEFORE the logout and the logout runs regardless of how it went: a browser asking to
-   * be signed out is asking whether or not this succeeded, exactly as with the local wipe below.
+   * Before `auth.logout()`, and the order is the whole fix:
+   * `DELETE /push/subscriptions/:id` is authenticated by the session this
+   * call is about to revoke. After the logout it answers 401 for ever: the
+   * row stays, the sender keeps POSTing wakes, and — because the endpoint
+   * answers 2xx while the subscription lives — the prune-on-404/410 never
+   * fires. So the registration is taken down while a credential still can.
+   * It runs before the logout, and the logout runs regardless of how it
+   * went — a browser asking to be signed out is asking either way.
    */
   await revokeWakeRegistration();
   try {
     await auth.logout();
   } catch (err) {
     /**
-     * ── 401 AND 403 ARE "ALREADY GONE", NOT "REFUSED" ─────────────────────────────────────
-     *
-     * Without this the retry the copy asks for could never succeed. A blocked wipe keeps the
-     * pane in place AFTER the logout has already landed and cleared the cookies; the reader
-     * closes the other tab and presses again, exactly as told — and the second `auth.logout()`
-     * answers 401, because the session it would revoke is gone. Read as a refusal, that turned
-     * a completed sign-out into a permanent "the session may still be live", pressing again for
-     * ever in a dead signed-in shell.
-     *
-     * The outcome being asked for is "this session no longer exists", and a 401 is the server
-     * saying exactly that.
-     *
-     * 403 IS NOT, and it was in this set. This API answers 403 for a refusal that leaves the
-     * session perfectly alive — a step-up gate, an account suspension — so accepting it here
-     * would report a completed sign-out over a credential the next request still authenticates
-     * with, which is the precise failure the whole branch exists to prevent. Only 401.
+     * 401 and 403 are "already gone", not "refused" — without this the retry the copy asks for
+     * could never succeed: a blocked wipe keeps the pane up AFTER the logout landed and cleared the
+     * cookies, so the second `auth.logout()` answers 401 — the session it would revoke is gone.
+     * Read as a refusal, that turned a completed sign-out into a permanent "the session may still
+     * be live". The outcome asked for is "this session no longer exists", and a 401 says exactly
+     * that. 403 is NOT in the set (it was): this API answers 403 for refusals that leave the
+     * session alive — a step-up gate, a suspension — so accepting it would report a completed
+     * sign-out over a live credential. Only 401.
      */
     // A STRUCTURAL READ OF `status`, not `err instanceof ApiError`, and the difference is not
     // style. Callers' tests mock `./api-client` — one of them supplies `{ auth }` and nothing

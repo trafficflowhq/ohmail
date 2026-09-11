@@ -69,7 +69,6 @@ export async function serializeOrganizerProfile(
         enabled: awayResponders.enabled, body: awayResponders.body,
         startsAt: awayResponders.startsAt, endsAt: awayResponders.endsAt,
         audience: awayResponders.audience, throttle: awayResponders.throttle,
-        piles: awayResponders.piles,
       }).from(awayResponders).where(eq(awayResponders.accountId, accountId)),
       await tx.select({ name: tagsTbl.name }).from(tagsTbl).where(eq(tagsTbl.accountId, accountId)),
       // THE SIXTH READ, inside the same snapshot as the other five for the reason the comment
@@ -99,9 +98,6 @@ export async function serializeOrganizerProfile(
       startsAt: away.startsAt === null ? null : away.startsAt.toISOString(),
       endsAt: away.endsAt === null ? null : away.endsAt.toISOString(),
       audience: away.audience,
-      // The row's own scope, so it reaches the person's other computers. `canonicalizeProfilePayload`
-      // sorts and dedupes it; this is the stored value.
-      piles: [...away.piles],
     },
     tagNames: tagRows.map((t) => t.name),
     // NO ROW READS AS NO SIGNATURE, which is also what a NULL column reads as. They are the same

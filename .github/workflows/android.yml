@@ -136,32 +136,35 @@ jobs:
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
 
+      # ── THE FIRST STEP OF EVERY PHONE BUILD ────────────────────────────────────────────────
+      # The app organizes a mailbox on the phone itself, and the engine that does it ships inside
+      # the app as a pre-bundled file. `apps/mobile/src/engine/engine-bundle-native.ts` requires it
+      # by path and the door chooser offers its tile exactly where that artifact registered itself,
+      # so a build without this step is a build showing three doors. Metro refuses to configure
+      # without it (apps/mobile/metro.config.js), which makes that state unbuildable rather than
+      # merely unlikely — but the refusal is not the point of ordering this first: the artifact is.
+      #
+      # The bundler is pinned and deliberately not a workspace dependency — the artifact is only
+      # reproducible for one version of it — so it is installed outside the tree and named, exactly
+      # as the desktop engine's own build does. An install inside the workspace rewrites the module
+      # graph and leaves the repository's dependencies unusable.
+      - name: Bundle the phone's mail engine into the app
+        env:
+          CI: "1"
+        run: |
+          set -euo pipefail
+          D="$(mktemp -d)" && (cd "$D" && npm install --no-save --no-audit --no-fund esbuild@0.24.0)
+          OHMAIL_ESBUILD_FROM="$D" node apps/mobile/scripts/bundle-engine.mjs
+          # It is gitignored and generated, so its presence is asserted rather than assumed: a
+          # generator that wrote nothing and exited 0 would otherwise be found by Gradle.
+          test -s apps/mobile/generated/phone-engine.js
+
       - name: Generate the native Android project
         working-directory: apps/mobile
         env:
           CI: "1"
           EXPO_NO_TELEMETRY: "1"
         run: npx expo prebuild --platform android --no-install
-
-      # THE HEAP THE TWO PACKAGING TASKS NEED, written into the project the prebuild just
-      # generated. Expo's template sets `-Xmx2048m -XX:MaxMetaspaceSize=512m`, and packaging the
-      # APK and the bundle in ONE invocation exhausts it: `packageRelease` and
-      # `packageReleaseBundle` both failed with `Java heap space` against a max heap the log named
-      # as 2 GiB. The daemon reads `gradle.properties`, not the client's environment, so the knob
-      # belongs in the file; and the edit is ASSERTED, because a knob that did not land looks
-      # exactly like the failure it was meant to fix.
-      - name: The Gradle heap the two packaging tasks need
-        working-directory: apps/mobile/android
-        run: |
-          set -euo pipefail
-          sed -i 's|^org\.gradle\.jvmargs=.*|org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8|' gradle.properties
-          n=$(grep -c '^org\.gradle\.jvmargs=-Xmx4g' gradle.properties || true)
-          if [ "$n" -ne 1 ]; then
-            echo "the heap line did not land; gradle.properties says:"
-            grep -a '^org\.gradle\.jvmargs' gradle.properties || echo "  (no org.gradle.jvmargs line at all)"
-            exit 1
-          fi
-          grep -a '^org\.gradle\.jvmargs' gradle.properties
 
       # ONE invocation, both packagings. The release variant has a single R8 run behind both
       # tasks, and R8 writes ONE `mapping.txt`; as two separate Gradle commands, whichever ran
@@ -328,32 +331,35 @@ jobs:
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
 
+      # ── THE FIRST STEP OF EVERY PHONE BUILD ────────────────────────────────────────────────
+      # The app organizes a mailbox on the phone itself, and the engine that does it ships inside
+      # the app as a pre-bundled file. `apps/mobile/src/engine/engine-bundle-native.ts` requires it
+      # by path and the door chooser offers its tile exactly where that artifact registered itself,
+      # so a build without this step is a build showing three doors. Metro refuses to configure
+      # without it (apps/mobile/metro.config.js), which makes that state unbuildable rather than
+      # merely unlikely — but the refusal is not the point of ordering this first: the artifact is.
+      #
+      # The bundler is pinned and deliberately not a workspace dependency — the artifact is only
+      # reproducible for one version of it — so it is installed outside the tree and named, exactly
+      # as the desktop engine's own build does. An install inside the workspace rewrites the module
+      # graph and leaves the repository's dependencies unusable.
+      - name: Bundle the phone's mail engine into the app
+        env:
+          CI: "1"
+        run: |
+          set -euo pipefail
+          D="$(mktemp -d)" && (cd "$D" && npm install --no-save --no-audit --no-fund esbuild@0.24.0)
+          OHMAIL_ESBUILD_FROM="$D" node apps/mobile/scripts/bundle-engine.mjs
+          # It is gitignored and generated, so its presence is asserted rather than assumed: a
+          # generator that wrote nothing and exited 0 would otherwise be found by Gradle.
+          test -s apps/mobile/generated/phone-engine.js
+
       - name: Generate the native Android project
         working-directory: apps/mobile
         env:
           CI: "1"
           EXPO_NO_TELEMETRY: "1"
         run: npx expo prebuild --platform android --no-install
-
-      # THE HEAP THE TWO PACKAGING TASKS NEED, written into the project the prebuild just
-      # generated. Expo's template sets `-Xmx2048m -XX:MaxMetaspaceSize=512m`, and packaging the
-      # APK and the bundle in ONE invocation exhausts it: `packageRelease` and
-      # `packageReleaseBundle` both failed with `Java heap space` against a max heap the log named
-      # as 2 GiB. The daemon reads `gradle.properties`, not the client's environment, so the knob
-      # belongs in the file; and the edit is ASSERTED, because a knob that did not land looks
-      # exactly like the failure it was meant to fix.
-      - name: The Gradle heap the two packaging tasks need
-        working-directory: apps/mobile/android
-        run: |
-          set -euo pipefail
-          sed -i 's|^org\.gradle\.jvmargs=.*|org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8|' gradle.properties
-          n=$(grep -c '^org\.gradle\.jvmargs=-Xmx4g' gradle.properties || true)
-          if [ "$n" -ne 1 ]; then
-            echo "the heap line did not land; gradle.properties says:"
-            grep -a '^org\.gradle\.jvmargs' gradle.properties || echo "  (no org.gradle.jvmargs line at all)"
-            exit 1
-          fi
-          grep -a '^org\.gradle\.jvmargs' gradle.properties
 
       # ONE invocation, both packagings — see the build check above for why the two tasks must
       # not be two Gradle commands. This is the tag path, so both artifacts here are published:

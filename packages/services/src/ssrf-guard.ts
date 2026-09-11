@@ -7,26 +7,14 @@ import {
 import { ServiceError } from "./errors.js";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE SSRF GATE, AS THIS PACKAGE'S CALLERS HAVE ALWAYS SEEN IT
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * The IMPLEMENTATION moved to `@trafficflow/core/net` — parsers, refusal sets, the pin, all of it
- * verbatim — because `apps/worker` needs the same gate for the UnifiedPush wake sender and may not
- * import this package (its dependency test forbids it; the services barrel in the worker's boot
- * graph is a measured Node-23 `ERR_REQUIRE_CYCLE_MODULE`). The full argument is at the top of
- * `packages/core/src/net/ssrf-guard.ts`.
- *
- * What stayed here is the ERROR CONTRACT, and it stayed because it is a wire contract: three
- * callers (`unsubscribe-service`, `privacy-service`, `packages/api/src/imap-probe`) let this throw
- * reach a route, where it becomes `validation_failed` / 400 / `u is not a permitted url: <why>`.
- * The core gate cannot produce that — it sits below HTTP and has no `ServiceError` — so these two
- * functions map {@link SsrfRefusal} onto it and re-throw anything else untouched. Every existing
- * import of these names is unchanged, deliberately: a security refactor that also edits its
- * callers is a refactor whose blast radius nobody can bound by reading it.
- *
- * `isBlockedAddress`, `nodeHostResolver` and `HostResolver` are pure re-exports — they never threw
- * a `ServiceError` and have nothing to map.
+ * THE SSRF GATE, AS THIS PACKAGE'S CALLERS HAVE ALWAYS SEEN IT. The IMPLEMENTATION moved to
+ * `@trafficflow/core/net` — parsers, refusal sets, the pin, verbatim — because `apps/worker`
+ * needs the same gate for the UnifiedPush wake sender and may not import this package (a measured
+ * Node-23 `ERR_REQUIRE_CYCLE_MODULE`). What stayed is the ERROR CONTRACT: three callers
+ * (`unsubscribe-service`, `privacy-service`, `packages/api/src/imap-probe`) let this throw reach
+ * a route as `validation_failed` / 400; the core gate has no `ServiceError`, so these two
+ * functions map `SsrfRefusal` onto it and re-throw anything else. Every existing import is
+ * unchanged. `isBlockedAddress`, `nodeHostResolver` and `HostResolver` are pure re-exports.
  */
 
 export {

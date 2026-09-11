@@ -59,48 +59,26 @@ const YES_FOLDER: Destination = "INBOX";               // Imbox
 const NO_FOLDER: Destination = "ohmail/Screened";
 
 /**
- * ── THE FIVE PLACES A DECISION MAY FILE MAIL, AND THE SIXTH THAT IS NOT ONE ──────────────────
- *
- * The DecisionBar has shown five buttons since it shipped — Ohbox, Reads, Receipts, Screen out,
- * Mark spam — and until `dest` reached this file the wire carried none of them. `decide`
- * answered with exactly two folders, `INBOX` for a yes and `ohmail/Screened` for a no, so three
- * of the five buttons wrote a rule and a `folder_state` naming a place the user had not chosen.
- *
- * **The clients did compose the difference, and it did not survive.** Both surfaces fired a
- * follow-up `move` per held message beside the decide. This method reads its held rows OUTSIDE
- * the transaction and then upserts `desired_folder` inside it, so a `move` that commits in that
- * window was silently overwritten by the decide's own write. The result is visible as a promoted
- * rule whose `destination` is `INBOX` for a sender the user admitted with Reads, the sender's mail
- * piling up in the Ohbox behind it, and the destination folder left all but empty.
- *
- * `Destination` and not a screener-only `"ohbox"|"reads"|…` vocabulary: `POST /messages/:id/move`
- * takes `{folder}` and `POST /rules` takes `{destination}`, both folder strings, and
- * {@link ScreenDecisionResult.appliedFolder} answers with one. A second spelling for the same
- * concept, reachable only here, is the drift this file would have to keep translating.
- *
- * **`ohmail/Screener` IS ABSENT AND THAT IS THE POINT.** It is a `Destination` and it is where
- * mail is HELD, never a place consent can file it to. A promoted rule pointing at it would hold
- * that sender at the gate for ever — every message they send re-screened by the user's own
- * rule, with no path out but revoking it. The check below is therefore membership in this set
- * FIRST and the allow/deny agreement second: `effectForDestination("ohmail/Screener")` is
- * `"deny"`, so the agreement check alone would wave it through on any `no`.
+ * THE FIVE PLACES A DECISION MAY FILE MAIL, AND THE SIXTH THAT IS NOT ONE. The DecisionBar has
+ * five buttons; the wire used to carry two folders, so three buttons wrote a rule naming a place
+ * the user had not chosen. `Destination`, not a screener-only vocabulary: `move` takes `{folder}`
+ * and `POST /rules` takes `{destination}` — a second spelling is drift. `ohmail/Screener` IS
+ * ABSENT ON PURPOSE: it is where mail is HELD, never a place consent files to — a promoted rule
+ * pointing at it holds the sender at the gate for ever. Membership FIRST, agreement second:
+ * `effectForDestination("ohmail/Screener")` is `"deny"`, so the agreement check alone would wave
+ * it through on any `no`.
  */
 const DECIDABLE_FOLDERS: ReadonlySet<string> = new Set<Destination>([
   YES_FOLDER, "ohmail/Reads", "ohmail/Receipts", NO_FOLDER, "ohmail/Quarantine",
 ]);
 
 /**
- * What the READ half is allowed to hold.
- *
- * There is no `classifier` here and no `credits` here, and both absences are the gate rather
- * than a convention. `ScreenerReadService` is constructed with exactly this bag, so inside
- * `list` and `decide` the expressions `this.deps.classifier` and `this.deps.credits` DO NOT
- * COMPILE. `ScreenerService` destructures both out of its own deps before calling `super`
- * ({@link ScreenerService.constructor}), so they are not reachable at runtime either — a cast
- * finds nothing on the object to cast to.
- *
- * The alternative is a `limit` constant guarding a call the read path can still make:
- * "the someone-remembers form". Nobody has to remember this one.
+ * What the READ half is allowed to hold. No `classifier`, no `credits` — the absences ARE the
+ * gate: `ScreenerReadService` is constructed with exactly this bag, so inside `list`/`decide` the
+ * expressions `this.deps.classifier` and `this.deps.credits` DO NOT COMPILE. `ScreenerService`
+ * destructures both out before `super`, so they are unreachable at runtime too. The alternative
+ * is a `limit` constant guarding a call the read path can still make — the someone-remembers
+ * form. Nobody has to remember this one.
  */
 export interface ScreenerDeps {
   /**
@@ -129,54 +107,34 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
   /** The model. Absent ⇒ `POST /screener/suggest` answers 503; no read path is affected. */
   classifier?: ClassifierPort;
   /**
-   * The AI spend gate FACTORY, per account like every other gate. Absent ⇒ unmetered.
-   *
-   * A factory rather than a gate because this service is constructed ONCE per host bag
-   * (`makeScreenerService({})`) and serves every account, while a gate is per account by
-   * construction — it is what holds the account's refund markers.
-   *
-   * It moved OUT of {@link ScreenerDeps} with the classifier and for the same reason: a
-   * read path that can build a gate is a read path that can charge, and the two capabilities
-   * are only useful together anyway.
+   * The AI spend gate FACTORY, per account like every other gate. Absent ⇒ unmetered. A factory
+   * rather than a gate because this service is constructed ONCE per host bag and serves every
+   * account, while a gate is per account by construction — it holds the account's refund markers.
+   * It moved OUT of `ScreenerDeps` with the classifier, for the same reason: a read path that can
+   * build a gate is a read path that can charge, and the two capabilities are only useful
+   * together.
    */
   credits?: SpendPort;
   /**
    * THE WALL-CLOCK CEILING THIS HOST KILLS A REQUEST AT — declared by the composition root,
-   * ABSENT for a host that has none.
-   *
-   * `suggest` admits lanes only while there is time left to finish the work it is about to start;
-   * see {@link admissionDeadline}. That window is `this − the model call's own ceiling − the store
-   * that follows it`, and it only means anything where a platform actually kills the request.
-   *
-   * Three hosts compose this service and ONE of them is killed by a platform: the serverless API,
-   * whose route declares `maxDuration = 60`. The self-hosted server and the standalone desktop's
-   * own engine are ordinary processes, and the desktop's provider deliberately permits a SIXTY
-   * SECOND model call because a local model on a laptop is slow — a window sized for the
-   * serverless host would refuse every sender after the first round there, enforcing a ceiling
-   * that host does not have.
-   *
-   * So it is stated rather than inferred, in the shape `trustedAuthservIds` and `storageCap`
-   * established: absent means "nothing kills a request here", which is a claim a deployment makes
-   * about itself and not a default this file guesses.
+   * ABSENT for a host that has none. `suggest` admits lanes only while there is time left to
+   * finish the work about to start (`admissionDeadline`): this − the model call's ceiling − the
+   * store after it. Three hosts compose this service and ONE is killed by a platform: the
+   * serverless API (`maxDuration = 60`). The others are ordinary processes, and the desktop
+   * deliberately permits a SIXTY SECOND model call — a window sized for serverless would refuse
+   * every sender after the first round there. Stated, never inferred: absent means "nothing kills
+   * a request here", a claim a deployment makes about itself.
    */
   invocationBudgetMs?: number;
   /**
-   * THE BALANCE READ that answers "how much is left", beside the gate that spends it.
-   *
-   * A separate dep and not a method on {@link SpendPort}, because the gate is a PORT — the
-   * question a caller asks about permission — and this is a read with no decision in it.
-   * Widening that port would make every implementation of it, including the one-line test
-   * doubles the pipeline's degrade-to-rules proof is written against, owe an answer about a
-   * ledger they do not have.
-   *
-   * A factory taking `(db, accountId)` for the same reason `credits` is one: this service is
-   * constructed once per host and serves every account.
-   *
-   * ABSENT ⇒ {@link ScreenerSuggestResult.remainingCredits} is omitted, and the surface says
-   * nothing about a balance. That is the correct answer for the local install and for the
-   * hosted deployment during any window where the ledger is not wired: silence, never `0`.
-   * It is also why `balanceOf` is not imported here — it lives in `@trafficflow/db/cloud`,
-   * the half this module must compile without (see the import block's own note).
+   * THE BALANCE READ that answers "how much is left", beside the gate that spends it. A separate
+   * dep, not a method on `SpendPort`: the gate is the permission question, this is a read with no
+   * decision — widening the port would make every implementation (the one-line test doubles
+   * included) owe an answer about a ledger they do not have. A factory taking `(db, accountId)`
+   * for `credits`' reason: constructed once per host, serves every account. ABSENT ⇒
+   * `remainingCredits` is omitted and the surface says nothing — the correct answer for the local
+   * install and any unwired window: silence, never `0`. Also why `balanceOf` is not imported
+   * here: it lives in `@trafficflow/db/cloud`, the half this module must compile without.
    */
   remaining?: (db: Tx, accountId: string) => Promise<number>;
 }
@@ -184,15 +142,12 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
 export interface ScreenBody {
   decision: "yes" | "no";
   /**
-   * WHERE THE USER ASKED FOR IT — one of {@link DECIDABLE_FOLDERS}. Optional, and its absence
-   * is exactly the behaviour this endpoint has always had: `yes` ⇒ `INBOX`, `no` ⇒
-   * `ohmail/Screened`.
-   *
-   * Optional rather than required because a shipped desktop mirror and the API's own contract
-   * tests post `{decision}` alone, and a client that cannot name a folder should still be able
-   * to admit a sender. It is NOT optional in the sense of "the server will guess": present, it
-   * decides the folder outright; absent, the two-folder default stands and the response's
-   * `appliedFolder` says which one it was.
+   * WHERE THE USER ASKED FOR IT — one of `DECIDABLE_FOLDERS`. Optional, and absence is the
+   * endpoint's original behaviour: `yes` ⇒ `INBOX`, `no` ⇒ `ohmail/Screened`. Optional because a
+   * shipped desktop mirror and the API's contract tests post `{decision}` alone, and a client
+   * that cannot name a folder should still admit a sender. NOT "the server will guess": present,
+   * it decides the folder outright; absent, the two-folder default stands and `appliedFolder`
+   * says which.
    */
   dest?: Destination;
   scope?: "sender" | "domain";   // default "sender"
@@ -226,86 +181,38 @@ export interface ScreenRequestResult {
 /* ── The explicit suggestion purchase ───────────────────────────────────────────────────── */
 
 /**
- * Where a bought suggestion is STORED, and why it is a `routing_decisions` row.
- *
- * The table already holds "what was decided about this message, with what confidence and on
- * what evidence" — `destination`, `confidence`, `rationale`, `spam`, per account, per message,
- * FK'd to `messages`, dropped by `AccountDeletionService`, and granted to NO staff role
- * (`scripts/harden-staff-role.sql` §11). A suggestion is that shape exactly.
- *
- * The two vocabulary values are NEW, and deliberately values no existing reader matches:
- * `input_provenance` is `'rule'|'header'|'screener'|'ai'` for the pipeline's own writer
- * (`packages/core/src/adapters/drizzle-repo.ts:771`) and `'screener'` there means "the router
- * sent this to the gate", which is a different sentence from "the model advised on a sender
- * already at the gate". Reusing it would have merged the two in every count anybody runs —
- * including the `ai_decisions` figure. Neither column carries
- * a CHECK, and migration 0023's rule (quoted at `schema.ts` `authVerdict`) is that the
- * vocabulary belongs to the code that computes it.
- *
- * This is the one part of this feature that would rather have been a migration: there is no
- * `UNIQUE (account_id, message_id)` here, so the write deletes-then-inserts inside its
- * transaction and two concurrent suggests for one message can leave two rows. They
- * carry the same verdict (the model was asked once — the second spend is a `duplicate`), and
- * the read takes the newest, so the surface is unaffected; it is untidiness, not ambiguity.
- *
- * **THE VALUE AND THE WRITE BOTH MOVED TO `@trafficflow/db`, and the alias below is the read
- * path's half of it.** There are now two writers — this service's user-pressed purchase and the
- * worker's always-on pass for opted-in accounts — and the worker may import core and db and
- * nothing else from the workspace, so `storeScreenerSuggestion` is the one place the row shape
- * lives. Everything the paragraphs above argue is unchanged; it is argued in
- * `packages/db/src/screener-suggestion.ts` now, next to the INSERT it constrains. This file keeps
- * the name because the WHERE clause below is what makes a suggestion readable at all: a writer
- * and a reader that disagreed about this string would produce rows that are bought, charged and
- * invisible.
+ * Where a bought suggestion is STORED — a `routing_decisions` row: the table already holds "what
+ * was decided about this message" — per account, FK'd to `messages`, dropped on account deletion,
+ * granted to NO staff role. The two vocabulary values are NEW, matching no existing reader: the
+ * pipeline's `'screener'` means "routed to the gate", not "the model advised"; reusing it merges
+ * the two in every count. No `UNIQUE (account_id, message_id)`: the write deletes-then-inserts
+ * and two concurrent suggests can leave two rows; the read takes the newest — untidiness, not
+ * ambiguity. The value and write moved to `@trafficflow/db` (`storeScreenerSuggestion`); this
+ * file keeps the name because the WHERE below is what makes a suggestion readable.
  */
 const SUGGESTION_PROVENANCE = SCREENER_SUGGESTION_PROVENANCE;
 
 /**
- * The most senders ONE `POST /screener/suggest` request may cover — the PER-REQUEST cap.
- *
- * A cap and not a truncation: over it the request is REFUSED (413), because a control that quotes
- * a price for the whole request and silently buys up to the cap has priced something the user did not do.
- * Every sender is spend-gated INDIVIDUALLY inside {@link ScreenerService.suggest} — so a larger N
- * costs proportionally more and never bypasses the credit check. The quote and the charge both
- * scale with N; neither is a per-batch shortcut.
- *
- * ── A HARD 413 CEILING, NOT A SIZE CHOSEN TO FIT ONE INVOCATION ──────────────────────────────
- *
- * A real (non-dry) purchase of N senders makes N model calls in the passes below — no longer one
- * at a time, but {@link SUGGEST_LANES} at a time — and the Vercel host runs under
- * `maxDuration = 60` (`apps/api-vercel/app/[[...path]]/route.ts`). Fifty senders measured at
- * 100.8 s while the loop was serial and 20.2 s in lanes (real Postgres, `max: 1`, 2 000 ms per
- * sender), so a request at this cap now DOES finish inside one invocation. That does not make 50 a
- * size picked to fit the deadline: it stays what it always was, the point past which a request is
- * REFUSED (413) — a guard against an absurd request. The size that fits the deadline is still the
- * CLIENT's and is still smaller: the webapp splits a purchase into requests of
- * `SUGGEST_CHUNK_SIZE` senders (40, below this cap and deliberately not equal to it), pricing and
- * buying each on its own (`apps/webapp/.../screener-suggest.ts`), so each request completes and the
- * run ticks forward one chunk at a time rather than freezing on a single oversized request. This cap only bounds the worst a single request may be; the run is RESUMABLE
- * per message anyway — spend and the stored suggestion are written before the next model call — so
- * even a request cut short bills only what it finished and a re-press resumes for free (the
- * `duplicate` retry re-asks nothing already stored). A DRY RUN makes no model call at all, so a
- * price for any size is a single fast request.
+ * The most senders ONE `POST /screener/suggest` may cover — the PER-REQUEST cap. A cap, not a
+ * truncation: over it the request is REFUSED (413) — a control that quotes a price and silently
+ * buys up to the cap has priced something the user did not do. Every sender is spend-gated
+ * INDIVIDUALLY, so a larger N costs proportionally more. Not a size chosen to fit one invocation:
+ * fifty senders measured 100.8 s serial, 20.2 s in lanes — but the size that fits the deadline is
+ * the CLIENT's (`SUGGEST_CHUNK_SIZE`, 40, deliberately below this). The run is RESUMABLE per
+ * message, so a cut-short request bills only what it finished and a re-press resumes free
+ * (`duplicate` re-asks nothing stored). A DRY RUN makes no model call.
  */
 export const MAX_SUGGEST_SENDERS = 50;
 
 /**
- * How long ONE `POST /screener/suggest` will wait, in total, for verdicts another caller is
- * already buying.
- *
- * The gate refuses a second caller on a source that is being worked on — that refusal is the fix,
- * and this is what the request does with it. Waiting is what makes a correct system look correct:
- * a person pressed Suggest, their sender's verdict is arriving within seconds because the worker's
- * auto-suggest pass or their own other tab is paying for it, and a skip would send them back to
- * press again for something already on its way.
- *
- * **2.5 s, and each of the two bounds it sits between is real.** Below it, a typical Haiku
- * classification (~1 s, and the API's own client gives it 10 s with one retry) would routinely be
- * reported as unavailable when it was merely in progress. Above it, the wait starts eating the
- * 60 s serverless invocation the rest of the set still has to be classified inside. The budget is
- * per REQUEST rather than per sender for the same reason — see its use.
- *
- * It bounds no correctness: exceeding it costs one honest "retry" answer, and the retry is free.
+ * How long ONE `POST /screener/suggest` waits, in total, for verdicts another caller is already
+ * buying. The gate refuses a second caller on a source being worked on; waiting is what makes a
+ * correct system look correct — the verdict is arriving within seconds (the worker's auto-suggest
+ * pass or another tab is paying), and a skip sends the person back to press again for something
+ * already on its way. 2.5 s, both bounds real: below it a typical classification (~1 s, the
+ * client gives it 10 s with one retry) reads as unavailable while merely in progress; above it
+ * the wait eats the 60 s invocation the rest of the set must classify inside. Per REQUEST, not
+ * per sender. Exceeding it costs one honest "retry", and the retry is free.
  */
 const INFLIGHT_WAIT_MS = 2_500;
 
@@ -316,61 +223,26 @@ const INFLIGHT_WAIT_MS = 2_500;
 const INFLIGHT_POLL_MS = 120;
 
 /**
- * HOW MANY SENDERS OF ONE REQUEST ARE BOUGHT AT THE SAME TIME.
- *
- * The purchase loop used to be strictly serial and the whole of its wall clock was a model round
- * trip it spent idle — ~2 s per sender, so a fifteen-sender request took about thirty seconds and
- * a four-hundred-sender purchase took twenty-seven of them. Nothing about the money required
- * that: `spend` serializes on the account's balance row whatever this file does, and the sources
- * in one request are distinct, so the lanes never contend for a claim with each other.
- *
- * ── WHY FIVE, AND NOT `Promise.all` OVER THE SET ────────────────────────────────────────────
- *
- * The bound is what makes this honest rather than a way of turning a slow answer into a 429. It
- * is set by the three ceilings the concurrency actually presses on, and it is the SMALLEST of
- * them that decides:
- *
- *  · **The model provider's per-account rate limit.** One request may not become fifty
- *    simultaneous classify calls; the account being burned would be the deployment's own.
- *  · **The pooled connection.** A serverless invocation dials `max: 1` (`packages/db/src/client.ts`),
- *    so every lane's transactions queue on one connection. That costs nothing while the
- *    transactions are short and no lane holds one across its model call — both true here, and
- *    both stated in the pass-2 comment — but it does mean lanes beyond a handful buy nothing.
- *  · **The invocation deadline.** Five lanes bring a fifty-sender request (the endpoint's own
- *    {@link MAX_SUGGEST_SENDERS} cap) to ~20 s of model time, comfortably inside the 60 s
- *    ceiling with room for a cold start. Ten would leave more headroom and press harder on the
- *    first two ceilings for a saving nobody watching a progress line would notice.
- *
- * It is a number this file owns rather than configuration: a deployment that could tune it could
- * tune it into a rate-limit failure, and the ceiling it is being fitted to is the model
- * provider's, which no operator here controls.
+ * HOW MANY SENDERS OF ONE REQUEST ARE BOUGHT AT THE SAME TIME. The serial loop's wall clock was a
+ * model round trip spent idle (~2 s per sender). Nothing about the money requires serial: `spend`
+ * serializes on the balance row anyway, and one request's sources are distinct, so lanes never
+ * contend for a claim. Five, not `Promise.all` — the smallest of three ceilings decides: the
+ * provider's per-account rate limit; the pooled connection (`max: 1` — lanes queue, fine while
+ * transactions are short and none spans a model call); the invocation deadline (five lanes bring
+ * fifty senders to ~20 s inside 60 s). Owned here, not configuration: a tunable would be tuned
+ * into a rate-limit failure, and the binding ceiling is the provider's.
  */
 const SUGGEST_LANES = 5;
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE ADMISSION WINDOW, AND WHY IT IS DERIVED RATHER THAN CHOSEN
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * A request killed by the platform is the ONE failure mode with no error handling at all: no
- * response, no `finally`, no idempotency row. If a sender was charged and claimed before that
- * happened, what is left behind is money moved for a verdict nobody will ever see — and the next
- * attempt is told `duplicate`, so it is not bought again either.
- *
- * The window therefore is not a round number somebody liked. It is what is left of the invocation
- * after the WORST CASE of the work a lane is about to start:
- *
- *     window = invocation − the model call's own ceiling − the store that follows it
- *
- * Forty-five seconds was the round number, and it was wrong by construction: a lane admitted at 45 s
- * may legitimately spend {@link SUGGEST_MODEL_CALL_CEILING_MS} on the model, which is past the
- * invocation on its own. Admitting work there is no time to finish is the defect; refusing it costs
- * one honest "retry" per sender, which is what `spend_unavailable` already means.
- *
- * Measured from the TOP of `suggest`, before the preflight reads, so a slow preflight eats into the
- * window rather than being added to it. `Date.now()` and NOT `ctx.now()`, for the reason
- * {@link INFLIGHT_WAIT_MS} gives: elapsed real time against `setTimeout`, and a frozen test clock
- * would switch it off silently.
+ * THE ADMISSION WINDOW — DERIVED, NOT CHOSEN. A request killed by the platform has no error
+ * handling: no response, no `finally`, no idempotency row — a sender charged and claimed before
+ * that is money moved for a verdict nobody sees; the next attempt is told `duplicate`. So the
+ * window is what is left after the worst case a lane is about to start: invocation − the model
+ * call's ceiling − the store after it. A round 45 s was wrong by construction: a lane admitted
+ * then may legitimately spend `SUGGEST_MODEL_CALL_CEILING_MS`, past the invocation on its own.
+ * Refusing costs one honest "retry". Measured from the TOP of `suggest`, so a slow preflight eats
+ * the window; `Date.now()`, not `ctx.now()` — a frozen test clock would switch it off silently.
  */
 /** `maxDuration` on the catch-all route this service is served from. */
 const SUGGEST_INVOCATION_BUDGET_MS = 60_000;
@@ -394,19 +266,14 @@ const SUGGEST_ADMISSION_WINDOW_MS =
   SUGGEST_INVOCATION_BUDGET_MS - SUGGEST_MODEL_CALL_CEILING_MS - SUGGEST_STORE_MARGIN_MS;
 
 /**
- * THE WINDOW FOR A HOST THAT STATES ITS OWN CEILING — and the reason this is a dependency rather
- * than the constant above.
- *
- * `ScreenerService` is composed by THREE hosts, and only one of them is killed by a platform: the
- * serverless API. The self-hosted server and the standalone desktop's own engine run in ordinary
- * processes with no invocation cutoff, and the desktop's provider deliberately permits a SIXTY
- * SECOND call because a local model on a laptop is slow. Applying the serverless window there
- * would refuse every sender after the first round of a slow local batch — a deadline enforcing a
- * ceiling that host does not have.
- *
- * So the ceiling is DECLARED by the host that has one, and an absent value means "nothing kills a
- * request here". That is the same shape as `trustedAuthservIds` and `storageCap`: a fact about the
- * deployment, stated by the composition root, never inferred from a default.
+ * THE WINDOW FOR A HOST THAT STATES ITS OWN CEILING — a dependency, not the constant above. Three
+ * hosts compose `ScreenerService` and only the serverless API is killed by a platform. The
+ * self-hosted server and the desktop engine run in ordinary processes, and the desktop
+ * deliberately permits a SIXTY SECOND call because a local model is slow — the serverless window
+ * there would refuse every sender after the first round, enforcing a ceiling that host does not
+ * have. So the ceiling is DECLARED by the host that has one; absent means "nothing kills a
+ * request here" — the `trustedAuthservIds`/`storageCap` shape: a fact about the deployment,
+ * stated by the composition root, never inferred.
  */
 export function admissionDeadline(invocationBudgetMs: number | undefined): number {
   if (invocationBudgetMs === undefined) return Number.POSITIVE_INFINITY;
@@ -422,31 +289,14 @@ export function admissionDeadline(invocationBudgetMs: number | undefined): numbe
 const SUGGEST_PER_SENDER_BUDGET_MS = 3_000;
 
 /**
- * WHAT THIS SERVER TELLS A CLIENT TO PUT IN ONE REQUEST — published on `GET /screener` as
- * `suggestable.recommendedPerRequest`, and it is a fact about THIS BUILD rather than a constant a
- * client may assume.
- *
- * ── DERIVED, FOR THE SAME REASON THE WINDOW IS ──────────────────────────────────────────────
- *
- * Every sender in a request has to be ADMITTED inside {@link SUGGEST_ADMISSION_WINDOW_MS}, and
- * lanes admit in rounds: `SUGGEST_LANES` at a time, each round costing one sender's wall time. So
- * the largest request that reliably finishes is
- *
- *     lanes × floor(window / per-sender)  =  5 × floor(17 s / 3 s)  =  25
- *
- * and a number chosen instead of derived gets this wrong in the direction that hurts. Forty was
- * chosen — ~16 s of admissions against a 17 s window, which fits only while every sender answers
- * at the measured 2 s. A model half a second slower pushes the tail of the request past the
- * window, those senders come back `spend_unavailable`, and the client HALTS its whole chunk
- * sequence on `stopped`: a four-hundred-sender purchase would stop at thirty-something and say so.
- * Honest, and a worse product than sixteen requests that each complete.
- *
- * The win is smaller than forty's and it is real: sixteen requests for the largest purchase the
- * ladder offers, where the serial build needed twenty-seven.
- *
- * Deliberately BELOW {@link MAX_SUGGEST_SENDERS}: the cap is the 413 boundary and this is the
- * latency budget, and a build that set them equal would leave nothing in reserve for the client
- * that has not yet read either.
+ * WHAT THIS SERVER TELLS A CLIENT TO PUT IN ONE REQUEST — published as
+ * `suggestable.recommendedPerRequest`, a fact about THIS BUILD. DERIVED like the window: lanes
+ * admit in rounds of `SUGGEST_LANES`, each round one sender's wall time, so the largest request
+ * that reliably finishes is lanes × floor(window / per-sender) = 5 × floor(17 s / 3 s) = 25. A
+ * chosen forty fit only while every sender answered at the measured 2 s — slower pushes the tail
+ * past the window, those senders come back `spend_unavailable`, the client HALTS its chunks on
+ * `stopped`. Deliberately BELOW `MAX_SUGGEST_SENDERS`: the cap is the 413 boundary, this is the
+ * latency budget — equal would leave no reserve.
  */
 export const SUGGEST_RECOMMENDED_PER_REQUEST =
   SUGGEST_LANES * Math.floor(SUGGEST_ADMISSION_WINDOW_MS / SUGGEST_PER_SENDER_BUDGET_MS);
@@ -466,27 +316,14 @@ export const SUGGEST_ADMISSION = {
 } as const;
 
 /**
- * …AND THE CEILING IS PER PROCESS, NOT PER REQUEST — which is what the paragraph above claims.
- *
- * A bound local to one `suggest` call bounds nothing a rate limit cares about: ten concurrent
- * requests would each start five lanes and put fifty calls in flight, which is exactly the
- * fan-out {@link SUGGEST_LANES} exists to prevent. The lanes of different requests do not contend
- * on the per-source claim either — different accounts, different messages — so nothing else was
- * holding them apart.
- *
- * This is the admission control, and it wraps the MODEL CALL alone: a lane waiting here holds no
- * database transaction and no connection, and the wait is bounded by one round trip because the
- * holder releases as soon as its call returns.
- *
- * ── WHAT IT DOES AND DOES NOT REACH, said plainly ────────────────────────────────────────────
- *
- * One process. On a container (the worker, a self-hosted server) that is the whole deployment. On
- * the serverless API host it is one instance, and instances are created and reused by the
- * platform — so the fleet-wide ceiling is the platform's own invocation concurrency multiplied by
- * this number, not this number. No in-process mechanism can do better than that, and the honest
- * consequence is stated rather than implied: a provider 429 arrives as `model_unavailable` for
- * that sender with the charge standing, which is the same shape as any other model fault here and
- * is bought back free by the `duplicate` retry.
+ * …AND THE CEILING IS PER PROCESS, NOT PER REQUEST. A bound local to one `suggest` bounds nothing
+ * a rate limit cares about: ten concurrent requests would each start five lanes — fifty calls in
+ * flight, the fan-out `SUGGEST_LANES` exists to prevent. This is the admission control and it
+ * wraps the MODEL CALL alone: a waiting lane holds no transaction and no connection, and the wait
+ * is bounded by one round trip. One process: on a container that is the whole deployment; on
+ * serverless it is one instance, so the fleet-wide ceiling is the platform's invocation
+ * concurrency × this number. The honest consequence is stated: a provider 429 arrives as
+ * `model_unavailable` with the charge standing, bought back free by the `duplicate` retry.
  */
 /** Exported for its own unit test — the mechanism, driven directly. Not part of the service API. */
 export class LaneGate {
@@ -495,18 +332,13 @@ export class LaneGate {
   constructor(private readonly ceiling: number) {}
 
   /**
-   * A slot, or FALSE because `deadline` passed first.
-   *
-   * ── THE DEADLINE IS THE HALF THAT KEEPS THIS FROM BEING A NEW BUG ────────────────────────
-   *
-   * A queue with no deadline turns "too many requests at once" into "a request that never
-   * answers": on a host that multiplexes four forty-sender calls into one instance, 160 two-second
-   * model calls through five slots is over two minutes, and the invocation is killed at sixty
-   * seconds. Combined with charging BEFORE the wait — which is what the first version of this did
-   * — that leaves senders debited and claimed with no response and no idempotency row, which is
-   * the worst outcome this whole method is built to avoid. Both halves are fixed: the caller takes
-   * its slot BEFORE `gate.spend()`, and a slot that cannot be had inside the request's budget is a
-   * REFUSAL, reported per sender, that spent nothing.
+   * A slot, or FALSE because `deadline` passed first. THE DEADLINE IS THE HALF THAT KEEPS THIS
+   * FROM BEING A NEW BUG: a queue with no deadline turns "too many requests at once" into "a
+   * request that never answers" — four multiplexed forty-sender calls are 160 two-second model
+   * calls through five slots, over two minutes against a sixty-second kill. Combined with
+   * charging BEFORE the wait (the first version), that left senders debited and claimed with no
+   * response and no idempotency row. Both halves fixed: the slot is taken BEFORE `gate.spend()`,
+   * and a slot the budget cannot buy is a REFUSAL, per sender, that spent nothing.
    */
   async acquire(deadline: number): Promise<boolean> {
     // A NON-FINITE DEADLINE IS "THIS HOST HAS NO INVOCATION CEILING" — see
@@ -587,17 +419,13 @@ export interface ScreenerSuggestion {
    */
   decision: "yes" | "no" | "hold";
   /**
-   * The pile the model actually named, unreduced.
-   *
-   * `decision` answers "may a bulk control act, and which way"; three values cannot also say WHICH
-   * of five piles, and the difference was visible on a live account: `ohmail/Receipts`,
-   * `ohmail/Reads` and `ohmail/Quarantine` answers all reached the surface as the one word
-   * "Screened out", so the product looked as though it never suggested Receipts, never Reads and
-   * never spam. It suggested all three.
-   *
-   * `POST /screener/:id` already accepts every one of these as a `dest`, so a surface can offer the
-   * suggestion as a one-press filing. What it must not do is act on it WITHOUT a press — that is
-   * `decision`'s job, and `decision` still says `hold` wherever the model declined.
+   * The pile the model actually named, unreduced. `decision` answers "may a bulk control act, and
+   * which way"; three values cannot also say WHICH of five piles — `ohmail/Receipts`,
+   * `ohmail/Reads` and `ohmail/Quarantine` all reached the surface as "Screened out", so the
+   * product looked as though it never suggested any of the three. `POST /screener/:id` already
+   * accepts each as a `dest`, so a surface can offer the suggestion as a one-press filing. It
+   * must not act WITHOUT a press — that is `decision`'s job, and `decision` still says `hold`
+   * wherever the model declined.
    */
   destination: Destination;
   /**
@@ -621,17 +449,15 @@ export type ScreenerSuggestSkip =
   | "out_of_credits"      // the balance ran out part-way through the set
   | "spend_unavailable"   // see below — every "not now, ask again" the gate can produce
   | "model_unavailable";  // charged, the model faulted; the free retry honours it
-/*
- * `spend_unavailable` COVERS ONE MORE THING since the double-buy fix, and it is deliberately not a new
- * wire value: another caller holds the exclusive claim on this sender's message and did not
- * finish inside this request's wait budget. Its cause is different from a subscription state or a
- * gate fault; its INSTRUCTION to the client is identical and is the whole content of the value —
- * nothing is owed, nothing is broken, ask again and it will be there. Minting a fourth reason
- * would have added a branch to every consumer (two clients and their copy) to say the same
- * sentence in a rarer case.
- *
- * The one thing it must never be is `out_of_credits`: the account is fully funded, and answering
- * a concurrency overlap with a demand for money is the error that would matter.
+/**
+ * `spend_unavailable` COVERS ONE MORE THING since the double-buy fix, deliberately not a new wire
+ * value: another caller holds the exclusive claim on this sender's message and did not finish
+ * inside this request's wait budget. The cause differs from a subscription state or a gate fault;
+ * the INSTRUCTION to the client is identical and is the whole content of the value — nothing
+ * owed, nothing broken, ask again. A fourth reason would add a branch to every consumer to say
+ * the same sentence in a rarer case. The one thing it must never be is `out_of_credits`: the
+ * account is funded, and answering a concurrency overlap with a demand for money is the error
+ * that would matter.
  */
 // `"withheld"` was here — a sender skipped because their mail looked like it carried a credential.
 // It is GONE rather than retained-and-never-emitted, and the compile errors that removal caused at
@@ -651,17 +477,13 @@ export interface ScreenerSuggestResult {
    */
   quoted: number;
   /**
-   * What {@link quoted} COSTS, in credits — `quoted × AI_ACTION_WEIGHTS.debit_classify`,
-   * computed here.
-   *
-   * The count and the price are different numbers and only one of them is what the pricing
-   * invariant demands a control names before it spends. They happen to be equal today because
-   * a screening classification weighs 1, which is exactly why the client must not be the one
-   * multiplying: the webapp cannot import `@trafficflow/db`, so a client-side price would be a
-   * hardcoded `1` that goes on reading "40 senders · 40 credits" the day the weight moves —
-   * and since 2026-08-21 the schedule is per-reason, so weights DO move independently.
-   * `GET /screener` already states `suggestable.credits` for the same reason; this is the
-   * same sentence on the path that a client which does not read that page can reach.
+   * What `quoted` COSTS, in credits — `quoted × AI_ACTION_WEIGHTS.debit_classify`, computed here.
+   * Count and price are different numbers and only the price is what the pricing invariant
+   * demands a control names before it spends. Equal today because a classification weighs 1 —
+   * exactly why the client must not multiply: the webapp cannot import `@trafficflow/db`, so a
+   * client-side price is a hardcoded `1` still reading "40 senders · 40 credits" the day the
+   * weight moves — and weights are per-reason now, moving independently. `GET /screener` states
+   * `suggestable.credits` for the same reason.
    */
   quotedCredits: number;
   /** Credits this request moved. A re-run over the same mail is a `duplicate` and charges 0. */
@@ -673,27 +495,14 @@ export interface ScreenerSuggestResult {
    */
   stopped?: "out_of_credits" | "spend_unavailable";
   /**
-   * WHAT IS LEFT ON THE ACCOUNT AFTER THIS REQUEST — read from the ledger, never inferred.
-   *
-   * ── WHY THE SERVER HAS TO SAY IT ──────────────────────────────────────────────────────
-   *
-   * The summary a person sees after a run states what it cost. The obvious next question —
-   * "so how much have I got left?" — had no answer anywhere on this path, and the only
-   * material a client held was `charged`, which answers a different question entirely. A
-   * client that subtracted `charged` from a remembered figure would be keeping its own
-   * shadow ledger: wrong after a renewal, wrong after a refund, wrong after a second tab,
-   * wrong after an expiry, and wrong in the direction that tells somebody they have credits
-   * they do not. Invariant #10 is that money is named by the side that moves it.
-   *
-   * ── OPTIONAL, AND THE OPTIONALITY IS THE CONTRACT ─────────────────────────────────────
-   *
-   * A deployment with no ledger — the local install, every test that predates the gate —
-   * supplies no reader, so the field is ABSENT and the client omits the clause. It is never
-   * `0` for "we do not know": zero is a real balance with a real sentence of its own, and
-   * conflating them would put "no credits left" in front of an unmetered install.
-   *
-   * Read AFTER the loop, so it is the balance the run left behind rather than the one it
-   * started with. A dry run charges nothing, so on that path the two are the same number.
+   * WHAT IS LEFT ON THE ACCOUNT AFTER THIS REQUEST — read from the ledger, never inferred. The
+   * summary states what the run cost; "how much is left?" had no answer on this path, and a
+   * client subtracting `charged` from a remembered figure keeps a shadow ledger: wrong after a
+   * renewal, a refund, a second tab, an expiry — and wrong in the direction that claims credits
+   * that are not there. Money is named by the side that moves it. OPTIONAL, and the optionality
+   * is the contract: a deployment with no ledger supplies no reader, the field is ABSENT and the
+   * client omits the clause — never `0` for "we do not know"; zero is a real balance with its own
+   * sentence. Read AFTER the loop: the balance the run left behind.
    */
   remainingCredits?: number;
   suggestions: ScreenerSuggestion[];
@@ -711,17 +520,13 @@ export interface ScreenerSuggestResult {
  * the thing that is bought are the same list rather than two computations that agree today.
  */
 /**
- * ── A PAGE CAN COME BACK EMPTY WITH A CURSOR STILL SET, AND THAT MEANS "KEEP GOING" ──────────
- *
- * Stated as a contract because it stopped being theoretical when reader decisions started
- * queueing. `nextCursor` is anchored to the last row the QUERY consumed, never to the last row the
- * page RETURNS — anchoring it to the returned rows would re-offer or skip rows the next call has
- * already passed. But the returned rows are the query's rows MINUS every sender with a decision in
- * flight, and if a whole page's worth of senders were decided on another door, `items` is empty
- * while there is plenty more queue behind it.
- *
- * So a caller must stop on `nextCursor === null`, never on `items.length === 0`. A client that
- * stops on empty shows an empty Screener to somebody whose queue is not empty.
+ * A PAGE CAN COME BACK EMPTY WITH A CURSOR STILL SET, AND THAT MEANS "KEEP GOING". `nextCursor`
+ * is anchored to the last row the QUERY consumed, never the last row RETURNED — anchoring to
+ * returned rows would re-offer or skip rows the next call already passed. The returned rows are
+ * the query's rows MINUS every sender with a decision in flight, so a whole page's worth decided
+ * on another door leaves `items` empty with plenty of queue behind it. Stop on `nextCursor ===
+ * null`, never on `items.length === 0`: a client that stops on empty shows an empty Screener to
+ * somebody whose queue is not.
  */
 export interface ScreenerPage extends Page<ScreenerItem> {
   suggestable: {
@@ -730,48 +535,34 @@ export interface ScreenerPage extends Page<ScreenerItem> {
     /** `senders.length × AI_ACTION_WEIGHTS.debit_classify`. Stated, not implied. */
     credits: number;
     /**
-     * How many senders one `POST /screener/suggest` will accept — {@link MAX_SUGGEST_SENDERS}.
-     *
-     * It is published so the client learns the PER-REQUEST cap by READING it rather than
-     * hardcoding a constant that can drift. The webapp does not batch by the page at all — it
-     * derives its Screener queue from the `/sync` mirror, which can hold far more than one page —
-     * and it may offer a purchase LARGER than this cap; it then splits that purchase into requests
-     * of at most this many, pricing and buying each on its own (`screener-suggest.ts`). So this
-     * number is not the ladder's top — it is the CEILING on one chunk of it (the client's own
-     * latency budget makes a chunk smaller still), and the only thing that keeps a chunk under
-     * the 413.
+     * How many senders one `POST /screener/suggest` will accept — `MAX_SUGGEST_SENDERS`,
+     * published so the client learns the PER-REQUEST cap by READING it rather than hardcoding a
+     * constant that drifts. The webapp does not batch by the page — its queue derives from the
+     * `/sync` mirror — and may offer a purchase LARGER than this cap, splitting it into requests
+     * of at most this many, priced and bought each on its own (`screener-suggest.ts`). Not the
+     * ladder's top: the CEILING on one chunk, and the only thing keeping a chunk under the 413.
      */
     maxPerRequest: number;
     /**
      * HOW MANY SENDERS THIS SERVER RECOMMENDS PER REQUEST — the latency budget, distinct from the
-     * 413 cap above, and a CAPABILITY SIGNAL rather than a second limit.
-     *
-     * It exists because the server and its clients are built and released as separate artifacts,
-     * so during a rollout — or a rollback — a new client can be talking to an old server. The old server bought its senders SERIALLY, so a chunk sized for a server
-     * that buys them in lanes would run past the invocation deadline there and leave a partly
-     * debited purchase with no response. The client cannot infer that from `maxPerRequest`, which
-     * both versions publish as the same 50.
-     *
-     * ABSENT ⇒ the client keeps its own conservative fallback, which is the shape that makes this
-     * safe: an old server omits the field and a new client reads `undefined`, exactly as it would
-     * from a server deployed before the field existed.
+     * 413 cap above; a CAPABILITY SIGNAL, not a second limit. Server and clients release
+     * separately, so during a rollout (or rollback) a new client can talk to an old server that
+     * bought senders SERIALLY — a chunk sized for lanes would run past the deadline there and
+     * leave a partly debited purchase with no response; `maxPerRequest` cannot reveal that, both
+     * versions publish 50. ABSENT ⇒ the client keeps its own conservative fallback — an old
+     * server omits the field, exactly as one deployed before the field existed.
      */
     recommendedPerRequest: number;
   };
   /**
-   * SENDERS THIS INSTALL HAS ALREADY DECIDED ON, WAITING FOR THE ORGANIZER (0.14.1).
-   *
-   * A sender with a `pending` or `sent` request in `organizer_requests` is EXCLUDED from `items`
-   * above the instant the decision is made — "the sender leaves the reader's queue immediately"
-   * (the ruling's own words) — and named here instead, so the client can render "Decided —
-   * <holder> files it on its next pass" rather than showing the sender in the queue a second
-   * time under a different state.
-   *
-   * Visible only on the door that made the decision — see
-   * `@trafficflow/db#listOutstandingForAccount`'s own header for why: `organizer_requests` is
-   * per-install bookkeeping, and a different install's `GET /screener` reads a different
-   * database with no row for it at all. That install still shows the sender as held, truthfully,
-   * until the organizer's own pass actually applies the decision.
+   * SENDERS THIS INSTALL HAS ALREADY DECIDED ON, WAITING FOR THE ORGANIZER. A sender with a
+   * `pending` or `sent` request in `organizer_requests` is EXCLUDED from `items` the instant the
+   * decision is made — the sender leaves the reader's queue immediately — and named here instead,
+   * so the client renders "Decided — <holder> files it on its next pass" rather than the same
+   * sender twice under two states. Visible only on the door that made the decision:
+   * `organizer_requests` is per-install bookkeeping, and another install's `GET /screener` reads
+   * a different database with no row — that install truthfully shows the sender as held until the
+   * organizer applies.
    */
   pendingDecisions: ScreenerPendingDecision[];
 }
@@ -791,15 +582,11 @@ export interface ScreenerPendingDecision {
    */
   sent: boolean;
   /**
-   * WHERE THE DECISION ACTUALLY IS (mail 0090).
-   *
-   *  · `pending` — queued here, not yet handed to the mailbox.
-   *  · `sent`    — in the mailbox, waiting for the organizer.
-   *  · `refused` — the organizer answered, and said no. **The sender is back in the queue**; this
-   *    entry exists to explain why the decision the person made did not take effect.
-   *
-   * `applied` and `expired` never appear: the first needs no explaining and the second returns the
-   * sender to the queue with the ordinary "nobody is organizing this" notice.
+   * WHERE THE DECISION ACTUALLY IS (mail 0090). `pending` — queued here, not yet handed to the
+   * mailbox. `sent` — in the mailbox, waiting for the organizer. `refused` — the organizer said
+   * no; THE SENDER IS BACK IN THE QUEUE, and this entry explains why the decision did not take
+   * effect. `applied` and `expired` never appear: the first needs no explaining, the second
+   * returns the sender to the queue with the ordinary "nobody is organizing this" notice.
    */
   state: "pending" | "sent" | "refused";
   /**
@@ -839,20 +626,14 @@ interface ScreenerRow {
 }
 
 /**
- * The columns a {@link ScreenerRow} is built from — named ONCE.
- *
- * Two queries produce this row: {@link ScreenerReadService.heldRows} (the whole bag, for
- * `decide`) and {@link ScreenerReadService.heldSenderPage} (one bounded page, for `list`). They
- * share this projection and {@link toScreenerRow} so the two cannot drift into disagreeing about
- * what a held row IS.
- *
- * `no_ai` and `sensitivity_category` USED to be selected here, to compute an `aiEligible` flag
- * that travelled on the row and gated the model call. Both are gone with the flag under the
- * AI-OPEN ruling, and the field was deleted rather than left unread on purpose: an unread
- * eligibility boolean sitting on the row is an invitation to gate on it again, and the guard that
- * keeps this open is `screener-ai-open.test.ts`, which plants the old gate and watches it go red.
- * The COLUMNS themselves are untouched in the database and still drive stored redaction — this is
- * a statement about what the Screener's suggestion path reads, not about what the mail is.
+ * The columns a `ScreenerRow` is built from — named ONCE. Two queries produce this row:
+ * `heldRows` (the whole bag, for `decide`) and `heldSenderPage` (one bounded page, for `list`);
+ * they share this projection and `toScreenerRow` so the two cannot drift about what a held row
+ * IS. `no_ai` and `sensitivity_category` used to be selected to compute an `aiEligible` flag;
+ * both are gone under AI-OPEN, and the field was deleted rather than left unread: an unread
+ * eligibility boolean is an invitation to gate on it again — `screener-ai-open.test.ts` plants
+ * the old gate and watches it go red. The COLUMNS stay in the database and still drive stored
+ * redaction; this is about what the suggestion path reads.
  */
 const HELD_COLUMNS = {
   messageId: messages.id, threadId: messages.threadId, fromAddress: messages.fromAddress,
@@ -884,21 +665,14 @@ function toScreenerRow(r: {
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
 /**
- * The `(date, messageId)` keyset for the Screener's `date desc, messageId desc` order — the
- * same shape and the same encoding as `MessageService`'s.
- *
- * The tuple, and not the id alone: senders share dates (an ESP sends a batch in one second),
- * so a date-only cursor would skip every sender after the first at that instant. `?? 0` maps
- * undated mail to the epoch, which is where the sort puts it too.
- *
- * **The encodings match; the two lists do NOT page identically over UNDATED mail, and the
- * difference is in this file's favour.** `MessageService.list` orders by a bare `desc(date)` —
- * NULLS FIRST in Postgres — and its cursor predicate is `date < $cursorDate`, which is NULL for
- * an undated row and therefore drops it from every page after the first. So there, undated mail
- * leads page one and then vanishes. Here the sort key is `coalesce(date, epoch)` in BOTH the
- * ORDER BY and the keyset, so undated mail sorts last and pages like everything else. Stated
- * rather than silently copied: a sender chooses whether to send a `Date:` header, and this is
- * the consent queue.
+ * The `(date, messageId)` keyset for the Screener's `date desc, messageId desc` order — same
+ * shape and encoding as `MessageService`'s. The tuple, not the id alone: senders share dates (an
+ * ESP sends a batch in one second), so a date-only cursor would skip every sender after the first
+ * at that instant; `?? 0` maps undated mail to the epoch, where the sort puts it too. The
+ * encodings match; the two lists do NOT page identically over UNDATED mail, in this file's
+ * favour: `MessageService.list` orders by bare `desc(date)` (NULLS FIRST) and drops undated rows
+ * after page one; here the sort key is `coalesce(date, epoch)` in BOTH the ORDER BY and the
+ * keyset, so undated mail sorts last and pages like everything else.
  */
 function encodeScreenerCursor(r: { date: Date | null; messageId: string }): string {
   return encodeListCursor(`${r.date ? r.date.getTime() : 0}:${r.messageId}`);
@@ -921,35 +695,14 @@ function decodeScreenerCursor(cursor: string): { time: number; messageId: string
 }
 
 /**
- * The READ half of the Screener — the queue and the decision, and NOTHING that spends.
- *
- * ## This class exists because `list` used to call the model
- *
- * `list` performed one `classifier.classify()` per held sender per page — up to
- * {@link MAX_PAGE_LIMIT} of them on a single `GET`, on the one endpoint a client re-fetches
- * on every poll, scroll and reload. Three things were wrong with that and only one of them
- * was money: a read charged, its cost was a function of how much the user scrolled, and the
- * subject and snippet of first-contact mail were shipped to a third party by the act of
- * LOOKING at the queue. Generation is now a purchase — {@link ScreenerService.suggest} — and
- * this class returns what is stored.
- *
- * The separation is structural, not documentary. This class is constructed with
- * {@link ScreenerDeps}, which has no classifier and no credit-gate factory, so neither `list`
- * nor `decide` can compile a model call or a debit; and {@link ScreenerService} keeps both on
- * its own private fields rather than on the bag it passes down, so neither is reachable at
- * runtime from here either.
- *
- * The queue itself is DERIVED (no separate table): every message whose desired folder is
- * `ohmail/Screener` is a held first-contact sender, and `list` returns one entry per distinct
- * sender (latest message representative).
- *
- * `decide` re-routes ALL of that sender's held mail to the destination the user pressed
- * ({@link ScreenDest}) and creates a `provenance:'promoted'` sender/domain rule pointing at
- * that same folder. **yes** additionally marks the sender known; **no** additionally hands the
- * re-routed messages to auto-unsubscribe. With no `dest` on the body the two-folder default
- * stands — yes ⇒ `INBOX`, no ⇒ `ohmail/Screened`. Every branch records a deduped learning
- * signal and emits the rule-create + per-message move changes through the `change_log` seam;
- * the physical IMAP move runs via the reconciler write-path OUTSIDE the tx.
+ * The READ half of the Screener — the queue and the decision, NOTHING that spends. `list` used to
+ * call the model per held sender per page: a read that charged, cost scaling with scrolling,
+ * first-contact subjects shipped to a third party by LOOKING. Generation is now a purchase
+ * (`suggest`); this class returns what is stored — `ScreenerDeps` has no classifier and no gate
+ * factory, so a model call or debit does not compile here. The queue is DERIVED: every message
+ * whose desired folder is `ohmail/Screener`, one entry per distinct sender. `decide` re-routes
+ * ALL the sender's held mail and creates a `provenance:'promoted'` rule; yes marks the sender
+ * known, no arms auto-unsubscribe. The IMAP move runs outside the tx.
  */
 export class ScreenerReadService {
   private readonly learning: LearningService;
@@ -1025,44 +778,30 @@ export class ScreenerReadService {
     // "yes" while the posture is lenient and "no" once it is `people_only`, with no re-purchase.
     const posture = resolveOhboxPolicy(preference.ohboxPolicy);
 
-    // ONE extra query for the whole page, not one per row, and none at all for an empty page.
-    //
-    // ── BY SENDER, NOT BY REPRESENTATIVE ────────────────────────────────────────────────
-    //
-    // The row on screen is a SENDER and the advice bought is about that sender, so what this page
-    // answers is "does this account hold advice about them" — whichever of their messages the
-    // verdict was generated from. It used to ask about the representative alone, and because the
-    // representative is the sender's NEWEST held message, one more message from them made the
-    // advice the account had already paid for invisible: no chip, no "Apply all", and the client's
-    // automatic on-open batch — whose entire buy list is "senders with no answer" — put them
-    // straight back in the next purchase. One sender, re-sending, priced once per Screener open.
-    //
-    // The verdict may therefore have been generated from mail older than the row on screen. That
-    // is the honest reading of what was bought (the question is about the sender, not the subject),
-    // and a person who wants the model to read the newer mail has the re-ask ladder, which prices
-    // and charges it per message like any other purchase.
+    // ONE extra query for the whole page, none for an empty one. BY SENDER, NOT BY
+    // REPRESENTATIVE: the row on screen is a SENDER and the advice bought is about that sender,
+    // so the page asks "does this account hold advice about them" — whichever message the verdict
+    // was generated from. Asking about the representative alone (the sender's NEWEST held
+    // message) meant one more message from them hid paid-for advice: no chip, no "Apply all", and
+    // the automatic on-open batch — whose buy list is "senders with no answer" — bought them
+    // again. One sender, re-sending, priced once per Screener open. The verdict may come from
+    // mail older than the row on screen; a person who wants the newer mail read has the re-ask
+    // ladder, priced per message.
     const stored = await this.senderSuggestions(
       ctx, pageRows.map((r) => r.fromAddress.toLowerCase()), posture,
     );
 
     const items = pageRows.map((r) => toItem(r, stored.get(r.fromAddress.toLowerCase()) ?? null));
 
-    // The quote. A sender is priced when they have not already been paid for (`!stored`) — and
-    // that is now the WHOLE rule. The fact is in hand, so this costs no query.
-    //
-    // It used to also require `r.aiEligible`, and the two halves had to agree with `suggest`'s
-    // own loop or the page would price a set the purchase would not buy. They still have to
-    // agree, and they do — by both having one clause. Under the AI-OPEN ruling every held sender
-    // is suggestable, so a quote that subtracted the credential-bearing ones would under-price a
-    // purchase that then charged for them.
-    //
-    // **A SENDER WHOSE STORED VERDICT BELONGS TO AN OLDER REPRESENTATIVE IS NO LONGER PRICED HERE,
-    // AND THIS COMMENT SAID THE OPPOSITE.** It read: "priced again, and that is right … also
-    // charged again, under that message's own source". Charged again is still true of the PRESSED
-    // path — `suggest` keeps its per-message identity, and a re-ask is a purchase — but this field
-    // is what an UNPRESSED batch reads as its buy list, so pricing them here is what made a
-    // re-sending stranger a recurring charge. They appear in the re-ask ladder instead, where a
-    // person sees the price before it is spent.
+    // The quote. A sender is priced when not already paid for (`!stored`) — the WHOLE rule; the
+    // fact is in hand, so this costs no query. It used to also require `r.aiEligible`, and the
+    // halves had to agree with `suggest`'s own loop or the page priced a set the purchase would
+    // not buy; they still agree, by both having one clause. Under AI-OPEN every held sender is
+    // suggestable, so a quote that subtracted credential-bearing ones would under-price a
+    // purchase that then charged for them. A SENDER WHOSE STORED VERDICT BELONGS TO AN OLDER
+    // REPRESENTATIVE IS NO LONGER PRICED HERE: this field is what an UNPRESSED batch reads as its
+    // buy list, so pricing them made a re-sending stranger a recurring charge — they appear in
+    // the re-ask ladder instead, where the price is seen before it is spent.
     const suggestable = pageRows
       .filter((r) => !stored.has(r.fromAddress.toLowerCase()))
       .map((r) => r.fromAddress.toLowerCase());
@@ -1121,20 +860,14 @@ export class ScreenerReadService {
     if (decision !== "yes" && decision !== "no") {
       throw new ServiceError("validation_failed", 400, "decision must be 'yes' or 'no'");
     }
-    // ── AND SO IS `dest`, TWICE, IN THIS ORDER ─────────────────────────────────────────────
-    //
-    // Two separate refusals, because they are two separate mistakes. A folder outside
-    // {@link DECIDABLE_FOLDERS} is a client naming a place a decision may not file to — an
-    // invented string, or `ohmail/Screener`, which would promote a rule that holds the sender
-    // at the gate for ever. A DECIDABLE folder on the wrong side of the gate —
-    // `{decision:"yes", dest:"ohmail/Quarantine"}` — is the second: coercing it either way
-    // files mail under a consent the user did not give, and which half to trust is a coin toss
-    // the caller cannot see. The client guards the same confusion in the other direction —
-    // `sender-screening.ts` once shipped a "yes unless screened" mapping that asked the server
-    // to file a SPAM press into the Ohbox.
-    //
-    // MEMBERSHIP FIRST. `effectForDestination("ohmail/Screener")` is `"deny"`, so the agreement
-    // check on its own accepts it for any `no`.
+    // AND SO IS `dest`, TWICE, IN THIS ORDER — two refusals, two mistakes. A folder outside
+    // `DECIDABLE_FOLDERS` is a client naming a place a decision may not file to — an invented
+    // string, or `ohmail/Screener`, which would promote a rule holding the sender at the gate for
+    // ever. A DECIDABLE folder on the wrong side of the gate (`{decision:"yes",
+    // dest:"ohmail/Quarantine"}`) is the second: coercing either way files mail under a consent
+    // the user did not give, and which half to trust is a coin toss. MEMBERSHIP FIRST:
+    // `effectForDestination("ohmail/Screener")` is `"deny"`, so the agreement check alone accepts
+    // it for any `no`.
     const dest = b.dest;
     if (dest !== undefined) {
       if (typeof dest !== "string" || !DECIDABLE_FOLDERS.has(dest)) {
@@ -1154,23 +887,14 @@ export class ScreenerReadService {
         );
       }
     }
-    // ── ONE INDEXED READ, NOT THE WHOLE QUEUE ───────────────────────────────────────────────
-    //
-    // This used to be `heldRows(ctx)` — every held message in the account — followed by a
-    // `.find` and a `.filter` in JavaScript. On a large mailbox that is **thousands of rows,
-    // each carrying `subject` and `snippet`**, pulled into a serverless function before the
-    // decision does any work at all. The user-visible cost is the whole point: they click
-    // "Ohbox" on a sender and the request spends its first seconds materializing a queue it is
-    // about to discard, an unstable delay reported from the field. A delay that scales with the
-    // size of the backlog is unpredictable by construction, and an action whose effect arrives at
-    // an unpredictable time is indistinguishable from one that failed.
-    //
-    // The target lookup stays a HELD-ONLY lookup, so the 404 still means "not in the Screener"
-    // and not merely "no such message" — deciding on mail that is not at the gate would create a
-    // promoted rule for a sender nobody was asked about. `@trafficflow/db#heldRowById`, not this
-    // class's own read stack — it is the ONE implementation the drain also reads through
-    // (`heldRowsForSender`/`heldRowsForDomain`, inside `applyScreenerDecision`), and it is the
-    // one that carries `mailboxId`, which the role branch below needs.
+    // ONE INDEXED READ, NOT THE WHOLE QUEUE. This used to be `heldRows(ctx)` — every held
+    // message, thousands of rows each carrying `subject` and `snippet`, pulled into a serverless
+    // function before the decision did any work; a delay scaling with the backlog is
+    // unpredictable by construction, and an action landing at an unpredictable time is
+    // indistinguishable from one that failed. The lookup stays HELD-ONLY, so the 404 still means
+    // "not in the Screener" — deciding on mail not at the gate would promote a rule for a sender
+    // nobody was asked about. `@trafficflow/db#heldRowById`, the ONE implementation the drain
+    // also reads through, and the one that carries `mailboxId`, which the role branch needs.
     const target = await heldRowById(asTx(ctx), ctx.accountId, id);
     if (!target) throw new ServiceError("not_found", 404, "screener item not found");
 
@@ -1201,21 +925,14 @@ export class ScreenerReadService {
   }
 
   /**
-   * ══════════════════════════════════════════════════════════════════════════════════════════
-   *  DECIDE — 0.14.1: branches on the mailbox's role for THIS install.
-   * ══════════════════════════════════════════════════════════════════════════════════════════
-   *
-   * An ORGANIZER writes directly, exactly as before this slice — `applyAsOrganizer` below is
-   * `decide`'s old transactional body, unchanged in EFFECT and now sharing its core
-   * (`@trafficflow/db#applyScreenerDecision`) with the organizer's own request drain
-   * (`apps/worker/src/request-drain.ts`), which applies the identical decision when a READER
-   * made it. A READER never writes here: its decision becomes a REQUEST — a row in
-   * `organizer_requests` and, on its own next cycle, a record appended to `ohmail/_meta` — and
-   * the organizer applies it on ITS next pass. only the organizer moves.
-   *
-   * The role is asked PER MAILBOX (`readRequestEligibility`, keyed on `target.mailboxId`), never
-   * per account: an account may hold several mailboxes with different roles, and this decision
-   * is about the ONE the held message belongs to.
+   * DECIDE — branches on the mailbox's role for THIS install. An ORGANIZER writes directly —
+   * `applyAsOrganizer` is `decide`'s old transactional body, sharing its core
+   * (`@trafficflow/db#applyScreenerDecision`) with the organizer's request drain, which applies
+   * the identical decision when a READER made it. A READER never writes here: its decision
+   * becomes a REQUEST — a row in `organizer_requests`, appended to `ohmail/_meta` on its next
+   * cycle — applied on the organizer's next pass. The role is asked PER MAILBOX
+   * (`readRequestEligibility` on `target.mailboxId`), never per account: mailboxes have different
+   * roles, and this decision is about the ONE the held message belongs to.
    */
   async decide(
     ctx: ServiceContext, id: string, b: ScreenBody,
@@ -1239,21 +956,15 @@ export class ScreenerReadService {
     // what the row actually says.
     if (eligibility.status === "disabled") throw new MailboxNotFoundError(v.target.mailboxId);
 
-    /* ── THE ROLE ALONE DECIDES THIS BRANCH. `capable` MUST NOT APPEAR HERE ──────────────────
-     *
-     * `capable` answers a question a READER asks about the install that HOLDS its mailbox: will
-     * that holder take a decision made somewhere else. It says nothing about whether THIS install
-     * may write to a mailbox it organizes itself, and reading it that way puts a header an
-     * ATTACKER can write (a claim is a message anyone with append rights can leave in the folder)
-     * in front of the organizer's own press — the highest-traffic decide in the product, and the
-     * whole of a standalone install's Screener.
-     *
-     * It was `role === "organizer" && capable`, which was not wrong TODAY only because `capable`
-     * happens to reduce to `status !== "disabled"` whenever the role is `organizer`. That is a
-     * coincidence of one boolean's current definition, not a property anybody stated, and the
-     * tombstone half of it is already checked on the line above — so the conjunct bought nothing
-     * and would have started refusing every organizer's own decision the day `capable` grew a
-     * requirement. Removed rather than left as a trap with a comment on it.
+    /**
+     * THE ROLE ALONE DECIDES THIS BRANCH — `capable` MUST NOT APPEAR HERE. `capable` answers a
+     * READER's question about the install HOLDING its mailbox; it says nothing about whether THIS
+     * install may write to a mailbox it organizes, and reading it that way puts a header an
+     * ATTACKER can write in front of the organizer's own press — the highest-traffic decide in
+     * the product. `role === "organizer" && capable` was not wrong TODAY only because `capable`
+     * reduces to `status !== "disabled"` for organizers — a coincidence; the conjunct bought
+     * nothing and would refuse every organizer's press the day `capable` grew a requirement.
+     * Removed rather than left as a trap.
      */
     if (eligibility.role === "organizer") {
       return this.applyAsOrganizer(ctx, id, v, opts);
@@ -1282,19 +993,14 @@ export class ScreenerReadService {
     let rerouted: AppliedScreenerRow[] = [];
 
     const result = await asTx(ctx).transaction(async (tx) => {
-      // ── THE ROLE IS RE-READ HERE, INSIDE THE WRITE, UNDER THE SHARE LOCK ────────────────────
-      //
-      // `decide`'s own `readRequestEligibility` is a PLAIN read on the ambient handle — right for
-      // choosing a branch, and not evidence about a write that has not started yet. READ
-      // COMMITTED gives every statement a fresh snapshot, so between that read and this
-      // transaction the worker's lease gate can commit a demotion, and an install that is now a
-      // READER would insert a promoted rule and a bag of `last_set_by: 'us'` move intents.
-      // `assertOrganizerRole`'s own header records that exact interleaving and why the lock is
-      // the only thing that closes it.
-      //
-      // AFTER the erasure fence and not before: `applyScreenerDecision` takes `accounts FOR SHARE`
-      // as its first statement, and `deleteAccount` takes the same row first — so this transaction
-      // must reach `accounts` before it reaches `mailboxes`, or the two orders cross and deadlock.
+      // THE ROLE IS RE-READ HERE, INSIDE THE WRITE, UNDER THE SHARE LOCK. `decide`'s own
+      // `readRequestEligibility` is a plain read — right for choosing a branch, not evidence
+      // about a write that has not started: under READ COMMITTED the worker's lease gate can
+      // commit a demotion in between, and a now-READER would insert a promoted rule and
+      // `last_set_by: 'us'` move intents; `assertOrganizerRole`'s header records that
+      // interleaving. AFTER the erasure fence, not before: `applyScreenerDecision` takes
+      // `accounts FOR SHARE` first and `deleteAccount` takes the same row first — this
+      // transaction must reach `accounts` before `mailboxes` or the orders cross and deadlock.
       const erasedAt = await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId);
       if (erasedAt != null) {
         throw new ServiceError("account_erased", 410,
@@ -1349,27 +1055,16 @@ export class ScreenerReadService {
       return dto;
     });
 
-    /* ── RING THE WORKER'S DOORBELL FOR WHAT THIS VERDICT NOW OWES — OUTSIDE THE TX ───────────
-     *
-     * A Screener press is a filing decision like any other and waited for the ROTATION like any
-     * other: a tick queues one serialized pass and each mailbox gets one bounded turn in it. This
-     * is the front door of the product, so it is the decision whose wait was most visible — the
-     * rail said "Filing 1 message on your mail server…" for minutes after a press.
-     *
-     * OUTSIDE the transaction, and that placement is the whole of what a review round cost.
-     * Inside it, `applyScreenerDecision` already holds row locks on `rules`, on every rerouted
-     * message's `folder_state`, and on the account's settings — so a `mailboxes` row lock at the
-     * end of that chain closed a cycle: real Postgres answered `40P01 deadlock detected`, "while
-     * updating tuple in relation `mailboxes`", for two concurrent domain decisions on ONE mailbox,
-     * and `screener-domain-scope.pg.test.ts` and `consent-baseline.concurrency.pg.test.ts` both
-     * caught it. PGlite saw none of it.
-     *
-     * ONCE rather than per message: the doorbell is not a work item — it says come sooner, and the
-     * reconcile pass reads the pending rows itself. GUARDED ON `rerouted`, so a verdict that moved
-     * nothing (every held row had already moved on — see the `setWhere` in the apply) does not wake
-     * a worker for work that does not exist. BEST-EFFORT, on `MessageService.ringFiledMailbox`'s
-     * argument and `junk-window.ts`'s own precedent for this column: the verdict has committed, and
-     * the poll is the floor beneath this either way. */
+    /**
+     * RING THE WORKER'S DOORBELL FOR WHAT THIS VERDICT NOW OWES — OUTSIDE THE TX. A Screener
+     * press waited for the ROTATION like any filing decision — the rail said "Filing 1 message…"
+     * for minutes at the product's front door. OUTSIDE, because inside the tx
+     * `applyScreenerDecision` holds row locks on `rules`, every rerouted `folder_state` and the
+     * settings — a `mailboxes` lock at the end closed a cycle: real Postgres answered `40P01` for
+     * two concurrent domain decisions on one mailbox; PGlite saw none of it. ONCE, not per
+     * message; GUARDED ON `rerouted`, so a verdict that moved nothing wakes nobody; BEST-EFFORT —
+     * the verdict has committed and the poll is the floor.
+     */
     if (rerouted.length > 0) {
       try {
         await ringFilingDoorbell(ctx.db as unknown as Tx, target.mailboxId, ctx.now());
@@ -1395,16 +1090,13 @@ export class ScreenerReadService {
       const adapter = this.deps.adapter;
       const repo = makeDrizzleRepo(ctx.db as unknown as Tx);
       // `rerouted`, never `heldMail`: a row the guard skipped belongs to whoever wrote it, and
-      // moving it on IMAP would make the mailbox disagree with the database that just declined
-      // to claim it. This is the one place a stale read could still reach the user's server.
-      //
-      // A STALE SOURCE LOCATOR DOES NOT END THIS LOOP, and the verdict does not become an error.
-      // The transaction above has already committed the decision AND `desired_folder` with
-      // `reconcile_status: 'pending'` for every one of these rows, so the physical move is owed by
-      // the organizer whether or not this opportunistic pass lands it. Until `applyReconcileAction`
-      // learned to defer (see its header), one recycled folder threw out of here and the reader was
-      // shown a 500 for a decision that had committed and was converging — the Screener is this
-      // product's front door, and "your press failed" is the one thing that was not true.
+      // moving it on IMAP would make the mailbox disagree with the database that declined to
+      // claim it — the one place a stale read could still reach the user's server. A STALE SOURCE
+      // LOCATOR DOES NOT END THIS LOOP, and the verdict does not become an error: the transaction
+      // has committed the decision AND `desired_folder` with `reconcile_status: 'pending'`, so
+      // the physical move is owed by the organizer whether or not this opportunistic pass lands
+      // it. Until `applyReconcileAction` learned to defer, one recycled folder threw and the
+      // reader saw a 500 for a decision that had committed and was converging.
       for (const m of rerouted) {
         await applyReconcileAction(
           { repo, adapter, accountId: ctx.accountId, mailboxId: "" },
@@ -1414,35 +1106,16 @@ export class ScreenerReadService {
       }
     }
 
-    // AFTER the tx has committed, never inside it, and only on a REJECT. `onScreenOut`
-    // never throws: a sender who cannot be unsubscribed is still screened out, because the
-    // filing decision is the product and this is a courtesy on top of it.
-    //
-    // ── THE TRIGGER IS THE CONSENT, NOT THE FOLDER ──────────────────────────────────────────
-    //
-    // This read `appliedFolder === NO_FOLDER` while a reject could only ever land in
-    // `ohmail/Screened`. Now that `dest: "ohmail/Quarantine"` is reachable, that predicate would
-    // have gone quietly false for every SPAM press — a shipped behaviour dropped as a side
-    // effect of a slice about destinations, which is exactly the class of change that has to be
-    // deliberate or not at all.
-    //
-    // It is deliberate the other way, and the ruling is already written down:
-    // `unsubscribe-service.ts` names its actionable set as "`ohmail/Screened` and
-    // `ohmail/Quarantine` — the user said no. Every reject path lands in one of these two: **the
-    // Screener's spam verb**, an explicit screen-out, a block rule." Spam is named there. So
-    // `decision === "no"` is both the same set of senders this has always had and the sentence
-    // that file is written against, and `sender-screening.ts`'s pre-click disclosure — which
-    // tells the user a spam press arms auto-unsubscribe — stays true.
-    //
-    // The narrowing is still done twice: `onScreenOut` filters to those two folders itself
-    // rather than trusting its caller, which is what keeps a future promote path from turning
-    // this into an unsubscribe by passing the wrong ids.
-    //
-    // `rerouted` and not `heldMail`, for the reason the IMAP loop above gives: a row this
-    // decision did not claim is not one it may leave a mailing list on behalf of.
-    //
-    // NOT PERFORMED ON THE DRAIN'S OWN APPLY OF A READER'S REQUEST — see
-    // `@trafficflow/db#applyScreenerDecision`'s own header for the documented gap.
+    // AFTER the tx has committed, never inside, and only on a REJECT; `onScreenOut` never throws
+    // — a sender who cannot be unsubscribed is still screened out. THE TRIGGER IS THE CONSENT,
+    // NOT THE FOLDER: this read `appliedFolder === NO_FOLDER`, which `dest: "ohmail/Quarantine"`
+    // would have made quietly false for every SPAM press. `unsubscribe-service.ts` names its
+    // actionable set as `ohmail/Screened` and `ohmail/Quarantine` — the user said no — so
+    // `decision === "no"` is the same senders and the sentence that file is written against. The
+    // narrowing is still done twice: `onScreenOut` filters to those two folders itself.
+    // `rerouted`, not `heldMail`: a row this decision did not claim may not be unsubscribed for.
+    // NOT performed on the drain's apply of a reader's request — see `applyScreenerDecision`'s
+    // header.
     if (this.deps.unsubscribe && decision === "no") {
       await this.deps.unsubscribe.onScreenOut(ctx, rerouted.map((m) => m.messageId));
     }
@@ -1451,19 +1124,14 @@ export class ScreenerReadService {
   }
 
   /**
-   * THE READER'S DECISION — a REQUEST, waiting for the organizer to apply it (0.14.1).
-   *
-   * Offered only while `eligibility.capable` — the holder's claim advertises
-   * {@link CAPABILITY_REQUESTS} AND `organizer_state = 'held'` (see
-   * `readRequestEligibility`'s own header). Otherwise `409 organized_elsewhere`, naming which of
-   * the two is missing so the client can render the right sentence and the claim CTA — never a
-   * silent queue nobody is ever going to drain.
-   *
-   * `match` — `address` for a sender-scope decision, `domain` for a domain-scope one — is what
-   * `listOutstandingForAccount` (`@trafficflow/db`) keys the Screener list's exclusion on, and what
-   * `apps/worker/src/request-drain.ts`'s validator re-checks before applying anything: the
-   * payload is untrusted the instant it leaves this process and travels through an RFC822 header
-   * another install wrote.
+   * THE READER'S DECISION — a REQUEST, waiting for the organizer to apply it. Offered only while
+   * `eligibility.capable` — the holder's claim advertises `CAPABILITY_REQUESTS` AND
+   * `organizer_state = 'held'`; otherwise `409 organized_elsewhere`, naming which of the two is
+   * missing so the client renders the right sentence and the claim CTA — never a silent queue
+   * nobody drains. `match` — `address` for a sender-scope decision, `domain` for domain — is what
+   * `listOutstandingForAccount` keys the list's exclusion on and what the drain's validator
+   * re-checks before applying: the payload is untrusted the instant it leaves this process,
+   * travelling through an RFC822 header another install wrote.
    */
   private async requestAsReader(
     ctx: ServiceContext, id: string,
@@ -1544,19 +1212,14 @@ export class ScreenerReadService {
   }
 
   /**
-   * All messages currently held in the Screener (desired folder = ohmail/Screener).
-   *
-   * **The sensitivity flags narrow NOTHING here, and they never did.** This WHERE has never
-   * carried `no_ai = false AND sensitivity_category IS NULL` — the shape
-   * `DraftingService.retrieveThreadContext` uses, and the obvious symmetry to reach for — because
-   * it would be wrong twice over: it would HIDE a held sensitive message from the queue the user
-   * is meant to triage, and `decide` reads the same rows, so that sender could never be screened
-   * at all (404) and their mail would stay stuck in `ohmail/Screener` for ever.
-   *
-   * What HAS changed is what happened downstream. The SELECT used to compute an `aiEligible`
-   * flag that travelled on the row so {@link ScreenerService.suggest} could refuse to ask about
-   * it. Under the AI-OPEN ruling it asks about all of them, and the credential material is
-   * redacted at the sink instead.
+   * All messages currently held in the Screener (desired folder = ohmail/Screener). THE
+   * SENSITIVITY FLAGS NARROW NOTHING HERE, AND NEVER DID: `no_ai = false AND sensitivity_category
+   * IS NULL` (the `retrieveThreadContext` shape) would be wrong twice — it would HIDE a held
+   * sensitive message from the queue the user must triage, and `decide` reads the same rows, so
+   * that sender could never be screened (404) and their mail would stay stuck for ever. What
+   * changed is downstream: the SELECT used to compute an `aiEligible` flag so `suggest` could
+   * refuse; under AI-OPEN it asks about all of them and the credential material is redacted at
+   * the sink.
    */
   protected async heldRows(ctx: ServiceContext, extra?: SQL): Promise<ScreenerRow[]> {
     const filters: SQL[] = [
@@ -1577,67 +1240,14 @@ export class ScreenerReadService {
   }
 
   /**
-   * ONE PAGE of the queue: the representative per sender, ordered, keyset-filtered and
-   * LIMITed — **by Postgres**, which is the whole of the second defect.
-   *
-   * ## What this replaces
-   *
-   * `list` used to call {@link heldRows} with no predicate and no limit and then do all four
-   * jobs in JavaScript. That is **every held message in the account** — thousands of rows on a
-   * large mailbox, each carrying `subject` AND `snippet` — pulled into a serverless function
-   * on every scroll, poll and reload, to return at most 200 of them. The cost of reading page
-   * one grew with the size of the backlog, which is the same defect `decide` was cured of and
-   * for the same reason: the Screener is the surface a user meets a stranger on, and it is the
-   * surface that got slower the more strangers were waiting.
-   *
-   * ## THE KEYSET IS APPLIED AFTER THE `DISTINCT ON`, NEVER INSIDE IT
-   *
-   * This is the one composition that has to be right, and it is not the obvious one. The inner
-   * query reduces the held set to one row per sender — their LATEST held message. Pushing the
-   * cursor predicate down into that query would filter rows BEFORE the representative is
-   * chosen, so a sender whose true representative sits ABOVE the cursor (already shown) but who
-   * also has an older held message BELOW it would have that older message promoted to
-   * representative and be **listed a second time**. The user would be asked about the same
-   * stranger twice, on different mail. The predicate therefore sits in the outer query, over a
-   * set that is already one-row-per-sender.
-   *
-   * A keyset and not `OFFSET`: the held set mutates under the reader (mail arrives, `decide`
-   * removes a whole sender's bag), and `OFFSET n` over a shifting set silently skips rows when
-   * something above the window disappears and repeats them when something is inserted. A skip
-   * here is not a cosmetic paging artefact — it is a first-contact sender the user is never
-   * asked about, whose mail then sits in `ohmail/Screener` unseen. That is why this is a
-   * correctness fix and not a performance one.
-   *
-   * The keyset is not a promise that one pagination pass sees a consistent snapshot, and it is
-   * not sold as one. A sender whose representative rotates mid-pass — new mail arrives, or the
-   * rep message alone is moved out — can move relative to the cursor and be seen twice or not
-   * until the next reload. Both resolve on re-read, and neither loses a sender permanently,
-   * which is the property that matters here.
-   *
-   * ## The sort key is TRUNCATED TO MILLISECONDS on purpose
-   *
-   * The cursor round-trips the date through `Date.getTime()`, which is integer milliseconds. If
-   * the column held more precision than the cursor can carry, the comparison would be made
-   * against a value slightly BELOW the row's real timestamp, and any row falling in the gap
-   * would satisfy neither page — a silent loss of exactly the kind the tiebreak below exists to
-   * prevent. `date_trunc('milliseconds', …)` makes the SQL sort key exactly representable in
-   * the cursor, and the ties that truncation can create are broken by `id`, which the cursor
-   * also carries.
-   *
-   * `coalesce(…, the epoch)` and not `DESC NULLS LAST`: it is the literal translation of
-   * the `?? 0` the JavaScript used, it matches what {@link encodeScreenerCursor} writes for an
-   * undated row, and it keeps undated mail at the END of the queue. Postgres sorts NULLs FIRST
-   * under `DESC`, so the naive spelling would let a sender who simply omits a `Date:` header —
-   * a field they control — take the top of the consent queue.
-   *
-   * ## The representative is now chosen deterministically
-   *
-   * `ORDER BY lower(from_address), sort_key DESC, id DESC` inside the `DISTINCT ON` picks the
-   * newest held message per sender and, on a date tie, the higher id. The JavaScript it
-   * replaces kept the first row it happened to see at a tie, under an `ORDER BY date` that does
-   * not order ties at all — so which message represented a sender was arbitrary and could
-   * differ between two identical requests. A cursor cannot be built on that: the tuple it
-   * encodes has to name the same row on the next request.
+   * ONE PAGE of the queue: representative per sender, ordered, keyset-filtered and LIMITed — BY
+   * POSTGRES, replacing four jobs in JavaScript over thousands of rows per scroll. THE KEYSET IS
+   * APPLIED AFTER THE `DISTINCT ON`: pushed inside, it filters BEFORE the representative is
+   * chosen, and a sender with an older held message below the cursor is LISTED TWICE. A keyset,
+   * not `OFFSET`: the held set mutates under the reader, and a skip is a first-contact sender
+   * never asked about. The sort key is TRUNCATED TO MILLISECONDS — the cursor round-trips through
+   * `getTime()`; ties break on `id`. `coalesce(…, epoch)`, not `DESC NULLS LAST`: NULLs sort
+   * FIRST under `DESC`, and omitting `Date:` must not take the top of the consent queue.
    */
   protected async heldSenderPage(
     ctx: ServiceContext,
@@ -1658,16 +1268,14 @@ export class ScreenerReadService {
     const sortKey = d.truncMs(sql`coalesce(${messages.date}, ${d.ts(EPOCH)})`) as SQL<Date>;
     const sender = sql`lower(${messages.fromAddress})`;
 
-    /* ONE HELD MESSAGE PER SENDER, AS A WINDOW ─────────────────────────────────────────────
-     *
-     * `distinct on (k) … order by k, o` and `row_number() over (partition by k order by o) = 1`
-     * pick the same row — the first in `o` within each `k`. The first spelling exists only on the
-     * server; the second is standard and both stores have it, so the representative is chosen the
-     * same way everywhere instead of by a branch.
-     *
-     * The ordering moves INSIDE the window, which is where it always belonged: the leading `k` in
-     * the old ORDER BY was there to satisfy the clause, not to order the answer. The OUTER order
-     * below is the one the caller sees and is unchanged.
+    /**
+     * ONE HELD MESSAGE PER SENDER, AS A WINDOW. `distinct on (k) … order by k, o` and
+     * `row_number() over (partition by k order by o) = 1` pick the same row — the first in `o`
+     * within each `k`. The first spelling exists only on the server; the second is standard and
+     * both stores have it, so the representative is chosen the same way everywhere instead of by
+     * a branch. The ordering moves INSIDE the window, where it belonged: the leading `k` in the
+     * old ORDER BY satisfied the clause, not the answer. The OUTER order below is the caller's
+     * and is unchanged.
      */
     // `account_id` LEADS the predicate rather than filtering a cross-account result (no cross-account disclosure).
     const reps = ctx.db.select({
@@ -1728,28 +1336,14 @@ export class ScreenerReadService {
    */
 
   /**
-   * THE STORED SUGGESTIONS FOR A SET OF SENDERS — what {@link ScreenerReadService.list} draws.
-   *
-   * ## Two reads, two different questions, and the difference is the money
-   *
-   * This one asks *"does this account hold advice ABOUT THIS SENDER"* and
-   * {@link storedSuggestions} asks *"has THIS MESSAGE been advised on"*. They used to be one read
-   * doing both jobs, and the per-message answer was wrong for the display: a sender's newest held
-   * message is their representative, so one more message from them hid advice the account had
-   * already bought, and every unpressed buyer that reads "senders with no answer" bought it again
-   * (the double-buy the review measured).
-   *
-   * The per-message read is still exactly right where it is used — {@link ScreenerService.suggest}'s
-   * layers, where a person pressing "Suggest again" is asking about mail the model has not read and
-   * must be charged for it. Neither read may be substituted for the other; the two docblocks are
-   * the whole of the distinction.
-   *
-   * The query, the `DISTINCT ON` that makes "newest wins" the database's job and the
-   * `lower(from_address)` normalisation all live in `@trafficflow/db`
-   * ({@link screenerSuggestionsBySender}), because the worker's always-on pass needs the same
-   * identity for its entitlement and cannot import this package. `senders` must already be
-   * lower-cased — this method does not fold, so a caller passing raw addresses gets misses rather
-   * than a silent mismatch.
+   * THE STORED SUGGESTIONS FOR A SET OF SENDERS — what `list` draws. Two reads, two questions,
+   * and the difference is the money: this asks "does this account hold advice ABOUT THIS SENDER";
+   * `storedSuggestions` asks "has THIS MESSAGE been advised on". One read doing both was wrong
+   * for the display: one more message from a sender hid advice already bought, and every
+   * unpressed buyer reading "senders with no answer" bought it again. The per-message read stays
+   * right in `suggest`, where "Suggest again" is a purchase. The query lives in `@trafficflow/db`
+   * (`screenerSuggestionsBySender`) — the worker's pass needs the same identity. `senders` must
+   * already be lower-cased: raw addresses get misses, not a silent mismatch.
    */
   protected async senderSuggestions(
     ctx: ServiceContext, senders: string[], ohboxPolicy: OhboxPolicy,
@@ -1767,16 +1361,13 @@ export class ScreenerReadService {
   }
 
   /**
-   * The STORED suggestions for a set of MESSAGES — the purchase path's "already bought" read.
-   *
-   * One query for the set, none for an empty one, and the newest row wins per message (see
-   * {@link SUGGESTION_PROVENANCE} for why there can be more than one). `account_id` is in the
-   * WHERE even though the ids are already this account's: the no-cross-account-disclosure rule
-   * says the account leads every key, never a filter applied to a cross-account result.
-   *
-   * PER MESSAGE ON PURPOSE, and {@link senderSuggestions} is the other question — see there. Every
-   * caller of this one is inside a purchase a person pressed for, where the unit of "already
-   * bought" has to be the mail the model would read.
+   * The STORED suggestions for a set of MESSAGES — the purchase path's "already bought" read. One
+   * query for the set, none for an empty one; the newest row wins per message (see
+   * `SUGGESTION_PROVENANCE` for why there can be more than one). `account_id` is in the WHERE
+   * even though the ids are this account's: the account leads every key, never a filter over a
+   * cross-account result. PER MESSAGE ON PURPOSE — `senderSuggestions` is the other question;
+   * every caller here is inside a purchase a person pressed for, where "already bought" has to
+   * mean the mail the model would read.
    */
   protected async storedSuggestions(
     ctx: ServiceContext, messageIds: string[], ohboxPolicy: OhboxPolicy,
@@ -1842,82 +1433,14 @@ export class ScreenerService extends ScreenerReadService {
   }
 
   /**
-   * **Buy suggestions for an EXPLICIT set of senders.** `POST /screener/suggest`,
-   * `cost: "work"`.
-   *
-   * ## What it refuses, and why refusing is the feature
-   *
-   * A missing, empty, non-array or all-blank sender set is a 400. It is never read as "all",
-   * and that is the rule this route exists to obey: on a large mailbox "all" can be well over a
-   * thousand senders — a four-figure spend one malformed body away. Absent evidence must not
-   * select the expensive branch.
-   *
-   * ## AI-OPEN — THE CURRENT RULING, AND WHAT IT REPLACED
-   *
-   * "There is not one single message for AI to not read justified… scan everything and remove the
-   * exceptions; if someone wants to use AI, they can, if not, they won't."
-   *
-   * This method used to run `sensitivity → money → model`, skipping a `no_ai` or non-`ordinary`
-   * row as `"withheld"` before the spend question was asked. **Every held sender is now
-   * suggestable.** The consent argument that justified the exception does not survive contact with
-   * what this endpoint is: nobody reaches it by accident. A person selected a set of senders, was
-   * quoted a price, and pressed a button labelled "Suggest". Withholding there is not protecting
-   * them from a disclosure they did not choose — it is declining to perform the one they did.
-   *
-   * What it cost, measured on the account that reported it: **293 of 1,698 waiting senders** could
-   * not be suggested for, and the surface told them so in a sentence
-   * ("This one is never sent to AI — it looks like it carries a login or a code") that read as a
-   * safety promise while being, for most of those senders, a false positive in a detector.
-   *
-   * ## What still protects the credential, and where it moved to
-   *
-   * REDACTION, which is the half that was always doing the real work. `pipeline.ts` stores the
-   * body and the snippet of this class of mail redacted, and the loop below applies the SAME
-   * transform — `redactForModel`, over the live bytes — to the subject and the snippet before any
-   * port sees them. So the model sees what the user's own client shows them, one representation
-   * rather than two, and the code itself never leaves the building.
-   *
-   * The automatic routing path in `pipeline.ts` is UNCHANGED and still refuses. Nobody presses
-   * anything there, so there is no consent to point at; see `SensitivePayloadPolicy`.
-   *
-   * ## The order of the remaining gates
-   *
-   * money → model, and the sink can no longer throw on this path. That pairing is deliberate:
-   * a sink that refused AFTER `gate.spend()` would charge a credit and return
-   * `model_unavailable`.
-   *
-   * ## Two clicks do not pay twice, at FOUR independent layers
-   *
-   *  1. **A stored suggestion is served, not re-bought.** The cheapest layer and the only one
-   *     that also protects OUR cost: a `duplicate` charges the user nothing but still spends
-   *     tokens, so a second click over the same senders must not reach the model at all.
-   *  2. `Idempotency-Key` — claimed once the work is done, so a retry after a lost response
-   *     replays the answer instead of re-running the purchase.
-   *  3. `classify:screener:<message_id>` — the ledger's own identity, and the backstop for
-   *     everything the first two cannot see (two hosts, two keys, one message). It answers
-   *     `duplicate`, which is why `charged` can be lower than `quoted` for an honest reason.
-   *  4. **The EXCLUSIVE CLAIM on that source**, and it is here because the three
-   *     above share a blind spot that cost real money. Every one of them is a statement about
-   *     work that is already OVER — a stored row, a claimed key, a committed debit — and a
-   *     request that OVERLAPS another passes all three, because at the instant it looks, none of
-   *     those exists yet. Layer 3 in particular answers `duplicate`, which reads as "already paid
-   *     for, proceed", so N simultaneous requests over one sender made N paid model calls against
-   *     ONE credit. The claim is the only layer that can say "somebody is doing this right now",
-   *     and it is taken in the same transaction as the debit, before the model call.
-   *
-   *     It needs no unusual behaviour to matter: two clicks land as two invocations with
-   *     DIFFERENT `Idempotency-Key`s (so layer 2 does not collapse them), and the worker's
-   *     auto-suggest pass selects the same held sender as a button press by construction.
-   *
-   * ## The model calls happen OUTSIDE any transaction, and each verdict lands ALONE
-   *
-   * Network latency inside a tx holds a pooled connection for the duration of N model calls, so
-   * no `classify` runs inside one. Each verdict is then persisted in its OWN small transaction
-   * rather than batched into a closing one: on a serverless host 50 senders is 50 model
-   * round trips, and a function that dies at sender 40 with one pending write loses all 40
-   * results the account has already paid for. Per message, a death costs the writes that had
-   * not happened yet — and the money already spent buys those back for free, because the
-   * ledger source is the message.
+   * Buy suggestions for an EXPLICIT set of senders. A missing, empty or all-blank set is a 400,
+   * never "all" — a four-figure spend one malformed body away. AI-OPEN: every held sender is
+   * suggestable; the old sensitivity skip is gone — a person chose senders, saw a price, pressed
+   * the button. REDACTION protects the credential (`redactForModel`); the automatic routing path
+   * still refuses. FOUR LAYERS against paying twice: stored suggestion served; `Idempotency-Key`;
+   * the ledger identity `classify:screener:<message_id>`; the EXCLUSIVE CLAIM — the only layer
+   * that sees a caller not yet finished. Each verdict lands in its OWN small transaction — a
+   * death mid-run loses only unwritten results.
    */
   async suggest(
     ctx: ServiceContext,
@@ -1953,25 +1476,15 @@ export class ScreenerService extends ScreenerReadService {
     const ohboxPolicy = resolveOhboxPolicy(pref.ohboxPolicy);
     const ohboxBar = pref.ohboxBar ?? undefined;
 
-    /* -- A READER BUYS SUGGESTIONS TOO — BUT ONLY WHERE THE ANSWER COULD BE ACTED ON ---------
-     *
-     * This used to refuse a reader outright, before the model was ever called: a suggestion is
-     * bought so a person can act on it in the Screener, and `decide` — the only thing that acts on
-     * one — refused a reader one door over, so buying an answer nobody could use would spend
-     * somebody's money on nothing.
-     *
-     * `decide` no longer refuses a reader outright: it turns the decision into a REQUEST for the
-     * install that organizes the mailbox. So the blanket refusal is wrong now. But the reasoning
-     * BEHIND it survives intact, and the version of this comment that removed the check missed
-     * it — "a reader's suggestion is no longer a purchase with nothing to act on" is only true
-     * while some organizer will actually take the request. A reader whose holder is an older build
-     * (or whose mailbox has no holder at all) gets `409 organizer_outdated` from `decide`, so a
-     * suggestion for that mailbox is exactly the old case again: money spent, and first-contact
-     * subjects sent to a model, for advice that cannot be applied.
-     *
-     * So the gate is not "am I the organizer" but "could a decision here ever land", asked PER
-     * MAILBOX — which is the same question `decide` asks, through the same function. A mailbox
-     * this account organizes passes it trivially.
+    /**
+     * A READER BUYS SUGGESTIONS TOO — BUT ONLY WHERE THE ANSWER COULD BE ACTED ON. This used to
+     * refuse a reader outright: `decide` refused a reader one door over, so the purchase bought
+     * nothing. `decide` now turns a reader's decision into a REQUEST, so the blanket refusal is
+     * wrong — but the reasoning survives: it holds only while some organizer will take the
+     * request. A reader whose holder is an older build (or whose mailbox has no holder) gets `409
+     * organizer_outdated` from `decide` — money spent, first-contact subjects sent to a model,
+     * advice that cannot be applied. The gate is "could a decision here ever land", asked PER
+     * MAILBOX — the same question `decide` asks, through the same function.
      */
 
     // ONE query for the whole set, and the representative per sender chosen by the SAME rule
@@ -1994,16 +1507,14 @@ export class ScreenerService extends ScreenerReadService {
       if (!prev || t > p || (t === p && r.messageId > prev.messageId)) rep.set(key, r);
     }
 
-    /* ── THE ELIGIBILITY GATE, BEFORE A SINGLE MODEL CALL ────────────────────────────────────
-     *
-     * One read per DISTINCT mailbox in the set, not one per sender: a set of forty senders in one
-     * mailbox asks once. Senders whose mailbox could never have the decision applied are dropped
-     * from the purchase entirely rather than answered and billed.
-     *
-     * REFUSED, not silently emptied, when nothing survives: a 200 carrying no suggestions is what
-     * a caller sees when the model had nothing to say, and "your other install is too old to apply
-     * this" is a different sentence that names something the person can fix. It is the same
-     * refusal `decide` gives for the same mailbox, so the two doors cannot disagree.
+    /**
+     * THE ELIGIBILITY GATE, BEFORE A SINGLE MODEL CALL. One read per DISTINCT mailbox in the set,
+     * not per sender: forty senders in one mailbox ask once. Senders whose mailbox could never
+     * have the decision applied are dropped from the purchase, not answered and billed. REFUSED,
+     * not silently emptied, when nothing survives: a 200 with no suggestions is what "the model
+     * had nothing to say" looks like, and "your other install is too old" is a different sentence
+     * naming something fixable — the same refusal `decide` gives, so the two doors cannot
+     * disagree.
      */
     const eligibilityByMailbox = new Map<string, RequestEligibility | null>();
     for (const mailboxId of new Set([...rep.values()].map((r) => r.mailboxId))) {
@@ -2024,20 +1535,13 @@ export class ScreenerService extends ScreenerReadService {
      */
     const hadCandidates = rep.size > 0;
     /**
-     * THE FIRST INELIGIBLE MAILBOX, AND ITS OWN ELIGIBILITY, AS ONE VALUE.
-     *
-     * These were two variables latched by two `??=` — and two `??=` on the same line do NOT latch
-     * together. `null` is a legitimate eligibility (the read found no row at all), so the id
-     * latched on the first ineligible mailbox while the eligibility stayed null and latched again
-     * on a LATER one. The sentence that reached the person then named one mailbox's id beside a
-     * different mailbox's holder, and chose between "nobody is organizing this" and "that install
-     * is too old" from the second mailbox while pointing at the first.
-     *
-     * A comment two lines down used to assert this could not happen ("the id and the holder are
-     * taken from the SAME mailbox"), which is what made it hard to see. One object, latched once,
-     * is the shape where that sentence is true by construction rather than by assertion — the
-     * object is always truthy, so `??=` captures exactly the first ineligible mailbox and both
-     * halves come from it.
+     * THE FIRST INELIGIBLE MAILBOX, AND ITS OWN ELIGIBILITY, AS ONE VALUE. These were two
+     * variables latched by two `??=` — which do NOT latch together: `null` is a legitimate
+     * eligibility (no row at all), so the id latched on the first ineligible mailbox while the
+     * eligibility stayed null and latched on a LATER one; the sentence reaching the person named
+     * one mailbox's id beside a different mailbox's holder. One object, latched once, makes "both
+     * halves come from the same mailbox" true by construction — the object is always truthy, so
+     * `??=` captures exactly the first.
      */
     let ineligibleAt: { mailboxId: string; eligibility: RequestEligibility | null } | null = null;
     for (const [sender, row] of [...rep.entries()]) {
@@ -2066,20 +1570,14 @@ export class ScreenerService extends ScreenerReadService {
     // a money answer is never taken inside somebody else's transaction. See the local adapter.
     const gate = this.credits;
     /**
-     * THE WHOLE REQUEST'S patience for senders another caller is already buying, as a deadline
-     * rather than a per-sender allowance.
-     *
-     * Per-sender would multiply: a set of forty senders all held by the worker's pass would sit
-     * for forty × the budget inside one serverless invocation and time the invocation out — a
-     * request killed by its own politeness. One deadline for the run means the first overlap
-     * waits and the rest are answered immediately, which is also the honest shape: if the holder
-     * is slower than this, it is slower than this for every sender in the set.
-     *
-     * `Date.now()` and NOT `ctx.now()`, which is the injectable request clock every dated value
-     * in this service is built from. This is not a dated value — it is a measurement of elapsed
-     * real time against `setTimeout`, and a test clock frozen at a literal (which most of this
-     * suite uses) would put the deadline in the past on the first comparison and switch the wait
-     * off silently. The gate's own docs record the same trap for `retryWindowMs`.
+     * THE WHOLE REQUEST'S patience for senders another caller is already buying — a deadline, not
+     * a per-sender allowance. Per-sender multiplies: forty senders held by the worker's pass
+     * would wait forty × the budget and time the invocation out — killed by its own politeness.
+     * One deadline means the first overlap waits and the rest answer immediately; if the holder
+     * is slower than this, it is slower for every sender. `Date.now()`, NOT `ctx.now()`: this
+     * measures elapsed real time against `setTimeout`, and a test clock frozen at a literal would
+     * put the deadline in the past and switch the wait off silently — the gate's docs record the
+     * same trap for `retryWindowMs`.
      */
     const waitUntil = Date.now() + INFLIGHT_WAIT_MS;
     const suggestions: ScreenerSuggestion[] = [];
@@ -2091,56 +1589,14 @@ export class ScreenerService extends ScreenerReadService {
     let refusal: { refusal: "state" | "quantity" | "fault"; reason?: string } | undefined;
 
     /**
-     * ══════════════════════════════════════════════════════════════════════════════════════════
-     *  TWO PASSES, AND THE SPLIT IS WHAT MAKES THE SECOND ONE SAFE TO RUN CONCURRENTLY
-     * ══════════════════════════════════════════════════════════════════════════════════════════
-     *
-     * This was one serial `for` over `senders` doing everything: resolve, price, debit, ask the
-     * model, store. One model round trip is ~2 s and the loop spent all of it idle, so a request
-     * of fifteen took ~30 s and a four-hundred-sender purchase took twenty-seven of those — about
-     * a quarter of an hour of a person watching a progress line move.
-     *
-     * PASS 1 (below) is the whole of the resolution and it touches nothing: which message
-     * represents each sender, which are already bought, which are not held here, and therefore
-     * `quoted`. It performs no IO, spends nothing and cannot fail, which is why a DRY RUN answers
-     * out of it alone — a quote is now a pure function of two reads taken before the passes.
-     *
-     * PASS 2 is the paid work, and it is the only part that is concurrent.
-     *
-     * ── WHY CONCURRENCY IS SAFE HERE, IN THE ORDER THE MONEY CARES ABOUT ─────────────────────
-     *
-     *  · **The balance cannot be overspent, and that is not this loop's promise to keep.**
-     *    `AiCreditGate.spend` takes a row lock on the account's balance (`lockExistingBalance`,
-     *    `FOR UPDATE`) and debits inside it, so two lanes spending for the same account SERIALIZE
-     *    on that row whatever this function does. The gate is the authority on the balance and it
-     *    was already written to be raced — the fourth layer in this method's docblock exists for
-     *    exactly that. Lanes make refusals arrive in a different ORDER; they cannot make one
-     *    arrive too late.
-     *  · **The exclusive claim is per SOURCE, and the sources in one request are distinct.** A
-     *    source is `classify:screener:<message_id>` and `rep` maps each sender to one message, so
-     *    no two lanes of one request ever contend for the same claim. Two REQUESTS still can, and
-     *    that is the case the claim was built for; it behaves here exactly as it does today,
-     *    `awaitHeldSuggestion` included.
-     *  · **No lane holds a database transaction across a model call.** That is the standing rule
-     *    in this file ("the model calls happen OUTSIDE any transaction") and it is now also what
-     *    keeps a `max: 1` pooled host — which every serverless invocation is — from wedging: each
-     *    lane's transactions are short and queue behind each other on the single connection,
-     *    while the ~2 s each lane spends waiting on the model holds nothing at all. The DB phase
-     *    therefore stays serial and only the idle part overlaps, which is the part worth having.
-     *  · **A stop leaves the ledger consistent, because there is no stop.** This loop does not
-     *    break on a refusal and did not before: an exhausted balance makes every remaining
-     *    `spend` refuse without a model call, each such sender is reported `out_of_credits`, and
-     *    the caller halts its own chunk sequence on `stopped`. So no lane can be admitted past
-     *    the balance and none is abandoned mid-purchase.
-     *
-     * ── AND THE ANSWER IS ORDER-INDEPENDENT, WHICH IS NOT AUTOMATIC ──────────────────────────
-     *
-     * Results are written into POSITION-INDEXED slots and flattened in `senders` order after both
-     * passes, so the response bytes do not depend on which lane finished first. The same applies
-     * to `stopped` and `refusal`: both are decided by the LOWEST INDEX that produced one, which
-     * is precisely what `??=` meant while the loop was serial. Without this a run would answer
-     * differently on two identical inputs, and the client's "stopped at N of M" line would name a
-     * different sender each time.
+     * TWO PASSES; THE SPLIT MAKES THE SECOND SAFE TO RUN CONCURRENTLY. PASS 1 resolves everything
+     * and touches nothing — representatives, already-bought, `quoted`; no IO, so a DRY RUN
+     * answers from it alone. PASS 2 is the paid work, concurrent because: the balance cannot be
+     * overspent (`spend` takes `FOR UPDATE` on the balance row); the claim is per SOURCE and one
+     * request's sources are distinct; no lane holds a transaction across a model call; an
+     * exhausted balance refuses each remaining `spend` without one. ORDER-INDEPENDENT: results
+     * land in position-indexed slots, flattened in `senders` order; `stopped`/`refusal` take the
+     * LOWEST INDEX.
      */
     interface Purchase { index: number; sender: string; row: ScreenerRow }
     const answered: Array<ScreenerSuggestion | undefined> = senders.map(() => undefined);
@@ -2154,21 +1610,15 @@ export class ScreenerService extends ScreenerReadService {
     senders.forEach((sender, index) => {
       const r = rep.get(sender);
       if (!r) { refused[index] = { sender, reason: "not_held" }; return; }
-      // ── THERE IS NO SENSITIVITY GATE HERE ANY MORE. THAT IS THE FEATURE ────────────────────
-      //
-      // This line read `if (!r.aiEligible) { skipped.push({ sender, reason: "withheld" }); … }`
-      // and it was the whole of the withholding on the user-requested path. It is gone under the
-      // AI-OPEN ruling (see the method docblock). Nothing replaces it: every held sender the
-      // caller names is priced, charged and asked about, and the credential material is dealt
-      // with by REDACTING the payload at the sink (`classifyUserPayload(input, "redact")`),
-      // which is the same transform that produced the snippet stored on `r` in the first place.
-      //
-      // Removing it in isolation would have been a billing defect rather than a policy change,
-      // and that is worth stating where the money is: `gate.spend()` is in the lane below, and
-      // the sink used to THROW for exactly these rows. A withheld sender would have been debited,
-      // then caught as `model_unavailable`, and the user would have paid a credit for a sentence
-      // saying the model did not answer. The sink's `"redact"` policy is what makes this line's
-      // removal safe, not the other way round.
+      // THERE IS NO SENSITIVITY GATE HERE ANY MORE — THAT IS THE FEATURE. This line read `if
+      // (!r.aiEligible) { skipped … "withheld" }` and was the whole of the withholding on the
+      // user-requested path; it is gone under AI-OPEN and nothing replaces it: every held sender
+      // named is priced, charged and asked about, the credential handled by REDACTING at the sink
+      // (`classifyUserPayload(input, "redact")`), the same transform that produced the stored
+      // snippet. Removing it in isolation would have been a billing defect: `gate.spend()` is
+      // below, and the sink used to THROW for these rows — a withheld sender would pay a credit
+      // for "the model did not answer". The sink's `"redact"` policy is what makes the removal
+      // safe, not the other way round.
 
       // ALREADY BOUGHT — answer from the store. Not `quoted`, because a control must not price
       // what it will not be charged for, and not `skipped`, because the caller asked a question
@@ -2188,20 +1638,15 @@ export class ScreenerService extends ScreenerReadService {
 
     /** One sender's purchase, end to end. Everything below used to be the body of the loop. */
     const buy = async ({ index, sender, row: r }: Purchase): Promise<void> => {
-      /* -- THE LANE SLOT IS TAKEN BEFORE THE MONEY, AND THAT ORDER IS THE WHOLE OF ITS SAFETY --
-       *
-       * The first version of this took the slot around the MODEL CALL, after `gate.spend()` had
-       * already debited and claimed. Under a host that multiplexes several requests into one
-       * instance, the FIFO can then hold a lane past the invocation's own deadline — and a request
-       * the platform kills has no response, no `finally` and no idempotency row, so what is left
-       * behind is a charged, claimed sender nobody will ever be shown. Charging for a queue
-       * position is the defect; charging only for admitted work is the fix.
-       *
-       * A slot the budget could not buy is therefore an ordinary per-sender REFUSAL — the same
-       * `spend_unavailable` the in-flight wait already answers with, for the same honest reason
-       * ("this is temporary; ask again"), and it spent nothing to say so. `refusal: "fault"` so a
-       * run that produced nothing at all answers 503 rather than demanding money for our own
-       * queue.
+      /**
+       * THE LANE SLOT IS TAKEN BEFORE THE MONEY — THAT ORDER IS THE WHOLE OF ITS SAFETY. The
+       * first version took the slot around the MODEL CALL, after `gate.spend()`: a multiplexing
+       * host's FIFO can hold a lane past the invocation deadline, and a killed request has no
+       * response, no `finally`, no idempotency row — a charged, claimed sender nobody is ever
+       * shown. Charging for a queue position is the defect; charging only for admitted work is
+       * the fix. A slot the budget could not buy is an ordinary per-sender REFUSAL
+       * (`spend_unavailable`) that spent nothing; `refusal: "fault"` so a run producing nothing
+       * answers 503, not a demand for money.
        */
       if (!(await laneGate.acquire(laneDeadline))) {
         refused[index] = { sender, reason: "spend_unavailable" };
@@ -2236,27 +1681,16 @@ export class ScreenerService extends ScreenerReadService {
         const outcome = await gate.spend(
           ctx.accountId, "screener", attemptKey, { messageId: r.messageId });
 
-        // ── SOMEBODY ELSE IS BUYING THIS ONE RIGHT NOW ─────────────────────────────────────
-        //
-        // The FOURTH layer, and the only one that can see a caller which has not finished. The
-        // three above are all statements about work that is already OVER — a stored suggestion,
-        // a claimed `Idempotency-Key`, a committed ledger row — and a request that overlaps
-        // another passes every one of them, because at the instant it looks, none of them exists
-        // yet. That is how N simultaneous requests over one sender used to make N paid model
-        // calls against ONE credit: the ledger answered `duplicate`, which reads as "already
-        // paid for, proceed", and each of them proceeded.
-        //
-        // The holder is either the user's own other tab or the worker's auto-suggest pass; the
-        // second needs no unusual behaviour from anyone, since the cron and a button press select
-        // the same held sender by construction. Either way this request is not entitled to a
-        // model call — the work is bought, once, and the answer is coming.
-        //
-        // SO IT WAITS FOR THAT ANSWER RATHER THAN REPORTING A FAILURE. A person pressed Suggest
-        // and there is a verdict for their sender arriving within seconds; handing them a skip
-        // would make a correct system look broken and send them back to press again. The wait is
-        // bounded and the budget is per-REQUEST, so a large set whose senders are all held
-        // elsewhere degrades to one wait and not one per sender — and now that the lanes overlap,
-        // several such waits run inside that one budget rather than end to end.
+        // SOMEBODY ELSE IS BUYING THIS ONE RIGHT NOW — the FOURTH layer, the only one that can
+        // see a caller not yet finished. The three above describe work already OVER (a stored
+        // suggestion, a claimed key, a committed ledger row), and an overlapping request passes
+        // all of them; the ledger even answers `duplicate` — "already paid for, proceed" — which
+        // is how N simultaneous requests made N paid calls against ONE credit. The holder is the
+        // user's other tab or the worker's auto-suggest pass (the cron and a press select the
+        // same held sender by construction). SO IT WAITS for the answer rather than reporting a
+        // failure: a verdict is arriving within seconds, and a skip makes a correct system look
+        // broken. Bounded, per-REQUEST budget — a large set held elsewhere degrades to one wait,
+        // and lanes overlap several waits inside it.
         if (outcome.verdict === "inflight") {
           const settled = await this.awaitHeldSuggestion(ctx, r.messageId, ohboxPolicy, waitUntil);
           if (settled) {
@@ -2293,41 +1727,28 @@ export class ScreenerService extends ScreenerReadService {
               };
           return;
         }
-        // `charged: false` is a free retry of an attempt already on record — a `duplicate`.
-        // Reporting it as spend would tell the user they paid twice for one message.
-        //
-        // `+= the weight` and not `++`: the field is documented as CREDITS and `spend()` moves
-        // that many per call (`ai-gate.ts` — `opts.amount ?? aiActionCost(opts.reason)`, and no
-        // amount is passed here). The gate this service is handed books `debit_classify`, whose
-        // weight is 1, so the two agree today and this changes no number; it is the increment
-        // that stays true now that weights are per-reason and move independently.
-        //
-        // `charged` is a plain `+=` across lanes and that is sound: JavaScript runs one lane at a
-        // time between `await`s, so a read-modify-write with no `await` inside it is atomic here.
+        // `charged: false` is a free retry of an attempt already on record — a `duplicate`;
+        // reporting it as spend would say the user paid twice. `+= the weight`, not `++`: the
+        // field is CREDITS and `spend()` moves that many per call (`ai-gate.ts` — `opts.amount ??
+        // aiActionCost(opts.reason)`). `debit_classify` weighs 1 today, so this changes no
+        // number; it is the increment that stays true now that weights are per-reason. `charged`
+        // is a plain `+=` across lanes, sound because JavaScript runs one lane at a time between
+        // `await`s — a read-modify-write with no `await` inside is atomic here.
         if (outcome.verdict === "ok") {
           charged += AI_ACTION_WEIGHTS.debit_classify;
           chargedAttempt = outcome.attempt;
         }
 
-        // ── A FREE RETRY LOOKS FOR THE RESULT IT IS A RETRY OF, BEFORE RE-BUYING TOKENS ────
-        //
-        // `charged: false` means the gate found this work already paid for. Until this read that
-        // was taken as leave to call the model, and it is the LAST way N requests could still
-        // make more than one paid call for one credit — not through the claim (this caller holds
-        // it) but through the preflight SNAPSHOT above, which is read once for the whole set
-        // before the passes start. A racer that stored its verdict after that read and released
-        // its claim leaves the next caller with a `stored` map that predates the answer: it sees
-        // nothing, is told `duplicate`, and buys the same tokens again. Measured, on two racers
-        // over five senders: eight model calls where the claim alone brought ten down to eight.
-        //
-        // So the check is re-made HERE, inside the exclusive region, where it can see everything
-        // any earlier holder committed. It is not a second copy of layer 1 — it is layer 1 asked
-        // at the only moment the answer is authoritative.
-        //
-        // Deliberately NOT run when `charged` is true. Then this caller has just opened a new
-        // attempt, which only happens when the previous one was refunded or aged out, and a new
-        // attempt is a purchase of a FRESH verdict — serving the old row would take the money and
-        // hand back what the customer already had.
+        // A FREE RETRY LOOKS FOR THE RESULT IT IS A RETRY OF, BEFORE RE-BUYING TOKENS. `charged:
+        // false` means the gate found the work already paid for; taking that as leave to call the
+        // model was the LAST way N requests could buy one credit's work N times — through the
+        // preflight SNAPSHOT, read once before the passes: a racer that stored its verdict after
+        // that read leaves the next caller seeing nothing, told `duplicate`, buying the same
+        // tokens again (measured on two racers over five senders). So the check is re-made HERE,
+        // inside the exclusive region, where every earlier commit is visible — layer 1 asked at
+        // the only authoritative moment. NOT run when `charged` is true: a new attempt purchases
+        // a FRESH verdict; serving the old row takes the money and hands back what the customer
+        // already had.
         if (outcome.verdict === "duplicate") {
           const settled = (await this.storedSuggestions(ctx, [r.messageId], ohboxPolicy)).get(r.messageId);
           if (settled) {
@@ -2339,40 +1760,25 @@ export class ScreenerService extends ScreenerReadService {
       }
 
       let result;
-      /*
-       * THE CLAIM IS GIVEN BACK WHEN THE WORK ENDS, WHICHEVER WAY IT ENDS — AND NOT ONE LINE
-       * SOONER THAN THE WRITE THAT MAKES THE WORK READABLE.
-       *
-       * There are two releases below rather than one `finally`, and the reason is a hole a
-       * `finally` around the model call quietly opens: it runs BEFORE `store`, so between the
-       * release and the insert there is a window in which the suggestion is not on record and
-       * nothing holds the source. A second caller landing in it reads no stored suggestion, takes
-       * the freed claim, is told `duplicate` — already paid for, proceed — and calls the model
-       * again. That is the concurrent double-buy restored, narrower and harder to see.
-       *
-       * So: on SUCCESS the claim is released after the verdict is durable, and on FAILURE it is
-       * released in the catch. The failure path needs it as much as the success path, because a
-       * model fault leaves the charge standing on purpose — the source is stable, so the next
-       * attempt answers `duplicate` and is free — and holding the claim would make that free
-       * retry wait out the whole TTL first.
-       *
-       * Forgetting a release entirely would still be SAFE (the claim expires and the next caller
-       * takes it over), which is why these are the optimisation of a bound rather than the bound
-       * itself. `release` never throws — see the port.
+      /**
+       * THE CLAIM IS GIVEN BACK WHEN THE WORK ENDS — AND NOT ONE LINE SOONER THAN THE WRITE THAT
+       * MAKES IT READABLE. Two releases rather than one `finally`: a `finally` around the model
+       * call runs BEFORE `store`, and in that window the suggestion is not on record and nothing
+       * holds the source — a second caller takes the freed claim, is told `duplicate`, and calls
+       * the model again: the double-buy restored, narrower. On SUCCESS the claim is released
+       * after the verdict is durable; on FAILURE in the catch — the charge stands on purpose, the
+       * next attempt is a free `duplicate`, and holding the claim would make it wait out the TTL.
+       * Forgetting a release is still SAFE (claims expire). `release` never throws.
        */
       try {
-        // ── THE REQUEST — `askScreeningQuestion`, ONE definition, in `@trafficflow/core/mail` ──
-        //
-        // The redaction (at the CALLER, because a port has implementations outside this repo),
-        // the `outbound: "prescreened"` declaration that goes with it, the screening question
-        // rather than the routing one, and the account's own Ohbox bar into the model's user turn.
-        // All four were written out here while this was the only caller; the worker's always-on
-        // pass is the second, and four lines a second caller has to get independently right is
-        // four ways to send a credential or ask the wrong question. See that function.
-        //
-        // THIS IS THE ONLY AWAIT THAT OVERLAPS BETWEEN LANES in any meaningful way, and it is the
-        // whole point of them: it holds no connection, no lock and no claim-blocking transaction,
-        // and it is ~2 s long.
+        // THE REQUEST — `askScreeningQuestion`, ONE definition, in `@trafficflow/core/mail`. The
+        // redaction (at the CALLER, because a port has implementations outside this repo), the
+        // `outbound: "prescreened"` declaration, the screening question rather than the routing
+        // one, and the account's Ohbox bar into the model's user turn — four lines a second
+        // caller (the worker's always-on pass) would have to get independently right, four ways
+        // to send a credential or ask the wrong question. THIS IS THE ONLY AWAIT THAT OVERLAPS
+        // BETWEEN LANES in any meaningful way, and it is the point: no connection, no lock, no
+        // claim-blocking transaction, ~2 s long.
         result = await askScreeningQuestion(classifier, {
           fromAddress: r.fromAddress,
           subject: r.subject,
@@ -2418,20 +1824,14 @@ export class ScreenerService extends ScreenerReadService {
     // above relies on, stated once here because it is the load-bearing one.
     let next = 0;
     /**
-     * THE FIRST THROW STOPS ADMISSION, AND EVERY LANE IS AWAITED BEFORE IT IS RE-RAISED.
-     *
-     * `buy` catches the model's own faults per sender; what reaches here is the rest — `this.store`
-     * rejecting, the database going away mid-write. In the serial loop that throw left the function
-     * and nothing else was bought. `Promise.all` does NOT have that property: it rejects on the
-     * first error and leaves the other lanes running, so a transient storage fault would go on
-     * dequeuing and DEBITING the rest of the batch while the caller is already receiving a 500 and
-     * no idempotency row has been claimed. Money moved for work nobody will ever see.
-     *
-     * So: a fatal error closes the queue (`fatal` is checked before each dequeue, and the
-     * read-modify-write of `next` has no `await` in it, so it is atomic here), `allSettled` waits
-     * for the lanes that are mid-model-call to land their own verdicts, and the FIRST error is
-     * re-raised afterwards. Senders already paid for are still stored, which is the same bargain
-     * the per-message-transaction rule makes everywhere else in this method.
+     * THE FIRST THROW STOPS ADMISSION, AND EVERY LANE IS AWAITED BEFORE IT IS RE-RAISED. `buy`
+     * catches the model's faults per sender; what reaches here is `this.store` rejecting or the
+     * database going away. `Promise.all` rejects on the first error and leaves the other lanes
+     * RUNNING — a transient storage fault would go on dequeuing and DEBITING while the caller
+     * gets a 500 with no idempotency row: money moved for work nobody sees. So a fatal error
+     * closes the queue (`fatal` checked before each dequeue; the read-modify-write of `next` has
+     * no `await`), `allSettled` waits for mid-call lanes to land their verdicts, and the FIRST
+     * error re-raises. Paid-for senders are still stored.
      */
     let fatal: unknown;
     const lanes = Math.max(1, Math.min(SUGGEST_LANES, purchases.length));
@@ -2489,18 +1889,13 @@ export class ScreenerService extends ScreenerReadService {
       );
     }
 
-    // ── WHAT IS LEFT, FROM THE LEDGER THE GATE READS ──────────────────────────────────────
-    //
-    // AFTER the loop, so it is the balance this run left behind and not the one it began with.
-    // No arithmetic: the client is never handed material to subtract `charged` from, because a
-    // client-side balance is a shadow ledger that goes wrong on a renewal, a refund, an expiry
-    // or a second tab — and goes wrong upward, telling somebody they have credits they do not.
-    //
-    // A FAILED READ IS SILENCE, NOT ZERO. The run has already completed and its suggestions are
-    // already paid for; a database hiccup on a courtesy read must not turn a successful purchase
-    // into an error, and must not report an empty balance to a funded account. Absent means "no
-    // answer", which is exactly what an unmetered deployment (no `remaining` dep at all) means
-    // too, so the client needs one rule for both.
+    // WHAT IS LEFT, FROM THE LEDGER THE GATE READS. AFTER the loop, so it is the balance this run
+    // left behind. No arithmetic: a client handed material to subtract `charged` from keeps a
+    // shadow ledger that goes wrong on a renewal, a refund, an expiry or a second tab — and wrong
+    // upward, claiming credits that are not there. A FAILED READ IS SILENCE, NOT ZERO: the run
+    // has completed and its suggestions are paid for — a hiccup on a courtesy read must not turn
+    // a purchase into an error or report an empty balance to a funded account. Absent means "no
+    // answer", the same rule an unmetered deployment gives.
     let remainingCredits: number | undefined;
     if (this.remaining) {
       try {
@@ -2552,32 +1947,14 @@ export class ScreenerService extends ScreenerReadService {
    * that module for the argument; this stays a method so the call sites above read the same.
    */
   /**
-   * WAIT FOR THE CALLER THAT HOLDS THIS MESSAGE TO FINISH, then read what they bought.
-   *
-   * Reached only from the `inflight` branch of {@link ScreenerService.suggest}, which is to say
-   * only when the spend gate has just said, on the authority of a committed claim row, that
-   * another caller is inside a model call for this exact message. So the thing being waited for
-   * is not speculative: it is a verdict that has been paid for and is on its way.
-   *
-   * ## Why it polls the STORE and not the claim
-   *
-   * The claim disappearing means the holder stopped, not that it succeeded — a model fault
-   * releases it too. What a caller can actually serve is a stored suggestion, so that is what is
-   * waited for. It also makes the wait correct when the holder is not a request at all: the
-   * worker's auto-suggest pass writes the same rows through the same writer, and this reads them
-   * without knowing which of the two produced them.
-   *
-   * ## Why it is a poll
-   *
-   * `LISTEN`/`NOTIFY` is the shape that suggests itself and it is unavailable here: production
-   * runs through a transaction-pooling connection pooler, where no session is pinned long enough
-   * to hold a listener. A bounded poll of an indexed point read is the honest alternative — about
-   * twenty reads in the worst case, and none at all in the overwhelmingly common one where
-   * nothing is contended.
-   *
-   * @param deadline Wall-clock ms (`Date.now()` scale) shared by the whole request.
-   * @returns the stored suggestion, or `undefined` if the holder did not finish in time — in
-   *   which case the caller reports a retryable skip and charges nothing.
+   * WAIT FOR THE CALLER THAT HOLDS THIS MESSAGE TO FINISH, then read what they bought. Reached
+   * only from `suggest`'s `inflight` branch — the spend gate has said, on a committed claim row,
+   * that another caller is inside a model call for this message. It polls the STORE, not the
+   * claim: the claim disappearing means the holder stopped, not succeeded (a model fault releases
+   * it too), and what a caller can serve is a stored suggestion — which also covers the worker's
+   * auto-suggest pass. A poll because `LISTEN`/`NOTIFY` is unavailable through a
+   * transaction-pooling pooler; a bounded poll of an indexed point read is ~twenty reads worst
+   * case, none in the common uncontended one.
    */
   private async awaitHeldSuggestion(
     ctx: ServiceContext, messageId: string, ohboxPolicy: OhboxPolicy, deadline: number,
@@ -2614,26 +1991,14 @@ interface ClassifierResultLike {
 }
 
 /**
- * ── WHAT EACH ROUTING DESTINATION MEANS TO THE SCREENER ──────────────────────────────────────
- *
- * `Record<Destination, …>` and NOT a lookup with a default, because the default is what broke.
- * Adding a folder to the `Destination` union without deciding what it means for a stranger at the
- * gate is now a COMPILE error rather than a silent "yes".
- *
- * THE DEFECT THIS REPLACES, in full, because the shape recurs: this collapse used to be a
- * predicate called `screenedOut` — a DENYLIST that named spam, `ohmail/Screened` and
- * `ohmail/Quarantine` and answered `false` (⇒ admit to the Ohbox) for everything else.
- * `ohmail/Screener` was not on that list. But `ohmail/Screener` is what the taxonomy DEFINES as
- * the right answer for a first-contact sender, and every row this service reasons about is a
- * first-contact sender — so the model's "hold this one for a human" was both the most common
- * answer and the one the mapping got wrong: it was read as "admit them". A stored suggestion of
- * `ohmail/Screener` rendered as "Ohbox", with the model's own hold-this rationale printed
- * underneath it, at whatever confidence the model had reported. With "Apply all" that is a consent
- * gate granting consent in bulk — the same inversion `screener-state.ts#applyAll` documents having
- * already been fixed once at the surface, reached the second time through the mapping instead of
- * through a fallback.
- *
- * A denylist is the wrong shape for a question whose safe answer is "don't act".
+ * WHAT EACH ROUTING DESTINATION MEANS TO THE SCREENER. `Record<Destination, …>`, NOT a lookup
+ * with a default, because the default is what broke: adding a folder to `Destination` without
+ * deciding what it means for a stranger at the gate is now a COMPILE error, not a silent "yes".
+ * This replaces a DENYLIST (`screenedOut`) answering `false` (⇒ admit) for everything unnamed —
+ * and `ohmail/Screener` was unnamed, though the taxonomy DEFINES it as right for a first-contact
+ * sender. "Hold this one for a human" rendered as "Ohbox"; with "Apply all" that is a consent
+ * gate granting consent in bulk. A denylist is the wrong shape for a question whose safe answer
+ * is "don't act".
  */
 const SCREEN_DISPOSITION: Record<Destination, ScreenerSuggestion["decision"]> = {
   "INBOX": "yes",
@@ -2648,43 +2013,23 @@ const SCREEN_DISPOSITION: Record<Destination, ScreenerSuggestion["decision"]> = 
 };
 
 /**
- * The Yes/No/Hold reading of a classifier verdict, UNDER THE ACCOUNT'S OHBOX POSTURE — ONE
- * definition, written once and read at both the fresh (`suggest`) and the stored
- * ({@link ScreenerReadService.storedSuggestions}) sites so a bought suggestion cannot read one way
- * when fresh and another on the next page load. That shared-ness is also what makes this fix
- * retroactive: the 83 rows already on disk are re-read through it and answer "hold" with no
- * backfill.
- *
- * **"hold" is advice with no action attached.** It is not a third destination — the wire still has
- * only the two outcomes `POST /screener/:id` can perform — it is the model saying the decision is
- * the account owner's. A surface may show it; a BULK control may never act on it.
- *
- * **POSTURE TIGHTENS "YES".** Under `people_only` the account keeps its Ohbox for real people and
- * the service mail it actually acts on, so a first-contact sender the model files into an AUTOMATED
- * pile (`ohmail/Reads` / `ohmail/Receipts`) is NOT admitted — it reads "no". This is the same two
- * piles, and only those two, that `pipeline.ts`'s `people_only` demotion moves out of the Ohbox
- * ({@link policyDemotion} → {@link headerHeuristic} answers Reads/Receipts); it never touches INBOX,
- * the Screener, or a denial. The LENIENT default — `people_and_replied`, which every NULL preference
- * resolves to via {@link resolveOhboxPolicy} — demotes nobody, so Reads/Receipts stay "yes" exactly
- * as before this posture existed, and an account that never set a posture classifies as it did.
- *
- * **THE RATIONALE IS CROSS-CHECKED AGAINST THE FIELD.** A reply whose prose concludes "hold at the
- * Screener" while its `destination` names a folder past the gate is downgraded to "hold" rather
- * than acted on ({@link rationaleHoldsAtGate}). Two channels carry the answer and only one is
- * schema-checked; when they disagree, the one that costs a human glance wins over the one that
- * writes an allow rule.
+ * The Yes/No/Hold reading of a classifier verdict UNDER THE ACCOUNT'S OHBOX POSTURE — ONE
+ * definition, read at both the fresh (`suggest`) and stored (`storedSuggestions`) sites, so a
+ * suggestion cannot read one way fresh and another on the next page load. "hold" is advice with
+ * no action — a surface may show it, a BULK control may never act on it. POSTURE TIGHTENS "YES":
+ * under `people_only` a first-contact sender filed into `ohmail/Reads`/`ohmail/Receipts` reads
+ * "no" — the two piles `pipeline.ts`'s demotion moves; the lenient default demotes nobody. THE
+ * RATIONALE IS CROSS-CHECKED: prose concluding "hold at the Screener" beside a `destination` past
+ * the gate downgrades to "hold" (`rationaleHoldsAtGate`).
  */
 /**
- * ONE stored row, read as advice — the decision AND the answer the decision collapses.
- *
- * Both callers go through here ({@link ScreenerService.suggest} for a fresh answer,
- * {@link ScreenerReadService.storedSuggestions} for one off disk) so a suggestion cannot read one
- * way when it is bought and another on the next page load. That shared-ness is also what makes a
- * change here retroactive: rows already written are re-read through it with no backfill.
- *
- * `destination` is normalised against the taxonomy for the same reason `suggestionDecision` is
- * total over strings — this reads a `text` column, which a past version or a hand-run migration
- * may have written. An unrecognised label becomes the gate, which is `hold`: never a guess.
+ * ONE stored row, read as advice — the decision AND the answer the decision collapses. Both
+ * callers go through here (`suggest` fresh, `storedSuggestions` off disk), so a suggestion cannot
+ * read one way when bought and another on the next page load; that shared-ness makes a change
+ * here retroactive — stored rows re-read through it with no backfill. `destination` is normalised
+ * against the taxonomy for the reason `suggestionDecision` is total over strings: this reads a
+ * `text` column a past version or a hand-run migration may have written. An unrecognised label
+ * becomes the gate, which is `hold` — never a guess.
  */
 function suggestionAdvice(
   destination: string, spam: boolean, rationale: string, ohboxPolicy: OhboxPolicy,

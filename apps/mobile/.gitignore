@@ -39,3 +39,10 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# The phone's mail engine, pre-bundled into the app by scripts/bundle-engine.mjs. It is the
+# fourth door's engine: a 6 MiB generated file with every specifier resolved and every Node
+# builtin substituted, rebuilt from source by every phone build. Generated output, never source —
+# and the app will not bundle without it, so a missing one is a loud build failure, not a silent
+# three-door app.
+/generated/

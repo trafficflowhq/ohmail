@@ -1,24 +1,12 @@
 /**
- * ONE refresh, however many callers ask for it.
- *
- * `POST /auth/refresh` rotates the refresh-token family: the presented token is consumed and a
- * new one issued, and presenting a consumed token a second time is REUSE, which
- * `AuthService.rotateRefresh` treats as theft and answers by revoking the whole family. That
- * behaviour is correct and must not be softened — which makes concurrency this module's whole
- * job. Three sync calls and a mailbox list 401-ing together must produce ONE refresh, not
- * four; four would rotate once and then kill the family with its own retries, signing the user
- * out as a direct consequence of trying to keep them signed in.
- *
- * So every caller awaits the same in-flight promise.
- *
- * ── THE PATH IS BARE, NOT `/api`-PREFIXED ───────────────────────────────────────────────
- *
- * `packages/api/src/cookies.ts` scopes `tf_refresh` to `Path=/auth/refresh`, and a browser
- * sends a path-scoped cookie only to that exact path. `/api/auth/refresh` is a DIFFERENT path,
- * so the cookie would not be attached and the refresh would fail with no refresh token —
- * looking exactly like an expired session. `apps/webapp/next.config.mjs` carries a second,
- * dedicated rewrite for `/auth/refresh` for precisely this reason; its `REFRESH_PATH` note is
- * the long version.
+ * One refresh, however many callers ask. `POST /auth/refresh` rotates the refresh-token family: the
+ * presented token is consumed, and presenting a consumed one again is REUSE, which
+ * `AuthService.rotateRefresh` treats as theft and answers by revoking the whole family — correct,
+ * and not to be softened, which makes concurrency this module's whole job: three sync calls and a
+ * mailbox list 401-ing together must produce ONE refresh, not four (four would sign the user out by
+ * trying to keep them in). Every caller awaits the same in-flight promise. The path is BARE, not
+ * `/api`-prefixed: `tf_refresh` is scoped `Path=/auth/refresh`, and a different path gets no cookie
+ * — `next.config.mjs` carries the dedicated rewrite (`REFRESH_PATH`).
  */
 
 import { csrfToken } from "./csrf";
@@ -31,30 +19,14 @@ export const REFRESH_ENDPOINT = "/auth/refresh";
 let inFlight: Promise<boolean> | null = null;
 
 /**
- * ═══ WHAT THE LAST REFRESH ACTUALLY LEARNED — three answers, not two ══════════════════════
- *
- * `resumeSession` returns a boolean, and a boolean cannot carry the distinction the rest of
- * the app has to make: **"the server says this session is gone" and "the server did not
- * answer" are different facts**, and only the first is a verdict about the account. A caller
- * that reads `false` alone is reading the two of them as one, which is exactly the defect
- * `AUTH-FLICKER-DIAGNOSIS.md` records — a `503 db_busy` on the confirm rendered as
- * "You are signed out." over a live cookie.
- *
- * ── WHY THIS AND NOT `sessionIsDead()` ─────────────────────────────────────────────────────
- *
- * Because that latch is deliberately STICKY and deliberately survives a client-side sign-in.
- * `engine.tsx` documents the case: visiting `/login` while signed out latches the store from
- * a truthful coded 401, and `router.push("/")` then carries the latch into a freshly
- * signed-in shell — which is why the resolver's confirmed answer WITHDRAWS the claim
- * there. A classifier keying on `sessionIsDead()` would read that stale `true`, meet one
- * unrelated 503, and reproduce the pane over a session the server had just confirmed.
- *
- * This is the other shape: the outcome of the LAST refresh this tab performed, overwritten by
- * every refresh, never sticky. It answers "what did the recovery path just say?", which is the
- * only question a 401 on another endpoint needs answered.
- *
- * It is a report and not a decision: nothing here renders anything, and the death latch keeps
- * its single writer at the `markSessionDead()` call below.
+ * What the last refresh actually learned — three answers, not two. `resumeSession` returns a
+ * boolean, and a boolean cannot carry the distinction: "the server says this session is gone" and
+ * "the server did not answer" are different facts, and only the first is a verdict
+ * (`AUTH-FLICKER-DIAGNOSIS.md`: a `503 db_busy` rendered as "You are signed out."). Not
+ * `sessionIsDead()`: that latch is deliberately sticky and survives a client-side sign-in, so a
+ * classifier keying on it would meet one unrelated 503 and reproduce the pane over a confirmed
+ * session. This is the outcome of the LAST refresh, overwritten every time, never sticky — a
+ * report, not a decision; the death latch keeps its single writer at `markSessionDead()`.
  */
 export type RefreshOutcome = "minted" | "revoked" | "unavailable";
 
@@ -74,68 +46,26 @@ export function lastRefreshOutcome(): RefreshOutcome | null {
 }
 
 /**
- * ── THE CROSS-TAB LOCK, because the module-scoped promise above only covers ONE tab ─────────
- *
- * Every tab shares one cookie jar and one `tf_refresh`, and rotation consumes the presented
- * token — so two tabs firing this refresh together present the SAME token and one of them is a
- * "reuse". The server carries a grace window for exactly that, but the window is a bound, not a
- * licence: at machine wake a whole browser's worth of suspended tabs fires at once over a
- * network that is still re-associating, and a presentation was measured arriving 10.1 seconds
- * after its token was consumed — past the old window, family revoked, user signed out.
- *
- * The Web Locks API is the browser's own cross-tab mutex: the first tab rotates while the rest
- * QUEUE, and each queued tab's fetch then reads the JAR CURRENT AT SEND TIME — the winner's
- * fresh cookie, not the stale one it woke up holding. Serial rotations are cheap and correct;
- * skipping "unnecessary" ones is not worth a staleness heuristic. A browser without the API
- * (or a lock manager that throws) falls back to today's per-tab behaviour, which the server's
- * grace window and lost-response recovery still cover.
- *
- * DELIBERATELY NO TIMEOUT — not on the fetch, not on the lock wait. This request must outwait
- * a serverless cold start (the pinned invariant in `session-resume.test.ts`: clamping it turns
- * cold starts into sign-outs), and a queued tab inherits the same budget. The lock cannot jam
- * for ever without a live page holding a fetch the browser itself never times out, which
- * browsers do not allow: the network stack bounds the holder, the holder's settle frees the
- * queue, and a closed or discarded tab releases its lock automatically.
+ * The cross-tab lock — the module promise covers ONE tab, and every tab shares one `tf_refresh`: two tabs
+ * firing together present the SAME token and one is a "reuse". The server's grace window is a bound, not
+ * a licence: at machine wake a browser's worth of tabs fires over a re-associating network, and a
+ * presentation was measured 10.1 s after its token was consumed — family revoked. Web Locks is the
+ * browser's own cross-tab mutex: the first tab rotates, the rest queue, and each queued fetch reads the
+ * jar current AT SEND TIME. No API ⇒ per-tab behaviour, still covered by the grace window. Deliberately
+ * NO timeout on fetch or lock wait: the request must outwait a cold start (`session-resume.test.ts` pins
+ * it), and the network stack bounds the holder; a closed tab releases its lock automatically.
  */
 const REFRESH_LOCK = "ohmail:session-refresh";
 
 /**
- * ═══ THE SAME LOCK, HELD BY THE SIGN-IN CEREMONY ══════════════════════════════════════════
- *
- * `refreshSettled` orders THIS TAB's ceremony behind THIS TAB's refresh, and review named what
- * that cannot reach: `inFlight` is module state, so a refresh running in ANOTHER tab is invisible
- * to it. Tab A begins a refresh; tab B sees its own `inFlight === null`, waits for nothing, signs
- * in; A's response lands afterwards and rewrites every session cookie — restoring the previous
- * account or clearing the one just created. The Web Lock below serialises refreshes against each
- * other and did nothing about a login, because a login never asked for it.
- *
- * So the ceremony asks for it too. Every request that WRITES session cookies — the password step
- * and each second factor — runs inside the same origin-wide lock, so a refresh in any tab either
- * completes before the login starts or waits until after it. Ordering across tabs, by the same
- * instrument that already ordered refreshes across tabs.
- *
- * ── HELD AROUND THE REQUEST, NEVER AROUND THE HUMAN ───────────────────────────────────────
- *
- * One round trip at a time. Wrapping the whole ceremony — password, then a person finding their
- * phone, then a code — would hold an origin-wide lock for minutes and stall every other tab's
- * refresh behind it. Each call takes it, writes, and releases.
- *
- * ── AND THE WAIT HAS A FLOOR, FOR `refreshSettled`'S REASON ───────────────────────────────
- *
- * A lock is a queue, and a queue behind a holder that never finishes is the deadlock this slice
- * already fixed once in the other place. `AbortSignal` cancels the WAIT FOR A GRANT — never the
- * holder, which keeps whatever budget it had.
- *
- * ON EXPIRY THE CEREMONY REFUSES; IT DOES NOT PROCEED. This paragraph used to end "on expiry the
- * ceremony proceeds unlocked, which is exactly the behaviour it had before this existed", and
- * that sentence outlived the change that made it false — waiting out a holder and then writing
- * anyway is the original race with a delay in front of it, because the holder is still going to
- * write and its answer lands last. A `SessionBusyError` is thrown instead: retryable, rendered,
- * and clear by itself the moment the other tab settles.
- *
- * The one path that still proceeds unlocked is a browser with NO lock manager at all — a
- * different case, argued where it is taken, and the reason it is not this one is that a browser
- * without Web Locks would otherwise be unable to sign in at all.
+ * The same lock, held by the sign-in ceremony. `refreshSettled` orders this tab's ceremony behind this tab's
+ * refresh; `inFlight` is module state, so a refresh in ANOTHER tab was invisible — its response landed after
+ * the ceremony and rewrote every session cookie, restoring the previous account or clearing the new one. So
+ * every request that WRITES session cookies runs inside the same origin-wide lock. Held around the REQUEST,
+ * never the human: wrapping the whole ceremony would stall every tab's refresh for minutes. The wait has a
+ * floor (`AbortSignal` cancels the wait for a grant, never the holder), and on expiry the ceremony REFUSES
+ * (`SessionBusyError`, retryable) — proceeding unlocked is the original race with a delay in front. The one
+ * path that proceeds unlocked is a browser with NO lock manager, which otherwise could not sign in at all.
  */
 export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T> {
   /*
@@ -168,22 +98,14 @@ export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T>
      */
     if (started) throw err;
     /*
-     * ── THE DEADLINE REFUSES NOW; IT USED TO PROCEED UNLOCKED ──────────────────────────────
-     *
-     * Waiting out and then writing anyway is the original race with a delay in front of it: the
-     * holder is still going to write, this ceremony writes first, and the holder's answer lands
-     * last and restores the account it was refreshing or clears the one just created. Review
-     * pointed out that the test pinning that fallback DEMONSTRATED the attack rather than closing
-     * it, which was fair.
-     *
-     * A refusal is the honest outcome and it is not a dead end: it is retryable, it reaches the
-     * screen through the error path every one of these surfaces already renders, and the state it
-     * describes clears by itself in seconds. A visible "try that again" beats a silent
-     * wrong-account write, which is this slice's stated ordering applied to its own machinery.
-     *
-     * NOT the same case as having no lock manager at all — that falls through below and proceeds,
-     * because a browser without Web Locks would otherwise be unable to sign in, and there the
-     * server's grace window is the only instrument there has ever been.
+     * The deadline refuses now; it used to proceed unlocked — the original race with a delay in
+     * front of it: the holder is still going to write, this ceremony writes first, and the holder's
+     * answer lands last and restores the account it was refreshing (review: the test pinning that
+     * fallback demonstrated the attack rather than closing it). A refusal is honest and not a dead
+     * end: retryable, rendered through the error path these surfaces already have, and the state
+     * clears by itself in seconds. NOT the same case as no lock manager at all — that falls through
+     * and proceeds, because a browser without Web Locks could not sign in, and there the grace
+     * window is the only instrument.
      */
     if (isAbort(err)) {
       throw new SessionBusyError();
@@ -248,50 +170,14 @@ async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
 export const SETTLE_DEADLINE_MS = 15_000;
 
 /**
- * ═══ WAIT FOR ANY REFRESH ALREADY IN FLIGHT, AND DO NOT CANCEL IT ═════════════════════════
- *
- * A refresh REWRITES THE WHOLE COOKIE JAR: a success rotates `tf_session`, `tf_refresh`,
- * `tf_csrf`, the resume marker and the account name; a coded failure clears all five. That is a
- * side effect the client cannot take back, and it lands whenever the response lands.
- *
- * The collision: `/login`'s "are you already signed in?" check can 401 and enter this refresh
- * carrying the OLD account's cookie. If the person then signs in as somebody else while it is
- * still in flight, the refresh's response arrives AFTER the ceremony has written the new
- * account's cookies — restoring the previous account's session, or clearing the new one
- * outright. The person is switched back, or signed out seconds after signing in.
- *
- * Aborting it is the wrong instrument and this function exists to say so. The refresh is
- * SINGLE-FLIGHT and SHARED — a sync drain, a mailbox read and the resume splash may all be
- * awaiting this exact promise — so cancelling it on one caller's behalf strands every other
- * caller on a recovery it was owed, and (because the request may already have reached the
- * server) does not even guarantee the cookies are left alone.
- *
- * So the ceremony WAITS instead. The refresh finishes and writes whatever it writes; the login
- * then runs and writes last. Ordering, not cancellation. Nothing is stranded, and the jar ends
- * up holding the credential the person actually asked for.
- *
- * Never rejects, and resolves immediately when nothing is in flight.
- *
- * ── AND IT GIVES UP, WHICH IS THE HALF THAT WAS MISSING ────────────────────────────────────
- *
- * "The refresh finishes and writes whatever it writes; the login then runs and writes last" was
- * written as though the refresh always finishes. Nothing here guaranteed that. The fetch has no
- * application deadline on purpose (a cold start must not become a sign-out —
- * `session-resume.test.ts` pins that), and the cross-tab Web Lock has none either: a queued tab
- * waits for a grant held by a tab that may be hung, suspended or wedged behind a network stack
- * that never settles. In that state a password submit awaited this for ever — no login request
- * was ever sent, the form stayed busy, and nothing on screen said why.
- *
- * That is a worse failure than the one the ordering exists to prevent. The collision it guards
- * against is a race that MAY happen; a wait with no floor is a sign-in that CANNOT happen. So the
- * wait is bounded and the caller proceeds.
- *
- * {@link SETTLE_DEADLINE_MS} bounds the WAIT, never the refresh — the request is untouched, is
- * still shared, still single-flight, and still gets however long it needs. What expires is one
- * caller's willingness to be ordered behind it. Past the deadline the ordering guarantee is gone
- * and the old race is back for that one submit: a refresh landing afterwards can still rewrite
- * the jar. That is the honest trade and it is stated here rather than glossed, because the
- * alternative is a form that never submits at all.
+ * Wait for any refresh already in flight, and do not cancel it. A refresh rewrites the whole cookie jar whenever its
+ * response lands. The collision: `/login`'s signed-in check can 401 into a refresh carrying the OLD account's cookie;
+ * sign in as somebody else mid-flight and the late response restores the previous account or clears the new one.
+ * Aborting is the wrong instrument: the refresh is single-flight and SHARED — other callers await this exact promise
+ * — and the request may already have reached the server. So the ceremony WAITS: ordering, not cancellation. And it
+ * gives up: the fetch and the lock have no deadline on purpose, so a hung holder once left a password submit awaiting
+ * for ever. {@link SETTLE_DEADLINE_MS} bounds the WAIT, never the refresh — past it the old race is back for that one
+ * submit, the honest trade against a form that never submits at all.
  */
 export async function refreshSettled(): Promise<void> {
   // Read once: `inFlight` is nulled by the callback's own `finally`, so re-reading after the
@@ -335,19 +221,13 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
   if (inFlight) return inFlight;
   inFlight = withCrossTabLock(async () => {
     /*
-     * ── STILL THE SAME BROWSER? ASKED INSIDE THE LOCK, NOT BEFORE IT ─────────────────────
-     *
-     * A refresh ROTATES whatever session the jar holds, and this function's caller may have
-     * decided to call it a long time ago — the resume splash is chosen by the edge, under the
-     * cookies of that request, and its effect does not run until the page has hydrated. The
-     * lock adds a second wait on top of that. Either gap is enough for another tab to sign in,
-     * and the rotation would then spend that account's refresh token from a window that was
-     * never theirs — which their own tab can then present as a consumed one and be read as
-     * reuse.
-     *
-     * Here rather than at the call site for the same reason `csrfToken()` is read here: what
-     * matters is the jar as it is when the request LEAVES, not as it was when somebody decided
-     * to make one.
+     * Still the same browser? Asked INSIDE the lock, not before it. A refresh rotates whatever
+     * session the jar holds, and the caller may have decided long ago (the resume splash is chosen
+     * by the edge; its effect runs after hydration; the lock adds a second wait). Either gap is
+     * enough for another tab to sign in, and the rotation would spend that account's refresh token
+     * from a window that was never theirs — their own tab then presents a consumed token and is
+     * read as reuse. Here rather than at the call site for `csrfToken()`'s reason: what matters is
+     * the jar as it is when the request LEAVES.
      */
 
     try {
@@ -357,44 +237,14 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
       // Found by running the cases in file order rather than one at a time.
       if (opts.mayProceed && !opts.mayProceed()) return false;
       /*
-       * THE CSRF HEADER IS REQUIRED HERE, and the comment that used to stand in its place was
-       * wrong in production.
-       *
-       * It read: "No CSRF header, and none is needed: `tf_refresh` is `SameSite=Strict`, so a
-       * cross-site page cannot cause this request to carry it… `POST /auth/refresh` is `public`
-       * and reads the cookie directly." Every clause is true and the conclusion does not follow.
-       * `withCsrf` (`packages/api/src/middleware.ts`) keys off the SESSION, not off the route:
-       *
-       *     if (UNSAFE_METHODS.has(method) && deps.session?.via === "cookie") { … }
-       *
-       * `public` only means `withSession` will not 401 — it still POPULATES a session when a
-       * credential happens to be present. So a POST that arrives with a live `tf_session` cookie
-       * is cookie-authenticated as far as the guard is concerned, and a missing `X-CSRF-Token`
-       * is answered `403 csrf_failed`.
-       *
-       * The premise that saved it was "`tf_csrf` expires with the access cookie, so by the time
-       * a refresh is wanted it is typically gone" — i.e. no session, no guard. That holds for the
-       * IDLE-TAB case this module was written for, and it is exactly false for the case the
-       * resume splash exists to serve: a `SameSite=Strict` cross-site top-level navigation
-       * withholds `tf_session` from THAT NAVIGATION while leaving it alive in the jar. The edge
-       * gate therefore sees no cookie and routes to the splash, and the splash's same-origin
-       * fetch then attaches the very cookie the navigation withheld. Live session, live
-       * `tf_csrf`, no header — 403, every time.
-       *
-       * Observed live: the first Microsoft mailbox connect through this flow died here. Microsoft's
-       * redirect is that cross-site navigation, so the return from consent ALWAYS lands on the
-       * splash; the refresh 403'd; `ResumeScreen` read the non-204 as "not resumable" and sent
-       * the browser to `/login`, which destroyed the `?oauth=pending&state=…&code=…` query and
-       * the `#/settings` fragment the ceremony was carried in. `/login` then found the live
-       * session and forwarded to `/`, so the person landed on the Ohbox with no mailbox added
-       * and nothing on screen. The ceremony row was never consumed.
-       *
-       * Echoing the cookie is the whole fix and it weakens nothing. The guard recomputes the
-       * expected value from the presented session token (`csrfTokenFor`) and requires BOTH the
-       * cookie and the header to equal it, so this is the same double-submit every other
-       * mutation makes — and a cross-site attacker cannot read `tf_csrf` to forge the header.
-       * Absent cookie ⇒ no header, which is the genuinely session-less case where the guard does
-       * not run.
+       * The CSRF header is required here — the old "none is needed" comment was wrong in production:
+       * `withCsrf` keys off the SESSION, not the route, so a POST arriving with a live `tf_session` is
+       * cookie-authenticated and a missing header is `403 csrf_failed`. The saving premise fails exactly
+       * on the resume splash: a SameSite=Strict cross-site navigation withholds `tf_session` from that
+       * navigation while leaving it in the jar, so the splash's same-origin fetch attaches it (observed
+       * live: the first Microsoft mailbox connect died here — the 403 sent ResumeScreen to /login,
+       * destroying the oauth query). Echoing the cookie is the whole fix: the guard requires BOTH cookie
+       * and header to equal `csrfTokenFor(session)`, the same double-submit as every mutation.
        */
       // Read INSIDE the lock, not before it: a queued tab must send the cookie and CSRF value
       // current AFTER the winner's rotation landed, which is the whole point of queueing.
@@ -408,25 +258,15 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
         cache: "no-store",
         credentials: "same-origin",
       });
-      // 204 with fresh Set-Cookie headers is success. A 401 means the family is gone, and the
-      // server has already cleared the whole jar (including the resume marker) on its way out,
-      // so the next navigation is an honest signed-out landing rather than another attempt.
-      //
-      // ── BOTH ANSWERS ARE TOLD TO THE SESSION-TRUTH STORE, because both are DEFINITIVE ──────
-      //
-      // Every other 401 in this product is one request's evidence — `sync-scheduler.ts` spends
-      // sixty seconds confirming one before it will say "sign in", precisely because a transient
-      // 401 once told a signed-in user they were signed out. THIS one is different in kind: the
-      // refresh endpoint is the recovery path itself, so its coded 401 means the refresh family
-      // is revoked and the jar is cleared — there is no stronger confirmation to wait for. And a
-      // 204 is the opposite fact with the same authority: a session exists again, which is what
-      // lets surfaces holding an auth-shaped failure ask once more (`markSessionAlive` publishes
-      // a revival; see `shell/session-truth.ts`).
-      //
-      // The death latch additionally requires OUR error envelope. A 401 with no parseable
-      // `error.code` is a platform interposing itself — deployment protection, an alias
-      // mid-roll — and the scheduler's `isTerminalRefusal` already records how such a 401 told
-      // a signed-in user to sign in while the API answered 200. Same lesson, same guard.
+      // 204 with fresh Set-Cookie is success; a 401 means the family is
+      // gone and the server has already cleared the whole jar, so the next navigation is an honest
+      // signed-out landing. Both answers are told to the session-truth store, because both are
+      // DEFINITIVE: every other 401 in this product is one request's evidence (the scheduler spends
+      // sixty seconds confirming one), but the refresh endpoint IS the recovery path — its coded
+      // 401 means the family is revoked, with no stronger confirmation to wait for; a 204 is the
+      // opposite fact with the same authority (`markSessionAlive` publishes a revival). The death
+      // latch additionally requires OUR error envelope: a 401
+      // with no parseable `error.code` is a platform interposing itself.
       if (res.status === 204) {
         lastOutcome = "minted";
         markSessionAlive();
@@ -448,25 +288,14 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
     }
   });
   /*
-   * ── CLEARED AFTER THE ASSIGNMENT, AND ONLY IF IT IS STILL OURS ──────────────────────────
-   *
-   * This used to be a `finally` inside the callback, and that is a race with its own assignment:
-   * a callback that settles before `withCrossTabLock` has returned — which an account predicate's
-   * early refusal makes ordinary rather than exotic — runs the `finally` FIRST, and the line
-   * below then stores a settled promise that nothing will ever clear. Every later resume,
-   * including `api()`'s recovery path, returns that cached answer without asking anything.
-   *
-   * Found by running this file's cases in order instead of one at a time: alone each passed, and
-   * together the second one wedged the third.
-   *
-   * NO IDENTITY CHECK ON THE CLEAR. One stood here — `if (inFlight === started)` — against "a
-   * newer resume having replaced it in the meantime", and there is no such sequence: the guard at
-   * the top of this function returns the live promise rather than starting a second, so while
-   * `started` IS `inFlight` nothing can replace it. Removed rather than kept as defence in depth,
-   * because a condition whose contrary state is unreachable cannot be watched fail — and this
-   * lane has twice now had such a line read by a later reviewer as a guarantee. What fixes the
-   * race is the PLACEMENT, after the assignment rather than inside the callback, and that is the
-   * whole of it.
+   * Cleared after the assignment, and only if it is still ours. This was a `finally` inside the callback
+   * — a race with its own assignment: a callback settling before `withCrossTabLock` returns (ordinary
+   * under an account predicate's early refusal) runs the `finally` FIRST, and the line below then stores
+   * a settled promise nothing will ever clear — every later resume returns the cached answer (found by
+   * running the cases in order: alone each passed, together the second wedged the third). No identity
+   * check on the clear: `if (inFlight === started)` guarded an unreachable sequence — the top guard
+   * returns the live promise rather than starting a second — and a condition whose contrary state is
+   * unreachable cannot be watched fail. The fix is the PLACEMENT.
    */
   const started = inFlight;
   void started.finally(() => { inFlight = null; });
@@ -498,15 +327,13 @@ registerSessionProbe(() => {
 });
 
 /**
- * Should this failure be retried after a refresh?
- *
- * **401 is not the whole story, and assuming it was would have left half the bug in place.**
- * `tf_csrf` is issued with the same `Max-Age` as the access cookie, so an idle tab loses BOTH.
- * Its next mutation therefore arrives with a live-looking session and no double-submit token,
- * and `withRequestGuard` answers **403 `csrf_failed`** — not 401. A retry policy watching only
- * 401 would fix reads and leave every write in an idle tab broken.
- *
- * A refresh mints a new `tf_csrf` alongside the new session, so the retry fixes both.
+ * Should this failure be retried after a refresh? 401 is not the whole
+ * story: `tf_csrf` is issued with the same `Max-Age` as the access cookie,
+ * so an idle tab loses BOTH — its next mutation arrives with a live-looking
+ * session and no double-submit token, and `withRequestGuard` answers
+ * **403 `csrf_failed`**, not 401. A retry policy watching only 401 would
+ * fix reads and leave every write in an idle tab broken. A refresh mints a
+ * new `tf_csrf` alongside the new session, so the retry fixes both.
  */
 export function isRecoverable(status: number, code?: string): boolean {
   if (status === 401) return true;
@@ -535,19 +362,13 @@ const NEVER_REFRESH = [
    */
   "/auth/logout",
   /*
-   * `/hello` is the capability handshake, and it is here for a different reason from its
-   * neighbours: not because a 401 there is an ANSWER, but because a refresh cannot possibly be
-   * the remedy for one. The route carries no credential meaning — it reports what the server is
-   * and whether it has any accounts yet — and its callers are page mounts that treat any failure
-   * as "behave normally".
-   *
-   * What it cost while it was absent: `/login` asks `/hello` on mount, independently of the
-   * already-signed-in ladder. A delayed 401 there — an edge gate, a proxy, a server mid-deploy —
-   * sent `api()` into a refresh carrying the PREVIOUS account's cookies, and a refresh rewrites
-   * the whole jar whenever it lands. Arriving after somebody had finished signing in as a
+   * `/hello` is the capability handshake, here for a different reason from its neighbours: not
+   * because a 401 there is an answer, but because a refresh cannot possibly be the remedy — the
+   * route carries no credential meaning, and its callers treat any failure as "behave normally".
+   * What its absence cost: `/login` asks `/hello` on mount, and a delayed 401 there sent `api()`
+   * into a refresh carrying the PREVIOUS account's cookies — arriving after somebody signed in as a
    * different account, it restored the old session or cleared the new one. The ceremony cannot
-   * order itself behind a request it does not know exists, so the fix is that this route never
-   * starts one.
+   * order itself behind a request it does not know exists, so this route never starts one.
    */
   "/hello",
 ];

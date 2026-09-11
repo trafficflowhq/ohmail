@@ -53,19 +53,14 @@ type Method = "webauthn" | "totp" | "recovery_code";
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
 /**
- * The platform-qualified desktop kinds — what a CURRENT desktop install declares itself as, on
- * the two seams where the desktop identifies itself: the link-claim and the password sign-in's
- * TOTP verify. A closed set on purpose, and NARROWER than the device vocabulary:
- *
- *  · `"web"` is excluded — the device staleness alarm excludes kind `web` by design (a closed
- *    browser is not an incident), so letting a desktop declare `web` would be an attribution
- *    dodge, not a vocabulary choice.
- *  · The mobile kinds are excluded — a phone arrives through the pairing redeem, never these
- *    doors, and a declaration that cannot be true is refused rather than recorded.
- *  · `"macos"` is excluded HERE and admitted separately where the legacy claim needs it (see
- *    {@link DESKTOP_CLAIM_KINDS}): on the verify seam `macos` is the one kind whose derived
- *    lifetime surface is `native`, so admitting it would let anonymous wire input choose the
- *    long window — the exact capability the declaration must not carry.
+ * The platform-qualified desktop kinds — what a CURRENT desktop declares on the two seams where
+ * it identifies itself: the link-claim and the password sign-in's TOTP verify. Narrower than the
+ * device vocabulary on purpose: `"web"` is excluded (the staleness alarm excludes kind `web`, so
+ * declaring it would be an attribution dodge); the mobile kinds are excluded (a phone arrives
+ * through the pairing redeem, so the declaration cannot be true); `"macos"` is excluded HERE and
+ * admitted separately in {@link DESKTOP_CLAIM_KINDS} — on the verify seam it is the one kind
+ * whose derived lifetime surface is `native`, and anonymous wire input must not choose the long
+ * window.
  */
 const DESKTOP_DECLARED_KINDS: ReadonlySet<string> = new Set<DeviceKind>([
   "desktop-linux", "desktop-macos", "desktop-windows",
@@ -123,27 +118,14 @@ function challengeOfAssertion(credential: unknown): string | null {
 }
 
 /**
- * The advertised password rule, ENFORCED WHERE IT IS TRUE — on the server.
- *
- * `/join` renders `minLength={12}` and the copy says "at least 12 characters", and until
- * this function existed that HTML attribute was the entire enforcement: `register` called
- * `requireField`, which accepts any non-blank string, so a direct API caller (curl, a stale
- * client, a script) could register with `x`.
- *
- * That gap matters more here than the usual "the client validates, the server should too",
- * because of WHERE the password sits in this design. Between `register` and the first factor
- * the password is the ONLY credential, and `login` on a zero-factor user re-mints an
- * enrollment session (the re-entry path) — so a guessable password does not merely open
- * an account, it lets an attacker enroll THEIR passkey on it.
- *
- * The MAXIMUM is not tidiness either. `scrypt` is deliberately ~100 ms, it is run before the
- * transaction opens, and `register` is public: without a ceiling a caller can post a
- * multi-megabyte password and spend the host's CPU at will. 256 is far past any real
- * passphrase and far short of a payload worth sending.
- *
- * Length is counted in CODE POINTS (`[...s].length`), not UTF-16 units: a 12-emoji
- * passphrase is twelve characters to the person who typed it, and `"".length` would
- * disagree with them in the direction that lets a weaker secret through.
+ * The advertised password rule, enforced where it is true — on the server. `/join` renders
+ * `minLength={12}`, and that HTML attribute used to be the entire enforcement: a direct API
+ * caller could register with `x`. It matters because between `register` and the first factor the
+ * password is the ONLY credential, and `login` on a zero-factor user re-mints an enrollment
+ * session — a guessable password lets an attacker enroll THEIR passkey. The MAXIMUM is not
+ * tidiness: scrypt is ~100 ms on a public route, so without a ceiling a caller spends the host's
+ * CPU at will; 256 is past any real passphrase. Length is counted in CODE POINTS: a 12-emoji
+ * passphrase is twelve characters to the person who typed it.
  */
 export const PASSWORD_MIN_LENGTH = 12;
 export const PASSWORD_MAX_LENGTH = 256;
@@ -172,36 +154,14 @@ function requirePassword(v: unknown): string {
 }
 
 /**
- * The same gap `requirePassword` closed, in the field next to it — and opening public signup
- * is what opened it.
- *
- * `register` normalized the address (`.trim().toLowerCase()`) and never checked its SHAPE, so
- * `POST /auth/register {"email":"not-an-email"}` created a real account. Not hypothetical: it
- * was hit in the wild immediately after public signup went live, and the account had to be
- * erased by hand.
- *
- * While signup was invite-only this was bounded without anyone deciding it: `consumeInvite`
- * matched the address
- * against an invite row an operator had minted FOR a real person, so the invite was doing
- * duty as an email validator nobody had written. Removing the gate removed that too. This is
- * the general shape worth remembering — a check that was only ever a side effect of another
- * check disappears silently when that one moves.
- *
- * It matters beyond tidiness because the address IS the account: it is the login identity,
- * the only recovery path, and what Stripe puts a receipt against. An account whose address
- * cannot receive mail is one nobody can recover and nobody can be told anything about.
- *
- * It DELEGATES to `normalizeRecipient` rather than carrying its own pattern, and that is the
- * point rather than an economy. A second definition of "a valid address" would eventually
- * disagree with the first, and the disagreement has a shape: an address good enough to hold
- * an invite but not to hold an account, or — worse — an account whose address the mailer
- * then refuses as `invalid_recipient`, so the person can register and can never be sent
- * anything. One predicate, used by invites, the waitlist, the mailer and now registration,
- * cannot drift against itself.
- *
- * `login` deliberately does NOT call this. Its answer must not depend on the shape of what
- * was typed, and any account that predates this rule must still be able to sign in and
- * delete itself.
+ * The same gap `requirePassword` closed, in the field next to it. `register` normalized the
+ * address and never checked its SHAPE, so `{"email":"not-an-email"}` created a real account — hit
+ * in the wild immediately after public signup opened. Invite-only signup had bounded this by
+ * accident: `consumeInvite` was an email validator nobody had written, and a check that is only a
+ * side effect of another check disappears silently when that one moves. The address IS the
+ * account: login identity, only recovery path, receipt target. It DELEGATES to
+ * `normalizeRecipient` — one predicate cannot drift against itself. `login` deliberately does NOT
+ * call this: an account predating the rule must still sign in.
  */
 function requireEmail(v: unknown): string {
   const email = normalizeRecipient(requireField(v, "email"));
@@ -250,15 +210,12 @@ const lockedOut = (until: Date): ServiceError => new ServiceError(
 );
 
 /**
- * The deployment cannot identify clients, so it will not accept anonymous account
- * creation.
- *
- * 503 rather than 429 on purpose: nothing about THIS caller is being rate-limited, and
- * saying "too many signups from your connection" to the first visitor of the day would be
- * a false explanation of a deployment fault. `clientIp` returns `""` when no trusted
- * platform header is present (see `packages/api/src/context.ts`), and with the invite gate
- * open there is nothing else bounding registration — so the open path closes and the invite
- * path, which an operator still controls, keeps working.
+ * The deployment cannot identify clients, so it will not accept anonymous account creation. 503
+ * rather than 429 on purpose: nothing about THIS caller is being rate-limited, and "too many
+ * signups from your connection" to the first visitor of the day would be a false explanation of a
+ * deployment fault. `clientIp` returns `""` when no trusted platform header is present, and with
+ * the gate open nothing else bounds registration — so the open path closes and the invite path,
+ * which an operator controls, keeps working.
  */
 const signupUnavailable = (): ServiceError => new ServiceError(
   "signup_unavailable", 503,
@@ -273,16 +230,13 @@ const signupCapacityReached = (): ServiceError => new ServiceError(
 );
 
 /**
- * ONE sentence for every way a verification link can fail to be a live one.
- *
- * Unknown, expired, already used, the wrong `purpose`, blank, and the loser of a concurrent
- * race all get this — because the remedy is the same in every case (ask for another link) and
- * because the distinctions are only ours to know. "Already used" in particular must not be
- * distinguishable: a token that appears in a mail also appears in mailbox-scanner logs and in
- * proxy access logs, and telling whoever presents it second that it *was* real confirms that the
- * address it was mailed to has an account — the oracle, reappearing one endpoint over.
- *
- * The same reasoning `invites.ts` applies to `revoked` vs `expired`, applied to a shorter list.
+ * ONE sentence for every way a verification link can fail to be live. Unknown, expired, already
+ * used, the wrong `purpose`, blank, and the loser of a race all get this: the remedy is the same
+ * in every case (ask for another link), and the distinctions are only ours to know. "Already
+ * used" especially must not be distinguishable — a token that appears in a mail also appears in
+ * scanner and proxy logs, and telling whoever presents it second that it WAS real confirms the
+ * address has an account: the oracle, one endpoint over. The same reasoning `invites.ts` applies
+ * to `revoked` vs `expired`.
  */
 const invalidVerification = (): ServiceError => new ServiceError(
   "invalid_token", 400,
@@ -302,16 +256,13 @@ const invalidVerification = (): ServiceError => new ServiceError(
 export const DESKTOP_LINK_PURPOSE = "desktop_link";
 
 /**
- * ONE sentence for every way a desktop handoff code can fail to be a live one.
- *
- * Unknown, expired, already claimed, the wrong `purpose`, blank, over-long, and the loser of a
- * concurrent race all get this. Same rule as {@link invalidVerification}: the remedy is
- * identical in every case — ask the browser for a fresh code — and distinguishing "already
- * used" from "never existed" tells whoever presents a code second that it was real.
- *
- * 400 and not 401: nothing is being authenticated here that could be said to have failed, and
- * a 401 on a route the desktop app calls before it holds any session at all reads, to every
- * generic client in between, as "your session expired".
+ * ONE sentence for every way a desktop handoff code can fail to be live. Unknown, expired,
+ * already claimed, wrong `purpose`, blank, over-long, and the loser of a race all get this — same
+ * rule as {@link invalidVerification}: the remedy is identical (ask the browser for a fresh
+ * code), and distinguishing "already used" from "never existed" tells the second presenter it was
+ * real. 400 and not 401: nothing is being authenticated, and a 401 on a route the desktop calls
+ * before it holds any session reads, to every generic client in between, as "your session
+ * expired".
  */
 const invalidDesktopCode = (): ServiceError => new ServiceError(
   "invalid_code", 400,
@@ -337,19 +288,13 @@ const desktopClaimRateLimited = (): ServiceError => new ServiceError(
 const DESKTOP_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 
 /**
- * The mint's refusal of a challenge it cannot use.
- *
- * ── WHY THIS IS A REFUSAL AND NOT A SHRUG ─────────────────────────────────────────────────
- *
- * The obvious implementation ignores a malformed challenge and mints an ordinary unbound code.
- * That is a SILENT DOWNGRADE: the app that sent the challenge believes the code on screen is
- * worthless without the verifier it is holding, and would then hand that code to a URL scheme any
- * program on the machine can claim. Every party ends up thinking the binding is on. Refusing
- * makes the disagreement visible at the only moment anybody can act on it.
- *
- * Distinct from {@link invalidDesktopCode}, and there is no enumeration concern in doing so: this
- * refusal is only reachable by a caller that has already presented a live session AND cleared the
- * step-up gate, and it names a fault in that caller's own request.
+ * The mint's refusal of a challenge it cannot use. The obvious implementation ignores a malformed
+ * challenge and mints an ordinary unbound code — a SILENT DOWNGRADE: the app believes the code is
+ * worthless without its verifier and hands it to a URL scheme any program can claim, with every
+ * party thinking the binding is on. Refusing makes the disagreement visible at the only moment
+ * anybody can act on it. Distinct from {@link invalidDesktopCode} with no enumeration concern:
+ * this is only reachable by a caller holding a live session past the step-up gate, and it names a
+ * fault in that caller's own request.
  */
 const invalidDesktopChallenge = (): ServiceError => new ServiceError(
   "invalid_challenge", 400,
@@ -357,32 +302,14 @@ const invalidDesktopChallenge = (): ServiceError => new ServiceError(
 );
 
 /**
- * The open path's "this address already has an account" signal, thrown INSIDE the
- * registering transaction and caught immediately outside it.
- *
- * ══ WHY A THROW AND NOT A RETURN VALUE ════════════════════════════════════════════════
- *
- * This was a `return null` from the transaction callback, and it produced a **500 in
- * production on concurrent duplicate signups** — found by
- * `invite-consumption.concurrency.pg.test.ts` and invisible to every PGlite test, because
- * PGlite is single-connection and the second registration always takes the SELECT branch
- * instead of the unique-violation one.
- *
- * The mechanism: once a statement inside a Postgres transaction fails, the transaction is
- * ABORTED and no further statement — including `COMMIT` — can succeed. Catching the
- * `users_email_unique_idx` violation and then returning normally therefore asked the driver
- * to commit an aborted transaction, and postgres-js surfaced the original `PostgresError`
- * from the commit. It is not a `ServiceError`, so `withErrorEnvelope` turned it into
- * `500 internal` — an unhandled 500 on the one endpoint reachable with no credential, and a
- * response that differs from the constant 202, i.e. the enumeration oracle reappearing as a
- * status code under concurrency.
- *
- * Throwing unwinds the transaction properly (the rollback is the driver's, not ours), and the
- * catch sits outside `inTransaction` so the taken branch is reached with no transaction open —
- * which is also where the mail has to be sent from anyway.
- *
- * It is a private sentinel and never reaches a caller: `register` is the only thrower and the
- * only catcher, and it converts it to `RegistrationPending` in the same expression.
+ * The open path's "this address already has an account" signal — thrown INSIDE the registering
+ * transaction, caught immediately outside. A `return null` produced a 500 on concurrent duplicate
+ * signups (`invite-consumption.concurrency.pg.test.ts`; invisible on single-connection PGlite):
+ * once a statement fails, the Postgres transaction is ABORTED and even `COMMIT` fails, so
+ * catching the `users_email_unique_idx` violation and returning asked the driver to commit an
+ * aborted transaction — a 500 on the one credential-free endpoint, the enumeration oracle as a
+ * status code. Throwing unwinds properly, and the catch sits outside `inTransaction`, where the
+ * mail must be sent from anyway. A private sentinel: `register` is the only thrower and catcher.
  */
 class AddressAlreadyRegistered extends Error {
   constructor() { super("address already registered"); }
@@ -407,15 +334,12 @@ function isUniqueViolation(e: unknown, constraint: string): boolean {
 }
 
 /**
- * The decoy password hash of the constant-time unknown-email path, memoized
- * PER HASHER rather than per service instance.
- *
- * It used to be a lazy per-instance field, and `apps/web` builds a fresh AuthService
- * per request: an unknown email therefore paid `hash()` + `verify()` (two scrypts)
- * on every request while a known email paid `verify()` only — a systematic ~2×
- * timing oracle for account existence, in the exact code path whose comment promises
- * constant time. The hasher is a process-wide singleton, so keying on it makes the
- * decoy a once-per-process cost that is already warm by the first login.
+ * The decoy password hash of the constant-time unknown-email path, memoized PER HASHER rather
+ * than per instance. It was a lazy per-instance field, and `apps/web` builds a fresh AuthService
+ * per request: an unknown email paid `hash()` + `verify()` (two scrypts) per request while a
+ * known one paid `verify()` only — a systematic ~2× timing oracle for account existence, in the
+ * code path whose comment promises constant time. The hasher is a process-wide singleton, so
+ * keying on it makes the decoy a once-per-process cost, warm by the first login.
  */
 const DECOY_HASHES = new WeakMap<PasswordHasher, Promise<string>>();
 function decoyHashFor(hasher: PasswordHasher): Promise<string> {
@@ -454,19 +378,13 @@ export interface TokenBodyRefresh {
 }
 
 /**
- * AuthService — register, two-step login, WebAuthn + TOTP + recovery
- * codes, native OAuth2 PKCE, step-up, lockout, and audit. Constructed with
- * injectable {@link AuthDeps} (key provider, scrypt hasher) so the whole
- * surface is hermetic.
- *
- * The session MACHINERY — `establish`, refresh rotation with reuse detection,
- * family revocation, logout, devices, `establishPairedDevice` — lives on
- * {@link SessionLifecycle}, which this class extends and which the desktop
- * engine runs on its own (Phase 3; the base file's header carries the
- * boundary argument). This class is the identity CEREMONY on top of it, and
- * it overrides the base's three hosted hooks (`audit`, `throttleReset`,
- * `twofaEnrolled`) with the real cloud-half reads and writes, so every hosted
- * path behaves exactly as it did when the two were one file.
+ * AuthService — register, two-step login, WebAuthn + TOTP + recovery codes, native OAuth2 PKCE,
+ * step-up, lockout, and audit; constructed with injectable {@link AuthDeps} so the surface is
+ * hermetic. The session MACHINERY (establish, refresh rotation with reuse detection, family
+ * revocation, logout, devices, `establishPairedDevice`) lives on {@link SessionLifecycle}, which
+ * this class extends and the desktop engine runs on its own. This class is the identity CEREMONY
+ * on top, overriding the base's three hosted hooks (`audit`, `throttleReset`, `twofaEnrolled`)
+ * with the real cloud-half reads and writes.
  */
 export class AuthService extends SessionLifecycle {
   constructor(private readonly deps: AuthDeps) {
@@ -486,91 +404,14 @@ export class AuthService extends SessionLifecycle {
   // ── Registration & first factor ────────────────────────────────────────────
 
   /**
-   * Create the account+user and mint the ENROLLMENT-SCOPED session that carries the
-   * caller into 2FA enrollment. Before that session existed this returned a user and no
-   * session, so there was no wire path from registration to a first session at all:
-   * every 2FA-enrollment endpoint demands a session and login on a 2FA-less user
-   * dead-ended. Minting here (rather than a separate `POST /auth/2fa/bootstrap` that
-   * would have to accept a zero-method login token) is the recommended
-   * shape: one round trip, no second single-use credential to leak or replay.
-   *
-   * ── THE INVITE IS A ROW NOW, AND IT IS CONSUMED IN THIS TRANSACTION ────────
-   *
-   * The first build shipped `inviteCodes.has()` as an explicit MITIGATION and named the
-   * fix it was standing in for: "hashed, expiring, ideally email-bound invite rows
-   * consumed transactionally with account creation. It needs a migration". Migration
-   * 0020 is that migration, and this is that consumption. Three things follow:
-   *
-   *  1. **The account creation is now ONE transaction**, so a failure after the invite
-   *     is burned un-burns it, and a half-created account (`accounts` + `users` with no
-   *     `credentials` row — a user who could never log in and whose email was
-   *     permanently taken) is no longer representable. The throttle writes stay OUTSIDE
-   *     it on purpose: a rolled-back attempt counter is a free retry, which is the one
-   *     thing the attempt limit exists to deny.
-   *  2. **The invite is EMAIL-BOUND**, which is what stops the 201-vs-409 answer being
-   *     an account-existence oracle for arbitrary addresses. See `invites.ts` and
-   *     migration 0020's header.
-   *  3. **`cfg.inviteCodes` survives as the OPERATOR BOOTSTRAP** and is consulted only
-   *     when the invite table does not recognise the code at all. It is unbound and
-   *     reusable — i.e. it still carries the oracle — so a deployment should run with
-   *     `TF_INVITE_CODES` empty once the first invite row exists. Deleting it outright
-   *     would leave a fresh deployment with no way to open its first account.
-   *
-   * ── THE INVITE BECAME OPTIONAL, UNDER A FLAG, AND NOTHING ELSE MOVED ───────────
-   *
-   * `AuthConfig.publicSignup` (default `false`; `TF_PUBLIC_SIGNUP=1` opens it) lets a
-   * stranger open an account with no code. Three things are worth reading before changing
-   * anything in here, because each of them is a place where the obvious edit is wrong:
-   *
-   *  4. **The branch is on whether a code was OFFERED, not on whether one was REQUIRED.**
-   *     Skipping the invite logic "because the gate is open anyway" would let a REVOKED
-   *     code succeed — and revocation is the documented remedy for a leaked or misdirected
-   *     invite, so it would silently stop being one. An offered code takes the invite path in
-   *     both modes, refusals and all.
-   *  5. **The per-IP limit is now the whole bound, so it tightens and it stops being
-   *     skippable.** `maxPublicRegistrationsPerWindow` replaces the invite-path cap, and an
-   *     unknown client IP refuses (`signup_unavailable`) instead of bypassing the limit.
-   *  6. ~~**Registration became an account-existence oracle, deliberately.**~~ **REVERSED —
-   *     see below.** The open-gate revision accepted the 201-vs-409 split as a bounded risk
-   *     and named the exact trigger for undoing it: "`MAIL_FROM` armed + a confirmation
-   *     observed". Both happened, so the acceptance expired and the oracle is gone.
-   *
-   * ── THE PUBLIC PATH ANSWERS THE SAME THING ABOUT EVERY ADDRESS ─────────────────
-   *
-   *  7. **On the OPEN path there is no 201, no 409 and no session — only a constant 202.**
-   *     `RegistrationPending` is returned for a fresh address and for one that already has an
-   *     account, and the type deliberately carries no field that distinguishes them. The news
-   *     a real user needs ("check your mail" / "you already have an account, sign in") moves
-   *     into the INBOX, which only the address owner can read.
-   *
-   *     A constant response and a session are mutually exclusive, and that is not a limitation
-   *     to be engineered around: a session can only be minted for a caller who proved
-   *     something, a prober naming somebody else's address proved nothing, and any decoy would
-   *     be unmasked by the wizard's very next call (`GET /auth/session`, 200 vs 401). So the
-   *     open path returns no credential at all and the verification mail is the sole
-   *     continuation — which is exactly the escape the open-gate revision named and could not
-   *     take because the mailer was dark.
-   *
-   *  8. **THE INVITE PATH IS BYTE-IDENTICAL TO WHAT SHIPPED BEFORE**, 201 + enrollment session
-   *     + 409 `email_taken` included. That 409 is not an oracle there and never was:
-   *     `consumeInvite` is email-BOUND, so the only address a caller can put through the invite
-   *     path is one an operator mailed them a code for, and the 409 therefore tells them a fact
-   *     about themselves. Removing it would cost an invited user a true, useful sentence to
-   *     protect information they already have.
-   *
-   *  9. **The invite path STAMPS `email_verified_at` only when the consumed ROW says it may,
-   *     and the bootstrap path never does.** An email-bound invite that was MAILED to the
-   *     address and then redeemed is proof the address receives mail and that the registrant
-   *     read it — the same argument that lets a mailed verification link stamp the column. But
-   *     not every invite row was mailed any more: the pairing-token redeem mints one for
-   *     whatever address its redeemer typed, and receipt of nothing proves nothing. So the row
-   *     itself carries the answer (`invites.confers_verified`, read in the same statement that
-   *     consumed it): mailed invites and the first-boot setup token's invite confer, a user's
-   *     pairing-minted invite does not, and those accounts verify later through the ordinary
-   *     mailed flow. The condition is `outcome?.ok && outcome.confersVerified` — a consumed ROW
-   *     that PROVES control — never "a code was offered", and never anything a caller sent.
-   *     `cfg.inviteCodes` is unbound, reusable and non-expiring, so it proves nothing about an
-   *     address and those registrations stay unverified.
+   * Create the account+user and mint the ENROLLMENT-SCOPED session for 2FA enrollment. The invite
+   * is a ROW consumed in THIS transaction (migration 0020, email-bound): a failure un-burns it;
+   * the throttle writes stay OUTSIDE (a rolled-back counter is a free retry). `cfg.inviteCodes`
+   * is only the operator bootstrap. Under `publicSignup` the branch is on whether a code was
+   * OFFERED — a revoked code must still refuse. The OPEN path answers a constant 202
+   * (`RegistrationPending`, no session); the INVITE path is unchanged, 201/409 included — email
+   * binding makes that 409 a fact about the caller. `email_verified_at` is stamped only when the
+   * consumed ROW confers it; the bootstrap never stamps.
    */
   async register(
     ctx: ServiceContext,
@@ -599,47 +440,30 @@ export class AuthService extends SessionLifecycle {
     const inviteCode = openGate ? "" : normalizeInviteCode(requireField(b.inviteCode, "inviteCode"));
 
     const db = asTx(ctx);
-    // RATE LIMIT, OUTSIDE the transaction below so a refusal is never rolled back — a
-    // rolled-back attempt counter is a free retry, which is the one thing the limit exists
-    // to deny. Every attempt counts, success or failure, against its own key namespace
-    // (never the login keys).
-    //
-    // Public signup changed two things here and nothing else. (1) The counter is a SLOT CLAIM
-    // answering 429 `rate_limited`, not the lockout counter answering 423 `account_locked`
-    // "too many failed attempts" — which was false in every word on an endpoint whose
-    // whole purpose is that there is no account yet and nothing has failed. See
-    // `ip-throttle.ts`. (2) The cap is tighter when the gate is open, because an
-    // email-bound invite row was what bounded a stranger before.
-    //
-    // ── AN UNKNOWN IP: SKIP WHEN GATED, REFUSE WHEN OPEN ────────────────────────────────
-    //
-    // `clientIp` returns `""` when no trusted platform header is present, and keying a
-    // limiter on `""` is an outage, not a limit: one shared bucket for the whole deployment
-    // means N requests from anywhere lock out every new signup on earth. The invite-era rule
-    // was therefore "an unknown client is not rate-limited per-IP, it is limited by what does
-    // not need an identity" — and for registration that other thing was the email-bound
-    // invite row. With the gate OPEN there is no other thing, so the same reasoning inverts:
-    // an unidentifiable client and an open gate is unbounded account creation, and the
-    // deployment refuses rather than accepting it. The invite path still works.
+    // Rate limit, OUTSIDE the transaction below so a refusal is never rolled back — a rolled-back
+    // attempt counter is a free retry. Every attempt counts against its own key namespace, never
+    // the login keys. The counter is a SLOT CLAIM answering 429 `rate_limited`, not the lockout's
+    // 423 `account_locked` — "too many failed attempts" was false in every word on an endpoint
+    // whose purpose is that no account exists yet (`ip-throttle.ts`). An unknown IP: skip when
+    // gated, refuse when open. `clientIp` is `""` without a trusted platform header, and keying a
+    // limiter on `""` is an outage — one shared bucket for the whole deployment. Invite-era
+    // registration was bounded by the email-bound invite row instead; with the gate OPEN there is
+    // no other bound, so an unidentifiable client refuses. The invite path still works.
     const ip = (ctx.ip ?? "").trim();
     if (ip.length > 0) {
       const claimed = await reserveIpSlot(db, {
         namespace: "register:ip",
         ip,
         now: ctx.now(),
-        // ON `openGate`, NEVER ON `publicSignup` — the two disagree on exactly the case that
-        // matters, and the comment above already states the intended rule ("the cap is tighter
-        // when the gate is OPEN"). `publicSignup` is the deployment MODE; `openGate` is whether
-        // THIS request is taking the open path. With the flag on, an offered invite code takes
-        // the invite path "byte for byte" (see above) — and was nonetheless being metered
-        // against the five-slot public ceiling, on the SAME `register:ip` counter the public
-        // path fills. Five stranger attempts from one NAT therefore denied a live, operator-
-        // issued invite for the whole window: the one signup path that is supposed to be
-        // available when the public valve is closing was the first to shut.
-        //
-        // Sharing one counter across both paths is deliberate and stays: the counter means
-        // "registrations from this client in this window" and only the CEILING is per-path, so
-        // a public flood stops at five and still leaves fifteen slots the invite path can claim.
+        // On `openGate`, never on `publicSignup` — they disagree on exactly the case that
+        // matters. `publicSignup` is the deployment MODE; `openGate` is whether THIS request
+        // takes the open path. With the flag on, an offered invite code takes the invite path
+        // byte for byte — yet it was metered against the five-slot public ceiling on the SAME
+        // `register:ip` counter, so five stranger attempts from one NAT denied a live,
+        // operator-issued invite for the whole window. Sharing one counter across both paths
+        // stays: the counter means "registrations from this client in this window" and only the
+        // CEILING is per-path — a public flood stops at five and leaves the invite path its
+        // slots.
         max: openGate
           ? this.cfg.maxPublicRegistrationsPerWindow
           : this.cfg.maxRegistrationsPerWindow,
@@ -650,21 +474,14 @@ export class AuthService extends SessionLifecycle {
       throw signupUnavailable();
     }
 
-    // ── NO MAILER + OPEN GATE ⇒ REFUSE. The inversion of the open gate's own reasoning. ──
-    //
-    // The open gate originally shipped BECAUSE mail was dark: gating registration on a mail that
-    // cannot send would have been "a signup page that silently accepts nobody". Now that the
-    // mail IS the funnel — it carries the only continuation, since the response is constant —
-    // the same reasoning points the other way. Creating an account whose verification link can
-    // never be sent produces exactly what that revision feared, only worse: a row that looks
-    // like a signup, cannot reach Checkout or a mailbox, and whose owner was told to check an
-    // inbox nothing will arrive in.
-    //
-    // `signup_unavailable` is reused verbatim and it is the right sentence for the
-    // right reason: nothing about THIS caller is being refused, the DEPLOYMENT cannot complete
-    // an open signup, and the invite path — which needs no mail, because the invite already
-    // proved the address — still works so an operator can still mint. Checked BEFORE the
-    // password hash so a misconfigured deployment does not spend ~100 ms of scrypt per probe.
+    // No mailer + open gate: refuse — the inversion of the open gate's own reasoning. The gate
+    // originally shipped BECAUSE mail was dark; now the mail is the funnel (the response is
+    // constant, the mail carries the only continuation), so creating an account whose
+    // verification link can never be sent is a row that looks like a signup and whose owner was
+    // told to check an inbox nothing will arrive in. `signup_unavailable` is the right sentence:
+    // the DEPLOYMENT cannot complete an open signup, and the invite path — which needs no mail —
+    // still works. Checked BEFORE the password hash so a misconfigured deployment does not spend
+    // ~100 ms of scrypt per probe.
     if (openGate && !this.deps.mail) throw signupUnavailable();
 
     // Hash the password BEFORE the transaction opens: scrypt is deliberately slow
@@ -672,17 +489,13 @@ export class AuthService extends SessionLifecycle {
     // every concurrent redemption of that code behind one CPU-bound operation.
     const passwordHash = await this.deps.passwordHasher.hash(b.password);
 
-    // The transaction decides WHAT HAPPENED; the mail is sent afterwards, outside it.
-    //
-    // `null` means "the address was already registered", which on the open path is not an error
-    // and must not be one: throwing would have to become a status code, and a status code is the
-    // oracle. It is a value the code below turns into the same 202 a fresh signup gets.
-    //
-    // The sends are deliberately NOT inside `inTransaction`. A mail is a network call to Resend
-    // with its own timeout, and holding an open Postgres transaction — and its connection, on a
-    // serverless host with a small pool — across one is a self-inflicted outage under any load
-    // at all. It also means a mail failure can never roll back a committed account, which is
-    // the mail service's own rule stated from the caller's side.
+    // The transaction decides WHAT HAPPENED; the mail is sent afterwards, outside it. `null`
+    // means "already registered", which on the open path is not an error and must not be one — a
+    // throw becomes a status code, and a status code is the oracle; the code below turns it into
+    // the same 202 a fresh signup gets. The sends are NOT inside `inTransaction`: a mail is a
+    // network call with its own timeout, and holding a Postgres transaction (and its connection,
+    // on a small serverless pool) across one is a self-inflicted outage — and a mail failure can
+    // then never roll back a committed account.
     const created = await this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
 
@@ -706,47 +519,25 @@ export class AuthService extends SessionLifecycle {
         }
       }
 
-      // (1a) THE CAPACITY VALVE, on the open path only.
-      //
-      // An invited person was chosen by an operator, and minting the invite already WAS the
-      // capacity decision; capping them here would close the valve on the wrong side. Past
-      // the cap a stranger is sent to the waitlist, which is what the waitlist is for once
-      // it is no longer the front door.
-      //
-      // SOFT, and said out loud rather than implied: this read and the insert below share a
-      // transaction, but under READ COMMITTED two concurrent registrations both see
-      // `cap - 1` and both proceed. A hard cap needs a serialized counter row — a write lock
-      // on every signup, to enforce a number chosen as a rough limit.
+      // The capacity valve, on the open path only. An invited person was chosen by an operator —
+      // minting the invite WAS the capacity decision; past the cap a stranger goes to the
+      // waitlist. SOFT, said out loud: this read and the insert share a transaction, but under
+      // READ COMMITTED two concurrent registrations both see `cap - 1` and both proceed. A hard
+      // cap needs a serialized counter row — a write lock on every signup, to enforce a number
+      // chosen as a rough limit.
       if (openGate && this.cfg.publicSignupCap !== null) {
         const [taken] = await tx.select({ n: count() }).from(accounts);
         if ((taken?.n ?? 0) >= this.cfg.publicSignupCap) throw signupCapacityReached();
       }
 
-      // (2) The address. On the INVITE path this is reachable only by a caller who proved
-      // they hold an invite for THIS address (or an operator bootstrap code) — see the
-      // class doc above.
-      //
-      // ── ON THE OPEN PATH IT IS AN ACCOUNT-EXISTENCE ORACLE, AND THAT IS DECIDED ──────
-      //
-      // 201 for a fresh address and 409 for a registered one is a probe anyone can run once
-      // the email binding is gone. It is not overlooked: it is inherent to self-service
-      // signup (every answer that completes a real signup also completes the probe), the
-      // only escape is a constant response plus an out-of-band mail this deployment cannot
-      // yet be relied on to send, and it is bounded by the per-IP slot claim above — every
-      // attempt, 201 and 409 alike, costs one. `POST /auth/login` keeps its constant
-      // "invalid email or password" parity, so the oracle exists on exactly one endpoint. The
-      // named trigger for reversing it — outbound mail proven — has since fired; see below.
-      //
-      // This READ is the polite refusal, not the guarantee. It cannot be: under READ
-      // COMMITTED two concurrent registrations for one address both select nothing, and
-      // `UNIQUE (account_id, email)` can never catch them because each inserts its own
-      // fresh `accounts` row first. The guarantee is `users_email_unique_idx` (migration
-      // 0021), and the catch below is what turns its violation back into this same sentence
-      // instead of a 500.
-      //
-      // ON THE OPEN PATH A TAKEN ADDRESS IS NOT A REFUSAL. A refusal is a status code and
-      // a status code is the oracle, so it becomes a private sentinel that the code after the
-      // transaction turns into the same 202 a fresh signup gets.
+      // The address. On the INVITE path this is reachable only by a caller who proved they hold
+      // an invite for THIS address. On the OPEN path a taken address is NOT a refusal — a refusal
+      // is a status code and a status code is the oracle — so it becomes the private sentinel the
+      // code after the transaction turns into the same 202. This READ is the polite refusal, not
+      // the guarantee: under READ COMMITTED two concurrent registrations both select nothing, and
+      // `UNIQUE (account_id, email)` can never catch them because each inserts its own fresh
+      // `accounts` row first. The guarantee is `users_email_unique_idx` (migration 0021), and the
+      // catch below turns its violation back into the same sentence instead of a 500.
       const existing = await tx.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
       if (existing.length > 0) {
         // ON THE OPEN PATH THIS IS NOT AN ERROR, but it still has to unwind the
@@ -807,23 +598,15 @@ export class AuthService extends SessionLifecycle {
     // ── The invite path: unchanged, and it returns before any mail is considered ────────
     if (created !== null && !("openUserId" in created)) return created;
 
-    // ── The open path: ONE mail, then the SAME answer either way ───────────────────────
-    //
-    // `created === null` means the address was already registered — from the read OR from the
-    // concurrent unique-violation, which is exactly why both throw the same sentinel: the two
-    // ways of discovering it must not produce two different answers.
-    //
-    // Both branches send exactly one mail, through the same `unsolicited` per-recipient budget
-    // (`MailQuota`), so the limiter's observable behaviour does not depend on which branch ran —
-    // a constant response with a branch-dependent side effect is not constant. Both then return
-    // the identical `RegistrationPending`.
-    //
-    // A FAILED send does not fail the request and does not strand the signup. The account (when
-    // one was created) exists and is reachable by the re-entry path — `POST /auth/login` with
-    // the password just chosen re-mints an enrollment session for a user with zero factors — and
-    // the wizard's verify step offers a resend. So a Resend outage costs a new user one sign-in,
-    // never their account. `mailed` is how a caller inside the trust boundary observes that; the
-    // route must never put it on the wire.
+    // The open path: ONE mail, then the SAME answer either way. `created === null` means already
+    // registered — from the read OR the concurrent unique-violation, which is why both throw the
+    // same sentinel. Both branches send exactly one mail through the same `unsolicited`
+    // per-recipient budget (`MailQuota`) — a constant response with a branch-dependent side
+    // effect is not constant — then return identical `RegistrationPending`. A FAILED send does
+    // not fail the request or strand the signup: the account is reachable by the re-entry path
+    // (`POST /auth/login` re-mints an enrollment session at zero factors) and the wizard offers a
+    // resend, so a mail outage costs one sign-in, never an account. `mailed` is for callers
+    // inside the trust boundary; the route must never put it on the wire.
     const mail = this.deps.mail!;
     const result = created === null
       ? await mail.sendAccountExists(ctx, { to: email })
@@ -832,60 +615,14 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * PROVE AN ADDRESS: a token that was mailed to it, PLUS the account's password.
-   *
-   * ══ WHY BOTH, AND WHAT A TOKEN ALONE WOULD HAVE ALLOWED ═══════════════════════════════
-   *
-   * The obvious design is "the link proves the address, so consume it and let the holder in".
-   * It is a full account-takeover primitive, and the chain is short enough to be worth writing
-   * out so nobody simplifies this method back into it:
-   *
-   *   1. The attacker registers `victim@example.com` on the open path with a password THEY
-   *      choose. The response is a constant 202 (it has to be), so this costs them nothing and
-   *      tells them nothing — but the row now exists with their credential on it.
-   *   2. They sign in via the re-entry path (zero factors ⇒ enrollment session) and enroll
-   *      their OWN passkey or TOTP. The account is now fully 2FA'd, by the attacker, and parked
-   *      against the verification gate.
-   *   3. The victim receives the verification mail — which they did not ask for but which looks
-   *      entirely legitimate — and clicks it.
-   *
-   * With a token-only design, step 3 stamps `email_verified_at` on the ATTACKER's account and
-   * the gate opens: Checkout and `POST /mailboxes` on an account the attacker controls, under
-   * the victim's address. In the variant where the attacker does not pre-enroll, the victim is
-   * handed a session and onboards normally onto an account whose PASSWORD is the attacker's —
-   * and since the password is the first factor of every future login, the victim loses the
-   * account, and their IMAP credentials with it, the moment that session expires.
-   *
-   * Requiring the password closes both: the victim cannot verify the attacker's account because
-   * they do not know its password, and the attacker cannot verify their own because they never
-   * receive the mail. The two credentials are held by different people in every abusive case and
-   * by the same person in every legitimate one. It also makes link-prefetching mail scanners
-   * harmless — a scanner issues a GET and never posts a password — which is the residual risk
-   * the verification-mail design named and could not otherwise answer.
-   *
-   * It is not friction invented here either: the caller chose this password minutes ago on the
-   * previous screen, and anyone who has genuinely lost it can reach the same place by signing in
-   * (the re-entry path) and using the wizard's resend.
-   *
-   * ══ THE THROTTLE IS MANDATORY, NOT DEFENCE IN DEPTH ═══════════════════════════════════
-   *
-   * This method verifies a password, so without the lockout it is a password-guessing endpoint
-   * that bypasses `login`'s lockout entirely — an attacker holding a leaked token could
-   * brute-force at will. It claims the SAME `user:` and `email:` keys `login` uses, so guesses
-   * here and guesses there share one budget and neither is a way around the other.
-   *
-   * ══ THE SESSION IS MINTED ONLY AT ZERO FACTORS, BY LOGIN'S OWN RULE ══════════════════
-   *
-   * Byte-for-byte the `login` re-entry condition (`methods.length === 0`): for a user with no
-   * second factor the password IS the only factor in existence, so handing its holder an
-   * enrollment-scoped session lowers no bar. With a factor enrolled it would — a mailed link
-   * plus a password must not skip a second factor somebody deliberately added — so that caller
-   * gets `{status:"verified"}` and signs in normally.
-   *
-   * The token stays `purpose='email_verify'`, so the token-family separation still holds: it is
-   * invisible to `peekLoginToken` and cannot be presented to `webauthnAssertOptions`,
-   * `totpVerify` or `recoveryVerify` as a first factor. Consumption is the single-statement
-   * `consumeEmailVerification`, so single-use survives concurrency.
+   * Prove an address: a token MAILED to it PLUS the account's password. Token-only is an
+   * account-takeover primitive: an attacker registers the victim's address with a chosen
+   * password, enrolls their own factor via re-entry, and the victim's innocent click stamps
+   * `email_verified_at` on the ATTACKER's account. The password closes it — the two credentials
+   * are held by different people in every abuse — and makes link-prefetching scanners harmless.
+   * The throttle is MANDATORY: this verifies a password, so it claims the SAME keys `login` uses.
+   * The session is minted only at zero factors; otherwise `{status:"verified"}`. The token stays
+   * `purpose='email_verify'`; consumption is `consumeEmailVerification`.
    */
   async verifyEmail(
     ctx: ServiceContext, b: { token?: unknown; password?: unknown },
@@ -968,42 +705,14 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * Send this session's owner another verification link.
-   *
-   * ══ IT IS AUTHENTICATED, AND THAT IS WHAT MAKES IT SAFE ══════════════════════════════
-   *
-   * The natural shape for "resend my verification mail" is an unauthenticated endpoint taking an
-   * address, and it is two vulnerabilities at once: a mail-bomb aimed at anyone the caller can
-   * name, and an enumeration oracle, because the honest implementation answers differently for
-   * an address with no account. The mail service's standing rule is what this follows — invite
-   * delivery stays authenticated work — and the generalisation is that no endpoint takes a
-   * RECIPIENT from an anonymous caller.
-   *
-   * So the recipient is `users.email` for the session's own user and there is no parameter for
-   * it. There is nothing to enumerate: the caller already holds a session for the account, so
-   * the account's existence is not news to them. `issueEmailVerification` independently refuses
-   * any `to` that is not the user's own address, which means even a future bug in this
-   * method cannot mail one account's token to another inbox.
-   *
-   * Anyone whose mail never arrived reaches this through the re-entry path — sign in with the
-   * password, land in the wizard, press the button — so no anonymous variant is needed to keep
-   * a stranded signup recoverable.
-   *
-   * ══ BOTH LIMITERS, NEITHER NEW ═══════════════════════════════════════════════════════
-   *
-   * Per IP: `reserveIpSlot` under `verify:ip`, the same slot-claim primitive registration uses,
-   * answering 429 (a slot claim, never the 423 lockout — see `ip-throttle.ts`). Per recipient:
-   * whatever `MailService.guarded` already enforces on the `unsolicited` budget, reached by
-   * construction because this can only send through `MailService`. No third limiter was written.
-   *
-   * An unknown client IP does NOT refuse here, unlike open registration: the caller is
-   * authenticated, so the session is the identity the per-IP counter would otherwise stand in
-   * for, and the per-recipient budget still bounds the mail itself.
-   *
-   * The response is deliberately uninformative — `{ ok: true }` whether the mail sent, was rate
-   * limited, or was skipped because the address is already verified. It is the same rule
-   * applied to an authenticated endpoint: `MailSendResult` is a readout of a limiter, and a
-   * limiter readout on the wire is an oracle even when the caller is known.
+   * Send this session's owner another verification link. AUTHENTICATED, and that is what makes it
+   * safe: the natural unauthenticated address-taking endpoint is a mail-bomb and an enumeration
+   * oracle at once — no endpoint takes a RECIPIENT from an anonymous caller. The recipient is
+   * `users.email` for the session's own user; there is no parameter, and `issueEmailVerification`
+   * refuses any other `to`. Both limiters, neither new: `reserveIpSlot` under `verify:ip` (429)
+   * and the `unsolicited` per-recipient budget. An unknown IP does NOT refuse here: the session
+   * is the identity. The response is uninformative — `{ ok: true }` whether sent, limited, or
+   * already verified: a limiter readout on the wire is an oracle.
    */
   async resendVerification(ctx: ServiceContext): Promise<{ ok: true }> {
     const userId = this.requireUser(ctx);
@@ -1040,22 +749,13 @@ export class AuthService extends SessionLifecycle {
     const db = asTx(ctx);
     const email = requireField(b.email, "email").trim().toLowerCase();
     /**
-     * ── THE CEILING APPLIES HERE TOO, AND IT DID NOT ─────────────────────────────────────
-     *
-     * {@link PASSWORD_MAX_LENGTH}'s own rationale is about THIS path's cost: *"`scrypt` is
-     * deliberately ~100 ms, it is run before the transaction opens, and `register` is public:
-     * without a ceiling a caller can post a multi-megabyte password and spend the host's CPU at
-     * will."* Every word of that is true of `login`, which is equally public and reached far more
-     * often — and `login` called `requireField` alone, so the guard whose docstring names the
-     * attack was applied on the one route that is not the usual way in.
-     *
-     * Only the MAXIMUM, not `requirePassword`'s minimum: a stored password shorter than today's
-     * policy must still be able to sign in, and refusing it here would lock out anybody who
-     * registered before the minimum was raised. Nothing about the length of a SUBMITTED guess is
-     * a fact about the account.
-     *
-     * Before the throttle reservation, so a malformed request burns no attempt — it is not a
-     * guess — and before scrypt, which is the cost being refused.
+     * {@link PASSWORD_MAX_LENGTH} applies here too, and it did not. Its rationale is about THIS
+     * path's cost — scrypt is ~100 ms, run before the transaction, on a public route — yet
+     * `login`, equally public and reached far more often, called `requireField` alone. Only the
+     * MAXIMUM, not `requirePassword`'s minimum: a stored password shorter than today's policy
+     * must still sign in, and nothing about the length of a SUBMITTED guess is a fact about the
+     * account. Before the throttle reservation, so a malformed request burns no attempt, and
+     * before scrypt, which is the cost being refused.
      */
     const password = requireField(b.password, "password");
     if ([...password].length > PASSWORD_MAX_LENGTH) {
@@ -1065,20 +765,13 @@ export class AuthService extends SessionLifecycle {
       );
     }
 
-    // THE ATTEMPT IS RESERVED ON THE EMAIL KEY FIRST — before the user lookup, so both
-    // branches below are already behind the same gate. Checking only
-    // `user:<id>` made the lockout itself an account-existence oracle: past
-    // `maxFailures` a REGISTERED email answered 423 while an unregistered one kept
-    // answering 401 forever, which is a clean, reliable, unlimited enumeration
-    // signal — and the re-entry path (a password-only login) is built on exactly
-    // this endpoint. Every attempt below counts against the email key too, so the two
-    // paths also lock after the same number of guesses, not merely with the same
-    // status.
-    //
-    // RESERVE, NOT CHECK, and that is the whole bound. This was `throttleCheck` — a pure
-    // SELECT — with the increment landing only after the password verify, so N simultaneous
-    // requests all read "not locked", all ran their scrypt, and the effective limit was the
-    // attacker's concurrency rather than `maxFailures`. See {@link throttleReserve}.
+    // The attempt is reserved on the EMAIL key first — before the user lookup, so both branches
+    // are behind the same gate. Checking only `user:<id>` made the lockout an account-existence
+    // oracle: past `maxFailures` a registered email answered 423 while an unregistered one
+    // answered 401 for ever. RESERVE, not check: `throttleCheck` was a pure SELECT with the
+    // increment landing after the verify, so N simultaneous requests all read "not locked" and
+    // the effective limit was the attacker's concurrency, not `maxFailures`. See {@link
+    // throttleReserve}.
     await this.throttleReserve(db, `email:${email}`);
 
     const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
@@ -1155,62 +848,14 @@ export class AuthService extends SessionLifecycle {
   // ── Handing a session to the desktop app ────────────────────────────────────
 
   /**
-   * Mint the ONE-USE code a desktop install exchanges for a session of its own.
-   *
-   * ── WHAT THIS IS FOR ──────────────────────────────────────────────────────────────────────
-   *
-   * The desktop app's hosted door asks for an address, a password and a six-digit code, and it
-   * has to: it holds no browser, so it cannot run a ceremony. That is a password typed into a
-   * native window, which is the one place a person cannot check the address bar. This is the
-   * alternative — the ceremony happens in the browser, where the account already has a session
-   * and where a password manager and a URL bar both work, and the app receives a value that is
-   * worth nothing to anybody who is not holding it within the next two minutes.
-   *
-   * ── IT REUSES `login_tokens`, AND THAT IS THE POINT ───────────────────────────────────────
-   *
-   * This is the third `purpose` on the same table (`login`, `email_verify`, and now
-   * `desktop_link`), storing `hashToken(raw)` with a short `expires_at` and a `consumed_at`
-   * that makes it single-use. A new table would have re-derived every one of those decisions
-   * and got one of them slightly different. The purposes are mutually invisible BY QUERY, in
-   * both directions, and each direction is a real refusal rather than a convention:
-   * {@link peekLoginToken} filters `purpose='login'`, `consumeEmailVerification` filters
-   * `purpose='email_verify'`, and {@link claimDesktopLink} filters `purpose='desktop_link'`.
-   * So a code displayed on a web page cannot be presented as a first factor, and a token
-   * MAILED to an inbox cannot be exchanged for a native session.
-   *
-   * ── WHY THE ROUTE IS STEP-UP GATED, AND WHY THIS METHOD DOES NOT SAY SO ───────────────────
-   *
-   * `POST /auth/desktop-link` carries `stepUp: true` — the same gate `DELETE /devices/:id`
-   * carries, and for the mirror-image reason: this ADDS a device, and a device holds a refresh
-   * token good for `nativeRefreshTtlMs` on a machine the browser session knows nothing about. A
-   * live browser session alone must not be able to grow itself a rolling four-hundred-day native
-   * credential — a window four times its own, on hardware it cannot see.
-   *
-   * The gate lives on the route rather than here because `withStepUp` is where every other
-   * step-up decision in this codebase is made, and a second implementation of it inside a
-   * service is how the two drift. `requireStepUp` is not called again: the double-gating on
-   * `DELETE /auth/2fa/totp` exists because that call is destructive and irreversible, and this
-   * one is neither.
-   *
-   * ── `challenge` — THE OPTIONAL COMMITMENT, AND WHY BINDING IS DECIDED HERE ────────────────
-   *
-   * A desktop install can now receive its code over a registered URL scheme rather than through
-   * a person's fingers. A scheme is claimed by whichever program on the machine registered it,
-   * and nothing authenticates that, so a code that travels over one has to be worth nothing to
-   * an interceptor. `challenge` is what makes that true: the app invents a 32-byte verifier,
-   * keeps it, sends only `sha256(verifier)` here, and {@link claimDesktopLink} will not spend
-   * the code for anyone who cannot produce the verifier the digest was made from.
-   *
-   * BINDING IS DECIDED AT MINT AND NEVER AFTERWARDS. A row is written with a `challengeHash` or
-   * without one; nothing updates the column. So there is no sequence of calls in which a code
-   * that was minted bound becomes claimable unbound — which is the only direction that would
-   * matter, and the reason this is a column on the row rather than an argument to the claim.
-   *
-   * An ABSENT challenge is not a fault. It is the browser flow that has existed all along: a
-   * person who opened this page themselves has no verifier to commit to, and their code stays
-   * retypable exactly as before. A MALFORMED challenge is a fault, and a loud one — see
-   * {@link invalidDesktopChallenge}, because the alternative is minting an unbound code for a
-   * caller that believes it is bound.
+   * Mint the ONE-USE code a desktop install exchanges for a session: the ceremony happens in the
+   * browser, and the app receives a value worth nothing to anyone not holding it within two
+   * minutes. It reuses `login_tokens` as a third `purpose` (`desktop_link`), mutually invisible
+   * BY QUERY: a code shown on a page cannot be a first factor, a mailed token cannot become a
+   * native session. The route carries `stepUp: true` — a live browser session must not grow
+   * itself a rolling native credential. `challenge` is the optional commitment for URL-scheme
+   * delivery: the app keeps a 32-byte verifier, sends `sha256(verifier)`; binding is decided at
+   * MINT, never afterwards. Absent = the browser flow; malformed refuses.
    */
   async issueDesktopLink(
     ctx: ServiceContext,
@@ -1231,42 +876,16 @@ export class AuthService extends SessionLifecycle {
     if (raw.length > 0 && !DESKTOP_CHALLENGE_RE.test(raw)) throw invalidDesktopChallenge();
     const challengeHash = raw.length > 0 ? raw : null;
 
-    // ── A MINT SUPERSEDES. AT MOST ONE DESKTOP CODE PER USER, AND IT IS A REAL BOUND. ────────
-    //
-    // Two things, and the second is why this is a DELETE rather than a mark-consumed:
-    //
-    //  · **Security.** Pressing "show me another code" has to mean the one on screen stops
-    //    working. Without this it does not: the first code stays claimable for its full two
-    //    minutes, so a code that was shown on a shared screen — which is the most likely reason
-    //    somebody asks for a second one — outlives the decision to replace it. Same rule
-    //    {@link establishEnrollment} applies to password-only sessions, and for the same reason:
-    //    at most one live credential of a kind per user.
-    //  · **Growth.** `login_tokens` has no reaper (the `login` rows are bounded by the login
-    //    throttle and `email_verify` by `verify:ip`; this route has neither, and it is reachable
-    //    as often as an authenticated caller likes). Deleting rather than consuming bounds the
-    //    rows this route can ever produce at one per user, permanently, instead of one per press.
-    //
-    // Nothing is lost by deleting. The history is in `auth_events` — this issue, and the `login`
-    // the claim writes from the other machine — and a spent handoff row carries nothing beyond
-    // what those two already say.
-    //
-    // ── `FOR UPDATE` ON THE OWNER ROW, EXACTLY AS {@link generateRecoveryCodes} DOES ──────────
-    //
-    // Delete-then-insert is not a supersede under READ COMMITTED. Two concurrent mints — a
-    // double-click, a retry, an attacker racing a victim — both delete, then both insert, and
-    // BOTH codes survive, because neither delete can see a row the other transaction has not
-    // committed. The user is shown a fresh code and told the old one is dead while it is still
-    // a live way into their mail. A transaction alone does not fix that; the lock does, and the
-    // transaction is only what makes the lock outlive its statement.
-    //
-    // The `users` row is the lock and NOT the token rows, because `FOR UPDATE` can only lock
-    // rows that EXIST — a first mint has no token row to lock and would race exactly as before.
-    // The user's own row is always there.
-    //
-    // A CLAIM of the old code racing this is correct in both orders: the claim's `UPDATE` takes
-    // the row lock and completes, then the row goes; or the row goes first and the claim finds
-    // nothing and answers `invalid_code`. Neither can produce a session from a superseded code
-    // after this returns.
+    // A mint SUPERSEDES: at most one desktop code per user, and it is a real bound. Security —
+    // "show me another code" must kill the one on screen (most likely shown on a shared screen).
+    // Growth — `login_tokens` has no reaper and this route has no throttle, so DELETE rather than
+    // mark-consumed bounds the rows at one per user; nothing is lost, the history is in
+    // `auth_events`. `FOR UPDATE` on the OWNER row, exactly as {@link generateRecoveryCodes}:
+    // delete-then-insert is not a supersede under READ COMMITTED — two concurrent mints both
+    // delete then both insert and BOTH codes survive; the lock serializes them, and the `users`
+    // row is locked because `FOR UPDATE` can only lock rows that EXIST (a first mint has no token
+    // row). A racing claim of the old code is correct in both orders: claim then delete, or
+    // delete then `invalid_code`.
     await this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
       await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1).for("update");
@@ -1297,98 +916,14 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * Exchange a live handoff code for a native session. NO SESSION REQUIRED — the code is the
-   * credential, which is the entire mechanism.
-   *
-   * ── SINGLE-USE IS THE DATABASE'S JOB, NOT THIS PROCESS'S ──────────────────────────────────
-   *
-   * ONE statement: `UPDATE … WHERE token_hash = … AND purpose = … AND consumed_at IS NULL AND
-   * expires_at > now RETURNING user_id`. A SELECT-then-check-then-UPDATE is a read-modify-write,
-   * and two requests carrying the same code both read `consumed_at IS NULL`, both pass, and both
-   * establish a session — a defect no sequential test can see and that PGlite, being one
-   * connection, structurally cannot reach. `consumeEmailVerification` was fixed for exactly this
-   * and this is the same statement; `desktop-link.pg.test.ts` runs it concurrently against real
-   * Postgres.
-   *
-   * ── ONE SENTENCE FOR EVERY WAY IT CAN FAIL ────────────────────────────────────────────────
-   *
-   * Unknown, expired, already claimed, the wrong purpose, blank, and the loser of a race all get
-   * {@link invalidDesktopCode}. The remedy is identical in every case (ask the browser for a
-   * fresh one) and the distinctions are only ours to know — the same rule
-   * {@link invalidVerification} states at more length.
-   *
-   * ── THE ATTEMPT BOUND, AND WHY AN UNKNOWN IP DOES NOT REFUSE ──────────────────────────────
-   *
-   * A slot claim per IP, not the lockout counter: nothing has FAILED in the sense
-   * `account_locked` means, there is no account to name before the code is read, and a lockout
-   * keyed on a value an attacker chooses is a denial of service. `reserveIpSlot` answers 429
-   * — the shape `register` and `resendVerification` already use.
-   *
-   * When `ctx.ip` is blank the request is admitted, and that is the opposite of what
-   * `register` does on its open path. The reasoning is `register`'s own, applied to a different
-   * endpoint: an unidentifiable client is bounded by whatever does not need an identity, and
-   * here that is a 128-bit single-use secret with a two-minute life. Refusing instead would take
-   * the whole flow away on any deployment without a trusted client-IP header, to bound a search
-   * space nobody can walk.
-   *
-   * ── `verifier` — THE OTHER HALF OF A COMMITMENT MADE AT MINT ──────────────────────────────
-   *
-   * A code minted with a challenge is spendable only by a caller that can produce the value the
-   * challenge is the digest of. That is what lets the browser hand a code to a desktop install
-   * over a URL scheme: any program on the machine may register `ohmail://`, and the one that
-   * wins gets a code it cannot spend, because the verifier never left the process that invented
-   * it. A code minted WITHOUT a challenge is unchanged — the retype flow, claimable by whoever
-   * holds it, and byte-for-byte the behaviour that shipped before this parameter existed.
-   *
-   * ── THE BINDING IS INSIDE THE SAME SINGLE UPDATE, AND THAT IS NOT AN OPTIMISATION ─────────
-   *
-   * Reading the row, comparing the digest in this process, and then burning the code is a
-   * read-modify-write with the same defect the single-use guard above exists to prevent: two
-   * requests both read a live row, both find the binding satisfied, and both burn it. Making the
-   * binding one more conjunct of the WHERE means the database decides both facts at once, under
-   * one row lock, and there is no window between them at all.
-   *
-   * ── AN ABSENT `verifier` IS `challenge_hash IS NULL`, AND MUST NOT BE "NO CONDITION" ──────
-   *
-   * The shape that is easy to write and wrong is `if (verifier) where.push(binding)`: with no
-   * verifier there is no predicate, so a BOUND code is claimable by anyone who omits the field.
-   * The whole mechanism is then bypassed by sending less. So the predicate is unconditional and
-   * only its SHAPE varies — with a verifier, "bound to exactly this digest"; without one,
-   * "unbound", full stop. Neither form can match a bound row without the verifier, and the
-   * second form is a real refusal rather than an accident of comparing against the digest of an
-   * empty string (a challenge somebody could deliberately mint).
-   *
-   * ── A PRESENTED VERIFIER REQUIRES A BOUND MATCH — IT DOES NOT ALSO ADMIT UNBOUND CODES ─────
-   *
-   * The `verifier`-present arm is an EXACT match on `challenge_hash`, not "unbound OR bound to
-   * this digest". Admitting an unbound code while a verifier is presented is login CSRF, and the
-   * direction that bites is INJECTION, not theft: an attacker mints an UNBOUND code for their own
-   * account and delivers `ohmail://link?code=…` to a victim whose install is mid browser-handoff
-   * and therefore holding a verifier of its own. Under an `or(isNull(challenge_hash), …)` arm the
-   * victim's verifier is irrelevant — the unbound attacker row satisfies `isNull` — and the claim
-   * burns it and signs the victim's desktop into the ATTACKER's account (session fixation).
-   *
-   * Requiring the bound match closes it with no cost to any real client: the only caller that
-   * ever presents a verifier is one that minted a challenge before opening the browser
-   * (`apps/sidecar/src/cloud-engine.ts` keeps the verifier and publishes the challenge; the field
-   * is OMITTED, never sent, when no challenge was minted — `cloud-signin.ts`), so a presented
-   * verifier always accompanies a code the browser minted BOUND to that challenge. No legitimate
-   * client claims an unbound code while presenting a verifier; the unbound retype path, which
-   * presents no verifier, is unchanged.
-   *
-   * ── A FAILED BINDING DOES NOT BURN THE CODE ───────────────────────────────────────────────
-   *
-   * The predicate is on the UPDATE, so a claim whose verifier does not match matches no row and
-   * changes nothing. The code stays live for the rest of its two minutes and the person whose
-   * app is holding the right verifier can still use it. An implementation that consumed first
-   * and compared afterwards would let any interceptor destroy a code it could not spend.
-   *
-   * ── AND THE REFUSAL IS THE SAME SENTENCE AS "NO SUCH CODE" ────────────────────────────────
-   *
-   * A wrong verifier, a missing verifier on a bound code, an unknown code and a spent one all
-   * get {@link invalidDesktopCode}. Distinguishing them would tell a caller holding a code that
-   * the code is real and only the proof is wrong, which is exactly the fact a scheme
-   * interceptor would like to learn.
+   * Exchange a live handoff code for a native session — no session required; the code is the
+   * credential. Single-use is the DATABASE's job: one `UPDATE … consumed_at IS NULL … RETURNING`
+   * (`desktop-link.pg.test.ts` runs it concurrently). Every failure gets {@link
+   * invalidDesktopCode}. A slot claim per IP bounds attempts; a blank IP is ADMITTED — the search
+   * space is a 128-bit two-minute secret. `verifier` completes the mint's commitment, one more
+   * conjunct of the SAME UPDATE. An absent verifier means `challenge_hash IS NULL`, never "no
+   * condition"; a presented verifier requires an EXACT bound match — an unbound row admitted is
+   * session fixation. A failed binding matches no row, so it does not burn the code.
    */
   async claimDesktopLink(
     ctx: ServiceContext, b: { code?: unknown; verifier?: unknown; kind?: unknown },
@@ -1409,18 +944,13 @@ export class AuthService extends SessionLifecycle {
       }
       kind = b.kind as DeviceKind;
     }
-    // THE CHEAP REFUSALS AND THE CROSS-ACCOUNT CHECK COME BEFORE THE THROTTLE, deliberately.
-    // `reserveIpSlot` MUTATES — it spends one of this address's claims — so a 409 raised after it
-    // charged the caller for a request that did nothing, and with the window nearly full the
-    // advice "sign out and try again" could not be honoured: the retry met a 429. Refusing first
-    // costs the slot to nobody.
-    //
-    // It opens no oracle. The peek matches an exact `generateToken()` hash, so a caller learns the
-    // answer only for a code they already hold, and the length bounds above are string tests that
-    // reach neither the database nor `sha256`.
-    // Bounded before it reaches `sha256`, for `requirePassword`'s reason: this value arrives
-    // from an anonymous caller and an unbounded body is free work for whoever wants to send a
-    // megabyte of it. A real code is `generateToken()`-shaped and nowhere near this.
+    // The cheap refusals and the cross-account check come BEFORE the throttle, deliberately:
+    // `reserveIpSlot` MUTATES, so a 409 raised after it charged the caller for a request that did
+    // nothing, and with the window nearly full the advice "sign out and try again" met a 429. No
+    // oracle opens: the peek matches an exact `generateToken()` hash, so a caller learns only
+    // about a code it already holds, and the length bounds are string tests reaching neither the
+    // database nor `sha256`. Bounded before `sha256` for `requirePassword`'s reason: an unbounded
+    // anonymous body is free work, and a real code is nowhere near 512.
     if (raw.length === 0 || raw.length > 512) throw invalidDesktopCode();
     // Bounded for the same reason the code is, and BEFORE `hashToken` runs over it. A verifier
     // this long is not one this flow produces (32 bytes, base64url, 43 characters), so the bound
@@ -1476,27 +1006,14 @@ export class AuthService extends SessionLifecycle {
     if (!row) throw invalidDesktopCode();
 
     const user = await this.loadUser(db, row.userId);
-    // The device row is labelled for the app — the claimant's own declared kind, or the legacy
-    // `"macos"` when it said nothing — so `GET /devices` shows the machine that claimed the code
-    // and `DELETE /devices/:id` can take it away again. That revocation path is the reason the
-    // handoff is safe to offer at all.
-    //
-    // `surface: "native"` is PINNED, not derived, and the pin is what makes the declaration
-    // privilege-free: every admissible kind mints the identical credential — the bearer pair
-    // this route answers with, on the native window this door has always issued (for the legacy
-    // `"macos"` the pin and the derivation agree byte for byte). The kind therefore selects a
-    // device row's spelling and nothing else. Without the pin the platform-qualified kinds
-    // would fall to the derivation's strict side and shrink the window — a behavior change for
-    // exactly the installs this field exists to name.
-    //
-    // NO `method`, so no `2fa_verified` row is written: no factor was asserted HERE. What was
-    // asserted is on the mint side — the browser session cleared `withStepUp` less than
-    // `desktopLinkTtlMs` ago — which is what makes the `lastTwofaAt: now` that `establish`
-    // stamps an honest record rather than a laundered one.
-    // `twofaAt: ctx.now()` — HONEST HERE, and the reason is the paragraph above: the mint side
-    // cleared `withStepUp` less than `desktopLinkTtlMs` ago, so a factor really was asserted by
-    // this person, within two minutes, on the browser that produced this code. That precondition
-    // is what the PKCE door lacked until step-up was enforced on its mint; see {@link establish}.
+    // The device row is labelled for the app — the claimant's declared kind, or legacy `"macos"`
+    // when it said nothing — so `GET /devices` shows the machine and `DELETE /devices/:id` can
+    // take it away; that revocation path is what makes the handoff safe to offer. `surface:
+    // "native"` is PINNED, not derived, which makes the declaration privilege-free: every
+    // admissible kind mints the identical credential, and the kind selects a device row's
+    // spelling and nothing else. No `method`, so no `2fa_verified` row: no factor was asserted
+    // HERE. `twofaAt: ctx.now()` is honest — the mint side cleared `withStepUp` less than
+    // `desktopLinkTtlMs` ago, on the browser that produced this code.
     const established = await this.establish(ctx, user, { kind, twofaAt: ctx.now(), surface: "native" });
     // The pair and nothing else, the shape `POST /auth/refresh`'s native branch answers with.
     // The claimant is a desktop install; a `user` object it does not read, and a `Set-Cookie`
@@ -1685,27 +1202,14 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * `b.kind` — the CALLER's own declaration of what it is, {@link DESKTOP_DECLARED_KINDS} or
-   * absent, and it exists for one client: the desktop's cloud-door password sign-in, which
-   * lands on this seam through a native process rather than a browser and used to mint a
-   * DEVICELESS session — invisible to per-device staleness attribution, so the console could
-   * see the account wedge but never say which install. A present declaration makes `establish`
-   * auto-mint a device row of that kind (label from its map), exactly the row the desktop-link
-   * claim has always minted.
-   *
-   * NO PRIVILEGE RIDES ON IT, and the set is why: the admissible kinds all derive the COOKIE
-   * lifetime surface (none is `"macos"`, the one native-deriving kind — see the set's doc), so
-   * a declared sign-in gets the same window, scope and factor stamp as an undeclared one, to
-   * the byte. The only delta is `device_id` pointing at a row — vocabulary and attribution.
-   * The row's consequences all point the safe direction: `GET /devices` names it,
-   * `DELETE /devices/:id` can aim at it, and the device staleness alarm WATCHES it (including
-   * the never-synced arm) instead of the weaker session rule. The one behavioral trade is that
-   * `POST /devices/revoke-web-sessions` (a `device_id IS NULL` sweep) no longer catches it —
-   * which is the standing semantics of every named device, paired ones included, and the
-   * individually-aimable revoke is what replaces the sweep.
-   *
-   * Refused BEFORE the throttle reserve and the token peek: a malformed declaration is the
-   * caller's bug and must burn neither a lockout slot nor the login token's window.
+   * `b.kind` — the caller's own declaration, {@link DESKTOP_DECLARED_KINDS} or absent, for one
+   * client: the desktop's cloud-door password sign-in, which used to mint a DEVICELESS session,
+   * invisible to staleness attribution. A present declaration makes `establish` auto-mint a
+   * device row of that kind. NO PRIVILEGE rides on it: the admissible kinds all derive the COOKIE
+   * lifetime surface, so a declared sign-in gets the same window, scope and factor stamp — the
+   * only delta is `device_id`. `GET /devices` names it, `DELETE /devices/:id` can aim at it, the
+   * staleness alarm watches it. Refused BEFORE the throttle reserve and token peek: a malformed
+   * declaration burns nothing.
    */
   async totpVerify(
     ctx: ServiceContext, b: { loginToken: string; code: string; kind?: unknown },
@@ -1790,29 +1294,16 @@ export class AuthService extends SessionLifecycle {
     await db.delete(totpSecrets).where(eq(totpSecrets.userId, userId));
   }
 
-  // ── Step-up re-verification (the inline ceremony behind a stale 5-minute window) ────────
-  //
-  // `withStepUp` refuses a stale `last_twofa_at` with 403 `step_up_required`, and until these
-  // methods existed the ONLY way to refresh the stamp was a full sign-out/sign-in round trip —
-  // which turned every step-up-gated verb (mint a pairing code, revoke a device, remove a
-  // factor) into a dead end the moment five minutes had passed. These are the sign-in second
-  // factor, re-run against the session the caller already holds:
-  //
-  //  · **The factor is the whole proof.** Same verify, same single-use guards (the TOTP
-  //    timestep advance, the challenge claim), same throttle key and lockout as the sign-in
-  //    path — so a code spent at sign-in cannot be replayed here, and spraying codes at this
-  //    door locks the same counter the sign-in door locks.
-  //  · **The stamp is a GUARDED update** ({@link stampStepUp}): `revoked_at IS NULL AND
-  //    scope = 'full'` re-checked in the write itself, `RETURNING` inspected, 401 on zero
-  //    rows. An enrollment-scoped session can never re-stamp itself into step-up standing
-  //    (`withSession` already refuses it these routes; the predicate refuses it again), and a
-  //    session revoked mid-ceremony gets a refusal, never `{ok:true}` over an unstamped row.
-  //  · **No new cookie surface.** The response is `{ok: true}` and nothing else — no tokens,
-  //    no Set-Cookie, no session exchange. The session is the one the caller presented; only
-  //    its factor clock moves.
-  //  · A paired device's bearer (minted with `twofaAt: null` — see `establishPairedDevice`)
-  //    MAY earn step-up standing here by asserting a real factor. That is the designed door:
-  //    "this session cannot reach POST /pair until its holder asserts a factor of their own."
+  // Step-up re-verification — the inline ceremony behind a stale 5-minute window. `withStepUp`
+  // refuses a stale `last_twofa_at` with 403; before these methods the only refresh was a full
+  // sign-out/sign-in, a dead end for every step-up-gated verb after five minutes. These are the
+  // sign-in second factor re-run against the caller's own session: same verify, same single-use
+  // guards, same throttle key and lockout — a spent code cannot replay here, and spraying codes
+  // locks the same counter. The stamp is a GUARDED update ({@link stampStepUp}): `revoked_at IS
+  // NULL AND scope = 'full'` re-checked in the write, `RETURNING` inspected, 401 on zero rows —
+  // an enrollment session can never re-stamp itself. No new cookie surface: `{ok: true}` and
+  // nothing else. A paired device's bearer (minted `twofaAt: null`) MAY earn standing here by
+  // asserting a real factor — the designed door.
 
   /** Re-verify TOTP against the caller's own session and re-stamp its step-up clock. */
   async stepUpTotp(ctx: ServiceContext, b: { code: string }): Promise<{ ok: true }> {
@@ -1898,16 +1389,13 @@ export class AuthService extends SessionLifecycle {
     await this.throttleReserve(db, `user:${user.id}`);
 
     // The claim binds to the challenge THIS assertion was signed over — read from the
-    // credential's own clientDataJSON — never merely "the user's newest". A user-only lookup
-    // let two overlapping ceremonies (two tabs, or any second session of the same user) burn
-    // each other: the older tab's legitimate assertion was matched against the newer tab's
-    // challenge, failed, counted toward the SHARED lockout, and consumed the newer row —
-    // repeatable into a factor lockout by anyone holding any session of the account. The
-    // extracted value is only a row SELECTOR: `verifyAssertion` below still checks the signed
-    // clientDataJSON against the claimed row's challenge and origin, so a forged selector can
-    // only select a row the signature then has to actually match. `userId` stays in the
-    // predicate NON-optionally — `consumeChallenge`'s keys are optional, and a call that
-    // passed neither key would select ANY newest authentication challenge.
+    // credential's own clientDataJSON — never merely "the user's newest". A user-only lookup let
+    // two overlapping ceremonies burn each other: the older tab's legitimate assertion was
+    // matched against the newer tab's challenge, failed, counted toward the SHARED lockout, and
+    // consumed the newer row — repeatable into a factor lockout by anyone holding any session of
+    // the account. The extracted value is only a row SELECTOR: `verifyAssertion` still checks the
+    // signed clientDataJSON against the claimed row's challenge and origin. `userId` stays in the
+    // predicate NON-optionally — a call passing neither key would select ANY newest challenge.
     const submitted = challengeOfAssertion(b.credential);
     if (!submitted) {
       await this.twofaFail(db, user, ctx);
@@ -1978,28 +1466,14 @@ export class AuthService extends SessionLifecycle {
   // ── Recovery codes ──────────────────────────────────────────────────────────
 
   /**
-   * Mint a fresh batch of ten break-glass codes and retire every earlier one.
-   *
-   * ── WHY THE LOCK, AND WHY A TRANSACTION ALONE IS NOT ENOUGH ───────────────────────────────
-   *
-   * This was a bare `delete` followed by a bare `insert` on the ambient handle, and the two
-   * statements auto-committed separately. Two regenerations that overlap — a double-submitted
-   * button, a retry, an attacker racing a victim — both delete, then both insert, and BOTH
-   * batches survive: the delete cannot see rows the other transaction has not committed yet.
-   * The user is shown a new sheet and told the old one is dead while ten retired codes remain
-   * live second factors.
-   *
-   * Wrapping the pair in a transaction does NOT fix that under READ COMMITTED, which is why the
-   * `FOR UPDATE` on the OWNER ROW is the mechanism and the transaction is only what makes the
-   * lock outlive its statement. Two callers now serialize: the second one's delete runs after
-   * the first one's insert is visible, so it removes those rows and exactly one batch is left.
-   *
-   * The `users` row is the lock and not the code rows themselves, because `FOR UPDATE` can only
-   * lock rows that EXIST — two regenerations for a user who has no codes yet would lock nothing
-   * and race exactly as before. The user's own row is always there.
-   *
-   * And that is still only half: {@link recoveryVerify} honours the NEWEST batch only, so a pair
-   * of batches already sitting in the database from before this fix cannot both be valid either.
+   * Mint a fresh batch of ten break-glass codes and retire every earlier one. A bare delete +
+   * insert auto-committed separately: two overlapping regenerations both delete then both insert
+   * and BOTH batches survive — ten retired codes stay live second factors. A transaction alone
+   * does not fix that under READ COMMITTED; the `FOR UPDATE` on the OWNER ROW is the mechanism,
+   * and the transaction only makes the lock outlive its statement. The `users` row is the lock,
+   * not the code rows: `FOR UPDATE` can only lock rows that EXIST, and a first mint has no code
+   * rows. Still only half: {@link recoveryVerify} honours the NEWEST batch only, so a
+   * pre-existing surplus pair cannot both be valid either.
    */
   async generateRecoveryCodes(ctx: ServiceContext): Promise<RecoveryCodesResp> {
     const userId = this.requireUser(ctx);
@@ -2024,17 +1498,13 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * The batch a user's recovery codes must belong to to count: the newest one they own.
-   *
-   * `batch_id` was WRITTEN by every regeneration and READ by nothing, anywhere in the repo — so
-   * "regenerating invalidates the prior set" rested entirely on a delete having actually removed
-   * the prior rows. This is what makes the column load-bearing: whatever rows exist, only the
-   * most recently created batch is honoured, so a surplus batch left behind by a race, a partial
-   * failure, or a hand-run SQL statement is inert rather than a live second factor.
-   *
-   * Ordered by `created_at` then `batch_id`: the tiebreak matters because ten rows of one batch
-   * share an insert and can share a timestamp, and two batches written in the same millisecond
-   * must still resolve to exactly ONE answer for every caller.
+   * The batch a user's recovery codes must belong to: the newest one they own. `batch_id` was
+   * WRITTEN by every regeneration and READ by nothing, so "regenerating invalidates the prior
+   * set" rested entirely on a delete having worked. Now only the most recently created batch is
+   * honoured, so a surplus batch left by a race, a partial failure or a hand-run statement is
+   * inert rather than a live second factor. Ordered by `created_at` then `batch_id`: ten rows of
+   * one batch can share a timestamp, and two batches in one millisecond must still resolve to
+   * exactly ONE answer for every caller.
    */
   private async liveRecoveryBatch(db: Tx, userId: string): Promise<string | null> {
     const [row] = await db.select({ batchId: recoveryCodes.batchId })
@@ -2116,27 +1586,14 @@ export class AuthService extends SessionLifecycle {
   // ── Native OAuth2 (Authorization-Code + PKCE) ───────────────────────────────
 
   /**
-   * Mint the native authorization code.
-   *
-   * ── THE GATE IS ON THE ROUTE, AND THIS METHOD DELIBERATELY DOES NOT REPEAT IT ─────────────
-   *
-   * `GET /oauth/authorize` carries `stepUp: true`. It is the same placement — and the same
-   * argument — as {@link issueDesktopLink}: `withStepUp` is where every step-up decision in this
-   * codebase is made, and a second implementation inside a service is how the two drift. The
-   * flag is now actually enforced on `raw` routes; see `app.ts#RAW_PIPELINE`.
-   *
-   * So by the time this runs, the caller is a full session that asserted a second factor within
-   * `stepUpWindowMs`. The old comment here asserted that as a premise about "the browser flow";
-   * nothing made it true, and the register's step 2 is exactly the sequence in which it was not.
-   *
-   * ── WHAT IT READS THE SESSION ROW FOR, WHICH IS NOT THE GATE ──────────────────────────────
-   *
-   * The exchange at `POST /oauth/token` asserts no factor of its own — a code and a PKCE verifier
-   * are not second factors — so the session it establishes has no honest `last_twofa_at` of its
-   * own to write. The authorizing session has the real one, and this is the only point where both
-   * are in scope. Reading a value to RECORD it is not re-implementing a gate: nothing below
-   * branches on it, and a stale value here cannot admit anybody, because admission already
-   * happened upstream.
+   * Mint the native authorization code. The gate is on the ROUTE (`GET /oauth/authorize` carries
+   * `stepUp: true`) and this method deliberately does not repeat it — `withStepUp` is where every
+   * step-up decision is made, and a second implementation is how the two drift; the flag is
+   * enforced on `raw` routes (`app.ts#RAW_PIPELINE`). What the session row IS read for is not the
+   * gate: `POST /oauth/token` asserts no factor of its own, so the session it establishes has no
+   * honest `last_twofa_at` to write — the authorizing session has the real one, and this is the
+   * only point where both are in scope. Reading a value to RECORD it is not re-implementing a
+   * gate: nothing below branches on it.
    */
   async authorize(ctx: ServiceContext, q: AuthorizeQuery): Promise<{ redirect: string }> {
     const userId = this.requireUser(ctx);
@@ -2148,19 +1605,13 @@ export class AuthService extends SessionLifecycle {
       throw new ServiceError("validation_failed", 400, "PKCE S256 code_challenge required");
     }
     /**
-     * ── THE TWO OPAQUE VALUES ARE BOUNDED, and neither was ────────────────────────────────
-     *
-     * `client_id` and `redirect_uri` are checked above by EQUALITY against a registered value, so
-     * their size costs one comparison. These two are not:
-     *
-     *  · `code_challenge` is STORED on the authorization code row, and its shape is not a matter
-     *    of taste — RFC 7636 §4.2 makes an S256 challenge the base64url of a SHA-256 digest,
-     *    which is exactly 43 characters. Anything else is not a challenge this method can
-     *    verify, so accepting it stores a value that can never succeed.
-     *  · `state` is ECHOED into the `Location` header of the redirect below. Unbounded, it is a
-     *    caller-chosen header value — the proxy in front answers 431 or 502 for what is plainly a
-     *    bad request, on a route reachable with an ordinary session. RFC 6749 sets no maximum;
-     *    {@link OAUTH_STATE_MAX_CHARS} is the practical one every URL shares.
+     * The two opaque values are bounded, and neither was. `client_id` and `redirect_uri` are
+     * checked by EQUALITY against a registered value, so their size costs one comparison; these
+     * two are not: `code_challenge` is STORED on the code row, and RFC 7636 §4.2 makes an S256
+     * challenge the base64url of a SHA-256 digest — exactly 43 characters, so anything else can
+     * never verify; `state` is ECHOED into the redirect's `Location` header — unbounded, it is a
+     * caller-chosen header value the proxy answers 431/502 for. RFC 6749 sets no maximum; {@link
+     * OAUTH_STATE_MAX_CHARS} is the practical one every URL shares.
      */
     if (!/^[A-Za-z0-9_-]{43}$/.test(q.code_challenge)) {
       throw new ServiceError(
@@ -2289,19 +1740,13 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * Authorization for the FACTOR-ENROLLMENT surface (`/auth/2fa/{webauthn/register,
-   * totp/enroll,totp/activate}`). Two admissible callers, and they are not the same
-   * caller — which is why these routes cannot simply carry the `stepUp` flag:
-   *
-   *  - an ENROLLMENT-scoped session: onboarding's FIRST factor. It has no
-   *    `last_twofa_at` and by construction never will, so a plain step-up gate would
-   *    lock onboarding out entirely.
-   *  - a FULL session with a recent 2FA: the "add another factor later" path. Without
-   *    this leg, ADDING a factor was strictly easier than REMOVING one — `DELETE
-   *    /auth/2fa/totp` demands fresh 2FA, while any still-valid-but-old full session
-   *    (an unattended browser, a stolen cookie, a long-lived native bearer) could
-   *    plant an attacker-controlled passkey or TOTP secret and thereby obtain durable,
-   *    independent access to the account. Same bar in both directions now.
+   * Authorization for the FACTOR-ENROLLMENT surface. Two admissible callers, not the same caller
+   * — why these routes cannot simply carry `stepUp`: an ENROLLMENT-scoped session (onboarding's
+   * FIRST factor — no `last_twofa_at`, never will have one, so a plain step-up gate would lock
+   * onboarding out), and a FULL session with recent 2FA ("add another factor later"). Without the
+   * second leg, ADDING a factor was strictly easier than REMOVING one: any still-valid-but-old
+   * session could plant an attacker-controlled passkey and obtain durable independent access.
+   * Same bar in both directions now.
    */
   private async requireEnrollmentOrStepUp(ctx: ServiceContext): Promise<void> {
     if (!ctx.sessionId) throw new ServiceError("step_up_required", 403, "recent 2FA re-assertion required");
@@ -2318,23 +1763,14 @@ export class AuthService extends SessionLifecycle {
   // ── Internal: the enrollment mint (the full-session mint and refresh rotation live on the base class) ──
 
   /**
-   * Mint the ENROLLMENT-SCOPED session. Deliberate properties, each one load-
-   * bearing:
-   *  - `scope='enrollment'` — `withSession` admits it on the `enrollmentOk` routes
-   *    only (/auth/2fa/*, /auth/session, /auth/logout) and rejects it everywhere else.
-   *  - `lastTwofaAt` STAYS NULL — a password-only session must never satisfy step-up,
-   *    so device revocation, mailbox writes, TOTP removal and recovery-code generation
-   *    remain unreachable until a real factor exists.
-   *  - no `refresh_tokens` row and `refreshExpiresAt = accessExpiresAt` — nothing can
-   *    extend it; it dies in `loginTokenTtlMs` (~5 min) whatever the client does.
-   *  - no `devices` row — the enrollment session is not a device a user manages; the
-   *    full session minted at exchange registers the real one.
-   *  - it SUPERSEDES any earlier enrollment session of the same user. Re-entry used to
-   *    accumulate live siblings, and the exchange only revoked the family it was
-   *    handed — so a token captured during one password-only window stayed
-   *    `scope='enrollment'` and fully usable after somebody else finished onboarding
-   *    on a sibling, i.e. it could be replayed into a passkey of the holder's choosing
-   *    plus a full session. At most one password-only session per user may be live.
+   * Mint the ENROLLMENT-SCOPED session; each property load-bearing: `scope='enrollment'` —
+   * admitted only on the `enrollmentOk` routes; `lastTwofaAt` stays NULL — a password-only
+   * session must never satisfy step-up; no `refresh_tokens` row and `refreshExpiresAt =
+   * accessExpiresAt` — it dies in ~5 min whatever the client does; no `devices` row. It
+   * SUPERSEDES any earlier enrollment session of the same user: re-entry used to accumulate live
+   * siblings, so a token captured during one password-only window stayed usable after somebody
+   * finished onboarding on a sibling — replayable into a passkey of the holder's choosing. At
+   * most one password-only session per user may be live.
    */
   private async establishEnrollment(
     ctx: ServiceContext, user: typeof users.$inferSelect,
@@ -2381,31 +1817,14 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * EXCHANGE (not upgrade-in-place) the caller's enrollment session for a full one
-   * the moment a first 2FA factor lands. Session-fixation hygiene: a privilege change
-   * mints a NEW session id and a NEW refresh family, so a token that was observed
-   * during the password-only window — it travelled in a JSON body, by design, so that
-   * native clients can onboard — can never be replayed as a full-privilege credential.
-   *
-   * The revocation predicate is `user_id + scope='enrollment'`, NOT the presented
-   * refresh family. Revoking only the caller's family was the original defect: every
-   * enrollment session gets a fresh `familyId`, so two live siblings (register on the
-   * laptop, re-entry login on the phone) shared nothing, and completing onboarding on
-   * one left the other `scope='enrollment'` and fully usable — replayable into an
-   * attacker-chosen passkey plus a full session on the victim's account. It runs
-   * inside the caller's transaction, and {@link establish} repeats it so the invariant
-   * does not depend on which door was used.
-   *
-   * Returns `undefined` when the caller is already a full session, which is the
-   * ordinary "add another factor later" path: enrollment and re-enrollment therefore
-   * share one handler, and "is this the FIRST factor?" needs no counting — an
-   * enrollment-scoped session by construction had zero factors, and the first
-   * exchange retires it.
-   *
-   * The scope is read from the session ROW under `FOR UPDATE`, never from the request:
-   * the API's `withSession` gate and this privilege decision must not share a trust
-   * path, and the row lock is what makes "the first exchange retires it" true against
-   * two concurrent first-factor requests rather than merely likely.
+   * EXCHANGE (not upgrade-in-place) the enrollment session for a full one when the first factor
+   * lands — session-fixation hygiene: a privilege change mints a NEW session id and refresh
+   * family, so a token observed during the password-only window can never replay as a full
+   * credential. The revocation predicate is `user_id + scope='enrollment'`, NOT the presented
+   * family: revoking only the caller's family left a sibling live and replayable into an
+   * attacker-chosen passkey. Returns `undefined` for an already-full session. The scope is read
+   * from the ROW under `FOR UPDATE`, never from the request: the gate and this privilege decision
+   * must not share a trust path, and the lock makes the retirement true under concurrency.
    */
   private async exchangeEnrollmentSession(
     ctx: ServiceContext, userId: string,
@@ -2426,18 +1845,13 @@ export class AuthService extends SessionLifecycle {
   // ── Internal: login-token & challenge lifecycle ─────────────────────────────
 
   /**
-   * Resolve a first-factor login token.
-   *
-   * **Scoped to `purpose='login'`.** Before verification mails existed the `login_tokens`
-   * table held exactly one kind of row, so a hash match WAS a login token and this lookup did
-   * not mention `purpose`. Email verification put a second kind in the same table — the
-   * `purpose='email_verify'` token whose raw value is MAILED to an inbox — and an
-   * unscoped lookup would make that mailed value presentable here: at minimum it mints
-   * a WebAuthn challenge bound to the user (`webauthnAssertOptions`), and it turns
-   * "read one email" into a live first factor for every 2FA endpoint. The predicate
-   * below is what keeps the two token families from being interchangeable;
-   * `mail-service.test.ts` ("a mailed verification token is not a login token") asserts
-   * it bites, with a `purpose='login'` row of identical shape as the control.
+   * Resolve a first-factor login token — scoped to `purpose='login'`. Email verification put a
+   * second kind of row in this table (a `purpose='email_verify'` token whose raw value is MAILED
+   * to an inbox), and an unscoped lookup would make that mailed value presentable here — turning
+   * "read one email" into a live first factor for every 2FA endpoint. The predicate keeps the two
+   * token families non-interchangeable; `mail-service.test.ts` ("a mailed verification token is
+   * not a login token") asserts it bites, with a `purpose='login'` row of identical shape as the
+   * control.
    */
   private async peekLoginToken(
     db: Tx, ctx: ServiceContext, raw: string,
@@ -2455,14 +1869,10 @@ export class AuthService extends SessionLifecycle {
 
   /**
    * Burn a first-factor login token, and REFUSE if somebody else burned it first.
-   *
-   * `peekLoginToken` reads the row and checks `consumedAt`; this used to be an unconditional
-   * `UPDATE … WHERE id = $1`, so the pair was a read-modify-write. Two presentations of one
-   * login token racing each other both peek an unconsumed row, both verify a factor, and
-   * both get a session — from a token whose entire contract is that it is single-use.
-   * The `consumed_at IS NULL` predicate makes the write the arbiter, exactly as it is in
-   * `consumeInvite`, and the loser is told what a stale token is always told.
-   *
+   * `peekLoginToken` reads and checks `consumedAt`; an unconditional `UPDATE … WHERE id` made the
+   * pair a read-modify-write — two racing presentations both peek unconsumed, both verify, both
+   * get a session from a single-use token. The `consumed_at IS NULL` predicate makes the write
+   * the arbiter (as in `consumeInvite`); the loser is told what a stale token is always told.
    * Every caller awaits this BEFORE `establish`, so the loser never reaches a session.
    */
   private async consumeLoginToken(db: Tx, id: string, now: Date): Promise<void> {
@@ -2493,21 +1903,15 @@ export class AuthService extends SessionLifecycle {
     if (!row || row.expiresAt.getTime() <= ctx.now().getTime()) {
       throw new ServiceError("unauthorized", 401, "webauthn challenge expired");
     }
-    // Single-use + origin/RP-ID binding.
-    //
-    // `rpID` stays single-valued, so it is still an equality check. The ORIGIN is
-    // now checked twice, and the two checks answer different questions:
-    //
-    //  (a) MEMBERSHIP — is the origin this challenge was minted for still one this
-    //      deployment serves? A row written before an origin was removed from the
-    //      allow-list (or by a differently-configured host sharing the database)
-    //      must not be completable.
-    //  (b) PIN — does the VERIFY request come from the same origin that OPENED the
-    //      ceremony? A deployment may allow more than one origin, and
-    //      without this check any of them could finish another's ceremony. Requests
-    //      with no `Origin` header (native) skip it; for them the pin is still
-    //      enforced downstream, because `expectedOrigin` is `row.origin` and
-    //      `clientDataJSON.origin` is signed.
+    // Single-use + origin/RP-ID binding. `rpID` stays single-valued — an equality check. The
+    // ORIGIN is checked twice, answering different questions: (a) MEMBERSHIP — is the origin this
+    // challenge was minted for still one this deployment serves? A row written before an origin
+    // was removed (or by a differently-configured host sharing the database) must not be
+    // completable. (b) PIN — does the verify request come from the same origin that OPENED the
+    // ceremony? A deployment may allow several origins, and without this any of them could finish
+    // another's ceremony. Native requests with no `Origin` header skip (b); their pin is still
+    // enforced downstream, because `expectedOrigin` is `row.origin` and `clientDataJSON.origin`
+    // is signed.
     if (row.rpId !== this.cfg.rpID || !allowedOrigins(this.cfg).includes(row.origin)) {
       throw new ServiceError("unauthorized", 401, "webauthn challenge origin mismatch");
     }
@@ -2546,49 +1950,14 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * ADMIT OR REFUSE ONE ATTEMPT, counting it in the SAME statement that decides.
-   *
-   * ── WHAT WAS WRONG, AND WHY THE ATOMIC INCREMENT ALONE DID NOT FIX IT ─────────────────────
-   *
-   * `throttleFailure` was made atomic because concurrent wrong passwords collapsed into one
-   * recorded failure. The SEPARATE `throttleCheck` in front of the password verify was left as a
-   * pure read, and that is the same defect one layer up: the gate answers from a counter that
-   * the request being gated has not yet touched. N requests that arrive together all read "not
-   * locked", all run their scrypt, and only then increment — so the real bound on guesses was
-   * the attacker's chosen concurrency, not `maxFailures`. Measured on real Postgres in
-   * `auth-throttle.pg.test.ts`: 40 simultaneous wrong passwords against `maxFailures: 5` all
-   * reached the hasher.
-   *
-   * A check-then-act pair cannot be repaired by making one half atomic. So the count and the
-   * decision are ONE `INSERT … ON CONFLICT DO UPDATE … RETURNING`: the row lock serializes
-   * concurrent callers, each gets its own post-increment value back, and the attempt that
-   * EXCEEDS the policy installs the lock and is refused before it costs a hash.
-   *
-   * ── THE FOUR ARMS, IN ORDER, AND WHY THAT ORDER ───────────────────────────────────────────
-   *
-   *  1. **A live lock refuses without counting.** It must not count, because an attacker who
-   *     keeps hammering a locked key would otherwise slide `locked_until` forward for ever and
-   *     hold the legitimate owner out — a denial of service handed to whoever is attacking.
-   *  2. **An EXPIRED lock restarts the window at 1 and clears the lock.** Serving the lockout
-   *     spends the count; the policy says `maxFailures` per window and then `lockoutMs`, and a
-   *     user who has waited it out must get a real budget rather than a single attempt. (With
-   *     the shipped config the window and the lockout are both 15 minutes, so arm 3 covers this
-   *     anyway; the arm exists because both are injectable.)
-   *  3. **A rolled window restarts at 1.**
-   *  4. **Otherwise increment.**
-   *
-   * The lock is installed here ONLY when the post-increment count is strictly GREATER than
-   * `maxFailures` — i.e. only on the attempt this call refuses. Reaching exactly `maxFailures`
-   * is admitted, and the lock for that is installed by {@link throttleLock} after the attempt
-   * has actually FAILED. That split is what keeps a correct password from locking an account
-   * that was one attempt short: the reservation counts it, {@link throttleRefund} gives it back,
-   * and no lock was ever written.
-   *
-   * ISO STRINGS, not `Date`s, inside every raw `sql` template — the rule `ip-throttle.ts:41-44`
-   * states. postgres-js serializes a raw template parameter against the type Postgres describes
-   * for `$n` in `$n::timestamptz`, which is TEXT, and hands a `Date` straight to
-   * `Buffer.byteLength`. That is a 500 on every failed login on any postgres-js host, i.e.
-   * production, and it is green on PGlite; `auth-throttle.pg.test.ts` is the net.
+   * Admit or refuse ONE attempt, counting it in the SAME statement that decides. `throttleCheck`
+   * was a pure read, so the real bound was the attacker's concurrency (`auth-throttle.pg.test.ts`
+   * measured 40 concurrent guesses all reaching the hasher). Count and decision are ONE `INSERT …
+   * ON CONFLICT DO UPDATE … RETURNING`. A live lock refuses WITHOUT counting (else hammering
+   * slides `locked_until` for ever); an expired lock or rolled window restarts at 1; otherwise
+   * increment. The lock installs only when the count EXCEEDS `maxFailures`: reaching it exactly
+   * is admitted, and {@link throttleRefund} keeps a correct password one short from ever locking.
+   * Raw `sql` templates take ISO strings, never `Date`s — a 500 on every failed login otherwise.
    */
   private async throttleReserve(db: Tx, key: string): Promise<void> {
     const now = new Date();
@@ -2641,15 +2010,12 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * The attempt {@link throttleReserve} counted has now FAILED: install the lock if that count
-   * has reached the policy.
-   *
-   * One statement, and the comparison is made server-side against the row's own column, so two
-   * concurrent failures cannot disagree about whether the threshold was crossed. It does not
-   * increment — the reservation already did, and counting twice would halve the budget.
-   *
-   * A live lock is left exactly as it is rather than extended, for arm 1's reason above.
-   * There is no INSERT arm: every call site reserves the same key first, so the row exists.
+   * The attempt {@link throttleReserve} counted has now FAILED: install the lock if the count
+   * reached the policy. One statement, compared server-side against the row's own column, so two
+   * concurrent failures cannot disagree about the threshold. It does not increment — the
+   * reservation did, and counting twice would halve the budget. A live lock is left as it is
+   * rather than extended (arm 1's reason). No INSERT arm: every call site reserves the same key
+   * first, so the row exists.
    */
   private async throttleLock(db: Tx, key: string): Promise<void> {
     const now = new Date();
@@ -2668,17 +2034,13 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * Give back the ONE attempt this request reserved, because the credential was RIGHT.
-   *
-   * Not {@link throttleReset}: a full reset here would launder the second-factor counter. An
-   * attacker holding the password but not the factor could otherwise loop — correct password
-   * (zeroes `user:<id>`), wrong TOTP, repeat — and never reach the 2FA lockout at all. So this
-   * decrements by exactly what was reserved and clears the lock only if the remaining count is
-   * back under the policy. `throttleReset` still runs on a COMPLETED login (`establish`), where
-   * zeroing both counters is the right thing.
-   *
-   * Without this, a password that is right but whose second factor is still outstanding would
-   * spend budget: five visits to the 2FA screen would lock an account on which nothing failed.
+   * Give back the ONE attempt this request reserved, because the credential was RIGHT. Not {@link
+   * throttleReset}: a full reset would launder the second-factor counter — correct password
+   * (zeroes `user:<id>`), wrong TOTP, repeat, never reaching the 2FA lockout. So this decrements
+   * exactly what was reserved and clears the lock only if the remainder is back under policy;
+   * `throttleReset` still runs on a COMPLETED login. Without this, a right password whose second
+   * factor is outstanding would spend budget: five visits to the 2FA screen would lock an account
+   * on which nothing failed.
    */
   private async throttleRefund(db: Tx, key: string): Promise<void> {
     const back = sql`greatest(${authThrottle.failures} - 1, 0)`;
@@ -2721,27 +2083,14 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * Finalize a refused TOTP presentation — as a counted failure, or as a REPLAY that must not
-   * burn a lockout slot.
-   *
-   * ── WHY A REPLAY DOES NOT COUNT, AND WHY THAT OPENS NO DOOR ────────────────────────────────
-   *
-   * The single-use-per-timestep guard means the code that just signed someone in FAILS when
-   * they type it again seconds later at the step-up sheet — correct security, and the sentence
-   * deliberately does not say why ("the caller must not learn that their code was right"). But
-   * counting those refusals as failed ATTEMPTS locked real people out: measured in production
-   * 2026-08-28 — five presentations of one just-consumed code inside eleven seconds, the same
-   * six digits still showing in the authenticator — reached `maxFailures` and produced a
-   * fifteen-minute lockout with nothing guessed by anybody.
-   *
-   * The lockout exists to price GUESSING, and a replay is not a guess: reaching this arm
-   * requires presenting a code that VERIFIES against the secret — exactly as hard as knowing
-   * the current code, i.e. holding the factor. Refunding the reserved slot therefore hands an
-   * attacker nothing a guesser could use (a guesser's wrong codes still count), and the
-   * OUTWARD refusal is byte-identical to the wrong-code arm, so no response oracle appears.
-   * The trail keeps the truth for investigations: the audit row says `2fa_failed` with a
-   * detail naming the replay, so five of these in a log read as a person re-typing a spent
-   * code, not as five guesses.
+   * Finalize a refused TOTP presentation — a counted failure, or a REPLAY that must not burn a
+   * lockout slot. The single-use-per-timestep guard means the code that just signed someone in
+   * FAILS when retyped seconds later at the step-up sheet. Counting those as attempts locked real
+   * people out: measured, five presentations of one just-consumed code in eleven seconds produced
+   * a fifteen-minute lockout with nothing guessed. The lockout prices GUESSING, and a replay is
+   * not a guess: reaching this arm requires a code that VERIFIES against the secret. The outward
+   * refusal is byte-identical to the wrong-code arm, so no oracle; the audit row says
+   * `2fa_failed` with a replay detail.
    */
   private async twofaRefused(
     db: Tx, user: typeof users.$inferSelect, ctx: ServiceContext, replayed: boolean,
@@ -2795,14 +2144,11 @@ export class AuthService extends SessionLifecycle {
 
   /**
    * The hosted revoke takes the device's WAKE REGISTRATIONS down with its sessions.
-   *
-   * `push_subscriptions` rows are stamped with the registering session's `device_id`
-   * (push-service.ts), so revoking a paired phone from the Devices pane must also stop the
-   * worker POSTing wakes to that phone's UnifiedPush endpoint — a revoked device that keeps
-   * receiving "something changed" signals is a credential take-back that did not take
-   * everything back. The prune runs AFTER the base revoke so a step-up refusal never deletes
-   * anything, and it lives HERE rather than in `SessionLifecycle` because the base class also
-   * serves the desktop engine, whose mail-only database has no push table to prune.
+   * `push_subscriptions` rows carry the registering session's `device_id`, so revoking a paired
+   * phone must also stop the worker POSTing wakes to its UnifiedPush endpoint — a revoked device
+   * still receiving "something changed" is a take-back that did not take everything. The prune
+   * runs AFTER the base revoke so a step-up refusal deletes nothing, and lives HERE because the
+   * base class also serves the desktop engine, whose mail-only database has no push table.
    */
   override async revokeDevice(
     ctx: ServiceContext, deviceId: string, opts: { requireStepUp?: boolean } = {},
@@ -2815,46 +2161,14 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * SIGNING OUT A DEVICE TAKES ITS WAKE REGISTRATION WITH IT — the same rule as
-   * {@link revokeDevice} one door over, and the door people actually use.
-   *
-   * ── THE HOLE THIS CLOSES ────────────────────────────────────────────────────────────────
-   *
-   * `push_subscriptions` rows are stamped with the registering session's `device_id`
-   * (`push-service.ts`, whose own comment says the stamp is "what lets `DELETE /devices/:id`
-   * take the wake registration down with the credential"). Only `revokeDevice` ever used that
-   * stamp, and `revokeDevice` is reachable only from a SERVER's Devices pane. The base
-   * `logout` revoked the session family and nothing else — so a phone that forgot a server,
-   * or a person who signed out, kept a live row and the worker kept POSTing "something
-   * changed" to a device that could no longer open the account. Nothing unregisters the
-   * distributor either, so the endpoint keeps answering 2xx and the worker's prune-on-410
-   * never fires: the row and the traffic are permanent.
-   *
-   * A non-`allDevices` logout IS the device saying its credential is done. That is the same
-   * statement `revokeDevice` makes about somebody else's device, and it deserves the same
-   * consequence. `allDevices` says it about every device, so it takes every row.
-   *
-   * ── WHY HERE AND NOT IN `SessionLifecycle` ──────────────────────────────────────────────
-   *
-   * The base class also boots the desktop-host door, whose mail-only database has no
-   * `push_subscriptions` table at all — the same reason `revokeDevice`'s prune lives here.
-   *
-   * ── ORDER, ATOMICITY, AND THE ONE THING THIS DELIBERATELY DOES NOT DO ───────────────────
-   *
-   * AFTER `super.logout`, so a step-up refusal on the `allDevices` arm deletes nothing — and in
-   * ONE TRANSACTION with it, which is not a tidiness point. `super.logout` revokes the session
-   * family, and that family is the only credential that could ever ask for this again: a crash
-   * between two autocommitted statements would leave the row live AND the caller unable to
-   * retry, because the middleware refuses the revoked session before this method is reached.
-   * The endpoint keeps answering 2xx, so the worker's prune-on-404/410 never fires either. One
-   * transaction makes the pair all-or-nothing, and the retry a client already performs on a
-   * failed logout then finds a session that still works.
-   *
-   * A session with NO device row (a browser ceremony mints none) prunes nothing: web-push rows
-   * carry `device_id = NULL`, so there is no predicate that names THIS browser rather than
-   * every deviceless registration on the account, and deleting them all would silently turn
-   * another browser's notifications off. That residue is a separate finding with a separate
-   * fix (stamp the browser's own registration), not something to guess at from here.
+   * Signing out a device takes its wake registration with it — {@link revokeDevice}'s rule, on
+   * the door people actually use. The base `logout` revoked the session family only, so a phone
+   * that forgot a server kept a live row: the endpoint answers 2xx for ever and the prune-on-410
+   * never fires. HERE, not `SessionLifecycle`: the desktop-host door's database has no push
+   * table. AFTER `super.logout` (a step-up refusal deletes nothing), in ONE transaction: the
+   * revoked family is the only credential that could retry — a crash between autocommitted
+   * statements leaves the row live and unremovable. A session with NO device row prunes nothing:
+   * web-push rows carry `device_id = NULL`, and deleting them all would silence another browser.
    */
   override async logout(ctx: ServiceContext, b: { allDevices?: boolean } = {}): Promise<void> {
     await this.inTransaction(ctx, async (txCtx) => {
@@ -2898,18 +2212,13 @@ export class AuthService extends SessionLifecycle {
 }
 
 /**
- * One four-digit group of a recovery code.
- *
- * `randomInt` and NOT `Math.random()`, which is what stood here. A recovery code is a
- * break-glass credential that stands in for the whole second factor, so the generator behind
- * it has to be the cryptographic one. `Math.random()` is a plain PRNG whose internal state is
- * recoverable from a run of its outputs, and every group of every code a process issues comes
- * from that one state — so the guarantee it offers is not "unguessable", it is "unguessable
- * until somebody has seen enough of it".
- *
- * The range is unchanged: `randomInt(1000, 10000)` is uniform over 1000-9999, the same span
- * the previous arithmetic produced. Codes are stored as hashes, so nothing already issued is
- * affected — this only changes where the next code's bits come from.
+ * One four-digit group of a recovery code. `randomInt`, NOT `Math.random()`, which stood here: a
+ * recovery code stands in for the whole second factor, so the generator must be the cryptographic
+ * one — `Math.random()` is a plain PRNG whose internal state is recoverable from a run of
+ * outputs, and every group of every code a process issues comes from that one state: "unguessable
+ * until somebody has seen enough of it". The range is unchanged (`randomInt(1000, 10000)`,
+ * uniform over 1000-9999). Codes are stored as hashes, so nothing already issued is affected —
+ * only where the next code's bits come from changes.
  */
 function rand4(): string {
   return randomInt(1000, 10000).toString();

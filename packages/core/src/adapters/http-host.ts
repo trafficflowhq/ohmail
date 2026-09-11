@@ -4,46 +4,14 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 /**
- * THE HAND-ROLLED node:http ADAPTER — IncomingMessage/ServerResponse ⇄ fetch Request/Response,
- * and nothing else. No framework: the route table already IS the framework
- * (`createApp(...)` speaks fetch types), so the only job here is the translation, and
- * a framework would re-introduce its own body parsing, its own cookie folding and its own
- * timeouts on top of the ones this file must own anyway.
- *
- * It lives in `packages/core` as a NODE-ONLY subpath (`@trafficflow/core/adapters/http-host`)
- * because it has exactly two long-running consumers and they must not become two hand-kept
- * copies: the standalone self-host server (`apps/server`, which keeps `src/http.ts` as its own
- * re-export shim so its tests and composition are untouched — the change-wake precedent) and the
- * desktop engine's host door (`apps/sidecar/src/host-listener.ts`, the loopback listener
- * `tailscale serve` publishes). Nothing browser-shaped may import this subpath: it is `node:http`
- * top to bottom, and it is deliberately NOT re-exported from the package root.
- *
- * Four correctness points, ruled and each held by real-socket tests in BOTH consumers: the
- * self-host server's adapter suite drives them through its shim (the same module this file is),
- * and the sidecar's listener suite re-proves them over the subpath import:
- *
- *  1. **`Readable.toWeb(req)` + `duplex: "half"`.** A Request constructed with a stream body
- *     requires the half-duplex marker or undici throws at construction; and the body must be the
- *     socket's own stream, not a hand-buffered copy — the pipeline downstream decides what to
- *     buffer (`apps/server`'s `handler.ts` buffers JSON bodies for canonicalization, exactly as
- *     the managed host does). A body-less request must pass NO body: node gives every
- *     IncomingMessage a readable, and forwarding an empty stream makes `withRequestGuard` demand
- *     a Content-Type from a legitimately body-less `POST /auth/logout` — a 415 for a correct
- *     request.
- *  2. **Multi-value `Set-Cookie` via `getSetCookie()`.** A sign-in mints FIVE cookies; the
- *     Headers iterator folds them into one comma-joined value, which browsers read as one broken
- *     cookie. `getSetCookie()` is the one API that returns them separately, and node's
- *     `writeHead` takes the array form.
- *  3. **Streaming response bodies.** `/events` is an SSE stream that stays open for minutes;
- *     `Readable.fromWeb(...).pipe(res)` moves each frame as it is enqueued, with backpressure,
- *     and never buffers the response. (Buffering here is not slow — it is a stream that sends
- *     nothing until lifetime close, i.e. SSE that does not work.)
- *  4. **Body byte cap + `headersTimeout`/`requestTimeout`.** A declared Content-Length over the
- *     cap is 413 before a byte is read; a chunked body that lies is cut off by a counting
- *     transform at the cap (413 while the headers are still writable, connection destroyed
- *     either way). The two node timeouts bound slow-header and slow-body clients — a
- *     long-running process accumulates slowloris sockets that a serverless platform reaps for
- *     free.
+ * The hand-rolled node:http adapter — IncomingMessage/ServerResponse to fetch Request/Response;
+ * the route table is the framework. A node-only subpath (`@trafficflow/core/adapters/http-host`)
+ * with two consumers that must not diverge: the self-host server (via its `src/http.ts` shim) and
+ * the sidecar's host door (`host-listener.ts`). Four points, held by real-socket tests in both:
+ * `Readable.toWeb(req)` with `duplex: "half"`, no body forwarded for a body-less request;
+ * multi-value `Set-Cookie` via `getSetCookie()`; streaming responses via
+ * `Readable.fromWeb(...).pipe(res)` so `/events` SSE frames move as enqueued; a body byte cap
+ * plus `headersTimeout`/`requestTimeout` against slow and lying clients.
  */
 
 export interface AdapterOptions {
@@ -57,20 +25,13 @@ export interface AdapterOptions {
    */
   connectionsCheckingIntervalMs?: number;
   /**
-   * Serve TLS with this key pair instead of plain HTTP. PRESENT ONLY FOR THE LAN DOOR
-   * (`apps/sidecar/src/host-lan.ts`), whose one client — a phone's native app — cannot open a
-   * cleartext socket at all on a release build of either mobile platform, and whose trust is
-   * established by the pairing ceremony's key fingerprint rather than by a certificate authority
-   * (`apps/sidecar/src/host-lan-tls.ts` argues the whole shape).
-   *
-   * Deliberately NOT a wider TLS-termination feature: the loopback door stays plain HTTP because
-   * `tailscale serve` terminates TLS in front of it with a real MagicDNS certificate, and the
-   * self-host server stays plain behind the operator's own proxy. One consumer, one reason.
-   *
-   * `https.Server` extends `http.Server`, so every property this module sets afterwards
-   * (`headersTimeout`, `requestTimeout`) and every method its callers use
-   * (`closeIdleConnections`, `closeAllConnections`) is the same one — which is why this is a
-   * choice of constructor and not a second adapter.
+   * Serve TLS with this key pair instead of plain HTTP — present only for the LAN door
+   * (`apps/sidecar/src/host-lan.ts`), whose one client, a phone's native app, cannot open a
+   * cleartext socket on a release build, and whose trust comes from the pairing ceremony's key
+   * fingerprint (`apps/sidecar/src/host-lan-tls.ts`). Not a wider TLS feature: the loopback door
+   * stays plain behind `tailscale serve`, the self-host server behind the operator's proxy.
+   * `https.Server` extends `http.Server`, so every property and method this module touches is the
+   * same one — a choice of constructor, not a second adapter.
    */
   tls?: { key: string; cert: string };
 }
@@ -94,24 +55,13 @@ const BODY_NOT_ALLOWED = JSON.stringify({
 });
 
 /**
- * THE HEADERS OF A REFUSAL THAT ENDS THE SOCKET — and `connection: close` is the load-bearing
- * one.
- *
- * Each of the three refusals below answers and then calls `res.destroy()`, because the rest of
- * the request body is still coming and this connection cannot be reused. Node defaults an
- * HTTP/1.1 response to `Connection: keep-alive`, so without this the answer SAID the connection
- * was good and the socket died a moment later — a header that contradicts what the server is
- * about to do.
- *
- * That is not cosmetic. A client reading `keep-alive` is entitled to pipeline the next request
- * onto this socket and to keep feeding the body it was already sending; both then die on a
- * broken pipe, which surfaces as a transport fault rather than as the 413 the server actually
- * sent. Saying `close` is how HTTP lets a server refuse mid-body and be understood — the same
- * fix, for the same reason, that `apps/server/src/handler.ts` applies on its own refusal paths
- * (`closing()`), which this adapter's paths were simply missing.
- *
- * `res.destroy()` stays: the header is the ANNOUNCEMENT, and destroying is what actually stops
- * an over-cap upload from continuing to cost bytes.
+ * The headers of a refusal that ends the socket — `connection: close` is the load-bearing one.
+ * Each refusal answers and then calls `res.destroy()` while the rest of the body is still coming;
+ * node defaults to `Connection: keep-alive`, so without this the answer claimed the connection
+ * was good and the socket died a moment later. A client reading keep-alive pipelines the next
+ * request and keeps feeding the body; both die on a broken pipe, surfacing as a transport fault
+ * instead of the 413 actually sent. `res.destroy()` stays: the header announces, destroying stops
+ * an over-cap upload from costing bytes.
  */
 const REFUSED_HEADERS = {
   "content-type": "application/json",

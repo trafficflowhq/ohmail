@@ -14,43 +14,14 @@ import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE READER'S WRITE DOORS — one dispatch, four families (mail 0094)
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * On a mailbox this install organizes, a write door writes. On a mailbox another install holds,
- * the same press becomes a REQUEST the holder applies — a row in `organizer_requests`, which the
- * reader's own cycle later signs and appends to `ohmail/_meta`
- * (`apps/worker/src/request-drain.ts#driveOutstandingRequests`). This module is the branch, and it
- * exists so that there is exactly one of it.
- *
- * ── EXTRACTED FROM `ScreenerService.requestAsReader`, WHICH WAS THE ONLY ONE ────────────────
- *
- * 0.14.1 shipped this shape for a single kind (`screener.decide`) inside the Screener's own
- * service. Mail 0094 adds three families — moves, rules and profile edits — and the alternative to
- * extracting was four copies of "read the eligibility, decide the branch, fence the account, write
- * the row". Four copies of a security branch is how one of them ends up asking a slightly
- * different question: the version that forgets the erasure fence, or the one that passes the wrong
- * capability and queues a decision nobody will ever take.
- *
- * ── THIS MODULE DOES NOT SIGN, AND THAT SURPRISES EVERY READER OF IT ───────────────────────
- *
- * A request is signed with a key derived from the mailbox PASSWORD (`deriveRequestKey`), which the
- * API tier does not hold — it has no IMAP connection and no credential. So the door writes a
- * `pending` ROW and stops. The reader's cycle, which does hold both, picks up every `pending` row
- * for the mailbox, signs it and appends it, KIND-AGNOSTICALLY: it reads `kind` and `payload` off
- * the row and formats the record. That is why a new kind needs no change on the sending side at
- * all, and why "signed" is a property of the channel rather than of this file.
- *
- * ── TWO DISPATCH SHAPES, BECAUSE THE FAMILIES ARE SCOPED DIFFERENTLY ───────────────────────
- *
- *  · PER-MAILBOX ({@link routeMailboxWrite}) — the write is about ONE mailbox's mail or one
- *    mailbox's own column. `message.move` and the mailbox signature. The question is "who holds
- *    THIS mailbox", and there is exactly one answer.
- *  · FAN-OUT ({@link planAccountFanOut}) — the write is ACCOUNT-scoped configuration (rules, the
- *    away responder, the screening preference, the dormancy window) that TRAVELS to whoever holds
- *    each mailbox. One press can therefore be a local write AND several requests at once, and the
- *    answer has to say which mailbox got which — see that function's header.
+ * THE READER'S WRITE DOORS — one dispatch, four families (mail 0094). Where this install
+ * organizes, a door writes; where another install holds, the press becomes a REQUEST — a row in
+ * `organizer_requests` the reader's cycle signs and appends to `ohmail/_meta`
+ * (`request-drain.ts`). Exactly ONE branch — copies of a security branch drift. IT DOES NOT SIGN:
+ * the key derives from the mailbox PASSWORD (`deriveRequestKey`), which the API tier does not
+ * hold — the door writes `pending` and stops; the cycle signs KIND-AGNOSTICALLY, so a new kind
+ * changes nothing here. TWO SHAPES: PER-MAILBOX (`routeMailboxWrite`) and FAN-OUT
+ * (`planAccountFanOut` — one press can be a local write AND several requests).
  */
 
 /**
@@ -79,26 +50,14 @@ export type MailboxRoute =
   | { route: "request"; holder: OrganizedBy };
 
 /**
- * DECIDE ONE PER-MAILBOX DOOR: does this install write, or does it ask?
- *
- * Throws {@link MailboxNotFoundError} when the account does not hold the mailbox or the mailbox is
- * a tombstone, and {@link OrganizedElsewhereError} when it is held by an install that will not
- * take this KIND of request — `organizer_outdated` when there is a holder that cannot, and
- * `no_organizer` when there is no holder at all. Those are two different sentences and a client
- * renders different affordances for them, which is why the reason travels.
- *
- * ── IT IS A PLAIN READ, AND IT IS NOT THE REFUSAL ───────────────────────────────────────────
- *
- * `readRequestEligibility` takes no lock, deliberately (its own header). That is right for
- * CHOOSING A BRANCH and is not evidence about a write that has not started yet: under READ
- * COMMITTED the worker's lease gate can commit a demotion between this read and the caller's
- * write. So the `organizer` arm here is a routing decision, and the caller still takes
- * `assertOrganizerRole`'s share lock inside its own transaction before writing. Deleting that
- * second check because "we already asked" would reintroduce exactly the interleaving
- * `assertOrganizerRole`'s header records.
- *
- * The capability is derived from the KIND rather than passed, so a door and the record it writes
- * cannot disagree about what the holder must advertise.
+ * DECIDE ONE PER-MAILBOX DOOR: write, or ask? Throws `MailboxNotFoundError` when the account does
+ * not hold the mailbox (or it is a tombstone), `OrganizedElsewhereError` when the holder will not
+ * take this KIND — `organizer_outdated` for a holder that cannot, `no_organizer` for none: two
+ * sentences, two affordances, so the reason travels. A PLAIN READ, NOT THE REFUSAL:
+ * `readRequestEligibility` takes no lock — right for choosing a branch; under READ COMMITTED the
+ * worker's lease gate can demote between this read and the write, so the caller still takes
+ * `assertOrganizerRole`'s share lock in its own transaction. The capability derives from the
+ * KIND, so a door and its record cannot disagree about what the holder must advertise.
  */
 export async function routeMailboxWrite(
   tx: Tx, accountId: string, mailboxId: string, kind: RequestKind,
@@ -123,25 +82,14 @@ export async function routeMailboxWrite(
 }
 
 /**
- * THE SYMBOLIC WORD FOR A CANONICAL FOLDER — the inverse of `MOVE_DESTINATIONS` (mail 0094).
- *
- * A `message.move` request names a WORD, never an IMAP path: the applier resolves it against the
- * mailbox on the machine that is actually connected, and a reader writing a path would be writing
- * its guess about somebody else's server. `request-apply.ts#MOVE_DESTINATIONS` carries the full
- * argument; the one with teeth is that a raw path is an instruction to file a person's mail outside
- * ohmail's own tree, where nothing here would ever look for it again.
- *
- * DERIVED from that map rather than typed out beside it, so the two cannot drift.
- *
- * ── HERE, AND NOT PRIVATE TO ONE DOOR ─────────────────────────────────────────────────────
- *
- * It began as a private method on `MessageService`. The moment a SECOND door needed it — the
- * approval decision, whose approve arm is a move — copying it would have been exactly the drift
- * that method's own comment warns about, with two inversions of one map free to disagree about a
- * folder rename. One place, both callers.
- *
- * `trash` is deliberately absent: it maps to `null` in the source map because it is discovered per
- * mailbox, and the delete door names the word directly rather than looking a path up.
+ * THE SYMBOLIC WORD FOR A CANONICAL FOLDER — the inverse of `MOVE_DESTINATIONS` (mail 0094). A
+ * `message.move` request names a WORD, never an IMAP path: the applier resolves it on the machine
+ * actually connected; a raw path is an instruction to file mail outside ohmail's tree
+ * (`request-apply.ts#MOVE_DESTINATIONS` carries the argument). DERIVED from that map so the two
+ * cannot drift. HERE, not private to one door: it began on `MessageService`, and the approval
+ * decision's approve arm needed the same inversion — one place, both callers. `trash` is
+ * deliberately absent: it maps to `null` (discovered per mailbox), and the delete door names the
+ * word directly.
  */
 const DESTINATION_WORDS: ReadonlyMap<string, string> = new Map(
   [...MOVE_DESTINATIONS].flatMap(
@@ -171,52 +119,25 @@ export function moveDestinationWord(folder: string): string {
 }
 
 /**
- * How many message ids one `IN` predicate carries.
- *
- * Postgres refuses a statement with more than 65 535 bind parameters, and the predicate below
- * binds one per id plus the account — so a single-statement version is refused at about 65 534
- * ids. That is not a theoretical number here: neither caller's array is bounded by anything. The
- * Hey migration's re-route pass names every message in the account whose sender or domain matches
- * a migrated observation, and a workflow undo names one id per recorded step, both from reads with
- * no `limit`. The failure would therefore arrive on the largest accounts and nowhere else, which
- * is the shape that reaches people rather than tests.
- *
- * Five hundred is `consent-seed.ts`'s `WRITE_CHUNK`, chosen there for the same arithmetic and kept
- * the same here so that "how many values fit in a statement" has one answer in this codebase.
+ * How many message ids one `IN` predicate carries. Postgres refuses a statement with more than 65
+ * 535 bind parameters, and the predicate binds one per id plus the account — a single-statement
+ * version dies at about 65 534 ids. Not theoretical: neither caller's array is bounded — the Hey
+ * migration's re-route pass names every matching message in the account, a workflow undo one id
+ * per recorded step. The failure would arrive on the largest accounts and nowhere else. Five
+ * hundred is `consent-seed.ts`'s `WRITE_CHUNK`, the same arithmetic, kept equal so "how many
+ * values fit in a statement" has one answer in this codebase.
  */
 const READ_CHUNK = 500;
 
 /**
- * REFUSE A BULK MOVE ON A READER, BY NAME, AND REFUSE IT WHOLE (mail 0094).
- *
- * Two doors move MANY messages from one press: `WorkflowsService.undoRun` (one move per recorded
- * step of a run, unbounded) and the Hey migration's RE-ROUTE PASS — `rerouteToMatchRules`, the
- * opt-in second half of the FORWARD verb, which walks every message in the account and files each
- * one whose sender or domain matches a migrated observation. Not the migration's UNDO, which removes
- * `provenance:'migrated'` rules and moves no mail at all. Both wrote `folder_state.desired_folder`
- * with `last_set_by: 'us'` and asked nothing about who organizes the mailboxes involved.
- *
- * ── WHY THEY REFUSE RATHER THAN TRAVEL, WHICH IS A RULING AND NOT A PREFERENCE ─────────────
- *
- * Converting them would mean N `message.move` records from ONE press. LB1's drain already carries
- * the guard against exactly that flood — it bounds appends to the headroom measured on the cycle
- * and leaves the rest `pending`, because *"filling the folder this way is a state that does not
- * heal on its own"*. A whole-account migration undo on a reader would therefore either sit
- * half-appended across many cycles or drive `ohmail/_meta` toward the ceiling from one button, and
- * a folder past that ceiling is unreadable by EVERY install. Ruling 6 gives `message.move` a
- * per-message natural key and no bulk form, no bound and no DTO for "pending n of m", so the bulk
- * shape is owed a design (0.17 `messages.move_many`) rather than an improvisation here.
- *
- * Deferring the TRAVEL is not deferring the TRUTH: until that design lands, these doors say no on
- * a mailbox this install only reads, and say which mailbox and who holds it.
- *
- * ── WHOLE, ON A MIXED ACCOUNT, AND THAT IS THE DELIBERATE PART ─────────────────────────────
- *
- * If ANY message the operation would move sits on a mailbox this install reads, the whole
- * operation is refused — including the moves that WOULD have been legal. A partial undo is worse
- * than a refused one: an undo is a single act in the person's head ("put this back the way it
- * was"), and half of one leaves a state nobody chose and no surface describes. It also runs before
- * any write, so a refusal leaves nothing behind.
+ * REFUSE A BULK MOVE ON A READER, BY NAME, AND WHOLE (mail 0094). Two doors move MANY messages
+ * from one press: `WorkflowsService.undoRun` (one per recorded step) and the Hey migration's
+ * RE-ROUTE PASS (`rerouteToMatchRules` — not the UNDO, which moves no mail). They refuse rather
+ * than travel: N `message.move` records from one press would sit half-appended across cycles or
+ * drive `ohmail/_meta` to the ceiling — a folder past it is unreadable by EVERY install; the bulk
+ * shape is owed a design (`messages.move_many`). WHOLE on a mixed account: if ANY message sits on
+ * a read-only mailbox the whole operation refuses — half an undo leaves a state nobody chose —
+ * and it runs before any write, so nothing is left behind.
  */
 export async function refuseBulkMoveOnReader(
   tx: Tx, accountId: string, messageIds: readonly string[],
@@ -288,44 +209,14 @@ export interface AccountFanOut {
 }
 
 /**
- * PLAN THE FAN-OUT for an ACCOUNT-SCOPED door: rules, the away responder, the screening preference,
- * the dormancy window (mail 0094, ruling 6).
- *
- * ── WHAT THIS REPLACES, AND WHY IT IS NOT JUST A WIDER REFUSAL ─────────────────────────────
- *
- * `assertAccountOrganizes` asked one question — "does this account organize ANYTHING" — and refused
- * when the answer was no. That was right when a refusal was the only alternative to a dead write.
- * It has two costs now. On a MIXED account (one mailbox organized here, one held elsewhere) it
- * PERMITTED the write and nothing travelled, so the install holding the other mailbox never learned
- * the rule and the person was told their mail would be filed that way on both. And on an
- * all-reader account it refused where a request could have travelled.
- *
- * So the account-wide yes/no becomes a per-mailbox dispatch, and the caller reports the per-mailbox
- * outcome rather than one "saved".
- *
- * ── THE THREE STATES, AND THE ONBOARDING ONE IS THE EASY ONE TO GET WRONG ──────────────────
- *
- *  · ≥1 mailbox organized here ⇒ WRITE LOCALLY, plus a request to every capable holder.
- *  · 0 organized and ≥1 held   ⇒ NO local write. The row would be an instruction this install never
- *    carries out. Requests to the capable holders; if there are none, {@link OrganizedElsewhereError}
- *    naming the first holder we can name.
- *  · 0 organized and 0 held    ⇒ WRITE LOCALLY. This is CONSENT TIME — an account with no mailbox,
- *    or none live — and it is the state a fail-closed rule gets wrong. `organizer-role-census`'s own
- *    exemption for `consent-seed.ts` was written about exactly this: refusing here means a person
- *    cannot choose a window, name a tag or write a rule until they have connected a mailbox, which
- *    is precisely the moment nothing is organized yet. Account configuration is INERT until
- *    something organizes, and inert is not dangerous; what is dangerous is configuration that
- *    reaches an organizer which is somebody else's. It is a POSITIVE case by name in the suite,
- *    not an implicit fall-through.
- *
- * ── PER-MAILBOX READS RATHER THAN ONE PASS, DELIBERATELY ───────────────────────────────────
- *
- * `assertAccountOrganizes` projected everything it needed in a single SELECT. This asks
- * `readRequestEligibility` once per live mailbox instead, which is one round trip per mailbox on an
- * account that has one or two of them. The reason is that `capable` is not a column: it is a
- * conjunction over `status`, `organizer_state` and a parsed capability list, and re-deriving that
- * conjunction here would be a second implementation of the eligibility rule that could drift from
- * the one every per-mailbox door uses. One rule, asked N times, beats two rules asked once each.
+ * PLAN THE FAN-OUT for an ACCOUNT-SCOPED door: rules, away responder, screening preference,
+ * dormancy window (mail 0094). Replaces the account-wide "organizes ANYTHING?" check, wrong both
+ * ways: a MIXED account was PERMITTED a write that never travelled; an all-reader account was
+ * refused a request that could travel. THREE STATES: ≥1 organized here ⇒ write locally + request
+ * every capable holder. 0 organized, ≥1 held ⇒ NO local write; requests, or
+ * `OrganizedElsewhereError`. 0 and 0 ⇒ WRITE LOCALLY — consent time: configuration is INERT until
+ * something organizes. Per-mailbox reads: `capable` is a conjunction the eligibility rule owns —
+ * one rule asked N times, not two that drift.
  */
 export async function planAccountFanOut(
   tx: Tx, accountId: string, kind: RequestKind,
@@ -371,20 +262,14 @@ export async function planAccountFanOut(
 }
 
 /**
- * THE BYTE CEILING, ASKED AT THE DOOR IN THE CYCLE'S OWN UNITS.
- *
- * `formatRequest` THROWS when the base64url-encoded payload exceeds
- * {@link REQUEST_PAYLOAD_MAX_BYTES}, and it runs in the reader's CYCLE — long after this door
- * answered 202 to a person. Without this check an over-large payload is a row that is accepted,
- * fails to append on every pass for a day, and then expires as `outstanding_requests_never_sent`:
- * the person watched a spinner for something that was never going to travel, and every guard was
- * green the whole time.
- *
- * Measured the same way the cycle measures it — `base64url(JSON)` length, not the JSON's own byte
- * count — because base64 inflates by 4/3 and a bound expressed in the wrong unit is the
- * verification-shares-the-assumption failure with extra steps. A door with its own narrower rule
- * (the signature's 2 000 characters) still states that rule where it belongs; this is the backstop
- * that no payload can get past.
+ * THE BYTE CEILING, ASKED AT THE DOOR IN THE CYCLE'S OWN UNITS. `formatRequest` throws past
+ * `REQUEST_PAYLOAD_MAX_BYTES` — but it runs in the reader's CYCLE, long after this door answered
+ * 202. Without this check an over-large payload is a row that is accepted, fails to append on
+ * every pass, then expires as `outstanding_requests_never_sent`: a spinner for something that was
+ * never going to travel, every guard green. Measured as the cycle measures — `base64url(JSON)`
+ * length, not the JSON's bytes; base64 inflates by 4/3 and a bound in the wrong unit shares the
+ * assumption it should check. A door with a narrower rule (the signature's 2 000 characters)
+ * still states it; this is the backstop nothing gets past.
  */
 function assertPayloadFits(kind: RequestKind, payload: unknown): void {
   const encoded = Buffer.from(JSON.stringify(payload ?? null), "utf8").toString("base64url");
@@ -398,20 +283,14 @@ function assertPayloadFits(kind: RequestKind, payload: unknown): void {
 }
 
 /**
- * WRITE ONE REQUEST ROW. Nothing else happens: no local write, no IMAP, no signature.
- *
- * Takes the caller's transaction rather than opening its own, so that a door already inside one
- * (`MessageService.move` reads the message, decides, and writes in a single transaction) commits
- * the record with whatever else it decided, and a door outside one can pass the ambient handle.
- *
- * ── THE ERASURE FENCE IS THE FIRST THING THIS FUNCTION DOES ────────────────────────────────
- *
- * `erasure-fence.ts`'s rule for every writer of account-scoped state. A reader with a stale page
- * open could otherwise queue a request against an account whose erasure has already committed; the
- * organizer's drain would (correctly) fence it too, but the row should never exist. Callers that
- * touch `accounts` themselves must reach it BEFORE `mailboxes` — `deleteAccount` takes the same
- * row first, and crossing the two orders deadlocks. Every caller of this helper takes no lock
- * before it, so the order holds by construction.
+ * WRITE ONE REQUEST ROW. Nothing else: no local write, no IMAP, no signature. Takes the caller's
+ * transaction, so a door already inside one (`MessageService.move` reads, decides and writes in a
+ * single transaction) commits the record with whatever else it decided. THE ERASURE FENCE IS THE
+ * FIRST THING THIS DOES — `erasure-fence.ts`'s rule for every writer of account-scoped state: a
+ * reader with a stale page could queue a request against an erased account; the drain would fence
+ * it too, but the row should never exist. Callers touching `accounts` themselves must reach it
+ * BEFORE `mailboxes` — `deleteAccount` takes the same row first, and crossing the orders
+ * deadlocks. Every caller takes no lock before this, so the order holds by construction.
  */
 export async function writeReaderRequest(
   tx: Tx, ctx: ServiceContext,

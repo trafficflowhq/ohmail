@@ -24,128 +24,14 @@ import type { Route } from "../router.js";
 import { learnMissingSmtpSizes } from "../smtp-size.js";
 
 /**
- * `POST /internal/alerts` — the OUTSIDE-THE-WORKER alert driver.
- *
- * ## Why this endpoint exists at all
- *
- * The worker runs the same alert pass every minute, and for most of the rules that is enough:
- * they are facts about the deployment that either arm reads out of the same Postgres. A handful
- * are statements ABOUT AN ARM, and a dead process reports nothing — so those need an observer on
- * a different machine, on a different platform, with a different failure mode. That is this
- * host: the API deployment watching the worker from a different platform, both reading one
- * Postgres.
- *
- * `worker_down` ("no leader lock held for > 2 minutes") is the original one and the reason this
- * endpoint exists. `worker_degraded` joins it — alive, holding the lock, not doing the work — and
- * so does `alert_driver_dark`, which each arm evaluates about THE OTHER for the same reason one
- * level up: a process cannot testify to its own death, which is why there are two. `schema_behind`
- * is the inverse shape, host-local by construction: each arm reports its OWN journal against the
- * database, because "the worker is ahead" and "the API is ahead" are two different bad deploys.
- *
- * The count deliberately is not written here. `AlertKind` in `packages/db/src/alerts.ts` is the
- * authoritative list and a census test holds it to what the evaluator emits; a number in this
- * comment would be a second claim with nothing keeping it honest, and it was wrong here for as
- * long as it stood.
- *
- * The remaining hole — every platform down at once — is covered by the scheduler itself:
- * `.github/workflows/alerts.yml` runs on GitHub's infrastructure, and a failed scheduled
- * workflow mails the repository owner without anything in this repo having to work.
- *
- * ## TWO clocks drive this host, and the reason is an outage
- *
- * The worker once died and stayed dead for over two hours with nobody notified.
- * Everything in this file was already written and correct; none of it was running, because
- * the API host had never been deployed with a secret and the only scheduler was a GitHub
- * workflow that exits 0 when its secrets are unset. So there are now two clocks:
- *
- *  · **Vercel Cron** — `GET /internal/alerts/run` below, scheduled from the host
- *    deployment's cron config. The PRIMARY, because it is the tighter interval and
- *    because it cannot be switched off by inactivity.
- *  · **GitHub Actions** — `POST /internal/alerts`, every 5 minutes. The OUTER RING, and the
- *    only observer on a third platform: when this host is the thing
- *    that is down, its `curl` fails, the run goes red, and GitHub mails the operator.
- *
- * They are not redundant with each other. Vercel Cron cannot report that Vercel is down, and
- * GitHub's schedule is best-effort and is disabled automatically after 60 days of repository
- * inactivity. Each covers the other's blind spot.
- *
- * The corresponding arming rule lives in the host deployment's build config
- * (`assertAlertingArmed`): a production build of this host with no secret and no sink does
- * not exist, so "deployed but not watching" is not a reachable state.
- *
- * ## Authentication is a shared secret, and that is the right shape
- *
- * The caller is a cron, not a person. There is no session to resolve, no cookie, no
- * step-up, and inventing a service account would mean a credential in `users` that can be
- * phished. `Authorization: Bearer <TF_ALERT_SECRET>` compared in CONSTANT TIME is the whole
- * story, and the route is `public` + `anonymous` so `withSession` never runs.
- *
- * With no `deps.alerts` the route answers **404**, not 401: a deployment that configured no
- * secret has no alerting surface, and advertising an endpoint it cannot authenticate is
- * strictly worse than not having one.
- *
- * ## Why POST and not GET
- *
- * It has side effects — it writes `alert_state` and it can send mail. A GET that mails people
- * is a GET a link preview, a crawler, or a browser prefetch can fire. `withRequestGuard` also
- * applies its content-type and cross-site checks to unsafe methods only, so POST is the
- * method that actually gets guarded.
- *
- * ## The response is the SAME data the admin console renders
- *
- * `evaluateAlerts` is a pure read shared by both, so what a scheduler sees and what an
- * operator sees cannot drift. Nothing in the body can carry mail content: every field is a
- * count, an age, or a rule name (`packages/db/src/alerts.ts`).
- *
- * ## THE ALERT PASS RUNS ENTIRELY ON THE CONTENT-BLIND CONNECTION
- *
- * `/internal/alerts*` is a STAFF SURFACE — the same audience, the same shared-secret shape and
- * the same cross-account reach as `/admin/*` — so it reads and writes through `deps.adminDb`,
- * the handle authenticated as `ohmail_admin`. That role holds SELECT on every input the rules
- * read — `worker_heartbeats`, `billing_events`, `outbound_sends`, `mailboxes` and
- * `billing_subscriptions` were the first of them, and the authoritative list is
- * `STAFF_SELECT_GRANTS` in `packages/db/src/staff-grants.ts`, which a census holds equal to the
- * grants the database actually carries. Naming the tables here instead is how this paragraph
- * came to describe a rule set several times smaller than the one that shipped.
- *
- * It writes exactly two: `alert_state`, which it may INSERT and UPDATE — the pass opens a row,
- * claims the notification, and MARKS the row resolved when the condition clears. It may NOT
- * delete: resolution stopped deleting in cloud 0030, the prune that briefly needed the verb is
- * gone, and the grant went with it so that an older bundle cannot delete the row a delayed pass
- * fences against; and
- * `alert_pass_runs`, one row per arm, because the arm that is hardest to observe from anywhere
- * else must be able to record that it ran.
- *
- * **The one thing that is NOT on the blind handle, stated because the sentence above used to
- * claim otherwise.** The mail SINK — the second delivery path, not the pass — claims a
- * slot in the per-recipient limiter, and `auth_throttle` is a table `ohmail_admin` has no grant
- * on. It therefore holds a narrow limiter port over the runtime connection, built in the host's
- * composition root (`apps/api-vercel/src/deps.ts`), and never a `Db`: see
- * `packages/services/src/mail/mail-service.ts:RecipientLimiter`. Before that correction it held
- * `makePooledDb(...) as never`, which made "all three routes run wholly on the blind
- * connection" false.
- *
- * ## A DARK PAGER ANSWERS 503, AND AN ABSENT ONE ANSWERS 404
- *
- * With no `deps.alerts` this host has no alerting surface and every route here is **404**: a
- * deployment that configured no secret is not broken, it simply has no pager, and advertising
- * an endpoint it cannot authenticate is worse than not having one.
- *
- * With `deps.alerts` armed and no `deps.adminDb` the pager is CONFIGURED AND CANNOT RUN, and
- * that is **503 `alerts_db_unarmed`**. The two must not share an answer. A dead-man's switch
- * that 404s is indistinguishable from one nobody asked for, and this exact state — alerting
- * fully configured, no blind handle, `/health` still 200 — was reachable for a while because
- * `loadAdminConfig` refused on `TF_ADMIN_SECRET` before it ever looked at `DATABASE_URL_ADMIN`.
- * The construction of the pager's database handle was gated on the admin console's credential.
- * It is not any more (`loadStaffDbConfig`), and `/health` publishes `alertsFault` so an operator
- * gets the reason in one curl.
- *
- * Both answers are non-2xx, so the third ring catches either: `.github/workflows/alerts.yml`
- * curls `POST /internal/alerts` every five minutes from GitHub's infrastructure, the run goes
- * red, and GitHub mails the operator without anything in this repo having to work.
- *
- * The alternative — falling back to `deps.db` when the blind handle is absent — is the "absent
- * configuration selects the dangerous branch" shape this whole surface exists to remove.
+ * `POST /internal/alerts` — the outside-the-worker alert driver. A few rules are statements about
+ * an arm, and a dead process reports nothing, so those need an observer on another platform
+ * reading the same Postgres: `worker_down`, `worker_degraded`, `alert_driver_dark`,
+ * `schema_behind` (the count lives in `AlertKind`). Two clocks — Vercel Cron (primary) and the
+ * scheduled CI workflow (a failed run mails the operator). A shared secret in constant time; no
+ * `deps.alerts` ⇒ 404. POST: it writes and can send mail. The pass runs on the blind handle,
+ * writing `alert_state` and `alert_pass_runs`; the mail sink's limiter is the one non-blind
+ * piece. Dark pager 503; absent 404.
  */
 
 /*
@@ -184,53 +70,34 @@ export const SESSIONS_REAP_CRON_PATH = "/internal/sessions/reap";
 export const SMTP_SIZE_CRON_PATH = "/internal/mailboxes/smtp-size";
 
 /**
- * The PATH the PLATFORM SIGNAL poll is scheduled at — what the hosting platform actually SERVED,
- * asked for every five minutes.
- *
- * ── WHY IT IS A ROUTE ON THIS HOST AND NOT A WORKER PASS ──────────────────────────────────
- *
- * The subject is THIS host's error rate, and the token that can read it is an env var on THIS
- * deployment (`VERCEL_TOKEN`) — the same one `scripts/vercel-errors.mjs` uses. Putting the poll on
- * the sync worker would mean provisioning the platform credential onto a second host to measure
- * the first one.
- *
- * ── WHY FIVE MINUTES, WHICH IS FINER THAN EVERY OTHER TARGET ON THAT CLOCK ────────────────
- *
- * The rule reads a fifteen-minute window, and a window is only as trustworthy as the number of
- * independent samples inside it. Three five-minute rows mean a single missed poll still leaves two
- * windows of evidence rather than none — and one poll is one aligned window, so a coarser cadence
- * would not make bigger windows, it would make GAPS.
- *
- * A deployment with no platform token writes NO ROW, deliberately, and that absence is what the
- * board renders as "5xx: not measured". It is a different state from a zero and must stay one.
- *
- * Driven by the worker's `api-cron.ts`, and a census text-matches this literal against that table.
+ * The path the platform-signal poll is scheduled at — what the hosting platform actually served,
+ * asked every five minutes. A route on this host, not a worker pass: the subject is this host's
+ * error rate, and the token that can read it is an env var on this deployment — polling from the
+ * worker would provision the platform credential onto a second host to measure the first. Five
+ * minutes because the rule reads a fifteen-minute window and needs independent samples: three
+ * five-minute rows leave two windows of evidence after a missed poll. A deployment with no
+ * platform token writes no row, deliberately — the board renders "5xx: not measured", a different
+ * state from zero. Driven by the worker's `api-cron.ts`; a census text-matches this literal.
  */
 export const PLATFORM_SIGNALS_CRON_PATH = "/internal/platform-signals/run";
 
 /**
- * The PATH the SCHEDULED-SEND pass is scheduled at (Send later, mail 0077) — exported for the
- * reason its four siblings are: the worker's `api-cron.ts` names it as a literal string and a
- * census asserts the two agree, because a schedule whose path this router does not serve is a
- * feature whose whole promise ("it sends at 9:00") silently never runs. Poked EVERY MINUTE —
- * the appointment's stated precision is "±about a minute", so the clock has to be at least
- * that fine. The PASS runs here, on the API host, and that placement is measured twice over:
- * the sync host's platform blocks outbound SMTP submission at the port level
+ * The path the scheduled-send pass is scheduled at (Send later, mail 0077) — exported because the
+ * worker's `api-cron.ts` names it as a literal and a census asserts the two agree: a schedule
+ * whose path this router does not serve is a feature whose promise silently never runs. Poked
+ * every minute — the appointment's stated precision is about a minute. The pass runs here, on the
+ * API host, measured twice over: the sync host's platform blocks outbound SMTP at the port level
  * (`apps/worker/src/smtp-size.ts`), and the worker's runtime dependency set may not include
- * `@trafficflow/services` (its package.json records the Node-23 boot crash that promoting it
- * caused) — while this host runs `SendService` on every manual send already.
+ * `@trafficflow/services` — while this host runs `SendService` on every manual send already.
  */
 export const SCHEDULED_SEND_CRON_PATH = "/internal/sends/scheduled/run";
 
 /**
- * `GET /internal/sends/reconcile/run` — the RECONCILING pass for stranded send reservations.
- *
- * A SEPARATE route from the sender's clock one line up, and the separation is a budget rather
- * than a preference: that invocation already plans three sends of up to twenty seconds each
- * against this platform's sixty-second kill, so hanging a second batch of work off it would
- * spend the sender's remaining time on the reconciler's. Both are poked every minute by the same
- * worker clock, on their own staggers.
- *
+ * `GET /internal/sends/reconcile/run` — the reconciling pass for stranded send reservations. A
+ * separate route from the sender's clock one line up, and the separation is a budget: that
+ * invocation already plans three sends of up to twenty seconds each against this platform's
+ * sixty-second kill, so hanging a second batch off it would spend the sender's remaining time on
+ * the reconciler's. Both are poked every minute by the same worker clock, on their own staggers.
  * `runSendReconcilePass` holds the whole policy — what "stranded" means, which mailboxes may be
  * dialled, and why nothing on this path can submit.
  */
@@ -245,40 +112,25 @@ export const SEND_RECONCILE_CRON_PATH = "/internal/sends/reconcile/run";
 export const AWAY_RESPONDER_CRON_PATH = "/internal/away/run";
 
 /**
- * `makeSendAdapter` UNDER THE PER-MAILBOX IMAP ADMISSION COUNTER — the reconciling pass's dial.
- *
- * The attachment path's `openImapUnderCap` shape, reduced to the half this caller needs: acquire
- * before the credential is decrypted and long before a socket exists, release exactly once when
- * the handle closes. There is no local in-process slot here because there is no queue to hold
- * one — a refusal is a defer, and the row is examined again a minute later.
- *
- * A REFUSAL IS A `TransientDialRefusal`, AND EMPHATICALLY NOT A `ServiceError` — this paragraph
- * used to say the opposite, and the opposite was the defect. `SendService.resolveStale` reads a
- * factory `ServiceError` as "this mailbox can never be dialled again" and calls
- * `settleUnverified` — a TERMINAL write, not a defer. Correct for a mailbox whose credential rows
- * are gone; catastrophic for one that is merely busy or for a host that configured no counter at
- * all. So both the refusal AND any throw from consulting the counter are re-raised as transient,
- * and the pass defers the row.
- *
- * Nothing here fails OPEN: neither path dials. What changes is only whether a row is left alone
- * for the next cycle or written off without the Sent folder ever being read.
- *
- * The release is best-effort and never silent: losing it leaves the mailbox one unit short until
- * the stale-window reclaim resets it, which is the bounded direction; throwing would replace a
- * completed probe with an error about our own bookkeeping.
+ * `makeSendAdapter` under the per-mailbox admission counter — the reconciling pass's dial:
+ * acquire before the credential is decrypted, release exactly once at close; no in-process slot
+ * because a refusal is a defer, re-examined a minute later. A refusal is a
+ * `TransientDialRefusal`, never a `ServiceError`: `resolveStale` reads a factory `ServiceError`
+ * as "never dialable again" and writes a terminal `unverified` — correct for gone credentials,
+ * catastrophic for a busy mailbox. Both the refusal and any counter throw are re-raised
+ * transient. Nothing fails open. The release is best-effort: losing it costs one slot until the
+ * stale-window reclaim.
  */
 async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<SendAdapter> {
   const now = (): Date => deps.now?.() ?? new Date();
   /**
-   * THE COUNTER ITSELF FAILING IS NOT EVIDENCE ABOUT THE MESSAGE EITHER, and this wrapper is why
-   * the whole call is inside it. `imapAdmission()` throws `ServiceError("internal", 500)` when
-   * the host supplies no admission port at all, and the acquire can throw on a database fault —
-   * and `resolveStale` reads ANY `ServiceError` from a factory as "this mailbox can never be
-   * dialled again" and writes a terminal `unverified`. So a deployment that armed the alert
-   * secret but no admission port would have closed EVERY stranded reservation as unconfirmed,
-   * three a minute, without one Sent-folder search — a configuration mistake spending other
-   * people's mail. Re-raised as a transient refusal: the pass defers, the row is untouched, and
-   * the 24-hour give-up is still the bound. Nothing here fails open — a refusal never dials.
+   * The counter itself failing is not evidence about the message either: `imapAdmission()` throws
+   * a 500 `ServiceError` when the host supplies no port, the acquire can throw on a database
+   * fault, and `resolveStale` reads any factory `ServiceError` as terminal — a deployment with
+   * the alert secret armed and no admission port would have closed every stranded reservation as
+   * unconfirmed, three a minute, without one Sent-folder search. Re-raised as a transient
+   * refusal: the pass defers, the row is untouched, the 24-hour give-up is the bound. Nothing
+   * fails open.
    */
   let admitted: boolean;
   try {
@@ -392,18 +244,13 @@ function alertsArmed(
 }
 
 /**
- * Run one pass and answer it, shared by all three drivers.
- *
- * One implementation, three callers (the GitHub POST, the Vercel Cron GET, and any operator
- * with curl), because two copies of the logging block is where the two surfaces drift and an
- * incident gets logged differently depending on which clock happened to observe it.
- *
- * **It takes four narrow values and not `ApiDeps`.** This runs behind a staff
- * credential with cross-account reach, and it needed exactly `deps.logger` and `deps.now` out
- * of that container — so those are what it gets. Handing it the whole bag would have handed it
- * `deps.db`, the user-serving runtime connection, which is the capability `/admin/*` just
- * finished removing from its own callbacks. `route` is gone with it: the caller already builds
- * the child logger it was used for.
+ * Run one pass and answer it, shared by all three drivers (the CI POST, the platform cron GET, an
+ * operator with curl): two copies of the logging block is where the surfaces drift and an
+ * incident gets logged differently depending on which clock observed it. It takes four narrow
+ * values and not `ApiDeps`: this runs behind a staff credential with cross-account reach and
+ * needed exactly `deps.logger` and `deps.now` — handing it the whole bag would hand it `deps.db`,
+ * the user-serving runtime connection, the capability `/admin/*` just finished removing from its
+ * own callbacks.
  */
 /**
  * This host's consecutive-failure memory for the alert sinks.
@@ -417,43 +264,24 @@ function alertsArmed(
 const apiDeliveryStreak = newDeliveryStreak();
 
 /**
- * How many passes THIS INSTANCE has completed, and the only reason it is counted.
- *
- * `apiDeliveryStreak` above accumulates for as long as one instance stays warm, so a cold
- * instance answers `attempts: 0` for every arm — including arms that have been delivering for
- * months. Published on `/health` with nothing beside it, those zeros read as "the pager has
- * never worked", which is a lie in the direction that endpoint may never lie in. This number is
- * the qualifier: `passes: 0` says the counters are cold, `passes: 40` with `attempts: 0` says
- * this instance ran forty passes and had nothing to page about.
- *
- * Incremented the moment a pass CAN mutate the streak — see the comment at the increment for why
- * "completed" was the wrong line to draw and how a post-delivery database failure would otherwise
- * leave warm counters labelled cold.
+ * How many passes this instance has completed, and the only reason it is counted:
+ * `apiDeliveryStreak` accumulates only while an instance stays warm, so a cold instance answers
+ * `attempts: 0` for arms that have delivered for months — published bare, those zeros read as
+ * "the pager has never worked", a lie in the direction `/health` may never lie in. This number is
+ * the qualifier: `passes: 0` says the counters are cold; `passes: 40` with `attempts: 0` says
+ * forty quiet passes. Incremented the moment a pass can mutate the streak — see the comment at
+ * the increment.
  */
 let apiAlertPasses = 0;
 
 /**
- * The pager's standing health as `GET /health` publishes it — the ONE reader of the streak above
- * that is not the pass itself.
- *
- * It exists because the worker's boot announcement has no equivalent on a serverless host: the
- * worker names its arms in its startup line and warns when there is exactly one, and until this
- * function the per-arm verdicts here lived only on the `/internal/alerts` response, behind the
- * scheduler's credential. This host is the only observer of a dead worker, so its own arms going
- * quiet is precisely the fault that coincides with the outage they exist to report.
- *
- * DERIVED, never stored, for the reason the worker's `/health` gives about `sinkHealthOf`: a
- * cached copy would drift from the streak the pass actually mutates. It reads memory only, so
- * `/health` still touches no database — which for this field is the whole point, since one of the
- * states it has to be readable in is the one where the database cannot be read.
- *
- * The return type is the MAIL-half `AlertSinkSummary`, and the projection is written out field by
- * field on purpose. `AlertSinkHealth` is a hosted type that `/health`'s own module may not name,
- * so the two shapes are mirrors — and structural assignability would happily accept a wider
- * object, while `JSON.stringify` publishes what an object holds rather than what its type says.
- * Naming every field is what makes a later addition to `AlertSinkHealth` — a vendor's error
- * sentence being the candidate that matters — a compile error here instead of new text on an
- * endpoint anybody can read.
+ * The pager's standing health as `GET /health` publishes it — the one reader of the streak that
+ * is not the pass itself. The worker names its arms in a startup line; a serverless host has
+ * none, and it is the only observer of a dead worker. Derived, never stored (a cached copy would
+ * drift from the streak the pass mutates); memory only, readable exactly when the database cannot
+ * be. The mail-half `AlertSinkSummary`, projected field by field: structural assignability
+ * accepts a wider object and `JSON.stringify` publishes what an object holds — naming every field
+ * makes a later `AlertSinkHealth` addition a compile error, not new text on a public endpoint.
  */
 export function apiAlertSinkSummary(sinks: readonly AlertSink[]): AlertSinkSummary {
   return {
@@ -473,25 +301,15 @@ async function alertPass(
 ): Promise<Response> {
   try {
     const staff = await staffDb();
-    // COUNTED THE INSTANT THE PASS CAN TOUCH THE STREAK, and the placement is the whole
-    // correctness of the field.
-    //
-    // It used to be counted after `runAlertPass` RETURNED, on the reasoning that a pass which
-    // threw evaluated nothing. That reasoning is false in a state the design explicitly
-    // supports: the streak is mutated by `deliver()` and only then are the notification claims
-    // settled, so a settle UPDATE that fails throws AFTER the per-arm counters have already
-    // advanced. On that path the arms would publish fresh attempts and outcomes beside
-    // `passes: 0` — the qualifier claiming its own neighbours are cold, and permanently so on an
-    // instance where that keeps happening. Counting on entry makes the two inseparable: every
-    // invocation that CAN mutate the streak is counted, and one that cannot (no staff handle:
-    // `await staffDb()` above rejects before this line) is not.
-    //
-    // What the number therefore means is "alert passes this instance has RUN", not "completed".
-    // A pass that died before `evaluateAlerts` returned is still counted and still left the arms
-    // at zero, so `passes: 40` with `attempts: 0` reads either as forty quiet passes or as forty
-    // failing ones. That ambiguity is deliberate and is not this field's job: a failing pass
-    // answers 503 to its scheduler and logs `alert_pass_failed`, which is where it is diagnosed.
-    // The one thing the field must never do is call warm counters cold.
+    // Counted the instant the pass can touch the streak; the placement is the field's
+    // correctness. Counting after `runAlertPass` returned was false in a supported state: the
+    // streak is mutated by `deliver()` and only then are the claims settled, so a settle UPDATE
+    // that fails throws after the per-arm counters advanced — fresh attempts beside `passes: 0`,
+    // the qualifier calling its own neighbours cold. Counting on entry makes the two inseparable;
+    // an invocation that cannot mutate the streak (no staff handle — the await above rejects
+    // first) is not counted. The number means "passes RUN", not "completed": a failing pass
+    // answers 503 and logs `alert_pass_failed`, which is where it is diagnosed. The one thing
+    // this field must never do is call warm counters cold.
     apiAlertPasses++;
     const result = await runAlertPass(staff, {
       now: now(),
@@ -587,21 +405,13 @@ async function alertPass(
 }
 
 /**
- * One PLATFORM SIGNAL poll. `platformCostPass`'s shape above, property for property — 404 on an
- * unarmed surface, either shared secret in constant time, and the same deliberate absence of an
- * "unconfigured" skip.
- *
- * THE ONE THING WORTH READING TWICE is what an unconfigured deployment does here, because it is
- * the ruling's second ranked risk and it is settled by an ABSENCE rather than by a value. With no
- * platform token the port answers `unconfigured`, the pass writes NO ROW, and
- * `platformSignalWindow` therefore returns nothing for that project — so the rule cannot fire and
- * the board says "not measured". At no point does a `0` exist to be rendered. A pass that wrote
- * `requests: 0, errors_5xx: 0` on an unconfigured deployment would satisfy every test about the
- * rule not firing, and would put a measured-looking zero on an operator's screen for a figure
- * nobody has ever asked the platform for.
- *
- * It runs on `deps.db`, the runtime connection: it writes `platform_signals`, and the blind staff
- * handle holds SELECT on that table and must not gain more.
+ * One platform-signal poll, `platformCostPass`'s shape — 404 unarmed, either secret in constant
+ * time, no "unconfigured" skip. The part worth reading twice: an unconfigured deployment is
+ * settled by an absence — the port answers `unconfigured`, the pass writes no row, the rule
+ * cannot fire, the board says "not measured". At no point does a `0` exist to render: a pass
+ * writing zeros would satisfy every test and put a measured-looking zero on screen for a figure
+ * nobody asked the platform for. Runs on `deps.db`: it writes `platform_signals`, and the blind
+ * handle holds SELECT and must not gain more.
  */
 async function platformSignalPass(req: Request, deps: ApiDeps): Promise<Response> {
   const log = (deps.logger ?? silentLogger).child({ route: PLATFORM_SIGNALS_CRON_PATH });
@@ -633,18 +443,14 @@ async function platformSignalPass(req: Request, deps: ApiDeps): Promise<Response
       outcome: report.outcome, rows: report.rows, pruned: report.pruned,
       ...(report.code ? { code: report.code } : {}),
     });
-    // ── A SEMANTIC FAILURE MUST NOT BE A 200, BECAUSE THE CALLER READS ONLY THE STATUS ──
-    //
-    // The worker's cron driver discards this body and looks at `res.ok` alone. A poll that
-    // could not authenticate, could not resolve its project, or was refused by the log endpoint
-    // returns `outcome: "failed"` and wrote NOTHING — and answering 200 for that made the worker
-    // record the target healthy and RESET its failure streak. The clock would then report a
-    // perfectly running schedule while no signal data existed at all, which is this file's
-    // recurring failure in its purest form: the broken state rendering as the healthy one.
-    //
-    // `unconfigured` stays 200 and must: a deployment with no token has nothing to report and is
-    // not failing. That is the distinction the three-way outcome exists to carry, and it is why
-    // this is a branch on `outcome` rather than on whether any row was written.
+    // A semantic failure must not be a 200, because the caller reads only the status: the
+    // worker's cron driver discards the body and looks at `res.ok`. A poll that could not
+    // authenticate or resolve its project returns `outcome: "failed"` and wrote nothing —
+    // answering 200 for that made the worker record the target healthy and reset its failure
+    // streak, a perfectly running schedule over no signal data: the broken state rendering as the
+    // healthy one. `unconfigured` stays 200 and must — a deployment with no token has nothing to
+    // report and is not failing; that distinction is why this branches on `outcome`, not on
+    // whether a row was written.
     if (report.outcome === "failed") {
       return json(502, { now: deps.now().toISOString(), ...report });
     }
@@ -657,7 +463,53 @@ async function platformSignalPass(req: Request, deps: ApiDeps): Promise<Response
   }
 }
 
+/**
+ * `POST /internal/fault` — make this deployment answer one 5xx, on purpose.
+ *
+ * Only a real request proves the WIRING of cloud 0033: the port reached the composition root,
+ * the row reached the table, the grant let the reader see it. Every way that fails renders as
+ * an empty table, which is also what a healthy deployment looks like.
+ *
+ * TWO independent arming conditions, neither a new flag: the internal secret, AND a fault log
+ * on this host. The second keeps the route reachable only where the mechanism it tests exists.
+ */
+const faultProbeRoute: Route = {
+  method: "POST",
+  pattern: "/internal/fault",
+  cost: "unauthenticated",
+  relay: false,  /* the hosted service's shared-secret intake */
+  /**
+   * `public`, and NEITHER `raw` NOR `anonymous` — the one line to get right. `withErrorEnvelope`
+   * is in FULL_PIPELINE only, so either flag would throw past the middleware under test and the
+   * suite would pass against a 500 the host invented.
+   */
+  options: { public: true },
+  handler: async (req, deps) => {
+    if (!deps.faultLog) return json(404, { error: { code: "not_found" } });
+    const secret = deps.alerts?.secret ?? "";
+    if (secret.trim().length === 0) return json(404, { error: { code: "not_found" } });
+    if (!presentsSecret(req, secret)) {
+      (deps.logger ?? silentLogger).warn("fault_probe_unauthorized", {});
+      return json(401, { error: { code: "unauthorized" } });
+    }
+    // An UNMODELLED throw, which is the branch that matters: a `ServiceError` is a fault the code
+    // already has a name for, and this one lands in the envelope's `request_unhandled` arm — the
+    // population `api_fault_rate` exists to notice. The class name is what reaches the row, so it
+    // says what it is; the message never leaves this process.
+    throw new FaultProbeError();
+  },
+};
+
+/** The class name cloud 0033's `error_class` records for a probe. Never a real fault's name. */
+class FaultProbeError extends Error {
+  constructor() {
+    super("deliberate fault from POST /internal/fault");
+    this.name = "FaultProbeError";
+  }
+}
+
 export const internalRoutes: Route[] = [
+  faultProbeRoute,
   {
     method: "POST",
     pattern: "/internal/alerts",
@@ -682,35 +534,14 @@ export const internalRoutes: Route[] = [
   },
   {
     /**
-     * `GET /internal/alerts/run` — THE PLATFORM CRON'S ENTRY POINT, and the reason the dead
-     * worker of the outage above would be paged for today.
-     *
-     * ## Why a second path, and why GET
-     *
-     * The POST above is the right shape for a caller that can choose its method, and the
-     * header explains at length why a pass that writes `alert_state` and can send mail should
-     * not be a GET. Vercel Cron cannot choose: it issues GET, and only GET. The options were a
-     * GET with side effects or no platform cron at all, and "no platform cron" leaves the only
-     * external clock on GitHub Actions — best-effort, and DISABLED AUTOMATICALLY after 60 days
-     * of repository inactivity. A dead-man's switch with an expiry date is the failure this
-     * endpoint exists to prevent, wearing a different hat.
-     *
-     * The POST's actual objection survives intact, because it was never about the verb: it was
-     * that a GET which mails people can be fired by a link preview, a crawler or a browser
-     * prefetch. None of those can present a bearer token. An unauthenticated GET here is a
-     * 401, and nothing runs.
-     *
-     * It is a SEPARATE path from `GET /internal/alerts` rather than a mode of it, because that
-     * one is documented as the runbook's safe read — "is anything paging right now?" — and
-     * the operations runbook tells an operator to curl it. Overloading it would mean the
-     * documented diagnostic command stamps `notified_at` and pages people.
-     *
-     * ## Two accepted secrets
-     *
-     * `TF_ALERT_SECRET` (the same credential the other two drivers hold) or `CRON_SECRET`
-     * (Vercel's own, which the platform presents on cron invocations). Both constant-time.
-     * See {@link AlertsConfig.cronSecret} for why this is two credentials and not one value
-     * pasted twice.
+     * `GET /internal/alerts/run` — the platform cron's entry point. Vercel Cron issues GET and
+     * only GET, and "no platform cron" leaves the only external clock on a best-effort schedule
+     * disabled after 60 days of repository inactivity — a dead-man's switch with an expiry date.
+     * The POST's objection was never about the verb: a link preview cannot present a bearer
+     * token, so an unauthenticated GET is a 401 and nothing runs. A separate path from `GET
+     * /internal/alerts` because that is the runbook's safe read; overloading it would make the
+     * documented diagnostic command page people. Two accepted secrets, both constant-time; see
+     * {@link AlertsConfig.cronSecret}.
      */
     method: "GET",
     pattern: ALERT_CRON_PATH,
@@ -759,30 +590,13 @@ export const internalRoutes: Route[] = [
   },
   {
     /**
-     * `GET /internal/sessions/reap` — THE WEB-SESSION REAPER'S CLOCK. Revokes plain browser
-     * sessions (`device_id IS NULL`, scope `full`) unseen for over sixty days, refresh
-     * families included; paired devices are structurally out of reach
-     * (`reapStaleWebSessions`, where the whole policy is argued). Without this pass a
-     * session that stops being presented simply stops rolling and sits live-but-idle for
-     * ever — the flood the Devices pane showed its owner.
-     *
-     * The alert cron's shape verbatim, and each borrowed property is load-bearing:
-     *  · **GET, because Vercel Cron issues GET and only GET** — the same trade the alerts
-     *    run makes, and the same defense: a link preview or a crawler cannot present a
-     *    bearer token, and an unauthenticated GET here is a 401 that reaps nothing.
-     *  · **Two accepted secrets** — `TF_ALERT_SECRET` (the operator's own driver) or
-     *    `CRON_SECRET` (what the platform presents on cron invocations), both constant-time.
-     *  · **No secret configured ⇒ 404** — a deployment that armed no internal surface has no
-     *    reaper, and advertising an endpoint it cannot authenticate is worse than not having
-     *    one. (Consequence, named because the ruling named it: on such a deployment the
-     *    hygiene DOES NOT RUN. The live acceptance curls the armed route and reads a count.)
-     *
-     * It runs on `deps.db`, the RUNTIME connection, and NOT the content-blind staff handle —
-     * the opposite choice from every alert route above, argued rather than inherited:
-     * revoking sessions is session machinery on user tables (`sessions`,
-     * `refresh_tokens`), a write grant `ohmail_admin` does not hold and must not gain. The
-     * shared secret gates WHO can fire the pass; what the pass may touch is pinned by the
-     * reaper's own structural predicate.
+     * `GET /internal/sessions/reap` — the web-session reaper's clock: revokes plain browser
+     * sessions (`device_id IS NULL`, scope `full`) unseen for over sixty days, families included;
+     * paired devices are structurally out of reach (`reapStaleWebSessions`). The alert cron's
+     * shape verbatim: GET (a crawler cannot present a bearer token), either secret, 404 unarmed —
+     * where the hygiene then does not run; the live acceptance curls the armed route. On
+     * `deps.db`, not the blind handle — argued, not inherited: revoking sessions is session
+     * machinery on user tables, a write grant `ohmail_admin` must not gain.
      */
     method: "GET",
     pattern: SESSIONS_REAP_CRON_PATH,
@@ -815,29 +629,14 @@ export const internalRoutes: Route[] = [
   },
   {
     /**
-     * `GET /internal/mailboxes/smtp-size` — LEARN WHAT EXISTING MAILBOXES' SERVERS ACCEPT.
-     *
-     * `mailboxes.smtp_max_size_bytes` is the only ceiling left on an attachment once the bytes stop
-     * riding the send request, and nothing ever learned it for a mailbox that was already
-     * connected: the column is written on create and on a PATCH that re-dials SMTP, which means the
-     * person re-entering their password. This pass closes that, a bounded batch at a time —
-     * `learnMissingSmtpSizes` holds the whole policy, including why it runs on THIS host and not on
-     * the sync worker (the platform there blocks outbound submission ports; measured, not assumed).
-     *
-     * The session reaper's shape verbatim, and each borrowed property is load-bearing for the same
-     * reasons stated there: GET because Vercel Cron issues GET; either shared secret, compared in
-     * constant time; and 404 rather than 401 on a deployment that armed no internal surface —
-     * which does mean the back-fill DOES NOT RUN there, and such a deployment's mailboxes keep the
-     * strict fallback until somebody re-enters a password.
-     *
-     * It runs on `deps.db`, the runtime connection, for the reaper's reason: this reads
-     * `mailbox_credentials` and writes `mailboxes`, which is user-table machinery the content-blind
-     * staff handle does not hold and must not gain.
-     *
-     * `cost: "unauthenticated"` like its two siblings — the shared secret is the whole gate, no
-     * user session is resolved, and the spend census counts it in the unauthenticated class rather
-     * than in the gated remainder. It DOES open sockets to third-party servers, which is why the
-     * batch and the deadline are constants in `smtp-size.ts` rather than parameters a caller picks.
+     * `GET /internal/mailboxes/smtp-size` — learn what existing mailboxes' servers accept.
+     * `smtp_max_size_bytes` is the only ceiling left once bytes stop riding the send request, and
+     * nothing ever learned it for an already-connected mailbox. This pass closes that, a bounded
+     * batch at a time — `learnMissingSmtpSizes` holds the policy, including why it runs here and
+     * not on the sync worker (that platform blocks outbound submission ports; measured). The
+     * reaper's shape: GET, either secret, 404 unarmed — where the back-fill then does not run. On
+     * `deps.db`. It opens sockets to third parties, which is why the batch and deadline are
+     * constants.
      */
     method: "GET",
     pattern: SMTP_SIZE_CRON_PATH,
@@ -868,55 +667,25 @@ export const internalRoutes: Route[] = [
       }
     },
   },
-  /*
-   * THE BILLING RECONCILIATION — two routes, the alerts pattern verbatim (a safe read and an
-   * armed clock), because the thing being guarded is money state.
-   *
-   * `GET /internal/billing/reconcile` is the DRY RUN: it pages the plane's `status:"all"`
-   * subscription list, compares every subscription against the `billing_subscriptions` mirror,
-   * and reports what an armed pass WOULD re-emit — codes, Stripe ids, account ids, nothing
-   * else — applying nothing. The runbook's first command after any webhook incident, and the
-   * read this slice's production bring-up ran before arming anything.
-   *
-   * `GET /internal/billing/reconcile/run` is the ARMED pass Vercel Cron fires hourly: the same
-   * comparison, and each divergence is re-emitted through `EntitlementsService.applyEvent` —
-   * the SAME claim+apply transaction the webhook relay calls, so there is no second write path
-   * into the mirror (replay semantics — the license boundary keeps every write open-side).
-   * Both record their run in
-   * `billing_reconciliation_runs`, which the two reconciliation alert rules read.
-   *
-   * Shape borrowed from the three siblings above, each property load-bearing for their stated
-   * reasons: GET because Vercel Cron issues GET; either shared secret, constant-time; 404 on a
-   * deployment that armed no internal surface. Two departures, both argued:
-   *  · with alerts armed but billing unconfigured (no plane, no entitlements service) the
-   *    answer is 200 `{skipped:"billing_unconfigured"}`, not 5xx — a cron with nothing to do
-   *    did not fail, and a self-hosted deployment without billing must not record red cron
-   *    runs forever. On OUR production the quiet-branch tripwire is the `billing_reconciliation_stale`
-   *    alert: skipped passes insert no run row, so a mis-flip goes stale and pages.
-   *  · it runs on `deps.db`, the RUNTIME connection, for the reaper's reason: applyEvent
-   *    writes billing tables and the ledger, grants `ohmail_admin` does not hold and must not
-   *    gain.
+  /**
+   * The billing reconciliation — a safe read and an armed clock, because the thing guarded is
+   * money state. The dry run compares the plane's subscription list against the
+   * `billing_subscriptions` mirror and reports what an armed pass would re-emit — codes and ids
+   * only. The hourly pass re-emits each divergence through `EntitlementsService.applyEvent` — the
+   * same claim+apply transaction the webhook calls: no second write path into the mirror. Both
+   * record their run in `billing_reconciliation_runs`. Two departures: billing unconfigured
+   * answers 200 `{skipped}`, not 5xx (the tripwire is the stale-run alert — skipped passes insert
+   * no row); and it runs on `deps.db`, grants the blind role must not gain.
    */
   {
     /**
-     * `GET /internal/sends/scheduled/run` — SEND LATER's sender pass (mail 0077).
-     *
-     * Claims due `drafts.send_at` appointments and runs the ordinary gated send on each with
-     * the row's own stored Idempotency-Key — `runScheduledSendPass` holds the whole policy
-     * (the claim, the recovery arm, the outcome table, and why the pass runs on THIS host and
-     * not the sync worker). The session reaper's shape verbatim, each borrowed property
-     * load-bearing for the reasons stated there: GET, either shared secret in constant time,
-     * 404 on a deployment that armed no internal surface — which does mean scheduled sends DO
-     * NOT FIRE there, and that is the honest state of a host nobody armed a clock on.
-     *
-     * It runs on `deps.db`, the runtime connection, for the reaper's reason: this reads and
-     * writes `drafts`/`outbound_sends` and dials the user's own mail servers through their
-     * decrypted credentials — user-table machinery the content-blind staff handle does not
-     * hold and must not gain.
-     *
-     * Overlapping pokes are SAFE here in a way the reconciler's are not: the claim is
-     * `FOR UPDATE SKIP LOCKED` and every send is idempotency-keyed, so two invocations split
-     * the due set rather than double-sending — the property the whole pass is built on.
+     * `GET /internal/sends/scheduled/run` — Send later's sender pass (mail 0077): claims due
+     * `drafts.send_at` appointments and runs the ordinary gated send with the row's own stored
+     * Idempotency-Key (`runScheduledSendPass` holds the policy). The reaper's shape: GET, either
+     * secret, 404 unarmed — where scheduled sends then do not fire, the honest state of an
+     * unarmed host. On `deps.db`: it reads and writes `drafts`/`outbound_sends` and dials the
+     * user's own servers. Overlapping pokes are safe: the claim is `FOR UPDATE SKIP LOCKED` and
+     * every send is keyed, so two invocations split the due set.
      */
     method: "GET",
     pattern: SCHEDULED_SEND_CRON_PATH,
@@ -962,31 +731,14 @@ export const internalRoutes: Route[] = [
   },
   {
     /**
-     * `GET /internal/sends/reconcile/run` — the reconciler for stranded send RESERVATIONS.
-     *
-     * The scheduled sender's route above, shape for shape and each borrowed property
-     * load-bearing for the reasons stated there: GET, either shared secret in constant time, 404
-     * on a deployment that armed no internal surface — which does mean stranded reservations are
-     * NOT reconciled there, and that is the honest state of a host nobody armed a clock on.
-     * It runs on `deps.db`, the runtime connection, for the same reason: it reads and writes
-     * `drafts`/`outbound_sends` and dials the user's own mail servers through their decrypted
-     * credentials.
-     *
-     * Overlapping pokes are safe for a reason ONE STEP STRONGER than the sender's, and worth
-     * stating because the sender's reason does not apply here. That claim flips a status and so
-     * genuinely splits the due set; this one writes nothing, so two pokes CAN select the same
-     * row. What they cannot do is both write it: every finalizer is compare-and-swap on
-     * `status='pending'`, and the loser reads back and reports the winner's state. The cost of an
-     * overlap is a duplicate probe, never a wrong outcome and never a second envelope.
-     *
-     * ── THE DIAL GOES THROUGH ADMISSION, LIKE EVERY OTHER DIAL ON THIS HOST ─────────────────
-     *
-     * The pass opens at most one connection per distinct mailbox in a batch of three, but "at
-     * most three" is a statement about ONE invocation and this host runs many. The per-mailbox
-     * admission counter is what makes it a statement about the deployment, and it is the same
-     * counter the attachment and probe paths hold — so a mailbox already at its ceiling refuses
-     * this pass rather than becoming the connection that trips the provider's own limit. A
-     * refusal is a DEFER: the pass counts it and the row is examined again next minute.
+     * `GET /internal/sends/reconcile/run` — the reconciler for stranded reservations; the
+     * scheduled sender's route shape for shape. Overlapping pokes are safe one step more
+     * strongly: this pass writes nothing at claim time, so two pokes can select the same row —
+     * what they cannot do is both write it: every finalizer is compare-and-swap on
+     * `status='pending'`, and the loser reads back the winner's state. The cost of an overlap is
+     * a duplicate probe, never a second envelope. The dial goes through admission like every dial
+     * on this host — the per-mailbox counter turns "at most three per invocation" into a
+     * statement about the deployment; a refusal is a defer.
      */
     method: "GET",
     pattern: SEND_RECONCILE_CRON_PATH,
@@ -1031,24 +783,13 @@ export const internalRoutes: Route[] = [
   },
   {
     /**
-     * `GET /internal/away/run` — THE AWAY RESPONDER'S SENDER (mail 0087).
-     *
-     * The scheduled sender's shape verbatim, and it is on THIS host for the same measured reason
-     * plus one that is specific to this feature: the sync worker's platform blocks outbound SMTP
-     * submission at the port level (`apps/worker/src/smtp-size.ts` — twelve hosts, every dial a
-     * timeout), and the responder used to run THERE. The consequence was not a slow responder; it
-     * was a responder that had almost certainly never delivered a single reply, with each failed
-     * dial keeping its at-most-once claim and silencing that correspondent for the episode. Moving
-     * the pass to the host that can actually dial is the whole of the fix.
-     *
-     * It runs on `deps.db`, the runtime connection, for the scheduled sender's reason: it reads and
-     * writes `away_replies`/`away_sender_state` and dials the user's own mail servers through their
-     * decrypted credentials — user-table machinery the content-blind staff handle does not hold and
-     * must not gain.
-     *
-     * Overlapping pokes are SAFE: the reservation is `INSERT … ON CONFLICT DO NOTHING RETURNING`,
-     * so two invocations racing one message split it rather than answering twice, and the per-sender
-     * throttle is an upsert whose `WHERE` decides. That is the property the whole pass is built on.
+     * `GET /internal/away/run` — the away responder's sender (mail 0087), on this host for a
+     * measured reason: the sync worker's platform blocks outbound SMTP at the port level, and the
+     * responder used to run there — almost certainly never delivering a reply, each failed dial
+     * keeping its at-most-once claim and silencing that correspondent for the episode. On
+     * `deps.db`: it reads and writes `away_replies`/`away_sender_state` and dials the user's own
+     * servers. Overlapping pokes are safe: the reservation is `INSERT … ON CONFLICT DO NOTHING
+     * RETURNING`, and the per-sender throttle is an upsert whose `WHERE` decides.
      */
     method: "GET",
     pattern: AWAY_RESPONDER_CRON_PATH,

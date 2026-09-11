@@ -11,35 +11,23 @@ import type { Change, NativeLocator } from "../mail.js";
 import { DESTINATIONS as DESTINATIONS_VALUE, RESERVED_FOLDER_LEAF } from "../types.js";
 
 /**
- * THE TWO MODEL TYPES THIS MODULE'S OWN INTERFACES ARE WRITTEN IN, HANDED ON.
- *
+ * The two model types this module's own interfaces are written in, handed on:
  * `MailboxAdapter.move`, `moveMany`, `setFlags`, `fetchPart`, `MoveManyResult` and
- * `SendResult.sentLocator` all name {@link NativeLocator}; {@link ChangeBatch} and
- * {@link TargetedFetch} are arrays of {@link Change}. Both types arrived here as `import type`
- * from the mail half and stopped there, so a consumer could import `MailboxAdapter` from this
- * entrypoint — or from `adapters/imap`, which re-exports this module whole — and still have no
- * name for the argument it has to pass: `TS2459: declares 'NativeLocator' locally, but it is not
- * exported`. Re-exported for the reason `isOrganizedFolder` below is re-exported: a caller that
- * already imports this module should not need a second import to spell its own signatures.
- *
- * This is a `export type { … } from` rather than a value re-export because both are types; it
- * creates no local binding and so does not shadow the `import type` above, which the rest of
- * this file still reads.
+ * `SendResult.sentLocator` name {@link NativeLocator}; {@link ChangeBatch} and {@link
+ * TargetedFetch} are arrays of {@link Change}. Without the re-export a consumer of
+ * `MailboxAdapter` had no name for the argument it must pass (TS2459). `export type { … } from`
+ * creates no local binding, so it does not shadow the `import type` above, which the rest of this
+ * file still reads.
  */
 export type { Change, NativeLocator } from "../mail.js";
 
 /**
- * Canonical folders the worker watches. INBOX = Imbox.
- *
- * These are the six `Destination` strings and nothing else: the set `ensureFolders()` creates,
- * the set a reconcile may MOVE a message into, and the set every list view filters on. It is
- * frozen — changing it is an IMAP data migration in the customer's own mailbox.
- *
- * **The Sent folder is watched too and is deliberately NOT in here.** Its path is
- * server-specific and discovered at login (`ImapAdapter.findSentForScan`), we never create it,
- * we never move anything into or out of it, and a message that lives there matches no view
- * filter — it reaches the product only through its conversation. Putting it in this tuple would
- * have made all four of those false at once. See `ImapAdapter.changesSince`.
+ * Canonical folders the worker watches. INBOX = Imbox. These are the six `Destination` strings
+ * and nothing else: the set `ensureFolders()` creates, the set a reconcile may move a message
+ * into, the set every list view filters on. Frozen — changing it is an IMAP data migration in the
+ * customer's own mailbox. The Sent folder is watched too and deliberately NOT here: its path is
+ * server-specific and discovered at login (`ImapAdapter.findSentForScan`), we never create it or
+ * move anything into or out of it, and it matches no view filter. See `ImapAdapter.changesSince`.
  */
 export const WATCHED_FOLDERS = [
   "INBOX",
@@ -77,77 +65,14 @@ export const WATCHED_FOLDERS_ARE_THE_DESTINATIONS: boolean =
   && WATCHED_FOLDERS.every((f, i) => f === DESTINATIONS_VALUE[i]);
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  PASSIVE PRESENCE — the customer's OWN folders, read and never reorganized
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Mail the customer filed themselves — `Archive`, `Private/Family`, `_archive/Clients/…`,
- * fifteen years of nested folders made in Apple Mail — was invisible to ohmail entirely: the only
- * folders ever enumerated were {@link WATCHED_FOLDERS} plus the resolved Sent folder, so a message
- * living anywhere else was in no `messages` row, in no thread, and in no search result. Measured on
- * a real mailbox whose server listed well over a hundred folders, of which seven were read.
- *
- * These folders are now ENUMERATED, INGESTED, SEARCHABLE and THREADED, and they are never
- * REORGANIZED. The distinction is enforced in three independent places rather than by intention:
- *
- *  1. {@link isOrganizedFolder} answers false, so no rule, no Screener decision, no AI proposal and
- *     no retro pass has them in its candidate set.
- *  2. `pipeline.ts#planChange` returns before `listRules`/`knownSenders` and before the classifier
- *     for a passive arrival — the same early return the Sent folder already has — so `desired` IS
- *     the arrival folder, the reconciler answers `none`, and no IMAP move is ever issued.
- *  3. the row is written `folder_state.last_set_by = 'external'`: a placement the USER made. Every
- *     pass that moves mail requires `'us'`.
- *
- * ── WHAT IS EXCLUDED, AND WHY EACH ONE ─────────────────────────────────────────────────────────
- *
- * `\Junk` / `\Trash` / `\Drafts` are excluded from READING on one shared argument: none of the
- * three holds mail the customer FILED. Junk is the provider's verdict, Trash is mail they deleted,
- * Drafts is mail they have not finished writing; putting any of it into their history and their
- * search results would be inventing a decision rather than reading one. The organizer therefore
- * never watches these folders and never acts there ON ITS OWN INITIATIVE — no rule, no retro pass,
- * no AI proposal and no reconcile may name them as a destination or enumerate them as a source.
- *
- * WRITING is governed by a narrower rule than it used to be (amended 2026-08-22, owner-ratified).
- * The old sentence — "never watched and never written to" — treated the write side as one case,
- * and it is two. A write on OUR initiative into somebody's Junk or Trash invents a decision,
- * exactly as reading one out would; that stays forbidden. A write that EXECUTES the user's own
- * explicit verdict is the opposite of inventing a decision — refusing it would mean overriding
- * the user in their own mailbox, which is the deeper rule this file exists to protect. Three
- * user-commanded writes are allowed, and only these:
- *
- *  1. A SPAM VERDICT (the screener's spam press, or the rule that press promoted) files the
- *     message to the provider's native `\Junk` folder — where their other clients and the
- *     provider's own filter expect spam to live — instead of parking it in `ohmail/Quarantine`.
- *  2. A NOT-JUNK RESCUE moves a message OUT of `\Junk`, back to INBOX. Same authorship: the user
- *     is reversing their own verdict (or the provider's), and both directions belong to them.
- *  3. A DELETE moves a message to the provider's native `\Trash`. NEVER an expunge: Trash is the
- *     provider's own undo surface, and leave-anytime means the mail stays recoverable by the
- *     user's other clients for as long as the provider keeps it.
- *
- * The destination is discovered per mailbox — SPECIAL-USE first, then the {@link JUNK_BY_NAME} /
- * {@link TRASH_BY_NAME} belts, never created (see {@link MailboxAdapter.findSpecialFolders}). A
- * mailbox with NO native `\Junk` keeps the prior behaviour byte-for-byte: the verdict files to
- * `ohmail/Quarantine` and the fallback is recorded under a closed code (`no_junk_folder`). A
- * mailbox with no `\Trash` refuses the delete the same way (`no_trash_folder`) — falling back to
- * an expunge is exactly the destructive write this rule forbids.
- *
- * The reading rule is unchanged by all of this, and one residual follows from it, stated rather
- * than hidden: a message we filed into `\Junk`/`\Trash` is in a folder we never enumerate, so a
- * later change made there by another client (a restore, a provider purge) is observed only when
- * its copy next appears in a folder we do watch — see `forgetInstanceAt`'s evidence rule for how
- * that re-appearance is adopted.
- *
- * `\All` and `\Flagged` (Gmail's *All Mail* and *Starred*) are excluded because they are VIRTUAL:
- * every message in the account appears in `\All` a second time, so ingesting it would double the
- * whole mailbox and give every message a second physical instance in a folder nobody filed it into.
- *
- * `\Sent` is excluded HERE because it is watched by its own path, with the UID watermark
- * {@link DEFAULT_SENT_HISTORY_MESSAGES} exists for. It is not less covered; it is covered already.
- *
- * The `ohmail` NAMESPACE is excluded whole — every path with an `ohmail` segment, which covers the
- * five organized folders, the unsubscribed `ohmail/_meta` lease, and the namespace-prefixed forms a
- * server with a personal prefix reports (`INBOX/ohmail/_meta` on a `.`-delimited server, measured).
- * A watched `_meta` would ingest the organizer lease's own bookkeeping as mail.
+ * Passive presence — the customer's own folders, read and never reorganized: enumerated,
+ * ingested, searchable, threaded. Held three ways: {@link isOrganizedFolder} answers false,
+ * `pipeline.ts#planChange` returns early for a passive arrival, and the row is `last_set_by =
+ * 'external'` while moving passes require `'us'`. `\Junk`/`\Trash`/`\Drafts` are never read —
+ * none holds mail the customer filed. Three user-commanded writes only: a spam verdict to native
+ * `\Junk`, a not-junk rescue back to INBOX, a delete to native `\Trash` (never an expunge);
+ * destinations discovered, never created (`no_junk_folder`/`no_trash_folder`). `\All`/`\Flagged`
+ * are virtual; `\Sent` has its own watermark; the `ohmail` namespace is excluded whole.
  */
 export const PASSIVE_EXCLUDED_SPECIAL_USE: ReadonlySet<string> = new Set([
   "\\inbox", "\\sent", "\\drafts", "\\junk", "\\trash", "\\all", "\\flagged", "\\important",
@@ -166,34 +91,23 @@ export const PASSIVE_EXCLUDED_SPECIAL_USE: ReadonlySet<string> = new Set([
 export const PASSIVE_EXCLUDED_LEAF = RESERVED_FOLDER_LEAF;
 
 /**
- * Sent-shaped CANONICAL paths — top level or under the INBOX prefix. RE-EXPORTED from
- * `../types.js`, which is now the value's home; the import points that way because `types.ts`
- * stays import-free and this module does not.
- *
- * It moved because a THIRD reader appeared and it is a browser bundle: the client mirrors ask
- * "is this the mailbox's Sent folder" to decide whether a mirror row is the account's OWN sent
- * mail, and they cannot reach this module (it names the mail vocabulary; the engine's bundle gate
- * refuses that graph). The two readers this comment used to name keep their stakes verbatim — the
- * folders inventory (`packages/services/src/folders.ts`) excludes these from the user-folder
- * class, and the folder delete's stale-residue cleanup
- * (`drizzle-repo.ts#tombstoneFolderMessages`) must NEVER take a Sent-folder instance row, because
- * Sent is scanned by UID WATERMARK rather than enumerated end to end, so after a UIDVALIDITY reset
- * an old message's renumbered copy is never re-learned and a deleted "stale" Sent row is the last
- * evidence that copy exists.
+ * Sent-shaped canonical paths — top level or under the INBOX prefix. Re-exported from
+ * `../types.js`, now the value's home, because a third reader is a browser bundle: the client
+ * mirrors ask whether a row is the account's own sent mail and cannot reach this module. The
+ * other two readers keep their stakes: the folders inventory (`packages/services/src/folders.ts`)
+ * excludes these from the user-folder class, and the folder delete's stale-residue cleanup must
+ * never take a Sent-folder instance row — Sent is scanned by UID watermark, so a deleted stale
+ * Sent row is the last evidence its copy exists.
  */
 export { SENT_SHAPED_CANONICAL } from "../types.js";
 
 /**
- * Leaf names that mean the provider's Junk folder on a server that names no SPECIAL-USE — the
- * WRITE-side belt for the three user-commanded writes (see the product rule above).
- *
- * The vocabulary is the junk subset of {@link PASSIVE_EXCLUDED_LEAF}, split out rather than
- * derived because the two belts fail in opposite directions and must be tuned separately: the
- * passive belt errs toward NOT READING (a false positive hides a customer folder), this one errs
- * toward NOT WRITING (a false positive would file the user's spam verdict into a folder that
- * merely happens to be named `Spam`, which is why the alternation here is narrower — no `bin`,
- * no `deleted`, nothing that could be a customer's own archive). A miss costs nothing destructive:
- * the verdict falls back to `ohmail/Quarantine` under the closed code.
+ * Leaf names that mean the provider's Junk folder on a server naming no SPECIAL-USE — the
+ * write-side belt for the three user-commanded writes. Split from {@link PASSIVE_EXCLUDED_LEAF}
+ * rather than derived because the two belts fail in opposite directions: the passive belt errs
+ * toward not reading (a false positive hides a customer folder), this one errs toward not writing
+ * — no `bin`, no `deleted`, nothing that could be a customer's own archive. A miss costs nothing
+ * destructive: the verdict falls back to `ohmail/Quarantine` under the closed code.
  */
 export const JUNK_BY_NAME = /^(junk[ -]?(?:e-?mail)?|spam|bulk[ -]?mail|unerw(?:ü|ue)nscht)$/i;
 
@@ -270,40 +184,14 @@ export function passiveFolderExclusion(
 }
 
 /**
- * How many of the customer's own folders one mailbox may have read — and it is TWO numbers, because
- * the cost this bounds is not the folder count.
- *
- * ── WHAT IS ACTUALLY EXPENSIVE ──────────────────────────────────────────────────────────────────
- *
- * A folder in the scan costs a SELECT per cycle, and the worker's cycle is SERIAL across every
- * mailbox on the shard — so an unbounded folder count is one customer's filing habit setting every
- * other customer's sync latency. A mailbox with a hundred-odd folders, most of them the customer's
- * own, is an ordinary shape rather than a pathological one.
- *
- * But with RFC 5819 LIST-STATUS the steady-state cost is not one SELECT per FOLDER — it is one LIST
- * for the whole mailbox plus a SELECT per folder that actually CHANGED (see
- * `ImapAdapter.unchangedPassive`). On a settled mailbox that is one command for all 126. So the
- * ceiling that matters there is far higher than the one that matters on a server which must be asked
- * folder by folder, and collapsing the two into one number prices every customer as though their
- * provider were the worst one.
- *
- * ── AND WHY THE LOWER NUMBER IS NOT THE SAFE DEFAULT ────────────────────────────────────────────
- *
- * A ceiling here is not a throttle, it is INVISIBLE MAIL: everything past it is in no `messages`
- * row, no thread and no search result, and the customer is told nothing. A ceiling low enough to
- * bite lands its cut-line alphabetically, which is to say arbitrarily — it takes half of one branch
- * of somebody's filing and leaves the other half. Choosing the conservative number "just in case"
- * is choosing to hide their mail to save round trips their provider does not charge for.
- *
- * Both production providers, measured, advertise LIST-STATUS.
- *
- * The residual is stated rather than hidden: past either ceiling the overflow is reported by
- * `ImapAdapter.passiveFolderReport()` and read by nothing. That is a bounded, nameable gap; an
- * unbounded per-cycle SELECT count is not.
- *
- * **The order is deterministic** — by path — so the SAME folders are read on every cycle and the
- * overflow set does not oscillate. Sorting by activity would need a STATUS per folder to compute,
- * which is exactly the cost the lower ceiling exists to bound.
+ * How many of the customer's own folders one mailbox may have read — two numbers, because the
+ * cost is not the folder count. Each scanned folder is a SELECT per cycle on a worker serial
+ * across the shard; with RFC 5819 LIST-STATUS the steady state is one LIST plus a SELECT per
+ * changed folder (`ImapAdapter.unchangedPassive`), so that ceiling sits far higher than on a
+ * server asked folder by folder. The lower number is not the safe default: past a ceiling mail is
+ * invisible, cut alphabetically. Overflow is reported by `passiveFolderReport()` and read by
+ * nothing — a bounded, nameable gap. The order is deterministic, by path, so the overflow set
+ * does not oscillate.
  */
 export const DEFAULT_PASSIVE_FOLDERS_MAX = 256;
 
@@ -316,58 +204,25 @@ export const DEFAULT_PASSIVE_FOLDERS_MAX = 256;
  */
 export const PASSIVE_FOLDERS_MAX_NO_STATUS = 32;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THE TLS FLOOR ON THE ohmail→PROVIDER LEG.
-//
-// Everything from here to {@link smtpTlsFloor} exists because `ImapConfig.secure` is a
-// CALLER-SUPPLIED boolean that originates in the onboarding request body, and until this
-// landed it was the *only* thing standing between the user's IMAP password and the wire.
-// `secure: false` against a server that does not offer STARTTLS sent that password in
-// CLEAR TEXT, from our server, on the user's behalf, on every sync cycle.
-//
-// `secure` is not the question. Both shapes are legitimate and a provider may offer only
-// one — implicit TLS (IMAPS 993 / SMTPS 465) or cleartext-then-STARTTLS (143 / 587). The
-// invariant is narrower and is about the wire, not the flag:
-//
-//     AUTHENTICATION NEVER HAPPENS OVER A CONNECTION THAT DID NOT BECOME ENCRYPTED.
-//
-// Which is why these are functions of `(host, secure)` returning options, and why the
-// TLS-floor guards assert on a server TRANSCRIPT — that no LOGIN and no
-// AUTH ever reached it — rather than on the value of a flag. A test that checks
-// `secure === true` proves nothing about what crossed the socket.
-//
-// No runtime imports in this module, deliberately: `packages/services` owes an
-// onboarding-time refusal and must be able to import
-// {@link loopbackHarnessReason} without pulling `imapflow`/`nodemailer` — or `node:net` —
-// into the API bundle. Hence the hand-rolled address matching below.
-// ─────────────────────────────────────────────────────────────────────────────
+// The TLS floor on the ohmail-to-provider leg. `ImapConfig.secure` is a caller-supplied boolean
+// from the onboarding request body, and it used to be the only thing between the user's IMAP
+// password and the wire — `secure: false` against a server without STARTTLS sent it in clear
+// text. Both connection shapes are legitimate (implicit TLS 993/465, STARTTLS 143/587); the
+// invariant is narrower: authentication never happens over a connection that did not become
+// encrypted. Hence functions of `(host, secure)` returning options, and guards that assert on a
+// server TRANSCRIPT — no LOGIN or AUTH reached it — rather than on a flag. No runtime imports:
+// `packages/services` must import {@link loopbackHarnessReason} without pulling
+// imapflow/nodemailer or `node:net` into the API bundle.
 
 /**
- * The two TLS parameters that must never be left to a default, and the reason why.
- *
- * Both `imapflow@1.5.0` and `nodemailer@6.10.1` pass their `tls` option object STRAIGHT
- * into `tls.connect` and inject nothing of their own (`imap-flow.js` `connect()` /
- * `upgradeToSTARTTLS()`; `smtp-connection/index.js` `_createConnection()` /
- * `_upgradeConnection()`). So the effective default is Node's, and Node's defaults for
- * both of these are PROCESS GLOBALS that something outside this file can flip. Measured on
- * node v23.6.1 against a self-signed local TLS server:
- *
- *   · `rejectUnauthorized` — defaults to true, and `NODE_TLS_REJECT_UNAUTHORIZED=0` turns
- *     that into `connected: true, authorized: false`. One environment variable on the
- *     worker host, set for some unrelated reason, would silently disable certificate
- *     validation on both mail legs. An explicit `rejectUnauthorized: true` STILL FAILS
- *     under that env var (measured) — it is the only form that holds.
- *   · `minVersion` — `tls.DEFAULT_MIN_VERSION` is `TLSv1.2`, and `node --tls-min-v1.0`
- *     makes it `TLSv1`; a client with no explicit `minVersion` then negotiated **TLSv1**
- *     with a TLS1.0-only server (measured). With `minVersion: "TLSv1.2"` set it refused.
- *
- * A security-relevant default that another process's flags can lower is not a floor.
- *
- * **Why TLSv1.2 and not TLSv1.3.** TLS 1.0/1.1 are dead (RFC 8996) and this refuses them.
- * TLS 1.3 as the minimum would refuse mail servers that work today, and the common shape is
- * a host whose IMAP endpoint on 993 offers TLS 1.3 while its SUBMISSION endpoint on 587 tops
- * out at TLS 1.2 — so a 1.3 floor breaks sending on a server whose receiving side is fine. A
- * floor that disconnects a working provider is not a floor either.
+ * The two TLS parameters that must never be left to a default. `imapflow@1.5.0` and
+ * `nodemailer@6.10.1` pass their `tls` object straight into `tls.connect`, so the effective
+ * defaults are Node's — and both are process globals: `NODE_TLS_REJECT_UNAUTHORIZED=0` silently
+ * disables certificate validation unless `rejectUnauthorized: true` is explicit (measured: the
+ * explicit form still fails under the env var, the only form that holds), and `node
+ * --tls-min-v1.0` lowers `minVersion` so an unpinned client negotiated TLSv1 (measured). TLSv1.2,
+ * not 1.3: the common shape is IMAP on 993 offering 1.3 while submission on 587 tops out at 1.2 —
+ * a 1.3 floor breaks sending on a server whose receiving side is fine.
  */
 export const TLS_FLOOR = { rejectUnauthorized: true, minVersion: "TLSv1.2" } as const;
 
@@ -387,52 +242,26 @@ const isIpLiteral = (host: string): boolean => {
 };
 
 /**
- * The SNI name for a dial, or undefined when SNI must be omitted.
- *
- * RFC 6066 §3 forbids an IP literal in SNI, and both `imapflow@1.5.0` (`imap-flow.js:290`) and
- * `nodemailer@6.10.1` (`smtp-connection/index.js:61`) apply exactly this rule when deriving their
- * own default. It is PINNED here rather than inherited because the derivation lives inside two
- * dependencies' internals: a multi-vhost mail server presents its DEFAULT certificate to a dial
- * with no SNI, which then fails hostname validation — a refusal indistinguishable from a genuinely
- * wrong certificate, on a mailbox that every other client connects to fine. An explicit
- * `servername` on the assembled option set is the difference between "the library happens to do
- * this today" and a floor the guards can watch.
+ * The SNI name for a dial, or undefined when SNI must be omitted. RFC 6066 §3 forbids an IP
+ * literal in SNI, and both `imapflow@1.5.0` and `nodemailer@6.10.1` apply exactly this rule when
+ * deriving their own default. Pinned here because the derivation lives inside two dependencies'
+ * internals: a multi-vhost server presents its default certificate to a dial with no SNI, which
+ * fails hostname validation — indistinguishable from a wrong certificate. An explicit
+ * `servername` is the difference between what a library happens to do and a floor the guards can
+ * watch.
  */
 export const sniServername = (host: string): string | undefined =>
   isIpLiteral(host) ? undefined : host;
 
 /**
- * Why `host` is THE LOCAL TEST HARNESS and therefore exempt from the floor, or `null` if
- * it is not — the shape `transactionPoolerReason` in `packages/db/src/session-url.ts`
- * established, for the same reason: a guard that only says "no" teaches the operator
- * nothing about the value in their hand.
- *
- * ── WHY AN EXEMPTION EXISTS AT ALL ─────────────────────────────────────────────────────
- *
- * GreenMail (`docker-compose.yml`, `:3143`/`:3025`) and the dovecot CONDSTORE fallback
- * (`:3144`) speak plaintext and nothing else. The end-to-end suites for the worker, for the
- * local engine and for this adapter all connect to them. The forbidden move is to soften the
- * PRODUCTION rule so those keep passing; the permitted one is an exemption so narrow that
- * production cannot reach it.
- *
- * ── WHY IT CANNOT APPLY IN PRODUCTION ──────────────────────────────────────────────────
- *
- * It is keyed on the host being LOOPBACK, and loopback is the one address family that
- * cannot carry a packet off the machine, so there is no wire for a credential to leak on.
- * A mailbox host arrives from the onboarding request body and is stored in
- * `mailbox_credentials.meta.host`; a real provider's host is a public FQDN, and so is every
- * `PROVIDERS` preset the onboarding screen offers. For any of them this returns null and the
- * floor applies.
- *
- * ── AND WHY IT IS DELIBERATELY MEAN ────────────────────────────────────────────────────
- *
- * `0.0.0.0` is NOT exempt even though connecting to it reaches loopback on Linux and
- * macOS; nor is `::ffff:127.0.0.1`; nor `localhost.evil.com`, `notlocalhost`,
- * `127.0.0.1.attacker.net`, or a bare empty string. Every rejection here fails CLOSED —
- * the consequence of not matching is that the connection is *harder*, never softer — so
- * the cost of being strict is a developer who has to type `127.0.0.1`, and the cost of
- * being generous is a plaintext password. `*.localhost` is admitted because RFC 6761 §6.3
- * reserves the whole name for loopback.
+ * Why `host` is the local test harness and therefore exempt from the floor, or `null` — the
+ * `transactionPoolerReason` shape: a guard that only says no teaches the operator nothing.
+ * GreenMail (`:3143`/`:3025`) and the dovecot CONDSTORE fallback (`:3144`) speak plaintext only,
+ * and the exemption is so narrow production cannot reach it: keyed on the host being LOOPBACK,
+ * the one address family that cannot carry a packet off the machine. Deliberately mean —
+ * `0.0.0.0`, `::ffff:127.0.0.1`, `localhost.evil.com` and an empty string all fail CLOSED (the
+ * connection gets harder, never softer); `*.localhost` is admitted because RFC 6761 §6.3 reserves
+ * it for loopback.
  */
 export function loopbackHarnessReason(host: string): string | null {
   // A trailing dot is the fully-qualified form of the same name; anything else is
@@ -485,15 +314,11 @@ export interface SmtpTlsFloorOptions {
 }
 
 /**
- * IMAP: the options that make `imapflow` refuse to authenticate over cleartext.
- *
- * `secure: true` needs nothing added — the socket is TLS from its first byte. The
- * dangerous case is `secure: false`, where imapflow's DEFAULT is opportunistic: its own
- * docs say *"If not supported, continue unencrypted. This may expose the connection to a
- * downgrade attack."* `doSTARTTLS: true` converts that into a refusal — `_failSTARTTLS()`
- * (`imap-flow.js:1215`) throws `Server does not support STARTTLS` — and it is checked in
- * `startSession()` at `:1038`, one line BEFORE `authenticate()` at `:1040`, which is the
- * ordering the whole guard rests on.
+ * IMAP: the options that make `imapflow` refuse to authenticate over cleartext. `secure: true`
+ * needs nothing — TLS from the first byte. The dangerous case is `secure: false`, where
+ * imapflow's default is opportunistic STARTTLS; `doSTARTTLS: true` converts that into a refusal
+ * (`Server does not support STARTTLS`), checked in `startSession()` one line before
+ * `authenticate()` — the ordering the whole guard rests on.
  */
 export function imapTlsFloor(host: string, secure: boolean, allowInsecure = false): {
   options: ImapTlsFloorOptions; exemptReason: string | null;
@@ -505,18 +330,14 @@ export function imapTlsFloor(host: string, secure: boolean, allowInsecure = fals
   const servername = sniServername(host);
   const sni = servername ? { servername } : {};
   /**
-   * THE CONSENT BRANCH — the ONE way authentication may cross an unencrypted socket, and it is
-   * reachable only with `secure: false` AND an explicit `allowInsecure`, which every caller
-   * derives from a stored per-mailbox consent marker written by the connect flow after the
-   * PROBE PROVED the server offers no TLS at all (no implicit TLS, no STARTTLS) and the user
-   * opted in over copy that says the password and all mail travel unencrypted.
-   *
-   * It does NOT abandon the upgrade: `doSTARTTLS` is simply absent, which is imapflow's
-   * OPPORTUNISTIC mode — a consented server that later gains STARTTLS is upgraded on the next
-   * dial, with {@link TLS_FLOOR} still validating the certificate it presents. So the consented
-   * state heals toward encryption on its own and can never mask a working TLS deployment.
-   * A `secure: true` config ignores the flag entirely: an implicit-TLS dial is already
-   * encrypted from its first byte and there is nothing to consent away.
+   * The consent branch — the one way authentication may cross an unencrypted socket, reachable
+   * only with `secure: false` AND an explicit `allowInsecure`, which callers derive from a stored
+   * per-mailbox consent marker written after the probe proved the server offers no TLS at all and
+   * the user opted in over copy saying the password and all mail travel unencrypted. It does not
+   * abandon the upgrade: `doSTARTTLS` is simply absent (imapflow's opportunistic mode), so a
+   * consented server that later gains STARTTLS is upgraded on the next dial, {@link TLS_FLOOR}
+   * still validating the certificate. A `secure: true` config ignores the flag: there is nothing
+   * to consent away.
    */
   if (!secure && allowInsecure) {
     return { options: { secure: false, ...sni, tls: TLS_FLOOR }, exemptReason: null };
@@ -601,34 +422,14 @@ export interface ImapConfig {
   allowInsecure?: boolean;
   auth: ImapAuth;
   /**
-   * THE ADDRESSES THIS DIAL MAY CONNECT TO — the SSRF gate's return value, carried to the socket.
-   *
-   * `assertPublicHost` resolves a caller-supplied hostname and clears its addresses. That
-   * clearance is worth nothing if the dial then resolves the NAME a second time: a DNS-rebinding
-   * server answers the gate's lookup with a public address and the socket's independent lookup
-   * with `169.254.169.254`, and the gate has cleared one host while the connection goes to
-   * another. Validate-then-re-resolve is a time-of-check/time-of-use window the size of the whole
-   * guard — the argument is written out at the top of `packages/core/src/net/pinned-fetch.ts`,
-   * and this field is that argument applied to the mail legs instead of to HTTP.
-   *
-   * ── WHAT IT CHANGES, AND WHAT IT DELIBERATELY DOES NOT ──────────────────────────────────────
-   *
-   * ONLY the IP the packets go to. `host` stays the NAME on both transports, so SNI
-   * ({@link sniServername}), certificate hostname validation and any name-based virtual hosting
-   * still see the name the user typed — a pin that weakened certificate validation would be
-   * trading one hole for a worse one. See {@link imapFlowOptions} for the IMAP half (a `lookup`
-   * in the `tls` slot, which is the one option bag imapflow forwards to `net`/`tls.connect`) and
-   * `smtpTransportOptions` for the SMTP half, where nodemailer resolves the name ITSELF before
-   * connecting and the only way to pin it is to hand it an address with `servername` already set.
-   *
-   * ── ABSENT MEANS "DIAL BY NAME", AND THAT IS THE HISTORICAL PATH BYTE FOR BYTE ──────────────
-   *
-   * Every stored-credential dialler (the worker, the send adapter, the attachment adapter) leaves
-   * this undefined and is unchanged by it. It is set on the ADD-TIME PROBE, which is the one
-   * dialler whose host arrives in a request body and has just been through the gate — and only on
-   * the HOSTED policy, because the local policy (`ALLOW_ANY_PROBE_HOST`) clears nothing and so has
-   * nothing to pin to. An empty array is treated as absent rather than as "connect to nothing":
-   * the pin narrows a dial, it is not a second refusal mechanism.
+   * The addresses this dial may connect to — the SSRF gate's clearance, carried to the socket.
+   * `assertPublicHost` resolves a caller-supplied hostname; if the dial resolves the name a
+   * second time, a DNS-rebinding server answers the gate with a public address and the socket
+   * with `169.254.169.254` (the argument is at the top of `net/pinned-fetch.ts`). Only the IP
+   * changes: `host` stays the NAME on both transports, so SNI and certificate validation still
+   * see what the user typed. Absent means dial by name — every stored-credential dialler leaves
+   * it undefined; it is set on the add-time probe under the hosted policy only. An empty array
+   * reads as absent: the pin narrows a dial, never a second refusal mechanism.
    */
   pin?: readonly string[];
   smtp?: {
@@ -639,15 +440,13 @@ export interface ImapConfig {
   };
   sentDomain?: string;
   /**
-   * Network deadlines, in ms, for BOTH transports (see {@link DEFAULT_NET_TIMEOUTS}).
-   *
-   * Neither `imapflow` nor `nodemailer` fails fast by default — a provider that accepts the
-   * TCP connection and then stops responding leaves the operation hanging for as long as the
-   * caller allows. On the serverless host that ceiling is the platform's `maxDuration` (60 s),
-   * and being killed BY the platform is the one failure mode with no error handling at all:
-   * no `finally`, no `adapter.close()`, no response. Every deadline here is therefore set well
-   * below it, so a hung mailbox produces a normal error inside our own code — and, on the send
-   * path, one that can be finalized rather than stranded.
+   * Network deadlines, in ms, for both transports (see {@link DEFAULT_NET_TIMEOUTS}). Neither
+   * `imapflow` nor `nodemailer` fails fast by default — a provider that accepts the TCP
+   * connection and then stops responding hangs the operation indefinitely. On the serverless host
+   * the ceiling is the platform's 60 s `maxDuration`, and being killed by the platform is the one
+   * failure with no error handling at all: no `finally`, no `adapter.close()`, no response. Every
+   * deadline here sits well below it, so a hung mailbox produces a normal error inside our own
+   * code.
    */
   timeouts?: Partial<NetTimeouts>;
 }
@@ -675,42 +474,14 @@ export const DEFAULT_NET_TIMEOUTS: NetTimeouts = {
 };
 
 /**
- * The SAME deadlines for a process that is not serverless — the worker's persistent, IDLE-held
- * connections. Split out because the worker had been silently inheriting a
- * number chosen against that invocation ceiling and a `socketMs` shorter than the legitimate
- * quiet stretches its own cycle produces.
- *
- * ── WHY 25 s WAS A LOADED GUN, AND EXACTLY WHERE IT WENT OFF ───────────────────────────────
- *
- * `socketMs` is Node's socket INACTIVITY timer. imapflow's handler (`_socketTimeout`) is not
- * symmetric: while the client is IDLING it recovers with a NOOP and re-enters IDLE, but when it
- * is NOT idling it calls `emitError`, and after `connect()` has resolved that is a plain
- * `emit("error")` on the client. imapflow also only auto-idles when a mailbox is SELECTED, and
- * only 15 s after the last command (`autoidle()`).
- *
- * So the fatal window is: connection established, no mailbox SELECTED, no command in flight.
- * `connect()` and `ensureFolders()` issue LIST only — which selects nothing — and on a mailbox
- * whose kickstart has already run `runKickstart` returns before touching IMAP. The thread
- * backfill then ran there for minutes on a large backlog: auto-idle was never
- * armed, nothing reset the socket, and at 25 s the client emitted `ETIMEOUT` with no listener.
- * That is the crash cadence of the no-error-listener outage, and it is also why the small seeded
- * test world never reproduced it.
- *
- * ── WHY 120 s ──────────────────────────────────────────────────────────────────────────────
- *
- * It has to exceed the longest stretch in which the worker legitimately holds a connection with
- * nothing on the wire, and stay under the point where one hung command wedges the shard for
- * longer than an alert takes to notice:
- *   · 8× imapflow's 15 s auto-idle delay, so every window auto-idle DOES eventually cover has
- *     ~105 s of slack rather than 10 s;
- *   · above the bounded DB-only stretches a cycle can now produce — 500 flag applications
- *     ({@link DEFAULT_SYNC_BATCH_MAX_FLAGS}) and a 10 s thread-backfill slice;
- *   · below imapflow's own 300 s default, and far below the 15-minute `sync_lag` alert, so a
- *     provider that accepts a command and never answers still fails inside the window an
- *     operator finds out in.
- *
- * It is NOT the reason the process survives — {@link ImapAdapterOpts.onConnectionError} is.
- * A deadline only decides how often the failure happens; the listener decides what it costs.
+ * The same deadlines for the worker's persistent, IDLE-held connections. `socketMs` is Node's
+ * inactivity timer, and imapflow's handler recovers with a NOOP only while IDLING; otherwise it
+ * emits `error`. imapflow auto-idles only when a mailbox is SELECTED, 15 s after the last command
+ * — so the fatal window is connected, nothing selected, no command in flight, which is where the
+ * thread backfill ran for minutes and a 25 s timer emitted ETIMEOUT with no listener. 120 s: 8x
+ * the auto-idle delay, above the bounded DB-only stretches a cycle produces, below imapflow's 300
+ * s default and the 15-minute `sync_lag` alert. Survival is {@link
+ * ImapAdapterOpts.onConnectionError}'s job, not this number's.
  */
 export const WORKER_NET_TIMEOUTS: NetTimeouts = {
   connectionMs: 15_000,
@@ -727,16 +498,13 @@ export interface ImapCapabilities {
   specialUse: boolean;   // RFC 6154 SPECIAL-USE
   sentFolder: string | null; // resolved \Sent path (canonical name)
   /**
-   * The Sent path the SCAN actually watches — `sentFolder` when SPECIAL-USE answered, otherwise
-   * the name-fallback resolution (`findSentForScan`), which is memoised on the first
-   * `changesSince`. OPTIONAL, for adapter fakes; consumers treat absence as `sentFolder`.
-   *
-   * A SEPARATE field rather than folding the fallback into `sentFolder`, because that field is
-   * where the SEND path appends and a read must never redirect it (the adapter's own rule at
-   * `scanSentFolder`). The reader that needs THIS one is the delete completion's Sent exclusion:
-   * on a no-SPECIAL-USE server the watched Sent lives only in the fallback, and excluding
-   * against `sentFolder` alone would leave exactly those providers open to the stale-Sent-row
-   * retry wedge the exclusion closes.
+   * The Sent path the scan actually watches — `sentFolder` when SPECIAL-USE answered, otherwise
+   * the memoised name-fallback (`findSentForScan`). Optional for adapter fakes; absence reads as
+   * `sentFolder`. A separate field because `sentFolder` is where the SEND path appends and a read
+   * must never redirect it. The reader that needs this one is the delete completion's Sent
+   * exclusion: on a no-SPECIAL-USE server the watched Sent lives only in the fallback, and
+   * excluding against `sentFolder` alone would leave those providers open to the stale-Sent-row
+   * retry wedge.
    */
   watchedSentFolder?: string | null;
 }
@@ -759,22 +527,13 @@ export const DEFAULT_SYNC_BATCH_MAX_MESSAGES = 200;
 export const DEFAULT_SYNC_BATCH_MAX_BYTES = 32 * 1024 * 1024;
 
 /**
- * How many messages one {@link MailboxAdapter.moveMany} call may carry.
- *
- * ── WHY THERE IS A CEILING AT ALL, WHEN A BIGGER ONE IS STRICTLY FASTER ────────────────────
- *
- * The destination pre-check is a single `OR HEADER MESSAGE-ID …` command holding one term per
- * member. At 50 that command is roughly 3 KB; at over a thousand — the size of a real screening
- * session measured against a production mailbox — it would be about 70 KB, and a server that caps the
- * command line refuses it. That failure would appear ONLY on large backlogs, which is precisely
- * the case the batched path exists for, so the ceiling is the difference between a fast path and
- * a fast path that breaks when it matters. The `UID MOVE` set has the same shape and the same
- * ceiling covers it.
- *
- * 50 is not a tuned number and does not need to be: the cost is ~5 commands per CHUNK, so at 50
- * the per-message cost is already 0.1 commands and doubling the chunk halves a number that has
- * stopped mattering. It is chosen to keep both commands comfortably small on the least
- * accommodating server rather than to squeeze the last round trip out of the most capable one.
+ * How many messages one {@link MailboxAdapter.moveMany} call may carry. The destination pre-check
+ * is a single `OR HEADER MESSAGE-ID …` command with one term per member: at 50 roughly 3 KB, at a
+ * real screening session's thousand-plus members about 70 KB — which a command-line-capping
+ * server refuses, and only on large backlogs, precisely the case the batched path exists for. The
+ * `UID MOVE` set has the same shape. 50 is not tuned and need not be: ~5 commands per chunk means
+ * 0.1 commands per message already; it keeps both commands comfortably small on the least
+ * accommodating server.
  */
 export const FILING_BATCH_MAX = 50;
 
@@ -805,57 +564,25 @@ export interface MoveManyResult {
 export const DEFAULT_SENT_SCAN_MESSAGES = 500;
 
 /**
- * How much of the Sent folder ohmail ever ingests, newest first.
- *
- * ── WHY THERE IS A CEILING AT ALL ───────────────────────────────────────────────────────────
- *
- * Watching Sent is what puts the user's own replies in their conversations. Ingesting a Sent
- * folder the way INBOX is ingested would also copy fifteen years of outbound mail — bodies and
- * all — into `messages`/`message_bodies` for conversations nobody will ever open. That is
- * storage the account pays for against no product surface (cost must be proportional to
- * value), and it is precisely the question the threading incident existed to teach: not "is it right?"
- * but "does it fit?". The conversation value lives in recent correspondence; the tail does not.
- *
- * 2 000 is roughly two years of a working correspondence at a handful of sends a day, and at
- * the shared per-cycle create budget ({@link DEFAULT_SYNC_BATCH_MAX_MESSAGES}) it drains in
- * about ten bounded cycles — the same shape as the message backfill the worker already re-kicks
- * itself through, on the serial queue, off the attach path.
- *
- * **The residual limit, stated:** a conversation whose outbound half is older than the newest
- * 2 000 Sent messages shows the other side only. Nothing on screen claims otherwise.
- *
- * ── HOW IT IS ENFORCED, AND WHY IT IS NOT A WINDOW EVERY CYCLE ──────────────────────────────
- *
- * FIRST scan only: enumerate the newest N by SEQUENCE number (`${exists-N+1}:*`), the same
- * mechanism `scanSentRecipients` uses. Every cycle after that, the folder's persisted `uidNext`
- * is the WATERMARK — `UID FETCH ${uidNext}:*`, filtered `uid >= uidNext` — so steady state
- * costs one UID enumeration of what has arrived since the last pass, not of the whole
- * {@link DEFAULT_SENT_HISTORY_MESSAGES} window.
- *
- * The watermark is load-bearing for more than cost. `own_copy` (see `dedup.ts`) deliberately
- * writes NO row for the Sent twin of a message we already store, so that UID never joins the
- * known-set. Under the known-set diff every self-CC'd message would be an unknown UID for ever
- * and its full RFC822 body would be re-fetched on every cycle, permanently, for the life of the
- * account. A UID is behind the watermark whether or not it produced a row, which is the only
- * property that closes that loop without persisting a second kind of row.
+ * How much of the Sent folder is ever ingested, newest first. Full ingestion would copy fifteen
+ * years of outbound mail into `messages`/`message_bodies` for conversations nobody opens; the
+ * value lives in recent correspondence. 2 000 is roughly two years at a few sends a day, drained
+ * in about ten bounded cycles. Residual, stated: a conversation whose outbound half is older
+ * shows the other side only. First scan enumerates the newest N by sequence; afterwards the
+ * persisted `uidNext` is the watermark. The watermark also closes the `own_copy` loop: that dedup
+ * writes no row for the Sent twin, and a UID is behind the watermark whether or not it produced a
+ * row — otherwise every self-CC'd message would be re-fetched for ever.
  */
 export const DEFAULT_SENT_HISTORY_MESSAGES = 2_000;
 
 /**
- * How many FLAG changes one `changesSince` call may report.
- *
- * The creates budget above bounds MEMORY. This one bounds TIME, and it was missing: the
- * CONDSTORE fast path pushed every changed UID with no cap, and the worker consumes each one as
- * its own database transaction (`apps/worker/src/sync.ts`). "Mark all as read" across a large
- * mailbox in Apple Mail therefore produced one sequential transaction per changed message
- * inside ONE cycle — minutes on the worker's single serial queue, during which no other
- * mailbox syncs, no roster pass runs, and `stop()` cannot complete inside the platform's 30 s
- * `drainingSeconds` before SIGKILL.
- *
- * 500 is ~7 s of database round trips: comfortably inside imapflow's 15 s auto-idle arming
- * delay, so the connection is protected by IDLE for the rest of the drain, and well inside
- * {@link WORKER_NET_TIMEOUTS}. A truncated flag pass sets `hasBacklog`, so the worker re-kicks
- * rather than waiting out a poll interval and 8 792 flags drain in about a minute.
+ * How many FLAG changes one `changesSince` call may report. The creates budget bounds memory;
+ * this bounds TIME: the CONDSTORE fast path pushed every changed UID uncapped, and the worker
+ * consumes each as its own transaction — mark-all-as-read across a large mailbox meant minutes on
+ * the single serial queue, no other mailbox syncing, and `stop()` unable to finish inside the
+ * platform's 30 s drain before SIGKILL. 500 is ~7 s of database round trips, inside imapflow's 15
+ * s auto-idle delay and {@link WORKER_NET_TIMEOUTS}. A truncated pass sets `hasBacklog`, so the
+ * worker re-kicks and 8 792 flags drain in about a minute.
  */
 export const DEFAULT_SYNC_BATCH_MAX_FLAGS = 500;
 
@@ -874,34 +601,23 @@ export interface ImapAdapterOpts {
   /** Sent-folder history depth. Default {@link DEFAULT_SENT_HISTORY_MESSAGES}. Test seam. */
   sentHistoryMessages?: number;
   /**
-   * The connection died ASYNCHRONOUSLY — the one failure this class cannot report by throwing.
-   *
-   * `ImapFlow` is an EventEmitter and signals a dead socket, a server `BYE`, or an `ETIMEOUT`
-   * by emitting `error`. Node turns an `error` event with NO listener into an uncaught
-   * exception, and the worker's entrypoint exits the process on those BY DESIGN. That is
-   * the entire kill mechanism of the no-error-listener outage: a `try/catch` around the slow code
-   * could never have caught it, because the throw did not come out of the call it wrapped.
-   *
-   * The adapter therefore ALWAYS attaches a listener (see `ImapAdapter.connect`), whether or
-   * not this callback is supplied — containment must not depend on a caller remembering. This
-   * is how the OWNER of the connection finds out: the worker detaches and quarantines just
-   * that mailbox, and every other account keeps syncing.
-   *
-   * It must not throw. Anything it does throw is swallowed at the emit site, because a handler
-   * that rethrows inside an `error` listener reproduces the crash it exists to prevent.
+   * The connection died asynchronously — the one failure this class cannot report by throwing.
+   * `ImapFlow` signals a dead socket, a server BYE or an ETIMEOUT by emitting `error`; with no
+   * listener Node turns that into an uncaught exception and the worker's entrypoint exits by
+   * design — a `try/catch` around the slow code could never catch it. The adapter therefore
+   * ALWAYS attaches a listener (`ImapAdapter.connect`), supplied or not: containment must not
+   * depend on a caller remembering. The worker detaches and quarantines just that mailbox. It
+   * must not throw — a handler that rethrows inside an `error` listener reproduces the crash it
+   * prevents.
    */
   onConnectionError?: (err: unknown) => void;
   /**
-   * The clock the adapter's wall-clock ceilings read — see `imap-bounds.ts`
-   * ({@link IMAP_READ_DEADLINE_MS}, {@link IMAP_CYCLE_DEADLINE_MS}).
-   *
-   * A TEST SEAM, and it exists because the alternative is worse. The slow-server ceilings are
-   * measured in minutes, so a test that proved them against the real clock would have to sleep
-   * for minutes, and one that proved them by lowering the ceilings would be exercising numbers
-   * the product does not ship. Handing the adapter its clock lets a hostile-server test drive
-   * the SHIPPING constants to the millisecond.
-   *
-   * Defaults to `Date.now`. Nothing in production supplies it.
+   * The clock the adapter's wall-clock ceilings read (`imap-bounds.ts`: {@link
+   * IMAP_READ_DEADLINE_MS}, {@link IMAP_CYCLE_DEADLINE_MS}). A test seam: the slow-server
+   * ceilings are minutes, so proving them against the real clock means sleeping minutes, and
+   * lowering them means testing numbers the product does not ship. Handing the adapter its clock
+   * lets a hostile-server test drive the SHIPPING constants to the millisecond. Defaults to
+   * `Date.now`; nothing in production supplies it.
    */
   nowMs?: () => number;
 }
@@ -911,20 +627,13 @@ export interface PersistedFolderCursor {
   uidNext: number;
   highestModseq: string;
   /**
-   * THE FOLDER'S `EXISTS`, AS THIS SELECT REPORTED IT — the first pull's denominator (mail 0083).
-   *
-   * The adapter has always read `mb.exists` and always DISCARDED it, so no truthful total of the
-   * mailbox existed anywhere: `mailbox_folders` held cursors only, and the import progress strip
-   * had a numerator (the mirror's row count) with nothing to divide it by. Remaining is the sum
-   * of this over watched folders minus the mirror count.
-   *
-   * OPTIONAL, and absent means "this pass did not open the folder" — the passive fast path, which
-   * skips the SELECT entirely on a provably unchanged folder, and every fake adapter. The writer
-   * (`upsertMailboxFolder`) leaves the stored value alone when it is absent rather than nulling
-   * it, so a folder the fast path skipped keeps the last count somebody actually observed.
-   *
-   * It is a COUNT AND NOT A CURSOR, which is why it is stated here rather than folded into one of
-   * the three above: nothing decides anything on it, and it may go backwards (mail is deleted).
+   * The folder's `EXISTS` as this SELECT reported it — the first pull's denominator (mail 0083).
+   * The adapter always read `mb.exists` and always discarded it, so no truthful total existed
+   * anywhere: the import progress strip had a numerator with nothing to divide it by. Remaining
+   * is the sum of this over watched folders minus the mirror count. Optional; absent means this
+   * pass did not open the folder (the passive fast path, every fake adapter), and the writer
+   * leaves the stored value alone rather than nulling it. A count, not a cursor: nothing decides
+   * on it and it may go backwards.
    */
   serverExists?: number;
 }
@@ -955,58 +664,34 @@ export interface ChangeBatch {
    */
   rebootstrapped?: readonly string[];
   /**
-   * At least one folder's backlog was TRUNCATED by the batch budget — another pass is owed.
-   *
-   * A truncated folder's cursor is deliberately held at its previous value (see
-   * {@link DEFAULT_SYNC_BATCH_MAX_MESSAGES}), so the worker cannot rely on the cursor moving
-   * to know it is done. It re-kicks its cycle on this flag instead of waiting out the poll
-   * interval, which is what turns a big first sync from "one 3-hour cycle that looks dead"
-   * into a series of short, observable ones.
-   *
-   * Optional so every existing fake adapter keeps compiling; absent ⇒ `false`.
+   * At least one folder's backlog was truncated by the batch budget — another pass is owed. A
+   * truncated folder's cursor is held at its previous value (see {@link
+   * DEFAULT_SYNC_BATCH_MAX_MESSAGES}), so the worker cannot rely on cursor movement to know it is
+   * done; it re-kicks on this flag instead of waiting out the poll interval — a big first sync
+   * becomes short observable cycles instead of one three-hour cycle that looks dead. Optional so
+   * every fake adapter keeps compiling; absent reads as `false`.
    */
   hasBacklog?: boolean;
   /**
-   * UIDs this pass ASKED THE SERVER FOR AND DID NOT GET BACK — and the caller owes each one a
-   * durable failure row BEFORE it writes the folder cursor.
-   *
-   * RFC 3501 lets a `UID FETCH` return fewer messages than the UID set names, with no error and no
-   * per-UID signal, so "the message did not arrive" is indistinguishable from "the message does not
-   * exist" at the protocol level. The adapter cannot tell the difference either; what it CAN do is
-   * refuse to be silent about it, which is what this field is.
-   *
-   * The cursor for such a folder is published ADVANCED, exactly as it is for a message that was
-   * fetched and then failed to parse. That is safe for the same reason and only for the same
-   * reason: `message_failures` holds the UID, `buildCursor` merges it into the known-set, and the
-   * targeted retry re-reads it by UID on a schedule and on every deploy. A caller that ignores this
-   * field instead publishes a watermark over mail nothing will ever enumerate again — see
-   * `sync.ts`, which records these and DEFERS the folder's cursor when the record cannot be written.
-   *
-   * Empty on almost every cycle. It is populated by servers that cannot serialize some field of a
-   * particular message (measured: iCloud omits the row for a quoted-string `Message-ID` when
-   * ENVELOPE is requested), which is why `fetchCapped` first re-asks without the field it suspects
-   * before giving up on the UID — most of what would land here is recovered instead.
-   *
-   * Optional so every existing fake adapter keeps compiling; absent ⇒ nothing was withheld.
+   * UIDs this pass asked the server for and did not get back — the caller owes each a durable
+   * failure row BEFORE writing the folder cursor. RFC 3501 lets `UID FETCH` return fewer messages
+   * than named, with no error, so did-not-arrive is indistinguishable from does-not-exist. The
+   * cursor is published advanced — safe only because `message_failures` holds the UID,
+   * `buildCursor` merges it into the known-set, and the targeted retry re-reads it on every
+   * deploy; ignoring this field publishes a watermark over mail nothing will enumerate again
+   * (`sync.ts`). iCloud omits the row for a quoted-string `Message-ID` under ENVELOPE;
+   * `fetchCapped` re-asks without the suspect field. Optional; absent means nothing withheld.
    */
   unanswered?: ReadonlyArray<{ folder: string; uidValidity: string; uid: number }>;
   /**
-   * UIDs whose RFC822.SIZE already exceeds the hard MIME ceiling (`MAX_RAW_MESSAGE_BYTES`), so
-   * their body was DELIBERATELY NEVER FETCHED — and the caller owes each one a durable
-   * `mime_too_large` row BEFORE it writes the folder cursor, exactly as it does for
-   * {@link unanswered}.
-   *
-   * The anti-stall rule in `fetchCapped` admits the first candidate past the BATCH byte budget so
-   * one large mail cannot wedge the drain — but a message past the MIME ceiling is refused by
-   * `normalizeMime` deterministically AFTER the download, so admitting it buys a full-source
-   * transfer (measured shape: 100+ MiB into one Buffer) whose only possible outcome was already
-   * known from the size the metadata fetch had in hand. That transfer can monopolize the
-   * connection or take the process past its memory budget before the failure ledger ever hears
-   * about the message. So the ceiling is enforced from RFC822.SIZE, pre-fetch, and the outcome is
-   * the SAME durable row the post-download rejection would have written — the targeted retry then
-   * probes it by size once per deployed build, never re-downloading it.
-   *
-   * Optional so every existing fake adapter keeps compiling; absent ⇒ nothing was refused on size.
+   * UIDs whose RFC822.SIZE already exceeds `MAX_RAW_MESSAGE_BYTES`, so the body was deliberately
+   * never fetched — the caller owes each a durable `mime_too_large` row before writing the
+   * cursor, exactly as for {@link unanswered}. The anti-stall rule in `fetchCapped` admits the
+   * first candidate past the BATCH byte budget, but a message past the MIME ceiling is refused by
+   * `normalizeMime` deterministically AFTER download — admitting it buys a 100+ MiB transfer
+   * whose outcome was already known from the metadata fetch. So the ceiling is enforced pre-fetch
+   * from RFC822.SIZE, writing the same durable row; the targeted retry probes by size once per
+   * build. Optional; absent means nothing refused on size.
    */
   oversize?: ReadonlyArray<{ folder: string; uidValidity: string; uid: number; size: number }>;
 }
@@ -1024,41 +709,23 @@ export interface OutboundMessage {
   text: string; html?: string;
   messageId?: string; inReplyTo?: string; references?: string | string[];
   /**
-   * Extra RFC 5322 header fields, written onto BOTH the delivered message and the Sent-folder copy
-   * (one `Mail.Options` builds both — see `outboundToMail`).
-   *
-   * It exists for ONE caller and one header: an automatic reply must carry
-   * `Auto-Submitted: auto-replied` (RFC 3834 §5), which is what stops another mail system's
-   * responder answering ours and the two of them filling a mailbox each. A hand-composed send
-   * never sets this — `SendService` does not pass it — so there is no path by which a message a
-   * person typed acquires an automation marker.
-   *
-   * Names are passed through to nodemailer's `headers` verbatim and may NOT restate a field this
-   * seam already owns (`From`/`To`/`Cc`/`Bcc`/`Subject`/`Message-ID`/`In-Reply-To`/`References`):
-   * MailComposer would emit the field twice, and a duplicated `Message-ID` breaks the
-   * verify-by-Sent probe the crash-safe send path depends on. The away responder's own test suite
-   * asserts the single header it passes, so the restriction above is a rule about this seam rather
-   * than a hope about its callers.
+   * Extra RFC 5322 header fields, written onto both the delivered message and the Sent-folder
+   * copy (one `Mail.Options` builds both — `outboundToMail`). Exists for one caller and one
+   * header: an automatic reply must carry `Auto-Submitted: auto-replied` (RFC 3834 §5), which
+   * stops another responder answering ours; a hand-composed send never sets it. Names pass to
+   * nodemailer's `headers` verbatim and may NOT restate a field this seam owns
+   * (From/To/Cc/Bcc/Subject/Message-ID/In-Reply-To/References): MailComposer would emit it twice,
+   * and a duplicated `Message-ID` breaks the verify-by-Sent probe the crash-safe send depends on.
    */
   headers?: Readonly<Record<string, string>>;
   /**
-   * FILES TO SEND — and the whole reason ohmail can attach without storing a byte.
-   *
-   * `outboundToMail` maps these straight onto nodemailer's own `attachments`, so the ONE compiled
-   * message drives BOTH the SMTP delivery AND the raw bytes appended to the Sent folder
-   * (`imap.ts#send` → `buildRaw`). The bytes therefore exist only in this in-memory object for the
-   * life of the send: they arrive in the send request, ride here, and are gone when the request
-   * returns — never a row in `attachments`, `drafts` or anywhere else (§13.2/§14). Two halves of that
-   * are guarded separately: that one compiled message carries the file into both the delivery and
-   * the Sent-folder copy, and that no row anywhere holds a byte of it. The citation that used to
-   * stand here named a test file that was never added on any branch, which reads as coverage and is
-   * not. Two producers fill it: the compose form's
-   * own files (bytes uploaded with the send), and a FORWARD's original parts, which the server
-   * streams from IMAP via `fetchPart` at send time and hands here without ever persisting them.
-   *
-   * `content` is the decoded bytes. nodemailer accepts a Buffer/Uint8Array for an attachment's
-   * `content`, and `cid` (set only for a forwarded inline part) lets a related image keep resolving
-   * against the quoted HTML.
+   * Files to send — the reason ohmail can attach without storing a byte. `outboundToMail` maps
+   * these onto nodemailer's `attachments`, so one compiled message drives both the SMTP delivery
+   * and the raw bytes appended to Sent (`imap.ts#send` → `buildRaw`). The bytes exist only in
+   * this in-memory object for the life of the send — never a row in `attachments`, `drafts` or
+   * anywhere else (§13.2/§14). Two producers: the compose form's own files, and a forward's
+   * original parts, streamed from IMAP via `fetchPart` at send time. `content` is decoded bytes;
+   * `cid` (forwarded inline parts only) keeps a related image resolving against the quoted HTML.
    */
   attachments?: OutboundAttachment[];
 }
@@ -1073,20 +740,14 @@ export interface SendResult {
   providerMessageId: string;
   sentLocator: NativeLocator;
   /**
-   * THE EXACT BYTES THAT WERE APPENDED TO THE SENT FOLDER — `MailComposer`'s output, the same
-   * Buffer handed to `client.append`, carried out rather than dropped on the floor.
-   *
-   * It exists for ONE consumer and the reason is an identity rule, not a convenience:
-   * `identity.ts#messageFingerprint` derives a message's identity from its CONTENT, computed by
-   * `normalizeMime` over the raw source. So a caller that wants to record this send as a
-   * `messages` row before the mailbox is re-read (`sent-record.ts#recordSentMessage`) must
-   * fingerprint THESE bytes. Rebuilding an equivalent message from the `OutboundMessage` instead
-   * drifts by a byte — a boundary string, a header fold, a transfer encoding — which is a
-   * different fingerprint, which is a SECOND `messages` row the first time the Sent copy is
-   * observed, in every client, permanently, with no delta that removes either.
-   *
-   * Not optional, deliberately: an adapter that appends and cannot say what it appended has no
-   * business on this seam, and a `raw?` would let a future adapter opt out of the rule silently.
+   * The exact bytes appended to the Sent folder — `MailComposer`'s output, the same Buffer handed
+   * to `client.append`. One consumer, and the reason is an identity rule:
+   * `identity.ts#messageFingerprint` derives identity from content via `normalizeMime` over raw
+   * source, so `sent-record.ts#recordSentMessage` must fingerprint THESE bytes. Rebuilding from
+   * the `OutboundMessage` drifts by a byte — a boundary string, a header fold — which is a
+   * different fingerprint and a second `messages` row when the Sent copy is observed,
+   * permanently. Not optional, deliberately: `raw?` would let a future adapter opt out of the
+   * rule silently.
    */
   raw: Buffer;
 }
@@ -1156,16 +817,13 @@ export interface MailboxAdapter {
   connect(): Promise<void>;
   close(): Promise<void>;
   /**
-   * An IMAP NOOP: ask this connection whether it is still answering. A half-open link — socket
-   * up, every command hanging, no `close` and no `error` — is invisible to
-   * {@link ImapAdapterOpts.onConnectionError}, and the other detectors are clocks in minutes.
-   *
-   * Deliberately unbounded: the CALLER owns the window, because a heartbeat's whole purpose is a
-   * deadline shorter than the one every other command here is held to. Abandoning the call
-   * leaves the command outstanding, so pair it with {@link forceClose}.
-   *
-   * Optional: an adapter without it cannot be probed, which is not the same fact as a connection
-   * that failed to answer.
+   * An IMAP NOOP: ask this connection whether it still answers. A half-open link — socket up,
+   * every command hanging, no `close`, no `error` — is invisible to {@link
+   * ImapAdapterOpts.onConnectionError}, and the other detectors are clocks in minutes.
+   * Deliberately unbounded: the caller owns the window, because a heartbeat's purpose is a
+   * deadline shorter than every other command's. Abandoning the call leaves the command
+   * outstanding, so pair it with {@link forceClose}. Optional: an adapter without it cannot be
+   * probed, which is not the same fact as a connection that failed to answer.
    */
   noop?(): Promise<void>;
   /**
@@ -1175,16 +833,12 @@ export interface MailboxAdapter {
    */
   forceClose?(): void;
   /**
-   * THE LAST MOMENT THIS CONNECTION WAS HEARD FROM — the server's own bytes, not our writes.
-   *
-   * A heartbeat alone cannot tell a BUSY link from a DEAD one: imapflow writes one command at a
-   * time, so a NOOP issued during a legitimately long FETCH is not on the wire yet and its
-   * window says nothing about the link. What tells them apart is whether the server is still
-   * talking — a streaming FETCH answers continuously, a half-open link answers nothing at all.
-   *
-   * `null` means "nothing has been heard yet", which a caller must read as unknown rather than
-   * as silence. Optional, like {@link noop}: an adapter without it leaves the heartbeat's window
-   * as the only evidence, which is what this repository shipped before.
+   * The last moment this connection was heard from — the server's own bytes, not our writes. A
+   * heartbeat alone cannot tell a busy link from a dead one: imapflow writes one command at a
+   * time, so a NOOP issued during a long FETCH is not on the wire yet. What tells them apart is
+   * whether the server is still talking — a streaming FETCH answers continuously, a half-open
+   * link answers nothing. `null` means nothing heard yet — unknown, not silence. Optional, like
+   * {@link noop}.
    */
   lastServerActivityAt?(): Date | null;
   capabilities(): Promise<ImapCapabilities>;
@@ -1192,29 +846,14 @@ export interface MailboxAdapter {
   changesSince(cursor: ImapCursor): Promise<ChangeBatch>;
   move(locator: NativeLocator, toFolder: string): Promise<NativeLocator>;
   /**
-   * File a GROUP of messages that share a source folder and a destination, in a handful of round
-   * trips instead of a handful PER MESSAGE.
-   *
-   * ── WHAT THE CALLER IS PROMISED, STATED AS AN EQUIVALENCE ─────────────────────────────────
-   *
-   * When `batched` is true, the server's folders end up in the state calling {@link move} once
-   * per member would have produced, and `moved` names where each one landed. When `batched` is
-   * false, **NOTHING WAS WRITTEN** and the caller must fall back to {@link move} for every member
-   * of the group — the implementation refuses whenever it cannot prove the equivalence, and it
-   * always refuses before it writes. There is deliberately no third answer: a partial batch would
-   * make the caller reason about which half it still owes, which is the bookkeeping this method
-   * exists to remove.
-   *
-   * `gone` carries the members whose UID the source folder no longer holds — the batch's form of
-   * {@link MessageGoneError}, reported rather than thrown so one vanished message does not cost
-   * the rest of the group. The caller leaves those rows pending exactly as it does for the throw,
-   * and `changesSince` adopts whatever really happened to them.
-   *
-   * The group must not exceed {@link FILING_BATCH_MAX}; the caller chunks. A source folder equal
-   * to the destination, or a group spanning two source folders, is a caller bug and throws.
-   *
-   * OPTIONAL on the interface, on `scanSentRecipients`' rule: a backend that does not implement it
-   * simply never gets the fast path, and every fake adapter keeps compiling.
+   * File a group of messages sharing a source folder and destination in a handful of round trips
+   * instead of a handful per message. `batched: true` means the folders end in the state
+   * per-member {@link move} would have produced, `moved` naming where each landed; `batched:
+   * false` means NOTHING WAS WRITTEN and the caller owes the whole group to `move` — the
+   * implementation refuses before it writes; no partial outcome. `gone` carries members whose UID
+   * the source no longer holds ({@link MessageGoneError} reported, not thrown), so one vanished
+   * message does not cost the group; `changesSince` adopts what happened. The group must not
+   * exceed {@link FILING_BATCH_MAX}. Optional; fakes keep compiling.
    */
   moveMany?(locators: readonly NativeLocator[], toFolder: string): Promise<MoveManyResult>;
   /* ── The USER-COMMANDED folder verbs (FOLDERS-SPEC.md stage 2) — executed only by the
@@ -1246,102 +885,57 @@ export interface MailboxAdapter {
   /** The folder delete's sweep: move EVERYTHING in `folder` to `toFolder` (native \Trash). */
   moveAll?(folder: string, toFolder: string): Promise<number>;
   /**
-   * Write the `\Seen` flag on ONE message — the other half of organize-in-place.
-   *
-   * Originally this interface had `move` and nothing else, so read-state never reached the
-   * mailbox in either direction and the promise that read/seen flags survive
-   * everything was a claim about a code path that did not exist.
-   *
-   * Called ONLY by the worker's `reconcileMailbox`, from a pending `flag_state` row, OUTSIDE
-   * any transaction — the API never opens IMAP. Idempotent by construction: STORE
-   * +FLAGS/-FLAGS on a message that already carries the flag is a no-op on every server, so a
-   * crash between the IMAP write and the `observed_seen` update costs one redundant STORE on
-   * the next pass and nothing else.
-   *
-   * `{ seen }` rather than a flag array, deliberately: `\Seen` is the only flag the product has
-   * an opinion about, and a general flag-bag would invite writing `\Deleted` or `\Answered`
-   * from code that has not thought about what that means in someone's real mailbox.
-   *
-   * Throws {@link MessageGoneError} when the locator no longer resolves (the message moved or
-   * was expunged between the DB read and this call) — the same signal `move` raises, so the
-   * reconciler's existing skip-and-re-adopt branch covers it.
+   * Write the `\Seen` flag on one message — the other half of organize-in-place; without it
+   * read-state never reached the mailbox in either direction. Called only by the worker's
+   * `reconcileMailbox`, from a pending `flag_state` row, outside any transaction — the API never
+   * opens IMAP. Idempotent by construction: STORE +FLAGS/-FLAGS on a message already carrying the
+   * flag is a no-op on every server, so a crash between the IMAP write and the `observed_seen`
+   * update costs one redundant STORE. `{ seen }` rather than a flag bag: `\Seen` is the only flag
+   * the product has an opinion about. Throws {@link MessageGoneError} when the locator no longer
+   * resolves — the same signal `move` raises.
    */
   setFlags(locator: NativeLocator, flags: { seen: boolean }): Promise<void>;
   /**
-   * DISTINCT recipient addresses of the newest `limit` messages in the resolved Sent folder —
-   * the raw material of the connect-time kickstart.
-   *
-   * People you have written to are people you know, and `contacts` IS `knownSenders`
-   * (`drizzle-repo.ts`), so importing them is the single move that stops a virgin mailbox
-   * screening every thread reply and every existing correspondent. Measured on the seeded
-   * test world before it existed: most of its messages sat in `ohmail/Screener`.
-   *
-   * READ-ONLY AND NON-CREATING, both deliberately. It fetches envelopes under a mailbox lock and
-   * never moves, flags or appends; and unlike the send path's `resolveSentFolder` it will NOT
-   * create a `Sent` folder when the server has none — a mailbox with no Sent folder yields an
-   * empty list, which degrades the kickstart, while creating a folder in someone's mailbox to
-   * read zero messages out of it is a write we have no reason to make.
-   *
-   * OPTIONAL on the interface: the worker treats its absence as "no kickstart available", so
-   * every existing fake adapter and every alternative backend keeps compiling and keeps working.
+   * Distinct recipient addresses of the newest `limit` messages in the resolved Sent folder — the
+   * raw material of the connect-time kickstart. People you have written to are people you know,
+   * and `contacts` IS `knownSenders` (`drizzle-repo.ts`); importing them is the single move that
+   * stops a virgin mailbox screening every thread reply. Read-only and non-creating, both
+   * deliberately: it fetches envelopes under a mailbox lock, never moves, flags or appends, and
+   * unlike the send path's `resolveSentFolder` it will NOT create a Sent folder — a mailbox
+   * without one yields an empty list. Optional: the worker treats absence as no kickstart
+   * available.
    */
   scanSentRecipients?(limit?: number): Promise<string[]>;
   /**
-   * Re-read NAMED UIDs of one folder — the targeted retry of the durable failure ledger.
-   *
-   * ── WHY THIS IS NOT A FOLDER RESCAN, AND WHY IT CANNOT BE ──────────────────────────────
-   *
-   * A UID the ingest loop wrote off is, by then, behind the Sent folder's watermark
-   * ({@link DEFAULT_SENT_HISTORY_MESSAGES}), and the watermark is the only enumeration floor that
-   * folder has. Reaching the UID by rescanning means holding the watermark below it — for ever,
-   * because the message keeps failing — so the enumeration range grows without bound and the poison
-   * body is pulled again on every single cycle. Naming the UID is what makes the retry cost one
-   * fetch instead of a permanent regression, and it is why the watermark can keep advancing, which
-   * is the property that stops one bad message wedging a mailbox.
-   *
-   * ── WHY NOT {@link fetchRaw} ───────────────────────────────────────────────────────────
-   *
-   * `fetchRaw` returns bytes. The ingest path needs the bytes AND the server's `\Seen`, and
-   * inventing the flag is not a small liberty: guess `false` on the user's own sent mail and it
-   * comes back unread. This returns the same {@link Change} the ordinary create path carries,
-   * `ownAuthored` stamped by the same Sent-folder resolution, so a retried message runs through
-   * `planChange`/`commitChange` byte-identically to one that arrived normally — which is what makes
-   * the retry idempotent rather than a second ingest path with its own dedup story.
-   *
-   * READ-ONLY. Nothing is moved, flagged or appended, and imapflow emits `BODY.PEEK[]` for a source
-   * fetch, so re-reading somebody's mail cannot mark it read.
-   *
-   * OPTIONAL on the interface, on {@link scanSentRecipients}' rule: every existing fake adapter
-   * keeps compiling, and a caller treats its absence as "this backend cannot retry by UID" — which
-   * degrades to the pre-0041 behaviour rather than to an error.
+   * Re-read named UIDs of one folder — the targeted retry of the durable failure ledger. Not a
+   * rescan, and it cannot be: a written-off UID is behind the Sent watermark, and holding the
+   * watermark below it for ever grows the enumeration range without bound, pulling the poison
+   * body every cycle. Naming the UID makes the retry cost one fetch and lets the watermark
+   * advance. Not {@link fetchRaw}: the ingest path needs the bytes AND the server's `\Seen` —
+   * guess `false` on the user's own sent mail and it comes back unread. Returns the same {@link
+   * Change} the create path carries, so a retried message runs `planChange`/`commitChange`
+   * byte-identically. Read-only (`BODY.PEEK[]`). Optional; absence degrades, never errors.
    */
   fetchByUid?(
     folder: string, uids: readonly number[], opts?: FetchByUidOptions,
   ): Promise<TargetedFetch>;
   /**
-   * Resolve the provider's native `\Junk` and `\Trash` folders for the three user-commanded
-   * writes — see the product rule above {@link PASSIVE_EXCLUDED_SPECIAL_USE}.
-   *
-   * SPECIAL-USE first, then the {@link JUNK_BY_NAME}/{@link TRASH_BY_NAME} belts on the canonical
-   * leaf, `\Noselect` and the `ohmail` namespace excluded, and NOTHING IS EVER CREATED — see
-   * {@link SpecialFolders} for why a null answer is the honest one. Read-only: one LIST and no
-   * other command.
-   *
-   * OPTIONAL on the interface, on {@link scanSentRecipients}' rule: every existing fake adapter
-   * keeps compiling, and a caller treats its absence as "both null" — the documented fallbacks.
+   * Resolve the provider's native `\Junk` and `\Trash` for the three user-commanded writes — see
+   * the product rule above {@link PASSIVE_EXCLUDED_SPECIAL_USE}. SPECIAL-USE first, then the
+   * {@link JUNK_BY_NAME}/{@link TRASH_BY_NAME} belts on the canonical leaf, `\Noselect` and the
+   * `ohmail` namespace excluded, and nothing is ever created — see {@link SpecialFolders} for why
+   * a null answer is the honest one. Read-only: one LIST and no other command. Optional; a caller
+   * treats absence as both null, the documented fallbacks.
    */
   findSpecialFolders?(): Promise<SpecialFolders>;
   watch(onSignal: () => void): Promise<() => Promise<void>>;
   /**
    * Re-establish what {@link watch} set up — INBOX selected, IDLE running — after other
-   * operations on the same connection moved the selection elsewhere. The worker calls this at
-   * the end of every cycle visit; without it the IDLE sits on whichever folder the visit's last
-   * `SELECT` landed on and an INBOX arrival emits nothing, which is a dead push channel that
-   * looks exactly like a slow one (measured: p50 194 s arrival→mirror while "watching").
-   *
-   * OPTIONAL on the interface, on {@link scanSentRecipients}' rule: every existing fake adapter
-   * keeps compiling, and a backend without it simply relies on its own `watch` semantics.
-   * A no-op before `watch` and after its unwatch.
+   * operations moved the selection. The worker calls this at the end of every cycle visit;
+   * without it the IDLE sits on whichever folder the last SELECT landed on and an INBOX arrival
+   * emits nothing — a dead push channel that looks exactly like a slow one (measured: p50 194 s
+   * arrival to mirror while watching). Optional; a backend without it relies on its own `watch`
+   * semantics. A no-op before `watch` and after its unwatch.
    */
   rearmWatch?(): Promise<void>;
   send(msg: OutboundMessage): Promise<SendResult>;
@@ -1353,41 +947,14 @@ export interface MailboxAdapter {
    */
   fetchPart(locator: NativeLocator, partId: string | null, opts?: FetchPartOptions): Promise<FetchedPart>;
   /**
-   * The WHOLE RFC822 message, exactly as the server holds it. Read-only, and never persisted.
-   *
-   * ── WHY THIS EXISTS AS ITS OWN METHOD ──────────────────────────────────────────────────
-   *
-   * {@link fetchPart} is per-MIME-part and substitutes `"1"` for a null part, so it cannot ask
-   * for a whole message. `download(uid, "")` happens to reach the right branch inside imapflow —
-   * an empty part is falsy, and a falsy part makes it fetch the source — but that is an
-   * undocumented property of a dependency's internals two layers below this interface, and
-   * reading a stranger's mailbox is not a place to rely on one. A method whose name says what it
-   * fetches can be tested, and its read-only guarantee can be stated where callers see it.
-   *
-   * ── IT NEVER MARKS ANYTHING READ ───────────────────────────────────────────────────────
-   *
-   * imapflow emits `BODY.PEEK[]` for a source fetch, and PEEK is the form of FETCH that does not
-   * set `\Seen`. That is not a convention this method follows, it is the only wire form it can
-   * produce — so a caller cannot accidentally mark someone's mail read by re-reading it.
-   *
-   * ── THE CEILING REFUSES; IT DOES NOT TRUNCATE, AND IT DOES NOT ABORT ───────────────────
-   *
-   * Two failure modes are ruled out here rather than left to callers:
-   *
-   *  · A SHORT READ IS NEVER RETURNED. Over the ceiling, this throws. The caller re-parses these
-   *    bytes and decides something about their content; a message silently missing its tail
-   *    re-parses into a message missing text, and every content decision then runs on less
-   *    evidence than the real message carries. For a sensitivity decision that bias runs toward
-   *    "nothing to see here", which is the one direction that must never happen quietly.
-   *  · THE CONNECTION SURVIVES. {@link FetchPartOptions.maxBytes} abandons its stream mid-literal
-   *    and leaves the socket unusable, which is why only a caller owning a per-request connection
-   *    may pass it. This one stops at a chunk boundary instead, so it is safe on the long-lived
-   *    per-mailbox connection the worker keeps in IDLE — which is the only connection its caller
-   *    has.
-   *
-   * OPTIONAL on the interface, on {@link scanSentRecipients}' rule: every existing fake adapter
-   * and every alternative backend keeps compiling, and a caller treats its absence as "this
-   * backend cannot re-read a message" rather than as an error.
+   * The whole RFC822 message, exactly as the server holds it. Read-only, never persisted. Its own
+   * method because {@link fetchPart} is per-MIME-part; `download(uid, "")` reaches the right
+   * branch only through an undocumented property of imapflow's internals. Never marks anything
+   * read: imapflow emits `BODY.PEEK[]` for a source fetch, the only wire form it can produce. The
+   * ceiling REFUSES — a short read is never returned; a message missing its tail biases a
+   * sensitivity decision toward nothing-to-see-here. The connection survives: unlike {@link
+   * FetchPartOptions.maxBytes}, this stops at a chunk boundary, safe on the worker's IDLE
+   * connection. Optional; absence means the backend cannot re-read a message.
    */
   fetchRaw?(locator: NativeLocator, opts?: FetchRawOptions): Promise<Uint8Array>;
 }

@@ -15,58 +15,25 @@ import { insertOrganizerRequest, TERMINAL_REQUEST_STATES } from "./organizer-req
 const ledger = (tx: Tx): LedgerTx => tx as unknown as LedgerTx;
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  WHAT AN ORGANIZER DOES WITH A REQUEST THAT IS NOT A SCREENER DECISION (mail 0094)
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * `screener-apply.ts` is the model and the sibling: one transactional core, reached from BOTH the
- * organizer's own HTTP door and the request drain, so the two cannot drift into two answers about
- * one action. This module is the same shape for the kinds that arrive with mail 0094.
- *
- * It lives in `@trafficflow/db` for `screener-apply.ts`'s reason, unchanged: the worker may not
- * import `@trafficflow/services` at runtime (a CJS `sanitize-html` re-entering an ESM
- * `htmlparser2` mid-evaluation is a hard `ERR_REQUIRE_CYCLE_MODULE`), so a core both the drain and
- * the service tier run has to sit below both.
- *
- * ── WHY A MOVE NEEDS AN APPLIER AT ALL, WHEN `MessageService.move` EXISTS ──────────────────
- *
- * Because the two do not receive the same thing. `MessageService.move` is handed a message ID
- * this install minted, in its own database. A request record crossed an install boundary through
- * an IMAP folder: the reader that wrote it has a DIFFERENT database with different row ids, so it
- * cannot name a row here. What both installs DO agree on is the message itself, and the name they
- * share for it is `messages.dedup_key` under `messages_mailbox_dedup_uq`.
- *
- * That is the whole reason the natural key is `(dedupKey, destination)` and not an id.
+ * What an organizer does with a request that is not a Screener decision (mail 0094).
+ * `screener-apply.ts` is the model: one transactional core, reached from BOTH the organizer's own
+ * HTTP door and the request drain, so the two cannot drift into two answers about one action. In
+ * `@trafficflow/db` because the worker may not import `@trafficflow/services` at runtime — a core
+ * both the drain and the service tier run sits below both. `MessageService.move` cannot serve
+ * this: a request crossed an install boundary through an IMAP folder, the reader's database has
+ * different row ids, and the name both installs share is `messages.dedup_key`. Hence the natural
+ * key `(dedupKey, destination)`, not an id.
  */
 
 /**
- * ── THE DESTINATION VOCABULARY IS SYMBOLIC, AND THAT IS A SECURITY PROPERTY ───────────────
- *
- * A request record's destination is one of these WORDS, never an IMAP path. The applier resolves
- * the word against THIS mailbox. Three reasons, and the third is the one that matters:
- *
- *  1. `trash` is not a constant. Every provider spells it differently and ohmail DISCOVERS it per
- *     mailbox at connect (`mailboxes.trash_folder`, mail 0065). A reader writing a path would be
- *     writing its guess about a server the organizer is the one actually connected to.
- *  2. A closed word set is checkable at the boundary. `folder_state.desired_folder` is what the
- *     reconciler turns into a physical IMAP move, so the set of things that may reach it should be
- *     enumerable in one line rather than pattern-matched.
- *  3. **A raw path is an instruction to move mail somewhere nobody chose.** The record is a
- *     message in a folder anyone with the mailbox password can append to. Signed, so a forgery is
- *     refused — but the signature proves WHO wrote it, not that what they wrote is sane, and a
- *     compromised or simply buggy reader that could name an arbitrary path could file a person's
- *     mail into a folder outside ohmail's own tree, where nothing in this product would ever look
- *     for it again. A word that must map through {@link MOVE_DESTINATIONS} cannot express that.
- *
- * The five `ohmail/*` folders plus `inbox` mirror the canonical `Destination` union
- * (`packages/core/src/rules.ts`), duplicated here rather than imported for the dependency-direction
- * reason `organizer-role.ts#CAPABILITY_REQUESTS` states at length: this package must not depend on
- * `@trafficflow/core`. `request-apply.test.ts` holds the two equal, the same way
- * `screener-apply.test.ts` holds `DECIDABLE_FOLDERS` equal to `effectForDestination`.
- *
- * `trash` maps to `null` HERE and is resolved per mailbox in {@link applyMessageMove} — the map
- * cannot answer it, and a map that pretended to (by naming a default like `"Trash"`) would be the
- * guess this whole design exists to refuse.
+ * The destination vocabulary is SYMBOLIC, and that is a security property: a request's
+ * destination is one of these WORDS, never an IMAP path, resolved against THIS mailbox. `trash`
+ * is not a constant — providers spell it differently and ohmail discovers it per mailbox (mail
+ * 0065). A raw path is an instruction to move mail somewhere nobody chose: the record is a
+ * message anyone with the mailbox password can append, and the signature proves WHO wrote it, not
+ * that it is sane — a buggy reader could file mail where nothing ever looks again. The words
+ * mirror core's `Destination` union; `request-apply.test.ts` holds them equal. `trash` maps to
+ * `null` HERE and is resolved per mailbox in {@link applyMessageMove}.
  */
 export const MOVE_DESTINATIONS: ReadonlyMap<string, string | null> = new Map([
   ["inbox", "INBOX"],
@@ -91,21 +58,14 @@ export interface ValidatedMovePayload {
 }
 
 /**
- * VALIDATE A `message.move` PAYLOAD THAT ARRIVED THROUGH AN RFC822 HEADER.
- *
- * Untrusted input, on `validateRequestPayload`'s terms exactly: the writing door validated it, and
- * then it crossed an install boundary through a mailbox another machine wrote to, so it is
- * validated again here, independently, before a single write happens.
- *
- * Returns `null` for ANY failure — a missing field, a wrong type, an unknown destination word, an
- * empty or over-long dedup key. The caller's response to `null` is to REFUSE the record, never to
- * coerce it to a guess: a move is the least reversible thing in this product after a delete.
- *
- * `dedupKey` is length-bounded even though the wire format already caps the whole encoded payload
- * (`REQUEST_PAYLOAD_MAX_BYTES`), because the two bounds answer different questions — the wire cap
- * stops a folder being used as storage, this stops a pathological key reaching a `WHERE` clause.
- * A key longer than this cannot match any row this codebase ever wrote (`messageFingerprint`
- * produces a hex digest), so refusing is strictly more honest than truncating.
+ * Validate a `message.move` payload that arrived through an RFC822 header. Untrusted: the writing
+ * door validated it, then it crossed an install boundary through a mailbox another machine wrote
+ * to, so it is validated again here, independently, before a single write. Returns `null` for ANY
+ * failure — missing field, wrong type, unknown destination word, empty or over-long dedup key —
+ * and the caller REFUSES the record, never coerces: a move is the least reversible thing here
+ * after a delete. `dedupKey` is length-bounded even though the wire caps the whole payload: the
+ * two bounds answer different questions, and a key longer than this cannot match any row this
+ * codebase ever wrote, so refusing is more honest than truncating.
  */
 export function validateMovePayload(payload: unknown): ValidatedMovePayload | null {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return null;
@@ -118,16 +78,13 @@ export function validateMovePayload(payload: unknown): ValidatedMovePayload | nu
 }
 
 /**
- * WHY A MOVE DID NOT HAPPEN, when the record itself was perfectly valid.
- *
- * These are NOT refusals of the record — they are outcomes the drain reports back so a person is
- * told something true, and each is a state a reader could not have known about when it decided.
- *
- *  · `no_such_message` — no row in THIS database carries that dedup key for that mailbox. The
- *    reader has a message this organizer has never synced, or has since deleted. Not an error:
- *    two installs of the same mailbox legitimately hold different subsets of it.
- *  · `no_trash_folder` — the destination was `trash` and this mailbox has no Trash path
- *    discovered. ohmail never expunges, so there is nowhere to put it and nothing to guess.
+ * Why a move did not happen, when the record itself was valid. NOT refusals of the record —
+ * outcomes the drain reports back so a person is told something true, each a state the reader
+ * could not have known when it decided. `no_such_message`: no row in THIS database carries that
+ * dedup key for that mailbox — the reader has a message this organizer never synced or has since
+ * deleted; not an error, two installs legitimately hold different subsets. `no_trash_folder`: the
+ * destination was `trash` and this mailbox has no discovered Trash path — ohmail never expunges,
+ * so there is nowhere to put it and nothing to guess.
  */
 export type MoveRefusal = "no_such_message" | "no_trash_folder";
 
@@ -153,38 +110,14 @@ export type ApplyMessageMoveResult =
   | { applied: false; refusal: MoveRefusal };
 
 /**
- * APPLY ONE `message.move`, IDEMPOTENTLY, WRITING DESIRED STATE AND NOTHING ELSE.
- *
- * ── ORGANIZE-IN-PLACE IS WHY THIS TOUCHES NO IMAP ─────────────────────────────────────────
- *
- * It writes `folder_state.desired_folder` with `last_set_by = 'us'` and `reconcile_status =
- * 'pending'`, exactly as `MessageService.move` does, and the worker's reconciler performs the
- * physical move on its own pass. So a drain that dies half-way has moved nobody's mail: it has
- * either recorded an intention or it has not.
- *
- * **`observed_folder` IS READ AND PRESERVED, NEVER WRITTEN.** It is the worker's record of where
- * the message actually is on the server, and the worker flips it when a move lands. An applier
- * that set it would be asserting a physical fact it has not performed — after which the
- * reconciler would compare desired against a lie and conclude there was nothing to do. The
- * message would sit where it was, the row would say it had arrived, and no guard anywhere would
- * fire. That is the whole reason this function reads the existing row first.
- *
- * ── IDEMPOTENCY, AND WHERE IT ACTUALLY COMES FROM ─────────────────────────────────────────
- *
- * The same record drained twice must be one outcome, and the caller's idempotency key
- * (`meta-request:<request id>`) is the first line of that. This function is idempotent on its own
- * terms too, which is the line that holds when two cycles race the same record: the write is an
- * upsert keyed on `folder_state.message_id`, so the second one sets the same `desired_folder` it
- * already has. It is not "applied twice"; it is one desired state, asserted twice.
- *
- * What is NOT idempotent is `change_log`: two racing cycles would emit two `move` rows for one
- * message. That is deliberate and harmless — the client's apply is idempotent by contract, so a
- * duplicate converges on the same state — and it is cheaper than making the ledger conditional on
- * a read, which is where a real race would hide.
- *
- * A move to where the message ALREADY is still writes and still records: a reader can legitimately
- * ask for a state that has since become true, and answering "nothing to do" would make the ack it
- * gets back depend on a race it cannot see.
+ * Apply one `message.move`, idempotently, writing DESIRED state and nothing else. It touches no
+ * IMAP: it writes `folder_state.desired_folder`, and the reconciler performs the physical move —
+ * a drain that dies half-way has recorded an intention or it has not. `observed_folder` is READ
+ * AND PRESERVED, never written: an applier setting it would assert a fact it has not performed,
+ * and the reconciler would compare desired against a lie and do nothing. Idempotency: the
+ * caller's key first, and the write is an upsert on `folder_state.message_id`. `change_log` is
+ * not deduplicated — a duplicate `move` row converges. A move to where the message already is
+ * still writes: the ack must not depend on a race the reader cannot see.
  */
 export async function applyMessageMove(
   tx: Tx, input: ApplyMessageMoveInput,
@@ -266,45 +199,28 @@ export async function applyMessageMove(
   return { applied: true, messageId: msg.id, from, to, lastSeq };
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════════
- *  `profile.update` — the per-mailbox configuration a reader may ask the organizer to change
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * ── WHY THIS KIND EXISTS AT ALL, which is the sharpest reason in mail 0094 ─────────────────
- *
- * Before it, a reader editing an away responder, a signature, a dormancy window or a screening
- * posture got `200`. The write landed — in the READER's own row, which the organizer's pass never
- * reads. The setting was on screen and in effect nowhere. That is worse than the `409` a move
- * got, because a refusal is a decision somebody can argue with and a success that changes nothing
- * is not.
- *
- * ── PARTIAL, AND EVERY PRESENT FIELD REPLACES ─────────────────────────────────────────────
- *
- * A settings pane produces a partial: the person changed one thing. A whole-document replace
- * would let two panes edited a minute apart silently undo one another — the second writer
- * carrying stale copies of everything it did not touch. So an ABSENT key is "leave it alone" and
- * a PRESENT key replaces, `null` included: `signature: null` is "I removed my signature", which is
- * a change, and treating it as absent would make the one edit a person cannot make be the removal.
- *
- * A payload naming NO recognised field is refused rather than applied as a no-op. A reader that
- * queues an empty record has asked for nothing, and answering `applied` would tell somebody a
- * change they did not make had been made.
+/**
+ * `profile.update` — the per-mailbox configuration a reader may ask the organizer to change.
+ * Before it, a reader editing an away responder, a signature or a screening posture got 200 — the
+ * write landed in the READER's own row, which the organizer never reads: on screen and in effect
+ * nowhere, worse than a 409, because a refusal can be argued with and a success that changes
+ * nothing cannot. Partial, and every PRESENT field replaces — a whole-document replace would let
+ * two panes a minute apart silently undo one another. ABSENT is "leave it alone"; PRESENT
+ * replaces, `null` included: `signature: null` is "I removed my signature". A payload naming NO
+ * recognised field is refused rather than applied as a no-op.
  */
 
 /** The longest signature a request may carry. See {@link validateProfileUpdatePayload}. */
 export const PROFILE_SIGNATURE_MAX = 2_000;
 
 /**
- * The longest MARKUP a request may carry, in {@link PROFILE_SIGNATURE_MAX}'s unit.
- *
- * Sized from the column's own local cap the way the text half is: a local save is bounded at
- * 10 000 characters for whichever shape it carried (mail 0098), the travelling text takes a fifth
- * of that, and the markup takes the same fifth. An INDEPENDENT bound that happens to equal the
- * text's — the two govern different columns, so neither moves by editing the other.
- *
- * Both halves at their bounds exceed the record's own 3 072-byte JSON ceiling, which is the text
- * half's documented arrangement rather than an oversight: this bound is the sentence a person
- * reads, and the wire ceiling behind it refuses at the reader's door instead of truncating.
+ * The longest MARKUP a request may carry, in {@link PROFILE_SIGNATURE_MAX}'s unit. Sized from the
+ * column's own local cap the way the text half is: a local save is bounded at 10 000 characters
+ * (mail 0098), the travelling text takes a fifth, and the markup takes the same fifth — an
+ * INDEPENDENT bound that happens to equal the text's, so neither moves by editing the other. Both
+ * halves at their bounds exceed the record's own 3 072-byte JSON ceiling, which is the documented
+ * arrangement rather than an oversight: this bound is the sentence a person reads, and the wire
+ * ceiling refuses at the reader's door instead of truncating.
  */
 export const TRAVELLING_SIGNATURE_HTML_MAX_BYTES = 2_000;
 
@@ -314,25 +230,12 @@ const AWAY_AUDIENCES: ReadonlySet<string> = new Set(["screened_in", "everyone"])
 const AWAY_THROTTLES: ReadonlySet<string> = new Set(["always", "per_message", "per_day", "per_week"]);
 /**
  * `away_responders.piles` — the closed set `away_responders_piles_closed` enforces (mail 0096,
- * widened to four members by mail 0101).
- *
- * ── WHY THIS IS A SECOND SPELLING OF `AWAY_ANSWERABLE_PILES` AND NOT AN IMPORT ──────────────
- *
- * The canonical set is `@trafficflow/core/away-scope`'s `AWAY_ANSWERABLE_PILES`, and importing it
- * HERE does not compile: `@trafficflow/core` depends on `@trafficflow/db`, never the reverse
- * (`organizer-role.ts#CAPABILITY_REQUESTS` states the direction at length), so the import answers
- * `TS2307: Cannot find module '@trafficflow/core/away-scope'` — measured, not assumed.
- *
- * So it takes the arrangement {@link MOVE_DESTINATIONS} already documents forty lines up, for the
- * same reason and with the same obligation: the literal is restated and `request-apply.test.ts`
- * HOLDS THE TWO EQUAL. The equality is the point — a third pile added to the core set and not to
- * this one would be a scope a person can choose, that travels, and that the organizer's applier
- * then refuses as `invalid_payload`, which is a save that appears to work and changes nothing on
- * the one install whose row the responder reads.
- *
- * Exported for that guard alone. `AWAY_AUDIENCES` and `AWAY_THROTTLES` above are not exported and
- * have no such guard, which is a gap in their favour rather than a precedent: both are closed by
- * a CHECK as well, and widening either is a ruling that would come through this file anyway.
+ * widened by mail 0101). A second spelling of core's `AWAY_ANSWERABLE_PILES`, not an import,
+ * because the import does not compile: core depends on db, never the reverse. So the literal is
+ * restated and `request-apply.test.ts` HOLDS THE TWO EQUAL — a pile added to the core set and not
+ * here would be a scope that travels and is then refused as `invalid_payload`: a save that
+ * appears to work and changes nothing. Exported for that guard alone; `AWAY_AUDIENCES` and
+ * `AWAY_THROTTLES` have no such guard — both are closed by a CHECK as well.
  */
 export const AWAY_PILES: ReadonlySet<string> = new Set([
   "INBOX", "ohmail/Reads", "ohmail/Receipts", "ohmail/Screener",
@@ -356,18 +259,14 @@ export interface ProfileAwayUpdate {
   audience: string;
   throttle: string;
   /**
-   * WHICH PILES GET A REPLY (mail 0096), or ABSENT from an install one release older.
-   *
-   * THE ONE OPTIONAL MEMBER OF THIS INTERFACE, and it is optional for a compatibility reason
-   * rather than a stylistic one. Every other field is required because a request that carries an
-   * away responder at all carries those six; `piles` began travelling with the ruling of
-   * 2026-09-10, so a request written by a 0.15 install has an `awayResponder` and no `piles`, and
-   * refusing that record would 400 that install's every responder save — including the save that
-   * turns the responder OFF, which is the one save nobody may be prevented from making.
-   *
-   * ABSENT therefore means "this request is not about the scope", and {@link applyProfileUpdate}
-   * leaves the stored array alone. That is the recoverable direction: an existing row keeps the
-   * scope it had, and a row created by such a request takes the column's own narrow default.
+   * Which piles get a reply (mail 0096), or ABSENT from an install one release older. The one
+   * optional member, for compatibility rather than style: `piles` began travelling later, so a
+   * request written by a 0.15 install has an `awayResponder` and no `piles`, and refusing that
+   * record would 400 that install's every responder save — including the save that turns the
+   * responder OFF, the one save nobody may be prevented from making. ABSENT therefore means "this
+   * request is not about the scope", and {@link applyProfileUpdate} leaves the stored array alone
+   * — the recoverable direction: an existing row keeps its scope, a new row takes the column's
+   * narrow default.
    */
   piles?: string[];
 }
@@ -397,16 +296,14 @@ function asDateOrNull(v: unknown): Date | null | undefined {
 }
 
 /**
- * VALIDATE A `profile.update` PAYLOAD THAT ARRIVED THROUGH AN RFC822 HEADER.
- *
- * `validateMovePayload`'s terms exactly: the writing door validated it, then it crossed an install
- * boundary through a mailbox another machine wrote to, so it is validated again here before a
- * single write happens. `null` for ANY failure, and the caller refuses the record.
- *
- * The bounds are the columns' own closed sets, restated here rather than imported, for the
- * dependency-direction reason this package states elsewhere — and each one is a CHECK in the
- * schema too, so a value that slipped past this function would be refused by the database rather
- * than stored. Two gates, and the schema is the one that holds when this code is wrong.
+ * Validate a `profile.update` payload that arrived through an RFC822 header —
+ * `validateMovePayload`'s terms exactly: the writing door validated it, then it crossed an
+ * install boundary through a mailbox another machine wrote to, so it is validated again here
+ * before a single write. `null` for ANY failure, and the caller refuses the record. The bounds
+ * are the columns' own closed sets, restated rather than imported for the dependency-direction
+ * reason this package states elsewhere — and each is a CHECK in the schema too, so a value that
+ * slipped past this function is refused by the database. Two gates, and the schema is the one
+ * that holds when this code is wrong.
  */
 export function validateProfileUpdatePayload(payload: unknown): ValidatedProfileUpdate | null {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return null;
@@ -470,19 +367,13 @@ export function validateProfileUpdatePayload(payload: unknown): ValidatedProfile
       enabled: r.enabled, body: (r.body as string | null), startsAt, endsAt,
       audience: r.audience, throttle: r.throttle,
     };
-    /* ── THE PILE SCOPE, WHEN THE SENDER IS NEW ENOUGH TO HAVE ONE (ruling of 2026-09-10) ──
-     *
-     * `in` and not a truthiness check, because the three states are distinguishable and mean
-     * different things: ABSENT is an older install that has no scope to send, and the stored
-     * array is left alone; an EMPTY array is "answer nobody", which is what unticking every box
-     * means and is a coherent thing to ask for; and a NON-MEMBER refuses the whole record.
-     *
-     * A non-member refuses rather than being filtered out. Filtering would store a NARROWER scope
-     * than the request asked for and ack it `applied`, so the person would be told their edit
-     * travelled while the responder answered a different set of mail — and the surface would then
-     * state a scope nobody chose. The refusal reaches the reader as `invalid_payload`
-     * (`request-drain.ts`), which is a decision somebody can act on.
-     */
+    // The pile scope, when the sender is new enough to have one. `in` and not a truthiness check,
+    // because three states mean different things: ABSENT is an older install with no scope to
+    // send — the stored array is left alone; an EMPTY array is "answer nobody", a coherent ask; a
+    // NON-MEMBER refuses the whole record. A non-member refuses rather than being filtered:
+    // filtering would store a NARROWER scope than asked and ack it `applied` — the person told
+    // their edit travelled while the responder answers a different set of mail. The refusal
+    // reaches the reader as `invalid_payload`, a decision somebody can act on.
     if ("piles" in r) {
       const p = r.piles;
       if (!Array.isArray(p)) return null;
@@ -523,37 +414,14 @@ export interface ApplyProfileUpdateResult {
 }
 
 /**
- * APPLY ONE `profile.update`.
- *
- * ── THREE TABLES, AND WHY THEY ARE NOT ALL ACCOUNT-SCOPED ─────────────────────────────────
- *
- * `signature` is `mailboxes.signature` — a person with two addresses has two sign-offs, and it is
- * scoped by ACCOUNT as well as by id for the reason the move applier states: a predicate that is
- * correct only because of a uniqueness constraint elsewhere in the schema stops being correct the
- * day that constraint moves. Everything else — the responder, the dormancy window, the screening
- * posture — is the ACCOUNT's, exactly as the organizer's own doors write them.
- *
- * ── THE TRANSITION-ARMING IS MIRRORED, NOT REINVENTED ─────────────────────────────────────
- *
- * `setScreeningPreference` arms the Ohbox tidy pass on the TRANSITION into `people_only`, and
- * NULLs the cursor in the same write so a re-arm cannot resume at the end of a previous run. A
- * request that changed the posture without arming would leave the backlog unfiled — the setting
- * would take effect for new mail and silently not for the mail already misfiled, which is the
- * halfway state the arming exists to prevent. Only on the transition: a re-save that leaves the
- * posture where it was must not re-run the backlog.
- *
- * ── NO `change_log` FOR THE ACCOUNT-SCOPED FIELDS, DELIBERATELY ────────────────────────────
- *
- * The delta feed is keyed by ENTITY, and these are account configuration rather than an entity a
- * client mirrors — the organizer's own doors do not log them either, and a second answer here
- * would put rows in the feed that no client apply knows what to do with. `signature` is the
- * exception in shape only: it belongs to a mailbox, and the mailbox is not a synced entity either.
- * `signature_html` (mail 0098) owes this block the same answer and takes it: no client mirrors a
- * mailbox row, so the new column needs no client apply either, and it appears in `wrote` for the
- * drain's log line and nowhere else.
- * The profile document is how this configuration reaches other installs, and the write-behind
- * republishes it on its own dirty check — which is a FINGERPRINT over the serializer's output, so
- * writing these rows IS what makes it notice.
+ * Apply one `profile.update`. `signature` is `mailboxes.signature` — two addresses, two sign-offs
+ * — scoped by account AND id, so its correctness does not lean on a uniqueness constraint
+ * elsewhere. Everything else is the ACCOUNT's. The transition-arming is mirrored:
+ * `setScreeningPreference` arms the tidy pass on the TRANSITION into `people_only` (cursor NULLed
+ * in the same write); without it the backlog stays unfiled; only on the transition, so a re-save
+ * does not re-run it. No `change_log` for the account-scoped fields: the delta feed is keyed by
+ * ENTITY and no client apply mirrors these; the profile document carries them to other installs,
+ * and the write-behind's fingerprint dirty check notices the rows.
  */
 export async function applyProfileUpdate(
   tx: Tx, input: ApplyProfileUpdateInput,
@@ -595,18 +463,14 @@ export async function applyProfileUpdate(
       enabled: a.enabled, body: a.body, startsAt: a.startsAt, endsAt: a.endsAt,
       audience: a.audience, throttle: a.throttle, updatedAt: now,
     };
-    /* THE SCOPE IS NAMED IN BOTH ARMS ONLY WHEN THE REQUEST CARRIED ONE (ruling of 2026-09-10).
-     *
-     * Named in the SET as well as in `values`, and this is the half that was missing: the whole
-     * row is replaced together, so a scope present on the wire and absent from the SET is a field
-     * that travels and is ignored — the reader's pane shows the scope it asked for coming back as
-     * the old one, with the request acked `applied`.
-     *
-     * And ABSENT must leave the column untouched rather than write the default, which is why this
-     * is a conditional on the payload rather than a `?? AWAY_PILES_DEFAULT`: an older install's
-     * save would otherwise NARROW a scope its own pane never showed and never offered. The insert
-     * arm needs no such branch — an omitted column takes the table's own `'{INBOX}'`, the narrow
-     * member, which is the same value the local door infers for an omitted list. */
+    // The scope is named in both arms only when the request carried one. Named in the SET as well
+    // as `values`, and the SET half was the missing one: the row is replaced together, so a scope
+    // present on the wire and absent from the SET travels and is ignored — the reader's pane
+    // shows the scope it asked for coming back as the old one, acked `applied`. And ABSENT must
+    // leave the column untouched rather than write the default — a conditional, not `??
+    // AWAY_PILES_DEFAULT`: an older install's save would otherwise NARROW a scope its own pane
+    // never showed. The insert arm needs no branch: an omitted column takes the table's own
+    // `'{INBOX}'`, the same value the local door infers.
     if (a.piles !== undefined) {
       awayValues.piles = a.piles;
       awaySet.piles = a.piles;
@@ -658,37 +522,15 @@ export async function applyProfileUpdate(
   return { wrote, lastSeq: null };
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════════
- *  `rule.create` | `rule.update` | `rule.delete` — a reader's rule, applied by the organizer
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * ── THE NATURAL KEY IS FOUR FIELDS, NOT TWO, AND THE SCHEMA IS WHY ────────────────────────
- *
- * The shape these kinds were specified with is `{kind, match}`. That is under-determined by this
- * database: there is NO unique index on `(account_id, kind, match)`, and two rules on one sender
- * that differ only in a narrowing term are two different rules — *from this address* and *from
- * this address AND with this in the subject* file different mail to different places, on purpose.
- * A two-field key would have named both and had to guess.
- *
- * So the key is `{kind, match, subjectContains, bodyContains}`, with the two terms defaulting to
- * `null`. `{kind, match}` alone still identifies the BARE rule — both terms absent — which is the
- * promoted-rule shape the Screener writes and the case the two-field spelling had in mind.
- *
- * ── AND THE KEY CANNOT BE EDITED, WHICH IS THE OTHER HALF OF THAT ─────────────────────────
- *
- * `rule.update` carries a `key` and a `set`, and `set` may not contain a key field. Changing what
- * a rule MATCHES is not an edit to that rule, it is a different rule — a reader that could move
- * the key would be asking the organizer to guess whether the person meant "re-target this" or
- * "replace it with this", and those differ in what happens to mail the old rule already filed.
- * Expressed as a delete and a create, which says which one they meant.
- *
- * ── A DUPLICATE PAIR IS RESOLVED, NOT REFUSED ─────────────────────────────────────────────
- *
- * With no unique index, a database MAY hold two rows identical in all four key fields — nothing
- * created them here, but the schema permits it and old data might. Refusing would strand the
- * person's edit for ever with no way to fix it from the install they are sitting at. So the oldest
- * row wins (`created_at`, then `id` to break a tie deterministically), and the choice is stable
- * across retries — which is what makes the drain's idempotency mean anything.
+/**
+ * `rule.create` | `rule.update` | `rule.delete` — a reader's rule, applied by the organizer. The
+ * natural key is FOUR fields: there is no unique index on `(account_id, kind, match)`, and two
+ * rules on one sender differing only in a narrowing term are two different rules on purpose — so
+ * the key is `{kind, match, subjectContains, bodyContains}`; `{kind, match}` alone still names
+ * the BARE rule the Screener promotes. The key cannot be edited: `set` may not contain a key
+ * field — changing what a rule MATCHES is a different rule, expressed as a delete and a create. A
+ * duplicate pair is resolved, not refused: refusing would strand the person's edit forever, so
+ * the oldest wins (`created_at`, then `id`) — stable across retries.
  */
 
 /** `rules.kind` — the three the routing engine switches over. */
@@ -871,27 +713,14 @@ async function findRuleByKey(tx: Tx, accountId: string, key: RuleKey): Promise<{
 }
 
 /**
- * APPLY ONE `rule.create` / `rule.update` / `rule.delete`.
- *
- * ── RETRO IS THE DEFAULT, AND IT IS THE PRODUCT'S OWN RULE ────────────────────────────────
- *
- * Creating a rule applies it to mail ALREADY on disk, not only to mail that arrives next — mail
- * 0034's requirement, and it is a default rather than an opt-in. So `retro_requested_at` is
- * stamped on create unless the request says otherwise, and on update ONLY when what the rule
- * claims or where it sends it actually MOVED. That last part is compared against the STORED value:
- * a request that re-sends the destination it already has costs nothing, which is what makes a
- * habit-click harmless.
- *
- * `retro_done_at` and `retro_cursor` are cleared with it. A re-arm that left the cursor at the end
- * of a previous run would resume there and move nothing — the pass would report success over a
- * backlog it never looked at.
- *
- * ── `provenance` IS `manual`, NEVER `promoted` ────────────────────────────────────────────
- *
- * A request is a person pressing something on one of their own installs, which is the same
- * provenance the organizer's own door records. `promoted` means the Screener derived the rule from
- * a decision, and a request path that claimed it would make a person's explicit rule look learned
- * — which changes how the rules pane ranks and explains it.
+ * Apply one rule request. RETRO is the default: creating a rule applies it to mail already on
+ * disk (mail 0034), so `retro_requested_at` is stamped on create unless the request says
+ * otherwise, and on update ONLY when what the rule claims or where it sends actually MOVED —
+ * compared against the STORED value, so a habit-click re-sending the same destination costs
+ * nothing. `retro_done_at` and `retro_cursor` are cleared with it: a re-arm that left the cursor
+ * at the end of a previous run would resume there and move nothing. `provenance` is `manual`,
+ * never `promoted`: a request is a person pressing something on their own install, and claiming
+ * `promoted` would make an explicit rule look learned.
  */
 export async function applyRuleRequest(
   tx: Tx, input: ApplyRuleRequestInput,
@@ -967,27 +796,15 @@ export async function applyRuleRequest(
   return { applied: true, op: "update", ruleId: found.id, lastSeq };
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE OTHER DIRECTION — AN INTENT THIS INSTALL MAY NO LONGER CARRY OUT
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Everything above is the ORGANIZER receiving a request. This is the moment a host STOPS being
- * the organizer, and it is the same wire format read from the other end.
- *
- * ── THE SEQUENCE, AND WHY NEITHER GATE CATCHES IT ──────────────────────────────────────────
- *
- * Another install takes the mailbox. Between that takeover and this host's next lease poll its
- * `organizer_role` still reads `organizer`, so a paired device's forwarded move passes
- * `assertOrganizerRole`, is recorded as a local `folder_state` intent and answered 200. The
- * drain's own live lease check then stands the mailbox down — correctly, exactly one organizer per
- * mailbox — and the intent is left behind: this install may not perform it (a reader's
- * `reconcileFolders` skips), and the install that CAN has never heard of it. The near side shows a
- * move that never reaches the mail server.
- *
- * The database role cannot close that window: it is a cached answer to a question only the mailbox
- * can settle, and refusing a paired device's write whenever the poll is merely late would break
- * an ordinary sleeping host. So the intent TRAVELS at the stand-down instead — as the
- * `message.move` request the door would have written had the role been current.
+/**
+ * The other direction — an intent this install may no longer carry out: the moment a host STOPS
+ * being the organizer, the same wire format read from the other end. Another install takes the
+ * mailbox; until this host's next lease poll its role still reads `organizer`, and a forwarded
+ * move passes `assertOrganizerRole`, recorded as a local intent. The drain's live lease check
+ * then stands the mailbox down and the intent is left behind: this install may not perform it,
+ * and the install that CAN has never heard of it. The database role cannot close that window (a
+ * cached answer to a question only the mailbox settles), so the intent TRAVELS at the stand-down
+ * — as the `message.move` request the door would have written had the role been current.
  */
 
 /** The word for a canonical folder — {@link MOVE_DESTINATIONS} inverted, so the two cannot drift. */
@@ -1032,40 +849,28 @@ interface PendingIntentRow {
 }
 
 /**
- * HAND EVERY PENDING LOCAL MOVE TO THE INSTALL THAT HOLDS THE MAILBOX NOW.
- *
- * Called from the stand-down arm of both hosts' lease gates, IN THE SAME TRANSACTION as the role
- * write — see either caller. That is not tidiness: a handover that commits without the demotion
- * mints requests for a mailbox this install still believes it organizes, and a demotion that
- * commits without the handover is the lost filing this function exists to prevent. One
- * transaction makes both halves land or neither.
- *
- * `deleted_at` is deliberately NOT a filter, for the reason {@link applyMessageMove}'s own lookup
- * gives: a delete IS a move to Trash, its tombstone is local to this install, and leaving it
- * behind loses exactly the gesture that is hardest to notice.
- *
- * Idempotent on TWO independent terms, because one of them is not enough: the caller exports only
- * on the stand-down TRANSITION (a gate that answers `stand_down` every cycle would otherwise mint
- * a request per cycle), and a message already carrying a NON-TERMINAL `message.move` request is
- * skipped here — which covers two instances standing the same row down.
+ * Hand every pending local move to the install that holds the mailbox now. Called from the
+ * stand-down arm of both lease gates, IN THE SAME TRANSACTION as the role write: a handover
+ * without the demotion mints requests for a mailbox this install still believes it organizes; a
+ * demotion without the handover is the lost filing — both halves land or neither. `deleted_at` is
+ * NOT a filter: a delete IS a move to Trash, its tombstone is local, and leaving it behind loses
+ * the gesture hardest to notice. Idempotent on TWO terms: the caller exports only on the
+ * stand-down TRANSITION, and a message already carrying a non-terminal `message.move` request is
+ * skipped — covering two instances standing the same row down.
  */
 export async function exportPendingMovesOnStandDown(
   tx: Tx,
   input: { accountId: string; mailboxId: string; now: Date; mintId: () => string; limit?: number },
 ): Promise<StandDownExport> {
   const page = input.limit ?? STAND_DOWN_EXPORT_MAX;
-  /* ── THE ROW LOCK IS THE FIRST STATEMENT, AND IT IS WHAT MAKES THE READ BELOW COMPLETE ──────
-   *
-   * `assertOrganizerRole` takes `FOR SHARE` on this row inside the transaction that records a
-   * forwarded move (see its own header for the interleaving). So an exclusive lock here is
-   * granted only once every such write in flight has COMMITTED — its intent is therefore visible
-   * to the read below — and a write arriving afterwards blocks until this transaction commits and
-   * then re-reads the role this transaction demoted, and is refused. Exported, or refused: an
-   * intent admitted between the read and the demotion is the sequence this closes.
-   *
-   * It is also why the walk terminates: nothing can add to the pending set while the lock is
-   * held, so a strictly advancing cursor exhausts a fixed set.
-   */
+  // The row lock is the FIRST statement, and it is what makes the read below complete.
+  // `assertOrganizerRole` takes `FOR SHARE` on this row inside the transaction that records a
+  // forwarded move, so an exclusive lock here is granted only once every such write in flight has
+  // COMMITTED — its intent is visible to the read below — and a write arriving afterwards blocks,
+  // re-reads the role this transaction demoted, and is refused. Exported, or refused: an intent
+  // admitted between the read and the demotion is the sequence this closes. It is also why the
+  // walk terminates: nothing can add to the pending set while the lock is held, so a strictly
+  // advancing cursor exhausts a fixed set.
   const d = dialect(tx);
   const [mb] = await d.forUpdate(tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
     .where(and(eq(mailboxes.id, input.mailboxId), eq(mailboxes.accountId, input.accountId))));

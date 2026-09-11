@@ -2,7 +2,7 @@ import type { CreateMailboxBody, UpdateMailboxBody } from "@trafficflow/services
 /* The mirror read (mail 0094). From `/mail`, the LOCAL barrel — this route is mounted by the
    desktop engine too, and naming the root barrel here would pull the hosted schema into a shipped
    app (the rule at the top of `packages/db/src/index.ts`). */
-import { readMailboxProfile } from "@trafficflow/services/mail";
+import { readMailboxProfile, RECIPIENT_ADDRESS_MAX_CHARS } from "@trafficflow/services/mail";
 import {
   ProfileUnavailableError, readOrganizerProfile, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
@@ -16,24 +16,14 @@ import type { Route } from "../router.js";
 import { mailbox, profileImport, readBody, noContent } from "./shared.js";
 
 /**
- * THE WIRE SHAPE OF `POST /mailboxes/:id/organize`, VALIDATED HERE AND NOWHERE ELSE.
- *
- * `{ imap?: { pass }, screening?: { dormancyDays?, scope? } }`. Every field is optional, and the
- * empty body is the ordinary Cloud claim-back: nothing about the login has changed and the
- * account has been screening for months.
- *
- * ── WHY THE PARSE IS EXPLICIT AND NOT A SPREAD ──────────────────────────────────────────────
- *
- * The body reaches `MailboxService.organizeHere`, which writes `account_settings` and a mailbox
- * CREDENTIAL. Spreading an attacker-supplied object into either would let a caller name columns
- * the route never meant to expose. So each field is read by name and given a type; anything else
- * in the body is dropped silently, which is this codebase's standing answer for a wire object
- * (an unknown key is a client that is ahead of us, not an error to raise).
- *
- * The RANGES are deliberately NOT checked here. `organizeHere` validates `dormancyDays` (1-365)
- * and `scope` inside its own transaction and throws the 400, because that is where the write is
- * and a check in a route is a check one caller can be added past. This function's whole job is
- * to say what SHAPE reached the service.
+ * The wire shape of `POST /mailboxes/:id/organize`, validated here and nowhere else. `{ imap?: {
+ * pass }, screening?: { dormancyDays?, scope? } }` — every field optional, and the empty body is
+ * the ordinary Cloud claim-back. The parse is explicit and never a spread: the body reaches
+ * `organizeHere`, which writes `account_settings` and a mailbox credential, and spreading an
+ * attacker-supplied object would let a caller name columns the route never meant to expose;
+ * unknown keys are dropped silently (a client that is ahead of us, not an error). Ranges are
+ * deliberately not checked here: `organizeHere` validates inside its own transaction, where the
+ * write is — a check in a route is a check one caller can be added past.
  */
 function organizeInputOf(body: Record<string, unknown>): {
   imap?: { pass: string };
@@ -64,18 +54,12 @@ function organizeInputOf(body: Record<string, unknown>): {
 }
 
 /**
- * THE WIRE SHAPE OF `POST /mailboxes/probe`, VALIDATED HERE AND NOWHERE ELSE.
- *
- * `{ address, imap: { host, port?, secure?, user?, pass } }`. Read field by field and never
- * spread, on {@link organizeInputOf}'s argument verbatim: the object reaches a function that
- * opens a socket to a host named in it, and spreading an attacker-supplied object into that would
- * let a caller name fields this route never meant to expose.
- *
- * What is NOT checked here: whether the host is dialable, whether the port is a mail port, and
- * whether the address is well-formed. The first two belong to the probe's own SSRF/port guard,
- * which is the only place that knows this deployment's policy, and the third to the service, which
- * canonicalises the address inside its own call. A check here would be a check one caller can be
- * added past — the rule this file already states for `organizeHere`'s ranges.
+ * The wire shape of `POST /mailboxes/probe`, validated here and nowhere else. Read field by field
+ * and never spread, on {@link organizeInputOf}'s argument: the object reaches a function that
+ * opens a socket to a host named in it. Not checked here: whether the host is dialable or the
+ * port a mail port (the probe's own SSRF/port guard — the only place that knows this deployment's
+ * policy) and whether the address is well-formed (the service canonicalises it). A check here
+ * would be a check one caller can be added past.
  */
 function probeInputOf(body: Record<string, unknown>): {
   address: string;
@@ -100,17 +84,13 @@ function probeInputOf(body: Record<string, unknown>): {
 }
 
 /**
- * ONE FRESH READ of the mailbox's saved-settings document, for the confirm-import routes below.
- *
- * Built HERE, per request, from the same `openMailboxImap` every other API dial goes through —
- * so it queues behind the same per-mailbox connection cap and inherits the tightened client
- * timeouts (`attachments-adapter.ts` is emphatic about why a second `new ImapAdapter` anywhere
- * else would quietly break the cap's arithmetic). The service receives a thunk rather than an
- * adapter for the probe's reason restated: `packages/services` states what a read must answer
- * and never learns how to open a socket, so its tests inject documents through this argument.
- *
- * Read-only by construction: `readOrganizerProfile` lists the meta folder and writes nothing,
- * exactly as the organizer peek reads the lease without ever renewing one.
+ * One fresh read of the mailbox's saved-settings document, for the confirm-import routes below.
+ * Built here, per request, from the same `openMailboxImap` every other API dial goes through —
+ * the same per-mailbox connection cap and tightened client timeouts (`attachments-adapter.ts`
+ * says why a second `new ImapAdapter` anywhere would break the cap's arithmetic). The service
+ * receives a thunk, not an adapter: `packages/services` states what a read must answer and never
+ * learns how to open a socket. Read-only by construction: `readOrganizerProfile` lists the meta
+ * folder and writes nothing, as the organizer peek reads the lease without renewing one.
  */
 const profileReader = (deps: ApiDeps, mailboxId: string) => async (): Promise<ProfileReadResult> => {
   try {
@@ -163,22 +143,14 @@ export const mailboxRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       /**
-       * ── `?counts=1` — THE ONE OPT-IN ON THIS ROUTE, AND WHY IT IS OPT-IN ────────────────
-       *
-       * `MailboxDTO.messageCount` is an aggregate over the account's whole `messages` table.
-       * This route is POLLED: `MailStateProvider` reads it every 30 s in every open Cloud tab
-       * for the shell's status strip, and Settings → Mailboxes reads it every 10 s while it is
-       * open. Neither reads the count. Computing it unconditionally would put a full scan of
-       * somebody's mail history behind a heartbeat, twice a minute, per tab.
-       *
-       * STRICTLY `"1"`, AND ANYTHING ELSE IS THE CHEAP PATH. `params.has("counts")` — or any
-       * truthiness read — turns the aggregate ON for `?counts=0` and `?counts=false`, which are
-       * the two spellings a caller reaches for to turn it OFF. Since an absent field is a
-       * legitimate answer here, an unrecognised value costs a screen its number; the inverse
-       * mistake costs the polled route an aggregate nobody asked for.
-       *
-       * NOT A 400 either. The list is returned either way and this decides one optional field
-       * of it, so a malformed value must not break the pane that renders the rest.
+       * `?counts=1` — the one opt-in on this route. `MailboxDTO.messageCount` is an aggregate
+       * over the account's whole `messages` table, and this route is polled: every 30 s per open
+       * Cloud tab, every 10 s while Settings → Mailboxes is open — neither reads the count, so
+       * computing it unconditionally would put a full scan behind a heartbeat. Strictly `"1"`:
+       * `params.has("counts")` or a truthiness read turns the aggregate ON for `?counts=0` and
+       * `?counts=false`, the spellings a caller reaches for to turn it off. Not a 400 either:
+       * this decides one optional field, and a malformed value must not break the pane that
+       * renders the rest.
        */
       const counts = new URL(req.url).searchParams.get("counts") === "1";
       const items = await mailbox(deps).list(serviceContext(deps, req), { counts });
@@ -197,22 +169,14 @@ export const mailboxRoutes: Route[] = [
   },
   {
     /**
-     * §5.1 — THE SETTINGS THAT ARE ACTUALLY IN FORCE ON A MAILBOX THIS INSTALL READS (mail 0094).
-     *
-     * On a mailbox another install organizes, this install's own responder/rules/window/signature
-     * rows are NOT the answer — the ones in force are in that install's published document, and
-     * rendering the local copies is ruling 6's Critical: a reader was shown its own dead rows as
-     * though they were live.
-     *
-     * `read`, and it means it: one indexed row out of `mailbox_profile_mirror`, written by the
-     * reader's own cycle. NO IMAP and deliberately no per-request dial — `profile-import` dials and
-     * spends a slot from the per-mailbox connection cap, which is the wrong price for opening a
-     * settings pane, and it would make this route's cost class a lie.
-     *
-     * The four states it distinguishes (this install organizes / a document is mirrored / a holder
-     * is known but nothing read yet / nobody known) are argued in `readMailboxProfile`. They must
-     * not collapse: an absent document and "this install owns the settings" want different copy,
-     * and a `null` meaning both is the failure this repository has already shipped once.
+     * The settings actually in force on a mailbox this install reads (mail 0094). On a mailbox
+     * another install organizes, this install's own responder/rules/window/signature rows are not
+     * the answer — the ones in force are in the holder's published document, and rendering the
+     * local copies shows a reader its own dead rows as though live. `read`, and it means it: one
+     * indexed row out of `mailbox_profile_mirror`, written by the reader's own cycle; no IMAP, no
+     * per-request dial. The four states (this install organizes / a document is mirrored / a
+     * holder known, nothing read / nobody known) are argued in `readMailboxProfile` and must not
+     * collapse: an absent document and "this install owns the settings" want different copy.
      */
     method: "GET",
     pattern: "/mailboxes/:id/profile",
@@ -254,18 +218,12 @@ export const mailboxRoutes: Route[] = [
     method: "POST",
     pattern: "/mailboxes/:id/organizer-notice/dismiss",
     relay: true,
-    // `work`, and no step-up — the `inbound-quiet/dismiss` precedent one route up, with its
-    // argument unchanged: one timestamp on the caller's own mailbox row (mail 0088), no socket, no
-    // spend, and dismissing a notice about your own mailbox is not a credential act. A second
-    // factor here would teach people the notice is dangerous, which is the opposite of true and
-    // would make them leave it standing.
-    //
-    // Naturally idempotent: a repeat press re-stamps the same acknowledgement, which only makes it
-    // more durable — the client's comparison is `eventAt > seenAt`.
-    //
-    // Mounted on the LOCAL door too, through `mailboxRoutes` (`local.ts`), because a standalone
-    // install shows the same notice off the same row and must be able to dismiss it. Nothing about
-    // this handler is hosted-specific.
+    // `work`, and no step-up — the `inbound-quiet/dismiss` precedent: one timestamp on the
+    // caller's own mailbox row (mail 0088), no socket, no spend, and dismissing a notice about
+    // your own mailbox is not a credential act — a second factor here would teach people the
+    // notice is dangerous. Naturally idempotent: a repeat press re-stamps the same
+    // acknowledgement, and the client's comparison is `eventAt > seenAt`. Mounted on the local
+    // door too (`mailboxRoutes`): a standalone install shows the same notice off the same row.
     cost: "work",
     handler: async (req, deps, params) => {
       const dto = await mailbox(deps).dismissOrganizerNotice(serviceContext(deps, req), params.id!);
@@ -276,22 +234,15 @@ export const mailboxRoutes: Route[] = [
     method: "POST",
     pattern: "/mailboxes/:id/release",
     relay: true,
-    /* `work`, NOT `connection` — and the contrast with `/organize` two routes down is the whole
-     * classification argument rather than a technicality.
-     *
-     * `/organize` is `connection` because it MAY DIAL: the ceremony can carry a mailbox password
-     * and proves it against the customer's provider before writing anything. This opens no socket
-     * and can open none — the claim it is asking to give up lives in the customer's IMAP folder,
-     * and expunging it is the organizer's own next pass, not this request's.
-     *
-     * NO STEP-UP, and this is the asymmetry to state plainly because the reflex is to mirror
-     * `/organize`'s. A second factor guards the direction that TAKES CONTROL of somebody's mail;
-     * this direction gives it up, keeps every credential and every message, and is reversible with
-     * one press of the button beside it. Gating it would mean a person who has lost access to their
-     * second factor cannot stop a machine from filing their mail — which is a lockout of exactly
-     * the shape the 0.14.1 election exists to remove.
-     *
-     * Local twin for free through `mailboxRoutes`: `POST /local/mailboxes/:id/release`.
+    /**
+     * `work`, not `connection` — the contrast with `/organize` is the classification: that one
+     * may dial (the ceremony can carry a password and proves it against the provider); this opens
+     * no socket and can open none — the claim it gives up lives in the customer's IMAP folder,
+     * and expunging it is the organizer's next pass. No step-up, stated plainly: a second factor
+     * guards the direction that takes control of somebody's mail; this direction gives it up,
+     * keeps every credential and message, and is reversible with the button beside it — gating it
+     * would lock out exactly the person who lost their second factor. Local twin for free: `POST
+     * /local/mailboxes/:id/release`.
      */
     cost: "work",
     handler: async (req, deps, params) => {
@@ -415,28 +366,14 @@ export const mailboxRoutes: Route[] = [
   {
     method: "POST",
     /**
-     * TEST A CONNECTION WITHOUT MAKING ONE — the action every mailbox form has been missing.
-     *
-     * Until this route the only way to discover whether a set of mail-server details worked was to
-     * submit them and watch the mailbox either appear or not. All fourteen failure sentences were
-     * reachable only as the by-product of a create that did not happen, and there was no success
-     * sentence anywhere in the product because nothing could produce one.
-     *
-     * ── NO `:id`, BECAUSE THE POINT IS THAT THERE IS NO MAILBOX YET ─────────────────────────
-     *
-     * It is a PRE-create action, so there is no row to own and no ownership check to make. What
-     * bounds it is entirely the probe closure built below: the SSRF/port guard that refuses a
-     * private address on the hosted deployment, the per-address admission counter, and the
-     * deadline. A handler that dialled by hand would compile, classify correctly, and have none of
-     * them — which is why the probe is constructed here and never inside the service.
-     *
-     * ── `connection`, AND THAT IS WHAT KEEPS IT AWAY FROM AN UNVERIFIED ACCOUNT ──────────────
-     *
-     * The whole handler is one dial to a host the caller typed. `read` would put a mail-server
-     * dial inside the set an unproven address may reach, which is the connect oracle the peek
-     * route's comment argues at length; `work` would be a claim that it writes something, and it
-     * writes nothing at all. Step-up for `POST /mailboxes`'s reason with nothing subtracted: the
-     * body carries a mailbox password.
+     * Test a connection without making one — the action every mailbox form was missing: all
+     * fourteen failure sentences were reachable only as the by-product of a create. No `:id`,
+     * because there is no mailbox yet; what bounds it is the probe closure built below — the
+     * SSRF/port guard, the per-address admission counter, the deadline. A handler that dialled by
+     * hand would compile and have none of them, which is why the probe is constructed here, never
+     * in the service. `connection`: the whole handler is one dial to a host the caller typed —
+     * `read` would put a mail-server dial inside what an unproven address may reach. Step-up for
+     * `POST /mailboxes`' reason: the body carries a mailbox password.
      */
     pattern: "/mailboxes/probe",
     relay: true,
@@ -514,45 +451,45 @@ export const mailboxRoutes: Route[] = [
     cost: "work",
     options: { stepUp: true },
     handler: async (req, deps, params) => {
-      const { seq } = await mailbox(deps).delete(serviceContext(deps, req), params.id!);
-      // ── THE DELTA CONTRACT'S ECHO, ON A 204 ────────────────────────────────────────────
-      //
-      // A removal closes the mailbox's pending scheduled sends, which is a `draft` change the
-      // mirror that asked for the removal has to apply. Without the echo it has no seq to wait
-      // for and keeps rendering the appointment until the next drain — `DELETE /drafts/:id`
-      // sets the precedent for a 204 that carries one. Absent when nothing was closed, which is
-      // the ordinary case: there is no change, so there is no seq, and inventing one would name
-      // a row that does not exist.
-      //
-      // ── TWO RESIDUALS, WRITTEN DOWN RATHER THAN QUIETLY LEFT — both serious ──
-      //
-      // 1. NOTHING ON THE MAILBOX PATH CONSUMES THIS HEADER TODAY, and that is a property of
-      //    which client makes the call rather than of this line. The engine's mutation path DOES
-      //    read it and converge on it (`client-engine/src/adapters/http-adapter.ts:439` tracks
-      //    the highest seq seen and waits for `/sync` to reach it) — but the engine never issues
-      //    a mailbox mutation. `POST /mailboxes`, `PATCH /mailboxes/:id` and this route are all
-      //    the settings pane's own REST calls through `apps/webapp/app/api-client.ts`, whose
-      //    `api<void>` returns at 204 before it looks at a header, and the pane holds no engine
-      //    handle to converge with (`useMailState` is mailbox facts and a refresh, nothing more).
-      //    So a closed appointment reaches the Drafts list on the NOTIFY-driven `/sync` drain
-      //    instead of read-your-writes.
-      //    The header is still the RIGHT answer and is kept: it is what the contract requires of
-      //    the server, and a conforming client gets it for free the moment the mailbox family
-      //    goes through the engine. Closing the gap means giving a settings pane an engine
-      //    handle — a seam that exists for no mailbox mutation — and inventing it for one verb
-      //    would be the half-wired surface this app removes elsewhere. Filed, not hidden.
-      //
-      // 2. THIS ROUTE IS UNKEYED, so a lost 204 cannot be replayed: the retry finds the
-      //    tombstone, closes zero rows, and answers 204 with no seq. `DELETE /rules/:id` shows
-      //    exactly what keying it would look like (a bespoke lookup/hash/replay, because
-      //    `withIdempotency` cannot replay a bodiless 204). It is deliberately NOT done here.
-      //
-      //    The rule: exactly three mailbox routes spend without an idempotency key — this one,
-      //    `POST /mailboxes` and `PATCH /mailboxes/:id` — and they are enumerated as one set
-      //    rather than each being argued about on its own, so the remaining work has a definite
-      //    scope instead of a feeling. Keying one of the three inside a removal slice would spend
-      //    that scope arbitrarily and leave the other two looking decided. All three move
-      //    together or none does.
+      /* ── `?erase=1` — REMOVE THE MAILBOX AND ERASE OHMAIL'S COPY OF ITS MAIL ────────────
+       *
+       * Without it this route is the reversible removal it has always been. With it the mailbox's
+       * messages, bodies, read state, drafts, folder inventory and cached profile go, and
+       * `?confirm=` must repeat the mailbox's own address — the service compares it to the row it
+       * is about to erase, so neither a bare flag nor a mistyped id can erase anything. The
+       * bound is `RECIPIENT_ADDRESS_MAX_CHARS`: this is an address, read from a URL, and an
+       * unbounded query value reaching a comparison is the class `input-bounds-census` closes.
+       */
+      const query = new URL(req.url).searchParams;
+      const erase = query.get("erase") === "1"
+        ? { confirmAddress: (query.get("confirm") ?? "").slice(0, RECIPIENT_ADDRESS_MAX_CHARS) }
+        : undefined;
+      const { seq, erased } = await mailbox(deps)
+        .delete(serviceContext(deps, req), params.id!, { erase });
+      /* An erasure answers with its receipt rather than a bare 204: the operator's audit trail and
+       * the person's own confirmation both read the per-table counts, exactly as `DELETE /account`
+       * reports them. A plain removal keeps the 204 it has always answered. */
+      if (erased) {
+        return jsonResponse({
+          erased: true,
+          mailboxId: params.id!,
+          messagesErased: erased.messagesErased,
+          draftsErased: erased.draftsErased,
+          draftsUnanchored: erased.draftsUnanchored,
+          tables: erased.deleted,
+          retained: "nothing for this mailbox; the mail itself stays on your own server",
+        }, { seq });
+      }
+      // The delta contract's echo, on a 204: a removal closes the mailbox's pending scheduled
+      // sends — a `draft` change the asking mirror has to apply, so the seq rides `X-Sync-Seq`
+      // (absent when nothing was closed). Two residuals, filed rather than hidden. (1) Nothing on
+      // the mailbox path consumes the header today: mailbox mutations are the settings pane's own
+      // REST calls, and `api<void>` returns at 204 before reading a header — the closed
+      // appointment reaches Drafts on the next `/sync` drain. The header stays: it is the
+      // contract, free the moment the mailbox family goes through the engine. (2) This route is
+      // unkeyed, so a lost 204 cannot be replayed; exactly three mailbox routes spend without a
+      // key (this, `POST /mailboxes`, `PATCH /mailboxes/:id`) and all three move together or none
+      // does.
       return seq === null
         ? noContent()
         : new Response(null, { status: 204, headers: { "X-Sync-Seq": String(seq) } });
