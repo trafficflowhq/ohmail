@@ -2407,7 +2407,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
   const screener = useScreenerState(
     engine, version, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
-    screenerRole, suggestions.outstandingDecisions,
+    // The SAME addresses `consentView` was built from — the queue's rows and the partition's
+    // reckoning read one list, so the reader is never a row in their own Screener.
+    screenerRole, suggestions.outstandingDecisions, ownAddresses,
   );
   /**
    * The opt-in's quote, bound to the SAME list the automatic batch will slice.

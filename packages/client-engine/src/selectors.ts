@@ -1,6 +1,9 @@
 import { isSentFolderPath } from "@trafficflow/core/folder-name";
 import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
 import type { EntityReader } from "./store.js";
+/* The partition's own-address predicate — imported, never re-spelled here. `consent-cutline.ts`
+   imports this module's `senderKey` in return; neither reads the other at module scope. */
+import { ownAddressKeys } from "./consent-cutline.js";
 import { zonedFields } from "./zone.js";
 import { daysAgo, messageStamp, named } from "./stamp.js";
 import {
@@ -1186,7 +1189,18 @@ export function screenerSegments(
    * it reads `.length` and never a stamp.
    */
   zone = "UTC",
+  /**
+   * THE ACCOUNT'S OWN ADDRESSES — the same list the partition was given
+   * ({@link ConsentOptions.ownAddresses}), read through the same predicate.
+   *
+   * Own mail is never a WAITING row wherever it sits. `consentPartition` keeps such a row in its
+   * own place, so a message physically in `ohmail/Screener` used to group into the queue and ask
+   * the account to screen itself while the partition counted no undecided sender behind it.
+   * Absent ⇒ the mirror's `mailbox` rows, the partition's own fallback; `[]` ⇒ nobody.
+   */
+  ownAddresses?: Iterable<string>,
 ): ScreenerSegments {
+  const own = ownAddressKeys(reader, ownAddresses === undefined ? {} : { ownAddresses });
   const grouped: Record<ScreenerSegment, Map<string, EngineMessage[]>> = {
     waiting: new Map(),
     screened_out: new Map(),
@@ -1198,6 +1212,10 @@ export function screenerSegments(
     const segment = view ? SEGMENT_OF_VIEW[view] : undefined;
     if (!segment) continue;
     const key = senderKey(m.from.address);
+    // The account is not one of its own correspondents, so own mail mints no waiting row — the
+    // guard the partition applies to its reckoning, applied to the grouping that renders it.
+    // Screened and Quarantine are explicit placements somebody made and keep their rows.
+    if (segment === "waiting" && own.has(key)) continue;
     const bucket = grouped[segment].get(key);
     if (bucket) bucket.push(m);
     else grouped[segment].set(key, [m]);

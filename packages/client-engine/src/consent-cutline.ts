@@ -219,7 +219,21 @@ export interface ConsentOptions {
   ownAddresses?: Iterable<string>;
 }
 
-function ownSet(reader: EntityReader, opts: ConsentOptions): Set<string> {
+/**
+ * THE ACCOUNT'S OWN ADDRESSES, FOLDED — one predicate, two consumers.
+ *
+ * {@link consentPartition} reads it so the user is never weighed as one of their own
+ * correspondents, and `screenerSegments` reads THE SAME function so they never hold a waiting
+ * row. A second list spelled beside this one is the defect it exists to make unrepresentable:
+ * the guard held for INBOX mail and not for a message physically in `ohmail/Screener`, because
+ * the queue grouped on the presented folder and never asked who sent it.
+ *
+ * Explicit addresses win; absent, the mirror's `mailbox` rows are the fallback — see
+ * {@link ConsentOptions.ownAddresses}.
+ */
+export function ownAddressKeys(
+  reader: EntityReader, opts: ConsentOptions = {},
+): ReadonlySet<string> {
   const explicit = opts.ownAddresses;
   const source = explicit ?? reader.list<{ address?: unknown }>("mailbox")
     .map((m) => (typeof m.address === "string" ? m.address : ""));
@@ -409,7 +423,7 @@ export function senderActivity(
 export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}): ConsentPartition {
   const messages = reader.list<EngineMessage>("message");
   const index = consentIndex(rulesList(reader));
-  const own = ownSet(reader, opts);
+  const own = ownAddressKeys(reader, opts);
   /* ── THE USER'S OWN FOLDERS, when "Use folders" is on (FOLDERS-SPEC.md §16.5) ────────────
    *
    * TWO gates, and both must say yes: the caller's {@link ConsentOptions.foldersEnabled} (the

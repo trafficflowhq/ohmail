@@ -835,7 +835,10 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
 export function liveScreener(
   pres: EntityReader, v: WorldView, scopes: Readonly<Record<string, Scope>> = {},
 ): WorldScreener {
-  const segments = screenerSegments(pres, v.now, v.locale ?? "en", v.zone);
+  // `v.ownAddresses` rides in for the reason it rides into `presentedWorld`: the projection keeps
+  // an own-address row in its own place, so without it a self-addressed message in the Screener
+  // folder is a waiting row and the reader queues in their own queue.
+  const segments = screenerSegments(pres, v.now, v.locale ?? "en", v.zone, v.ownAddresses);
   const map = (rows: ScreenerSenderDTO[]) =>
     rows.map((dto) => rowOf(dto, scopes[senderKey(dto.from.address)]));
   return {
