@@ -989,31 +989,23 @@ export function FirstRun({
              * the cursor to `consent` and be thrown straight back here — the consent stamp
              * that ends the situation is two screens away. See the guard's own note. */
             if (mailboxId) setClaimAnsweredFor(mailboxId);
-            /* ── "JUST READ IT HERE" WRITES NOTHING ABOUT ORGANIZING ──────────────────────
-             *
-             * There is no "become a reader" call: this install is already a reader (which is
-             * what put this screen on screen), and a reader is a mail client — it reads,
-             * searches, marks read and sends. Nothing has to change for it to be one.
-             *
-             * ── AND IT USED TO `leave()` HERE, WHICH ENDED THE RUN AT THE QUESTION ────────
-             *
-             * Measured on the released 0.13.7: choosing to read closed the flow outright, on a
-             * first run, on "Run setup again" and in German — no summary, and nothing anywhere
-             * else in the shell saying who organizes the mailbox. The reader summary that
-             * screen owes exists in both catalogues (`doneReaderTitle`, `doneReaderReads`/`Why`,
-             * `doneReaderClaim`/`Why`) and was unreachable, because this was the only path to
-             * it and it went past.
-             *
-             * So the run FINISHES rather than being abandoned: `goTo("summary")` walks to the
-             * one screen written for this ending, which names the holder and since when, says
-             * what this computer does and does not do, and points at where the claim lives. Its
-             * own "Open ohmail" is what stamps completion — cancel and finish write the same
-             * stamp, so nothing is lost by deferring it one screen, and a person who quits
-             * mid-summary is in exactly the state `leave()` would have left them in.
-             *
-             * `summary` is always in `onboardingPath`, and `firstRunStep` returns a non-null
-             * cursor once the claim question is answered — which the line above has just
-             * recorded — so this cannot be thrown back to the choice it came from. */
+            /* "Just read it here" writes nothing about organizing: this install is already a
+             * reader (which put this screen on screen), and a reader is a mail client — reads,
+             * searches, marks read, sends. It used to `leave()` here, ending the run at the
+             * question — measured on the released 0.13.7: choosing to read closed the flow with
+             * no summary, while the reader summary that screen owes (`doneReaderTitle`,
+             * `doneReaderReads`/`Why`, `doneReaderClaim`/`Why`) sat unreachable in both
+             * catalogues, this being the only path to it.
+             */
+
+            /* So the run FINISHES rather than being abandoned: `goTo("summary")` walks to the
+             * one screen written for this ending — who holds the mailbox and since when, what
+             * this computer does and does not do, where the claim lives. Its own "Open ohmail"
+             * stamps completion; cancel and finish write the same stamp, so nothing is lost by
+             * deferring one screen, and quitting mid-summary leaves exactly the state `leave()`
+             * would have. `summary` is always in `onboardingPath`, and `firstRunStep` returns a
+             * non-null cursor once the claim question is answered — recorded on the line
+             * above — so this cannot be thrown back to the choice it came from. */
             if (elsewhereChoice === "read") { goTo("summary"); return; }
             /**
              * "ORGANIZE HERE INSTEAD" — AND WHY IT USUALLY CALLS NOTHING EITHER: The claim, the consent and the
@@ -1196,28 +1188,20 @@ export function FirstRun({
           () => {
             const on = ai === "yes";
             if (!host.setAiEnabled) { forward(); return; }
-            /* ── THE ONE PLACE A CURSOR IS KEPT PAST A WRITE, AND WHY ────────────────────
-             *
-             * "Yes" needs no help: it MOVES the posture — `on-unconfigured` on the standalone
-             * door, `on` on Cloud — and the derivation then names the provider step or the pull
-             * correctly by itself.
-             *
-             * "No" is the problem, and it is a real gap in what the doors can store rather than
-             * a shortcut taken here. `OnboardingAi` distinguishes "answered no" from "never
-             * asked" precisely because they need opposite behaviour; Cloud's storage cannot —
-             * `accounts.ai_enabled` is a boolean that rests false — so a re-derive after a "no"
-             * hands back `unset`, and the person is returned to the question they just answered,
-             * every time, for ever. Walking the cursor past it is what makes "no" a complete
-             * answer on that door.
-             *
-             * The cost is stated rather than hidden: a run RESUMED later on Cloud asks the AI
-             * question again. That is the safe direction and the one the posture's own union
-             * documents — the danger is silently skipping somebody who was never asked, not
-             * asking somebody twice.
-             *
-             * `undefined` once the import is finished, because "pull" would then be a completed
-             * progress bar and the derivation has a better answer (the guided decision, or the
-             * summary).
+            /**
+             * The one place a cursor is kept past a write. "Yes" needs no help: it MOVES the posture
+             * (`on-unconfigured` standalone, `on` Cloud) and the derivation then names the next step by itself. "No"
+             * is a real gap in what the doors can store: `OnboardingAi` distinguishes "answered no" from "never
+             * asked", but Cloud's `accounts.ai_enabled` is a boolean resting false, so a re-derive after a "no" hands
+             * back `unset` and returns the person to the question they just answered, every time. Walking the cursor
+             * past it makes "no" a complete answer on that door. The stated cost: a run RESUMED later on Cloud asks
+             * the AI question again — the safe direction the posture's union documents (the danger is silently
+             * skipping somebody never asked, not asking twice).
+             */
+
+            /**
+             * `undefined` once the import finishes, because "pull" would then be a completed progress bar and the
+             * derivation has a better answer.
              */
             /* ── AND ON A RE-RUN THE CURSOR IS THE ONLY NAVIGATION ──────────────────────────
              *
@@ -1357,23 +1341,16 @@ export function FirstRun({
           </>
         ) : null}
 
-        {/* ── THE SUMMARY REPORTS WHAT **THIS INSTALL** DID, AND IT USED TO REPORT THE MAILBOX ──
-         *
-         * An install that has stood down to READER organizes nothing, and this screen used to
-         * end its setup run by reporting a screening count and a list of folders anyway. Every
-         * number on it was true about the MAILBOX and false about the run that printed it: the
-         * folders and the screening belong to whichever install holds the lease. Settings →
-         * Mailboxes said the true thing at the same moment on the same machine, which is how the
-         * contradiction shows up.
-         *
-         * The two shapes are not two wordings of one screen. An organizer reports work; a reader
-         * reports a relationship — what it does (read, search, mark read, send), who organizes
-         * the mailbox and since when, and where the claim lives if they want it here. There is no
-         * count on the reader's half at all, because a count is a claim about work.
-         *
-         * `organizing` is `organizerRole !== "reader"`, so a host too old to say the role gets
-         * the organizer summary — the pre-0083 world, where every install was one.
-         */}
+        {/*
+            The summary reports what THIS INSTALL did, and it used to report the mailbox. An install stood down to
+            READER organizes nothing, yet this screen ended its run with a screening count and a folder list — every
+            number true about the MAILBOX and false about the run that printed it (the work belongs to whichever
+            install holds the lease; Settings → Mailboxes said the true thing at the same moment). The two shapes are
+            not two wordings of one screen: an organizer reports work; a reader reports a relationship — what it does,
+            who organizes the mailbox and since when, and where the claim lives. No count on the reader's half at all,
+            because a count is a claim about work. `organizing` is `organizerRole !== "reader"`, so a host too old to
+            say the role gets the organizer summary — the pre-0083 world, where every install was one.
+          */}
         {step === "summary" ? screen(leave, (
           <>
             <h1 id={`${ids}-title`}>{organizing ? t("doneTitle") : t("doneReaderTitle")}</h1>

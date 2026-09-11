@@ -672,20 +672,16 @@ export function InlineReply({
         <p className="reply-forwarding">{tc("forwardingNote")}</p>
       ) : null}
 
-      {/* FROM — a CONTROL when there is a choice, otherwise the sentence. This used to be static
-          text on the premise that a reply's sender is a fact and not a choice; it is now editable
-          when the account genuinely has one.
-          A reply still has a right answer (the address the sender wrote to), so the derived one
-          LEADS: the selector is offered only when the account has more than one sendable address
-          AND the shell can hold a pick (`onFrom`). One address, or a surface that cannot keep an
-          override, renders the plain statement; no facts renders nothing, because a From line is a
-          claim.
-
-          A PICK AND THE SUBSTITUTION NOTICE ARE MUTUALLY EXCLUSIVE BY CONSTRUCTION. An honored
-          pick makes `from.substituted` false (`resolveReplyFrom`), so choosing an address is what
-          silences the "answers from the address above" line — the selector's value becomes the
-          statement the sentence used to make, and re-announcing it as a substitution would be
-          claiming the user was overruled when they were obeyed. */}
+      {/* FROM — a control when there is a choice, otherwise the sentence. This used to be
+          static text on the premise that a reply's sender is a fact; it is editable when the
+          account genuinely has one. A reply still has a right answer (the address the sender
+          wrote to), so the derived one LEADS: the selector is offered only with more than one
+          sendable address AND a shell that can hold a pick (`onFrom`). One address, or a surface
+          that cannot keep an override, renders the plain statement; no facts renders nothing —
+          a From line is a claim. A pick and the substitution notice are mutually exclusive by
+          construction: an honored pick makes `from.substituted` false (`resolveReplyFrom`), so
+          choosing an address silences the "answers from the address above" line — re-announcing
+          it would claim the user was overruled when they were obeyed. */}
       {/* Collapsed head only: while the recipients stack is open, From stands as its FIRST
           row (`fromRow` above) — one aligned block, never a caption trailing a stack that can
           grow over it. */}
@@ -804,32 +800,24 @@ export function InlineReply({
 }
 
 /**
- * THE DRAFTER'S CARD — the price before the spend, then the one question the spend leaves open.
- *
- * ── IT SAYS WHAT IT COSTS, IN THE UNIT THE PLAN IS SOLD IN ───────────────────────────────
- *
- * "15 credits" — and credits ARE the unit the plan is sold in, which is the reverse of what this
- * paragraph used to say. It read "'1 AI action', never credits: credits are an internal ledger
- * unit nobody is quoted a plan in", and that was right while every action cost one credit and
- * the card advertised actions. Weighted debits ended both: the card sells credits, and a draft
- * is fifteen of them against a classification's one, so quoting "1 action" here would name a
- * number the server does not charge.
- * The number is `DRAFT_REPLY_COST_CREDITS`, which is what the route charges per accepted
- * request — not a figure derived from a balance this tab happens to be holding. Whether the
- * account can afford it is the server's decision and nothing here second-guesses it; a refusal
- * arrives as the server's own sentence and is rendered verbatim (`draft-reply.ts`).
- *
- * ── AND IT NEVER CLOBBERS WHAT SOMEBODY WROTE ────────────────────────────────────────────
- *
- * A draft landing in an empty editor is unambiguous and goes straight in. A draft landing on
- * top of a half-written reply is not, so it asks — replace, or add below — and the editor keeps
- * its text until the question is answered. There is no third option to dismiss the draft,
- * because the action has already been paid for by the time this appears and throwing the result
- * away behind a small button is not something to make easy.
- *
- * NOTHING HERE SENDS AND NOTHING HERE DISPATCHES A MUTATION. A generated draft is not an
- * answered message: the Reply Run's debt is discharged by a send settling and by nothing else
- * (`onSendSettled`), and that separation is the reason this card can only put text in a box.
+ * The drafter's card — the price before the spend, then the one question the spend leaves open.
+ * It says what it costs in the unit the plan is sold in: "15 credits". This used to say the
+ * reverse ("'1 AI action', never credits"), which was right while every action cost one credit;
+ * weighted debits ended that — a draft is fifteen against a classification's one, so quoting
+ * "1 action" would name a number the server does not charge. The number is
+ * `DRAFT_REPLY_COST_CREDITS`, what the route charges per accepted request — not a figure derived
+ * from a balance this tab holds. Whether the account can afford it is the server's decision;
+ * a refusal arrives as the server's own sentence, rendered verbatim (`draft-reply.ts`).
+ */
+
+/**
+ * And it never clobbers what somebody wrote: a draft landing in an empty editor goes straight
+ * in; one landing on a half-written reply asks — replace, or add below — and the editor keeps
+ * its text until answered. No third option to dismiss, because the action is already paid for
+ * by the time this appears and throwing the result away behind a small button is not something
+ * to make easy. Nothing here sends and nothing dispatches a mutation: a generated draft is not
+ * an answered message — the Reply Run's debt is discharged by a send settling and nothing else
+ * (`onSendSettled`), which is why this card can only put text in a box.
  */
 function DraftReplyCard({
   chrome,
@@ -884,27 +872,24 @@ function DraftReplyCard({
 }
 
 /**
- * THE OPENED AUDIENCE — To, Cc, Bcc as the same chip rows Compose has, over the edit strings
- * the shell holds.
- *
- * The markup deliberately mirrors `ComposeView`'s header rows — `.c-field`, the label gutter,
- * the error line under the row it belongs to — because "wherever this appears" means the SAME
+ * The opened audience — To, Cc, Bcc as the same chip rows Compose has, over the edit strings
+ * the shell holds. The markup deliberately mirrors `ComposeView`'s header rows (`.c-field`, the
+ * label gutter, the error line under its row) because "wherever this appears" means the SAME
  * field, not a cousin. What differs is only what must: ids come from `useId` (this editor is
- * mounted twice while the reader is open, and `compose-to` may exist on another route's DOM at
- * the same time), and the invalid entries are parsed here from the strings rather than handed
- * down from a plan, gated by the same still-typing rule (`gatedInvalid`).
- *
- * ── CC AND BCC ARE ALREADY OPEN — NO SECOND CLICK ────────────────────────────────────────
- *
- * Opening this stack IS the "change recipients" act, so all three rows show at once. The
- * compose form's fold (`ccBccOpen`) does not apply here, and used to: the head press revealed
- * a To row with a second `Cc/Bcc` toggle inside it, so reaching a blind copy from a reply took
- * two clicks about one decision. The rows keep whatever the user leaves in them — the strings
- * are the shell's envelope state, so nothing here can fold a row back over its contents.
- *
- * Cross-row moves (drag, Alt+arrows) land in ONE `onEnvelope` via `moveRecipient`, for the
- * reason `ComposeView.moveChip` states: two onChange calls would each spread a stale copy of
- * the other row.
+ * mounted twice while the reader is open, and `compose-to` may exist on another route's DOM),
+ * and invalid entries are parsed here from the strings, gated by the same still-typing rule
+ * (`gatedInvalid`).
+ */
+
+/**
+ * Cc and Bcc are already open — no second click. Opening this stack IS the "change recipients"
+ * act, so all three rows show at once. The compose form's fold (`ccBccOpen`) does not apply
+ * here, and used to: the head press revealed a To row with a second `Cc/Bcc` toggle inside it,
+ * so reaching a blind copy from a reply took two clicks about one decision. The rows keep
+ * whatever the user leaves in them — the strings are the shell's envelope state, so nothing
+ * here can fold a row back over its contents. Cross-row moves (drag, Alt+arrows) land in ONE
+ * `onEnvelope` via `moveRecipient`, for the reason `ComposeView.moveChip` states: two onChange
+ * calls would each spread a stale copy of the other row.
  */
 function ReplyRecipients({
   envelope,
