@@ -2,15 +2,13 @@
 
 /**
  * The spy-pixel blocker's consent half — the first consumer `GET /img` has ever had.
- * `MessageBody.tsx` blocks every remote reference; this module is the consent path. Why a proxy at
- * all: the reader's IP is the thing being protected, and "load images" in every other mail client
- * hands it to the sender. Routing through `GET /img` makes the request ours —
- * `PrivacyService.proxyImage` fetches server-side through a port whose signature takes ONLY a url,
- * so no client header can travel, structurally. The url is same-origin and load-bearing: the frame's
- * `img-src` admits `data:` and this function's own origin+path only ({@link imageProxyUrl} is what
- * `proxyImgSource` derives from, so the CSP cannot drift from the url), and `/api/*` is a Next
- * rewrite so the host-only `tf_session` cookie rides the subresource GET. Built absolute:
- * a relative url in `srcdoc` resolves against the parent's base — a later `<base>` would change it.
+ * `MessageBody.tsx` blocks every remote reference; this module is the consent path. Why a proxy: the
+ * reader's IP is the thing being protected, and "load images" in every other client hands it to the
+ * sender. `GET /img` makes the request ours — `PrivacyService.proxyImage` fetches server-side
+ * through a port whose signature takes ONLY a url, so no client header can travel, structurally. The
+ * url is same-origin and load-bearing: the frame's `img-src` admits `data:` and this origin+path
+ * only ({@link imageProxyUrl} is what `proxyImgSource` derives from, so the CSP cannot drift);
+ * `/api/*` is a Next rewrite, so `tf_session` rides the GET; built absolute for `srcdoc`.
  */
 
 /**
@@ -18,11 +16,10 @@
  * flag what the next one does, so flipping locally on a POST that fails gives images now and none
  * after a reload — the click awaits the write, and a refusal loads nothing. The button is now the
  * minority case: the default moved to loading pictures on open, through the proxy (mail 0048,
- * `account_settings.block_remote_images_at`); this module is the opt-out branch, unchanged. A
- * tracking pixel is not fetched in either mode unless the pixel switch says so (mail 0072,
- * {@link RemoteImagesChrome.loadPixels}) — that refusal lives in the sanitizer; remote stylesheets
- * stay blocked in every mode. The proxy is why the new default is affordable: an unpressed image
- * still hands the sender none of the reader's network.
+ * `account_settings.block_remote_images_at`); this module is the opt-out branch, unchanged. A pixel
+ * is not fetched in either mode unless the pixel switch says so (mail 0072,
+ * {@link RemoteImagesChrome.loadPixels}); stylesheets stay blocked in every mode. The proxy is why
+ * the new default is affordable: an unpressed image hands the sender none of the reader's network.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

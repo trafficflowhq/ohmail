@@ -1,13 +1,12 @@
 /**
  * Links in a message, on a desktop that has no second window. Every outbound link carries
- * `target="_blank"` (the sanitizer forces it; the shell's five link-outs spell it out), and a
- * `_blank` click is a request for a NEW WINDOW, forwarded to whatever the host registered — this
- * app registers nothing, so the webview dropped the request silently: not the navigation policy,
- * not the CSP, not a missing permission, which is why no log anywhere showed it. A click
- * interceptor rather than a new-window handler, because attaching one means this process owning the
- * main window's creation, shared with the interface preview whose published claim is that it spawns
- * no process — so the seam is here: one handler on the two documents that exist, no link surface
- * knows this module exists, and a link added tomorrow is covered by having been rendered.
+ * `target="_blank"` (the sanitizer forces it), and a `_blank` click is a request for a NEW WINDOW,
+ * forwarded to whatever the host registered — this app registers nothing, so the webview dropped
+ * the request silently: not the navigation policy, not the CSP, not a missing permission, which is
+ * why no log anywhere showed it. A click interceptor rather than a new-window handler, because
+ * attaching one means this process owning the main window's creation, shared with the interface
+ * preview whose published claim is that it spawns no process — so the seam is here: one handler on
+ * the two documents that exist, and a link added tomorrow is covered by having been rendered.
  */
 
 /**
