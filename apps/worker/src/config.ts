@@ -19,38 +19,14 @@ export const DEFAULT_MAX_MAILBOXES = 64;
 /** Shipped shard configuration: ONE shard (the seam exists, it is not used yet). */
 export const DEFAULT_SHARDS = 1;
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  HOW MANY MAILBOXES ONE CYCLE MAY BE VISITING AT ONCE
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * `cycle()` used to walk its rotation strictly one mailbox at a time, so EVERY mailbox on the
- * shard waited out every other mailbox's bounded batch. Measured twice in production, both on
- * the same shard:
- *
- *  · during a folder-coverage backfill, most of the shard's mailboxes crossed the 15-minute `sync_lag`
- *    threshold — worst 18 minutes — because one mailbox's deep walk owned the rotation. It
- *    cleared when that mailbox finished, and it comes back on every first enumeration;
- *  · a mailbox went 15.5 minutes between visits while the wake channel that was supposed to
- *    serve it answers in under a second. A sub-second doorbell in front of a 15-minute queue
- *    is a 15-minute doorbell.
- *
- * THREE, and every term of that number is measured rather than preferred:
- *
- *  · the POOL is the ceiling. One worker process owns ONE postgres pool of
- *    {@link WORKER_POOL_MAX} connections, and a cycle holds one of them for the length of each
- *    fenced write group. The pulse and the alert pass run OFF the cycle queue and need their own,
- *    so {@link CYCLE_LANE_POOL_RESERVE} is held back for them. postgres.js QUEUES on an exhausted
- *    pool instead of failing, so going wider does not break — it silently stops being concurrency
- *    while still costing the memory and the provider connections of running wide;
- *  · the SPEEDUP is bounded by the slowest mailbox anyway. A rotation of 3 deep backfills
- *    (~254 s each, at the measured 1.27 s/message over two-hundred-message batches) and 10 quick
- *    mailboxes is ~782 s serial and ~260 s over three lanes — the point at which one mailbox's
- *    own batch, not the rotation, is what a mailbox waits for. Lanes beyond that buy nothing;
- *  · one lane is RESERVED for mailboxes with no backlog ({@link CYCLE_FAST_LANES}), which is what
- *    makes the wake channel's promise reachable rather than merely likelier.
- *
- * `1` restores the earlier serial walk exactly, and is what the ordering guards that predate
- * the lanes are pinned to.
+ * How many mailboxes one cycle may be visiting at once. `cycle()` used to walk its rotation one at a
+ * time, so EVERY mailbox waited out every other's bounded batch — measured twice on one shard: most
+ * of the shard past the 15-minute `sync_lag` threshold during a backfill, and a 15.5-minute gap
+ * between visits on a wake channel that answers in under a second. THREE, every term measured: the
+ * POOL is the ceiling ({@link WORKER_POOL_MAX} minus {@link CYCLE_LANE_POOL_RESERVE}; postgres.js
+ * QUEUES on an exhausted pool, so wider silently stops being concurrency); the SPEEDUP is bounded by
+ * the slowest mailbox anyway (~782 s serial → ~260 s over three lanes, past which lanes buy nothing);
+ * and one lane is RESERVED for mailboxes with no backlog ({@link CYCLE_FAST_LANES}). `1` restores the earlier serial walk, which the ordering guards that predate the lanes are pinned to.
  */
 export const DEFAULT_CYCLE_LANES = 3;
 /**
@@ -68,65 +44,36 @@ export const CYCLE_LANE_POOL_RESERVE = 2;
  */
 export const MAX_CYCLE_LANES = WORKER_POOL_MAX - CYCLE_LANE_POOL_RESERVE;
 /**
- * Lanes a mailbox that OWES A BACKLOG may never occupy — the reservation that makes a fast lane
- * a fast lane.
- *
- * Without it, three cold backfills fill three lanes and a mailbox whose IDLE just fired is behind
- * a deep batch again, which is the 15.5-minute measurement with a smaller constant. With it, a
- * mailbox that has nothing queued is never behind more than the ONE other quick mailbox that
- * might be in the reserved lane.
- *
- * ONE, not more: at three lanes, reserving two would leave a single lane to drain every backfill
- * on the shard and would make the deep-backlog case worse than the serial walk it replaces. The
- * guard asserts BOTH directions for exactly that reason.
+ * Lanes a mailbox that OWES A BACKLOG may never occupy — the reservation that makes a fast lane a
+ * fast lane. Without it, three cold backfills fill three lanes and a mailbox whose IDLE just fired is
+ * behind a deep batch again (the 15.5-minute measurement with a smaller constant); with it, a mailbox
+ * with nothing queued is never behind more than the ONE other quick mailbox in the reserved lane. ONE,
+ * not more: at three lanes, reserving two would leave a single lane to drain every backfill and make
+ * the deep-backlog case worse than the serial walk it replaces. The guard asserts BOTH directions.
  */
 export const CYCLE_FAST_LANES = 1;
 /**
- * HOW MANY EXTRA TURNS ONE MAILBOX MAY EARN INSIDE A SINGLE CYCLE BY BEING WOKEN.
- *
- * ── WHY A SECOND TURN EXISTS AT ALL ────────────────────────────────────────────────────────
- *
- * Lanes shorten a rotation; they do not shorten a CYCLE. One `cycle()` entry runs until every
- * mailbox has had its turn, and the queue admits one entry at a time, so a mailbox whose doorbell
- * rings after its turn waits for the slowest lane in that cycle — one bounded batch, measured at
- * ~254 s. Four minutes is a large improvement on 15.5 and is still not what the wake channel
- * promises. So a mailbox with an UNSERVED wake may be re-admitted inside the pass it already had
- * a turn in, and because {@link CYCLE_FAST_LANES} holds a lane back for mailboxes that owe
- * nothing, that re-admission is usually immediate.
- *
- * ── AND WHY IT IS BOUNDED ──────────────────────────────────────────────────────────────────
- *
- * `servedIds` — one turn per mailbox per pass — is what keeps a live queue FINITE, and this is a
- * hole in it, so the hole has a floor of its own. A re-admission spends the wake (`wokenAt` is
- * cleared on admission), so another one needs another real signal; that already bounds it by
- * events rather than by policy. This bounds it by policy as well, because "the number of IDLE
- * notifications a chatty mailbox can produce" is not a number this file gets to choose, and a
- * cycle that never ends is a roster pass that never runs.
- *
- * FOUR is deliberately small. Past it the mailbox keeps its wake and is served at the front of
- * the NEXT pass — which is the pre-lane behaviour, i.e. the floor this can degrade to is exactly
- * what shipped.
+ * How many extra turns one mailbox may earn inside a single cycle by being woken. Lanes shorten a
+ * rotation, not a CYCLE: one `cycle()` entry runs until every mailbox has had its turn, so a mailbox
+ * whose doorbell rings after its turn waits for the slowest lane (~254 s) — a large improvement on
+ * 15.5 and still not what the wake channel promises. So an unserved wake may be re-admitted inside the
+ * pass it already had a turn in, usually immediately because {@link CYCLE_FAST_LANES} holds a lane
+ * back. BOUNDED: `servedIds` keeps a live queue FINITE and this is a hole in it, so a re-admission
+ * spends the wake and this floors it too (a cycle that never ends is a roster pass that never runs).
+ * FOUR is deliberately small — past it the mailbox keeps its wake and leads the next pass.
  */
 export const CYCLE_WAKE_REVISITS = 4;
 /** Standby lock-retry backoff — a hot spare re-tries every 15 s. */
 export const DEFAULT_STANDBY_RETRY_MS = 15_000;
 /**
- * How long an instance may SERVE NOTHING before `/health` stops calling it healthy.
- *
- * Two states are measured against it (`evaluateHealth` in `health.ts`): an instance that has
- * been waiting for the leader lock this long, and a leader that has had mailboxes to serve and
- * served none of them this long. Before this bound both answered 200 for ever — the first because a
- * wedge and a hot spare are the same snapshot, the second because the rule required a
- * quarantine to have been recorded — and an eight-minute production outage went unannounced
- * behind a green probe.
- *
- * TWO MINUTES, and the size is load-bearing in both directions:
- *   · a measured deploy handover is ~5 s, so a hot spare during a rolling
- *     deploy is 23× inside the bound and still answers 200 — kill that and no deployment can
- *     ever go active;
- *   · it is above the platform's 60 s health-check timeout, so in the pathological case the
- *     platform's own clock fails the deploy before this bound can be the thing that did. {@link
- *     MIN_SERVING_NOTHING_MAX_MS} keeps that true for any configured value.
+ * How long an instance may SERVE NOTHING before `/health` stops calling it healthy. Two states are
+ * measured against it (`evaluateHealth` in `health.ts`): an instance waiting for the leader lock this
+ * long, and a leader with mailboxes to serve that served none this long. Before this bound both
+ * answered 200 for ever (a wedge and a hot spare are the same snapshot; the second required a
+ * quarantine on record), and an eight-minute outage went unannounced behind a green probe. TWO
+ * MINUTES, load-bearing both ways: a measured deploy handover is ~5 s (so a hot spare is 23× inside
+ * the bound and still 200 — kill that and no deployment can go active), and it is above the platform's
+ * 60 s health-check timeout, so the platform's own clock fails a pathological deploy first ({@link MIN_SERVING_NOTHING_MAX_MS}).
  */
 export const DEFAULT_SERVING_NOTHING_MAX_MS = 120_000;
 /**
@@ -141,29 +88,14 @@ export const DEFAULT_SERVING_NOTHING_MAX_MS = 120_000;
  */
 export const MIN_SERVING_NOTHING_MAX_MS = 60_000;
 /**
- * How STALE the leader's last COMPLETED cycle may go, with mailboxes connected, before
- * `/health` reports `degraded` — never unhealthy. The deployment platform gates a deployment on
- * this endpoint
- * and never re-probes a running service, so a slow cycle must not be able to refuse a deploy;
- * what it must stop doing is hiding.
- *
- * The blind spot it closes: `serving_nothing` requires `connected === 0`, so a leader whose
- * mailboxes were all attached but whose cycle had stopped completing read `healthy: true,
- * degraded: false` for ever — measured in production at `lagSeconds: 560` during a cold backfill,
- * green throughout. Now that state answers `degraded: true, degradedReason: "stale_cycle"`.
- *
- * EIGHT MINUTES, and the size is load-bearing in both directions:
- *   · a first post-takeover cycle measured ~5 minutes in production, so the
- *     bound clears the measured shape with margin — and the rule keys on `lastCycleAt`, a
- *     COMPLETED cycle, so that first long cycle cannot trip it at all (a fresh leader has no
- *     completed cycle to be stale about until its first one lands);
- *   · it stays below `DEFAULT_ALERT_THRESHOLDS.syncLagMs` (15 min), so `/health` turns amber
- *     before the pager fires — the endpoint must never know less than the alert pass. Asserted
- *     in `test/health-verdict.test.ts`.
- *
- * Wall clock and not a count of poll intervals, for {@link DEFAULT_SYNC_BLOCK_GRACE_MS}'s
- * reason: at the default 60 s `pollIntervalMs` this is eight cycles, but the property that
- * matters is measured in wall clock, so the knob is too.
+ * How stale the leader's last COMPLETED cycle may go, with mailboxes connected, before `/health`
+ * reports `degraded` — never unhealthy. The platform gates a deployment on this endpoint and never
+ * re-probes, so a slow cycle must not refuse a deploy; what it must stop doing is hiding. The blind
+ * spot it closes: `serving_nothing` requires `connected === 0`, so a leader whose mailboxes were all
+ * attached but whose cycle had stopped completing read `healthy: true` for ever (measured at
+ * `lagSeconds: 560` during a cold backfill). EIGHT MINUTES, both ways: a first post-takeover cycle is
+ * ~5 minutes and the rule keys on `lastCycleAt` (a COMPLETED cycle, so it cannot trip on the first),
+ * and it stays below `syncLagMs` (15 min) so `/health` turns amber before the pager fires. Wall clock.
  */
 export const DEFAULT_STALE_CYCLE_MAX_MS = 480_000;
 /** Health-server port when the platform does not inject `PORT`. */
@@ -171,58 +103,25 @@ export const DEFAULT_HEALTH_PORT = 8080;
 /** How often the leader re-reads the mailbox roster: registrations, disables, deletions. */
 export const DEFAULT_ROSTER_INTERVAL_MS = 30_000;
 /**
- * HOW LONG A MAILBOX MAY GO UNSERVED BEFORE ITS ROW HAS TO SAY SO (mail migration 0029).
- *
- * ── A DURATION, NOT A COUNT OF PASSES ─────────────────────────────────────────────────────
- *
- * "After N roster passes" is a proxy for time that silently retunes itself whenever
- * {@link DEFAULT_ROSTER_INTERVAL_MS} changes: at N = 4 this threshold is two minutes today and
- * would become eight the day somebody quadrupled the roster interval to cut database load, with no
- * diff anywhere near this line. The property that matters is measured in wall clock, so the knob
- * is measured in wall clock.
- *
- * ── AND IT MUST STAY BELOW `DEFAULT_ALERT_THRESHOLDS.syncLagMs` (15 min) ──────────────────
- *
- * This is the whole of a measured half-hour silence, as a constraint. The `sync_lag` alert fires when an on-duty
- * mailbox has not synced for `syncLagMs`; the row is the only thing that can EXPLAIN that alert.
- * Set the grace above the alert threshold and the page arrives while the row is still pristine —
- * which is precisely the position an operator was in during that incident, and precisely the thing this
- * grace exists to make impossible. Two minutes leaves thirteen minutes of margin.
- *
- * The constraint is ASSERTED, not commented: `test/config.test.ts` compares the two
- * constants, and {@link syncBlockGraceMsFrom} refuses an env value that breaks it — a knob that can
- * make a documented claim false is a knob with a bound, the same rule
- * {@link MIN_SERVING_NOTHING_MAX_MS} exists for.
+ * How long a mailbox may go unserved before its row has to say so (mail 0029). A DURATION, not a
+ * count of passes: "after N roster passes" is a proxy for time that silently retunes itself whenever
+ * {@link DEFAULT_ROSTER_INTERVAL_MS} changes (N = 4 is two minutes today, eight the day somebody
+ * quadruples the roster interval), so the property measured in wall clock has a knob in wall clock.
+ * And it must stay below `DEFAULT_ALERT_THRESHOLDS.syncLagMs` (15 min): the `sync_lag` alert fires when
+ * an on-duty mailbox has not synced for `syncLagMs`, and the row is the only thing that can EXPLAIN
+ * that alert — set the grace above the threshold and the page arrives while the row is still pristine.
+ * The constraint is ASSERTED (`config.test.ts`), and {@link syncBlockGraceMsFrom} refuses an env value that breaks it.
  */
 export const DEFAULT_SYNC_BLOCK_GRACE_MS = 120_000;
 /**
- * HOW LONG A CYCLE MAY KEEP FAILING TO READ THE ORGANIZER LEASE BEFORE THE MAILBOX IS DETACHED.
- *
- * ── WHAT IT BOUNDS, MEASURED ──────────────────────────────────────────────────────────────
- *
- * In one production incident every served mailbox emitted over a hundred consecutive
- * `sync_cycle_lease_unavailable` over most of an hour with `causeCode="NoConnection"`, and healed only
- * on a process restart. `LeaseUnavailableError` is exempt from `maxSyncFailures` BY CLASS, which is
- * correct (an infrastructure fault must never write `status='error'` on a customer's mailbox), and
- * with nothing else bounding the exempt arm a PERMANENTLY dead connection was retried for ever.
- * This is the bound. Past it the runtime is DETACHED — not quarantined — and the next roster pass
- * re-attaches on a fresh connection, because attach IS reconnect.
- *
- * ── A DURATION, NOT A COUNT OF CYCLES ─────────────────────────────────────────────────────
- *
- * {@link DEFAULT_SYNC_BLOCK_GRACE_MS}'s argument, restated for the sibling knob: "after N cycles"
- * is a proxy for time that silently retunes itself the day somebody changes `pollIntervalMs`, and a
- * cycle loop that re-kicks itself while `hasBacklog` does not even have a fixed period. The
- * property is wall clock, so the knob is wall clock.
- *
- * ── AND IT MUST STAY BELOW `DEFAULT_ALERT_THRESHOLDS.syncLagMs` (15 min) ──────────────────
- *
- * Same reason as its sibling, one step further: the system must HEAL before the alert that pages
- * about it. At two minutes plus one roster interval the streak self-terminates in ~2.5 minutes
- * against the near-hour measured, so `sync_lag` never fires for this cause at all. Set the bound
- * above the alert threshold and the page arrives while the worker is still in the do-nothing loop —
- * the outage restored, with a knob to blame. Asserted in `test/config.test.ts` and
- * refused by {@link leaseUnavailableDetachMsFrom}.
+ * How long a cycle may keep failing to read the organizer lease before the mailbox is detached. In
+ * one incident every served mailbox emitted over a hundred `sync_cycle_lease_unavailable` over most
+ * of an hour and healed only on restart: `LeaseUnavailableError` is exempt from `maxSyncFailures` BY
+ * CLASS (correct — an infrastructure fault must never write `status='error'`), so with nothing
+ * bounding the exempt arm a permanently dead connection was retried for ever. Past this the runtime is
+ * DETACHED, not quarantined, and the next pass re-attaches (attach IS reconnect). A DURATION, not a
+ * count of cycles ({@link DEFAULT_SYNC_BLOCK_GRACE_MS}'s reason), and it must stay below `syncLagMs`
+ * so the system heals before the alert (asserted in `config.test.ts`, refused by {@link leaseUnavailableDetachMsFrom}).
  */
 export const DEFAULT_LEASE_UNAVAILABLE_DETACH_MS = 120_000;
 /** How often the leader proves it still HOLDS its advisory lock (split-brain guard). */
@@ -243,31 +142,23 @@ export const DEFAULT_ALERT_INTERVAL_MS = 60_000;
 export interface WorkerConfig {
   databaseUrl: string;          // session-mode / direct URL (NOT the transaction pooler)
   /**
-   * WHERE THIS HOST ASKS ABOUT MONEY, or `null` on a deployment that meters nothing.
-   *
-   * The organizer charges AI actions, so it needs the same answer the API host does and reaches
-   * it the same way: `ENTITLEMENTS_URL` + `BILLING_PLANE_SECRET`, present or absent as a WHOLE.
-   * `null` is a NAMED state, not an unfinished composition — the spend call sites are handed
-   * `UNMETERED` and charge nothing, which is a self-hosted or standalone install's truth.
-   *
-   * OPTIONAL, and ABSENT MEANS THE SAME AS `null` — deliberately, and it is the one place this
-   * interface collapses two states on purpose. `loadConfig` always writes one of the two, so a
-   * config that came from an environment says which it is; a config assembled in code is a test
-   * seam rather than a deployment, and there is no third thing "unfinished" could mean here.
+   * Where this host asks about money, or `null` on a deployment that meters nothing. The organizer
+   * charges AI actions, so it needs the same answer the API host does and reaches it the same way:
+   * `ENTITLEMENTS_URL` + `BILLING_PLANE_SECRET`, present or absent as a WHOLE. `null` is a NAMED state,
+   * not an unfinished composition — the spend call sites are handed `UNMETERED` and charge nothing, a
+   * self-hosted or standalone install's truth. OPTIONAL, and ABSENT means the same as `null`: the one
+   * place this interface collapses two states on purpose, because `loadConfig` always writes one of the
+   * two and a config assembled in code is a test seam, with no third thing "unfinished" could mean.
    */
   entitlements?: { url: string; secret: string } | null;
-  // ── accountId + mailboxId + imap are BOOTSTRAP-ONLY. The worker syncs
-  // ALL enabled mailboxes of ALL accounts in its shard, reading credentials from
-  // `mailbox_credentials`.
-  //
-  // `accountId` (`TF_ACCOUNT_ID`) CANNOT narrow the roster. It used to, and a stale
-  // production value would then leave every other account permanently unsynced — the
-  // silently-unsynced-second-account defect wearing a different hat. It now only (a) pairs with `mailboxId` to VALIDATE the
-  // legacy env mailbox during the one-shot creds bootstrap and (b) scopes the
-  // single-mailbox `reconcile-cron` backstop. `selectionOf()` ignores it entirely.
-  //
-  // `mailboxId` + `imap`, when present, seed the legacy single mailbox's DB creds exactly
-  // once, then are never read again.
+  // accountId + mailboxId + imap are BOOTSTRAP-ONLY. The worker syncs ALL enabled mailboxes of ALL
+  // accounts in its shard, reading credentials from `mailbox_credentials`. `accountId`
+  // (`TF_ACCOUNT_ID`) CANNOT narrow the roster — it used to, and a stale production value would leave
+  // every other account permanently unsynced (the silently-unsynced-second-account defect wearing a
+  // different hat). It now only pairs with `mailboxId` to VALIDATE the legacy env mailbox during the
+  // one-shot creds bootstrap and scopes the single-mailbox `reconcile-cron` backstop; `selectionOf()`
+  // ignores it entirely. `mailboxId` + `imap`, when present, seed the legacy single mailbox's DB creds
+  // exactly once, then are never read again.
   accountId?: string;
   mailboxId?: string;
   imap?: { host: string; port: number; secure: boolean; user: string; pass: string };
@@ -315,27 +206,21 @@ export interface WorkerConfig {
   /** How often the leader proves it still holds its advisory lock (split-brain guard). */
   lockHeartbeatMs?: number;
   /**
-   * Mail migration 0029: how long a mailbox this process is NOT serving may stay unexplained before the
-   * worker writes `sync_blocked_reason` on its row.
-   *
-   * Default {@link DEFAULT_SYNC_BLOCK_GRACE_MS}. It exists as a grace at all so a rolling deploy,
-   * a leader handoff or one slow first `ensureFolders` does not stamp a reason onto a mailbox that
-   * is about to attach perfectly well; it is bounded above by
-   * `DEFAULT_ALERT_THRESHOLDS.syncLagMs`, because a reason that lands after the alert cannot
-   * explain it. `loadConfig` REFUSES an env value at or above that bound; a programmatic config
-   * (the tests, which set milliseconds) is unclamped.
+   * Mail 0029: how long a mailbox this process is NOT serving may stay unexplained before the worker
+   * writes `sync_blocked_reason` on its row. Default {@link DEFAULT_SYNC_BLOCK_GRACE_MS}. It exists as
+   * a grace so a rolling deploy, a leader handoff or one slow first `ensureFolders` does not stamp a
+   * reason onto a mailbox about to attach perfectly well; it is bounded above by `syncLagMs`, because a
+   * reason that lands after the alert cannot explain it. `loadConfig` REFUSES an env value at or above
+   * that bound; a programmatic config (the tests, in milliseconds) is unclamped.
    */
   syncBlockGraceMs?: number;
   /**
-   * How long `cycle()` may keep failing to READ the organizer lease for one mailbox
-   * before that mailbox's runtime is detached so the next roster pass re-dials it.
-   *
-   * Default {@link DEFAULT_LEASE_UNAVAILABLE_DETACH_MS}. It is a grace at all because a lease read
-   * genuinely does fail transiently — a provider blip, a `FETCH` refused once — and detaching on the
-   * first one would cost a reconnect per hiccup. It is bounded above by
-   * `DEFAULT_ALERT_THRESHOLDS.syncLagMs` because the system has to heal before the page. `loadConfig`
-   * REFUSES an env value at or above that bound; a programmatic config (the tests, which set
-   * milliseconds) is unclamped.
+   * How long `cycle()` may keep failing to READ the organizer lease for one mailbox before that
+   * mailbox's runtime is detached so the next roster pass re-dials it. Default {@link
+   * DEFAULT_LEASE_UNAVAILABLE_DETACH_MS}. A grace because a lease read genuinely fails transiently (a
+   * provider blip, a `FETCH` refused once) and detaching on the first would cost a reconnect per
+   * hiccup; bounded above by `syncLagMs` because the system must heal before the page. `loadConfig`
+   * REFUSES an env value at or above that bound; a programmatic config (the tests, in milliseconds) is unclamped.
    */
   leaseUnavailableDetachMs?: number;
   /**
@@ -350,46 +235,25 @@ export interface WorkerConfig {
    */
   msOAuth?: { clientId: string; clientSecret: string; tenant: string; redirectUri?: string };
   /**
-   * THE PUBLIC CLIENT — `MS_DEVICE_CLIENT_ID`, and the reason this worker needs it at all.
-   *
-   * A mailbox connected through the device-code flow holds a refresh token issued by the PUBLIC
-   * application registration, and a refresh token is only renewable by the client that obtained it.
-   * This process is the organizer on a self-hosted install — the same image the compose file runs as
-   * `organizer` — so it is the process that has to renew those tokens for ever. Without this field
-   * it would present the confidential registration's client id, Microsoft would refuse, and
-   * `refreshAccessToken` maps a rejected client to "provider unavailable" deliberately: nothing
-   * quarantines, nothing pages, and the mailbox simply stops receiving mail an hour after somebody
-   * connected it.
-   *
-   * ABSENT is the ordinary state and is not a fault: an install with no public client has no
-   * device-connected mailboxes either, and a mailbox that claims otherwise is refused BY NAME
-   * (`MicrosoftTokenProvider` quotes `MS_DEVICE_CLIENT_ID`) rather than sending a doomed request.
-   * There is deliberately NO SECRET here — a public registration has none.
+   * The public client — `MS_DEVICE_CLIENT_ID`, and why this worker needs it. A mailbox connected
+   * through the device-code flow holds a refresh token issued by the PUBLIC application registration,
+   * and a refresh token is only renewable by the client that obtained it — and this process is the
+   * organizer on a self-hosted install, so it must renew those tokens for ever. Without this field it
+   * presents the confidential registration's client id, Microsoft refuses, and `refreshAccessToken`
+   * maps a rejected client to "provider unavailable" deliberately: nothing quarantines, nothing pages,
+   * the mailbox simply stops receiving mail an hour after connecting. ABSENT is ordinary and not a
+   * fault (no public client, no device-connected mailboxes; one that claims otherwise is refused BY NAME). No SECRET here.
    */
   msDevice?: { clientId: string; tenant: string };
   /**
-   * THE STAGING BUCKET THIS WORKER SWEEPS — or absent on a deployment with no object storage.
-   *
-   * The hosted send stages attachment bytes into a private bucket on a signed URL and references
-   * them from the send request; `attachment_staging` rows carry a 24-hour `expires_at` and this is
-   * the other half — the bytes and the rows actually going away. It belongs to this process for
-   * the reason `pruneIdempotencyKeys` already does: the worker is the single ELECTED writer, so
-   * exactly one process runs the sweep.
-   *
-   * ABSENT ⇒ no sweep runs and nothing else changes. That is correct on a worker whose API has no
-   * staging either — there is nothing to sweep — and it is a REPORTED state rather than a silent
-   * one: a deployment that stages and does not sweep grows a bucket forever, so the worker logs
-   * the skip once per maintenance pass rather than passing over it.
-   *
-   * The variables are the API host's exactly, KIND FOR KIND — `TF_STORAGE_KIND` selects
-   * `supabase` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TF_ATTACHMENT_STAGING_BUCKET`) or
-   * `s3` (the `S3_*` block) — and each kind's block is read all-or-nothing for the same reason:
-   * half a configuration is a sweep that cannot delete. The worker MUST speak every kind the API
-   * can mint into, because the worker is the only process that ever deletes: a kind the API
-   * stages into and this process cannot sweep is a bucket that grows forever behind a quota that
-   * deliberately counts unexpired rows only (an independent review caught exactly that gap when
-   * the second kind landed API-side first). The kind-less legacy shape — the SUPABASE trio with
-   * no `TF_STORAGE_KIND` at all — stays valid because it is the DEPLOYED managed contract.
+   * The staging bucket this worker sweeps — or absent on a deployment with no object storage. The
+   * hosted send stages attachment bytes into a private bucket and references them; `attachment_staging`
+   * rows carry a 24-hour `expires_at`, and this is the half that makes the bytes and rows go away. It
+   * belongs to this process (the worker is the single ELECTED writer). ABSENT ⇒ no sweep, and a
+   * REPORTED state (a deployment that stages and does not sweep grows a bucket forever, logged once).
+   * The variables are the API host's exactly, KIND FOR KIND (`TF_STORAGE_KIND` selects `supabase` or
+   * `s3`, each block all-or-nothing): the worker MUST speak every kind the API mints into, because it
+   * is the only process that deletes. The kind-less legacy SUPABASE trio stays valid (the managed contract).
    */
   attachmentStaging?: WorkerStagingStorage;
   /** Base per-mailbox retry delay after a quarantine (exponential, capped at 16×). */
@@ -420,15 +284,12 @@ export interface WorkerConfig {
    *  attach path nor the process's exit code — the two properties the placement fix exists for. */
   threadBackfill?: ThreadBackfillPass;
   /**
-   * The INJECTED ClassifierPort the routing pipeline's AI branch calls.
-   *
-   * The field an earlier comment said did not exist yet ("today `config.classifier` does not exist"). Absent ⇒
-   * rules-only routing: no AI branch, no debit — which is still the shipped behaviour
-   * of any deployment without an `ANTHROPIC_API_KEY`.
-   *
-   * It is NOT handed to `runSyncCycle` directly. `index.ts` wraps it in the per-process
-   * CIRCUIT BREAKER (`ai-circuit.ts`) and passes `circuit.port()` per cycle, so a model outage
-   * degrades to rules-only instead of stalling ingest and quarantining mailboxes.
+   * The INJECTED ClassifierPort the routing pipeline's AI branch calls. The field an earlier comment
+   * said did not exist yet. Absent ⇒ rules-only routing: no AI branch, no debit — still the shipped
+   * behaviour of any deployment without an `ANTHROPIC_API_KEY`. It is NOT handed to `runSyncCycle`
+   * directly: `index.ts` wraps it in the per-process CIRCUIT BREAKER (`ai-circuit.ts`) and passes
+   * `circuit.port()` per cycle, so a model outage degrades to rules-only instead of stalling ingest
+   * and quarantining mailboxes.
    */
   classifier?: ClassifierPort;
   /** The INJECTED DraftPort the workflow runtime's `draft_reply` tool calls.
@@ -442,17 +303,13 @@ export interface WorkerConfig {
    *  runs cleanly, no suggestions). Tests inject a mock port. */
   proposer?: WorkflowPort;
   /**
-   * THE LATE-BOUND USAGE SINK the three ports above report through.
-   *
-   * It exists because of an ORDERING this app cannot rearrange: the model client is constructed
-   * while the CONFIGURATION is parsed (`loadAiPorts`, from `loadConfig`), and the database pool
-   * is opened later, inside `startWorkerWithLock`, from a URL that configuration produced. So at
-   * the moment `onUsage` has to be handed to the client, there is nothing to record into.
-   *
-   * A relay closes that gap without a module-level global: `loadAiPorts` hands the client a
-   * dispatcher, the worker body attaches the real recorder once the pool exists, and everything
-   * reported in between goes to the logger only. Present whenever managed AI is armed; absent on
-   * a rules-only deployment, which has no client to report through either.
+   * The late-bound usage sink the three ports above report through. It exists because of an ORDERING
+   * this app cannot rearrange: the model client is constructed while the CONFIGURATION is parsed
+   * (`loadAiPorts`), and the database pool is opened later, inside `startWorkerWithLock`, from a URL
+   * that configuration produced — so at the moment `onUsage` is handed to the client, there is nothing
+   * to record into. A relay closes that gap without a module-level global: `loadAiPorts` hands the
+   * client a dispatcher, the worker body attaches the real recorder once the pool exists, and anything
+   * reported in between goes to the logger only. Absent on a rules-only deployment.
    */
   aiUsage?: AiUsageRelay;
 
@@ -483,31 +340,23 @@ export interface WorkerConfig {
    */
   buildError?: string | null;
   /**
-   * Generic alert webhook (`TF_ALERT_WEBHOOK_URL`): ntfy.sh, a Slack/Discord incoming hook,
-   * PagerDuty Events v2 — anything that accepts a JSON POST.
-   *
-   * This is how the WORKER pages a human. It cannot use the product's own mailer: the worker may import
-   * core + db only, and `MailService` lives in `packages/services`. A JSON POST needs
-   * nothing but `fetch`, which is why the alert sink seam is shaped the way it is.
-   *
-   * Unset ⇒ the worker still evaluates and LOGS alerts (structured, one line each) but pages
-   * nobody, and `alerts_undeliverable` says so at warn level rather than failing silently.
+   * Generic alert webhook (`TF_ALERT_WEBHOOK_URL`): ntfy.sh, a Slack/Discord hook, PagerDuty Events
+   * v2 — anything that accepts a JSON POST. This is how the WORKER pages a human. It cannot use the
+   * product's own mailer: the worker may import core + db only, and `MailService` lives in
+   * `packages/services`; a JSON POST needs nothing but `fetch`, which is why the alert sink seam is
+   * shaped this way. Unset ⇒ the worker still evaluates and LOGS alerts (structured, one line each)
+   * but pages nobody, and `alerts_undeliverable` says so at warn level rather than failing silently.
    */
   alertWebhookUrl?: string;
   /**
-   * The MAIL arm of the pager (`TF_ALERT_EMAIL`, armed with `RESEND_API_KEY` + `MAIL_FROM`).
-   *
-   * Added when the webhook arm's endpoint (ntfy.sh) turned out to blackhole the hosting
-   * platform's egress IPs — measured from inside this worker's own container, 2026-08-21,
-   * while `api.resend.com` answered 200 from the same place. The product IS mail; the mailer
-   * the API host already sends transactional mail through is one JSON POST away, so the
-   * "core + db only" import rule holds: `resendAlertSink` lives in `packages/db`, not in
-   * `packages/services` next to `MailService`.
-   *
-   * `TF_ALERT_EMAIL` is the ARMING variable: unset ⇒ no mail arm, quietly. Set with either
-   * mailer half missing ⇒ a sink that refuses every delivery naming the missing variable, so
-   * the escalation reports the misconfiguration instead of a silent hole. The spellings are
-   * the API host's own (`msOAuthEnv` rule).
+   * The MAIL arm of the pager (`TF_ALERT_EMAIL`, armed with `RESEND_API_KEY` + `MAIL_FROM`). Added
+   * when the webhook arm's endpoint (ntfy.sh) turned out to blackhole the hosting platform's egress
+   * IPs — measured from inside this worker's container, 2026-08-21, while `api.resend.com` answered
+   * 200 from the same place. The product IS mail, and the mailer the API host already uses is one JSON
+   * POST away, so the "core + db only" import rule holds (`resendAlertSink` lives in `packages/db`).
+   * `TF_ALERT_EMAIL` is the ARMING variable: unset ⇒ no mail arm quietly; set with either mailer half
+   * missing ⇒ a sink that refuses every delivery naming the missing variable, so the escalation reports
+   * the misconfiguration instead of a silent hole. The spellings are the API host's own.
    */
   alertEmail?: string;
   /** `MAIL_FROM` — the From the product already sends transactional mail as. */
@@ -515,23 +364,14 @@ export interface WorkerConfig {
   /** `RESEND_API_KEY` — the mail arm's bearer credential. Scoped, sending-only. */
   resendApiKey?: string;
   /**
-   * The PUSH arm of the pager — the pager's SECOND VENDOR
-   * (`TF_ALERT_TELEGRAM_BOT_TOKEN` + `TF_ALERT_TELEGRAM_CHAT_ID`).
-   *
-   * The mail arm above left the pager single-vendor: one transactional-mail account carrying
-   * every page there is, so that account's outage, suspension or revoked key takes the pager
-   * with it at the moment something is wrong. This arm shares nothing with it — different
-   * company, different network, different credential, and a push to a device rather than a
-   * message into a mailbox that this very product serves.
-   *
-   * Reachability was probed from inside this worker's own container rather than assumed, which
-   * is how the webhook arm's host was found to be blackholed: `api.telegram.org` answered 200
-   * in 86 ms from the same shell where `ntfy.sh` still times out.
-   *
-   * Either variable present arms the arm; the missing half is then a NAMED fault rather than a
-   * quiet disarm — unlike `TF_ALERT_EMAIL`, neither of these exists for any other purpose, so
-   * one of them being set can only mean somebody meant to arm this. `alert-push.ts` rules the
-   * states.
+   * The PUSH arm of the pager — the pager's SECOND VENDOR (`TF_ALERT_TELEGRAM_BOT_TOKEN` +
+   * `TF_ALERT_TELEGRAM_CHAT_ID`). The mail arm above left the pager single-vendor: one transactional-
+   * mail account carrying every page, so that account's outage, suspension or revoked key takes the
+   * pager with it at the moment something is wrong. This arm shares nothing with it — different company,
+   * network, credential, and a push to a device rather than a message into the mailbox this product
+   * serves. Reachability was probed from inside this worker's container (how ntfy.sh was found
+   * blackholed): `api.telegram.org` answered 200 in 86 ms from the same shell. Either variable present
+   * arms it; the missing half is a NAMED fault, since neither exists for any other purpose (`alert-push.ts`).
    */
   alertTelegramBotToken?: string;
   /** Where the push arm posts — a numeric chat id, or an `@channelusername`. */
@@ -539,32 +379,25 @@ export interface WorkerConfig {
   /** How often the leader runs the alert pass. Default {@link DEFAULT_ALERT_INTERVAL_MS}. */
   alertIntervalMs?: number;
   /**
-   * THE API-CRON ARM (`TF_API_CRON_URL` + `TF_API_CRON_SECRET`) — this worker as the schedule
-   * for the API host's internal passes (`api-cron.ts` has the whole argument: the platform
-   * cron layer those routes were written for was measured dark for three weeks of deploys).
-   *
-   * `baseUrl` is the API origin (`https://api.ohmail.app`); `secret` is presented as
-   * `Authorization: Bearer …` and must match the API host's `TF_ALERT_SECRET` or `CRON_SECRET`.
-   *
-   * Both-or-neither, enforced in `loadConfig`: neither ⇒ quiet disarm (a self-hosted compose
-   * where the API sits beside a cron-capable host has no use for this), exactly one ⇒ a
-   * NAMED refusal — like the Telegram pair, neither variable exists for any other purpose,
-   * so one being set can only mean somebody meant to arm this, and a half-armed schedule
-   * that quietly does nothing is precisely the dark-cron failure this arm replaces.
+   * The API-cron arm (`TF_API_CRON_URL` + `TF_API_CRON_SECRET`) — this worker as the schedule for the
+   * API host's internal passes (`api-cron.ts` has the whole argument: the platform cron layer those
+   * routes were written for was measured dark for three weeks of deploys). `baseUrl` is the API origin
+   * (`https://api.ohmail.app`); `secret` is presented as `Authorization: Bearer …` and must match the
+   * API host's `TF_ALERT_SECRET` or `CRON_SECRET`. Both-or-neither, enforced in `loadConfig`: neither
+   * ⇒ quiet disarm (a self-hosted compose beside a cron-capable host has no use for this), exactly one
+   * ⇒ a NAMED refusal — like the Telegram pair, one being set can only mean somebody meant to arm it,
+   * and a half-armed schedule that quietly does nothing is the dark-cron failure this replaces.
    */
   apiCron?: { baseUrl: string; secret: string };
   // ── The organizer lease (mail migration 0027) ───────────────────────────────────────
   /**
-   * Who this Cloud deployment is, as an organizer of a mailbox.
-   *
-   * Every field has a safe default and none of them is normally set. `installId` in particular
-   * MUST stay stable across restarts, deploys and database migrations — read the block above
-   * `cloudInstallId` in `lease.ts` before overriding it, because the failure mode of an unstable
-   * one is that every leader failover disables a customer's mailbox.
-   *
-   * `TF_ORGANIZER_INSTALL_ID` exists for the one case the default cannot serve: a self-hosted
-   * Cloud organizing the same mailbox as ours. `TF_LEASE_STALE_MS` exists for tests, which
-   * cannot wait out a ten-minute window.
+   * Who this Cloud deployment is, as an organizer of a mailbox. Every field has a safe default and
+   * none is normally set. `installId` in particular MUST stay stable across restarts, deploys and
+   * migrations — read the block above `cloudInstallId` in `lease.ts` before overriding it, because the
+   * failure mode of an unstable one is that every leader failover disables a customer's mailbox.
+   * `TF_ORGANIZER_INSTALL_ID` exists for the one case the default cannot serve: a self-hosted Cloud
+   * organizing the same mailbox as ours. `TF_LEASE_STALE_MS` exists for tests, which cannot wait out a
+   * ten-minute window.
    */
   organizer?: {
     /** ALWAYS SET by `loadConfig`, through `resolveCloudInstallId` — see the note at the read. */
@@ -585,16 +418,14 @@ export interface WorkerConfig {
 }
 
 /**
- * A configuration failure, NAMED — so the crash handler can report which variable is wrong
- * without printing the message.
- *
- * `packages/core/src/log.ts` reduces a thrown value to class + code and refuses the message,
- * for reasons that apply here too: `DATABASE_URL_SESSION` is a connection string and several of
- * these messages quote their input. But "the worker did not boot, class Error, code null" is not
- * an operational answer either, and a boot failure is exactly when there is nothing else to go
- * on. The variable's NAME is safe (we chose it, it is in the deploy manifest) and is the whole
- * of what a human needs, so it rides on the error as a field the handler can log deliberately.
- * The `message` keeps its original wording for a developer reading a stack locally.
+ * A configuration failure, NAMED — so the crash handler can report which variable is wrong without
+ * printing the message. `packages/core/src/log.ts` reduces a thrown value to class + code and refuses
+ * the message, for reasons that apply here too (`DATABASE_URL_SESSION` is a connection string and
+ * several of these messages quote their input) — but "the worker did not boot, class Error, code null"
+ * is not an operational answer, and a boot failure is exactly when there is nothing else to go on. The
+ * variable's NAME is safe (we chose it, it is in the deploy manifest) and is the whole of what a human
+ * needs, so it rides on the error as a field the handler logs deliberately; the `message` keeps its
+ * original wording for a developer reading a stack locally.
  */
 export class WorkerConfigError extends Error {
   /** Always this — `describeError` reads `code`, and the class is the taxonomy. */
@@ -626,19 +457,14 @@ function optInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
 }
 
 /**
- * THE ONE PLACE A LANE COUNT BECOMES A NUMBER OF CONCURRENT CYCLES.
- *
- * Both entry points go through it — `loadConfig` for a deployment and `startWorkerWithLock` for a
- * programmatic `WorkerConfig` — and it CLAMPS rather than trusting, which is deliberate and is
- * different from how the millisecond knobs in this file treat a programmatic value. Those knobs
- * bound a CLAIM (a row that explains an alert, a deploy the platform is still waiting on) and a test
- * setting an absurd one only makes its own assertions strange. This one bounds a RESOURCE that is
- * shared with the pulse, the alert pass and the customer's provider, and the failure mode of
- * exceeding it is invisible: postgres.js queues, so a worker configured 32 lanes wide would report
- * 32 cycles in flight while five of them make progress and 32 IMAP connections stream at once.
- *
- * A clamp and not a throw HERE because the throw belongs at the env boundary, where the operator
- * who typed the number can be told which variable to change ({@link cycleLanesFrom}).
+ * The one place a lane count becomes a number of concurrent cycles. Both entry points go through it,
+ * and it CLAMPS rather than trusting — different from how the millisecond knobs treat a programmatic
+ * value. Those knobs bound a CLAIM (a row that explains an alert, a deploy the platform is waiting on)
+ * and a test setting an absurd one only makes its own assertions strange. This one bounds a RESOURCE
+ * shared with the pulse, the alert pass and the customer's provider, whose failure mode is invisible:
+ * postgres.js queues, so a worker configured 32 lanes wide reports 32 cycles in flight while five make
+ * progress and 32 IMAP connections stream at once. A clamp and not a throw HERE because the throw
+ * belongs at the env boundary ({@link cycleLanesFrom}).
  */
 export function resolveCycleLanes(requested: number | undefined): number {
   const want = requested ?? DEFAULT_CYCLE_LANES;
@@ -688,16 +514,13 @@ function servingNothingMaxMsFrom(env: NodeJS.ProcessEnv): number {
 }
 
 /**
- * `TF_SYNC_BLOCK_GRACE_MS`, with the bound that keeps "the row explains the alert" true.
- *
- * A REFUSAL TO BOOT rather than a clamp, for {@link servingNothingMaxMsFrom}'s reason: silently
- * lowering somebody's 20 minutes to 15 leaves a deployment whose behaviour does not match what its
- * operator configured, and the variable is named in the error so the fix is one line.
- *
- * The comparison is against `DEFAULT_ALERT_THRESHOLDS.syncLagMs` — the SAME constant the alert pass
- * evaluates — so tuning one of the two numbers can never quietly invert the relationship between
- * them. The config suite asserts the same inequality about the DEFAULT, which is
- * the half an env-var check cannot cover.
+ * `TF_SYNC_BLOCK_GRACE_MS`, with the bound that keeps "the row explains the alert" true. A REFUSAL TO
+ * BOOT rather than a clamp, for {@link servingNothingMaxMsFrom}'s reason: silently lowering somebody's
+ * 20 minutes to 15 leaves a deployment whose behaviour does not match what its operator configured,
+ * and the variable is named in the error so the fix is one line. The comparison is against
+ * `DEFAULT_ALERT_THRESHOLDS.syncLagMs` — the SAME constant the alert pass evaluates — so tuning either
+ * number cannot quietly invert the relationship. The config suite asserts the same inequality about
+ * the DEFAULT, the half an env-var check cannot cover.
  */
 function syncBlockGraceMsFrom(env: NodeJS.ProcessEnv): number {
   const ms = optInt(env, "TF_SYNC_BLOCK_GRACE_MS", DEFAULT_SYNC_BLOCK_GRACE_MS);
@@ -712,15 +535,12 @@ function syncBlockGraceMsFrom(env: NodeJS.ProcessEnv): number {
 }
 
 /**
- * `TF_LEASE_UNAVAILABLE_DETACH_MS`, with the bound that keeps "the system heals before the page"
- * true.
- *
- * A REFUSAL TO BOOT rather than a clamp, for {@link syncBlockGraceMsFrom}'s reason. The comparison
- * is against the SAME `DEFAULT_ALERT_THRESHOLDS.syncLagMs` the alert pass evaluates, so tuning
- * either number cannot quietly invert the relationship: a detach bound at or above the alert
- * threshold means the measured hour-long do-nothing loop is reachable again from configuration
- * alone, with a green suite. `test/config.test.ts` asserts the same inequality about the
- * DEFAULT, which is the half an env-var check cannot cover.
+ * `TF_LEASE_UNAVAILABLE_DETACH_MS`, with the bound that keeps "the system heals before the page" true.
+ * A REFUSAL TO BOOT rather than a clamp, for {@link syncBlockGraceMsFrom}'s reason. The comparison is
+ * against the SAME `DEFAULT_ALERT_THRESHOLDS.syncLagMs` the alert pass evaluates, so tuning either
+ * number cannot quietly invert the relationship: a detach bound at or above the alert threshold makes
+ * the measured hour-long do-nothing loop reachable from configuration alone, with a green suite.
+ * `test/config.test.ts` asserts the same inequality about the DEFAULT, the half an env-var check cannot cover.
  */
 function leaseUnavailableDetachMsFrom(env: NodeJS.ProcessEnv): number {
   const ms = optInt(env, "TF_LEASE_UNAVAILABLE_DETACH_MS", DEFAULT_LEASE_UNAVAILABLE_DETACH_MS);
@@ -774,17 +594,14 @@ export { buildIdentityOf, buildVersionOf };
 export type { BuildIdentitySource };
 
 /**
- * Why the build identity is unknown, or null.
- *
- * REPORTED, NEVER THROWN, AND NEVER FOLDED INTO `healthy` — and here the worker must NOT copy
- * the API, which answers `/health` 503 for exactly this. The API's serverless platform does not
- * gate a deployment on
- * `/health`; the worker's platform DOES (the deploy manifest's health-check path, and the whole argument in
- * `health.ts`'s `evaluateHealth` header about why the bounds are generous). A 503 over a missing
- * LABEL would mean a worker that cannot say which build it is can never be deployed — turning a
- * bookkeeping gap into a refusal to ship the fix for whatever the real incident was. So this
- * rides in the JSON beside `version` and changes no verdict. `health-bounds.e2e.test.ts` pins
- * that: a snapshot with `version: "dev"` and this set is still `healthy`.
+ * Why the build identity is unknown, or null. REPORTED, NEVER THROWN, and never folded into
+ * `healthy` — and here the worker must NOT copy the API, which answers `/health` 503 for this. The
+ * API's serverless platform does not gate a deployment on `/health`; the worker's DOES (the deploy
+ * manifest's health-check path, and `health.ts`'s `evaluateHealth` header on why the bounds are
+ * generous). A 503 over a missing LABEL would mean a worker that cannot say which build it is can never
+ * be deployed — a bookkeeping gap turned into a refusal to ship the fix for the real incident. So this
+ * rides in the JSON beside `version` and changes no verdict (`health-bounds.e2e.test.ts`: a snapshot
+ * with `version: "dev"` and this set is still `healthy`).
  */
 export const buildIdentityErrorOf = (
   environment: string,
@@ -796,21 +613,15 @@ export const buildIdentityErrorOf = (
     return "no build identity: apps/worker/BUILD_VERSION is absent from this image " +
       "(the deploy script writes it) and neither RAILWAY_GIT_COMMIT_SHA nor TF_BUILD_VERSION is set";
   }
-  // ── THE ARM THAT HAD TO BE ADDED, AND THE INCIDENT THAT ADDED IT ─────────────────────────
-  //
-  // A variable-sourced label is the state this whole module was built to make impossible, and
-  // for ten days it was the state production was ACTUALLY in while reporting no fault at all:
-  // the file never reached the image, the variable answered in its place, and `version` named a
-  // commit the running image was never built from. The old rule fired only on the literal
-  // string `dev`, so the fallback silently DEFEATED the detector it was supposed to trigger —
-  // an absent label was converted into a present, wrong one, which is the worse of the two and
-  // the harder to disbelieve.
-  //
-  // Reported, never thrown, for the same reason as the arm above (the platform gates the
-  // deployment on this endpoint, so a refusal here refuses the fix). `version` still carries the
-  // variable's value: it is the operator's stated intent and suppressing it would lose the one
-  // clue to what they meant. What changes is that the JSON no longer presents it as an identity
-  // read out of the artifact.
+  // The arm that had to be added, and the incident that added it. A variable-sourced label is the
+  // state this whole module was built to make impossible, and for ten days it was the state production
+  // was ACTUALLY in while reporting no fault: the file never reached the image, the variable answered
+  // in its place, and `version` named a commit the running image was never built from. The old rule
+  // fired only on the literal string `dev`, so the fallback silently DEFEATED the detector it was
+  // supposed to trigger — an absent label converted into a present, wrong one, the worse of the two.
+  // Reported, never thrown, for the arm above's reason (the platform gates the deployment on this
+  // endpoint). `version` still carries the variable's value (the operator's stated intent); what
+  // changes is that the JSON no longer presents it as an identity read out of the artifact.
   if (source === "variable") {
     return "build identity came from TF_BUILD_VERSION, not from the image: " +
       "apps/worker/BUILD_VERSION is absent from this container, so `version` names whatever " +
@@ -962,19 +773,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     leaseUnavailableDetachMs: leaseUnavailableDetachMsFrom(env),
     mailboxRetryMs: optInt(env, "TF_MAILBOX_RETRY_MS", DEFAULT_MAILBOX_RETRY_MS),
     maxSyncFailures: optInt(env, "TF_MAX_SYNC_FAILURES", DEFAULT_MAX_SYNC_FAILURES),
-    // Exchange/M365 OAuth2 — the ENV BOOTSTRAP for the application registration. The authority is
-    // the `oauth_provider_config` row when there is one; these values are what a deployment with no
-    // row (or an operator locked out of the console) falls back to, and `resolveOAuthProviderConfig`
-    // owns that precedence for BOTH this process and the API.
-    //
-    // Read through `msOAuthEnv`, which is also what the API host calls, so the two accept exactly the
-    // same variable names — including the `MICROSOFT_*` aliases. A worker that accepted only
-    // `MS_OAUTH_CLIENT_SECRET` while the API accepted `MICROSOFT_CLIENT_SECRET` is the same
-    // split-brain as a precedence disagreement, arrived at through spelling.
-    //
-    // All of them default to empty; the token client names the one that is missing only when an oauth
-    // mailbox needs it. NOT validated here, for the same reason — an unset value is legitimate on a
-    // password-only deployment.
+    // Exchange/M365 OAuth2 — the ENV BOOTSTRAP for the application registration. The authority is the
+    // `oauth_provider_config` row when there is one; these values are what a deployment with no row (or
+    // an operator locked out of the console) falls back to, and `resolveOAuthProviderConfig` owns that
+    // precedence for BOTH this process and the API. Read through `msOAuthEnv`, which is what the API
+    // host calls, so the two accept exactly the same variable names — including the `MICROSOFT_*`
+    // aliases (a worker accepting only `MS_OAUTH_CLIENT_SECRET` while the API accepts
+    // `MICROSOFT_CLIENT_SECRET` is split-brain through spelling). All default to empty; the token
+    // client names the one missing only when an oauth mailbox needs it. NOT validated here — an unset
+    // value is legitimate on a password-only deployment.
     msOAuth: {
       ...msOAuthEnv(env as Record<string, string | undefined>),
       tenant: msOAuthEnv(env as Record<string, string | undefined>).tenant || "common",
@@ -1001,23 +808,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
          Setting it unconditionally also retires three `?? cloudInstallId(...)` fallbacks that
          each re-derived the identity at their own call site. */
       installId: resolveCloudInstallId(env),
-      // ── HOW THIS DEPLOYMENT NAMES ITSELF IN SOMEBODY'S MAILBOX ────────────────────────────
-      //
-      // `organizer.displayName` has been TYPED since the lease landed and was never read from the
-      // environment, so `leaseSelfFor` fell through to `CLOUD_DISPLAY_NAME` — and **every
-      // self-hosted deployment in the world wrote "ohmail Cloud" into its customers' `ohmail/_meta`
-      // and onto the reader banner of every other install they own.** A person running their own
-      // server was told a service they are not a customer of had taken their mailbox.
-      //
-      // Read here, and DEFAULTED FROM THE ORIGIN rather than left empty: an operator who sets
-      // nothing gets the host they actually deployed (`mail.example.com`), which is both true and
-      // recognisable, instead of a brand name that is false. `deploy/selfhost` sets
-      // `TF_ORGANIZER_DISPLAY_NAME` explicitly from `OHMAIL_ORIGIN` so the value is visible in the
-      // compose file rather than derived silently.
-      //
-      // The value ends up in an RFC822 header and on other people's screens, so it is
-      // header-safe and bounded at the write site (`organizerDisplayName`, mail 0083) — this is a
-      // configuration read, not a sanitiser.
+      // How this deployment names itself in somebody's mailbox. `organizer.displayName` has been TYPED
+      // since the lease landed and was never read from the environment, so `leaseSelfFor` fell through
+      // to `CLOUD_DISPLAY_NAME` — and every self-hosted deployment wrote "ohmail Cloud" into its
+      // customers' `ohmail/_meta` and onto the reader banner of every install they own: a person
+      // running their own server was told a service they are not a customer of had taken their mailbox.
+      // Read here and DEFAULTED FROM THE ORIGIN rather than left empty: an operator who sets nothing
+      // gets the host they deployed (`mail.example.com`), true and recognisable, not a false brand
+      // name (`deploy/selfhost` sets `TF_ORGANIZER_DISPLAY_NAME` from `OHMAIL_ORIGIN` so it is visible
+      // in the compose file). The value ends up in an RFC822 header, so it is bounded at the write site.
       ...(organizerDisplayNameFrom(env) ? { displayName: organizerDisplayNameFrom(env)! } : {}),
       ...(env.TF_LEASE_STALE_MS ? { staleAfterMs: optInt(env, "TF_LEASE_STALE_MS", 0) } : {}),
       ...(env.TF_PROFILE_FLUSH_MS ? { profileFlushIntervalMs: optInt(env, "TF_PROFILE_FLUSH_MS", 0) } : {}),
@@ -1041,22 +840,14 @@ export type WorkerStagingStorage =
   | { kind: "s3"; endpoint: string; region: string; accessKeyId: string; secretAccessKey: string; bucket: string };
 
 /**
- * The staging store's variables, spelled exactly as the API host spells them — the same rule
- * `msOAuthEnv` exists to enforce for the OAuth registration. Two hosts that accepted different
- * names for one bucket is a split-brain reached through spelling: the API would mint grants into
- * a bucket the worker never sweeps.
- *
- * Three shapes, and the asymmetry between them is deliberate:
- *
- *  · **Kind-less legacy** — the SUPABASE trio with no `TF_STORAGE_KIND` — keeps its DEPLOYED
- *    semantics untouched: all-or-nothing detection, a malformed URL degrades to "no staging"
- *    (the maintenance pass reports the skip). This is the managed environment as it runs today.
- *  · **An explicit kind** refuses a partial or malformed block instead of degrading, exactly as
- *    the API host does — under an explicit kind, "somebody configured this and got it wrong" is
- *    the only reading, and a worker that silently swept nothing while the API minted happily
- *    would be the unbounded-bucket failure this loader exists to prevent.
- *  · **`S3_*` variables with NO kind refuse** rather than being ignored: there is no legacy s3
- *    shape, so that state is always a configuration error naming the fix.
+ * The staging store's variables, spelled exactly as the API host spells them — the `msOAuthEnv` rule
+ * for the bucket. Two hosts accepting different names for one bucket is split-brain through spelling:
+ * the API would mint grants into a bucket the worker never sweeps. Three shapes, and the asymmetry is
+ * deliberate: kind-less LEGACY (the SUPABASE trio with no `TF_STORAGE_KIND`) keeps its DEPLOYED
+ * semantics (all-or-nothing detection, a malformed URL degrades to "no staging"); an EXPLICIT KIND
+ * refuses a partial or malformed block instead of degrading, because "somebody configured this and got
+ * it wrong" is the only reading and a silent no-sweep is the unbounded-bucket failure; and `S3_*`
+ * with NO kind refuses (there is no legacy s3 shape, so that state is always a configuration error).
  */
 function loadAttachmentStagingConfig(
   env: NodeJS.ProcessEnv,
@@ -1131,29 +922,14 @@ function loadAttachmentStagingConfig(
 }
 
 /**
- * The AI block — **all three ports, or none**, from one variable.
- *
- * ## Why one key gives three ports and not a choice of three
- *
- * The three model calls are not independently useful. Classify without draft is a router that
- * cannot answer; draft without classify is an assistant on a mailbox nobody sorted. The plan
- * card sells "AI actions", one allowance across all of them, and the ledger meters them through
- * one gate — so "which of the three is on" was never a deployment decision anybody should be
- * able to make by accident. One variable, three ports, and the only two states are the two that
- * make sense: managed AI on, or a rules-only deployment.
- *
- * ## Why a bad key is a REFUSAL TO BOOT, not a degradation
- *
- * The same argument `loadBillingConfig` makes about a half-configured Stripe block. **Absent**
- * is a legitimate deployment — a preview, a local run, the desktop tier's engine — so it yields
- * `{}` and the worker syncs mail with no AI, exactly as it does today. **Present but malformed**
- * is a deployment somebody tried to configure and got wrong, and the failure it produces is
- * invisible: every classify would throw, the circuit breaker would (correctly) degrade to
- * rules-only, and the deployment would look healthy while silently selling an AI product that
- * never runs. `assertAnthropicKey` names the variable and never the value.
- *
- * `onUsage` is wired to the worker's own logger at construction in `index.ts`, so every metered
- * call's token counts and estimated cost land in the structured log.
+ * The AI block — all three ports, or none, from one variable. The three model calls are not
+ * independently useful (classify without draft is a router that cannot answer, draft without classify
+ * an assistant on a mailbox nobody sorted), the plan card sells "AI actions" as one allowance, and the
+ * ledger meters them through one gate — so "which of the three is on" was never a deployment decision
+ * anybody should make by accident. A bad key is a REFUSAL TO BOOT, not a degradation: ABSENT is a
+ * legitimate deployment (a preview, the desktop engine) and yields `{}`, while PRESENT BUT MALFORMED is
+ * invisible — every classify would throw, the breaker would degrade to rules-only, and the deployment
+ * would look healthy while selling an AI product that never runs. `assertAnthropicKey` names the variable.
  */
 /**
  * The classifier's per-ATTEMPT deadline. Read here rather than inlined at the client so the claim
@@ -1219,20 +995,15 @@ export function loadAiPorts(
 ): Pick<WorkerConfig, "classifier" | "drafter" | "proposer" | "aiUsage"> {
   const raw = (env.ANTHROPIC_API_KEY ?? "").trim();
   if (raw === "") return {};
-  // ── THE ARMING GUARD: managed AI does not come up against a FLAT debit schedule ────────────
-  //
-  // The rule is older than the mechanism — managed AI must not arm before the weighted prices
-  // land — and while it lived only in prose it was one revert away from being untrue. This is
-  // the worker's half of it, placed where the key is parsed rather than where a spend happens,
-  // because the whole point is to refuse at BOOT: a guard at first spend would let the process
-  // come up healthy, sync mail, and only then start under-charging.
-  //
-  // The worker is the metered arm for three of the four priced reasons (classify, workflow steps,
-  // the proposer pass), so a flat schedule here would meter a workflow draft at a fifteenth of
-  // what it costs — an allowance that costs more than the tier earns, with every gate working
-  // perfectly. It throws for the reason `loadAiPorts` already throws on a malformed key: a
-  // deployment somebody configured wrong must fail loudly, not sell an AI product whose
-  // metering is quietly wrong. After the weighted schedule shipped this passes by construction.
+  // The arming guard: managed AI does not come up against a FLAT debit schedule. The rule is older
+  // than the mechanism — managed AI must not arm before the weighted prices land — and while it lived
+  // only in prose it was one revert away from being untrue. This is the worker's half, placed where the
+  // key is parsed rather than where a spend happens, because the whole point is to refuse at BOOT: a
+  // guard at first spend would let the process come up healthy, sync mail, and only then under-charge.
+  // The worker is the metered arm for three of the four priced reasons, so a flat schedule here would
+  // meter a workflow draft at a fifteenth of what it costs. It throws for `loadAiPorts`' reason: a
+  // deployment configured wrong must fail loudly, not sell an AI product whose metering is quietly
+  // wrong. After the weighted schedule shipped this passes by construction.
   assertWeightedScheduleActive();
   const aiUsage = makeAiUsageRelay(log);
   const client = makeAnthropicClient({
@@ -1267,15 +1038,12 @@ export function loadAiPorts(
  * genuinely useful line ("who is the leader right now") a coin flip.
  */
 /**
- * The organizer display name for THIS deployment: the operator's own, or the origin's host.
- *
- * Empty and whitespace-only are treated as unset (an operator who exported the variable with no
- * value meant "use the default", not "call me the empty string"), and CR/LF are stripped here as
- * well as at the write site, because a configuration value that can inject an RFC822 header is
- * worth refusing twice.
- *
- * Returns `undefined` when neither source has anything, which leaves `CLOUD_DISPLAY_NAME` — the
- * right answer for the hosted deployment and the only one it is true of.
+ * The organizer display name for THIS deployment: the operator's own, or the origin's host. Empty and
+ * whitespace-only are treated as unset (an operator who exported the variable with no value meant "use
+ * the default", not "call me the empty string"), and CR/LF are stripped here as well as at the write
+ * site, because a configuration value that can inject an RFC822 header is worth refusing twice. Returns
+ * `undefined` when neither source has anything, which leaves `CLOUD_DISPLAY_NAME` — the right answer
+ * for the hosted deployment and the only one it is true of.
  */
 export function organizerDisplayNameFrom(env: NodeJS.ProcessEnv): string | undefined {
   const explicit = (env.TF_ORGANIZER_DISPLAY_NAME ?? "").replace(/[\r\n]+/g, " ").trim();

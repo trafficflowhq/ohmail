@@ -1,18 +1,11 @@
 /**
- * ONE-OFF RUNNER for the Quarantine→\Junk sweep (`junk-sweep.ts`), scoped to ONE mailbox.
- *
- * DRY-RUN BY DEFAULT: it lists what would move and where (resolving the mailbox's native \Junk
- * read-only), and writes nothing anywhere. `--execute` performs the moves — each one a standing
- * spam verdict of the account's own user, executed against the destination a verdict chooses
- * today — with the same completion the live reconciler runs (locator parked, folder_state
- * satisfied, body husked `junk_filed`). It never runs on a schedule, never touches a mailbox it
- * was not named, and refuses a mailbox with no native \Junk rather than inventing one.
- *
- *   TF_DB_URL=… <key ring> tsx apps/worker/src/run-junk-sweep.ts --mailbox <id>
- *   TF_DB_URL=… <key ring> tsx apps/worker/src/run-junk-sweep.ts --mailbox <id> --execute --limit 5
- *
- * `<key ring>` is the KEK environment `keyProviderFromEnvOptional` reads (packages/core) —
- * the same ring every credential-decrypting process holds.
+ * ONE-OFF RUNNER for the Quarantine→\Junk sweep (`junk-sweep.ts`), scoped to ONE mailbox. DRY-RUN BY
+ * DEFAULT: it lists what would move and where (resolving the native \Junk read-only) and writes nothing.
+ * `--execute` performs the moves — each a standing spam verdict of the account's own user, against the
+ * destination a verdict chooses today — with the live reconciler's completion (locator parked, folder_state
+ * satisfied, body husked `junk_filed`). Never scheduled, never touches an unnamed mailbox, refuses one with
+ * no native \Junk. Invoked `TF_DB_URL=… <key ring> tsx apps/worker/src/run-junk-sweep.ts --mailbox <id>
+ * [--execute --limit 5]`; `<key ring>` is the KEK environment `keyProviderFromEnvOptional` reads (packages/core).
  */
 import { eq } from "drizzle-orm";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
@@ -49,17 +42,14 @@ const db = owned.db as unknown as Tx;
 
 const [mb] = await db.select({
   id: mailboxes.id, accountId: mailboxes.accountId, address: mailboxes.address,
-  /* ── "STOP ORGANIZING THIS MAILBOX" IS A REFUSAL FOR THIS TOOL TOO (mail 0088) ─────────────
-   *
-   * The lease gate below cannot answer this. A pending release leaves the row as `organizer` on
-   * purpose — the claim is in the customer's IMAP folder and expunging it belongs to the process
-   * holding that connection — so every lease-shaped check passes and this runner would take the
-   * permit, renewing the very claim the person asked to have removed, and then move their mail.
-   *
-   * It is REFUSED rather than honoured, on the reconcile backstop's reasoning: releasing means
-   * expunging a claim, writing the row and closing the appointments the install can no longer
-   * keep, and a second copy of that sequence here would be a second answer to what stopping means.
-   * The always-on gate performs it; this tool declines to act past a request it can see.
+  /* "STOP ORGANIZING THIS MAILBOX" IS A REFUSAL FOR THIS TOOL TOO (mail 0088). The lease gate below cannot
+   * answer this: a pending release leaves the row `organizer` on purpose (the claim is in the customer's
+   * IMAP folder and expunging it belongs to the process holding that connection), so every lease-shaped
+   * check passes and this runner would take the permit, renew the very claim the person asked removed, and
+   * move their mail. REFUSED rather than honoured, on the reconcile backstop's reasoning: releasing means
+   * expunging a claim, writing the row and closing appointments, and a second copy of that sequence is a
+   * second answer to what stopping means. The always-on gate performs it; this tool declines to act past a
+   * request it can see.
    */
   releaseRequestedAt: mailboxes.releaseRequestedAt,
 })
@@ -86,30 +76,16 @@ const adapter = new ImapAdapter({
 try {
   await adapter.connect();
 
-  // ══════════════════════════════════════════════════════════════════════════════════════════
-  //  THE ORGANIZER LEASE — TAKEN BEFORE THE FIRST MOVE, RE-VERIFIED BEFORE EVERY CHUNK
-  // ══════════════════════════════════════════════════════════════════════════════════════════
-  //
-  // This runner performed destructive IMAP moves in somebody's real mailbox with NO LEASE AT ALL.
-  // Exactly one active organizer per mailbox is the standing invariant, and it is enforced in
-  // `ohmail/_meta` — the only medium a LOCAL install and Cloud share — so an operator running this
-  // against a mailbox whose owner has since moved it to their own machine was the invariant's one
-  // hole: the desktop install holds the claim, this process never looked, and both organizers file
-  // the same mail. No infrastructure failure required; it is the ordinary dual-mode configuration.
-  // `reconcile-cron.ts` already runs this gate for the same reason at the same seam, and the pass
-  // registry ALREADY CLAIMED this runner did too ("the CLI takes the mailbox's own lease") — a
-  // false claim, which is worse than a missing one, because it answers the question for a reader.
-  //
-  // THE PERMIT EXPIRES. A single check at the top would enforce "one organizer at the instant the
-  // sweep began"; a pile of thousands moves for minutes, and a takeover inside that window is
-  // exactly the case the lease exists for. `guard` is `junkSweepPass`'s per-chunk write boundary
-  // and its contract is already an abort — the members not yet moved stay where they are.
-  //
-  // ONLY WHEN `--execute`. A dry run's promise is that it "writes nothing anywhere", and taking
-  // the lease is a WRITE: `runLeaseGate` appends our claim to `ohmail/_meta` and expunges the old
-  // one. A dry run that renewed a claim would announce this process as the organizer of a mailbox
-  // it was only asked to inspect — and on a mailbox held elsewhere it would (correctly) refuse,
-  // making the read-only preview fail for a reason that has nothing to do with the preview.
+  // THE ORGANIZER LEASE — TAKEN BEFORE THE FIRST MOVE, RE-VERIFIED BEFORE EVERY CHUNK. This runner
+  // performed destructive IMAP moves in a real mailbox with NO LEASE AT ALL. Exactly one active organizer
+  // per mailbox is enforced in `ohmail/_meta` (the only medium a LOCAL install and Cloud share), so running
+  // this against a mailbox its owner moved to their own machine had both organizers file the same mail — the
+  // ordinary dual-mode config. `reconcile-cron.ts` runs this gate at the same seam, and the pass registry
+  // ALREADY CLAIMED this runner did (a false claim, worse than a missing one). The permit EXPIRES: a single
+  // top check enforces one organizer at the START, but a pile moves for minutes and a takeover inside is the
+  // case the lease exists for — `guard` is `junkSweepPass`'s per-chunk write boundary and aborts. ONLY on
+  // `--execute`: taking the lease is a WRITE (`runLeaseGate` appends our claim to `ohmail/_meta` and
+  // expunges the old), so a dry run must not, and on a mailbox held elsewhere it would (correctly) refuse.
   let permit: LeasePermit | null = null;
   if (execute) {
     try {

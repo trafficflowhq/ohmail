@@ -22,30 +22,14 @@ import {
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE DISPATCH TABLE — one entry per kind this build can actually carry out (mail 0094)
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * ── WHY THE ENTRY RETURNS A CLOSURE RATHER THAN A VALIDATED VALUE ─────────────────────────
- *
- * A handler validates the payload and hands back the APPLIER ALREADY BOUND TO IT. The obvious
- * alternative — validate to a value, then switch on the kind again to choose an applier — has the
- * validated payload and the function entitled to read it as two separate things, so "this kind's
- * applier receives that kind's payload" becomes a property somebody has to keep true. Here it is
- * not expressible: the only thing that ever sees a validated move payload is the closure the move
- * handler made, and the drain cannot reach inside it.
- *
- * `null` means the payload failed that kind's own validation, and the caller answers
- * `invalid_payload` — the same word, for every kind, as before this table existed.
- *
- * ── WHAT IS DELIBERATELY MISSING ──────────────────────────────────────────────────────────
- *
- * `rule.create`, `rule.update`, `rule.delete` and `profile.update`. All four are members of
- * `REQUEST_KINDS` and all four are admitted by the database, because a widening migration ships
- * ahead of the code that writes the member. A kind with no entry here leaves the record STANDING —
- * not refused, not expunged — which is the disposition for a decision a newer install on this
- * account made and this organizer cannot yet carry out. Adding the entry is what makes it
- * appliable; the capability advertisement follows the entry, never precedes it.
+ * The dispatch table — one entry per kind this build can actually carry out (mail 0094). Each entry
+ * RETURNS A CLOSURE rather than a validated value: a handler validates the payload and hands back the
+ * APPLIER ALREADY BOUND TO IT, so "this kind's applier receives that kind's payload" is not
+ * expressible rather than a property somebody keeps true — the only thing that sees a validated move
+ * payload is the closure the move handler made. `null` means the payload failed validation, answered
+ * `invalid_payload`. `rule.create`, `rule.update`, `rule.delete` and `profile.update` are deliberately
+ * absent: they are `REQUEST_KINDS` members admitted by the database (a widening migration ships ahead
+ * of the writer), and a kind with no entry LEAVES THE RECORD STANDING (the advertisement follows the entry).
  */
 interface HandlerContext {
   accountId: string;
@@ -77,15 +61,13 @@ class ApplierRefusedError extends Error {
 }
 
 /**
- * THE APPLIER'S OWN WORD, MAPPED ONTO THE CHANNEL'S CLOSED VOCABULARY.
- *
- * A `Record` over `MoveRefusal` rather than a cast or a passthrough: the applier's outcomes and
- * the wire's refusal words are two closed sets that happen to agree today, and a new applier
- * outcome without a decision about what the reader is told would otherwise compile. Both members
- * are `REQUEST_REFUSAL_REASONS` members since mail 0094, and the database's own CHECK is what
- * holds that true — `request-refusal-closed.pg.test.ts` reads the vocabulary from this code, so a
- * word added here and not to the constraint is red on a real server rather than a row rejected at
- * the moment the drain tries to record a refusal.
+ * The applier's own word, mapped onto the channel's closed vocabulary. A `Record` over `MoveRefusal`
+ * rather than a cast or passthrough: the applier's outcomes and the wire's refusal words are two closed
+ * sets that happen to agree today, and a new applier outcome without a decision about what the reader
+ * is told would otherwise compile. Both members are `REQUEST_REFUSAL_REASONS` members since mail 0094,
+ * and the database's own CHECK holds that true — `request-refusal-closed.pg.test.ts` reads the
+ * vocabulary from this code, so a word added here and not to the constraint is red on a real server
+ * rather than a row rejected at the moment the drain tries to record a refusal.
  */
 const MOVE_REFUSAL_REASON: Readonly<Record<MoveRefusal, RequestRefusalReason>> = {
   no_such_message: "no_such_message",
@@ -152,15 +134,13 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
   },
 
   /**
-   * mail 0094. The kind that existed to close a SUCCESS THAT CHANGED NOTHING: before it, a reader
-   * editing an away responder, a signature, a dormancy window or a screening posture got `200`,
-   * the write landed in the reader's own row, and the organizer's pass never read it.
-   *
-   * It has no refusal arm, and that is a property of the action rather than an omission. A move
-   * can fail to find its message; a configuration write has nothing to look up — the rows are the
-   * account's and the mailbox's, both established before the record was drained. Every outcome
-   * that is not `applied` is therefore an exception, and the enclosing transaction already turns
-   * one of those into a record left standing for the next cycle.
+   * Mail 0094. The kind that existed to close a SUCCESS THAT CHANGED NOTHING: before it, a reader
+   * editing an away responder, a signature, a dormancy window or a screening posture got `200`, the
+   * write landed in the reader's own row, and the organizer's pass never read it. It has no refusal
+   * arm, a property of the action rather than an omission: a move can fail to find its message, a
+   * configuration write has nothing to look up (the rows are the account's and the mailbox's,
+   * established before the record was drained). Every outcome that is not `applied` is an exception,
+   * and the enclosing transaction turns one into a record left standing for the next cycle.
    */
   "rule.create": ruleHandler("rule.create"),
   "rule.update": ruleHandler("rule.update"),
@@ -180,100 +160,35 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
 
 
 /**
- * `Tx` (`@trafficflow/db`'s `PgDatabase<any, any, any>`), NOT the hosted worker's own narrower
- * `WorkerDb` (`ReturnType<typeof makeDb>` from `@trafficflow/db/cloud`, the FULL combined
- * schema over a real `postgres` connection). Both callers of this module reach it: the hosted
- * worker's own database and the desktop engine's PGlite-backed `LocalDb` (the mail-only schema)
- * are structurally different drizzle instances, and this module's actual needs —
- * `db.transaction(...)`, threaded into functions that already accept `Tx` — are satisfied by
- * either one. Typing this narrowly to `WorkerDb` (which this file used to do) compiled for the
- * worker and failed the desktop engine's typecheck the moment it called in, for the same reason
- * `OrganizerProfileSync`'s callers pass `db as unknown as Tx` rather than a real shared type.
+ * `Tx` (`@trafficflow/db`'s `PgDatabase<any, any, any>`), NOT the hosted worker's narrower `WorkerDb`
+ * (the FULL combined schema over a real `postgres` connection). Both callers reach this module: the
+ * hosted worker's own database and the desktop engine's PGlite-backed `LocalDb` (the mail-only schema)
+ * are structurally different drizzle instances, and this module's actual needs (`db.transaction(...)`,
+ * threaded into functions that already accept `Tx`) are satisfied by either. Typing this narrowly to
+ * `WorkerDb` (which this file used to) compiled for the worker and failed the desktop engine's
+ * typecheck the moment it called in — the reason `OrganizerProfileSync`'s callers pass `db as unknown
+ * as Tx` rather than a real shared type.
  */
 type WorkerDb = Tx;
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE ORGANIZER'S DRAIN — apply what a reader decided, or refuse it and SAY SO (0.14.1)
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * ── THE PAYLOAD IS UNTRUSTED, AND SO IS THE RECORD ITSELF ───────────────────────────────────
- *
- * A request record is an RFC822 message another install appended to a folder this process now
- * reads. Until 0090 the drain trusted that the message came from a reader of the same ohmail
- * account, and nothing established that: `ohmail/_meta` is an ordinary IMAP folder, so anyone with
- * APPEND rights on the mailbox — a shared-folder ACL, a sieve `fileinto`, a leaked device
- * credential, any mail client the person ever signed into — could write one, and this drain would
- * have applied it. A forged record buys a `promoted` rule, a `contacts` whitelist (a permanent
- * Screener bypass) and a mark-read pushed to the server, all indistinguishable in the product from
- * the account owner's own press.
- *
- * So the ORDER of the checks below is the security property, not an implementation detail:
- *
- *   1. read the headers and BOUND them            (`parseRequestEnvelope`, no decode yet)
- *   2. refuse a protocol or kind this build does not know   — LEAVE STANDING, never expunge
- *   3. VERIFY THE SIGNATURE                       (`verifyRequestEnvelope`, before any decode)
- *   4. check the record names THIS mailbox        (inside the signed body, so it cannot be moved)
- *   5. refuse a decision older than the stale window
- *   6. only now DECODE the payload                (`decodeRequestPayload`)
- *   7. validate the decoded content               (`validateRequestPayload`)
- *   8. apply, under a content-bound idempotency key
- *
- * Nothing between steps 1 and 3 parses base64 or JSON, so a hostile record costs a header read and
- * an HMAC and no more.
- *
- * ── NO KEY MEANS NO CHANNEL, AND THAT IS THE OFF-SWITCH ─────────────────────────────────────
- *
- * An organizer with no request key applies nothing and advertises no `requests` capability, so
- * readers are refused honestly at their own door. The key is HKDF over the mailbox PASSWORD
- * (`deriveRequestKey`), so "no key" means an OAuth mailbox, where each install holds its own token
- * and there is no shared secret to derive from — a real state with an honest answer, not a gap.
- *
- * There is no separate feature flag any more, and there must not be one again. The containment
- * 0.14.1 shipped with was a boolean constant standing in for exactly this condition, plus an
- * unguarded twin of each function behind it — and a stand-in for a real precondition is worse than
- * the precondition, because it can be true when the precondition is false. The gate is now a FACT
- * the drain reads. `request-drain-host-census.test.ts` holds that the retired names stay retired.
- *
- * ── AFTER `runSyncCycle`, UNDER A TIME BUDGET ───────────────────────────────────────────────
- *
- * This ran BEFORE the sync cycle in 0.14.1's first cut, so a decision would govern mail arriving
- * in the same pass. That ordering is inverted deliberately: the folder is attacker-writable, and a
- * drain that runs first lets anyone who can append to `ohmail/_meta` starve a mailbox's MAIL by
- * flooding it with records. Reading mail is the product; applying a queued decision one cycle
- * later is not a regression anybody can perceive. At most {@link REQUEST_DRAIN_MAX_PER_CYCLE}
- * records are handled per pass, oldest decision first, and the rest wait for the next one.
- *
- * ── IT PERFORMS NO PHYSICAL MOVE ────────────────────────────────────────────────────────────
- *
- * `applyScreenerDecision` writes `folder_state` rows with `reconcile_status: 'pending'`, exactly
- * the shape its HTTP twin (`ScreenerService.applyAsOrganizer`) leaves for the worker's own
- * reconciler. `reconcileFolders` is what actually MOVES the mail, and it runs unconditionally
- * every cycle. So this function writes the database exactly as the HTTP door does and lets the
- * pass that was always going to run do the rest — now the NEXT one, given the ordering above.
- *
- * ── IDEMPOTENCY IS BOUND TO THE CONTENT, NOT JUST THE ID ────────────────────────────────────
- *
- * `claimIdempotencyKey`, keyed `meta-request:<request id>`, is claimed inside the same transaction
- * as the apply. A LOST claim used to mean "already done, clean up" — but the id is a header a
- * forger chooses, so a second record REUSING a genuine id with different content would have been
- * silently skipped, and the genuine decision would have been consumed by the impostor's key. The
- * stored `requestHash` is now COMPARED: same content is a replay (clean up, ack `applied`),
- * different content is a `conflict` (refuse the impostor, and the genuine record still applies).
+ * The organizer's drain — apply what a reader decided, or refuse it and SAY SO (0.14.1). The payload
+ * is UNTRUSTED and so is the record itself: a request record is an RFC822 message another install
+ * appended to `ohmail/_meta`, an ordinary IMAP folder, so anyone with APPEND rights could write one
+ * (a forged record buys a `promoted` rule, a `contacts` whitelist, a mark-read). So the ORDER of the
+ * checks is the security property: bound the headers, refuse an unknown protocol/kind (LEAVE STANDING),
+ * VERIFY THE SIGNATURE before any decode, check it names THIS mailbox inside the signed body, refuse a
+ * stale decision, only then decode/validate, and apply under a content-bound idempotency key. No key
+ * means no channel. After `runSyncCycle` under a time budget (the folder is attacker-writable), and the drain performs no physical move.
  */
 
 /**
- * WHAT EITHER ROLE NEEDS TO WORK ON ONE MAILBOX.
- *
- * `requestKey` is passed IN rather than read here, and that is the shape the derivation forces: the
- * key is HKDF over the mailbox PASSWORD (`deriveRequestKey`), so it comes from the credential the
- * host already decrypted to open IMAP at all. This module has no credential and no business
- * decrypting one.
- *
- * `null` means there is no shared secret for this mailbox — an OAuth mailbox, where each install
- * holds its own token and there is nothing to derive from. Both roles stop on it, which is the
- * honest degraded mode rather than an error: no records are written, none are applied, and the
- * organizer advertises no `requests` capability, so a reader is refused at its own door.
+ * What either role needs to work on one mailbox. `requestKey` is passed IN rather than read here, the
+ * shape the derivation forces: the key is HKDF over the mailbox PASSWORD (`deriveRequestKey`), so it
+ * comes from the credential the host already decrypted to open IMAP — this module has no credential and
+ * no business decrypting one. `null` means there is no shared secret (an OAuth mailbox, each install
+ * holding its own token), and both roles stop on it, the honest degraded mode: no records written, none
+ * applied, and the organizer advertises no `requests` capability so a reader is refused at its own door.
  */
 export interface RequestRuntime {
   mailboxId: string;
@@ -321,17 +236,13 @@ function assertIdentity(rt: RequestRuntime): void {
 export const REQUEST_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /**
- * THE STALE WINDOW MUST BITE NO LATER THAN THE IDEMPOTENCY KEY EXPIRES, and that is a real
- * safety property rather than a tidy coincidence — `request-drain.test.ts` asserts it.
- *
- * The key at `meta-request:<id>` is what stops a second drain re-applying a record whose expunge
- * failed. It has a TTL (`IDEMPOTENCY_TTL_MS`). Once it expires, a record still sitting in the
- * folder would be claimable again — and a drain that re-claimed it would apply the same decision
- * a second time, writing a second promoted rule for a press that happened once.
- *
- * What closes that is this inequality. A record old enough for its key to have expired is, by
- * then, older than the stale window too, so step 5 refuses it as `stale` before step 8 can ever
- * re-claim it. Widen this constant past the TTL and the double-apply comes back.
+ * The stale window must bite no later than the idempotency key expires — a real safety property, not a
+ * coincidence (`request-drain.test.ts` asserts it). The key at `meta-request:<id>` is what stops a
+ * second drain re-applying a record whose expunge failed, and it has a TTL (`IDEMPOTENCY_TTL_MS`).
+ * Once it expires, a record still in the folder would be claimable again, and a drain that re-claimed
+ * it would apply the same decision twice. What closes that is this inequality: a record old enough for
+ * its key to have expired is, by then, older than the stale window too, so step 5 refuses it as `stale`
+ * before step 8 can re-claim it. Widen this constant past the TTL and the double-apply comes back.
  */
 export const REQUEST_STALE_MUST_NOT_EXCEED_MS = IDEMPOTENCY_TTL_MS;
 
@@ -350,21 +261,14 @@ export const REQUEST_DRAIN_MAX_PER_CYCLE = 200;
 const REQUEST_DRAIN_MAX_PAGES = 8;
 
 /**
- * WHERE EACH MAILBOX'S WALK GOT TO, so the next cycle resumes instead of starting over.
- *
- * The page budget bounds the round trips one cycle may spend, and on its own that made the walk a
- * treadmill: a folder with more than a budget's worth of no-work pages above the requests was
- * walked from the newest page every cycle, got the same eight pages down, and stopped in the same
- * place — for ever, paying the full cost each time. Bounded work per cycle is right; bounded work
- * that always covers the same ground is not progress.
- *
- * IN MEMORY AND PER PROCESS, deliberately. Losing it costs one cycle of re-walking, which is
- * exactly today's behaviour and never wrong — it says where to LOOK next, never what was settled.
- * Anything durable would be a second source of truth about a folder whose only truth is the folder.
- *
- * Cleared as soon as the folder reads whole again, and when the walk reaches the bottom: the
- * newest page is the right place to start when there is no backlog, and a stale cursor would send
- * a healthy mailbox to its oldest records for no reason.
+ * Where each mailbox's walk got to, so the next cycle resumes instead of starting over. The page
+ * budget bounds the round trips one cycle may spend, and on its own that made the walk a treadmill: a
+ * folder with more than a budget's worth of no-work pages above the requests was walked from the newest
+ * page every cycle, got the same eight pages down, and stopped in the same place for ever, paying the
+ * full cost each time. IN MEMORY AND PER PROCESS: losing it costs one cycle of re-walking (today's
+ * behaviour, never wrong — it says where to LOOK next, never what was settled), and anything durable
+ * would be a second source of truth about a folder whose only truth is the folder. Cleared when the
+ * folder reads whole again and when the walk reaches the bottom.
  */
 /**
  * WHERE THIS INSTALL'S WALK STOPPED, kept beside everything else it remembers about this mailbox.
@@ -399,19 +303,13 @@ function lowestRef(records: readonly RawMetaMessage[]): number | null {
 }
 
 /**
- * Is there anything on this page that THIS pass can settle? Acknowledgements are the sweep's.
- *
- * ── MATCHED AT A HEADER POSITION, NOT ANYWHERE IN THE RECORD ─────────────────────────────────
- *
- * A raw substring test says yes to a message that merely CONTAINS the header name — in its body,
- * in a quoted reply, in a forwarded original — and this predicate is what stops the cursor. One
- * such message parked in the newest page means the walk halts there every cycle and never reaches
- * the requests below it: a starvation anyone able to append to the folder could arrange, and the
- * pass would look busy the whole time.
- *
- * A header name begins at the start of a line, so that is what is matched, case-insensitively.
- * The record still has to PARSE as a request for anything to be settled — this only decides
- * whether the page is worth stopping on.
+ * Is there anything on this page that THIS pass can settle? Acknowledgements are the sweep's. Matched
+ * at a HEADER POSITION, not anywhere in the record: a raw substring test says yes to a message that
+ * merely CONTAINS the header name (in its body, a quoted reply, a forwarded original), and this
+ * predicate is what stops the cursor — one such message parked in the newest page halts the walk there
+ * every cycle and never reaches the requests below it, a starvation anyone able to append could
+ * arrange while the pass looks busy. A header name begins at the start of a line, so that is what is
+ * matched, case-insensitively. The record still has to PARSE as a request for anything to be settled.
  */
 function hasRequestRecord(records: readonly RawMetaMessage[]): boolean {
   const anchored = /(^|\r?\n)X-Ohmail-Request\s*:/i;
@@ -513,22 +411,14 @@ class AlreadyAppliedError extends Error {
 }
 
 /**
- * THE TRUNCATION BEHIND A FAILED READ, or `null` when the read failed for any other reason.
- *
- * ── EVERY DECISION THAT TURNS ON TRUNCATION GOES THROUGH HERE ──────────────────────────────
- *
- * The bounded read raises the truncation, and the adapter re-throws it WRAPPED in a
- * `RequestUnavailableError`, so what reaches this file always carries the page one level down in
- * `cause` and is never the bare class. That fact was known here and applied to the log field
- * alone: the branch deciding whether to page at all still asked `err instanceof
- * MetaFolderTruncatedError`, which against the real adapter is false every time. A full folder
- * therefore took the "unreadable" path, logged a fault, and returned the ordinary all-zero
- * result — no page processed, nothing settled, and no exception for a host to notice. The next
- * cycle read the same folder and did the same thing, so the one state paging exists to unstick
- * stayed stuck while every surface reported a healthy idle drain.
- *
- * Knowing the shape in one place and not the other is what made it survive: the fix is that
- * there is now ONE place to know it. Nothing in this file may test for the bare class.
+ * The truncation behind a failed read, or `null` when the read failed for any other reason. Every
+ * decision that turns on truncation goes through here. The bounded read raises the truncation and the
+ * adapter re-throws it WRAPPED in a `RequestUnavailableError`, so what reaches this file always carries
+ * the page in `cause` and is never the bare class — a fact known here and applied to the log field
+ * alone, while the branch deciding whether to page still asked `err instanceof MetaFolderTruncatedError`,
+ * false against the real adapter every time. So a full folder took the "unreadable" path, logged a
+ * fault, and returned all-zero with no exception — and the next cycle did the same, so the one state
+ * paging exists to unstick stayed stuck. There is now ONE place to know the shape; nothing else may test the bare class.
  */
 function truncationIn(err: unknown): MetaFolderTruncatedError | null {
   if (err instanceof MetaFolderTruncatedError) return err;
@@ -568,19 +458,14 @@ export async function applyMetaRequests(
     return EMPTY_RESULT;
   }
 
-  /* ── THE GENERATION IS LEARNED FROM THE READ, NOT ASKED FOR BEFOREHAND ────────────────────
-   *
-   * This asked the io for a generation before anything had been read, and the io answered with
-   * whatever folder the surrounding cycle had selected — the mailbox being synced, not
-   * `ohmail/_meta`. A position in one folder checked against another folder's numbering is not a
-   * stale check; it answers wrongly in both directions and, through the shared entry, took the
-   * claim and settings anchors down with it.
-   *
-   * The io now reports the generation of the folder it actually opened, which means it is known
-   * only AFTER the first read. So the resume point is taken unchecked, used, and then validated:
-   * a stale one costs this cycle one window that settles nothing real, and the entry is dropped
-   * so the next cycle starts from the top. That is the one position where using a value before
-   * checking it is safe, because being wrong costs a wasted read and never a wrong decision. */
+  /* The generation is learned from the read, not asked for beforehand. This asked the io for a
+   * generation before anything had been read, and the io answered with whatever folder the surrounding
+   * cycle had selected — the mailbox being synced, not `ohmail/_meta`. A position in one folder checked
+   * against another folder's numbering is not a stale check; it answers wrongly both ways and took the
+   * claim and settings anchors down through the shared entry. The io now reports the generation of the
+   * folder it actually opened, known only AFTER the first read — so the resume point is taken unchecked,
+   * used, then validated: a stale one costs one window that settles nothing, and the entry is dropped so
+   * the next cycle starts from the top. Being wrong costs a wasted read, never a wrong decision. */
   const remembered = peekMemo({ installId: rt.installId, mailboxId: rt.mailboxId });
   /** Set when the read proves the resume point belonged to another numbering. */
   let staleStart = false;
@@ -595,21 +480,14 @@ export async function applyMetaRequests(
   const key = rt.requestKey;
   if (key === null) return EMPTY_RESULT;
 
-  /* ── THE SWEEP RUNS BEFORE THE READ, BECAUSE THE READ IS WHAT IT UNBLOCKS ─────────────────
-   *
-   * The organizer's ack sweep is the only thing that ever makes `ohmail/_meta` SMALLER, and it used
-   * to sit after the bounded read below — which refuses a folder over the ceiling. So a folder that
-   * crossed the ceiling BY ACKS could never come back down: the read refused, the sweep never ran,
-   * the acks stayed, and every drain refused from then on. The compactor was locked behind the door
-   * it exists to open, and nothing about that state is self-healing.
-   *
-   * Asked of the server by header and date, so it costs integers in and an expunge out — no FETCH,
-   * no window, and nothing that a full folder can refuse. It was already a sweep "by AGE alone",
-   * and INTERNALDATE of an ack this organizer appended is its `ackedAt` to the day.
-   *
-   * Failure is logged and swallowed: a sweep that could not run is exactly where this was before,
-   * and it must not stop a drain that might still succeed.
-   */
+  /* The sweep runs before the read, because the read is what it unblocks. The organizer's ack sweep is
+   * the only thing that ever makes `ohmail/_meta` SMALLER, and it used to sit after the bounded read,
+   * which refuses a folder over the ceiling — so a folder that crossed the ceiling BY ACKS could never
+   * come back down: the read refused, the sweep never ran, and every drain refused from then on, with
+   * nothing self-healing. Asked of the server by header and date, so it costs integers in and an
+   * expunge out — no FETCH, no window, nothing a full folder can refuse (INTERNALDATE of an ack this
+   * organizer appended is its `ackedAt` to the day). Failure is logged and swallowed: a sweep that
+   * could not run is where this was before, and must not stop a drain that might still succeed. */
   if (typeof io.sweepStaleAcks === "function") {
     try {
       const swept = await io.sweepStaleAcks(new Date(now.getTime() - REQUEST_STALE_AFTER_MS));
@@ -633,17 +511,13 @@ export async function applyMetaRequests(
    * that finished work, and every ordinary step of the walk forgot where it had got to. A guard
    * written for that very property caught it. */
   let pageAdvance: { bottom: true } | { bottom: false; lo: number } | null = null;
-  /* ── ONE WRITER FOR THE RESUME POINT ────────────────────────────────────────────────────
-   *
-   * The walk used to write the resume point directly as it stepped, while ALSO leaving
-   * `pageAdvance` holding the bound from an earlier page. Whichever ran last won, and the exits
-   * below run last: eight steps across empty windows advanced the cursor eight times and then
-   * `keepPlace` put back the bound from before the first of them. Every cycle re-walked the same
-   * gaps and the requests beneath them were never reached — the defect the gap step was added to
-   * fix, reintroduced by the fix for it.
-   *
-   * Nothing in the walk touches the resume point now; it records where it got to in `pageAdvance`
-   * and this is the only thing that writes. */
+  /* One writer for the resume point. The walk used to write it directly as it stepped while ALSO
+   * leaving `pageAdvance` holding the bound from an earlier page — whichever ran last won, and the
+   * exits below run last: eight steps across empty windows advanced the cursor eight times and then
+   * `keepPlace` put back the bound from before the first, so every cycle re-walked the same gaps and
+   * the requests beneath them were never reached (the defect the gap step was added to fix,
+   * reintroduced by the fix for it). Nothing in the walk touches the resume point now; it records where
+   * it got to in `pageAdvance` and this is the only thing that writes. */
   const keepPlace = (capBit: boolean): void => {
     if (staleStart || pageAdvance === null || capBit) return;
     if (pageAdvance.bottom) drainMemo.clear(rt);
@@ -694,65 +568,26 @@ export async function applyMetaRequests(
       /* A page holding work keeps its bound: settling is capped per cycle, so moving below a
        * page this pass could not finish would strand the remainder until the walk came round
        * again. Re-reading a settled record is a claimed key and a no-op. */
-      /* ── WHETHER THIS PAGE IS FINISHED IS NOT KNOWN YET ──────────────────────────────────
-       *
-       * The first rule here asked whether the page held any request record at all, and pinned the
-       * bound if it did. That is the wrong question, and it turned one stuck record into a stuck
-       * mailbox: a request this build cannot settle — one written by a newer ohmail, left standing
-       * on purpose — is a request record for ever, so the page containing it pinned the walk for
-       * ever and every older request underneath went unsettled while the drain reported healthy
-       * cycles.
-       *
-       * The real question is whether the per-cycle cap stopped this pass part-way through work it
-       * WOULD have settled, and that is not answerable until the slice below has been taken. So
-       * the bound is only a candidate here; the decision is made after it. */
+      /* Whether this page is finished is not known yet. The first rule here asked whether the page held
+       * any request record at all and pinned the bound if it did — the wrong question, and it turned
+       * one stuck record into a stuck mailbox: a request this build cannot settle (one written by a
+       * newer ohmail, left standing on purpose) is a request record for ever, so the page containing it
+       * pinned the walk for ever and every older request underneath went unsettled while the drain
+       * reported healthy cycles. The real question is whether the per-cycle cap stopped this pass
+       * part-way through work it WOULD have settled, which is not answerable until the slice below has
+       * been taken. So the bound is only a candidate here; the decision is made after it. */
       pageAdvance = here.bottom ? { bottom: true } : { bottom: false, lo: here.lo };
     }
   } catch (err) {
-    /* ── A FOLDER TOO FULL TO READ IS DRAINED A PAGE AT A TIME, NOT REFUSED WHOLESALE ────────
-     *
-     * This returned empty for every fault, and for a folder over the ceiling that was the one
-     * outcome with no way back. Records leave this folder only after a drain settles them, the
-     * drain ran only after a whole read succeeded, and the read refuses past the ceiling — so a
-     * folder that crossed it stayed crossed, and every later cycle refused identically. The ack
-     * sweep ahead of this read is not a general answer either: it removes ACKNOWLEDGEMENTS, so it
-     * cannot help a folder that is full of REQUESTS, which is precisely what two readers crossing
-     * the ceiling together produce.
-     *
-     * The bounded read already hands back the newest window on the way out — that window IS a
-     * page. Processing it is what unsticks the mailbox: the decisions in it take effect, which a
-     * wholesale refusal prevented entirely and for ever.
-     *
-     * ── WHAT THIS DOES NOT DO, AND THE FIRST VERSION OF THIS COMMENT CLAIMED IT DID ──────────
-     *
-     * It does not make the folder smaller in the same cycle, and a guard caught the claim: 510
-     * records in, 200 settled, 510 records out. Settling a request APPENDS an acknowledgement in
-     * its place and expunges the request — one out, one in — because the reader has to learn the
-     * outcome. A folder full of requests therefore becomes a folder full of acknowledgements at
-     * the same count.
-     *
-     * That is still the recovery, and the shape of it is worth being exact about, because two
-     * different things were being run together:
-     *
-     *   · the DECISIONS stop being stuck immediately — this cycle, a page at a time, at
-     *     {@link REQUEST_DRAIN_MAX_PER_CYCLE} per pass. That is the part a person feels;
-     *   · the RECORD COUNT comes back under the ceiling when those acknowledgements age past the
-     *     sweep's cutoff and it removes them. The cutoff is floored to a day, so that is a day
-     *     away, not a cycle away.
-     *
-     * Anything that claimed one-cycle recovery for a folder of requests was describing a folder of
-     * acknowledgements. Both halves matter and only one of them is fast.
-     *
-     * WHAT MAKES ACTING ON A PARTIAL VIEW SAFE HERE, and it is not the same argument the ELECTION
-     * refuses on. An election decides who organizes a mailbox, and absence of a claim inside a
-     * window is not absence from the folder — acting on it means two organizers. This pass
-     * decides nothing about the mailbox; it applies decisions that are already signed, under
-     * `meta-request:<id>`, whose whole purpose this file states above: it "stops a second drain
-     * re-applying a record whose expunge did not land". Re-reading a record on a later page is
-     * therefore a claimed key and a no-op, not a double application.
-     *
-     * A read that failed for any OTHER reason is still a look that failed and still yields
-     * nothing: that is a connection or a server fault, and it carries no page to work from. */
+      /* A folder too full to read is drained a page at a time, not refused wholesale. This returned
+       * empty for every fault, and for a folder over the ceiling that was the one outcome with no way
+       * back: records leave only after a drain settles them, the drain ran only after a whole read
+       * succeeded, and the read refuses past the ceiling — so a crossed folder stayed crossed for ever
+       * (the ack sweep removes only ACKS). The bounded read already hands back the newest window, which
+       * IS a page; processing it unsticks the mailbox. It does NOT make the folder smaller the same
+       * cycle — settling a request appends an ack in its place, so a folder of requests becomes a folder
+       * of acks at the same count (which age out a day later). Safe because this applies signed decisions
+       * under `meta-request:<id>`, so a re-read on a later page is a no-op, not a double application. */
     const truncated = truncationIn(err);
     /* ── A TRUNCATION MAY CARRY NO PAGE, AND THAT IS A FAILED LOOK LIKE ANY OTHER ────────────
      *
@@ -775,23 +610,14 @@ export async function applyMetaRequests(
           + "ceiling once the acknowledgements written in their place age past the sweep's cutoff",
       });
       records = [...truncated.records];
-      /* ── AND THE CURSOR ADVANCES EVEN WHEN A PAGE HOLDS NO WORK ─────────────────────────────
-       *
-       * The newest page is the same page every cycle. A folder over the ceiling whose newest
-       * records are all acknowledgements — not yet stale, so the sweep leaves them — gives this
-       * pass nothing to settle, and the next pass reads exactly the same window and finds the same
-       * nothing. The requests that WOULD unstick it sit below the window, and no amount of waiting
-       * moves them up: the state is stationary, which is the shape the paging was introduced to
-       * remove and which it did not remove for this folder.
-       *
-       * So the read walks DOWN. Each page's lowest uid becomes the bound for the next, which makes
-       * the cursor strictly decreasing — a page can only be re-read if the folder changed under
-       * it, and never in the same pass. The walk stops at the first page with work to do, at the
-       * bottom of the folder, or at the page budget, whichever comes first.
-       *
-       * WORK means a request record: that is what this pass settles, and settling one is what
-       * takes a record out of the folder. Acknowledgements are the sweep's business and it has
-       * already run, ahead of this read, for exactly that reason. */
+      /* And the cursor advances even when a page holds no work. The newest page is the same page every
+       * cycle, so a folder over the ceiling whose newest records are all acknowledgements (not yet
+       * stale) gives this pass nothing to settle, and the next reads the same window — the requests that
+       * would unstick it sit below, and no waiting moves them up. So the read walks DOWN: each page's
+       * lowest uid becomes the next bound, making the cursor strictly decreasing (a page is re-read only
+       * if the folder changed under it, never in the same pass). The walk stops at the first page with
+       * work, the bottom of the folder, or the page budget. WORK means a request record; acknowledgements
+       * are the sweep's business, which already ran ahead of this read. */
       let cursor = lowestRef(records);
       /* ── A RESUME POINT BELOW A PAGE CLAIMS THE PAGE IS FINISHED ─────────────────────────
        *
@@ -858,28 +684,15 @@ export async function applyMetaRequests(
 
   const envelopes = requestEnvelopesIn(records);
 
-  /* ══ MATCHING IS PER-MAILBOX. COLLECTING IS NOT — AND THE TWO USED TO SHARE ONE FILTER ══════
-   *
-   * `acksIn` verifies under the ACCOUNT key, so everything here is this account's own bookkeeping,
-   * written by one of its own organizers. Which mailbox an ack NAMES decides whether it is an
-   * answer to anything in THIS folder, and that filter is load-bearing for the matching below: an
-   * ack signed for one mailbox must never be read as an answer in another's folder.
-   *
-   * It is the wrong question for the SWEEP. `staleAckRefs` fed the only path that expunges an ack,
-   * and it inherited the mailbox filter — so an ack that verifies under the account key but names
-   * some other mailbox id could never be collected by anybody. Not by this drain, which had just
-   * filtered it out; not by the drain for the mailbox it names, which reads a different folder.
-   * It sat in the customer's folder for ever, counting against the read ceiling on every cycle of
-   * every host.
-   *
-   * That is not hypothetical bookkeeping: a mailbox removed and re-added gets a NEW id, so an ack
-   * written moments before the removal names an id no mailbox has any more, in a folder that is
-   * still being read. The same shape covers an ack left behind by an older install and one
-   * misfiled by a copy between folders.
-   *
-   * So the sweep is by AGE alone. Past the stale window the reader has given up on the row and no
-   * ack can still be an answer to anything, whichever mailbox it names — while the matching below
-   * keeps the mailbox filter exactly as it was. */
+  /* Matching is per-mailbox. Collecting is not — and the two used to share one filter. `acksIn`
+   * verifies under the ACCOUNT key, so everything is this account's own bookkeeping; which mailbox an
+   * ack NAMES decides whether it answers anything in THIS folder, and that filter is load-bearing for
+   * the matching. It is the wrong question for the SWEEP: `staleAckRefs` fed the only path that expunges
+   * an ack and inherited the mailbox filter, so an ack that verifies under the account key but names
+   * another mailbox could never be collected by anybody — it sat in the folder for ever counting against
+   * the read ceiling (a mailbox removed and re-added gets a NEW id, so an ack written moments before the
+   * removal names an id no mailbox has). So the sweep is by AGE alone: past the stale window no ack can
+   * be an answer, whichever mailbox it names, while the matching keeps the mailbox filter. */
   const verifiedAcks = acksIn(records, key);
   const existingAcks = verifiedAcks.filter((a) => a.mailboxId === rt.mailboxId);
   const staleAckRefs = verifiedAcks
@@ -909,45 +722,15 @@ export async function applyMetaRequests(
   // would put a second ack in the folder for one request; the record still needs removing.
   const alreadyAcked = new Set(existingAcks.map((a) => a.requestId));
 
-  /* ══ ORDER, THEN BOUND — AND THE TWO KINDS DO NOT SHARE A BUDGET ═══════════════════════════
-   *
-   * Well-formed records are sorted BEFORE the ceiling is applied, so "the first 200" means the 200
-   * oldest decisions rather than whatever order the IMAP server happened to list them in.
-   *
-   * ── WHY THE CEILINGS ARE SEPARATE, WHICH THEY WERE NOT ───────────────────────────────────
-   *
-   * Malformed records used to be taken FIRST and out of the SAME 200, with the well-formed slice
-   * computed as the remainder. That let the cheapest possible record starve the most expensive
-   * guarantee: a malformed record needs no signature and no key — it need only carry
-   * `X-Ohmail-Request: 1` and then be unreadable — so anyone with APPEND rights on the folder could
-   * hold 200 of them in the read window and every genuine, SIGNED decision would be deferred, every
-   * cycle, for as long as they cared to keep appending. The drain's own counters would report it as
-   * healthy work: 200 refused, 0 applied, some deferred.
-   *
-   * The two kinds cost different things, so they get different allowances. Handling a malformed
-   * record is one ref in a batch that is already being sent — no transaction, no idempotency claim,
-   * no database work of any kind. Handling a well-formed one is a verify, a decode and a
-   * transaction. There is no reason for the cheap one to consume the expensive one's ceiling, and
-   * one very good reason for it not to.
-   *
-   * Both are still bounded, which is the point of a ceiling: an unbounded malformed sweep would
-   * hand the same attacker an unbounded expunge instead.
-   *
-   * ── AND EXPUNGING AN UNVERIFIABLE RECORD IS THE CORRECT DISPOSITION, NOT AN EXCEPTION ────
-   *
-   * A malformed record is removed WITHOUT a signature check, and that does not contradict the rule
-   * that a permanent disposition requires verification — it is the other side of it. That rule
-   * exists because LEAVING A RECORD STANDING is a courtesy: it reserves the folder, and a record
-   * that reaches it by merely SAYING `X-Ohmail-Protocol: 2` is a denial of service anyone can
-   * mount. So standing is extended only to records that proved where they came from.
-   *
-   * Removal is the default, not the courtesy. A malformed record has no signature to check — the
-   * fields the canonical form is taken over cannot be read — so verification is not something being
-   * skipped here, it is something that does not exist for this record. The alternatives are to keep
-   * it for ever (which is the reserved-folder attack, with extra steps) or to remove it. It is also
-   * unambiguously OURS to remove: it carries this build's own discriminator, which nothing but this
-   * build's writer emits, so it is either our own record gone wrong or a forgery — never somebody
-   * else's mail, which is what the "not its to destroy" rule protects. */
+  /* Order, then bound — and the two kinds do not share a budget. Well-formed records are sorted BEFORE
+   * the ceiling, so "the first 200" means the 200 oldest decisions. The ceilings are separate because
+   * they were not: malformed records used to be taken FIRST out of the SAME 200, so the cheapest record
+   * (one that carries `X-Ohmail-Request: 1` and is then unreadable — no signature, no key) could hold
+   * 200 slots and defer every genuine SIGNED decision every cycle while the counters reported healthy
+   * work. Handling a malformed record is one ref in a batch already being sent; a well-formed one is a
+   * verify, decode and transaction. Both are still bounded. Expunging an unverifiable record is the
+   * DEFAULT, not an exception: leave-standing is a courtesy extended only to records that proved where
+   * they came from, and a malformed one carries this build's own discriminator (ours to remove). */
   const malformed = envelopes.filter(isMalformedRequest);
   const wellFormed = envelopes
     .filter((e): e is RequestEnvelope => !isMalformedRequest(e))
@@ -1013,45 +796,23 @@ export async function applyMetaRequests(
       continue;
     }
 
-    // ── (2) A FUTURE PROTOCOL, OR A KIND WITH NO APPLIER: LEAVE IT STANDING ───────────────────
-    //
-    // The claim path's `c.protocol > ourProtocol` rule, one layer down. A record this build does
-    // not understand is not evidence of anything and is not this build's to destroy: a newer
-    // reader may be talking to an older organizer, and the record becomes applicable the moment
-    // that organizer updates. Refusing it would be a lie (it is not invalid) and expunging it
-    // would lose a decision a person made.
-    //
-    // ── (3) THE SIGNATURE, BEFORE ANY DECODE — AND BEFORE THE LEAVE-STANDING BRANCHES ───────
-    //
-    // The two "leave it standing" cases below USED TO SIT ABOVE THIS CHECK, on the reasoning that
-    // a future protocol might sign over fields this build cannot reconstruct, so a verification
-    // failure would mean "cannot check" rather than "forged". That reasoning is sound and the
-    // ordering it produced was a hole big enough to switch the feature off from outside:
-    //
-    // leaving a record standing means never expunging it, and an unverified record could reach
-    // that disposition by SAYING `X-Ohmail-Protocol: 2` — no key required. Two hundred such
-    // messages, dated 1970 so they sort first, permanently occupy the per-cycle ceiling. Every
-    // genuine decision falls outside the slice for ever, the folder grows without bound, and
-    // nothing pages anybody, because a nonzero `standing` is documented as normal.
-    //
-    // So authenticity comes first, and "leave it standing" is a courtesy extended only to records
-    // that PROVED they came from a holder of the account's key. The forward-compatibility cost is
-    // real and is a constraint on the next protocol rather than a defect in this one: **a protocol
-    // bump must keep the signature verifiable under this canonical form**, or must ship to
-    // organizers before any reader emits it. That is a cheaper promise to keep than an
-    // unauthenticated record with a permanent right to sit in someone's mailbox.
+    // (2) A future protocol, or a kind with no applier: LEAVE IT STANDING — the claim path's
+    // `c.protocol > ourProtocol` rule one layer down. A record this build does not understand is not
+    // evidence and not ours to destroy: a newer reader may be talking to an older organizer, and it
+    // becomes applicable the moment that organizer updates. (3) THE SIGNATURE, before any decode AND
+    // before the leave-standing branches. Those branches USED TO SIT ABOVE this check, on the reasoning
+    // that a future protocol might sign over fields this build cannot reconstruct — sound, and a hole:
+    // an unverified record could reach "leave standing" by merely SAYING `X-Ohmail-Protocol: 2`, so 200
+    // such messages dated 1970 permanently occupy the ceiling. So authenticity comes first, and a
+    // protocol bump must keep the signature verifiable under this canonical form, or ship to organizers first.
     if (!verifyRequestEnvelope(e, key)) {
-      // ── REMOVED, BUT NOT ACKNOWLEDGED, AND THE ASYMMETRY IS DELIBERATE ────────────────────
-      //
-      // Every other refusal answers, because every other refusal is about a record this account's
-      // own reader wrote and is waiting on. This one is not: a record that does not verify did not
-      // come from a holder of the key, so there is no reader to answer TO — and writing one ack
-      // per forged record would hand a flooder an amplifier, making this organizer APPEND once for
-      // every message the attacker appends.
-      //
-      // The one honest case that lands here is our own reader's record after a key rotation. It
-      // gets no ack and expires on the reader's own window instead, which is the behaviour
-      // rotation is documented to have: old records refuse and expire.
+      // Removed, but not acknowledged, and the asymmetry is deliberate. Every other refusal answers,
+      // because every other refusal is about a record this account's own reader wrote and is waiting on.
+      // This one is not: a record that does not verify did not come from a holder of the key, so there
+      // is no reader to answer TO — and writing one ack per forged record would hand a flooder an
+      // amplifier, making this organizer APPEND once for every message the attacker appends. The one
+      // honest case that lands here is our own reader's record after a key rotation; it gets no ack and
+      // expires on the reader's own window instead, the behaviour rotation is documented to have.
       if (e.ref !== undefined) toRemove.push(e.ref);
       refused++;
       log("organizer_request_refused", {
@@ -1079,19 +840,14 @@ export async function applyMetaRequests(
       });
       continue;
     }
-    /* ── (3c) WHICH APPLIER RUNS — one table, keyed by kind (mail 0094) ─────────────────────
-     *
-     * This was `if (e.kind !== "screener.decide")` while there was one applier. The table is the
-     * same statement for N of them, and it keeps the property that mattered about the `if`: a kind
-     * this build has no entry for LEAVES THE RECORD STANDING rather than refusing or expunging it.
-     * It is a decision a person made, written by a newer install on the same account, and it
-     * becomes applicable the moment this organizer updates.
-     *
-     * `rule.create|update|delete` and `profile.update` are deliberately ABSENT from the table in
-     * this slice, so they take exactly that path. They are in `REQUEST_KINDS` and admitted by the
-     * database, because the widening migration ships ahead of the code that writes them — being
-     * representable and being appliable are different facts, and this is the gap between them.
-     */
+    /* (3c) Which applier runs — one table, keyed by kind (mail 0094). This was
+     * `if (e.kind !== "screener.decide")` while there was one applier. The table is the same statement
+     * for N of them and keeps the property the `if` had: a kind this build has no entry for LEAVES THE
+     * RECORD STANDING rather than refusing or expunging it — a decision a person made, written by a
+     * newer install on the same account, applicable the moment this organizer updates.
+     * `rule.create|update|delete` and `profile.update` are deliberately ABSENT in this slice, so they
+     * take that path: in `REQUEST_KINDS` and admitted by the database because the widening migration
+     * ships ahead of the writer — being representable and being appliable are different facts. */
     const handler = KIND_HANDLERS[e.kind];
     if (!handler) {
       standing++;
@@ -1204,19 +960,14 @@ export async function applyMetaRequests(
           seq: null,
           now,
         });
-        // ── LOST THE CLAIM TO A CONCURRENT DRAIN, AND THE CONTENT STILL HAS TO BE COMPARED ──
-        //
-        // This used to step aside here, reasoning that "the winner already answered whether the
-        // content matched". It does not follow, and REAL POSTGRES CAUGHT IT: the read above and
-        // this claim are two statements, so two cycles can both see no key and then race the
-        // unique index. The loser learns only that it lost — not what it lost TO. Stepping aside
-        // reported the loser's record as `applied` when the winner may have applied entirely
-        // different content under the same id, which is the substitution attack succeeding by
-        // timing alone, and it is invisible under PGlite.
-        //
-        // So the loser re-reads. Under READ COMMITTED this statement takes a fresh snapshot and
-        // therefore sees the winner's committed row: same hash is a genuine replay, a different
-        // hash is the `conflict` the sequential path already refuses.
+        // Lost the claim to a concurrent drain, and the content still has to be compared. This used to
+        // step aside, reasoning "the winner already answered whether the content matched". It does not
+        // follow, and REAL POSTGRES CAUGHT IT: the read above and this claim are two statements, so two
+        // cycles can both see no key and then race the unique index — the loser learns only that it
+        // lost, not what it lost TO. Stepping aside reported the loser's record as `applied` when the
+        // winner may have applied entirely different content under the same id (the substitution attack
+        // by timing alone, invisible under PGlite). So the loser re-reads: under READ COMMITTED this
+        // takes a fresh snapshot and sees the winner's row — same hash a replay, a different hash the `conflict`.
         if (!claimed) {
           const winner = await readIdempotencyKey(tx, rt.accountId, idemKey, now);
           if (winner !== null && winner.requestHash !== hash) {
@@ -1288,17 +1039,14 @@ export async function applyMetaRequests(
     }
   }
 
-  // ── THE ACKS, THEN THE ONE EXPUNGE ──────────────────────────────────────────────────────────
-  //
-  // Acks are appended BEFORE the records they answer are removed, and the order is load-bearing:
-  // if the expunge fails after the acks land, the next cycle re-reads the same records, finds the
-  // acks already there (`alreadyAcked`), and retries only the removal. The reverse order would
-  // remove the record and then possibly fail to acknowledge it, leaving the reader with a decision
-  // that vanished with no outcome — the exact ambiguity acks exist to remove.
-  //
-  // An ack that fails to append is NOT a reason to skip the expunge of a record that was applied:
-  // the effect is committed, and re-applying next cycle is prevented by the key, so leaving the
-  // record would only produce a permanent refusal loop. The reader falls back to its stale window.
+  // The acks, then the one expunge. Acks are appended BEFORE the records they answer are removed, and
+  // the order is load-bearing: if the expunge fails after the acks land, the next cycle re-reads the
+  // records, finds the acks already there (`alreadyAcked`), and retries only the removal. The reverse
+  // order would remove the record and then possibly fail to acknowledge it, leaving the reader with a
+  // decision that vanished with no outcome — the ambiguity acks exist to remove. An ack that fails to
+  // append is NOT a reason to skip the expunge of a record that was applied: the effect is committed
+  // and re-applying is prevented by the key, so leaving the record would only produce a permanent
+  // refusal loop; the reader falls back to its stale window.
   let ackFailures = 0;
   for (const a of toAck) {
     try {
@@ -1362,27 +1110,14 @@ export async function applyMetaRequests(
 }
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE READER'S OWN CYCLE — append pending decisions, and read what the organizer ANSWERED
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * ── ABSENCE IS NOT EVIDENCE, AND THAT WAS THE BUG ───────────────────────────────────────────
- *
- * 0.14.1's first cut moved a row to `applied` when its record was no longer in the folder. But an
- * organizer removes a record for two OPPOSITE reasons — it applied it, or it refused it — and in
- * both cases the record is gone. So a person who screened a sender out was told "done" whether
- * their decision had been carried out or thrown away as malformed, stale, or about the wrong
- * mailbox. No amount of care on this side could turn absence into evidence, because absence does
- * not carry the outcome.
- *
- * An ACK does. The organizer appends one naming the request and what became of it, signed under
- * the same account key, and this cycle moves a row only on an ack it can verify. A `sent` row with
- * no ack stays `sent` until {@link REQUEST_STALE_AFTER_MS} expires it — which is the honest thing
- * to say when nobody has answered: not "applied", not "refused", but "nobody took this".
- *
- * This is the ONLY function on a reader's side that writes to `ohmail/_meta`, and it writes exactly
- * one thing: an APPEND. A reader never expunges — that is the organizer's exclusive act, and since
- * 0090 the reader's IO object does not even have the verb (`RequestReaderIo`).
+ * The reader's own cycle — append pending decisions, and read what the organizer ANSWERED. ABSENCE IS
+ * NOT EVIDENCE, and that was the bug: 0.14.1's first cut moved a row to `applied` when its record was
+ * no longer in the folder, but an organizer removes a record for two OPPOSITE reasons (applied, or
+ * refused), so a person who screened a sender out was told "done" whether their decision was carried
+ * out or thrown away. An ACK does carry it: the organizer appends one naming the request and its
+ * outcome, signed under the same account key, and this cycle moves a row only on an ack it can verify.
+ * A `sent` row with no ack stays `sent` until {@link REQUEST_STALE_AFTER_MS} — "nobody took this", not
+ * "applied". This is the ONLY reader-side function that writes to `ohmail/_meta`, and it writes exactly an APPEND.
  */
 
 export interface DriveOutstandingRequestsResult {
@@ -1493,41 +1228,27 @@ export async function driveOutstandingRequests(
     return EMPTY_DRIVE_RESULT;
   }
 
-  /* ── THE ROWS THAT COULD NOT BE HANDED OVER AGE OUT FIRST, KEY OR NO KEY ──────────────────
-   *
-   * Before the key check, deliberately. Every other expiry predicate requires `sent`, so a
-   * `pending` row used to be IMMORTAL — and immortal is worse than it sounds, because the Screener
-   * list EXCLUDES a sender with an outstanding decision: the sender disappeared from the person's
-   * queue for ever while nothing was coming.
-   *
-   * The case that reaches it is precisely the one that returns below. The door decides whether to
-   * queue from the HOLDER's advertised capability, which is copied out of a claim anyone with
-   * append rights on the folder can write; a forged claim on a mailbox this install has no shared
-   * secret for (OAuth) gets a row queued that no cycle will ever append. The signature makes that
-   * harmless for the ORGANIZER. This makes it harmless for the READER.
-   *
-   * Aged from `decidedAt` — when the person actually pressed, which is the clock they would
-   * measure by — on the same window as everything else in this file.
-   */
+  /* The rows that could not be handed over age out first, key or no key. Before the key check,
+   * deliberately. Every other expiry predicate requires `sent`, so a `pending` row used to be
+   * IMMORTAL — worse than it sounds, because the Screener list EXCLUDES a sender with an outstanding
+   * decision, so the sender disappeared from the queue for ever while nothing was coming. The case
+   * that reaches it is the one that returns below: the door queues from the HOLDER's advertised
+   * capability, copied out of a claim anyone with append rights can write, so a forged claim on a
+   * mailbox with no shared secret (OAuth) gets a row queued no cycle will ever append. The signature
+   * makes that harmless for the ORGANIZER; this makes it harmless for the READER. Aged from `decidedAt`. */
   const expiredUnsent = await expireNeverSent(db, rt, now, log);
 
   const key = rt.requestKey;
   if (key === null) return { sent: 0, applied: 0, refused: 0, expired: expiredUnsent };
 
-  /* ── THE FOLDER IS READ ONCE, BEFORE ANYTHING IS WRITTEN, AND BOTH HALVES USE IT ───────────
-   *
-   * It feeds two questions that would otherwise each cost a round trip: which of this install's
-   * records are ALREADY in the folder (so a re-append is skipped), and which acks are waiting.
-   *
-   * READING FIRST IS ALSO WHAT MAKES THE APPEND SAFE TO RETRY. A cycle that appended a record and
-   * then failed to mark its row `sent` leaves the row `pending` with its record already in the
-   * mailbox; without this read the next cycle would append the same signed decision AGAIN, and the
-   * one after that, for ever — a growing pile of genuine records the organizer would dutifully
-   * apply. So a `pending` row whose id is already present is not re-appended; it is simply marked.
-   *
-   * A read that FAILS stops the cycle before it writes. Appending without being able to check for
-   * a duplicate is exactly the loop above, so "I could not look" must not be a reason to write.
-   */
+  /* The folder is read once, before anything is written, and both halves use it. It feeds two
+   * questions that would otherwise each cost a round trip: which of this install's records are ALREADY
+   * in the folder (so a re-append is skipped), and which acks are waiting. Reading first is also what
+   * makes the append safe to retry: a cycle that appended a record and then failed to mark its row
+   * `sent` leaves the row `pending` with its record already in the mailbox, and without this read the
+   * next cycle would append the same signed decision AGAIN, and the one after that, for ever — a
+   * growing pile of genuine records the organizer would dutifully apply. A read that FAILS stops the
+   * cycle before it writes: appending without being able to check for a duplicate is exactly that loop. */
   let records: RawMetaMessage[];
   try {
     records = await io.listMetaRecords();
@@ -1545,18 +1266,14 @@ export async function driveOutstandingRequests(
     return EMPTY_DRIVE_RESULT;
   }
 
-  /* ── AND THE SET IS VERIFIED, NOT MERELY PARSED ───────────────────────────────────────────
-   *
-   * This decides whether a queued row is treated as already handed over. Built from unverified
-   * envelopes it was a suppression primitive: an attacker who can read the shared folder learns a
-   * request id, waits for the genuine record to go, and appends an UNSIGNED message carrying that
-   * id. The next cycle would take the already-in-folder branch, mark the row `sent`, and never
-   * append the real record — and since an unverifiable record earns no acknowledgement, the row
-   * would sit until the window reported "nobody took this". The decision is discarded silently.
-   *
-   * So the id must come off a record that verifies under this mailbox's key AND names this
-   * install: another install's genuine record is no reason for THIS one to stop appending its own.
-   */
+  /* And the set is verified, not merely parsed. This decides whether a queued row is treated as
+   * already handed over. Built from unverified envelopes it was a suppression primitive: an attacker
+   * who can read the shared folder learns a request id, waits for the genuine record to go, and appends
+   * an UNSIGNED message carrying that id — the next cycle takes the already-in-folder branch, marks the
+   * row `sent`, and never appends the real record, which then earns no ack and sits until the window
+   * reports "nobody took this". The decision is discarded silently. So the id must come off a record
+   * that verifies under this mailbox's key AND names this install: another install's genuine record is
+   * no reason for THIS one to stop appending its own. */
   const alreadyInFolder = new Set(
     requestEnvelopesIn(records)
       .filter((e): e is RequestEnvelope => !isMalformedRequest(e))
@@ -1585,54 +1302,15 @@ export async function driveOutstandingRequests(
     (r) => r.decidedAt.getTime() >= now.getTime() - REQUEST_STALE_AFTER_MS,
   );
 
-  /* ── THIS INSTALL MAY NOT ITSELF FILL THE FOLDER IT LATER REFUSES TO READ ─────────────────
-   *
-   * Every queued decision was appended in one pass, with nothing between the queue's length and
-   * the folder's ceiling. A reader that has been deciding while the organizer was offline comes
-   * back with hundreds of rows, and one cycle appends all of them — so the folder crosses the
-   * ceiling by THIS INSTALL'S OWN RECORDS, with no attacker, no foreign writer and nothing
-   * misconfigured.
-   *
-   * What makes that permanent rather than untidy is the order of the recovery: requests are only
-   * removed after a bounded read SUCCEEDS, and the bounded read refuses a folder past the ceiling.
-   * The compactor that clears old acknowledgements runs ahead of the read and is the way out, but
-   * it only ever removes ACKS — it cannot remove the requests, because the pass that settles them
-   * is the one that just refused. Filling the folder this way is therefore a state that does not
-   * heal on its own, which is exactly what the claim set's overflow arm exists to avoid.
-   *
-   * So the appends are bounded by the headroom actually measured on this cycle: `records` is the
-   * folder as it was read a moment ago, and this install writes at most enough to reach the
-   * ceiling and no further. Rows beyond that stay `pending` — the next cycle appends them, after
-   * the sweep has made room — and the shortfall is LOUD rather than inferred from a counter, so
-   * an operator sees a folder under pressure instead of a drain that quietly does less each pass.
-   *
-   * The ceiling is the same constant the read enforces. A bound that guessed a different number
-   * would be a second opinion about when this folder is full.
-   *
-   * ── AND THE HONEST INVARIANT IS TWO-PART, BECAUSE THIS CHECK CANNOT BE THE WHOLE OF IT ─────
-   *
-   * `records` is a SNAPSHOT taken a round trip ago, and there is no way to make it otherwise:
-   * IMAP has no append-under-condition, no compare-and-set, no transaction spanning a read and a
-   * write. Two readers can each measure the same headroom, each stay honestly within it, and
-   * still cross the ceiling together — and no amount of care on this line prevents that, because
-   * the check and the append cannot be made one operation against a shared folder.
-   *
-   * Pretending otherwise would be the worse outcome: a bound that LOOKS like it guarantees the
-   * folder stays readable invites everything downstream to assume it does. So the invariant is
-   * stated as the two things that are actually true:
-   *
-   *   (a) NO SINGLE WRITER'S CYCLE PUSHES THE FOLDER PAST THE CEILING — the bound below, which
-   *       is enforceable because one install's own arithmetic is entirely under its control; and
-   *
-   *   (b) TWO WRITERS CAN JOINTLY CROSS IT, AND THE FOLDER MUST THEN RECOVER WITHIN ONE CYCLE.
-   *       That is what makes the crossing survivable rather than terminal, and it is why the ack
-   *       sweep runs AHEAD of the bounded read rather than behind it: the sweep needs no read, so
-   *       it still runs when the folder is over the ceiling, it removes the acknowledgements that
-   *       are the bulk of an over-full folder, and the read that follows it in the same cycle
-   *       then succeeds. The refusal is a pause, not a wall.
-   *
-   * (b) is the half with teeth, and it is the half a test must hold: (a) alone is satisfied by an
-   * install that appends nothing at all. */
+  /* This install may not itself fill the folder it later refuses to read. Every queued decision was
+   * appended in one pass with nothing between the queue's length and the folder's ceiling, so a reader
+   * that decided while the organizer was offline comes back with hundreds of rows and one cycle appends
+   * all of them — crossing the ceiling by THIS INSTALL'S OWN RECORDS. That is permanent, not untidy:
+   * requests leave only after a bounded read SUCCEEDS, the read refuses past the ceiling, and the
+   * compactor removes only ACKS. So the appends are bounded by the headroom measured this cycle,
+   * rows beyond it stay `pending`, and the shortfall is LOUD. The honest invariant is two-part: (a) no
+   * single writer's cycle pushes the folder past the ceiling (enforceable), and (b) two writers CAN
+   * jointly cross it and the folder must recover within one cycle (why the ack sweep runs AHEAD of the read). */
   const headroom = Math.max(0, META_RECORDS_MAX_PER_FETCH - records.length);
   const appendable = stillQueued.slice(0, headroom);
   if (appendable.length < stillQueued.length) {
@@ -1763,36 +1441,14 @@ export async function driveOutstandingRequests(
 
 
 /**
- * THE ROLE FLIP, AND THE ROWS THAT WOULD OTHERWISE BE IMMORTAL.
- *
- * Rows this install queued while it was a reader do not disappear when it takes the mailbox over.
- * They sit `pending` — no cycle appends them any more — or `sent`, waiting for an acknowledgement
- * from an organizer that is now this very process and will never write one to itself. Both leave
- * the person looking at "waiting for …" for ever, and a `pending` row is worse than that: the
- * Screener list EXCLUDES a sender with an outstanding decision, so the sender vanishes from the
- * queue permanently while nothing is coming.
- *
- * ── THEY ARE EXPIRED, NOT APPLIED, AND THE FIRST VERSION OF THIS APPLIED THEM ────────────────
- *
- * Applying looked obviously right — the decision was a human's, on this install, and this install
- * now has the standing to carry it out — and it is wrong twice:
- *
- *  · **It can double-apply.** A `pending` row's record may ALREADY be in the folder: the reader's
- *    append can succeed and the row update fail, which is the state `alreadyInFolder` exists to
- *    recognise. The drain then applies that record, and this loop applies the same decision again.
- *    Sharing the drain's idempotency key does not fix it either, because the two paths cannot
- *    compute the same content hash — this one holds a row, not a record — so whichever wrote first
- *    would make the other read a hash mismatch and refuse a genuine record as a `conflict`.
- *  · **It can apply decisions the person has moved on from.** These rows accumulate for as long as
- *    the install could not hand them over, and applying them oldest-first lets the OLDEST decision
- *    win the final state for a sender who has since been decided the other way.
- *
- * Expiring loses nothing: the sender returns to the queue, where the person decides again on the
- * install that now organizes the mailbox — which is the honest offer, and one press rather than a
- * silent guess about what they meant weeks ago. It is also the same ending a reader's own cycle
- * gives an unanswered decision, so there is one story for "nobody took this" rather than two.
- *
- * Called from the ORGANIZER branch, so it runs precisely when the flip has happened.
+ * The role flip, and the rows that would otherwise be immortal. Rows this install queued while a
+ * reader do not disappear when it takes the mailbox over: they sit `pending` (no cycle appends them) or
+ * `sent` (waiting for an ack from an organizer that is now this process), leaving the person on
+ * "waiting for …" for ever — and a `pending` row is worse, since the Screener list EXCLUDES a sender
+ * with an outstanding decision. They are EXPIRED, not applied (applying is wrong twice: it can
+ * double-apply — a `pending` record may already be in the folder — and it can apply decisions the
+ * person has since reversed, oldest-first). Expiring loses nothing: the sender returns to the queue and
+ * the person decides again on the install that now organizes it, the same ending an unanswered decision gets.
  */
 export async function settleOwnOutstandingRequests(
   db: WorkerDb,

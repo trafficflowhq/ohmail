@@ -1,7 +1,6 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
-  organizerKindColumn, closedSetValue,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
   rules,
 } from "@trafficflow/db";
@@ -12,7 +11,6 @@ import {
   buildImapAuth, oauthSmtpEndpoint, type ImapAuth, type CredMetaAuth,
 } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import { asDatabaseFault, markDatabaseFaults } from "./db-fault.js";
 import type { SyncWriteFence } from "./sync.js";
 import { carryDialect } from "@trafficflow/db/dialect";
@@ -65,14 +63,6 @@ export interface EnabledMailbox {
    * all of them: the connect flow that stamps it lands separately.
    */
   takeoverAuthorizedAt: Date | null;
-  /**
-   * Mail 0104. WHAT that press asked for. `takeover` asks for the mailbox whoever holds it;
-   * `join` asks only for one nobody is organizing and yields at the fence to a live foreign
-   * claim. Cloud's own door writes `takeover`, so every press made here reads that; the field
-   * exists because the fence is shared with an install that has no takeover verb. On the roster
-   * row for `takeoverAuthorizedAt`'s reason exactly — another process writes the pair.
-   */
-  takeoverIntent: OrganizerIntent;
   /**
    * Mail 0027. A lease reason left over from a previous stand-down that a human has since
    * re-enabled past. Read only so the gate knows there is something to CLEAR — nothing decides
@@ -243,8 +233,6 @@ export async function loadEnabledMailboxes(
       id: mailboxes.id, accountId: mailboxes.accountId,
       provider: mailboxes.provider, address: mailboxes.address, status: mailboxes.status,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
-      // Mail 0104 — the VERB behind the stamp, in the same statement as the stamp.
-      takeoverIntent: mailboxes.takeoverIntent,
       disabledReason: mailboxes.disabledReason,
       organizerRole: mailboxes.organizerRole,
       organizedByKind: mailboxes.organizedByKind,
@@ -273,8 +261,6 @@ export async function loadEnabledMailboxes(
     .map((r) => ({
       accountId: r.accountId, mailboxId: r.id, provider: r.provider, address: r.address, status: r.status,
       takeoverAuthorizedAt: r.takeoverAuthorizedAt ?? null,
-      // COERCED, never trusted — `join` is the safe direction, as `reader` is below.
-      takeoverIntent: r.takeoverIntent === "takeover" ? "takeover" : "join",
       disabledReason: r.disabledReason ?? null,
       // COERCED, never trusted — see the field. `reader` is the safe direction.
       organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader",
@@ -325,8 +311,6 @@ export async function loadMailboxById(
 ): Promise<
   {
     accountId: string; status: string; takeoverAuthorizedAt: Date | null;
-    /** Mail 0104 — the VERB behind the stamp; the backstop runs the same gate the roster does. */
-    takeoverIntent: OrganizerIntent;
     disabledReason: string | null;
     /**
      * Mail 0090. The SALT of the request key's derivation, so the backstop derives the same key
@@ -349,7 +333,6 @@ export async function loadMailboxById(
     .select({
       accountId: mailboxes.accountId, status: mailboxes.status,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
-      takeoverIntent: mailboxes.takeoverIntent,
       disabledReason: mailboxes.disabledReason,
       organizerRole: mailboxes.organizerRole,
       releaseRequestedAt: mailboxes.releaseRequestedAt,
@@ -359,11 +342,7 @@ export async function loadMailboxById(
   const r = rows[0];
   if (!r) return null;
   // COERCED, `reader` on anything unrecognised — see `EnabledMailbox.organizerRole`.
-  return {
-    ...r,
-    organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader",
-    takeoverIntent: r.takeoverIntent === "takeover" ? "takeover" : "join",
-  };
+  return { ...r, organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader" };
 }
 
 /** The DISTINCT accounts of a mailbox set, in selection order (the per-account cron loop). */
@@ -519,22 +498,100 @@ export async function bootstrapEnvCreds(
 import type { MailboxErrorCode } from "@trafficflow/db";
 export type { MailboxErrorCode };
 
-/**
- * The evidence sets and the `error_detail` allowlist moved to `@trafficflow/db` for one reason:
- * the ADMIN PROJECTION has to ask the same set the write door asks, and a set that lives in the
- * worker is unreachable from `@trafficflow/services`. Classification stays here — which errno
- * means `connect` is IMAP judgement — and re-exports keep this module's importers unchanged.
- */
-import {
-  CONNECT_ERRNOS, SERVER_UNAVAILABLE_CODES, SERVER_UNAVAILABLE_RESPONSE_CODES,
-  TIMEOUT_ERRNOS, STORAGE_SQLSTATES, CERT_CODES,
-  MAILBOX_ERROR_DETAIL_MAX, MAILBOX_ERROR_DETAIL_TOKENS, isSafeMailboxErrorDetail,
-  staffChannelValue,
-} from "@trafficflow/db";
-export { MAILBOX_ERROR_DETAIL_MAX, MAILBOX_ERROR_DETAIL_TOKENS, isSafeMailboxErrorDetail };
-
 /** Where the throw came from. It decides only the FALLBACK, never a positive classification. */
 export type MailboxErrorPhase = "attach" | "sync";
+
+const CONNECT_ERRNOS: ReadonlySet<string> = new Set([
+  "ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH", "EHOSTDOWN", "ENETUNREACH", "ENETDOWN",
+  "ECONNRESET", "EPIPE", "EAI_AGAIN", "EADDRNOTAVAIL",
+]);
+
+/* The mail server is not available, which is not a rejected password. Two sets, one per channel,
+   because a provider that will not serve us says so in two different places and the worker recognised
+   neither. A provider at its connection cap answers `* BYE [UNAVAILABLE] Maximum number of
+   connections…` and closes; `serverBye` keeps only the TEXT attributes as `byeReason` — a bracket
+   atom is a SECTION, not TEXT — so the bracket atom never becomes `serverResponseCode` on this shape,
+   and the pending LOGIN is rejected carrying `code` and nothing else, with `authenticationFailed`
+   stamped on. So the fix is BOTH sets, not the response code alone. Neither WIDENS what can be stored:
+   every member is already in {@link IMAPFLOW_CODES} or {@link IMAP_RESPONSE_CODES}, spread into
+   {@link MAILBOX_ERROR_DETAIL_TOKENS} so that Set's "nothing storable without appearing" stays true. */
+
+/**
+ * The INSTALLED client's own words for a server that did not serve us — not errnos, hence their own
+ * set rather than four more members of {@link CONNECT_ERRNOS}. `NoConnection`, `EConnectionClosed`
+ * and the two `ClosedAfterConnect*` (a close landing while the connect promise is pending — that one
+ * never reaches the LOGIN catch, carries no flag, and used to fall to the phase fallback as
+ * `unknown`). `ETHROTTLE` is the fifth: set when a server answers a tagged failure with "Request is
+ * throttled. Suggested Backoff Time: N" (Office 365's rate limit), on the GENERIC tagged-response
+ * path, so it fires for LOGIN and `login.js` stamps the flag on it — leaving it out would ship the
+ * identical sentence one provider over. Its `err.throttleReset` (the server's suggested backoff) is ignored by the retry ladder, which lives in the main loop, not here.
+ */
+const SERVER_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
+  "NoConnection", "EConnectionClosed", "ClosedAfterConnectText", "ClosedAfterConnectTLS",
+  "ETHROTTLE",
+]);
+
+/**
+ * RFC 5530 response codes that mean THE SERVER WILL NOT SERVE US RIGHT NOW. `UNAVAILABLE` is "a
+ * subsystem is temporarily down"; `LIMIT` is "an implementation limit was reached", which is what a
+ * per-account connection cap is. A server that answers either has received and parsed our LOGIN, so
+ * neither is a statement about credentials. CLOSED AND NAMED, never "an atom that looks like a
+ * refusal": the forged-token rule applies to reading a server-chosen token as much as storing one, so
+ * an atom this set does not contain must fall THROUGH to the evidence below, or a hostile endpoint
+ * answering `NO [SECRETPASSWORD123]` could suppress the auth verdict by handing us a word we do not know.
+ */
+const SERVER_UNAVAILABLE_RESPONSE_CODES: ReadonlySet<string> = new Set(["UNAVAILABLE", "LIMIT"]);
+
+/**
+ * OAuth token-refresh codes that are safe to STORE in `error_detail`.
+ *
+ * Only `OAUTH_INVALID_GRANT` — the re-auth verdict a user acts on ("reconnect this mailbox"). It is
+ * a constant this codebase chose, not a server-supplied atom, so echoing it back to the account
+ * owner tells them what happened without letting anyone else pick the words (the whole point of the
+ * closed allowlist below). The provider-unavailable and config-missing codes are deliberately NOT
+ * here: their `error_code` (`connect`/`unknown`) is what a human acts on, and a null detail is a
+ * fine answer.
+ */
+const OAUTH_ERROR_DETAIL_CODES: ReadonlySet<string> = new Set(["OAUTH_INVALID_GRANT"]);
+
+/**
+ * Timeouts — Node's errnos AND the ones the INSTALLED IMAP client actually emits. The four imapflow
+ * codes were missing, and their absence was not theoretical: `imapflow@1.5.0` sets `err.code` to
+ * `CONNECT_TIMEOUT`, `GREETING_TIMEOUT`, `UPGRADE_TIMEOUT` and `ETIMEOUT` — between them EVERY way a
+ * provider that accepts the TCP connection and then stops answering is reported. All four were
+ * classified `unknown` (or `sync`), so the single most common shape of a flaky provider was
+ * indistinguishable from "we have no idea", and the UI could not say "the server did not answer in
+ * time" about the failure it says most.
+ */
+const TIMEOUT_ERRNOS: ReadonlySet<string> = new Set([
+  "ETIMEDOUT", "ESOCKETTIMEDOUT", "ERR_SOCKET_CONNECTION_TIMEOUT", "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT", "57014",   // 57014 = query_canceled, i.e. our own statement_timeout
+  // imapflow@1.5.0's own timeout constants — see the note above.
+  "CONNECT_TIMEOUT", "GREETING_TIMEOUT", "UPGRADE_TIMEOUT", "ETIMEOUT",
+]);
+
+/**
+ * SQLSTATEs that mean OUR storage failed, not the customer's mailbox.
+ *
+ * This is the class that produced the outage this slice comes from: Postgres answered
+ * `53100 disk_full`, every ingest threw, and each mailbox in turn hit `maxSyncFailures` and was
+ * quarantined — so the database being full was rendered to the user as "your mailbox is
+ * broken". A distinct code is what lets the UI say the true thing instead.
+ */
+const STORAGE_SQLSTATES: ReadonlySet<string> = new Set([
+  "53100",  // disk_full
+  "53200",  // out_of_memory
+  "54000",  // program_limit_exceeded (a row that cannot be stored at all)
+  "22001",  // string_data_right_truncation
+  "23514",  // check_violation — `message_bodies_html_cap` is the one that fires here
+]);
+
+/** The OpenSSL / Node verification constants imapflow surfaces verbatim. */
+const CERT_CODES: ReadonlySet<string> = new Set([
+  "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID", "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "ERR_TLS_CERT_ALTNAME_INVALID", "EPROTO",
+]);
 
 function isTlsCode(code: string): boolean {
   return code.startsWith("ERR_TLS_") || code.startsWith("ERR_SSL_") || CERT_CODES.has(code);
@@ -607,6 +664,135 @@ export function classifyMailboxError(err: unknown, phase: MailboxErrorPhase): Ma
   // is more useful than "unknown": it tells the reader the mailbox connected and authenticated
   // and then something went wrong while reading it.
   return phase === "sync" ? "sync" : "unknown";
+}
+
+/** Bound on `mailboxes.error_detail`. Every allowlist member below is far shorter. */
+export const MAILBOX_ERROR_DETAIL_MAX = 200;
+
+/* The closed allowlist. This replaced a SHAPE test
+   (`/^[A-Z][A-Z0-9_-]{0,63}$|^[0-9A-Z]{5}$/`), and the difference is the whole finding. A shape test
+   asks "does this look like a response code"; it never asks WHO CHOSE IT. imapflow derives
+   `err.serverResponseCode` by uppercasing the first bracket atom of the server's own reply, so a
+   hostile endpoint answering `* NO [SECRETPASSWORD123] authentication failed` hands us
+   `serverResponseCode = "SECRETPASSWORD123"` — it passed the regex, and landed in a column the account
+   owner reads in Settings and the admin console reads as `lastError`: an account-isolation breach
+   chosen by an attacker who controls a mail server. Membership is the fix, because membership cannot
+   be forged — a token is storable only if it is a name WE already knew; anything else is NULL. */
+
+/**
+ * IMAP response codes: RFC 3501 §7.1, RFC 5530 (the enhanced set), and the extension codes a
+ * CONDSTORE/QRESYNC/quota-aware client can actually be handed.
+ *
+ * Nothing here is free-text. Each is a protocol constant, so echoing one back to the mailbox
+ * owner tells them what the server said WITHOUT letting the server choose the words.
+ */
+const IMAP_RESPONSE_CODES: readonly string[] = [
+  // RFC 3501 §7.1
+  "ALERT", "BADCHARSET", "CAPABILITY", "PARSE", "PERMANENTFLAGS", "READ-ONLY", "READ-WRITE",
+  "TRYCREATE", "UIDNEXT", "UIDVALIDITY", "UNSEEN",
+  // RFC 5530 — the ones that make a failure legible
+  "UNAVAILABLE", "AUTHENTICATIONFAILED", "AUTHORIZATIONFAILED", "EXPIRED", "PRIVACYREQUIRED",
+  "CONTACTADMIN", "NOPERM", "INUSE", "EXPUNGEISSUED", "CORRUPTION", "SERVERBUG", "CLIENTBUG",
+  "CANNOT", "LIMIT", "OVERQUOTA", "ALREADYEXISTS", "NONEXISTENT",
+  // Extensions this client speaks or can be answered with
+  "UIDNOTSTICKY", "APPENDUID", "COPYUID",                    // RFC 4315
+  "CLOSED", "MODIFIED", "NOMODSEQ", "HIGHESTMODSEQ",         // RFC 7162 (CONDSTORE/QRESYNC)
+  "COMPRESSIONACTIVE",                                       // RFC 4978
+  "USEATTR", "HASCHILDREN",                                  // RFC 6154 / RFC 5258
+  "METADATA", "TOOMANY", "LONGENTRIES", "MAXSIZE", "NOPRIVATE", // RFC 5464
+  "UNKNOWN-CTE", "TOOBIG", "REFERRAL", "NOTSAVED",           // RFC 3516 / 4469 / 2193 / 5182
+  "NOTIFICATIONOVERFLOW", "BADEVENT",                        // RFC 5465
+  "MAILBOXID",                                               // RFC 8474
+  "WEBALERT",                                                // Gmail; the atom only, never its URL
+];
+
+/**
+ * imapflow@1.5.0's OWN `err.code` constants, read out of the installed package rather than
+ * remembered. Grepped from `lib/imap-flow.js`; the timeout four also live in
+ * {@link TIMEOUT_ERRNOS} because they carry a classification as well as a detail.
+ */
+const IMAPFLOW_CODES: readonly string[] = [
+  "NoConnection", "StateLogout", "EConnectionClosed", "ClosedAfterConnectTLS",
+  "ClosedAfterConnectText", "InvalidResponse", "ETHROTTLE", "LockTimeout", "ProxyError",
+  "STARTTLS_INJECTION",
+];
+
+/**
+ * TLS/OpenSSL constants, ENUMERATED rather than prefix-matched.
+ *
+ * {@link isTlsCode} still uses `startsWith("ERR_TLS_")` for CLASSIFICATION, and that is fine —
+ * its output is a seven-value enum. Storage may not use a prefix rule: a prefix is a shape, and
+ * a shape is what the forged-token finding walked through. An OpenSSL constant we did not list stores NULL and still
+ * reports `error_code: "tls"`.
+ */
+const TLS_DETAIL_CODES: readonly string[] = [
+  "ERR_TLS_CERT_ALTNAME_INVALID", "ERR_TLS_HANDSHAKE_TIMEOUT", "ERR_TLS_INVALID_PROTOCOL_VERSION",
+  "ERR_TLS_PROTOCOL_VERSION_CONFLICT", "ERR_TLS_REQUIRED_SERVER_NAME", "ERR_TLS_SNI_FROM_IP",
+  "ERR_TLS_DH_PARAM_SIZE", "ERR_TLS_RENEGOTIATION_DISABLED", "ERR_TLS_INVALID_CONTEXT",
+  "ERR_TLS_INVALID_STATE", "ERR_TLS_SESSION_ATTACK",
+  "ERR_SSL_WRONG_VERSION_NUMBER", "ERR_SSL_UNEXPECTED_MESSAGE", "ERR_SSL_NO_PROTOCOLS_AVAILABLE",
+  "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION", "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
+  "ERR_SSL_PACKET_LENGTH_TOO_LONG", "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+  "ERR_SSL_CERTIFICATE_VERIFY_FAILED", "ERR_SSL_UNSUPPORTED_PROTOCOL", "ERR_SSL_BAD_LENGTH",
+];
+
+/** Node errnos that are not connect/timeout but still name a real, non-secret condition. */
+const NODE_ERRNOS: readonly string[] = [
+  "EACCES", "EPERM", "EADDRINUSE", "ECONNABORTED", "EMFILE", "ENFILE", "ENOMEM", "ENOSPC",
+  "EIO", "ERR_STREAM_PREMATURE_CLOSE", "ERR_SOCKET_CLOSED", "ABORT_ERR",
+];
+
+/**
+ * SQLSTATEs. OUR storage's vocabulary, not the customer's mailbox — and the reason the old
+ * `^[0-9A-Z]{5}$` alternative existed at all. Enumerated for the same reason as the TLS set:
+ * five uppercase characters is a shape, and `53100` is a fact.
+ */
+const SQLSTATE_DETAILS: readonly string[] = [
+  "53100", "53200", "54000", "22001", "23514",   // the storage set, verbatim
+  "23503", "23505", "22P02", "42P01", "42703",   // FK / unique / bad text / missing relation or column
+  "40001", "40P01", "57014", "57P01", "57P03",   // serialization, deadlock, cancel, admin shutdown, starting up
+  "08000", "08003", "08006", "08P01", "53300",   // connection family + too_many_connections
+];
+
+/**
+ * THE ONLY VALUES `mailboxes.error_detail` MAY HOLD. Closed, by membership.
+ *
+ * Frozen at module load from the sets the classifier already keeps, so the taxonomy and the
+ * storage rule cannot drift apart: adding an errno to {@link CONNECT_ERRNOS} makes it storable
+ * in the same commit, and nothing becomes storable without appearing in one of these lists.
+ */
+export const MAILBOX_ERROR_DETAIL_TOKENS: ReadonlySet<string> = new Set<string>([
+  ...IMAP_RESPONSE_CODES,
+  ...IMAPFLOW_CODES,
+  ...TLS_DETAIL_CODES,
+  ...NODE_ERRNOS,
+  ...SQLSTATE_DETAILS,
+  ...CONNECT_ERRNOS,
+  ...TIMEOUT_ERRNOS,
+  ...STORAGE_SQLSTATES,
+  ...CERT_CODES,
+  // The reclassification's two sets. Every member is ALREADY reachable through the two lists above them
+  // — that is the finding, not an oversight: the tokens were storable while being unclassifiable
+  // — so these two spreads widen nothing. They are here so the sentence above stays literally
+  // true rather than true by coincidence, and so the next classifier set is added the same way.
+  ...SERVER_UNAVAILABLE_CODES,
+  ...SERVER_UNAVAILABLE_RESPONSE_CODES,
+  // OAuth's one storable detail. Added WITH the classifier arm that emits it (see
+  // classifyMailboxError's OAUTH_INVALID_GRANT → 'auth'), so the taxonomy and the storage rule stay
+  // in step — the same discipline every set above this line follows.
+  ...OAUTH_ERROR_DETAIL_CODES,
+]);
+
+/**
+ * Is this a value `mailboxes.error_detail` is allowed to hold?
+ *
+ * Exported because it is the guard at BOTH ends of the pipe: {@link mailboxErrorDetail} builds
+ * with it, and {@link markMailboxFailed} re-checks with it at the write site — so "the single
+ * safe write site" is enforced rather than merely conventional. A caller that hands
+ * `{ detail: err.message }` typechecks (the parameter is a `string | null`) and stores NULL.
+ */
+export function isSafeMailboxErrorDetail(value: unknown): value is string {
+  return typeof value === "string" && MAILBOX_ERROR_DETAIL_TOKENS.has(value);
 }
 
 /**
@@ -811,13 +997,7 @@ export async function markMailboxFailed(
   const now = opts.now ?? new Date();
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     status: "error",
-    // The column is TEXT with no CHECK, so `MailboxErrorCode` is a compiler claim and a cast
-    // ends it. The door REFUSES a non-member rather than coercing: a code we did not choose
-    // means the caller has a defect, and writing `unknown` over it would hide that.
-    errorCode: staffChannelValue("mailboxes.error_code", failure.code),
-    // COERCES, and it is the one channel in the registry that does — see `staffChannelValue`'s
-    // block. The candidate comes off the wire, so refusing would let a mail server fail the
-    // quarantine write by answering with a word we do not know.
+    errorCode: failure.code,
     errorDetail: isSafeMailboxErrorDetail(failure.detail) ? failure.detail : null,
     // Mail 0039 — WHEN the leader may next attach this mailbox, in the SAME statement as the
     // status, for the reason the whole of this function is one statement: a row that says
@@ -947,11 +1127,7 @@ export async function markMailboxStoodDown(
   // and the row is better for the disagreement (the banner names "ohmail Cloud (next)"). What is not
   // acceptable is a comment asserting an equality the code does not maintain, so it is stated as a
   // preference for the claim's own answer, which is what the expression encodes.
-  // THROUGH THE WRITE DOOR, not a cast: the middle term is a word cut out of a reason string,
-  // so the assertion was making a claim the expression cannot keep. `organized_by_kind` is a
-  // widenable set, which the device store carries no CHECK for at all — this is the refusal on
-  // both dialects, and an unrankable peer becomes `unknown` exactly as it did.
-  const kind = organizerKindColumn(opts.by?.kind ?? safe.split(":")[1]);
+  const kind = (opts.by?.kind ?? safe.split(":")[1] ?? "unknown") as OrganizerKind;
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     // Mail 0083: the role, not the status. This used to write `status: "disabled"` plus the reason,
     // and the mailbox left the roster. A loser is now a READER — connected, syncing, mirroring — so
@@ -1104,12 +1280,8 @@ export async function markMailboxSyncBlocked(
   opts: { fence?: LeaderFence; now?: Date } = {},
 ): Promise<boolean> {
   const now = opts.now ?? new Date();
-  // THE WRITE DOOR for a widenable set (mail 0029 opened it, mail 0102 widened it). The device
-  // store carries no CHECK for it, so the membership test is the refusal on both dialects — and
-  // the typed parameter is not one: this function is reachable from code the compiler never saw.
-  const member = closedSetValue("mailboxes_sync_blocked_reason_closed", reason);
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
-    syncBlockedReason: member,
+    syncBlockedReason: reason,
     syncBlockedSince: sql`coalesce(${mailboxes.syncBlockedSince}, ${now.toISOString()}::timestamptz)`,
     // NOTHING ELSE. Not `status`, not `error_code`, not `error_detail`, not `failed_at`, not
     // `retry_count`. The absence is the design — see the block above this function.

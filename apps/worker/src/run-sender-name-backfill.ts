@@ -1,26 +1,12 @@
 /**
- * ONE-OFF RUNNER for the sender-name / recipients backfill (`sender-name-backfill.ts`).
- *
- * DB-ONLY and dry-run by default. It re-reads the stored `message_bodies.headers` of historical
- * messages and fills `messages.from_name` (mail 0057), `to_addresses` and `cc_addresses` where
- * the column is still unset — the pass 0057's own file defers to — and appends a `message`
- * update to the change log per written row, so client mirrors pick the names up on their next
- * ordinary sync. It never opens IMAP and needs no credentials.
- *
- *   TF_DB_URL=… tsx apps/worker/src/run-sender-name-backfill.ts             # census, writes nothing
- *   TF_DB_URL=… tsx apps/worker/src/run-sender-name-backfill.ts --apply     # write
- *   TF_DB_URL=… tsx apps/worker/src/run-sender-name-backfill.ts --max=500   # bound the walk
- *
- * Idempotent and resumable: only unset columns are ever written, the UPDATE repeats the unset
- * predicate so a concurrent writer wins, and each page is its own transaction — a killed run
- * resumes by being run again.
- *
- * ── READING THE CENSUS ─────────────────────────────────────────────────────────────────────
- *
- * `scanned` does NOT fall to zero after a successful apply, and that is not a failure. A message
- * whose sender set no display name keeps a NULL `from_name` and a `from` header for ever, so it
- * stays a candidate. `fillable` — the rows the parse can still supply a value for — is the
- * number that goes to zero, and it is what a re-run is for.
+ * ONE-OFF RUNNER for the sender-name / recipients backfill (`sender-name-backfill.ts`). DB-ONLY, dry-run by
+ * default: it re-reads stored `message_bodies.headers` and fills `messages.from_name` (mail 0057),
+ * `to_addresses` and `cc_addresses` where still unset, appending a `message` update per written row so
+ * mirrors pick the names up on their next sync. It never opens IMAP. Idempotent and resumable (only unset
+ * columns written, the UPDATE repeats the predicate, each page its own transaction). READING THE CENSUS:
+ * `scanned` does NOT fall to zero after an apply (a sender that set no display name keeps a NULL `from_name`
+ * for ever), so `fillable` — the rows the parse can still supply a value for — is the number that goes to
+ * zero and what a re-run is for. Run: `tsx apps/worker/src/run-sender-name-backfill.ts [--apply] [--max=500]`.
  */
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { type Tx } from "@trafficflow/db";

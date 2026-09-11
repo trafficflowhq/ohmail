@@ -115,16 +115,13 @@ import { OrganizerProfileSync, syncProfileMirror } from "./profile.js";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME,
-  LeaseUnavailableError, leaseBlockReason, leaseStoodDown, DEFAULT_STALE_AFTER_MS,
-  type OrganizerWriteAuthority,
+  LeaseUnavailableError, DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
   type LeaseSelf, type LeasePeekCapableAdapter,
 } from "./lease.js";
 // The APPEND-less read of `ohmail/_meta` — see `LeasePeekCapableAdapter`. A reader LOOKS at the
 // lease every cycle to keep `organizer_state` and the holder columns honest, and looking must
 // never write a claim: `readLeasePeek` takes the read-only IO and creates nothing.
-import {
-  readLeasePeek, answerLeasePeek, deriveRequestKey, type OrganizerIntent,
-} from "@trafficflow/core/adapters/organizer-lease";
+import { readLeasePeek, deriveRequestKey } from "@trafficflow/core/adapters/organizer-lease";
 
 /** How often the leader runs the global maintenance pass (expired-idempotency-key sweep). */
 export const MAINTENANCE_EVERY_MS = 60 * 60 * 1000;
@@ -346,14 +343,6 @@ interface MailboxRuntime {
    */
   lease: {
     takeoverAuthorizedAt: Date | null;
-    /**
-     * Mail 0104. WHAT THAT PRESS ASKED FOR — `takeover` asks for the mailbox whoever holds it,
-     * `join` asks only for one nobody is organizing. Read in the same statement as the stamp and
-     * meaningless without it; Cloud's own door writes `takeover`, so this reads `takeover` for
-     * every press a person makes here, and the field exists because the FENCE is shared with an
-     * install that has no takeover verb.
-     */
-    takeoverIntent: OrganizerIntent;
     disabledReason: string | null;
     /**
      * Mail 0083. WHAT THE ROW SAYS THE ROLE IS — which is not the same thing as what this process
@@ -1153,6 +1142,7 @@ export async function startWorkerWithLock(
       },
     ): Promise<void> {
       const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
+      if (typeof peek !== "function") return;
       try {
         /* ── THE CONFIGURED WINDOW, and omitting it was a real divergence ─────────────────────
          *
@@ -1164,28 +1154,10 @@ export async function startWorkerWithLock(
          * omission and the same cause, with a WRITE at the end of it. One window per mailbox, read
          * from one place; the sidecar already forwards its own (`engine.ts:3267`, `:3657`), which
          * is what made the difference legible. */
-        /* THREE ANSWERS, AND THE MISSING ACCESSOR IS ONE OF THEM. This probed `leasePeekIo` and
-           answered a failed probe with a bare `return` — no write, no line, and the four holder
-           columns left saying exactly what an unorganized mailbox's say. Every banner in the
-           product reads those columns, so an adapter without the read-only accessor renders
-           "nobody organizes this mailbox" about a mailbox nothing has looked at. `answerLeasePeek`
-           makes that an ANSWER; the row is still left alone, because a failed look is not evidence
-           about who holds the mailbox. */
-        const answered = await answerLeasePeek({
-          io: typeof peek === "function" ? peek.call(adapter) : undefined,
-          now: new Date(),
+        const seen = await readLeasePeek({
+          io: peek.call(adapter), now: new Date(),
           ...(organizerStaleAfterMs !== undefined ? { staleAfterMs: organizerStaleAfterMs } : {}),
         });
-        if (answered.answer === "unreadable") {
-          log.warn("organizer_holder_refresh_failed", {
-            mailboxId: mb.mailboxId, accountId: mb.accountId, op: answered.op,
-            reason: "this reader could not look at the claim folder, so the holder columns keep "
-              + "their previous answer; a look that did not land is not evidence that nobody "
-              + "organizes this mailbox, and the next cycle looks again",
-          });
-          return;
-        }
-        const seen = answered.peek;
         // FRESHEST FIRST, and the freshest is the one a person means by "who organizes this".
         // `holders` is already sorted that way by `peekLease`; an empty list means the folder
         // holds no readable claim, which is reported as "nobody named" rather than invented.
@@ -1261,8 +1233,6 @@ export async function startWorkerWithLock(
       mb: { mailboxId: string; accountId: string },
       lease: {
         takeoverAuthorizedAt: Date | null; disabledReason: string | null;
-        /** Mail 0104 — the VERB behind the stamp; see {@link MailboxRuntime.lease}. */
-        takeoverIntent: OrganizerIntent;
         organizerRole: OrganizerRole;
         organizeConsentedAt: Date | null;
         /** Mail 0088 — "stop organizing this mailbox, keep my mail", honoured before anything. */
@@ -1513,12 +1483,7 @@ export async function startWorkerWithLock(
         // handed over unchanged, because the election ranks presses against each other: what
         // decides a contest between this install and another one that has ALSO been pressed for is
         // which person pressed last, and a boolean cannot say.
-
-        // AND THE VERB, which lets rule 6 refuse a press that asked only to JOIN a mailbox
-        // somebody else is organizing. The two are one fact about one press.
-        takeover: lease.takeoverAuthorizedAt
-          ? { authorizedAt: lease.takeoverAuthorizedAt, intent: lease.takeoverIntent }
-          : null,
+        takeover: lease.takeoverAuthorizedAt ? { authorizedAt: lease.takeoverAuthorizedAt } : null,
         ...(organizerStaleAfterMs !== undefined ? { staleAfterMs: organizerStaleAfterMs } : {}),
         log: (event: string, detail: Record<string, unknown>): void => {
           log.info(event, { ...detail, mailboxId: mb.mailboxId, accountId: mb.accountId });
@@ -1533,11 +1498,6 @@ export async function startWorkerWithLock(
         // `MIN_PERMIT_TTL_MS` refuses. Every write in the cycle that follows asks this receipt.
         nonce.leasePermit = await acquireLeasePermit({
           ...leaseArgs, adopt: { outcome, at: gateAskedAt },
-          /* THE NONCE THE PERMIT RENEWS IS THIS RUNTIME'S NONCE. A re-read past the deadline or
-             the write count writes a new claim and expunges the old one; holding the old nonce
-             made the next cycle's gate read this worker's own claim as a restored clone, stand it
-             down, and leave a live claim with nobody behind it. See `LeasePermitInput.onRenew`. */
-          onRenew: ({ nonce: renewed }) => { nonce.leaseNonce = renewed; },
         });
         // ONE-SHOT. The authorization bought this becoming and no other; leaving it set would
         // let a lapse-then-resubscribe seize the mailbox back months later from whatever a human
@@ -2106,8 +2066,7 @@ export async function startWorkerWithLock(
           leasePermit: { noLease: "not_supplied" } as OrganizerWriteAuthority,
         };
         const leaseRow = {
-          takeoverAuthorizedAt: mb.takeoverAuthorizedAt, takeoverIntent: mb.takeoverIntent,
-          disabledReason: mb.disabledReason,
+          takeoverAuthorizedAt: mb.takeoverAuthorizedAt, disabledReason: mb.disabledReason,
           // Mail 0083 — see `MailboxRuntime.lease.organizerRole`. This is the shape the promotion
           // hole was reachable through: an existing reader row attaches with no stamp and a null
           // reason, so without this the gate had nothing left to notice it by.
@@ -2542,7 +2501,7 @@ export async function startWorkerWithLock(
         // that split existed this arm's `log.warn` was the only trace of a mailbox nothing was syncing,
         // and it once stayed the only trace for half an hour.
         if (err instanceof LeaseUnavailableError) {
-          noteBlock(leaseBlocked, mb.mailboxId, leaseBlockReason(err));
+          noteBlock(leaseBlocked, mb.mailboxId, "lease_unreadable");
           log.warn("attach_lease_unavailable", {
             mailboxId: mb.mailboxId, accountId: mb.accountId, err,
             // The OPERATION, from the error rather than from this call site: `runLeaseGate` names
@@ -2689,9 +2648,7 @@ export async function startWorkerWithLock(
             // authorized by the connect flow while this mailbox was already serving reaches the
             // next cycle's gate instead of waiting for a restart.
             attached.lease = {
-              // Mail 0104 — the verb moves with the stamp on every refresh, for the same reason.
-              takeoverAuthorizedAt: mb.takeoverAuthorizedAt, takeoverIntent: mb.takeoverIntent,
-              disabledReason: mb.disabledReason,
+              takeoverAuthorizedAt: mb.takeoverAuthorizedAt, disabledReason: mb.disabledReason,
               // Mail 0083, refreshed with the other two: a promotion or demotion written by
               // another process (the connect flow, the reconcile backstop) is a fact about this
               // row, and a value captured at attach would leave this gate deciding against it.
@@ -3298,17 +3255,7 @@ export async function startWorkerWithLock(
            * layer down, where a partial folder read is ACTED on: that is a read deciding what it knows,
            * this is a write claiming standing it failed to establish. Skipping costs a delay — the
            * records remain, and the next pass drains them once the lease reads again. */
-          /* ── AND THE PERMIT'S OWN LAST VERDICT, WHICH NO CLASS IN THIS LIST NAMES ─────────
-           *
-           * A stand-down mid-cycle revokes the permit. `fileOne`, `reconcileFlags` and
-           * `folderOpsPass` swallow everything but a fence, so it reaches here as NO ERROR and
-           * this cycle would go on to acknowledge and expunge records in a mailbox another
-           * install now organizes. Asked of the permit, both shapes are one fact. ORGANIZER only:
-           * a reader holds no permit and its own drive below must not be refused by a receipt
-           * left over from before its demotion. */
-          const permitStoodDown = organize && leaseStoodDown(rt.leasePermit);
-          const cycleMayStillWrite = !permitStoodDown
-            && !(cycleError instanceof LeaderFencedError)
+          const cycleMayStillWrite = !(cycleError instanceof LeaderFencedError)
             && !(cycleError instanceof LeaseUnavailableError)
             // ── AND A SHARED-DATABASE FAULT IS NOT SOMETHING TO DRAIN THROUGH EITHER ─────────
             //
@@ -3437,11 +3384,7 @@ export async function startWorkerWithLock(
            * by a live desktop claim appended a profile document to `ohmail/_meta` on the next cycle —
            * two installs writing settings into one `_meta`, the co-tenancy hazard, and a reader mirrors,
            * marks read and sends; publishing configuration is an organizer's act. */
-          /* …and not on a permit that stood down mid-cycle. The publish is an append and an
-             expunge in `ohmail/_meta`, and it is reached on exactly the shape the role check
-             cannot see: a refusal swallowed inside the cycle leaves `cycleError` null, so this
-             line runs with `rt.role` still holding the answer the gate gave before the drain. */
-          if (rt.role === "organizer" && !permitStoodDown) await rt.profile.onOrganize();
+          if (rt.role === "organizer") await rt.profile.onOrganize();
           // The first stamp does not wait for the rest of the rotation. The batched write below stamps
           // everything that synced this pass and is still the steady-state writer, but this loop is
           // SERIAL, so a mailbox's very first `last_sync_at` waited on every other's bounded batch — and
@@ -3611,7 +3554,7 @@ export async function startWorkerWithLock(
           // again" was an outage as policy (over a hundred cycles, most of an hour). Now it RECORDS,
           // CLOCKS, and past `leaseUnavailableDetachMs` DETACHES; `releaseOrganizerClaim` is never called here.
           if (err instanceof LeaseUnavailableError) {
-            noteBlock(leaseBlocked, rt.mailboxId, leaseBlockReason(err));
+            noteBlock(leaseBlocked, rt.mailboxId, "lease_unreadable");
             rt.leaseUnavailableSince ??= Date.now();
             const unavailableMs = Date.now() - rt.leaseUnavailableSince;
             const due = unavailableMs >= leaseUnavailableDetachMs;

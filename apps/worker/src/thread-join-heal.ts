@@ -7,56 +7,16 @@ import {
   type ConversationJoinFacts, type CounterpartyEvidence, type EmailAddress, type Logger,
 } from "@trafficflow/core/mail";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE THREAD-JOIN HEAL — the deferred merge for conversations a forward split
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   ── WHAT IT REPAIRS, AND WHY NEITHER EXISTING THREAD PASS CAN ──────────────────────────────
-
-   `thread-backfill.ts` heals thread IDENTITY where `thread_id IS NULL`; `thread-subject-heal.ts`
-   heals thread NAMES. Both presuppose that the header chain, once read, puts every message of a
-   conversation in one thread. Production showed the case where it structurally cannot: the user
-   mails a correspondent, the correspondent's reply lands at ANOTHER of the user's addresses,
-   and the user forwards it here. The forward carries no `In-Reply-To` and no `References`, so
-   the mailbox holds two header chains that are disjoint by construction — the original outbound
-   message alone, and the forward plus everything that correctly chains onto it. Every row was
-   threaded RIGHT and the conversation still renders as two threads.
-
-   The joining evidence is not in any header; it accumulates across messages and completes only
-   when the counterparty appears on BOTH chains. So the join is a deferred, evidence-complete
-   MERGE — `conversationJoinVerdict` in packages/core states the guards and why each one is
-   load-bearing — performed here exactly the way `ThreadService.merge` performs the user's own:
-   messages reassigned onto the surviving thread, the emptied thread deleted, and the change log
-   told about every touched row in the same transaction.
-
-   ── THE SURVIVOR IS THE OLDEST THREAD ──────────────────────────────────────────────────────
-
-   The earliest first-message date wins and keeps its id, name and root anchor. Merging INTO the
-   conversation's true start means a client scrolled to the top of the healed thread reads it in
-   the order it happened, and repeated heals are stable: the survivor of run N is the survivor
-   of run N+1.
-
-   ── WHAT DELETING THE ABSORBED THREAD COSTS, AND WHY THAT IS ACCEPTED ──────────────────────
-
-   The absorbed thread's `root_message_id_header` row disappears, so a LATER out-of-order
-   arrival that anchors on exactly that root — and whose every parent candidate somehow misses
-   rows that are still right here in `messages` — would recreate a split. That takes a message
-   referencing ONLY ids this mailbox has never stored, arriving after the merge; and this pass
-   recurs, so the recreated split is re-evaluated and re-merged on the next run. Convergence
-   over a rare re-split beats a ghost `threads` row every client list has to skip — the same
-   trade `ThreadService.merge` already made for the user-initiated case.
-
-   ── BOUNDS, IDEMPOTENCE, LOCK ORDER ────────────────────────────────────────────────────────
-
-   Keyset pagination over (account_id, subject) duplicate groups — the SQL pre-filter; the JS
-   verdict re-derives base subjects from each thread's FIRST MESSAGE, so a stored name (which a
-   user may have renamed) can neither force nor forge a merge. A merged group leaves the
-   predicate (one thread remains), so a second run selects nothing: idempotent. Every group is
-   one transaction; data locks first (`messages` moves, `threads` update/delete), the account's
-   seq lock (`recordChanges`) LAST — the order `ThreadResolution.changes` documents as the one
-   that cannot deadlock ingest. A group that fails (say, its survivor was deleted mid-flight by
-   a user merge) is logged and skipped; the next run re-reads reality.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/* THE THREAD-JOIN HEAL — the deferred merge for a conversation a forward SPLIT. `thread-backfill.ts`
+ * heals thread IDENTITY (`thread_id IS NULL`) and `thread-subject-heal.ts` heals NAMES; both assume the
+ * header chain unites a conversation. A forward carries no `In-Reply-To`/`References`, so two disjoint
+ * chains render as two threads though every row was threaded right. The joining evidence accumulates and
+ * completes only when the counterparty appears on BOTH chains — an evidence-complete MERGE
+ * (`conversationJoinVerdict` in packages/core), performed exactly as `ThreadService.merge` performs the
+ * user's own: rows reassigned onto the survivor, the emptied thread deleted, the change log told. The
+ * SURVIVOR is the OLDEST thread (stable across runs). Deleting the absorbed `root_message_id_header` can
+ * let a rare later out-of-order arrival re-split, re-merged next run. Keyset over (account_id, subject);
+ * data locks first, the `recordChanges` seq lock LAST (`ThreadResolution.changes`' deadlock-free order). */
 
 /** Duplicate-subject groups examined per invocation — the run's hard budget. */
 export const THREAD_JOIN_HEAL_MAX_GROUPS = 200;
@@ -70,20 +30,14 @@ export const THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP = 12;
 export const THREAD_JOIN_HEAL_MAX_MESSAGES_PER_THREAD = 500;
 
 /**
- * An address that participates (author or recipient) in at least this many of the account's
- * threads is DISQUALIFIED as a join witness: its presence on both sides of a pair is treated
- * like one of the account's own addresses — no evidence at all.
- *
- * The threshold was cut from a measured distribution, not intuition. In a real, decade-scale
- * account the account holder's FORMER identities (an imported history carries them, and they
- * are not mailbox rows), long-standing frequent correspondents, and notification senders all
- * measure in the many hundreds to thousands of threads, while a genuine conversation-scale
- * correspondent sits far below 200. Every address in the first three classes has thousands of
- * subject-collision chances inside any 14-day window, which is exactly the false-merge tail
- * the minus-self guard exists to starve — and a witness this promiscuous can also FORGE
- * nothing about two particular threads being one conversation. The cost is deliberate and
- * one-sided: a true split whose only shared correspondent is a super-frequent colleague stays
- * split (the recoverable direction, and the next run re-looks); a false merge has no undo.
+ * An address participating (author or recipient) in at least this many of the account's threads is
+ * DISQUALIFIED as a join witness: its presence on both sides is treated like one of the account's own
+ * addresses — no evidence. The threshold was cut from a measured distribution: in a decade-scale account
+ * the holder's FORMER identities (imported history, not mailbox rows), frequent correspondents and
+ * notification senders measure in the hundreds-to-thousands of threads, while a genuine conversation-scale
+ * correspondent sits far below 200 — and a promiscuous witness has thousands of subject-collision chances
+ * per 14-day window, the false-merge tail the minus-self guard starves. One-sided by design: a true split
+ * whose only shared correspondent is super-frequent stays split (recoverable); a false merge has no undo.
  */
 export const THREAD_JOIN_WITNESS_SPREAD_MAX = 200;
 
@@ -123,15 +77,13 @@ export interface ThreadJoinHealResult {
   /** Groups permanently declined this run: over the per-group thread bound. */
   skipped: number;
   /**
-   * Groups whose merge TRANSACTION failed TWICE — once, and once more on the in-run retry
-   * below. A single failure is usually a user merge or delete racing the pass (nothing
-   * committed either way), and the immediate re-read-and-retry resolves it inside the same
-   * run, so this counter names the persistent case: a group that failed both attempts, left
-   * for the NEXT walk. Counted APART from `skipped` (an over-bound group is a permanent
-   * refusal, not a failure), and deliberately NOT a reason for a caller to reset its forward
-   * cursor: a deterministic poison group that reset the walk would pin every future run to
-   * the same leading page and starve the tail for ever. The trade is deliberate: the
-   * in-run retry covers transients and the wrap-around retries the rest.
+   * Groups whose merge TRANSACTION failed TWICE — once, and once more on the in-run retry. A single
+   * failure is usually a user merge/delete racing the pass (nothing committed either way), resolved by the
+   * immediate re-read-and-retry; this counter names the persistent case, left for the NEXT walk. Counted
+   * APART from `skipped` (an over-bound group is a permanent refusal, not a failure), and deliberately NOT
+   * a reason to reset the forward cursor: a deterministic poison group that reset the walk would pin every
+   * future run to the leading page and starve the tail. The in-run retry covers transients, the wrap-around
+   * retries the rest.
    */
   failed: number;
   /**
@@ -229,18 +181,14 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
         // account", which is true of every pair and proves nothing.
         self = new Set(own.map((m) => m.address.toLowerCase()));
 
-        // ── AND every address too widespread in the account to witness anything. ────────────
-        //
-        // The mailbox rows are not the whole of the disqualified set: an imported history
-        // carries the account holder's FORMER identities, which are not mailbox rows and
-        // would otherwise count as a counterparty — and an overlap consisting only of "mail
-        // involving one of this account's old addresses" is exactly the false-merge machine
-        // the verdict's minus-self guard exists to starve ("Re: Rechnung" from two unrelated
-        // vendors to one old address, inside the window, would merge).
-        // Measured rather than declared, over author AND recipient sides, because the risk is
-        // the same regardless of which side the address sat on — see the threshold constant
-        // for the distribution it was cut from. This only ever REMOVES evidence: it can
-        // starve a true join into staying split (the recoverable direction), never forge one.
+        // AND every address too widespread in the account to witness anything. The mailbox rows are not
+        // the whole disqualified set: an imported history carries the account holder's FORMER identities
+        // (not mailbox rows), and an overlap consisting only of mail involving an old address is the
+        // false-merge machine the verdict's minus-self guard exists to starve ("Re: Rechnung" from two
+        // unrelated vendors to one old address, inside the window, would merge). Measured over author AND
+        // recipient sides (the risk is the same either way — see the threshold constant for the
+        // distribution). This only ever REMOVES evidence: it can starve a true join into staying split
+        // (recoverable), never forge one.
         /* THE TWO ADDRESS BAGS AS SEPARATE ARMS, rather than one over their concatenation.
          *
          * This read the elements of `to_addresses || cc_addresses` — a server-side document
@@ -498,17 +446,13 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
 }
 
 /**
- * One thread's join facts, derived from its LIVING messages — a row the user soft-deleted
- * (`deleted_at`) is out of every living view and must not drive a merge either. `null` ⇒ no
- * dated living messages: ineligible.
- *
- * The dates are EXACT (one aggregate over the thread), never sampled: `lastMessageAt` is what
- * the window guard measures and what the merge writes back onto the survivor, and a sampled
- * value from an ascending page would miss every row past the cap — rejecting a valid recent
- * join, or dragging an active conversation backwards in every ordered list. Only the
- * CORRESPONDENT set is sampled ({@link THREAD_JOIN_HEAL_MAX_MESSAGES_PER_THREAD} oldest living
- * rows): it is evidence, a miss only starves a join, and any human conversation's participants
- * appear long before the cap.
+ * One thread's join facts, derived from its LIVING messages — a soft-deleted row (`deleted_at`) is out of
+ * every living view and must not drive a merge; `null` ⇒ no dated living messages, ineligible. The dates
+ * are EXACT (one aggregate over the thread), never sampled: `lastMessageAt` is what the window guard
+ * measures and what the merge writes onto the survivor, and a sampled value from an ascending page would
+ * miss every row past the cap (rejecting a valid recent join, or dragging an active conversation
+ * backwards). Only the CORRESPONDENT set is sampled ({@link THREAD_JOIN_HEAL_MAX_MESSAGES_PER_THREAD}
+ * oldest living rows): it is evidence, a miss only starves a join, and participants appear long before the cap.
  */
 async function threadFactsOf(db: Tx, threadId: string): Promise<ConversationJoinFacts | null> {
   const living = and(eq(messages.threadId, threadId), sql`${messages.deletedAt} is null`);
