@@ -258,33 +258,25 @@ export function ComposeView({
    * identically; there is no second path to SMTP.
    */
   /**
-   * ── CANCELLING, AND THE TWO THINGS IT MEANS ─────────────────────────────────────────────
-   *
-   * There was no way to abandon a compose from the compose surface at all. Escape LEFT the view
-   * and the autosaved row stayed on the account, so throwing a message away meant going to
-   * Drafts and discarding it there — a second surface, after the fact, for a decision taken
-   * here.
-   *
-   * Nothing worth keeping ⇒ this closes and deletes the row, with no question: there is no
-   * sentence to write about an empty form, and `worthSaving` is the SAME predicate that decided
-   * whether to write a row in the first place, so "nothing was worth saving" and "there is
-   * nothing to confirm" cannot drift apart.
-   *
-   * ATTACHMENTS COUNT TOO, as their own term beside `worthSaving` and deliberately not inside
-   * it: autosave is right to ignore them (bytes are never stored, so they are not a reason to
-   * write a row), and this question is about what the user LOSES, which the picked files are.
-   * A compose holding only an attachment used to discard silently — the guard read the text
-   * fields, found nothing, and threw the files away with no question.
-   *
+   * Cancelling, and the two things it means. There was no way to abandon a compose from the
+   * compose surface: Escape LEFT the view and the autosaved row stayed, so throwing a message
+   * away meant going to Drafts and discarding it there. Nothing worth keeping ⇒ close and delete
+   * the row with no question — `worthSaving` is the SAME predicate that decided whether to write
+   * a row, so "nothing was worth saving" and "there is nothing to confirm" cannot drift apart.
+   * Attachments count too, as their own term beside `worthSaving` and deliberately not inside
+   * it: autosave is right to ignore them (bytes are never stored), but this question is about
+   * what the user LOSES — a compose holding only an attachment used to discard silently.
+   */
+
+  /**
    * Anything written ⇒ the Drafts list's two-press idiom, in the panel's foot. Not an undo
    * toast: `DELETE /drafts/:id` is a real delete and the row is the only copy of an unsent
-   * message, so an undo affordance would be offering something the product cannot do.
-   *
-   * THE QUESTION IS A DIALOG TO THE ACCESSIBILITY TREE, not a `group` that appears in silence:
-   * `role="alertdialog"` with the sentence as its description, and focus MOVES into it when it
-   * opens — a screen-reader user used to press Cancel and hear nothing at all while a
-   * destructive question sat on screen. Focus returns to the trigger when the question closes
-   * without acting; the destructive press navigates away, which is its own focus move.
+   * message, so an undo affordance would offer something the product cannot do. The question is
+   * a dialog to the accessibility tree, not a `group` appearing in silence: `role="alertdialog"`
+   * with the sentence as its description, and focus MOVES into it when it opens — a
+   * screen-reader user used to press Cancel and hear nothing while a destructive question sat on
+   * screen. Focus returns to the trigger when the question closes without acting; the
+   * destructive press navigates away, its own focus move.
    */
   const [confirmCancel, setConfirmCancel] = useState(false);
   const rootRef = useRef<HTMLElement | null>(null);
@@ -557,38 +549,28 @@ export function ComposeView({
       </div>
       <div className="scroller">
         <div className="compose-wrap">
-          {/* ═══ THE HEADER BLOCK ═══════════════════════════════════════════════════════════
-              From, To, Cc/Bcc and Subject as ONE compact block, then the editor, then the
-              actions at the panel's bottom edge — the inline reply's proportions, which is
-              the composition this form should have had from the start.
-
-              What it replaces: five equally-weighted rows, each with its own 56px label
-              gutter and its own hairline, a standalone Cc/Bcc strip between To and Subject,
-              and a 150px editor sitting fourth among them. The message was the smallest
-              thing on a screen whose entire purpose is writing one, and the addressing —
-              which is answered in seconds and then never looked at again — took the top
-              half. The reply editor gets this right (`InlineReply`): a recessed head, a
-              dominant surface, one action row under it.
-
-              The rows keep their `.c-field` chrome, because that is the product's form-field
-              rule and this pass is about proportion, not a new field language. */}
+          {/* The header block: From, To, Cc/Bcc and Subject as ONE compact block, then the
+              editor, then the actions at the panel's bottom edge — the inline reply's
+              proportions. It replaces five equally-weighted rows, each with its own 56px label
+              gutter and hairline, a standalone Cc/Bcc strip, and a 150px editor sitting fourth:
+              the message was the smallest thing on a screen whose purpose is writing one, and
+              the addressing — answered in seconds, never looked at again — took the top half.
+              The reply editor gets this right (`InlineReply`): a recessed head, a dominant
+              surface, one action row under it. The rows keep their `.c-field` chrome — the
+              product's form-field rule; this pass is about proportion, not a new field
+              language. */}
           <div className="compose-head">
-            {/* FROM. Before To, because it is the question the reader asks first and
-                because the answer used to be nowhere on this screen at all — compose resolved
-                its sender from whichever mailbox had received the newest message, and said
-                nothing, so on an account with two addresses the From flipped with the post.
-
-                A CONTROL ONLY WHEN THERE IS SOMETHING TO CHOOSE. One address renders as static
-                text: a select with a single option is a decision nobody has, and the point of
-                this line with one mailbox is that a stranger can see what they are writing
-                from. Nothing renders when the account's mailboxes cannot be named at all —
-                `from.address` is null — because a From line is a claim and there is nothing to
-                claim yet.
-
-                THE VALUE IS A MAILBOX ID. `from.choices` holds sendable mailboxes only, so a
-                disconnected address is never offered; the server refuses it too
-                (`drafts-service.ts` → `validMailbox`), and a control that offers what the server
-                refuses is an inert affordance with extra steps. */}
+            {/* FROM. Before To, because it is the question the reader asks first and the answer
+                used to be nowhere on this screen — compose resolved its sender from whichever
+                mailbox had received the newest message and said nothing, so on an account with
+                two addresses the From flipped with the post. A control only when there is
+                something to choose: one address renders as static text (a select with a single
+                option is a decision nobody has); nothing renders when the mailboxes cannot be
+                named at all (`from.address` null), because a From line is a claim. The value is
+                a MAILBOX ID: `from.choices` holds sendable mailboxes only, so a disconnected
+                address is never offered — the server refuses it too (`drafts-service.ts` →
+                `validMailbox`), and a control offering what the server refuses is an inert
+                affordance with extra steps. */}
             {from.address !== null ? (
               <div className="c-field">
                 <label htmlFor="compose-from">{t("from")}</label>
@@ -620,20 +602,16 @@ export function ComposeView({
                     {displayAddress(from.address)}
                   </output>
                 )}
-                {/* THE SENDER MOVED WHILE YOU WERE TYPING SOMEWHERE ELSE, so it is said out loud
-                    in the row it happened in. The message is going to a domain this account can
-                    send from, and that address is now the one it leaves from
-                    (`compose-from.ts` → `domainMatchedFrom`).
-
-                    IT IS NOT AN UNDO AND CARRIES NO DISMISS. The selector beside it IS the way
-                    back — picking any address stores a real choice and the line goes with it,
-                    which is one control for one decision instead of a second affordance that
-                    would have to mean something subtly different. Deleting the recipient
-                    un-switches it too, because the whole thing is re-derived rather than stored.
-
-                    `role="status"` because the change is silent otherwise: it happens in a field
-                    the user is not looking at, and a describedby alone would only be heard by
-                    someone who later tabbed back to the control. */}
+                {/* The sender moved while you were typing somewhere else, so it is said out
+                    loud in the row it happened in: the message is going to a domain this
+                    account can send from, and that address is now the one it leaves from
+                    (`compose-from.ts` → `domainMatchedFrom`). Not an undo and no dismiss — the
+                    selector beside it IS the way back: picking any address stores a real choice
+                    and the line goes with it, one control for one decision. Deleting the
+                    recipient un-switches it too, because the whole thing is re-derived rather
+                    than stored. `role="status"` because the change is otherwise silent: it
+                    happens in a field the user is not looking at, and a describedby alone is
+                    only heard by someone who later tabs back. */}
                 {from.domainMatched ? (
                   <span id={MATCH_HINT_ID} className="compose-from-hint" role="status">
                     {t("fromMatched")}
@@ -663,24 +641,17 @@ export function ComposeView({
                 onMove={moveChip}
                 onDragActive={onChipDrag}
               />
-              {/* THE AFFORDANCE IS IN THE ROW IT ACTS ON, at its right edge.
-                  It had a strip of its own between To and Subject — a full-width row whose
-                  entire content was one 11.5px word, which cost the form a band of vertical
-                  space and read as a fourth field rather than as a control on the third.
+              {/* The affordance is in the row it acts on, at its right edge. It had a strip of
+                  its own between To and Subject — a full-width row whose entire content was one
+                  11.5px word, costing a band of vertical space and reading as a fourth field.
                   Cc and Bcc ARE recipients, so the way to more recipients belongs on the
-                  recipient row; this is the same reasoning that keeps Move's destinations on
-                  the bar rather than in a strip beneath it.
-
-                  Still a button and not a checkbox, because it does one thing: show two more
-                  inputs. `aria-expanded` names the state, and it vanishes once the rows are
-                  open — there is nothing left to reveal.
-
-                  IT MUST STAY INSIDE THIS `.c-field`. Lifted back out, the row's own
-                  `:focus-within` hairline stops covering it and the toggle is once again a
-                  control floating between two fields. `test/compose-composition.test.ts` asserts the
-                  CONTAINMENT (`#compose-to`'s `.c-field` holds the button), not merely that a
-                  Cc/Bcc button exists somewhere — the weaker assertion passes against the
-                  layout this replaces. */}
+                  recipient row — the reasoning that keeps Move's destinations on the bar. Still
+                  a button and not a checkbox, because it does one thing: show two more inputs;
+                  `aria-expanded` names the state, and it vanishes once the rows are open. It
+                  must stay inside this `.c-field`: lifted out, the row's `:focus-within`
+                  hairline stops covering it. `test/compose-composition.test.ts` asserts the
+                  CONTAINMENT (`#compose-to`'s `.c-field` holds the button) — the weaker
+                  "a Cc/Bcc button exists" passes against the layout this replaces. */}
               {!ccBccShown ? (
                 <button
                   type="button"
