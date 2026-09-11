@@ -1,17 +1,13 @@
 "use client";
 
 /**
- * The two things a rendered message needs from the shell, and why they are a context.
- *
- * `MessagePane` is mounted in TWO places at once whenever the reader is open — the Ohbox's
- * reading column and the reader sheet both render the selected message. If each owned its
- * own reply draft, the two editors would hold different text and whichever one you happened
- * to be looking at would be the one that lost it. So the draft lives in `AppShell` and both
- * panes read the same value; the same goes for which sender's screening popover is open.
- *
- * A context rather than props because the read column's `MessagePane` is three components
- * deep inside `OhboxView`, and threading five more parameters through a view that already
- * takes fifteen would make the seam harder to see, not easier.
+ * The two things a rendered message needs from the shell, and why they are a context. `MessagePane`
+ * is mounted in TWO places at once whenever the reader is open — the Ohbox's reading column and the
+ * reader sheet both render the selected message. If each owned its own reply draft, the two editors
+ * would hold different text and whichever one you looked at lost it: the draft lives in `AppShell`
+ * and both panes read the same value; likewise the open screening popover. A context rather than
+ * props because the read column's pane is three components deep inside a view that already takes
+ * fifteen.
  */
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import {
@@ -38,86 +34,55 @@ export type MessageBarPanel = "move" | "resurface" | "delete";
 
 export interface MessageChrome {
   /**
-   * THE READER'S OWN ADDRESSES, so the message header can fold a recipient that IS the reader
-   * to "me" rather than printing their own address back at them.
-   *
-   * It rides the chrome for the same reason `conversationOf` and `bodyOf` do: `MessagePane` is
-   * mounted TWICE while the reader is open and holds no engine hook of its own, and the answer
-   * has one source — `GET /mailboxes`, resolved once in `AppShell` (`ownAddresses`). A default
-   * of `[]` is a real answer, not a stub: a surface with no mailbox facts (the desktop shell, a
-   * test) recognises the reader nowhere, so every recipient renders in full, which is the honest
+   * The reader's own addresses, so the header can fold a recipient that IS
+   * the reader to "me". Rides the chrome for `conversationOf`'s reason:
+   * `MessagePane` is mounted twice and holds no engine hook, and the answer
+   * has one source — `GET /mailboxes`, resolved once in `AppShell`
+   * (`ownAddresses`). A default of `[]` is a real answer, not a stub: a
+   * surface with no mailbox facts (the desktop shell, a test) recognises
+   * the reader nowhere, so every recipient renders in full — the honest
    * degradation. `recipientSummary` case-folds both sides.
    */
   ownAddresses: readonly string[];
   /**
-   * THE FOLDERS FOUNDATION FLAG, as the shell knows it (`consent.foldersEnabled`).
-   *
-   * IT IS NO LONGER THE DELETE GATE, and no code in this file's consumers reads it today. It
-   * used to gate both halves of the reader's Delete verb — the menu entry and the confirm strip
-   * — and that was wrong: delete files the message to the mail server's own \Trash, a system
-   * folder every account already has and not one the user made, so the USER-folders foundation
-   * was never a fact about whether the verb can run. The engine's `message_delete` never read
-   * it, and the same verb over a SELECTION never read it either, so a folders-off account could
-   * delete a picked pile and not the row under its cursor. `mirrorHolds` below is now the whole
-   * gate, on both halves.
-   *
-   * Kept on the chrome, rather than deleted, because it is the chrome's declared copy of a
-   * foundation fact the shell already supplies (`folders-rail.test.tsx` pins that supply as part
-   * of the rail's flag-off parity) and the next surface that needs the flag in the reader should
-   * find it here rather than growing a second consent hook. A reader added later must not read
-   * it as a delete gate: it is not one.
+   * The folders foundation flag, as the shell knows it (`consent.foldersEnabled`). NO LONGER THE
+   * DELETE GATE, and no consumer reads it today: it used to gate both halves of the reader's
+   * Delete, and that was wrong — delete files to the server's own \Trash, a system folder, so the
+   * USER-folders foundation was never a fact about the verb; a folders-off account could delete a
+   * picked pile and not the row under its cursor. `mirrorHolds` below is the whole gate now. Kept
+   * as the chrome's declared copy of a foundation fact (`folders-rail.test.tsx` pins the supply); a
+   * later reader must not read it as a delete gate.
    */
   foldersEnabled?: boolean;
   /**
-   * DOES THE MIRROR HOLD THIS MESSAGE — the Delete verb's ONLY gate now. The reader can show
-   * rows the mirror deliberately does not hold (an off-mirror archive hit opened from Search),
-   * and `message_delete` is an engine mutation over a local row: offered there it would be a
-   * control that always fails (the engine rejects a mutation with no local effect before the
-   * wire).
-   *
-   * ── ABSENT AND `false` ARE DIFFERENT ANSWERS, AND ABSENT NOW DECIDES ─────────────────────
-   *
-   * ABSENT means "this shell has no mirror probe at all" (the desktop shell, a bare mount) and
-   * ADMITS — `!== false`, the same reading `forwardAdmitted` has always used. `false` means
-   * "this shell answered no for this row" and refuses. The distinction used to be unreachable
-   * for delete, and this docblock said so: the demo and provider-less mounts "never reach it
-   * because `foldersEnabled` is already off there". That sentence was the collapse of two
-   * states into one, and with the folders term gone the absent case is now the state that
-   * decides a destructive verb on every shell that supplies no probe. A shell that CANNOT
-   * answer is not a shell whose mail may not be deleted — the mutation path behind it still
-   * polices the row; a shell that answers `false` gets no verb.
+   * Does the mirror hold this message — the Delete verb's ONLY gate now. The reader can show rows
+   * the mirror deliberately does not hold (an off-mirror archive hit from Search), and
+   * `message_delete` is an engine mutation over a local row: offered there it always fails. Absent
+   * and `false` are different answers, and absent decides: ABSENT means "this shell has no mirror
+   * probe" (the desktop shell, a bare mount) and ADMITS — `!== false`, `forwardAdmitted`'s reading;
+   * `false` means "answered no for this row" and refuses. A shell that cannot answer is not a shell
+   * whose mail may not be deleted — the mutation path still polices the row.
    */
   mirrorHolds?: (messageId: string) => boolean;
   /**
-   * ABSOLUTE-TIME DISPLAY — a session-and-view-scoped preference on the reader's stamps.
-   *
-   * Every stamp in the open message shows the relative form by default ("09:12", "Mon"), with the
-   * exact instant on hover. Clicking any one of them flips ALL of them to the absolute form at
-   * once — so a reader comparing dates across a thread sees them all in the same shape rather than
-   * hovering each. It rides the chrome for the reason the rest of this context does: the stamp is
-   * rendered by `MessageHeader`/`MessageCard`, which are mounted several deep and hold no shell
-   * state of their own, and there may be more than one stamp on screen (the focused message plus
-   * its siblings) that must agree.
-   *
-   * DELIBERATELY NOT PERSISTED and reset on every view switch (see `AppShell`): it is a momentary
-   * "let me read the exact dates on THIS" gesture, not a setting. A default of `false` is the
-   * resting state, so a pane with no shell behind it (the inert default) simply always shows
-   * relative and its stamp does nothing on click.
+   * Absolute-time display — a session-and-view-scoped preference on the reader's stamps. Clicking
+   * any stamp flips ALL of them to the absolute form at once, so a reader comparing dates across a
+   * thread sees one shape rather than hovering each. It rides the chrome because the stamp is
+   * rendered by `MessageHeader`/`MessageCard`, mounted several deep with no shell state, and more
+   * than one stamp on screen must agree. Deliberately not persisted, reset on every view switch
+   * (`AppShell`): a momentary gesture, not a setting. Default `false`, so a pane with no shell
+   * shows relative and its stamp does nothing on click.
    */
   absoluteTime: boolean;
   onToggleAbsoluteTime: () => void;
   /**
-   * THE ACTION BAR'S OPEN DESTINATION PANEL (Move / Resurface / the delete confirm), SHARED
-   * across every mount of the bar — the reply-draft argument at the top of this file, applied
-   * to a strip: the focused message's bar renders in the reading column AND the reader sheet
-   * (and on the open stream card), and a panel opened by key in one had to be visible in the
-   * one the reader is actually looking at. Keyed by message id so a panel can never render
-   * over a different message's bar; the shell clears it when focus moves (the same "a
-   * half-open Move row must not carry over" rule the local state used to enforce per pane).
-   *
-   * OPTIONAL with a no-op setter absent, so the inert default and every provider-less mount
-   * (the desktop shell, bare view tests) keep compiling — there the bar falls back to nothing
-   * open, which is the resting strip.
+   * The action bar's open destination panel (Move / Resurface / the delete confirm), shared across
+   * every mount of the bar — the reply-draft argument applied to a strip: the focused message's bar
+   * renders in the reading column AND the reader sheet, and a panel opened by key in one had to be
+   * visible in the one being looked at. Keyed by message id so a panel can never render over a
+   * different message's bar; the shell clears it when focus moves. Optional with a no-op setter
+   * absent, so the inert default and provider-less mounts keep compiling — the bar falls back to
+   * nothing open.
    */
   barPanel?: { messageId: string; panel: MessageBarPanel } | null;
   setBarPanel?: (next: { messageId: string; panel: MessageBarPanel } | null) => void;
@@ -141,24 +106,14 @@ export interface MessageChrome {
    */
   replyMode?: "reply" | "forward";
   /**
-   * OPEN THE REPLY EDITOR ON A SPECIFIC MESSAGE — the seam every panel's ⋯ menu answers with.
-   *
-   * The focused message's own Reply travels the pane's `onAction("reply")` prop, which the shell
-   * resolves against the focused id. A panel's header menu (`MessageHeader`) retargets the editor
-   * by id through here instead — the same `openReply(messageId)` the shell already runs for the
-   * focused case.
-   *
-   * `all` answers EVERYONE on the message — the same flag `AppShell.openReply(id, true)` takes,
-   * so widening this signature is compatible with the shell that already exists. The menu offers
-   * the Reply-all item only where `replyAllRecipients(message, ownAddresses)` returns an
-   * envelope, resolved PER PANEL — the predicate the pill and the send path resolve, so what a
-   * panel offers and what would leave the account are one decision, and a 1:1 message offers no
-   * Reply all anywhere.
-   *
-   * OPTIONAL, so the inert default and every provider-less mount keep compiling; the menu item
-   * is simply ABSENT until the shell wires it — and a chrome with neither this nor `forward`
-   * renders no ⋯ trigger at all, which is the honest degradation for a surface with no reply
-   * machine behind it (the desktop shell, a bare test).
+   * Open the reply editor on a specific message — the seam every panel's ⋯ menu answers with. The
+   * focused message's own Reply travels the pane's `onAction("reply")`; a panel's header menu
+   * retargets by id through here — the same `openReply(messageId)` the shell already runs. `all`
+   * answers everyone on the message (the flag `AppShell.openReply(id, true)` takes); the menu
+   * offers Reply-all only where `replyAllRecipients` returns an envelope, resolved per panel — what
+   * a panel offers and what would leave the account are one decision. Optional: the item is ABSENT
+   * until wired, and a chrome with neither this nor `forward` renders no ⋯ trigger at all — honest
+   * for a surface with no reply machine.
    */
   openReply?: (messageId: string, all?: boolean) => void;
   /**
@@ -240,15 +195,13 @@ export interface MessageChrome {
   replySubjectEdit: string | null;
   onReplySubject?: (subject: string) => void;
   /**
-   * THE HOST'S OWN CEILING ON WHAT A SEND FROM THIS WINDOW CAN CARRY — `AppShell`'s
-   * `sendSurfaceMaxTotalBytes` prop, forwarded so the reply editor's attach control states and
-   * refuses against the same `min(surface, SIZE)` the send will enforce (`composeAttachCap`).
-   * It rides the chrome for the reason the files above do: the pane is mounted TWICE while the
-   * reader is open, and two readings of one ceiling is how the two editors' sentences drift.
-   * OPTIONAL, and absent — the inert default, every browser tab, every bare harness — means
-   * "not declared", which `composeAttachCap` resolves to the strict constant; `null` is the
-   * desktop's standalone door declaring there is no request body between the form and the
-   * SMTP dial.
+   * The host's own ceiling on what a send from this window can carry — `AppShell`'s
+   * `sendSurfaceMaxTotalBytes`, forwarded so the reply editor's attach control states and refuses
+   * against the same `min(surface, SIZE)` the send will enforce (`composeAttachCap`). Rides the
+   * chrome because the pane is mounted twice and two readings of one ceiling is how the two
+   * editors' sentences drift. Optional: absent means "not declared" (resolves to the strict
+   * constant); `null` is the desktop's standalone door declaring there is no request body between
+   * the form and the SMTP dial.
    */
   sendSurfaceMaxTotalBytes?: number | null;
   /**
@@ -290,18 +243,13 @@ export interface MessageChrome {
   /** Open the screening popover for `messageId`, anchored on `anchor`. */
   openSenderMenu: (messageId: string, anchor: HTMLElement | null) => void;
   /**
-   * THE ACCOUNT'S OWN NAME FOR ONE OF ITS ADDRESSES, or null when it has none — what the "me"
-   * chip in the recipients block wears instead of the sender's spelling of the reader.
-   *
-   * The answer is `GET /mailboxes`' `displayName`, resolved in `AppShell` from the same facts
-   * `ownAddresses` comes from, and it rides the chrome for the same reason they do: the header
-   * is rendered inside both `MessagePane` mounts and holds no mailbox hook of its own. A
-   * FUNCTION of the address rather than one string, because an account can hold several
-   * mailboxes under different labels and the chip folds a SPECIFIC own address.
-   *
-   * OPTIONAL, and null is a real answer either way: a mailbox with no label, the desktop
-   * shell, the demo and every bare harness all have no name to offer, and the chip then shows
-   * the bare address — the honest fallback, never an invented one.
+   * The account's own name for one of its addresses, or null when it has none — what the "me" chip
+   * wears instead of the sender's spelling of the reader. The answer is `GET /mailboxes`'
+   * `displayName`, resolved in `AppShell` from the same facts as `ownAddresses`, riding the chrome
+   * for the same reason. A FUNCTION of the address rather than one string: an account can hold
+   * several mailboxes under different labels and the chip folds a specific own address. Optional;
+   * null is a real answer (no label, the desktop shell, the demo, bare harnesses) and the chip
+   * shows the bare address — the honest fallback.
    */
   ownNameOf?: (address: string) => string | null;
   /**
@@ -315,129 +263,88 @@ export interface MessageChrome {
    */
   writeTo?: (address: string, name?: string) => void;
   /**
-   * OPEN THE SCREENING SHEET FOR `address` — the contact popover's Screener-settings verb, and
-   * the one entry that must NOT collapse to {@link MessageChrome.openSenderMenu} alone: that
-   * call resolves the SENDER of `messageId`, while a chip names a To/Cc person. `AppShell`
-   * fills this with its widened `openSenderMenu(messageId, anchor, address)`, so the sheet
-   * opens on the CHIP's address with the message as its anchor into the mirror.
-   *
-   * OPTIONAL for the same reason `writeTo` is: where no screening machine exists the item is
-   * ABSENT, never dead. (`openSenderMenu` itself stays required-with-a-noop for the sender
-   * line's sake, which is why it cannot serve as this item's presence signal.)
+   * Open the screening sheet for `address` — the contact popover's Screener-settings verb, and the
+   * one entry that must NOT collapse to {@link MessageChrome.openSenderMenu} alone: that call
+   * resolves the SENDER of `messageId`, while a chip names a To/Cc person. `AppShell` fills this
+   * with its widened `openSenderMenu(messageId, anchor, address)`, so the sheet opens on the CHIP's
+   * address. Optional for `writeTo`'s reason: where no screening machine exists the item is absent,
+   * never dead (`openSenderMenu` stays required-with-a-noop for the sender line's sake, so it
+   * cannot signal presence).
    */
   screenAddress?: (messageId: string, address: string, anchor: HTMLElement | null) => void;
   /**
-   * OPEN THE QUICK-LOOK PREVIEW for one attachment on `messageId`. The pane dispatches a tile
-   * press here for a type this app can render (image, PDF, text) and to `attachments.open`
-   * (download) for everything else.
-   *
-   * The overlay's state lives in `AppShell` — beside the reader and the reply run — so it can
-   * derive-close when the selected message changes and the engine revokes the object URLs the
-   * overlay was rendering. It travels through the chrome, and not as a prop, for the reason the
-   * rest of this context does: `MessagePane` is mounted twice while the reader is open. Inert in
-   * the default chrome, so a pane with no shell behind it simply does nothing on a preview press.
+   * Open the quick-look preview for one attachment on `messageId`. The pane
+   * dispatches a tile press here for a type this app can render (image,
+   * PDF, text) and to `attachments.open` (download) for everything else.
+   * The overlay's state lives in `AppShell` — beside the reader and the
+   * reply run — so it can derive-close when the selected message changes
+   * and the engine revokes the object URLs it was rendering. Through the
+   * chrome, not a prop, because `MessagePane` is mounted twice. Inert in
+   * the default chrome: no shell, nothing happens on a preview press.
    */
   openAttachmentPreview: (messageId: string, attachmentId: string) => void;
   /**
-   * The conversation this message belongs to, oldest first — `threadOf`, wired to the live
-   * engine. Empty when there is no conversation; see the selector.
-   *
-   * It arrives through the chrome rather than as a prop for the reason this whole context
-   * exists: `MessagePane` is mounted in TWO places at once (the Ohbox read column and the
-   * reader sheet), one of them three components deep inside a view that already takes
-   * fifteen props. A FUNCTION rather than a resolved array because the two mounts hold
-   * different messages, and because `MessagePane` must not acquire an engine hook of its
-   * own — `useEngine()` throws outside `EngineProvider` and `test/ohbox-read-state.test.ts`
-   * mounts `OhboxView` without one.
+   * The conversation this message belongs to, oldest first — `threadOf`,
+   * wired to the live engine; empty when there is no conversation. Through
+   * the chrome rather than a prop for the reason this context exists:
+   * `MessagePane` is mounted in two places, one three components deep in a
+   * fifteen-prop view. A FUNCTION rather than a resolved array because the
+   * two mounts hold different messages, and the pane must not acquire an
+   * engine hook of its own — `useEngine()` throws outside `EngineProvider`,
+   * and `test/ohbox-read-state.test.ts` mounts `OhboxView` without one.
    */
   conversationOf: (messageId: string) => EngineMessage[];
   /**
-   * THE MESSAGE'S TEXT, AND WHAT THAT TEXT IS — `bodyOf` wired to the live mirror.
-   *
-   * It travels with `conversationOf` and for the identical reason: `MessagePane` is mounted
-   * TWICE while the reader is open, one of those mounts is three components deep inside a
-   * view that already takes fifteen props, and the pane must not acquire an engine hook of
-   * its own — `useEngine()` throws outside `EngineProvider`, and `test/ohbox-read-state.test.ts`
-   * mounts `OhboxView` without one.
-   *
-   * A FUNCTION, so the two mounts can hold different messages and so the answer is read at
-   * render time from the current mirror. What it must NOT be is a resolved string: `state`
-   * is the whole point, and a pane that received only text could not tell a fetch in flight
-   * from a completed one — which is the failure that shipped the first time.
+   * The message's text, and what that text IS — `bodyOf` wired to the live
+   * mirror. Travels with `conversationOf` for the identical reason: the
+   * pane is mounted twice, one mount is deep inside a fifteen-prop view,
+   * and the pane must not acquire an engine hook. A FUNCTION, so the two
+   * mounts can hold different messages and the answer is read at render
+   * time from the current mirror. What it must NOT be is a resolved string:
+   * `state` is the whole point — a pane receiving only text could not tell
+   * a fetch in flight from a completed one, the failure that shipped first.
    */
   bodyOf: (message: EngineMessage) => MessageBody;
   /**
-   * ASK AGAIN — the reading pane's only way out of a failed body.
-   *
-   * Reads and Receipts recover for free: collapsing and re-expanding a card fires
-   * `onToggle(true)`, and scrolling back to it makes it current again. The Ohbox pane has
-   * neither — the shell hydrates on the SELECTED id, so a message whose body 500'd stays
-   * failed until the user selects something else and comes back. That is a dead end reachable
-   * by one transient server error, so the failed note carries a control rather than only a
-   * sentence.
-   *
-   * It goes through the chrome for the same reason `bodyOf` does: the pane must not hold an
-   * engine hook.
+   * Ask again — the reading pane's only way out of a failed body. Reads and
+   * Receipts recover for free (collapse and re-expand a card fires
+   * `onToggle(true)`); the Ohbox pane has neither — the shell hydrates on
+   * the SELECTED id, so a message whose body 500'd stays failed until the
+   * user selects something else and comes back. A dead end reachable by one
+   * transient server error, so the failed note carries a control rather
+   * than only a sentence. Through the chrome for `bodyOf`'s reason: the
+   * pane must not hold an engine hook.
    */
   hydrateBody: (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => void;
   /**
-   * ASK FOR A WHOLE CONVERSATION AT ONCE — one request, not one per sibling.
-   *
-   * `ConversationEntries` used to loop `hydrateBody` over the sibling ids from a single effect,
-   * which is N requests through a four-wide limiter: the tail of an eight-message thread did not
-   * start until a full round trip had finished. The engine's batch call replaces the loop, and it
-   * has to arrive through the chrome for the same reason `hydrateBody` does — the entries render
-   * inside `MessagePane`, which may not hold an engine hook.
-   *
-   * The DEFAULT IS INERT (a mount with no engine has nothing to ask), and the engine's own
-   * fallback covers a client whose adapter serves no batch route, so a caller never has to choose
-   * between this and the single-message call.
+   * Ask for a whole conversation at once — one request, not one per sibling. `ConversationEntries`
+   * used to loop `hydrateBody` over the sibling ids from one effect: N requests through a four-wide
+   * limiter, so an eight-message thread's tail waited a full round trip to start. The engine's
+   * batch call replaces the loop, arriving through the chrome for `hydrateBody`'s reason — the
+   * entries render inside `MessagePane`, which may not hold an engine hook. The default is inert,
+   * and the engine's own fallback covers a client whose adapter serves no batch route, so a caller
+   * never chooses between this and the single call.
    */
   hydrateThread: (messageIds: string[]) => void;
   /**
-   * THE FILES ON THIS MESSAGE, or ABSENT when this client cannot open attachments.
-   *
-   * It travels here for the third time for the same reason `conversationOf` and `bodyOf` do,
-   * and this one is the strongest case of the three: the pane is mounted TWICE while the
-   * reader is open, both mounts hold the SAME message, and each fetched byte is a `blob:` URL
-   * that must be minted once and revoked once. Two panes owning their own copies would open
-   * two IMAP connections for one press and leak whichever URL the losing mount held.
-   *
-   * ── OPTIONAL, AND ABSENCE IS A REAL ANSWER ────────────────────────────────────────────
-   *
-   * `undefined` means "this client has no attachment service" — `?demo=1` (fixtures, and a
-   * self-contained surface makes no external request), the desktop shell, and any test that
-   * mounts a view without an
-   * `EngineProvider`. The pane renders NO STRIP for it rather than an empty one, because an
-   * empty strip is a different claim: it says this message has no files. A "Download all"
-   * button over an archive nothing can build is exactly the shape of control this gap exists
-   * to remove, pointed the other way.
-   *
-   * It is NOT optional in the sense of "the shell may forget it". `test/attachments-wired.test.ts`
-   * asserts that `AppShell` supplies it and that the live engine can answer — a capability
-   * that silently stays unsupplied on the live path only is this gap's own failure, and it
-   * has already happened twice on this seam (`fetchBody`, `searchServer`).
+   * The files on this message, or ABSENT when this client cannot open attachments — the strongest
+   * case of the mounted-twice rule: both mounts hold the SAME message, and each fetched byte is a
+   * `blob:` URL that must be minted once and revoked once; two owners would open two IMAP
+   * connections for one press and leak the loser's URL. `undefined` means "no attachment service"
+   * (`?demo=1`, the desktop shell, engine-less tests) and the pane renders NO STRIP rather than an
+   * empty one — an empty strip claims this message has no files. Not optional as in "the shell may
+   * forget it": `test/attachments-wired.test.ts` asserts `AppShell` supplies it — this seam has
+   * shipped that wiring bug twice (`fetchBody`, `searchServer`).
    */
   attachments?: AttachmentsChrome;
   /**
-   * HOW A BLOCKED IMAGE MAY BE LOADED, or ABSENT when it may not be.
-   *
-   * It travels here for the same reason `attachments` does and the case is identical: the
-   * pane is mounted TWICE while the reader is open, both mounts hold the same message, and
-   * two copies of "has this reader consented" is how one pane loads the pictures and the
-   * other keeps showing placeholders.
-   *
-   * ── ABSENCE IS A REAL ANSWER, AND IT IS THE ONE THAT SHIPPED UNTIL NOW ────────────────
-   *
-   * `undefined` means this client cannot proxy an image — `?demo=1` (fixtures, zero network),
-   * the desktop shell, a test with no API. `MessageBody` renders NO "Show images" button for
-   * it rather than a dead one, which is exactly the state `MessageBody.tsx`'s header
-   * describes: *"the consent button is therefore absent rather than dead"*.
-   *
-   * It is NOT optional in the sense of "the shell may forget it". A capability that stays
-   * unsupplied on the LIVE path only is the wiring bug this seam has already shipped twice
-   * (`fetchBody`, `searchServer`), and `remote-images.test.ts` builds the real pane to assert
-   * the rendered frame routes through the proxy rather than that a function exists.
+   * How a blocked image may be loaded, or ABSENT when it may not be. Same mounted-twice case as
+   * `attachments`: two copies of "has this reader consented" is how one pane loads the pictures and
+   * the other keeps placeholders. `undefined` means this client cannot proxy an image (`?demo=1`,
+   * the desktop shell, no API) and `MessageBody` renders NO "Show images" button rather than a dead
+   * one. Not optional as in "the shell may forget it" — that wiring bug shipped twice on this seam
+   * (`fetchBody`, `searchServer`), and `remote-images.test.ts` builds the real pane to assert the
+   * rendered frame routes through the proxy.
    */
   remoteImages?: RemoteImagesChrome;
 }
@@ -497,39 +404,26 @@ export function useMessageChrome(): MessageChrome {
 }
 
 /**
- * ── HOW LONG "STILL COMING" MAY BE SAID BEFORE IT STOPS BEING TRUE ──────────────────────────
- *
- * The engine's own deadline plus a margin. `BODY_FETCH_TIMEOUT_MS` is the point at which a body
- * request is aborted and turned into a `failed` record, so a spinner is a true statement for that
- * long and no longer; the margin covers the queue (four bodies in the air at once, so a fifth
- * legitimately waits behind one full deadline) and the mirror write that follows.
- *
- * DERIVED, NOT CHOSEN. A number picked here would silently stop matching the engine the first
- * time that deadline moved, and the failure mode of being too short is a Retry button offered
- * over a request that was about to succeed.
+ * How long "still coming" may be said before it stops being true: the
+ * engine's own deadline plus a margin. `BODY_FETCH_TIMEOUT_MS` is when a
+ * body request is aborted and turned into a `failed` record, so a spinner
+ * is a true statement for that long and no longer; the margin covers the
+ * queue (four bodies in the air, so a fifth legitimately waits one full
+ * deadline) and the mirror write that follows. Derived, not chosen: a
+ * number picked here would silently stop matching the engine when that
+ * deadline moved, and too short offers Retry over a request about to succeed.
  */
 export const BODY_STALL_MS = BODY_FETCH_TIMEOUT_MS * 2 + 3_000;
 
 /**
- * ── A SPINNER MUST HAVE AN END, AND THIS IS THE ONE THAT DOES NOT DEPEND ON BEING RIGHT ─────
- *
- * Every path the engine takes deliberately ends in `ready` or `failed`: the fetch is bounded by a
- * deadline, the batch's throw fans out to a `failed` record per id, and a message nobody will ask
- * for is now recognised by the surfaces before they promise a request. That reasoning has been
- * wrong before — a protected message on a live account sat under "Loading the full message…" for
- * the life of the tab because two halves of the codebase read two different predicates — and it
- * can be wrong again in a way nothing here anticipates: `putBody` reaches IndexedDB, IndexedDB
- * refuses (a full quota, a private window, a version change), and BOTH the ready write and the
- * failure write are swallowed by design. The record then keeps saying `loading` for ever and no
- * further mirror bump is coming to re-drive it.
- *
- * So this is a bound on the SENTENCE rather than on any particular cause. Once a surface has
- * claimed a body is coming for longer than one could possibly be, it says the other true thing
- * instead — that it could not be loaded — and offers the Retry that re-asks. `retry: true` is
- * the arm that bypasses the failed-guard, so the way out is real and not another no-op.
- *
- * `waiting` false resets it: a body that arrives clears the claim, and a reader who selects
- * another message starts the clock again rather than inheriting the last one's.
+ * A spinner must have an end, and this is the one that does not depend on being right. Every engine path
+ * deliberately ends in `ready` or `failed` — and that reasoning has been wrong before (a protected
+ * message sat under "Loading…" for the life of a tab because two halves read two predicates), and can be
+ * wrong again: `putBody` reaches IndexedDB, which can refuse (quota, private window), and both the ready
+ * and failure writes are swallowed by design — the record says `loading` for ever. So this bounds the
+ * SENTENCE: past the longest a body could take, the pane says it could not be loaded and offers the Retry
+ * that re-asks (`retry: true` bypasses the failed-guard). `waiting` false resets it: an arrived body
+ * clears the claim; selecting another message restarts the clock.
  */
 export function useBodyStalled(key: string, waiting: boolean): boolean {
   const [stalled, setStalled] = useState(false);

@@ -1,36 +1,14 @@
 "use client";
 
 /**
- * THE KEYBOARD REGISTRY.
- *
- * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
- *
- * Two complaints, one cause: the basic shortcuts — read, unread and the rest — were not
- * integrated, and nothing in the interface made them discoverable. Both were true, and they
- * had the same cause. `AppShell` owned one `document` keydown listener and every view added another
- * one of its own — six listeners by the end — so nothing could say what `c` does without
- * reading six files, and precedence was whatever order React happened to mount them in.
- * The only key map on screen was a per-view hint strip plus a hand-typed sentence in the (i)
- * panel ("Keyboard: j/k, ↵, y + o/r/c/n/x…"), which is a second list of the bindings and had
- * already drifted from them.
- *
- * ── THE SHAPE ───────────────────────────────────────────────────────────────────────────
- *
- * One listener, here. Everything else DECLARES: `useKeyBindings([...])` from a view, and the
- * bindings are live while that view is mounted and gone when it unmounts. Two consequences
- * are the whole point:
- *
- *   1. **Precedence is a rule, not an accident.** View layers are consulted before global
- *      ones (innermost first within each), and the FIRST match runs. That is what lets the
- *      Screener own `c` (Receipts) while the rest of the product reads `c` as Compose,
- *      without either side knowing the other exists.
- *   2. **The overlay is GENERATED from this registry** (`ShortcutSheet`), by the same
- *      precedence walk the dispatcher uses. It cannot list a key that does nothing and it
- *      cannot omit one that does — there is no second list to keep in step, which is
- *      exactly what the (i) panel's sentence was.
- *
- * A binding declares its own label, so adding one adds its documentation. Deleting the
- * generation step is the mutation `test/keymap.test.ts` watches fail.
+ * The keyboard registry. `AppShell` owned one `document` keydown listener and every view added its own — six by
+ * the end — so nothing could say what `c` does without reading six files, and precedence was mount order; the
+ * only key map on screen was a hand-typed sentence that had already drifted. One listener, here; everything
+ * else DECLARES (`useKeyBindings([...])`), live while the view is mounted. Precedence is a rule: view layers
+ * before global ones, innermost first, first match runs — the Screener owns `c` while the rest of the product
+ * reads it as Compose. The overlay is GENERATED from this registry (`ShortcutSheet`) by the same precedence
+ * walk, so it cannot list a dead key or omit a live one. A binding declares its own label, so adding one adds
+ * its documentation; deleting the generation step is the mutation `test/keymap.test.ts` watches fail.
  */
 import {
   createContext,
@@ -59,37 +37,26 @@ export type BindingGroup = "navigate" | "message" | "screener" | "app";
 export const BINDING_GROUPS: BindingGroup[] = ["navigate", "message", "screener", "app"];
 
 /**
- * WHY a binding is resting — the ONE answer the dispatcher can do something about.
- *
- * A union of one, and deliberately not a second boolean beside `disabled`. Every message verb
- * in this app is `disabled` while the list under it has no cursor, and until this existed the
- * dispatcher could not tell that apart from "disabled because this message may not be
- * forwarded": both are a `true`, and it dropped the binding before the chord was even matched
- * (the filter below). So the FIRST press of any message verb on a freshly opened list did
- * nothing at all — no cursor, no sentence, no request — and the `?` sheet was the only place
- * that state was visible. Reported from a real Ohbox, where ⌫ read as broken.
- *
- * The declaring site says which it is; a binding that omits this keeps exactly the old
- * behaviour, which is what makes the rule additive rather than a new precedence.
- *
- * A TOKEN, never a sentence: the dispatcher acts on `"no_cursor"` alone, and every other member
- * is a reason the `?` sheet turns into words. Trash's two are keys that cannot work there at all,
- * so they must keep falling through rather than promise a second press.
+ * Why a binding is resting — the ONE answer the dispatcher can act on. A union of one, deliberately
+ * not a second boolean beside `disabled`: every message verb is `disabled` while the list has no
+ * cursor, and the dispatcher could not tell that from "this message may not be forwarded" — so the
+ * FIRST press of any message verb on a fresh list did nothing (⌫ read as broken, reported from a
+ * real Ohbox). The declaring site says which; omitting this keeps the old behaviour, making the
+ * rule additive. A TOKEN, never a sentence: the dispatcher acts on `"no_cursor"` alone; every other
+ * member is a reason the `?` sheet turns into words. Trash's two are keys that cannot work there
+ * and must keep falling through.
  */
 export type DisabledReason = "no_cursor" | "no_erase" | "trash_unavailable";
 
 /**
- * PUT A CURSOR ON THE FIRST ROW, and say so — the host's half of the rule above.
- *
- * `label` is the label of the binding that was PRESSED, so the sentence the host shows names
- * the verb the second press will run ("press again: Move it to Trash"). The return says whether
- * a cursor was actually placed: `false` means there was nothing to place one on (an empty list,
- * or a surface this host holds no cursor for), and the keypress is then left exactly as inert as
- * it is today rather than consumed.
- *
- * A boolean and not a message id: the dispatcher has no business knowing which row, and every
- * host already owns that choice (the Ohbox's first presented row is not the same question as
- * Reads' first fresh one).
+ * Put a cursor on the first row, and say so — the host's half of the rule
+ * above. `label` is the label of the binding that was PRESSED, so the
+ * host's sentence names the verb the second press will run ("press again:
+ * Move it to Trash"). The return says whether a cursor was actually placed:
+ * `false` means there was nothing to place one on (an empty list, or a
+ * surface this host holds no cursor for), and the keypress stays exactly as
+ * inert as today. A boolean, not a message id: the dispatcher has no
+ * business knowing which row — every host owns that choice.
  */
 export type CursorPlacer = (label: string) => boolean;
 
@@ -98,15 +65,14 @@ const SEQUENCE_MS = 1200;
 
 export interface KeyBinding {
   /**
-   * The chord, in the registry's own notation:
-   *   `"j"` · `"Enter"` · `"Escape"` · `"?"` · `"mod+k"` · `"shift+Enter"` · `"shift+o"`
-   * `mod` is ⌘ on macOS and Ctrl elsewhere — one token, because the binding is the same
-   * intent on both and duplicating it would let the two drift.
-   *
-   * A SPACE makes it a two-key sequence: `"g o"` is g-then-o. The ⌘K palette has been
-   * advertising `g o` / `g r` / `g e` / `g s` as keyboard hints since it shipped and
-   * nothing implemented them; sequences exist so the palette stops lying rather than
-   * because a mail client needs a chord grammar.
+   * The chord, in the registry's notation: `"j"` · `"Enter"` · `"?"` ·
+   * `"mod+k"` · `"shift+Enter"`. `mod` is ⌘ on macOS and Ctrl elsewhere —
+   * one token, because the binding is the same intent on both and
+   * duplicating it would let the two drift. A SPACE makes it a two-key
+   * sequence: `"g o"` is g-then-o. The ⌘K palette had advertised
+   * `g o`/`g r`/`g e`/`g s` since it shipped with nothing implementing
+   * them; sequences exist so the palette stops lying, not because a mail
+   * client needs a chord grammar.
    */
   chord: string;
   group: BindingGroup;
@@ -150,26 +116,14 @@ export interface KeyBinding {
 }
 
 /**
- * Registration scope, in precedence order: `overlay` beats `view` beats `global`.
- *
- * ── WHY THERE ARE THREE AND NOT TWO ──────────────────────────────────────────────────── 
- *
- * Two scopes said "the innermost VIEW wins", which is right for `c` (Compose everywhere,
- * Receipts in the Screener) and wrong for Escape. Escape's owner is not a view, it is
- * whatever is OPEN ON TOP of one — the `?` sheet, the ⌘K palette, a popover, the reader —
- * and all of those are the shell's, registered from a component that is an ANCESTOR of the
- * view. So the shell's cascade could only ever be `global`, and a view binding beat it
- * unconditionally: with rows selected in the Ohbox, Escape cleared the selection instead of
- * closing the sheet the user was reading.
- *
- * It had been patched once, per-case, by teaching the Ohbox to stand down when the reply
- * editor was open — a predicate in a view, naming one of the shell's eight overlays. Three
- * surfaces stayed broken and the fourth was one new overlay away from breaking again.
- *
- * `overlay` states the missing rank instead: a layer that is open is inner to any view,
- * whatever the component tree says about who mounted whom. It is deliberately narrow — the
- * shell registers ONE binding into it — and it is a scope rather than a flag on a binding
- * because precedence is a property of the LAYER, which is the thing that comes and goes.
+ * Registration scope, in precedence order: `overlay` beats `view` beats `global`. Two scopes said "the
+ * innermost VIEW wins" — right for `c`, wrong for Escape, whose owner is whatever is OPEN ON TOP of a
+ * view (the `?` sheet, the palette, the reader), all registered from an ANCESTOR of the view: the shell's
+ * cascade could only be `global`, and a view binding beat it — with rows selected, Escape cleared the
+ * selection instead of closing the sheet. It had been patched once per-case (the Ohbox standing down for
+ * the reply editor); three surfaces stayed broken. `overlay` states the missing rank: an open layer is
+ * inner to any view, whatever the component tree says. A scope, not a flag on a binding: precedence is a
+ * property of the LAYER, the thing that comes and goes.
  */
 export type BindingScope = "overlay" | "view" | "global";
 
@@ -187,63 +141,35 @@ interface Registry {
   /** The modifier's cap on this keyboard — ⌘ or Ctrl. See {@link useModGlyph}. */
   mod: string;
   /**
-   * RUN a chord's binding as if it had been typed, and say whether anything did.
-   *
-   * ── WHY THIS IS NOT `bindings.find(…).run()` ────────────────────────────────────────────
-   *
-   * `bindings` is memoised on `version`, which bumps only when a layer's SHAPE changes
-   * (chord, group, label, enabled-ness). That is right for everything the array is read for
-   * — the overlay renders shape, and a hint is shape — but a binding's `run` is a CLOSURE
-   * that changes on every render without changing the shape. So the memoised array holds
-   * handlers from the last shape change, and calling one of those runs against stale state.
-   *
-   * Found in a browser, not reasoned about: the action bar's read switch called
-   * `bindings.find("u").run()` and two presses in a row marked the message read TWICE,
-   * while two presses of the `u` KEY at the same cadence toggled correctly. `u`'s shape is
-   * constant across a read-state flip, so no version bump ever refreshed the array, and the
-   * second press re-ran the first press's closure.
-   *
-   * The dispatcher never had this problem because it walks `ordered()` at KEYPRESS time,
-   * and `Layer.get` is a getter for exactly this reason. `press` is that same walk, exposed
-   * — so a button and a keystroke are not merely equivalent, they are one code path.
+   * Run a chord's binding as if typed, and say whether anything did. Not `bindings.find(…).run()`:
+   * `bindings` is memoised on `version`, which bumps only when a layer's SHAPE changes — right for
+   * the overlay and hints, wrong for `run`, a CLOSURE that changes every render without changing
+   * shape, so the memoised array holds handlers from the last shape change. Found in a browser: the
+   * action bar's read switch called `find("u").run()` and two presses marked the message read
+   * TWICE, while two presses of the KEY toggled correctly — `u`'s shape is constant across a read
+   * flip. The dispatcher walks `ordered()` at KEYPRESS time (`Layer.get` is a getter for this
+   * reason); `press` is that same walk, exposed — a button and a keystroke are one code path.
    */
   press: (chord: string) => boolean;
   /**
-   * A WRITING SURFACE IS ON SCREEN — the compose form's claim. While at least one claim is
-   * held, the dispatcher refuses every chord a person could TYPE (see {@link KeyBinding.inWriting})
-   * unless focus is somewhere letters already mean letters. Returns the release; the pair is
-   * held for exactly as long as the surface is mounted ({@link useWritingSurface}).
-   *
-   * It is a claim on the DISPATCHER, not a layer of bindings: the `?` sheet keeps listing what
-   * the keys would do elsewhere (the modal gate's precedent — suspension is not documentation),
-   * and `press` is untouched, because a button click that resolves through the registry is a
-   * deliberate act, not a keystroke that missed its field.
+   * A writing surface is on screen — the compose form's claim. While at least one claim is held,
+   * the dispatcher refuses every chord a person could TYPE (see {@link KeyBinding.inWriting})
+   * unless focus is somewhere letters already mean letters. Returns the release; held for exactly
+   * as long as the surface is mounted ({@link useWritingSurface}). A claim on the DISPATCHER, not a
+   * layer of bindings: the `?` sheet keeps listing what the keys would do elsewhere (suspension is
+   * not documentation), and `press` is untouched — a button click resolving through the registry is
+   * a deliberate act, not a keystroke that missed its field.
    */
   claimWriting: () => () => void;
   /**
-   * OFFER TO PLACE THE CURSOR for as long as the caller is mounted — see {@link CursorPlacer}
-   * and {@link useCursorPlacer}. Returns the release, the shape `claimWriting` already set.
-   *
-   * A CLAIM RATHER THAN A PROP, for the reason `claimWriting` is one: the host that owns the
-   * cursor (`AppShell`) is a CHILD of this provider, so there is no prop to pass it down by.
-   *
-   * ── EXACTLY ONE PLACER ANSWERS, AND NOTHING FALLS THROUGH ────────────────────────────────
-   *
-   * The one claimed MOST RECENTLY, and no other is consulted — not even when it declines. The
-   * fallthrough is the tempting shape and it is wrong: a placer answers `false` both for "my list
-   * is empty" and for "this is not a surface I hold a cursor for", and those two cannot be told
-   * apart from here. A second host asked after the first declined would place a cursor in a list
-   * the pressed binding does not act on — a verb aimed at one message and a selection ring drawn
-   * on another.
-   *
-   * "MOST RECENTLY" IS NOT "INNERMOST", and the difference is worth naming because this file
-   * already carries the scar: React runs a CHILD's effects before its parent's, so on one mount
-   * pass the OUTERMOST host claims last (see {@link BindingScope}, which exists because binding
-   * layers hit exactly this). That is not a precedence anybody chose, and it is not one this app
-   * relies on — `AppShell` is the only claimant, because it is the only component that holds a
-   * cursor for the lists it renders. A surface with a cursor of its own (a split view's `shown`)
-   * would need a SCOPE here the way bindings do, and there is nothing to scope yet; until then a
-   * host that cannot place answers `false` and the key stays as inert as it is today.
+   * Offer to place the cursor for as long as the caller is mounted — see {@link CursorPlacer};
+   * returns the release. A claim rather than a prop: the host that owns the cursor (`AppShell`) is
+   * a CHILD of this provider. Exactly one placer answers — the one claimed most recently — and
+   * nothing falls through, not even on decline: a placer answers `false` both for "my list is
+   * empty" and "not my surface", and a second host asked after a decline would draw a selection
+   * ring on a list the pressed verb does not act on. "Most recently" is not "innermost" (React runs
+   * a child's effects first — {@link BindingScope} carries that scar); `AppShell` is the only
+   * claimant today, and a second would need a scope.
    */
   claimCursorPlacer: (place: CursorPlacer) => () => void;
 }
@@ -314,28 +240,14 @@ export function chordMatches(chord: string, e: KeyboardEvent): boolean {
   if (wantMod !== (e.metaKey || (e.ctrlKey && !altGr))) return false;
   if (wantShift && !e.shiftKey) return false;
   /**
-   * A SHIFTED PRESS IS A DIFFERENT GESTURE — for LETTERS, and for NAMED keys.
-   *
-   * This used to hold only letters to the rule, on the argument that "`?` is itself typed with
-   * Shift on most layouts". That argument is right and it is about CHARACTER keys, where Shift
-   * is how the character is produced: `?` is Shift+/, and refusing it would make the shortcut
-   * sheet unopenable. It does not extend to keys whose identity Shift cannot change.
-   *
-   * `Backspace` is not a letter, so the old test let a bare `Backspace` binding match ⇧⌫ —
-   * measured, and it was not theoretical: over a selection in the Ohbox, ⇧⌫ ran the ordinary
-   * delete and spent the pick. ⇧⌫ is "delete permanently" on Windows and a line-kill in several
-   * editors; a user pressing it is not asking for this app's ordinary, undoable delete, and
-   * silently giving them one is the wrong answer to a gesture that means something else. The
-   * single-message delete had the identical hole.
-   *
-   * So the test splits on what Shift can DO to the key rather than on letter-ness:
-   *   · `key.length > 1` — a NAMED key (Backspace, Delete, Enter, Escape, the arrows). Shift
-   *     cannot change which key it is, so a shifted press is a distinct chord and a bare
-   *     binding must not claim it. A binding that WANTS it declares `shift+…` and is admitted
-   *     by `wantShift` above, which is how `shift+ArrowDown` keeps working.
-   *   · `/^[a-z]$/` — a letter. Unchanged, and the reason is unchanged.
-   *   · anything else of length 1 — punctuation, where Shift is the typing gesture. Allowed,
-   *     which is what keeps `?` and the bracket keys reachable on every layout.
+   * A shifted press is a different gesture — for LETTERS and for NAMED keys. The old letters-only
+   * rule let a bare `Backspace` binding match ⇧⌫ (measured: over a selection, ⇧⌫ ran the ordinary
+   * delete and spent the pick — and ⇧⌫ means "delete permanently" on Windows). The test splits on
+   * what Shift can DO to the key: `key.length > 1` — a named key (Backspace, Enter, arrows); Shift
+   * cannot change its identity, so a shifted press is a distinct chord a bare binding must not
+   * claim (a binding that wants it declares `shift+…`); `/^[a-z]$/` — a letter, unchanged; anything
+   * else of length 1 — punctuation, where Shift is the typing gesture (what keeps `?` reachable on
+   * every layout).
    */
   if (!wantShift && e.shiftKey && (key.length > 1 || /^[a-z]$/.test(key))) return false;
   return key.length === 1 ? e.key.toLowerCase() === key.toLowerCase() : e.key === key;
@@ -399,15 +311,14 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * Dispatch order — overlay layers, then view layers, then global ones, each
-   * innermost-first, and the FIRST match runs.
-   *
-   * It cannot be plain registration order: React runs a CHILD's effects before its
-   * parent's, so the view registers before `AppShell` does and a naive "last wins" would
-   * hand every contested key to the shell. Worse for the overlays, which the SHELL owns:
-   * by mount order they are the outermost thing in the app, and by intent they are the
-   * innermost. The scope split states that intent instead of depending on a tree shape
-   * that says the opposite. See {@link BindingScope}.
+   * Dispatch order — overlay layers, then view layers, then global ones,
+   * each innermost-first; the FIRST match runs. It cannot be plain
+   * registration order: React runs a child's effects before its parent's,
+   * so the view registers before `AppShell` and a naive "last wins" would
+   * hand every contested key to the shell. Worse for the overlays, which
+   * the shell owns: by mount order they are the outermost thing in the app,
+   * by intent the innermost. The scope split states that intent instead of
+   * depending on a tree shape that says the opposite ({@link BindingScope}).
    */
   const ordered = useCallback((): KeyBinding[] => {
     const of = (scope: BindingScope) =>
@@ -451,17 +362,13 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       /*
-       * A BLOCKING DIALOG SUSPENDS EVERY BINDING — asked as a fact about the app, not read
-       * off the DOM.
-       *
-       * The session dialogs render over the shell and mark the mailbox `inert`, which stops
-       * focus and hit-testing INSIDE `.app-root` and does nothing about this listener: it is
-       * bound to `document`, and the dialog's own buttons are siblings of the mailbox rather
-       * than descendants of it. So with the dialog up and focus correctly on its remedy,
-       * `e` still parked the focused message and `d` `d` still ran the delete ceremony —
-       * which ends by clicking its own danger button programmatically, something `inert`
-       * does not block either. A screen that says the session is in question could delete
-       * mail behind itself. See `modal-gate.ts`.
+       * A blocking dialog suspends every binding — asked as a fact about the app, not read off the
+       * DOM. The session dialogs mark the mailbox `inert`, which stops focus and hit-testing inside
+       * `.app-root` and does nothing about this listener: it is bound to `document`, and the
+       * dialog's buttons are siblings of the mailbox. So with the dialog up, `e` still parked the
+       * focused message and `d` `d` still ran the delete ceremony — which ends by clicking its own
+       * danger button programmatically, something `inert` does not block either. See
+       * `modal-gate.ts`.
        */
       if (modalIsOpen()) {
         /*
@@ -478,18 +385,14 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
       }
       const typing = isTypingTarget(e.target);
       /*
-       * A MOUNTED COMPOSER SUSPENDS EVERY TYPEABLE CHORD — measured on the deployed desktop,
-       * not reasoned about: the compose form opened with nothing focused, and a person who
-       * pressed Compose and started typing was running the mailbox's one-key verbs on the
-       * message selected behind the form — `e` parked it, `b` resurfaced it, letter by letter,
-       * with the placeholders still empty. Focus-on-mount (`ComposeView`) closes the common
-       * case; this closes the rest of it, because focus is one blur away from nowhere at all
-       * (a click on dead space, a dismissed dialog) and a blurred composer must still read as
-       * "I am writing", never as "the list may act". Suspended at DISPATCH, exactly as
-       * `modalIsOpen()` suspends above — the registry and the `?` sheet still know the keys.
-       * Only chords a person could TYPE are refused (`chordSpellsCharacter`); Escape, Enter,
-       * Tab and every `mod` chord keep working, and a binding the writing surface itself owns
-       * opts back in with `inWriting` (the send-later digits, the `?` sheet).
+       * A mounted composer suspends every typeable chord — measured on the deployed desktop: the
+       * compose form opened with nothing focused, and typing ran the mailbox's one-key verbs on the
+       * message selected behind the form, letter by letter. Focus-on-mount closes the common case;
+       * this closes the rest — focus is one blur away from nowhere, and a blurred composer must
+       * still read as "I am writing". Suspended at DISPATCH, as `modalIsOpen()` is: the registry
+       * and `?` sheet still know the keys. Only typeable chords are refused
+       * (`chordSpellsCharacter`); Escape, Enter, Tab and `mod` chords keep working, and a writing
+       * surface opts back in with `inWriting`.
        */
       const writing = writingSurfaces.current > 0;
       const all = ordered();
@@ -552,21 +455,14 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
       }
 
       /**
-       * NOTHING LIVE OWNS THIS KEY — BUT A MESSAGE VERB MAY BE RESTING FOR WANT OF A CURSOR.
-       *
-       * The first press PLACES the cursor and says so; it performs nothing. The second press is
-       * an ordinary press of a live binding, because by then the host has a cursor and the
-       * binding is no longer disabled — there is no second code path and no state kept here.
-       *
-       * WHY NOT PLACE A CURSOR WHEN THE LIST OPENS, which is the shorter fix: the Ohbox
-       * deliberately stopped doing that (`AppShell.selectedOhbox` records why — a fallback
-       * selection fetched a body and put somebody's mail in the reading column on arrival), and
-       * a ⌫ that files the first message because a list happened to be under the cursor is that
-       * hazard with a delete on the end of it. A press is a deliberate act; an arrival is not.
-       *
-       * LAST, after both walks above, so this can only reach a keypress that was already inert.
-       * The single-chord guard is the same one the walk above uses: a `no_cursor` sequence would
-       * be a two-key chord whose first key means nothing yet, and no message verb is one.
+       * Nothing live owns this key — but a message verb may be resting for want of a cursor. The
+       * first press PLACES the cursor and says so; it performs nothing. The second press is an
+       * ordinary press of a live binding — no second code path, no state kept here. Why not place a
+       * cursor when the list opens: the Ohbox deliberately stopped (`AppShell.selectedOhbox`
+       * records why), and a ⌫ that files the first message because a list happened to be under the
+       * cursor is that hazard with a delete on the end. A press is a deliberate act; an arrival is
+       * not. Last, after both walks, so this only reaches a keypress that was already inert; single
+       * chords only.
        */
       for (const b of parked) {
         if (chordPrefix(b.chord)) continue;
@@ -691,17 +587,14 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
 }
 
 /**
- * DECLARE BINDINGS WHERE A REGISTRY MAY LEGITIMATELY BE ABSENT.
- *
- * `useKeyBindings`'s throw is a real guard and stays: a VIEW that declares its keys into no
- * registry is a bug, silently. This variant exists for exactly one caller — the zone model
- * (`zone-nav.tsx`), which every view mounts as part of itself. The views that carry it are
- * also mounted bare in tests and by surfaces with no keyboard registry at all, and a spatial
- * model with no dispatcher behind it is not a bug there, it is simply absent — the same
- * argument `useBinding` states for reading: no provider means NO keys, never guessed ones.
- * Registration is identical to `useKeyBindings` in every other respect (shape-keyed
- * re-registration, live closures through the ref), so a provider present behaves exactly as
- * if the caller had used the throwing form.
+ * Declare bindings where a registry may legitimately be absent.
+ * `useKeyBindings`'s throw is a real guard and stays: a VIEW that declares
+ * its keys into no registry is a bug, silently. This variant exists for one
+ * caller — the zone model (`zone-nav.tsx`), which every view mounts as part
+ * of itself; those views are also mounted bare in tests and by surfaces
+ * with no registry, where a spatial model with no dispatcher is simply
+ * absent (`useBinding`'s argument: no provider means NO keys, never guessed
+ * ones). Registration is otherwise identical to `useKeyBindings`.
  */
 export function useOptionalKeyBindings(bindings: KeyBinding[], scope: BindingScope = "view"): void {
   const ctx = useContext(KeymapContext);
@@ -721,35 +614,14 @@ export function useOptionalKeyBindings(bindings: KeyBinding[], scope: BindingSco
 }
 
 /**
- * THE BINDING THAT OWNS `chord` RIGHT NOW — so a BUTTON can show its key.
- *
- * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────────────────
- *
- * Reported from the reading view: the action bar does not show its shortcuts. Seven of its
- * eight verbs had a live shortcut and showed none; the eighth
- * carried `kbdHint="s"`, hand-typed at the call site, which rendered as a bare `s` in the
- * label row and read as a stray character rather than as a hint.
- *
- * A second, hand-maintained list of key hints is precisely what this registry deleted from the (i)
- * panel — *"a second list of the bindings [that] had already drifted from them"* — and
- * exactly what the `?` sheet is generated to avoid. So the bar reads the same registry the
- * sheet does, and a hint can no longer be wrong: change the chord and the button follows,
- * delete the binding and the hint disappears with it.
- *
- * ── WHAT IT RETURNS ─────────────────────────────────────────────────────────────────────
- *
- * The binding that would WIN this keypress — `bindings` is already in dispatch order
- * (overlay, then view, then global, innermost first) and the first match is the one the
- * dispatcher would run. So the hint answers the question the reader is actually asking,
- * "what will this key do HERE", which is the same rule `groupedBindings` dedups by.
- *
- * ── AND WHY IT DOES NOT THROW, UNLIKE `useKeymap` ───────────────────────────────────────
- *
- * `useKeymap`'s throw is a real guard: a component that DECLARES bindings into no registry
- * is a bug, silently. Reading one is not the same act. `MessagePane` renders in the desktop
- * shell and in tests that mount a view with no provider at all (`test/ohbox-read-state.test.ts`,
- * `test/conversation.test.ts`), and a message must stay readable without a keyboard registry
- * behind it. No provider means NO hint — never a guessed one.
+ * The binding that owns `chord` right now — so a BUTTON can show its key. Reported from the reading view:
+ * seven of the action bar's eight verbs had a live shortcut and showed none; the eighth carried a
+ * hand-typed `kbdHint="s"` that read as a stray character. A second hand-maintained hint list is what
+ * this registry deleted from the (i) panel — so the bar reads the same registry the `?` sheet does, and a
+ * hint cannot be wrong: change the chord and the button follows. Returns the binding that would WIN this
+ * keypress (`bindings` is in dispatch order), answering "what will this key do HERE". It does not throw,
+ * unlike `useKeymap`: reading is not declaring — `MessagePane` renders in provider-less mounts, and a
+ * message must stay readable. No provider means no hint, never a guessed one.
  */
 export function useBinding(chord: string): KeyBinding | null {
   const ctx = useContext(KeymapContext);
@@ -757,16 +629,14 @@ export function useBinding(chord: string): KeyBinding | null {
 }
 
 /**
- * THE BINDING THAT WOULD ACTUALLY RUN — {@link useBinding}'s sibling for the hint foot.
- *
- * `useBinding` answers "is this chord spoken for HERE", which is what a button's keycap
- * asks (a disabled owner still owns the key, and the cap must not vanish while the verb
- * rests). A TEACHING line asks the stricter question — "what will this key DO right now" —
- * and a disabled first declaration is not an answer, it is what the dispatcher skips. So
- * this walks past disabled entries to the first LIVE one, exactly as `onKey` filters, and
- * exactly the rule `groupedBindings` dedups by ("Disabled bindings … never shadow an
- * enabled one below them"). Null-safe for `useBinding`'s reason: no provider, no hint —
- * never a guessed one.
+ * The binding that would actually RUN — {@link useBinding}'s sibling for
+ * the hint foot. `useBinding` answers "is this chord spoken for HERE",
+ * which is what a button's keycap asks (a disabled owner still owns the
+ * key, and the cap must not vanish while the verb rests). A TEACHING line
+ * asks the stricter question — "what will this key DO right now" — and a
+ * disabled first declaration is what the dispatcher skips. So this walks
+ * past disabled entries to the first LIVE one, exactly as `onKey` filters
+ * and `groupedBindings` dedups. Null-safe for `useBinding`'s reason.
  */
 export function useEnabledBinding(chord: string): KeyBinding | null {
   const ctx = useContext(KeymapContext);
@@ -774,16 +644,14 @@ export function useEnabledBinding(chord: string): KeyBinding | null {
 }
 
 /**
- * PRESS a chord from a click — the companion to {@link useBinding}, and the only safe way
- * to invoke one.
- *
- * `useBinding` answers questions about SHAPE (is this key bound here, is it enabled, what
- * does it say), all of which the memoised array reports correctly because a shape change is
- * what bumps it. Its `run` is the one field that is NOT safe to call from that array — see
- * {@link Registry.press} for the browser-observed failure that establishes this.
- *
- * Returns `false` when nothing enabled is bound to `chord`, so a caller can fall back
- * rather than silently do nothing. Safe with no provider, for the reason `useBinding` is.
+ * PRESS a chord from a click — the companion to {@link useBinding}, and the
+ * only safe way to invoke one. `useBinding` answers questions about SHAPE,
+ * which the memoised array reports correctly because a shape change bumps
+ * it; its `run` is the one field NOT safe to call from that array — see
+ * {@link Registry.press} for the browser-observed failure. Returns `false`
+ * when nothing enabled is bound to `chord`, so a caller can fall back
+ * rather than silently do nothing. Safe with no provider, for the reason
+ * `useBinding` is.
  */
 export function useKeyPress(): (chord: string) => boolean {
   const ctx = useContext(KeymapContext);
