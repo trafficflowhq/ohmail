@@ -1044,32 +1044,21 @@ function ActionBar({
 
         <div className="abar-g abar-read-g">
           {/*
-           * ONE SLOT, TWO DIRECTIONS — AND A THIRD FACE ON A RESURFACED MESSAGE. See
-           * `markUnread` and `markRead` above for the two directions.
-           *
-           * Exactly one of the two renders, in the same position, with the same shape: the verb as
-           * the label (not a `role="switch"` reporting a state with the action hidden in a
-           * `title`), a dot PREVIEWING the outcome, and a keycap read from the live registry, so a
-           * chord that moves takes the hint with it and an unbound chord shows nothing. Filled dot
-           * ⇒ the row will have one; hollow ⇒ it will not — the same mark the list uses.
-           *
-           * A RESURFACED MESSAGE OWNS THE SLOT WITH "DONE". On a pinned message the deliberate
-           * read IS the release — one act spends both, there is no un-bold-but-pinned state — so
-           * "Mark as read" here was the release wearing the wrong name: nothing on the whole
-           * surface said how to END a resurface, reported from real use in exactly those terms.
-           * The verb is
-           * renamed where the state gives it its real meaning, not added beside it: a "Done" AND
-           * a "Mark as read" would be one mutation behind two buttons, and the slot's own rule is
-           * one control per state. It dispatches `resurface_done` (the shell's one release arm,
-           * shared with the pin-group row and the Resurface pile) rather than pressing `⇧I`,
+           * One slot, two directions — and a third face on a resurfaced message (see `markUnread`
+           * and `markRead` above). Exactly one of the two renders, same position, same shape: the
+           * verb as the label (not a `role="switch"` hiding the action in a `title`), a dot
+           * PREVIEWING the outcome (filled ⇒ the row will have one), and a keycap read from the
+           * live registry. A resurfaced message owns the slot with "Done": on a pinned message
+           * the deliberate read IS the release — one act spends both — so "Mark as read" was the
+           * release wearing the wrong name, and nothing on the surface said how to END a
+           * resurface (reported in exactly those terms). Renamed where the state gives it its
+           * real meaning, not added beside: two buttons would be one mutation twice. It
+           * dispatches `resurface_done` (the shell's one release arm) rather than pressing `⇧I`,
            * because the key acts on the SELECTED message and this bar can be mounted over an
-           * unselected one (a stream card); the keycap still shows `⇧I` where it is bound, since
-           * that key performs the same release on the open message. A check instead of the dot:
-           * the outcome being previewed is "finished", not a read mark.
-           *
-           * IT REPLACES THE SLOT AT EVERY WIDTH AND FOLDS NOWHERE — the read switch is part of
-           * the floor, and "Done" plus the check is NARROWER than either label it replaces, so
-           * it can only leave the measurement more room, never less.
+           * unselected one (a stream card); the keycap still shows `⇧I` where bound. A check
+           * instead of the dot — the previewed outcome is "finished", not a read mark. It
+           * replaces the slot at every width and folds nowhere: the read switch is part of the
+           * floor, and "Done" plus the check is narrower than either label it replaces.
            */}
           {isResurfaced(message) ? (
             <button
@@ -1312,63 +1301,44 @@ export function MessagePane({
       : null;
   const replying = replyTarget !== null;
   /**
-   * ONE COPY OF THE CONVERSATION ON SCREEN, EVER — AND IT IS THIS ONE.
-   *
-   * A reply must not repeat the message that is already visible.
-   *
-   * This read `conversation.length > 0 && !replying` once, because the editor
-   * below carried its own `.reply-context` scroller over the same list. The two copies of
-   * the LIST were never up at once — but the copy that mattered was the focused message's
-   * body, and that one was: once here as `.msg-body`, once again inside the editor's quote,
-   * in one scrolling column, with the textarea pushed below a duplicate of the text the
-   * reader had just finished. Redundant is exactly the word.
-   *
-   * The ownership is inverted now. The pane keeps the conversation, in full message anatomy,
-   * whether or not the editor is open; `InlineReply` renders no mail at all. So "scroll
-   * through the actual email conversation" is answered by the actual conversation instead of
-   * by a 190px quote of it.
-   *
-   * NOTHING HERE TOUCHES THE WIRE. The payload is still `{inReplyTo, body}` with `body`
-   * exactly what was typed (`http-adapter.ts` `mailSend`); quoting the parent would put its
-   * text into outgoing mail, and a sensitive parent carries `no_forward` with a redacted
-   * stored body — sensitive mail is never forwarded and never stored unredacted. This slice
-   * changed what the SCREEN shows and nothing else.
+   * One copy of the conversation on screen, ever — and it is this one. A reply must not repeat the message already
+   * visible: this read `conversation.length > 0 && !replying` once, because the editor below carried its own
+   * `.reply-context` scroller over the same list — the focused message's body rendered once as `.msg-body` and again
+   * inside the editor's quote, with the textarea pushed below a duplicate of the text the reader had just finished.
+   * The ownership is inverted now: the pane keeps the conversation, in full message anatomy, whether or not the
+   * editor is open; `InlineReply` renders no mail at all. Nothing here touches the wire — the payload is still
+   * `{inReplyTo, body}` with `body` exactly what was typed (`http-adapter.ts` `mailSend`); quoting the parent would
+   * put its text into outgoing mail, and a sensitive parent carries `no_forward` with a redacted stored body.
+   */
+
+  /**
+   * This slice changed what the SCREEN shows and nothing else.
    */
   const showConversation = conversation.length > 0;
 
   /**
-   * ── ASK FOR THE WHOLE CONVERSATION'S BODIES, ONCE, IN ONE REQUEST ───────────────────────
-   *
-   * THIS IS WHAT MAKES THE PANELS HONEST. Every sibling's
-   * body is fetched HERE, on open, alongside every other message on the thread — so a panel
-   * (`ConversationPanels`) draws a body already in the mirror with no request of its own, and
-   * every message on the thread is mail the reader has in hand rather than a placeholder for
-   * some they would have to go and get. The panels change what is drawn, never what is loaded,
-   * which is why a thread withholds nothing (see `Conversation.tsx`).
-   *
-   * Keyed on the joined id list rather than on `conversation`, which is a fresh array on every
-   * render (see above — it is computed inline on purpose). An array dep would re-fire this on
-   * every mirror version bump, and every bump is caused by the very writes this call produces.
-   *
-   * IT LIVES HERE RATHER THAN IN THE MAPPER, WHICH IS WHERE IT ONCE LIVED (as
-   * `ConversationEntries`, then mounted TWICE per thread — two lists, above and below the
-   * opened message — so an effect inside it asked twice for one act of opening one
-   * conversation). This is the only place that holds the whole thread.
-   *
-   * THE OPENED MESSAGE IS NOT IN THE LIST. The shell hydrates the selected id itself, and
-   * urgently (`AppShell`, keyed on `readerFor`/`selectedOhbox`), so that the body which IS the
-   * screen jumps the queue rather than riding a batch behind it.
-   *
-   * NO BOUNDING HERE, AND THAT IS NOT AN OVERSIGHT. `OhmailEngine.hydrateThread` single-flights
-   * per message, skips anything already held or already in the air, splits the id list at the
-   * route's cap, and takes ONE slot from the body limiter. A second limiter in this file would
-   * be the shape this repo keeps warning about: two guards read as belt-and-braces and behave as
-   * neither, because deleting either leaves the suite green.
-   *
-   * PROTECTED SIBLINGS ARE PASSED IN TOO, on purpose. The engine performs no fetch for one — it
-   * notes the message as rendered, which is true, and PURGES any body an older build cached
-   * before the message became sensitive. Filtering them out here would skip that purge for
-   * exactly the messages it exists for.
+   * Ask for the whole conversation's bodies, once, in one request — this is what makes the panels honest. Every
+   * sibling's body is fetched HERE, on open, so a panel (`ConversationPanels`) draws a body already in the mirror
+   * with no request of its own; the panels change what is drawn, never what is loaded, which is why a thread
+   * withholds nothing (see `Conversation.tsx`). Keyed on the joined id list rather than `conversation`, a fresh array
+   * every render: an array dep would re-fire this on every mirror version bump, and every bump is caused by the very
+   * writes this call produces. It lives here rather than in the mapper, where it once lived (`ConversationEntries`,
+   * mounted TWICE per thread, so one open asked twice); this is the only place that holds the whole thread.
+   */
+
+  /**
+   * The opened message is NOT in the list: the shell hydrates the selected id itself, urgently, so the body that IS
+   * the screen jumps the queue.
+   */
+
+  /**
+   * No bounding here, and that is not an oversight: `OhmailEngine.hydrateThread` single-flights
+   * per message, skips anything held or in the air, splits the id list at the route's cap, and
+   * takes one slot from the body limiter — a second limiter in this file would be two guards
+   * reading as belt-and-braces and behaving as neither. Protected siblings are passed in too,
+   * on purpose: the engine performs no fetch for one — it notes the message as rendered and
+   * PURGES any body an older build cached before the message became sensitive; filtering them
+   * out here would skip that purge for exactly the messages it exists for.
    */
   const { hydrateThread } = chrome;
   const siblingKey = conversation.filter((m) => m.id !== message.id).map((m) => m.id).join(",");
