@@ -144,17 +144,15 @@ jobs:
       # without it (apps/mobile/metro.config.js), which makes that state unbuildable rather than
       # merely unlikely — but the refusal is not the point of ordering this first: the artifact is.
       #
-      # The bundler is pinned and deliberately not a workspace dependency — the artifact is only
-      # reproducible for one version of it — so it is installed outside the tree and named, exactly
-      # as the desktop engine's own build does. An install inside the workspace rewrites the module
-      # graph and leaves the repository's dependencies unusable.
+      # The bundler is pinned — the artifact is only reproducible for one version of it — and it is
+      # a devDependency of the root manifest, so the `npm ci` above is the whole resolution and
+      # this step reaches no network. The generator asserts the version it got.
       - name: Bundle the phone's mail engine into the app
         env:
           CI: "1"
         run: |
           set -euo pipefail
-          D="$(mktemp -d)" && (cd "$D" && npm install --no-save --no-audit --no-fund esbuild@0.24.0)
-          OHMAIL_ESBUILD_FROM="$D" node apps/mobile/scripts/bundle-engine.mjs
+          node apps/mobile/scripts/bundle-engine.mjs
           # It is gitignored and generated, so its presence is asserted rather than assumed: a
           # generator that wrote nothing and exited 0 would otherwise be found by Gradle.
           test -s apps/mobile/generated/phone-engine.js
@@ -359,17 +357,15 @@ jobs:
       # without it (apps/mobile/metro.config.js), which makes that state unbuildable rather than
       # merely unlikely — but the refusal is not the point of ordering this first: the artifact is.
       #
-      # The bundler is pinned and deliberately not a workspace dependency — the artifact is only
-      # reproducible for one version of it — so it is installed outside the tree and named, exactly
-      # as the desktop engine's own build does. An install inside the workspace rewrites the module
-      # graph and leaves the repository's dependencies unusable.
+      # The bundler is pinned — the artifact is only reproducible for one version of it — and it is
+      # a devDependency of the root manifest, so the `npm ci` above is the whole resolution and
+      # this step reaches no network. The generator asserts the version it got.
       - name: Bundle the phone's mail engine into the app
         env:
           CI: "1"
         run: |
           set -euo pipefail
-          D="$(mktemp -d)" && (cd "$D" && npm install --no-save --no-audit --no-fund esbuild@0.24.0)
-          OHMAIL_ESBUILD_FROM="$D" node apps/mobile/scripts/bundle-engine.mjs
+          node apps/mobile/scripts/bundle-engine.mjs
           # It is gitignored and generated, so its presence is asserted rather than assumed: a
           # generator that wrote nothing and exited 0 would otherwise be found by Gradle.
           test -s apps/mobile/generated/phone-engine.js

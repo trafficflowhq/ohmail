@@ -43,8 +43,8 @@
  * `pnpm install` bought, enforced by what the context contains rather than by what the
  * package manager installed.
  *
- * esbuild is loaded exactly as the engine build loads it: pinned version, resolved from
- * `OHMAIL_ESBUILD_FROM`, never a project dependency. `@electric-sql/pglite` stays external
+ * esbuild is loaded exactly as the engine build loads it: pinned version, `OHMAIL_ESBUILD_FROM`
+ * first and the installed workspace second, where the root manifest declares it. `@electric-sql/pglite` stays external
  * for the engine's reason (it reads its own `.wasm` off disk); neither host imports it today,
  * so nothing is vendored — if either ever grows the import, the missing module fails the
  * container LOUDLY at boot rather than silently shipping a broken storage layer.
