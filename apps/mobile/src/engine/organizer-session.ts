@@ -99,6 +99,23 @@ export function holdStandaloneDoor(opened: StandaloneEngine): boolean {
 export const organizerDoor = (): StandaloneEngine | null => door;
 
 /**
+ * WHO HOLDS A MAILBOX THIS PHONE HAS STOOD DOWN FROM — the two facts the claim carries, together.
+ *
+ * One member and not two loose ones: `name` without a reason is not a holder, and a reason without
+ * a name is a holder this build cannot name. Pairing them makes the state "named a holder, but
+ * nobody holds it" unrepresentable.
+ *
+ * `standDownReason` is the engine's own word, verbatim (`organized_elsewhere:<kind>`) — this app
+ * re-spells no engine value, and `holderKind` in `ui/standalone-form.ts` is the one reader of it.
+ */
+export interface StandDownHolder {
+  /** The holder's display name, or `""` where the claim named none. NEVER an address. */
+  readonly name: string;
+  /** The engine's stand-down reason, unmodified. Non-null by construction: see the field above. */
+  readonly standDownReason: string;
+}
+
+/**
  * WHAT THE DOOR IN THIS PROCESS SAYS ABOUT THE MAILBOX IT SERVES — the address, and whether this
  * install organizes it. `null` when no door is held.
  *
@@ -113,7 +130,8 @@ export const organizerDoor = (): StandaloneEngine | null => door;
  * sentence on screen a second after the door opened.
  */
 export function standaloneHere():
-  { id: string | null; address: string; organizing: boolean | null; heldBy: string | null } | null {
+  { id: string | null; address: string; organizing: boolean | null; heldBy: StandDownHolder | null }
+  | null {
   const held = door;
   if (held === null) return null;
   let organizing: boolean | null = null;
@@ -121,11 +139,11 @@ export function standaloneHere():
   /**
    * WHO HOLDS THE MAILBOX WHEN THIS INSTALL DOES NOT — the engine's own peek at the claim.
    *
-   * `null` is "nobody, or not read yet"; a name is another machine. Without it the panel could
-   * only say `Nothing organizes this mailbox`, which is also what it says when the mailbox is
-   * free — so a phone standing down correctly told a person nothing was organizing their mail.
+   * `null` is "nobody, or not read yet". Without it the panel could only say `Nothing organizes
+   * this mailbox`, which is also what it says when the mailbox is free — so a phone standing down
+   * correctly told a person nothing was organizing their mail.
    */
-  let heldBy: string | null = null;
+  let heldBy: StandDownHolder | null = null;
   try {
     const entries = Object.entries(held.runtimes().organizer);
     /* ONE MAILBOX ON THIS PHONE is the fourth door's own ruled line and the door carries one
@@ -133,11 +151,21 @@ export function standaloneHere():
        saying so is that. */
     if (entries.length > 0) {
       organizing = entries.some(([, state]) => state.organizing);
-      /* The holder only where this install is NOT organizing: over our own claim the engine
-         reports us, and rendering that as "another machine has it" would be the false state in
-         the other direction. */
+      /**
+       * THE REASON IS THE DISCRIMINATOR AND THE NAME IS NOT. A name is absent in two different
+       * states — a claim that named nothing, and EVERY RELAUNCH, where the engine reassembles the
+       * stand-down off its own row and the row remembers no holder — so reading the name called
+       * both of those a free mailbox (the desktop's `reader-holder.ts` defect, here). `reason` is
+       * written at the stand-down and nowhere else, so a non-null reason IS "somebody else has it".
+       *
+       * Only where this install is NOT organizing: over our own claim the engine reports US, and
+       * rendering that as "another machine has it" is the false state in the other direction.
+       */
       if (!organizing) {
-        heldBy = entries.map(([, state]) => state.heldBy).find((n) => n !== null && n !== "") ?? null;
+        const stood = entries.map(([, state]) => state).find((state) => state.reason !== null);
+        heldBy = stood === undefined
+          ? null
+          : { name: stood.heldBy ?? "", standDownReason: stood.reason! };
       }
     }
     /**

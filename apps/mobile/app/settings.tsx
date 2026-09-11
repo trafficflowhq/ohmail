@@ -42,9 +42,10 @@ import { useConnection } from "../src/net/connection";
 import {
   claimChipLabel,
   claimFrom,
+  claimHere,
+  claimNoteLine,
   type PhoneClaim,
   mayStopHere,
-  platformRuleLine,
 } from "../src/ui/standalone-form";
 import { useLocale, useLocaleControls } from "../src/i18n/LocaleProvider";
 import { type AppLocale } from "../src/i18n/locale";
@@ -381,27 +382,14 @@ function ThisPhonePanel() {
     ? [{
         key: HERE_CARD,
         address: here.address,
-        claim: claimFrom(
-          {
-            /* `organizing: null` is "the engine has not said yet", which `claimFrom` renders as
-               `unknown`: no chip and no stop verb, rather than "nothing organizes this mailbox"
-               a second after the door opened. */
-            known: here.organizing !== null,
-            /* ── AND THE STAND-DOWN IS SAID, WHICH IT WAS NOT ─────────────────────────────────
-             *
-             * `organizer: null` for everything that is not ours collapsed two facts into one
-             * sentence: a FREE mailbox and one ANOTHER MACHINE holds both read `Nothing organizes
-             * this mailbox`. Measured on a device with a second install holding the claim — the
-             * phone took no claim, which is the invariant holding, and said nothing about why.
-             * `heldBy` is the engine's own peek, so `claimFrom` answers `theirs` and the chip
-             * names the holder. */
-            organizer: here.organizing === true
-              ? { name: PHONE_CLAIM_NAME, stopped: false }
-              : (here.heldBy !== null ? { name: here.heldBy, stopped: false } : null),
-          },
-          PHONE_CLAIM_NAME,
-          asked.includes(HERE_CARD),
-        ),
+        /* ── AND THE STAND-DOWN IS SAID, WHICH IT WAS NOT ───────────────────────────────────
+         *
+         * This composed a `claimFrom` read, and `claimFrom` recognises our own claim BY NAME —
+         * which every ohmail phone writes identically, so the OTHER phone's claim read as ours.
+         * `claimHere` is the door's own state instead and compares no names; the engine's
+         * `organizing` is this install's verdict on its own claim, which is the question the name
+         * test was standing in for. See the function. */
+        claim: claimHere(here, asked.includes(HERE_CARD)),
       }]
     : w.mailboxes.rows.map((row) => ({
         key: row.id,
@@ -435,8 +423,12 @@ function ThisPhonePanel() {
                 {chip === null ? null : (
                   <Chip style={{ alignSelf: "flex-start" }}>{chip}</Chip>
                 )}
+                {/* WHAT THIS PHONE DOES ABOUT THIS MAILBOX, IN THIS STATE. The platform rule was
+                    rendered here for every state, including the one where another machine holds
+                    the mailbox — where it is false. `claimNoteLine` follows the claim and keeps
+                    the platform rule for the three states it is true of. */}
                 <Txt variant="note" tone="ink2">
-                  {platformRuleLine(Platform.OS)}
+                  {claimNoteLine(claim, Platform.OS)}
                 </Txt>
                 {/* BATTERY SAVER, SAID WHERE THE PLATFORM RULE IS — and only once the background
                     half has actually met it. `organizerRestrictedSaid` is the record
@@ -505,13 +497,20 @@ function ThisPhonePanel() {
   );
 }
 
-/** One row's holder in `claimFrom`'s shape — a named holder, or nothing. */
+/**
+ * One row's holder in `claimFrom`'s shape — a named holder, or nothing.
+ *
+ * The KIND rides along: the note under the chip reads it, and dropping it here would give the
+ * paired arm the generic sentence for a mailbox a phone organizes. The same fix on both arms.
+ */
 function holderFor(row: {
   organizedBy: { kind: string | null; name: string | null } | null;
   organizerState: "held" | "stopped" | null;
-}): { name: string; stopped: boolean } | null {
+}): { name: string; stopped: boolean; kind: string | null } | null {
   const name = row.organizedBy?.name ?? "";
-  return name === "" ? null : { name, stopped: row.organizerState === "stopped" };
+  return name === ""
+    ? null
+    : { name, stopped: row.organizerState === "stopped", kind: row.organizedBy?.kind ?? null };
 }
 
 function FacePanel({

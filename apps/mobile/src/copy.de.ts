@@ -158,6 +158,16 @@ export const DE: Deck = {
   phoneStateNotOrganized: "Dieses Postfach wird von nichts organisiert",
   phoneStateReader: (name: string) => `Organisiert von ${name}`,
   phoneStateReaderLegacy: "Organisiert von einer anderen Installation",
+  /* Der zweite Satz ist `mailboxes.readerReadsOnly` aus dem Web-Katalog, mit "dieses Telefon"
+     statt "dieser Computer"; die Telefon-Variante folgt `blocked_organized_elsewhere_mobile`. */
+  phoneStateReaderWhy: (name: string) =>
+    `${name} organisiert dieses Postfach. Dieses Telefon liest es; es verschiebt nichts und sortiert nichts aus.`,
+  phoneStateReaderWhyPhone: (name: string) =>
+    `${name} organisiert dieses Postfach, und ein Telefon organisiert nur, solange ohmail darauf offen ist. Dieses Telefon liest es; es verschiebt nichts und sortiert nichts aus.`,
+  phoneStateReaderWhyUnnamed:
+    "Eine andere Installation organisiert dieses Postfach. Dieses Telefon liest es; es verschiebt nichts und sortiert nichts aus.",
+  phoneStateReaderWhyUnnamedPhone:
+    "Ein anderes Telefon organisiert dieses Postfach, und ein Telefon organisiert nur, solange ohmail darauf offen ist. Dieses Telefon liest es; es verschiebt nichts und sortiert nichts aus.",
   settingsStopHere: "Hier nicht mehr organisieren",
   settingsStopHereWhat:
     "Dieses Telefon sortiert dieses Postfach nicht mehr ein und liest es weiter. Deine Ordner und alles darin bleiben, wo sie sind. Danach kann jede Installation es übernehmen, auch diese.",

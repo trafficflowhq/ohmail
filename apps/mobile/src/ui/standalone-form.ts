@@ -187,6 +187,31 @@ export function focusTargetFor(step: StandaloneStep): "title" | "address" {
 }
 
 /**
+ * WHAT KIND OF INSTALL HOLDS A MAILBOX THIS PHONE IS NOT ORGANIZING — the claim's own four.
+ *
+ * Mirrors `ORGANIZER_KINDS` and the closed `organized_elsewhere:*` reason set, declared here rather
+ * than imported: this app reads the kind as a WORD off two doors and a new `@ohmail/core` subpath
+ * would be six registration points for a union of four strings.
+ */
+export type HolderKind = "local" | "cloud" | "mobile" | "unknown";
+
+/**
+ * THE ONE READER OF THE KIND, AND IT TAKES BOTH SPELLINGS ON PURPOSE.
+ *
+ * The two doors say it differently and neither is wrong: the STANDALONE door hands the engine's own
+ * stand-down reason (`organized_elsewhere:mobile`), the PAIRED door hands the roster's bare kind
+ * word (`mobile`). One reader is the point — two would let the two arms of one panel put different
+ * sentences on the same fact, which is the defect this whole row is about.
+ *
+ * Anything outside the four is `unknown`, which is a real answer and not a fallback: it is what a
+ * claim written by a build this one cannot rank looks like, and it has its own sentence.
+ */
+export function holderKind(said: string | null | undefined): HolderKind {
+  const word = (said ?? "").toLowerCase().split(":").pop() ?? "";
+  return word === "local" || word === "cloud" || word === "mobile" ? word : "unknown";
+}
+
+/**
  * ═══ THE CLAIM CHIP IN SETTINGS ════════════════════════════════════════════════════════════════
  *
  * The five states are the desktop's, with the desktop's own keys and values. They are derived from
@@ -205,9 +230,9 @@ export type PhoneClaim =
   /** Read, and no install holds it. */
   | { k: "free" }
   /** Somebody else holds it, and named itself. */
-  | { k: "theirs"; name: string }
+  | { k: "theirs"; name: string; kind: HolderKind }
   /** Somebody else holds it and named nothing — an install from before the holder columns. */
-  | { k: "theirsUnnamed" };
+  | { k: "theirsUnnamed"; kind: HolderKind };
 
 /** The chip's caption. `null` for `unknown`: no chip at all rather than a chip that guesses. */
 export function claimChipLabel(claim: PhoneClaim): string | null {
@@ -268,7 +293,10 @@ export function sendLaterOffered(o: { standalone: boolean; forward: boolean }): 
  * censuses hold, and both are the same rule: one source of truth for who organizes a mailbox.
  */
 export function claimFrom(
-  read: { known: boolean; organizer: { name: string; stopped: boolean } | null },
+  read: {
+    known: boolean;
+    organizer: { name: string; stopped: boolean; kind?: string | null } | null;
+  },
   ourName: string,
   stopAsked: boolean = false,
 ): PhoneClaim {
@@ -281,5 +309,68 @@ export function claimFrom(
        `stopQueued` rule, and it exists because that press showed no trace anywhere. */
     return { k: "ours", stopping: stopAsked || holder.stopped };
   }
-  return holder.name.length > 0 ? { k: "theirs", name: holder.name } : { k: "theirsUnnamed" };
+  /* THE KIND TRAVELS WITH THE HOLDER, because the sentence under the chip reads it: a mailbox
+     another PHONE organizes is organized only while ohmail is open on that phone, which is the one
+     thing about a holder that changes what a person should expect of their mail. */
+  const kind = holderKind(holder.kind);
+  return holder.name.length > 0
+    ? { k: "theirs", name: holder.name, kind }
+    : { k: "theirsUnnamed", kind };
+}
+
+/**
+ * ═══ THE SAME CLAIM FOR THE DOOR IN THIS PROCESS, AND IT ASKS NOBODY'S NAME ════════════════════
+ *
+ * {@link claimFrom} recognises our own claim BY NAME, which is all a roster read offers. Every
+ * ohmail phone writes the SAME display name (`PHONE_CLAIM_NAME`), so on the ordinary two-phone case
+ * the name test answers `ours` for the OTHER phone's claim: the panel would wear "Organizing" and
+ * offer a hand-back over a mailbox this phone organizes nothing of. The engine already answers what
+ * the name test stood in for — `organizing` is this install's verdict on its own claim — so this
+ * reads that and compares nothing. `null` stays `unknown`: no chip, no verb, no sentence about a
+ * mailbox opened a second ago.
+ */
+export function claimHere(
+  here: {
+    organizing: boolean | null;
+    heldBy: { name: string; standDownReason: string } | null;
+  },
+  stopAsked: boolean = false,
+): PhoneClaim {
+  if (here.organizing === null) return { k: "unknown" };
+  if (here.organizing) return { k: "ours", stopping: stopAsked };
+  const held = here.heldBy;
+  if (held === null) return { k: "free" };
+  const kind = holderKind(held.standDownReason);
+  return held.name.length > 0
+    ? { k: "theirs", name: held.name, kind }
+    : { k: "theirsUnnamed", kind };
+}
+
+/**
+ * ═══ THE SENTENCE UNDER THE CHIP — what this phone does about THIS mailbox ═════════════════════
+ *
+ * The panel rendered {@link platformRuleLine} in every state, and that sentence describes what
+ * organizing on a phone means ("It organizes while its notification is shown"). Over a mailbox
+ * another machine holds it is false, and it was the only sentence a standing-down phone got beside
+ * a chip naming nobody. So the note follows the claim: `ours`, `free` and `unknown` keep the
+ * platform rule, and the two foreign arms name the holder and say what this phone does instead, in
+ * the desktop's words (`mailboxes.readerReadsOnly`). No arm offers a takeover — there is no such
+ * press in this panel, and promising one would be a claim the screen makes false.
+ */
+export function claimNoteLine(claim: PhoneClaim, os: string): string {
+  switch (claim.k) {
+    case "theirs":
+      return claim.kind === "mobile"
+        ? Copy.phoneStateReaderWhyPhone(claim.name)
+        : Copy.phoneStateReaderWhy(claim.name);
+    case "theirsUnnamed":
+      /* A relaunch is where this arm lives: the engine reassembles a stood-down mailbox from its
+         own row, which remembers the REASON and not the holder. The kind survives that and the
+         name does not, so the phone clause is still said. */
+      return claim.kind === "mobile"
+        ? Copy.phoneStateReaderWhyUnnamedPhone
+        : Copy.phoneStateReaderWhyUnnamed;
+    default:
+      return platformRuleLine(os);
+  }
 }

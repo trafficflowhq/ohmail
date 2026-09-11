@@ -304,6 +304,35 @@ const TABLE = {
   phoneStateNotOrganized: "Nothing organizes this mailbox",
   phoneStateReader: (name: string) => `Organized by ${name}`,
   phoneStateReaderLegacy: "Organized by another install",
+  /**
+   * ═══ AND WHAT THIS PHONE DOES INSTEAD, WHICH THE PANEL USED TO GET WRONG ═════════════════
+   *
+   * The note under the chip was the platform rule — "It organizes while its notification is
+   * shown" — in every state, including the one where another machine holds the mailbox. False
+   * there, and the only sentence a standing-down phone got.
+   *
+   * The second clause is `mailboxes.readerReadsOnly` from the web catalogue with "this phone"
+   * for "this computer": the same promise in the same words, because it is the same promise.
+   *
+   * A PHONE HOLDER GETS ITS OWN SENTENCE and does not fall through to the plain one. It is the
+   * one kind that changes what somebody should expect of their mail — a phone organizes only
+   * while ohmail is open on it, so mail waits while that phone is closed — and the web
+   * catalogue makes the same split for the same reason (`blocked_organized_elsewhere_mobile`).
+   * `local` and `cloud` do not: the NAME already says which machine, and neither changes what
+   * this phone does.
+   *
+   * The UNNAMED pair is not an edge. A relaunch reads the stand-down off this install's own
+   * row, which remembers the kind and not the holder, so every restart under another machine's
+   * claim lands here.
+   */
+  phoneStateReaderWhy: (name: string) =>
+    `${name} organizes this mailbox. This phone reads it; it moves nothing and screens nothing.`,
+  phoneStateReaderWhyPhone: (name: string) =>
+    `${name} organizes this mailbox, and a phone organizes only while ohmail is open on it. This phone reads it; it moves nothing and screens nothing.`,
+  phoneStateReaderWhyUnnamed:
+    "Another install organizes this mailbox. This phone reads it; it moves nothing and screens nothing.",
+  phoneStateReaderWhyUnnamedPhone:
+    "Another phone organizes this mailbox, and a phone organizes only while ohmail is open on it. This phone reads it; it moves nothing and screens nothing.",
   settingsStopHere: "Stop organizing here",
   settingsStopHereWhat:
     "This phone stops filing this mailbox and goes on reading it. Your folders and everything in them stay where they are. Any install can take it over afterwards, including this one.",

@@ -62,12 +62,18 @@ export interface StandaloneEngine {
   /**
    * What each mailbox reports — the row's answer, not the gate's optimism.
    *
-   * `heldBy` is the OTHER install's name when this one has stood down: the engine knows it (it is
-   * the holder the lease read peeked) and this type did not carry it, so a phone that had correctly
-   * taken no claim showed `Nothing organizes this mailbox` — the same sentence it shows when NOBODY
-   * holds it. Two states, one sentence, and the one a person needs was the one missing.
+   * `heldBy` is the OTHER install's name when this one has stood down, and `reason` is WHY it stood
+   * down (`organized_elsewhere:<kind>`). Both are needed and neither replaces the other: a claim
+   * that named nothing leaves `heldBy` null, and so does a relaunch reading the stand-down off its
+   * own row — so a panel branching on the name alone calls both of those a free mailbox and says
+   * `Nothing organizes this mailbox` about a mailbox another machine holds. `reason` is the fact
+   * "somebody else has it"; `heldBy` is who, where the claim said.
    */
-  runtimes(): { organizer: Record<string, { organizing: boolean; heldBy: string | null }> };
+  runtimes(): { organizer: Record<string, {
+    organizing: boolean;
+    heldBy: string | null;
+    reason: string | null;
+  }> };
 }
 
 /**
