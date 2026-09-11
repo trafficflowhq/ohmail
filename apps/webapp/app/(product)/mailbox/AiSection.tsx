@@ -6,18 +6,14 @@ import { SettingsNote, SettingsRow, SettingsSection, Switch } from "@ohmail/ui";
 import { aiSettings, messageOf } from "../../api-client";
 
 /**
- * SETTINGS → AI — the account's own off switch, and nothing else.
- *
- * `GET/PATCH /account/ai` is the flag every AI call site passes through, which is what makes the
- * published sentence "you can switch the AI off entirely without losing a single feature that
- * files your mail" a property of the account rather than of a checkbox. A pane is what gives a
- * person somewhere to press it: the switch used to sit inside the subscription pane, so when that
- * pane left, the promise had no control behind it on any surface.
- *
- * ON EVERY HOST WITH AN ACCOUNT, and that is the reason it is not part of the subscription pane
- * this replaces: a self-hosted server mounts these two routes and has no subscription at all, so
- * a switch living beside a plan would be missing exactly where the operator pays the model bill
- * themselves. Nothing here reads a plan, a balance or a price.
+ * Settings → AI — the account's own off switch, and nothing else. `GET/PATCH /account/ai` is the
+ * flag every AI call site passes through, which is what makes the published sentence "you can
+ * switch the AI off entirely without losing a single feature that files your mail" a property of
+ * the account rather than a checkbox; a pane is what gives a person somewhere to press it (the
+ * switch used to sit inside the subscription pane, and when that left, the promise had no control
+ * on any surface). On every host with an account — the reason it is not part of the subscription
+ * pane: a self-hosted server mounts these routes and has no subscription at all. Nothing here reads
+ * a plan, a balance or a price.
  */
 export function AiSection() {
   const t = useTranslations("settings");

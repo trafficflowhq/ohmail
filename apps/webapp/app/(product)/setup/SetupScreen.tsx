@@ -1,48 +1,32 @@
 "use client";
 
 /**
- * FIRST-RUN SETUP — the guided ceremony a fresh self-host server opens with.
- *
- * `docker compose up` leaves a server with zero accounts, one ownerless setup token printed to
- * its own log, and `/hello` answering `needsSetup: true`. This page is what that state is FOR:
- * the operator pastes the token, chooses their sign-in, and the page drives
- *
- *   `POST /pair/redeem` (invite grant → an invite code) → `POST /auth/register` (the existing
- *   invite path; the ownerless token's record makes the account start email-verified) →
- *   an enrollment session → `/join`, which resumes at the second-factor step and carries on
- *   through recovery codes and the first mailbox.
- *
- * It replaces the interim ceremony the guides described — a hand-typed `curl /pair/redeem`
- * followed by pasting the code into `/join` — with the thing the boot log always promised:
- * "open the app in a browser and enter this one-time setup token".
- *
- * ── THE GATE: THIS PAGE EXISTS ONLY WHILE THE SERVER SAYS IT DOES ─────────────────────────────
- *
- * The form renders only after a FRESH `GET /hello` answers `needsSetup: true` — a database fact
- * (users == 0), not a build flag, so the page shows on exactly one server state and never on a
- * server that has accounts. Every other answer gets an honest screen of its own:
- *
- *  · `needsSetup: false` + a live session (mid-enrollment reload is the common case — the
- *    register above flips needsSetup the moment it commits) → straight to `/join`, which
- *    derives the right step from the server;
- *  · `needsSetup: false`, no session → "already set up", with sign-in as the exit;
- *  · no answer at all → "can't reach the server", with retry — never a form whose submit
- *    would fail one step later.
- *
- * ── WHY REDEEM AND REGISTER ARE ONE SUBMIT, AND WHAT THE RETRY KEEPS ──────────────────────────
- *
- * The setup token is SINGLE-USE, so a ceremony that consumed it on one screen and registered on
- * the next would strand anyone who fell between the two. One submit performs both; and if the
- * register half fails after a successful redeem (the redeem-minted invite lives 15 minutes),
- * the minted code is KEPT, keyed to the address it is bound to, so a retry re-uses it instead
- * of burning a token that can no longer be redeemed. Changing the address after a successful
- * redeem is the one unrecoverable edit — the invite is email-bound and the token is spent — and
- * the refusal for it says the true remedy: restart the server for a fresh token.
- *
- * The refusal for a wrong token is THIS form's own sentence, not the service's.
- * `pairing_invalid`'s wire message ends "ask whoever minted it for a fresh one", which is right
- * for every pairing token except this one — the setup token's minter is the server itself, and
- * the operator's remedy is the log or a restart. Same mapping discipline as `LoginScreen`.
+ * First-run setup — the guided ceremony a fresh self-host server opens with. `docker compose up` leaves a server with
+ * zero accounts, one ownerless setup token in its own log, and `/hello` answering `needsSetup: true`; the operator
+ * pastes the token, chooses their sign-in, and the page drives `POST /pair/redeem` → `POST /auth/register` (the
+ * token's record makes the account start email-verified) → an enrollment session → `/join`, which resumes at the
+ * second-factor step.
+ */
+
+/**
+ * It replaces the hand-typed `curl /pair/redeem` the guides described. The gate: the form renders only after a FRESH
+ * `GET /hello` answers `needsSetup: true` — a database fact (users == 0), not a build flag. Every other answer gets
+ * an honest screen: `false` + a live session → `/join` (the mid-enrollment reload); `false`, no session → "already
+ * set up"; no answer → retry, never a form whose submit would fail one step later.
+ */
+
+/**
+ * Redeem and register are ONE submit because the setup token is single-use: a two-screen ceremony would strand anyone
+ * who fell between. If the register half fails after a successful redeem, the minted invite code (15-minute life) is
+ * KEPT, keyed to the address it is bound to, so a retry re-uses it instead of burning a token that can no longer be
+ * redeemed; changing the address after a successful redeem is the one unrecoverable edit, and the refusal says the
+ * true remedy — restart the server for a fresh token.
+ */
+
+/**
+ * The wrong-token refusal is THIS form's own sentence, not the service's: `pairing_invalid` ends "ask whoever minted
+ * it", right for every pairing token except this one — the setup token's minter is the server itself. Same mapping
+ * discipline as `LoginScreen`.
  */
 
 import { useCallback, useEffect, useState } from "react";

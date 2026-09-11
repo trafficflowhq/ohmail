@@ -1,40 +1,27 @@
 "use client";
 
 /**
- * CONFIRM AN EMAIL ADDRESS. The page the verification mail links to.
- *
- * ── WHY THERE IS A PASSWORD FIELD ON THIS SCREEN ────────────────────────────────────────
- *
- * The obvious design is an auto-POST on mount: the token is in the URL, so consume it and get
- * on with it. That design is an account-takeover primitive and `AuthService.verifyEmail`'s doc
- * writes the chain out in full. The short version: because `POST /auth/register` must answer
- * identically for a taken and a free address (the whole point of the constant 202), anyone can create an account
- * on somebody else's address with a password of their own choosing, silently. The real owner
- * then receives an entirely legitimate-looking verification mail, and if clicking it were
- * enough, their click would verify the ATTACKER's account — or hand them an account whose
- * password they do not know and cannot recover.
- *
- * So the token proves the address and the password proves the account, and this form is where
- * the second one is collected. It is not friction added for its own sake: the person who
- * actually signed up chose that password on the previous screen, minutes ago. Anyone who has
- * genuinely lost it signs in instead, which lands them in the wizard with a resend button.
- *
- * A pleasant side effect: a link-prefetching mail scanner cannot verify anything, because a
- * scanner issues a GET and never submits a password. That was the residual the mail-link
- * decision named and had no answer for.
- *
- * ── THE TOKEN LEAVES THE ADDRESS BAR IMMEDIATELY ────────────────────────────────────────
- *
- * The same `replaceState` scrub `JoinScreen` does for `?code=`. Its sibling
- * mitigations (`Referrer-Policy: no-referrer`, `Cache-Control: no-store`) are paid by
- * `middleware.ts`'s `credentialPage`.
- *
- * ── WHAT THIS FILE MUST NOT DO ──────────────────────────────────────────────────────────
- *
- * Interpret the refusal. Every failure mode of a link — unknown, expired, already used, the
- * loser of a race — is deliberately ONE sentence from the server (`invalid_token`), because
- * distinguishing them would tell whoever holds a spent link that it was once real, i.e. that
- * the address it was mailed to has an account. This screen shows what it is given.
+ * Confirm an email address — the page the verification mail links to. There is a password field because the obvious
+ * design (auto-POST the URL token on mount) is an account-takeover primitive: `POST /auth/register` answers
+ * identically for a taken and a free address (the constant 202), so anyone can create an account on somebody else's
+ * address; the real owner then receives a legitimate-looking verification mail, and if clicking were enough, their
+ * click would verify the ATTACKER's account (`AuthService.verifyEmail`'s doc writes the chain in full).
+ */
+
+/**
+ * So the token proves the address and the password proves the account — the person who signed up chose it minutes
+ * ago, and anyone who lost it signs in instead. A side effect: a link-prefetching mail scanner cannot verify
+ * anything, because a scanner issues a GET and never submits a password.
+ */
+
+/**
+ * The token leaves the address bar immediately — the same `replaceState` scrub `JoinScreen` does
+ * for `?code=`; the sibling mitigations (`Referrer-Policy: no-referrer`, `Cache-Control: no-store`)
+ * are paid by `middleware.ts`'s `credentialPage`. What this file must NOT do: interpret the
+ * refusal. Every failure mode of a link — unknown, expired, already used, the loser of a race — is
+ * deliberately ONE sentence from the server (`invalid_token`), because distinguishing them would
+ * tell whoever holds a spent link that it was once real, i.e. that the address it was mailed to has
+ * an account. This screen shows what it is given.
  */
 
 import { useEffect, useState } from "react";

@@ -1,20 +1,18 @@
 "use client";
 
 /**
- * THE INLINE STEP-UP — the second factor, asked for in place, where the dead end used to be.
- *
- * Every credential verb in Settings (mint a pairing code, sign a device out, remove a factor)
- * is step-up-gated on a five-minute window, and until this component existed the pane's only
- * answer to a stale window was "sign in again" — a full round trip through the login screen
- * for someone who is already sitting in their signed-in mailbox. This asks for the factor the
- * account actually has (passkey preferred when the browser can do the ceremony, the
- * authenticator code otherwise — `LoginScreen`'s exact preference), calls the step-up
- * re-verification endpoints, and hands control back to the caller, which retries the verb
- * that was refused. No sign-out, no new session, no cookie changes — the server re-stamps the
- * session the browser already holds and censuses that its response carries nothing else.
- *
- * The factor set comes from `GET /auth/session` (`twofaEnrolled`) at mount — the same read
- * `SecuritySection` trusts — so the prompt never offers a ceremony the account cannot finish.
+ * The inline step-up — the second factor, asked for in place, where the dead end used to be. Every credential verb in
+ * Settings is step-up-gated on a five-minute window, and the pane's only answer to a stale window used to be "sign in
+ * again" — a full round trip for someone already sitting in their signed-in mailbox. This asks for the factor the
+ * account actually has (passkey preferred when the browser can do the ceremony, the authenticator code otherwise —
+ * `LoginScreen`'s exact preference), calls the step-up re-verification endpoints, and hands control back to the
+ * caller, which retries the refused verb.
+ */
+
+/**
+ * No sign-out, no new session, no cookie changes — the server re-stamps the session the browser holds, and a census
+ * holds its response to nothing else. The factor set comes from `GET /auth/session` (`twofaEnrolled`) at mount, the
+ * read `SecuritySection` trusts, so the prompt never offers a ceremony the account cannot finish.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
