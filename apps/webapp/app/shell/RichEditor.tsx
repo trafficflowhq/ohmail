@@ -499,40 +499,24 @@ const TOOLBAR_GLYPHS: Record<string, ReactNode> = {
 };
 
 /**
- * ═══ BLOCK COMMANDS TAKE LINES, NOT TEXTBLOCKS ═══════════════════════════════════════════
- *
- * ── THE DEFECT THIS LAYER CLOSES ──────────────────────────────────────────────────────────
- *
- * Enter here is a hard break (`EnterAsHardBreak`), so a message typed line by line is ONE
- * paragraph with `<br>`s in it. Every block command TipTap ships — `toggleBulletList`,
- * `toggleOrderedList`, `toggleBlockquote`, `setBlockType` — resolves its target as "the
- * textblocks the selection touches", which in an ordinary document is the current line and in
- * this editor is the WHOLE MESSAGE. Reported exactly so: "list or code formats always mark the
- * full text and not the current line". The multi-paragraph case was already right (measured:
- * three `<p>`s, caret in the middle one, list takes only that one), which is what pins the
- * defect on the hard-break line structure rather than on the toggles.
- *
- * ── THE RULE, WHICH IS EVERY OTHER EDITOR'S ───────────────────────────────────────────────
- *
- * A block command applies to LINES — the hard-break-delimited runs a person sees. No selection:
- * the line the caret stands in. A selection: exactly the lines it touches, expanded outward to
- * their boundaries (nobody selects a line to its exact ends before pressing Quote). A full
- * select is all lines, which is the one case the old behaviour got right — but as one item per
- * line, not the whole message inside a single bullet.
- *
- * ── HOW: THE BREAKS AT THE TARGET'S EDGES BECOME REAL SPLITS, THEN THE STOCK TOGGLE RUNS ──
- *
- * {@link splitTargetLines} rewrites the hard break on each side of the target lines into a
- * paragraph split (and, for lists, every break inside the target too — three selected lines
- * are three `<li>`s, not one item with breaks in it), then narrows the transaction's selection
- * to the isolated lines. The stock toggle chained after it therefore wraps exactly what the
- * user meant. Everything runs in ONE chain, hence one transaction and one undo step.
- *
- * The neighbouring lines necessarily become paragraphs of their own — a `<p>` cannot contain a
- * `<ul>`, so no editor keeps "the line above a list" in the same block as the list. Marks are
- * untouched: splitting moves nodes, it does not rebuild them, so bold inside a bulleted line
- * survives (the code block is the one command that drops marks, and that is the node's own
- * declared rule).
+ * Block commands take LINES, not textblocks. Enter here is a hard break (`EnterAsHardBreak`), so a message typed line
+ * by line is ONE paragraph with `<br>`s — and every block command TipTap ships (`toggleBulletList`,
+ * `toggleOrderedList`, `toggleBlockquote`, `setBlockType`) resolves its target as "the textblocks the selection
+ * touches", which here is the WHOLE MESSAGE. Reported exactly so: "list or code formats always mark the full text and
+ * not the current line". The multi-paragraph case was already right (measured: three `<p>`s, caret in the middle one,
+ * list takes only that one), which pins the defect on the hard-break line structure rather than the toggles. The rule
+ * is every other editor's: no selection — the caret's line; a selection — exactly the lines it touches, expanded to
+ * their boundaries; a full select — all lines, as one item per line, not the whole message inside one bullet.
+ */
+
+/**
+ * How: the breaks at the target's edges become real splits, then the stock toggle runs. {@link splitTargetLines}
+ * rewrites the hard break on each side of the target lines into a paragraph split (and, for lists, every break inside
+ * the target too — three selected lines are three `<li>`s), then narrows the transaction's selection to the isolated
+ * lines; the stock toggle chained after it wraps exactly what the user meant. One chain, one transaction, one undo
+ * step. The neighbouring lines necessarily become paragraphs of their own — a `<p>` cannot contain a `<ul>`. Marks
+ * are untouched: splitting moves nodes, it does not rebuild them, so bold inside a bulleted line survives (the code
+ * block is the one command that drops marks, by the node's own declared rule).
  */
 
 /** The hard-break-delimited line edge on one side of `pos`, inside `$pos`'s textblock. */
@@ -732,36 +716,25 @@ function selectionCoversLines(editor: Editor): boolean {
 }
 
 /**
- * THE CODE BUTTON — one control, and which of the two code constructs it means.
- *
- * ── THE DEFECT ───────────────────────────────────────────────────────────────────────────
- *
- * It used to run `toggleCode()` unconditionally, and `code` is an INLINE MARK. A mark applies
- * to text runs, and a multi-line selection is several text runs with structure between them —
- * so marking it produced a separate shaded box per line, nothing at all on the blank ones (a
- * blank line has no text to mark), and the paragraph margins or line breaks showing through
- * between them as gaps. Reported as "adding a code format applies it… with spaces in between,
- * only for lines that have text", which is an exact description of what an inline mark does to
- * a block of code. There was no way to ask for the thing that was actually wanted, because
- * `codeBlock` was switched off.
- *
- * ── THE RULE ─────────────────────────────────────────────────────────────────────────────
- *
- * A selection inside one line is inline code — `filename.txt` in a sentence, which is what the
- * mark is for. A selection covering more than one line is ONE code block. Nothing else changes
- * meaning with the selection, so this is the only command that has to ask.
- *
- * ── WHY THE BLOCK IS BUILT FROM TEXT RATHER THAN BY `setCodeBlock()` ─────────────────────
- *
- * `setCodeBlock` is `setBlockType`, which retypes each textblock it finds — so a selection over
- * three paragraphs gives THREE `<pre>` elements, one per paragraph, and the gaps the user
- * complained about come back in a different costume. Replacing the range with a single node
- * built from `textBetween(from, to, "\n", "\n")` gives one block for any selection, and it is
- * also the only form that is exact about the hard-break case: the same `"\n"` stands for a
- * block boundary and for a `<br>`, which is precisely the equivalence the rest of this file
- * (and `htmlToPlainText`) already keeps. Marks inside the selection are dropped, which is not a
- * loss but the node's own rule — `codeBlock` declares `marks: ""`, and bold inside a code block
- * is not a thing a mail client would render anyway.
+ * The code button — one control, and which of the two code constructs it means. It used to run `toggleCode()`
+ * unconditionally, and `code` is an INLINE MARK: a multi-line selection is several text runs with structure between
+ * them, so marking it produced a shaded box per line, nothing on the blank ones, and the margins showing through as
+ * gaps ("adding a code format applies it… with spaces in between, only for lines that have text" — an exact
+ * description of an inline mark over a block). There was no way to ask for what was wanted, because `codeBlock` was
+ * switched off. The rule: a selection inside one line is inline code (`filename.txt` in a sentence); a selection
+ * covering more than one line is ONE code block. Nothing else changes meaning with the selection, so this is the only
+ * command that must ask.
+ */
+
+/**
+ * Why the block is built from text rather than by `setCodeBlock()`: that is `setBlockType`,
+ * which retypes each textblock it finds — three paragraphs give THREE `<pre>` elements and the
+ * gaps come back in a different costume. Replacing the range with a single node built from
+ * `textBetween(from, to, "\n", "\n")` gives one block for any selection, and is exact about
+ * the hard-break case: the same `"\n"` stands for a block boundary and a `<br>`, the
+ * equivalence the rest of this file (and `htmlToPlainText`) already keeps. Marks inside the
+ * selection are dropped — the node's own rule (`codeBlock` declares `marks: ""`), and bold
+ * inside a code block is not a thing a mail client would render anyway.
  */
 function applyCode(editor: Editor): void {
   // Already in a block: the button is a toggle. `toggleCodeBlock` lifts it back to a paragraph

@@ -218,35 +218,30 @@ export function writeComposeDraft(f: ComposeFields): void {
 }
 
 /**
- * ── WHICH MESSAGE-IN-PROGRESS THIS COMPOSE SURFACE IS HOLDING ────────────────────────────────
- *
- * There is one compose lane for every message this browser will ever write, so a lane is not an
- * identity for anything. A DRAFT ROW is, once one exists — and a new message has no row until
- * autosave gives it one, which is exactly the window `send-lock.ts` needs an identity in: a send
- * whose outcome the server could not confirm has to keep blocking THAT message and nothing else.
- *
- * The fingerprint cannot be that identity, because the person is free to edit what they wrote and
- * it is still the same message. So the identity is a session id minted beside the scratch draft
- * and cleared with it. That gives it exactly the lifetime the message-in-progress has: it survives
- * typing and it survives a reload (the scratch buffer does), and it is gone the moment the compose
- * is delivered or abandoned — which is when the next press is a genuinely new message.
- *
- * ── ONE SESSION IS ONE MESSAGE, WHICH MEANS EVERY DOOR RE-MINTS IT ──────────────────────────
- *
- * "Delivered or abandoned" was not the whole list, and the omission was load-bearing. A door that
- * REPLACES the form with a different message — opening a draft, the contact popover's Write, an
- * operating-system `mailto:` click — left the id alone, so one session spanned several messages
- * and a record parking the first one parked whatever replaced it. The compose surface then showed
- * "We couldn't confirm this send" over a message that had never been sent, with Send refused.
- *
- * So {@link clearComposeDraft} runs at every such door, immediately before the new form is
- * persisted: it drops the buffer and the id together, and the next read of
- * {@link composeSessionId} mints a fresh one. Nothing has to remember to mint — the lazy read is
- * what makes "one door, one line" enough — and the row the account holds for the replaced message
- * goes with it ({@link composeRowKey}), because that row is the other half of the same identity.
- *
- * Owner-keyed and wrapped like every other door in this file. A blocked jar answers `null`, which
- * callers must read as "this browser cannot name the message", never as "a new one".
+ * Which message-in-progress this compose surface is holding. There is one compose lane for
+ * every message this browser will ever write, so a lane is not an identity; a DRAFT ROW is,
+ * once one exists — and a new message has no row until autosave gives it one, which is exactly
+ * the window `send-lock.ts` needs an identity in: a send whose outcome the server could not
+ * confirm has to keep blocking THAT message and nothing else. The fingerprint cannot be it (the
+ * person may edit and it is still the same message), so the identity is a session id minted
+ * beside the scratch draft and cleared with it — surviving typing and reload, gone when the
+ * compose is delivered or abandoned.
+ */
+
+/**
+ * One session is one message, which means every door re-mints it. "Delivered or abandoned" was not the whole list: a
+ * door that REPLACES the form with a different message — opening a draft, the contact popover's Write, an OS
+ * `mailto:` — left the id alone, so one session spanned several messages and a record parking the first parked
+ * whatever replaced it: "We couldn't confirm this send" over a message never sent, with Send refused. So {@link
+ * clearComposeDraft} runs at every such door, immediately before the new form is persisted: it drops buffer and id
+ * together, and the next read of {@link composeSessionId} mints fresh — the lazy read is what makes "one door, one
+ * line" enough. The account's row for the replaced message goes with it ({@link composeRowKey}), the other half of
+ * the same identity.
+ */
+
+/**
+ * Owner-keyed and wrapped like every door in this file: a blocked jar answers `null`, which callers must read as
+ * "this browser cannot name the message", never as "a new one".
  */
 export const COMPOSE_SESSION_PREFIX = "ohmail.compose.session.";
 
@@ -454,37 +449,24 @@ export interface ComposePlan extends RecipientParse {
 }
 
 /**
- * The compose form as a send, or as the reason it is not one yet.
- *
- * ── A TYPO BLOCKS THE WHOLE SEND, IT DOES NOT SILENTLY DROP ONE RECIPIENT ──────────────
- *
- * `to` is `[]` whenever ANYTHING failed to parse, even if three of four entries were fine.
- * That is the load-bearing line in this function: it means the refusal is expressed in the
- * MUTATION rather than as a second predicate beside `canSend`, so every caller — the button's
- * `disabled`, the state machine's own guard, a keyboard shortcut, a future Reply Run — is
- * stopped by the same rule with no way around it. Dropping the bad entry and mailing the rest
- * would be the worst option available: the user would learn about the typo from the person who
- * never answered.
- *
- * ── AN EMPTY SUBJECT SENDS ──────────────────────────────────────────────────────────────
- *
- * It does not block and it does not open a confirm dialog. Blocking would be wrong — a
- * subjectless message is legitimate mail and every client sends one — and a modal
- * confirmation is the exact shape Compose was moved away from to begin with — a dialog the
- * keyboard could not leave. So `noSubject` is surfaced as a factual note in the send row,
- * BEFORE the press rather than as a dialog after it, which is the same warning arriving early
- * enough to be useful.
- *
- * `mailboxId` is omitted rather than nulled when nothing can name one, so `canSend` refuses and
- * `Engine.enrich` has nothing to disagree with.
- *
- * ── IT IS HANDED THE ANSWER, IT DOES NOT CHOOSE ─────────────────────────────────────────
- *
- * `mailboxId` is `resolveComposeFrom(...).mailboxId` — the user's revalidated pick or
- * the derived default — resolved by the caller so that the id on the wire is the same object
- * the From line rendered. Passing `fields.fromMailboxId` straight through here would be the bug
- * this resolution removes wearing a different hat: a pick stored days ago against a mailbox since
- * disconnected would go out and collect a 409 nobody could act on.
+ * The compose form as a send, or as the reason it is not one yet. A typo blocks the WHOLE send,
+ * it does not silently drop one recipient: `to` is `[]` whenever anything failed to parse, even
+ * if three of four entries were fine. That is the load-bearing line — the refusal is expressed
+ * in the MUTATION rather than as a second predicate beside `canSend`, so every caller (the
+ * button's `disabled`, the state machine's guard, a keyboard shortcut, a future Reply Run) is
+ * stopped by the same rule. Dropping the bad entry and mailing the rest would be the worst
+ * option: the user would learn about the typo from the person who never answered.
+ */
+
+/**
+ * An empty subject sends — no block, no confirm dialog: a subjectless message is legitimate mail, and a modal is the
+ * exact shape Compose was moved away from. `noSubject` is surfaced as a factual note in the send row BEFORE the
+ * press, the same warning arriving early enough to be useful. `mailboxId` is omitted rather than nulled when nothing
+ * can name one, so `canSend` refuses and `Engine.enrich` has nothing to disagree with. And it is HANDED the answer,
+ * it does not choose: `mailboxId` is `resolveComposeFrom(...).mailboxId` — the user's revalidated pick or the derived
+ * default — resolved by the caller so the id on the wire is the same object the From line rendered. Passing
+ * `fields.fromMailboxId` straight through would be the bug this resolution removes wearing a different hat: a
+ * days-old pick against a since-disconnected mailbox would go out and collect a 409 nobody could act on.
  */
 /**
  * @param draftId THE ROW THIS MESSAGE ALREADY IS, when autosave has written one. It goes on the

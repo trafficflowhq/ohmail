@@ -747,20 +747,14 @@ export function SearchView({
                     </div>
                   ))}
                   {/*
-                    THE SIMILAR SECTION — typo-tolerant guesses, under a heading that says so.
-
-                    It exists because the alternative to showing these rows is not showing them,
-                    and a misspelt query would then answer "nothing" while the message the reader
-                    is looking for sits one letter away. What the heading buys is that the reader
-                    is never asked to work out which rows are which: an unlabelled guess mixed
-                    into matches is a wrong answer wearing a right answer's clothes.
-
-                    Rendered only when `similarOn` — merged exact count at the floor — so under
-                    today's rule this block and the rows above it are never both on screen.
-                    `data-similar` is what the ranking table asserts against; `.results-head`
-                    takes the existing 12px/--ink2 treatment rather than inventing a class in a
-                    stylesheet another slice owns.
-                  */}
+                      The Similar section — typo-tolerant guesses, under a heading that says so. The alternative to
+                      showing these rows is not showing them, and a misspelt query would then answer "nothing" while
+                      the message sits one letter away. The heading means the reader never works out which rows are
+                      which: an unlabelled guess mixed into matches is a wrong answer wearing a right answer's
+                      clothes. Rendered only when `similarOn` — merged exact count at the floor — so this block and
+                      the rows above it are never both on screen. `data-similar` is what the ranking table asserts
+                      against; `.results-head` takes the existing 12px/--ink2 treatment.
+                    */}
                   {shownSimilar.length > 0 ? (
                     <>
                       <div className="results-head" data-similar="head">
@@ -794,40 +788,29 @@ export function SearchView({
 }
 
 /**
- * ═══ ONE RESULT ROW — the name, the address, the subject, and which of them is the control ═══
- *
- * A result used to print its sender as `from.name ?? address`, so wherever a name existed the
- * address was invisible, and the whole row was one `<button>` that opened the message. Two things
- * change here, and they are one decision:
- *
- *  1. THE ADDRESS IS ON EVERY ROW. Line one is the name and line two the address, in the address
- *     type the list rows and stream cards already use (11.5px, `--ink3`); with no name the address
- *     takes line one at the name's weight, so a nameless row does not open with a whisper.
- *     `displayAddress` decodes an internationalized domain for the face, as everywhere else.
- *
- *  2. THE ADDRESS IS A LINK to `#/address/<addr>` — everything from and to that person. On a list
- *     row or a stream card the address pixels belong to the screening popover (`sender-hit.ts`
- *     answers non-null there, and the popover offers the address view as one of its rows). Here
- *     `senderHitOf` answers null, so the address itself is the way in — the address-control
- *     census beside the shell's tests renders each surface and asks, rather than assuming. A real
- *     `<a href>` and not a click handler: the hash is what the router reads, the link can be
- *     copied or opened beside, and nothing in the shell has to be wired for it to be true.
- *
- * ── WHY THE ROW IS NO LONGER ONE BUTTON ─────────────────────────────────────────────────────
- *
- * A button may not contain interactive content; a link inside one is invalid in the spec,
- * flattened by assistive technology and inconsistent between engines. So the row is a
- * `<div class="hit">` holding three things in reading order — the name line, the address link and
- * a `<button class="hit-open">` around the subject whose `::after` is stretched over the whole row
- * (`search-keys.css`). Pressing anywhere that is not the address opens the message, exactly as
- * before; the address sits above the stretch and navigates. Tab reaches the address and then the
- * open control, which is the reading order and also the DOM order. `.hit`'s own rules in
- * `packages/ui` (the radius, the hover lift, the pointer) apply unchanged to the div, so the row
- * looks as it did with one more line in it.
- *
- * `here` is the address whose view this row already stands in (the address view passes its own):
- * that row's address is printed, not linked — a control that navigates to the page that is open
- * is a control that does nothing.
+ * One result row — the name, the address, the subject, and which of them is the control. A result used to print its
+ * sender as `from.name ?? address` (address invisible wherever a name existed) and the whole row was one `<button>`.
+ * Two changes, one decision. The address is on EVERY row: line one the name, line two the address in the type the
+ * list rows already use (11.5px, `--ink3`); with no name the address takes line one at the name's weight;
+ * `displayAddress` decodes an internationalized domain, as everywhere else. And the address is a LINK to
+ * `#/address/<addr>` — everything from and to that person. On a list row those pixels belong to the screening
+ * popover, but here `senderHitOf` answers null, so the address itself is the way in (the address-control census
+ * renders each surface and asks).
+ */
+
+/**
+ * A real `<a href>`, not a click handler: the hash is what the router reads, and the link can be copied or opened
+ * beside.
+ */
+
+/**
+ * Why the row is no longer one button: a button may not contain interactive content — a link inside one is invalid,
+ * flattened by assistive technology and inconsistent between engines. So the row is a `<div class="hit">` holding, in
+ * reading order, the name line, the address link and a `<button class="hit-open">` around the subject whose `::after`
+ * stretches over the whole row (`search-keys.css`). Pressing anywhere that is not the address opens the message; the
+ * address sits above the stretch and navigates; Tab reaches the address then the open control, the reading order and
+ * the DOM order. `.hit`'s rules in `packages/ui` apply unchanged. `here` is the address whose view this row already
+ * stands in: that row's address is printed, not linked — a control that navigates to the open page does nothing.
  */
 export function SearchHitRow({
   hit,
