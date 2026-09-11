@@ -1329,33 +1329,14 @@ export const awayResponders = pgTable("away_responders", {
    */
   audience: text("audience").notNull().default("screened_in"),
   /**
-   * WHICH PILES ARE ANSWERED — `'{INBOX}'` by default (mail 0096), as FOLDER names.
-   *
-   * The second, independent dimension beside {@link audience}, and the two answer different
-   * questions on purpose. `audience` is a fact about a SENDER — past the Screener, decided once,
-   * true for ever — and it cannot express "answer this person's mail when it reaches me, but not
-   * when it files itself away". That gap is what sent eight automatic replies to shop and
-   * notification senders who had each been let in once, months earlier.
-   *
-   * MEMBERS ARE FOLDERS, NOT PILE WORDS. The pile a person calls "Ohbox" is `INBOX`
-   * (`VIEW_OF_FOLDER` in client-engine maps the six destinations onto the six words); there is no
-   * `ohmail/Ohbox`, and this feature's own fixture carried that string for three cases before
-   * anything read it. The value compared at decision time is `folder_state.desired_folder`, which
-   * holds a destination, so this column holds destinations.
-   *
-   * The closed set is `{INBOX, ohmail/Reads}` and the CHECK
-   * (`away_responders_piles_closed`) lives in the migration, for `audience`'s reason: an
-   * unhandled member is resolved by whichever branch the rule falls through to, and here that is
-   * the branch that sends mail. `ohmail/Receipts`, `ohmail/Screened` and `ohmail/Quarantine` are
-   * refused by the never-answered map in `away-eligibility.ts`; `ohmail/Screener` is deliberately
-   * not a member, because it is the AUDIENCE's decision and two settings ruling on one population
-   * is a contradiction whichever is consulted second.
-   *
-   * NOT NULL with a default, and the default is the NARROW member — unlike `throttle`, whose
-   * default is the middle of its range. Widening what a standing order reaches is the only
-   * irreversible thing this feature does, so the value nobody chose is the one that reaches
-   * fewest people. An EMPTY array is representable and means "answer nobody", which the rule
-   * handles by name rather than reading as "no filter".
+   * Which piles are answered — `'{INBOX}'` by default (mail 0096), as FOLDER names. The second
+   * dimension beside {@link audience}: `audience` is a fact about a SENDER and cannot express
+   * "answer this person's mail when it reaches me, but not when it files itself away" — the gap
+   * that sent eight automatic replies to shop and notification senders. MEMBERS ARE FOLDERS, NOT
+   * PILE WORDS: the pile a person calls "Ohbox" is `INBOX`, and the compared value is
+   * `folder_state.desired_folder`. CHECKed: an unhandled member falls through to the branch that
+   * sends mail; `ohmail/Screener` is not a member. NOT NULL with the NARROW default: widening a
+   * standing order's reach is the only irreversible thing here. EMPTY means "answer nobody".
    */
   piles: text("piles").array().notNull().default(["INBOX"]),
   /**
