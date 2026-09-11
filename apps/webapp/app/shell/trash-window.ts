@@ -46,10 +46,10 @@ export const trashLiveKeyOf = (
 ): string => `${i.mailboxId}:${i.uidValidity}:${i.uid}`;
 
 /**
- * THE TWO READS THIS WINDOW MAKES, behind one seam a host replaces with its own transport —
- * the junk window's `JunkWire` rule, and what makes the section exist on the desktop at all: that build
- * aliases the Cloud client to a refusing stub, so a hook reaching for it directly could only ever
- * report "no server" (which is precisely what it did).
+ * THE TWO READS THIS WINDOW MAKES, behind one seam a host replaces with its own transport — the
+ * junk window's `JunkWire` rule, and what makes the section exist on the desktop at all: that
+ * build aliases the Cloud client to a refusing stub, so a hook reaching for it directly could
+ * only ever report "no server" (which is precisely what it did).
  *
  * GET-ONLY, AND THE ABSENCE IS THE CONTRACT: there are two reads here and there is no verb, on
  * this seam or on any wire satisfying it. A message the provider filed in Trash has no origin
