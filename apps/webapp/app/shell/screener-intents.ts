@@ -2,14 +2,13 @@
 
 /**
  * The Screener's decisions, on disk the moment they are made. A decision used to exist ONLY as a
- * `setTimeout` closure for its whole undo window (8.4 s): close the tab, navigate away or crash
- * inside it and the decision was gone — with the product having already told the reader it happened,
- * at the product's primary consent gate. The undo window is kept; what changes is what the delay is
- * made of: a scheduled DURABLE INTENT lands here synchronously before the timer is armed, Undo
- * deletes it, and the commit deletes it only once the engine has taken the verb (from that moment
- * the durable outbox is the record). A crash inside the window resolves one way, deterministically:
- * the next boot reads the journal and commits — a decision that lands 30 s late is a decision; one
- * that evaporates is the product being wrong about the reader's mail.
+ * `setTimeout` closure for its whole undo window (8.4 s): close the tab or crash inside it and the
+ * decision was gone — with the product having already told the reader it happened, at the primary
+ * consent gate. The undo window is kept; the delay is now a scheduled DURABLE INTENT: it lands here
+ * synchronously before the timer is armed, Undo deletes it, and the commit deletes it only once the
+ * engine has taken the verb. A crash inside the window resolves one way, deterministically: the
+ * next boot reads the journal and commits — a decision that lands 30 s late is a decision; one that
+ * evaporates is the product being wrong about the reader's mail.
  */
 
 /**
@@ -17,11 +16,10 @@
  * promise a killed tab need never settle, while `setItem` has returned before `decide()` does — the
  * compose scratch buffer's own reasoning. Owner-keyed in the shape `composeDraftKey` uses: a
  * decision one account made must never replay for the next account on the same browser. The owner
- * is `storageOwner()` — the cookie where there is one, otherwise the identity the host establishes:
- * the standalone desktop has no cookie and mounts one engine per mailbox, and a `"local"` fallback
- * there meant every mailbox replaying every other mailbox's decisions. Storage can refuse (Safari
- * private mode); every access is wrapped, and a refusal means a decision is only as durable as the
- * tab — exactly the behaviour before this file existed.
+ * is `storageOwner()`: the standalone desktop has no cookie and mounts one engine per mailbox, and
+ * a `"local"` fallback there meant every mailbox replaying every other mailbox's decisions.
+ * Storage can refuse (Safari private mode); every access is wrapped, and a refusal means a decision
+ * is only as durable as the tab — exactly the behaviour before this file existed.
  */
 
 import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
