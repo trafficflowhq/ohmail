@@ -1,53 +1,28 @@
 "use client";
 
 /**
- * THE MESSAGE VERBS, OVER A VIEW'S OWN CURSOR — one declaration, for every view that shows a
- * message beside a list the shell cannot see into.
- *
- * ══ THE DEFECT THIS EXISTS TO CLOSE ═══════════════════════════════════════════════════════
- *
- * Folder, Tag and History mount the message pane — and with it the action bar, whose every
- * button prints the keycap for its verb. Nine of those keycaps did nothing in those three views:
- * `r`, `⇧R`, `a`, `e`, `b`, `s`, `t`, `m` and `d`. Pressing them was silent — no request, no
- * toast, no state change — while the button beside the keycap worked, and the same key worked in
- * the Ohbox.
- *
- * The cause is structural rather than a missing case. The shell's global bindings all act on
- * `focused`, which is the reader's message or the Ohbox's cursor; in a SPLIT view the message on
- * screen is that view's own `shown`, a piece of local state the shell has no arm for. So every
- * one of those bindings registers with `disabled: true` here — correctly, since it has nothing to
- * act on — and the bar goes on printing the cap.
- *
- * ── AND THE BAR IS RIGHT TO PRINT IT, WHICH IS WHY THE FIX IS TO WIRE ──────────────────────
- *
- * `MessagePane`'s `Key` renders a cap for a bound-but-disabled chord deliberately, and
- * `keymap.tsx` states the reason where `useBinding` is defined: *"a disabled owner still owns the
- * key, and the cap must not vanish while the verb rests"*. That is the right rule for a verb that
- * is momentarily unavailable — Reply-all on a 1:1 message, Forward on a `no_forward` one — because
- * a cap that blinks out as the cursor moves teaches people to stop reading caps. It is the wrong
- * outcome only when NOTHING is wired, and those two cases are indistinguishable from the bar.
- *
- * So suppression would have bought a quieter bar by making every resting verb's cap flicker, and
- * it would have left the keys still dead. The verbs are wired instead, which is what the keycap
- * always meant. `TriageView` reached the same conclusion first and declares its own set inline
- * ("views declare their own"); this module is that idea made reusable, because nine verbs
- * repeated in three files is how three views come to disagree about what `d` does.
- *
- * ══ WHAT A HOST OWES, AND WHY EACH PIECE COMES FROM OUTSIDE ═══════════════════════════════
- *
- * Every gate below is resolved by the SHELL and passed in, never re-derived here. `canDelete` is
- * the sharpest example: the delete ceremony's gates are the strip's own render gates (the folders
- * consent, and the mirror actually holding the row), they live on `AppShell`'s `consent` and
- * `reader`, and a second reading of them in this module would be a second answer to "may this be
- * deleted" — with the failure mode that the sheet advertises a delete the bar refuses to draw.
- *
- * ══ THE CURSOR MUST BE THE MESSAGE ON SCREEN, ON BOTH LAYOUTS ═════════════════════════════
- *
- * Every verb here reads `shown`. `TriageView` has the scar: where a view's `openRow` set the
- * cursor only on the WIDE layout, the narrow one raised the reader on the tapped row while
- * `shown` still pointed at the first row of the list — so a verb filed, forwarded or deleted a
- * different person's mail than the one being read. A host wiring these verbs must set its cursor
- * FIRST and unconditionally. Stated here because this hook is what makes the bug reachable.
+ * The message verbs, over a view's own cursor — one declaration for every view that shows a message beside a list the
+ * shell cannot see into. Folder, Tag and History mount the action bar, whose buttons print keycaps, and nine of those
+ * keys did nothing there: the shell's global bindings act on `focused`, and in a split view the message on screen is
+ * that view's own `shown`, local state the shell has no arm for — so the bindings register `disabled: true` while the
+ * bar goes on printing the cap.
+ */
+
+/**
+ * The bar is RIGHT to print it (`keymap.tsx`: a disabled owner still owns the key, and a cap that blinks out teaches
+ * people to stop reading caps), so the fix is to WIRE the verbs — `TriageView` reached the conclusion first, and nine
+ * verbs repeated in three files is how three views come to disagree about what `d` does.
+ */
+
+/**
+ * Every gate is resolved by the SHELL and passed in, never re-derived here — `canDelete` is the
+ * sharpest example: the delete ceremony's gates are the strip's own render gates, and a second
+ * reading here would be a second answer to "may this be deleted", with the sheet advertising a
+ * delete the bar refuses to draw. The cursor must be the message on screen, on BOTH layouts:
+ * `TriageView` has the scar — where `openRow` set the cursor only on the wide layout, the narrow one
+ * raised the reader on the tapped row while `shown` pointed at the first row, so a verb filed or
+ * deleted a different person's mail. A host wiring these verbs sets its cursor FIRST and
+ * unconditionally; stated here because this hook is what makes the bug reachable.
  */
 
 import { useTranslations } from "next-intl";

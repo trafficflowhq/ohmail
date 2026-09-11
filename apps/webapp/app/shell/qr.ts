@@ -1,30 +1,17 @@
 /**
- * A QR ENCODER, WHOLE, IN THIS FILE — byte mode, error-correction level M, versions 1–13.
- *
- * It exists so a phone camera never has to type what a screen can show: the invites pane
- * draws the invite link as a QR, and the pairing flows to come (a device pairing secret, a
- * server address) inherit the same idiom. It is hand-written rather than a dependency on
- * purpose — the published manifests are generated from the import closure and censused field by
- * field, and ~300 lines of ISO/IEC 18004 is a smaller liability than a new supply-chain edge on
- * a surface that renders credentials.
- *
- * What it deliberately does NOT do:
- *
- *  · no mode detection — everything is byte mode (UTF-8). The payloads are URLs carrying
- *    base64url tokens, which the numeric and alphanumeric modes cannot hold anyway (base64url
- *    is case-sensitive; the QR alphanumeric set has no lowercase).
- *  · no error-correction level choice — always M (15%). L would shave a version off long links
- *    at the cost of scan robustness on a phone pointed at a laptop screen; anything above M
- *    buys nothing for a link that is re-mintable in one click.
- *  · versions 1–13 only (334 data bytes at M). The longest realistic payload — a tailnet
- *    MagicDNS origin plus `/join/invite#` plus a 43-character token — is ~120 bytes. A payload
- *    that does not fit is REFUSED, never truncated: a QR of most of a token scans fine and then
- *    fails redeem, which is the worst kind of almost-working.
- *
- * The mask is chosen by the standard four penalty rules, and the choice is honest: the format
- * info written into the matrix names the mask that was actually applied, and the suite's
- * spec-derived decoder (its own tables, plus known-answer matrices minted from a foreign
- * encoder) reads it back out — see `test/qr.test.ts` for what was mutation-checked.
+ * A QR encoder, whole, in this file — byte mode, error-correction level M, versions 1–13. It exists so a phone camera
+ * never types what a screen can show. Hand-written rather than a dependency on purpose: the published manifests are
+ * generated from the import closure and censused field by field, and ~300 lines of ISO/IEC 18004 is a smaller
+ * liability than a new supply-chain edge on a surface that renders credentials.
+ */
+
+/**
+ * Deliberately not done: no mode detection (everything is byte mode — base64url is case-sensitive and the QR
+ * alphanumeric set has no lowercase); no level choice (always M — L shaves a version at the cost of scan robustness);
+ * versions 1–13 only (334 bytes at M; the longest realistic payload is ~120), and a payload that does not fit is
+ * REFUSED, never truncated — a QR of most of a token scans fine and then fails redeem, the worst almost-working. The
+ * mask is chosen by the standard four penalty rules and the format info names the mask actually applied; the suite's
+ * spec-derived decoder reads it back (`test/qr.test.ts`).
  */
 
 // ─── GF(256): poly 0x11d, generator α = 2 ────────────────────────────────────────────────────

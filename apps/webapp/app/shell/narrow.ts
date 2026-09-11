@@ -1,26 +1,16 @@
 /**
- * THE NARROW QUESTION, ASKED ONCE — "is the reading column off screen at this width?"
- *
- * ── WHY THIS MODULE EXISTS (ohmarchy Phase 3b, the Zero layout) ─────────────────────────
- *
- * Classic has ONE breakpoint: under 900px the reading column is `display:none` (app.css),
- * the rail is a drawer, and "open" means the reader sheet. Eleven call sites asked that
- * media query inline — the shell's `readColumnHidden`, four views' private copies of the
- * same function, four more inline reads in the Ohbox, and the Screener's subscription —
- * which was already one predicate written ten times.
- *
- * The Zero layout moves the answer WITHOUT moving the question: under `data-layout="zero"`
- * the split survives down to 722px beside a docked 52px ribbon (OHMARCHY-PLAN.md §12 —
- * the ruled ladder: full rail ≥900 · ribbon + split 722–899 · ribbon + one-tile push-nav
- * 392–721 · floating drawer <392), so the reading column only leaves at 721. A per-site
- * edit would be ten copies of a layout branch; here it is one, and the census ledgers it
- * once (`narrow.ts :: attr/cmp` — layout-slot selection: which SLOT the open message
- * renders into, the standing column or the sheet).
- *
- * The attribute, not the React context, deliberately: this is called from module-level
- * code (zone-nav's focus guards) and from views that must not each grow a theme hook —
- * and `data-layout` is stamped pre-paint by the boot script and owned by the ONE
- * ThemeProvider (OHMARCHY-CONTRACT.md), so the attribute IS the resolved fact.
+ * The narrow question, asked once — "is the reading column off screen at this width?" Classic has one breakpoint
+ * (under 900px the column is `display:none` and "open" means the reader sheet), and eleven call sites asked that
+ * media query inline — one predicate written ten times. The Zero layout moves the ANSWER without moving the question:
+ * under `data-layout="zero"` the split survives to 722px beside a docked ribbon (OHMARCHY-PLAN.md §12's ladder), so
+ * the column only leaves at 721 — a per-site edit would be ten copies of a layout branch; here it is one, ledgered
+ * once in the census.
+ */
+
+/**
+ * The attribute, not React context, deliberately: this is called from module-level code (zone-nav's focus guards) and
+ * from views that must not each grow a theme hook — `data-layout` is stamped pre-paint by the boot script and owned
+ * by the ONE ThemeProvider, so the attribute IS the fact.
  */
 
 /** The zero ladder's one JS-visible boundary: the split dies under 722 (§12: 52+5+320+10+325+10). */

@@ -1,44 +1,27 @@
 "use client";
 
 /**
- * THE REACH-PAST BODY DOOR — a session-held body for the rows `useOlderMail` fetched from beyond
- * the mirror window.
- *
- * ── THE DEFECT THIS CLOSES ──────────────────────────────────────────────────────────────────
- *
- * A reach-past row is deliberately NOT a mirror row (`older-mail.ts`: no sync sequence, nothing
- * to reconcile, the next prune would evict it). The engine's own body machinery keys on the
- * mirror — `bodyPlan` answers `skip` for a message id the mirror does not hold — so opening a
- * reach-past row never issued a request at all: the pane's stall timer expired over a fetch that
- * had never started, rendered "Couldn't load the full message — showing the preview" with a
- * Retry, and the Retry re-ran the same skip. A control whose promise could never be kept.
- *
- * ── THE MECHANICS ARE THE ENGINE'S, THIS FILE IS THE BIND ───────────────────────────────────
- *
- * The session-cache pattern — single-flight decided outside any state updater, one ask per row
- * per session, a human Retry that replaces a hung ask but never a settled answer, per-row ask
- * generations — is `createSessionBodyDoor` (`@ohmail/client-engine`, the Content Door's
- * on-demand arm; its header carries the review-caught findings this file used to carry). What
- * lives HERE is only what is this door's own: the wire (the browser's Cloud client), the
- * `reopenFailed: false` policy (this door's `open` fires on every render of the row, so a
- * failed row re-asks only on the human press), and the rendering of the held phases into
- * `MessageBody` — the pane's own vocabulary, so it needs no second one:
- *
- *  · not asked yet   → `snippet` (the surface asks via `open` the moment the row is shown);
- *  · in flight       → `loading`;
- *  · delivered       → `full`, html and unsubscribe posture included;
- *  · policy-emptied  → `withheld` with the server's own marker — the pane already owes each
- *                      member its own sentence and offers no Retry, which is the honest terminal;
- *  · 404/410         → `withheld: "expunged"`. The list handed us this id and the account no
- *                      longer holds the row — the stored copy is gone, a retry cannot change it,
- *                      and the expunged sentence says exactly that. Never `failed`: `failed`
- *                      offers a Retry, and a Retry that cannot work is the defect this module
- *                      exists to remove;
- *  · transport/5xx   → `failed` — here the Retry is real: `open(id, { retry: true })` dispatches
- *                      a fresh request even while a hung first ask still shows `loading`.
- *
- * Nothing here writes to the mirror or to IndexedDB: closing the app forgets it, which is
- * exactly the lifetime the rows themselves have.
+ * The reach-past body door — a session-held body for the rows `useOlderMail` fetched from beyond the mirror window. A
+ * reach-past row is deliberately not a mirror row, and the engine's body machinery keys on the mirror (`bodyPlan`
+ * answers `skip` for an id the mirror does not hold), so opening one never issued a request: the stall timer expired
+ * over a fetch that never started, rendered "Couldn't load the full message" with a Retry, and the Retry re-ran the
+ * same skip — a control whose promise could never be kept.
+ */
+
+/**
+ * The mechanics are the engine's (`createSessionBodyDoor`); what lives here is this door's own: the wire, the
+ * `reopenFailed: false` policy (a failed row re-asks only on the human press), and the rendering of held phases into
+ * `MessageBody`'s own vocabulary.
+ */
+
+/**
+ * The phases: not asked → `snippet` (the surface asks via `open` when the row shows); in flight →
+ * `loading`; delivered → `full`; policy-emptied → `withheld` with the server's marker (no Retry, the
+ * honest terminal); 404/410 → `withheld: "expunged"` — the account no longer holds the row, a
+ * retry cannot change it, and `failed` would offer a Retry that cannot work, the exact defect this
+ * module removes; transport/5xx → `failed`, where the Retry is real (`open(id, { retry: true })`
+ * dispatches a fresh request even while a hung first ask still shows `loading`). Nothing writes to
+ * the mirror or IndexedDB: closing the app forgets it — the rows' own lifetime.
  */
 
 import { useCallback, useRef, useState } from "react";

@@ -1,32 +1,18 @@
 "use client";
 
 /**
- * ONE PAGE OF TRASH, HELD BY THE VIEW — the off-mirror read.
- *
- * ══ WHY THIS IS NOT `older-mail.ts` ═════════════════════════════════════════════════════════
- *
- * `useOlderMail` pages mail from BEYOND the mirror's window, and almost all of its complexity is
- * the boundary between what it fetched and what the mirror holds: a four-verdict `suppress`
- * predicate asked per render, a ban latch, a scope epoch. Every bit of that exists because a
- * fetched row and a live mirror row can be the same message.
- *
- * Here they cannot. A delete TOMBSTONES the row in every client's mirror (`apply.ts` rule 4,
- * `entity: null`), so the mirror holds NOTHING for any message in this list, on any door. There
- * is no overlap to arbitrate, no row to prefer, no latch to keep. What is left is a cursor, a
- * loading flag, an error and a list — which is this file.
- *
- * ══ AND WHY THE ROWS ARE NOT PUT IN THE MIRROR ══════════════════════════════════════════════
- *
- * `OhmailEngine.listTrash`'s own header carries it: writing them in would be exactly the "a
- * LATER create resurrects" path, putting deleted mail back into somebody's Ohbox while the mail
- * server still has it in Trash. They live here, for as long as the view is mounted.
- *
- * ══ THE HELD RESTORE IS A LOCAL HIDE ════════════════════════════════════════════════════════
- *
- * The row must leave the list at the press, and the request does not go out until the Undo
- * window closes — so the disappearance cannot be the mutation's. {@link TrashPage.hidden} is the
- * set the shell's held-verb window publishes and this hook subtracts, which is `hideMessages`'
- * job on the mirror side done by hand here because there is no reader to wrap.
+ * One page of Trash, held by the view — the off-mirror read. Not `older-mail.ts`: almost all of that hook's
+ * complexity is the boundary between what it fetched and what the mirror holds, because a fetched row and a live
+ * mirror row can be the same message. Here they cannot: a delete TOMBSTONES the row in every client's mirror
+ * (`apply.ts` rule 4), so the mirror holds nothing for any message in this list — no overlap to arbitrate, no latch;
+ * what is left is a cursor, a loading flag, an error and a list.
+ */
+
+/**
+ * The rows are not put in the mirror (`OhmailEngine.listTrash`'s header: writing them in is the "a later create
+ * resurrects" path, putting deleted mail back into somebody's Ohbox). The held restore is a local hide: the row must
+ * leave at the press while the request waits out the Undo window, so {@link TrashPage.hidden} is the set the shell's
+ * held-verb window publishes and this hook subtracts — `hideMessages`' job done by hand, no reader to wrap.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";

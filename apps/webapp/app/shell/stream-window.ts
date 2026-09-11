@@ -1,68 +1,35 @@
 "use client";
 
 /**
- * A SLIDING WINDOW OVER A READING STREAM — only the cards near the viewport exist in the DOM.
- *
- * ── WHY THE GROWING PREFIX THIS REPLACES HAD TO GO ──────────────────────────────────────────
- *
- * The previous model mounted an opening run and only ever GREW it toward the reader; nothing
- * ever unmounted. That fixed the switch (a visit no longer mounted the pile before first
- * paint) and re-created the same cost one gesture later: scroll depth became a permanent tax.
- * Every mounted card is walked by the scroll-spy and the leave-range tracker once per animation
- * frame (`getBoundingClientRect` each), every growth commit re-rendered a larger run, and the
- * heap kept every card ever approached. Measured in real Chromium over a generated pile tens
- * of thousands deep: a deep scroll held thousands of mounted cards and hundreds of megabytes
- * of heap, with the main thread blocked for minutes — and a deep jump (`ensure`) mounted
- * everything above its target in ONE commit, which on throttled hardware never finished inside
- * the measurement's budget. Scrolled to the end, the whole pile was in the DOM; on a real
- * mailbox that is the freeze this file's history keeps re-measuring. (The harness and its
- * numbers live outside this file.)
- *
- * The window makes the mounted set a function of the VIEWPORT, not of where the reader has
- * been: cards within a lookahead below and a lookbehind above stay mounted, cards left behind
- * unmount, and two spacers reserve the height of everything else so the scrollbar still says
- * how much mail there is. Mounted count is bounded ({@link STREAM_WINDOW_MAX}) whatever the
- * pile holds and wherever the reader is in it.
- *
- * ── HEIGHTS ARE MEASURED PER CARD, NOT ASSUMED ──────────────────────────────────────────────
- *
- * Stream cards are variable-height (a clamped snippet, an expanded reading, a hydrated html
- * body), so unlike `list-window.ts` one measurement cannot stand for all of them. Every
- * mounted card's height is read after each render and cached BY MESSAGE ID; a card that has
- * never been laid out contributes {@link STREAM_CARD_ESTIMATE_PX} — the OUTER-height twin of
- * the `contain-intrinsic-size: auto var(--sc-est, 200px)` box guess — its FALLBACK: the box plus
- * the card's standing bottom margin, because the cache stores outer heights and the two must mean
- * the same thing. `StreamCard` writes `--sc-est` per card from that card's own data, so a card the
- * browser has laid out reserves its own estimate rather than this one; what this constant twins is
- * what a card reserves when nothing wrote the property, which is the case this cache is for.
- * The spacers are sums over that cache, so they get truer the more of the pile the reader has
- * actually passed, and `StreamShell`'s anchoring loop (which corrects a landing against the
- * REAL geometry over several frames) absorbs the drift the estimates leave.
- *
- * ── `ensure` IS STILL THE JUMP SEAM — BUT A JUMP NOW COSTS A WINDOW, NOT A PREFIX ───────────
- *
- * A row click or a cross-view jump lands on an arbitrary card. `ensure(index)` REPOSITIONS the
- * window around that index in one bounded commit; the caller scrolls after the commit exactly
- * as before. The scroll that follows lands inside the repositioned window, so the sampler's
- * next pass derives the same neighbourhood and nothing thrashes. Until that scroll arrives the
- * window is PINNED — a wheel event delivered between the commit and the landing must not let
- * the sampler snap the window back to the old scroll position and unmount the target mid-jump.
- *
- * ── WHAT `\Seen` HONESTY MEANS UNDER A WINDOW ───────────────────────────────────────────────
- *
- * The scroll-coupled observers can only mark a card that is in the DOM, and the window keeps a
- * card mounted for as long as it is anywhere near the viewport — which is exactly the span in
- * which an honest scroll can have displayed it. A fling fast enough to hop the window past a
- * card without mounting it is the same fling that hops an IntersectionObserver's transition
- * (the growth model documented that miss too); the anchored leave-commit remains the
- * reliability floor under both. Nothing is newly markable and nothing displayed goes unmarked
- * that was marked before.
- *
- * ── jsdom ───────────────────────────────────────────────────────────────────────────────────
- *
- * No layout: `clientHeight` is 0 and no scroll events fire, so the sampler never derives and
- * the window rests at its opening slice `[0, STREAM_MOUNT_INITIAL)` — which is what the
- * mount-cost guards assert — and jumps are driven through `ensure` exactly as in a browser.
+ * A sliding window over a reading stream — only the cards near the viewport exist in the DOM. The
+ * growing prefix it replaces never unmounted: every mounted card was walked per animation frame,
+ * every growth commit re-rendered a larger run, and the heap kept every card ever approached —
+ * measured in real Chromium over a pile tens of thousands deep: thousands of mounted cards,
+ * hundreds of megabytes, the main thread blocked for minutes, and a deep `ensure` jump mounted
+ * everything above its target in one commit. The window makes the mounted set a function of the
+ * VIEWPORT: a lookahead below, a lookbehind above, two spacers reserving the rest, mounted count
+ * bounded ({@link STREAM_WINDOW_MAX}) wherever the reader is.
+ */
+
+/**
+ * Heights are measured per card, not assumed: stream cards are variable-height, so every mounted
+ * card's height is cached BY MESSAGE ID after each render; an unmeasured card contributes
+ * {@link STREAM_CARD_ESTIMATE_PX} — the outer-height twin of the `contain-intrinsic-size` fallback
+ * (`StreamCard` writes `--sc-est` per card, so a laid-out card reserves its own estimate; this
+ * constant twins what a card reserves when nothing wrote the property). The spacers are sums over
+ * that cache, truer the more of the pile the reader has passed; `StreamShell`'s anchoring loop
+ * absorbs the drift.
+ */
+
+/**
+ * `ensure` is still the jump seam — but a jump now costs a window, not a prefix: it repositions the
+ * window around the target in one bounded commit, and until the caller's scroll lands the window is
+ * PINNED, so a wheel event between commit and landing cannot snap it back and unmount the target
+ * mid-jump. `\Seen` honesty under a window: the observers can only mark a mounted card, and the
+ * window keeps a card mounted for exactly the span an honest scroll can have displayed it — a fling
+ * fast enough to hop the window also hops an IntersectionObserver, and the anchored leave-commit
+ * remains the reliability floor. jsdom: no layout, so the window rests at its opening slice and
+ * jumps drive through `ensure` exactly as in a browser.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 

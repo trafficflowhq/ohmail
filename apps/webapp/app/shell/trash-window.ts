@@ -1,32 +1,19 @@
 "use client";
 
 /**
- * THE LIVE TRASH WINDOW'S CLIENT STATE — a read-only view of the provider's own \Trash, beside
- * the mirrored deletes the Trash view already lists.
- *
- * Two populations, two sources. `useTrashPage` reads the MIRROR: what ohmail deleted, ordered by
- * the instant of the press, each row carrying where a restore would put it. This hook reads the
- * FOLDER — mail deleted in Apple Mail, in Gmail's web client or on a phone, which the sync never
- * sees because that folder has no cursor. Those rows never enter `messages`, any client mirror or
- * any store table; they live here for as long as the view is mounted, and closing it forgets them.
- *
- * ── NO VERB, BY CONSTRUCTION ────────────────────────────────────────────────────────────────
- *
- * The junk window has a rescue because a spam verdict is the reader's own to reverse. This has
- * nothing. ohmail's restore aims at a mirror row's recorded origin folder; a message the provider
- * put in Trash has no origin recorded anywhere, so "put it back" would be ohmail choosing a folder
- * for somebody else's mail. So this control exposes NO mutation — not an omitted prop, no verb in
- * the type at all — and {@link trashReadVerbs} names the empty action set the reading column
- * renders for a live row.
- *
- * ── THE STATES ARE NAMED AND NONE STANDS IN FOR ANOTHER ─────────────────────────────────────
- *
- * A window that could not read SAYS so: `failed` renders the failed sentence and a human retry,
- * never an empty list — "your mail server's Trash is empty" is an answer, and a dead dial has no
- * business claiming it. Per-mailbox degrades ride the answer itself (`no_trash_folder`,
- * `unreachable`), so a mailbox with no native \Trash gets the stated absence and a mailbox the
- * server could not finish reading inside its budget gets the stated read limit.
- * {@link trashLiveState} is the one place those are decided; the view renders its verdict.
+ * The live Trash window's client state — a read-only view of the provider's own \Trash, beside the mirrored deletes.
+ * Two populations, two sources: `useTrashPage` reads the MIRROR (what ohmail deleted); this hook reads the FOLDER —
+ * mail deleted in Apple Mail or Gmail's web client, which the sync never sees. Those rows never enter `messages` or
+ * any store; they live here while the view is mounted.
+ */
+
+/**
+ * NO VERB, by construction: ohmail's restore aims at a recorded origin folder, and a message the provider put in
+ * Trash has none — "put it back" would be ohmail choosing a folder for somebody else's mail — so this exposes no
+ * mutation at all, and {@link trashReadVerbs} names the empty action set. The states are named and none stands in for
+ * another: `failed` renders the failed sentence and a human retry, never an empty list ("your Trash is empty" is an
+ * answer a dead dial may not claim); per-mailbox degrades ride the answer (`no_trash_folder`, `unreachable`); {@link
+ * trashLiveState} is the one place those are decided.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";

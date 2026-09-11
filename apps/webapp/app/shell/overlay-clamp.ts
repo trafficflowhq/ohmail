@@ -1,48 +1,28 @@
 "use client";
 
 /**
- * VIEWPORT CLAMPING FOR ANCHORED OVERLAYS — the sender-sheet family's fix for the clipped bottom.
- *
- * ── THE DEFECT THIS RETIRES ─────────────────────────────────────────────────────────────────
- *
- * Every popover placed by `placePicker` opened DOWNWARD from its anchor with `overflow: hidden`
- * and no knowledge of its own height: the placement flip guessed 190px, the sender sheet is
- * ~580px, and the screening sheet ~600px. Anchored to the last message of a thread — the default
- * reading position — everything below the fold was simply gone: no flip, no internal scroll, and
- * page scroll cannot reveal it (`position: fixed`; a programmatic scroll dismisses the popover).
- * At 1440×900 that made "Screened out" and "Spam" unreachable from the ⋯ path, which blocks
- * re-deciding a sender entirely.
- *
- * ── THE RULE ────────────────────────────────────────────────────────────────────────────────
- *
- * An overlay's box is clamped to the viewport, in this order:
- *
- *  1. **Below the anchor** when the whole sheet fits there — the placement every caller expects.
- *  2. **Flipped above the anchor** when below is too short but above holds the whole sheet.
- *  3. **Whole, wherever it fits** when neither side holds it but the viewport does: the sheet
- *     keeps its natural height and slides up from the anchor by exactly the pixels it lacks,
- *     covering part of its anchor. This replaced "the roomier side, capped": a 580px panel
- *     opened from a row mid-screen in a 900px window was being cut to ~430px with an inner
- *     scroll while 880px of window stood empty — reported as "cut off even when plenty of
- *     space would be available". A covered anchor is dismissable; a capped panel is one you
- *     scroll to finish reading.
- *  4. **The whole viewport band, scrolling inside** only when the sheet is taller than the
- *     viewport itself. Capping is what keeps every destination REACHABLE there; the scrollbar
- *     is the affordance that says so.
- *
- * And unconditionally: the box never starts above the viewport's top edge and never ends past
- * its bottom edge (degenerate viewports shorter than the minimum useful height are the one
- * physical exception). `clampOverlay` is the pure statement of that geometry so a test can hold
- * it without a browser; `useOverlayClamp` is the same statement wired to a live element — it
- * measures the REAL height after render (`scrollHeight`, which a `max-height` cap does not
- * lie about) and re-clamps on window resize and on content changes (a confirm opening, a scope
- * switching), because the sheet's height is state-dependent and the first render is not the
- * tallest it gets.
- *
- * The anchor's own edges ride the placement state (`placePicker` returns them) because flipping
- * pivots on the ANCHOR, not on the estimated point: a state built without them — a keyboard
- * opener's synthetic point, an older test's literal — degrades to "cap below the point", which
- * still keeps everything reachable.
+ * Viewport clamping for anchored overlays — the sender-sheet family's fix for the clipped bottom. Every popover
+ * placed by `placePicker` opened downward with no knowledge of its own height: the flip guessed 190px, the sender
+ * sheet is ~580px, and anchored to the last message of a thread everything below the fold was gone — no flip, no
+ * internal scroll, and page scroll cannot reveal a `position: fixed` box.
+ */
+
+/**
+ * At 1440×900 that made "Screened out" and "Spam" unreachable from the ⋯ path. The rule, in order: (1) below the
+ * anchor when the whole sheet fits; (2) flipped above when below is too short; (3) WHOLE, wherever it fits, sliding
+ * up by exactly the pixels it lacks and covering part of its anchor — a covered anchor is dismissable, a capped panel
+ * is one you scroll to finish reading; (4) the whole viewport band, scrolling inside, only when the sheet is taller
+ * than the viewport itself.
+ */
+
+/**
+ * Unconditionally, the box never starts above the viewport's top or ends past its bottom.
+ * `clampOverlay` is the pure geometry so a test holds it without a browser; `useOverlayClamp` wires
+ * it to a live element — it measures the REAL height after render (`scrollHeight`, which a
+ * `max-height` cap does not lie about) and re-clamps on resize and content changes (a confirm
+ * opening, a scope switching), because the first render is not the tallest the sheet gets. The
+ * anchor's own edges ride the placement state, because flipping pivots on the ANCHOR: a state built
+ * without them degrades to "cap below the point", which still keeps everything reachable.
  */
 import { useLayoutEffect, useState, type CSSProperties, type RefObject } from "react";
 
