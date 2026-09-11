@@ -2067,10 +2067,9 @@ export function OhboxView({
             DELIBERATE read clears the pin server-side (`MessageService.markSeen` without the
             glance label) and the row slides down to "Earlier" — but only once the selector
             actually files it there, which is why the slide keys on section membership rather
-            than the read flag (see `earlierIds`). A GLANCE — the two-second dwell — records the
-            reading and spends no pin, so the row does not move or change: that non-event is the
-            fix for the flip-flop this group was reported for. Each pinned row carries the
-            "Done" release control — see `doneFor`. */}
+            than the read flag (see `earlierIds`). A GLANCE — the two-second dwell — records
+            the reading and spends no pin, so the row does not move or change: the fix for the
+            reported flip-flop. Each pinned row carries the "Done" release — see `doneFor`. */}
         {displayResurfaced.length > 0 ? (
           <>
             <ListGroupLabel>{t("resurfacedGroup")}</ListGroupLabel>
@@ -2126,10 +2125,9 @@ export function OhboxView({
             a real row — never an "N more" count. `settled` gates the windowed arm: "this
             device keeps your recent mail" says where the reader's mail IS, which before the
             first drain has no referent (reported on first open, for up to a minute), and
-            `olderAction` was a wrong INSTRUCTION — pointing backwards past mail still in
-            flight. The cost — a returning tab loses the tail for one drain — is the cheap side;
-            `SyncBar` narrates throughout, and sentence and control return with the drained
-            mirror. */}
+            `olderAction` was a wrong INSTRUCTION, pointing backwards past mail still in
+            flight. The cost — a returning tab loses the tail for one drain — is the cheap side:
+            `SyncBar` narrates throughout, and both return with the drained mirror. */}
         {demo ? <div className="tail-row">{t("tail")}</div> : null}
         {!demo && older.available && settled ? (
           <div className="tail-row" role="status">
