@@ -298,59 +298,51 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const dormantUndecided = new Set<string>();
 
   for (const m of messages) {
-    /* ── OUTBOUND MAIL MEETS THE SAME CUTLINE AS INBOUND MAIL ────────────────────────────
-     *
-     * A folder outside the presented set is either one of the user's OWN folders (the lens branch
-     * immediately below) or the mailbox's Sent folder ({@link isOwnSent}, a POSITIVE test on the
-     * path — see that function for what this branch's old premise poured into the Ohbox). A row
-     * that is neither keeps its own place here and presents under its folder, never as the
-     * account's own writing.
-     * Those rows ARE presented: the Ohbox's "Earlier" is a history of what the reader has
-     * finished with, and half of every conversation is what they wrote.
-     *
-     * This branch used to be an unconditional `placeOf.set(m.id, m.folder); continue;`, which
-     * exempted outbound mail from the cutline entirely. On a mailbox with years of Sent mail
-     * that pours the whole backlog into "Earlier" — the "1,847 unread" arrival state this
-     * product refuses, wearing a different label. There is no sender to weigh here (the user is
-     * not one of their own correspondents, and never a stranger to themselves), so the cutline
-     * reduces to its date half: mail written before the line is part of the backlog the
-     * baseline says is finished, and it is History, exactly as a dormant stranger's mail is.
-     *
-     * Two things it deliberately does NOT do. A RESURFACED row keeps its place, for the reason
-     * spelled out below — the state's only home is the Ohbox's pinned group, so filing it in
-     * History would orphan a message the user just asked to see. And an UNDATED row is never
-     * assumed historical: {@link messageMs} answers `null` for one, and a row nobody can place
-     * in time has not been shown to be finished with.
-     *
-     * The thread rule below then applies to what lands here unchanged, which is the point of
-     * routing outbound mail through `historyIds` rather than filing it directly: a pre-cutline
-     * reply on a thread that holds consented mail follows its thread, so the user's own half of
-     * a conversation is never in History while the other half is in the Ohbox.
+    /**
+     * OUTBOUND MAIL MEETS THE SAME CUTLINE AS INBOUND MAIL. A folder outside the presented set is either one of the
+     * user's own folders (the lens branch below) or the mailbox's Sent folder ({@link isOwnSent}, a positive test on
+     * the path); a row that is neither keeps its own place and presents under its folder. Sent rows ARE presented —
+     * the Ohbox's "Earlier" is a history of what the reader has finished with, and half of every conversation is what
+     * they wrote. This branch used to exempt outbound mail from the cutline entirely (`placeOf.set(m.id, m.folder);
+     * continue;`), which on a mailbox with years of Sent mail poured the whole backlog into "Earlier" — the "1,847
+     * unread" arrival state this product refuses, wearing a different label.
+     */
+
+    /**
+     * With no sender to weigh (the user is never a stranger to themselves) the cutline reduces to its date half: mail
+     * written before the line is part of the backlog the baseline says is finished, and it is History.
+     */
+
+    /*
+     * Two deliberate exceptions, and the handoff. A RESURFACED row keeps its place — its only
+     * home is the Ohbox's pinned group, and filing it in History would orphan a message the
+     * user just asked to see. An UNDATED row is never assumed historical: {@link messageMs}
+     * answers `null`, and a row nobody can place in time has not been shown to be finished
+     * with. The thread rule below then applies unchanged, which is why outbound mail routes
+     * through `historyIds` rather than being filed directly: a pre-cutline reply on a thread
+     * holding consented mail follows its thread, so the user's own half of a conversation is
+     * never in History while the other half is in the Ohbox.
      */
     if (!KNOWN_FOLDERS.has(m.folder)) {
-      /* ── FOLDER-FILED MAIL — the lens branch (spec §16.5), only while folders are on ─────
-       *
-       * A message living in one of the user's OWN folders is FILED: somebody (the user, their
-       * other client, years of Thunderbird) put it there, and an explicit placement is already
-       * an answer — the same rule `UNDECIDED_RESIDENCES` states for the organized folders. So
-       * it always KEEPS ITS PLACE: the folder view must show everything the server holds
-       * there, and a null place here would delete rows from a folder's own list.
-       *
-       * History then reads it as a LENS, never as a move: the old-and-read slice from senders
-       * nobody ever screened joins `historyIds` while `placeOf` stays the folder, so the same
-       * row presents in both — badged by its folder in History, in place in the folder view.
-       * Unread mail never joins (History is read-only by construction — the rail's no-badge
-       * argument), a decided sender's mail never joins (the cutline is about senders never
-       * screened, unchanged), and the user's own mail never joins. The thread rule below still
-       * applies: a lens row on a thread holding consented mail leaves History with the thread.
-       *
-       * With the flag OFF `userFolders` is empty and every row here falls through to the branch
-       * below, byte-for-byte the pre-feature partition — and that fallthrough is exactly why
-       * {@link isOwnSent} had to stop being a negative test. With the flag off NOTHING here tells
-       * `Promotions` from `Sent`, so the Ohbox's own-sent union claimed the mailbox's whole folder
-       * tree. `placeOf` is unaffected either way (a row that is neither a user folder's nor Sent
-       * still keeps its own folder below); what the Ohbox does with it is not this partition's
-       * decision to make. */
+      /**
+       * FOLDER-FILED MAIL — the lens branch (spec §16.5), only while folders are on. A message in one of the user's
+       * OWN folders is FILED: somebody put it there, and an explicit placement is already an answer (the rule
+       * `UNDECIDED_RESIDENCES` states for the organized folders). It always KEEPS ITS PLACE — the folder view must
+       * show everything the server holds there, and a null place would delete rows from a folder's own list. History
+       * reads it as a LENS, never a move: the old-and-read slice from never-screened senders joins `historyIds` while
+       * `placeOf` stays the folder, so the row presents in both. Unread mail never joins (History is read-only by
+       * construction), a decided sender's mail never joins, the user's own mail never joins; the thread rule below
+       * still applies.
+       */
+
+      /*
+       * With the flag OFF `userFolders` is empty and every row falls through to the branch
+       * below, byte-for-byte the pre-feature partition — which is why {@link isOwnSent} had to
+       * stop being a negative test: with the flag off nothing here tells `Promotions` from
+       * `Sent`, so the Ohbox's own-sent union claimed the mailbox's whole folder tree.
+       * `placeOf` is unaffected either way; what the Ohbox does with the row is not this
+       * partition's decision to make.
+       */
       if (inUserFolder(m)) {
         placeOf.set(m.id, m.folder);
         const key = senderKey(m.from.address);
@@ -421,34 +413,26 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     }
   }
 
-  /* ── THE THREAD RULE ───────────────────────────────────────────────────────────────────
-   *
-   * A conversation is one thing. If somebody the user has consented to and somebody they have
-   * never screened both wrote on the same thread, splitting that thread across the Ohbox and
-   * History would hide half a conversation in a place nobody looks — and the half that gets
-   * hidden is decided by which participant happens to be dormant, which is not a distinction
-   * anybody reading the thread cares about.
-   *
-   * So: a thread that holds any consented mail presents ENTIRELY where that mail lives, and
-   * the anchor is the thread's most recent consented message. Nothing physical moves; this is
-   * the same presentation filter as everything else in this file.
-   *
-   * It deliberately does NOT rescue Screener-placed messages the same way. The Screener is a
-   * per-sender decision queue rather than a place, and pulling a sender out of it because they
-   * once replied on a consented thread would silently skip the decision the queue exists to
-   * ask for. That sender keeps their own row; only their History mail follows the thread.
-   *
-   * ── AND THE JOIN ITSELF HAS TO BE CORROBORATED ────────────────────────────────────────────
-   *
-   * `threadId` is the header chain, and In-Reply-To/References are the sender's own writing: a
-   * stranger who names a Message-ID this mailbox holds joins that conversation, and the rescue
-   * would then carry their first message into the consented pile — a first-contact decision
-   * skipped by a header. So the account's OWN outbound on that thread has to name the sender.
-   * `we_wrote` is the only class that can corroborate the row being placed, because the row is
-   * the sender's own writing and "they wrote to us" would corroborate itself
-   * (`@trafficflow/core/sender-headers`). The cost is stated: a stranger's reply on a consented
-   * thread the user has not answered stays in History until they do, which is the recoverable
-   * direction — an unrescued row is in a list, an admitted one skipped the queue.
+  /**
+   * THE THREAD RULE. A conversation is one thing: if a consented sender and a never-screened sender both wrote on a
+   * thread, splitting it across the Ohbox and History hides half a conversation in a place nobody looks — with the
+   * hidden half decided by which participant happens to be dormant. So a thread holding any consented mail presents
+   * ENTIRELY where that mail lives, anchored on the thread's most recent consented message. Nothing physical moves;
+   * this is the same presentation filter as everything else in this file. It deliberately does NOT rescue
+   * Screener-placed messages: the Screener is a per-sender decision queue, not a place, and pulling a sender out
+   * because they replied on a consented thread would skip the decision the queue exists to ask. That sender keeps
+   * their row; only their History mail follows the thread.
+   */
+
+  /**
+   * The join itself has to be corroborated. `threadId` is the header chain, and In-Reply-To/References are the
+   * sender's own writing: a stranger naming a Message-ID this mailbox holds joins that conversation, and the rescue
+   * would carry their first message into the consented pile — a first-contact decision skipped by a header. So the
+   * account's OWN outbound on the thread must name the sender: `we_wrote` is the only class that can corroborate,
+   * because the placed row is the sender's writing and "they wrote to us" would corroborate itself
+   * (`@trafficflow/core/sender-headers`). The stated cost: a stranger's reply on a consented thread the user has not
+   * answered stays in History until they do — the recoverable direction, since an unrescued row is in a list while an
+   * admitted one skipped the queue.
    */
   if (consentedByThread.size > 0) {
     const onThread = new Map<string, CounterpartyMessage[]>();

@@ -169,25 +169,20 @@ export function purgeLegacyMirror(factory?: IDBFactory): Promise<void> {
 }
 
 /**
- * EVERY MIRROR NAME THIS ORIGIN HAS EVER OPENED — the answer for a browser that will not
- * enumerate its own databases.
- *
- * `IDBFactory.databases()` is the only way to ask the browser what it holds, and it does not
- * exist everywhere (Firefox shipped it late; some privacy modes stub it away). Without it,
- * `clearAllMirrors` could only delete the legacy name and the caller's OWN mirror — and then
- * reported an empty survivor list, i.e. "this browser holds no mail", over an EARLIER account's
- * database that it had never even named. The header of `sign-out.ts` promises that this browser
- * forgets "including whatever an earlier account left behind"; on those engines it did not, and
- * said it had.
- *
- * So the store writes its own name down when it opens one. `localStorage` and not IndexedDB,
- * deliberately: the registry has to be readable when the databases cannot be listed, and a
- * synchronous read is what a sign-out's last act can rely on. It holds NAMES ONLY — an account
- * id is already in the mirror's name and in the `tf_owner` cookie beside it, so this discloses
- * nothing new — and it is swept by the same sign-out that empties it.
- *
- * Failure here is silent by design: a private mode that refuses writes leaves the registry
- * empty, which is exactly the state this function had before it existed.
+ * Every mirror name this origin has ever opened — the answer for a browser that will not enumerate its own databases.
+ * `IDBFactory.databases()` is the only way to ask the browser what it holds and does not exist everywhere (Firefox
+ * shipped it late; some privacy modes stub it away). Without it, `clearAllMirrors` could only delete the legacy name
+ * and the caller's own mirror — then reported an empty survivor list ("this browser holds no mail") over an earlier
+ * account's database it had never even named, breaking sign-out's promise that this browser forgets "including
+ * whatever an earlier account left behind".
+ */
+
+/**
+ * So the store writes its own name down when it opens one. `localStorage`, deliberately: the registry must be
+ * readable when the databases cannot be listed, and a synchronous read is what a sign-out's last act can rely on. It
+ * holds NAMES ONLY — the account id is already in the mirror's name and the `tf_owner` cookie beside it — and is
+ * swept by the same sign-out that empties it. Failure here is silent by design: a private mode that refuses writes
+ * leaves the registry empty, exactly the state this function had before it existed.
  */
 export const MIRROR_REGISTRY_PREFIX = "ohmail.mirror.";
 
@@ -355,26 +350,19 @@ function forgetMirrorNames(gone: readonly string[]): void {
 }
 
 /**
- * Delete EVERY mirror on this origin — the sign-out / "this is not my computer" path — and
- * ANSWER WITH THE NAMES THAT ARE STILL THERE.
- *
- * The delete set is the union of three sources: the legacy name, the caller's own mirror, and
- * — for the browsers that will not enumerate — every name this origin has opened
- * ({@link rememberMirror}). `databases()` is still used where it exists, because it is the only
- * source that can see a mirror written before the registry existed or by another tab.
- *
- * ── THE RETURN VALUE IS THE POINT, AND IT USED TO BE `void` ─────────────────────────────
- *
- * An IndexedDB delete is BLOCKED — not failed, not queued: blocked — while any other
- * connection holds the database open, and `deleteDatabase` resolved on `onblocked` as though
- * it had worked. Our OWN page yields (the store's `onversionchange` closes its handle), but a
- * SECOND TAB of this origin does not: sign out in tab A with tab B open on the mailbox, and
- * the browser reported a clean sign-out while every message, thread and screener decision
- * stayed on disk. On the shared or borrowed computer this whole path exists for, that is the
- * one promise it must not break silently.
- *
- * An empty `remaining` is the only thing that means "this browser holds no mirror" — and only
- * when `inventory` is `complete`. Anything else is the caller's to say out loud.
+ * Delete EVERY mirror on this origin — the sign-out / "this is not my computer" path — and answer with the names that
+ * are STILL THERE. The delete set unions three sources: the legacy name, the caller's own mirror, and every name this
+ * origin has opened ({@link rememberMirror}); `databases()` is still used where it exists — the only source that can
+ * see a mirror written before the registry existed or by another tab. The return value is the point, and it used to
+ * be `void`: an IndexedDB delete is BLOCKED — not failed, not queued — while any other connection holds the database
+ * open, and `deleteDatabase` resolved on `onblocked` as though it had worked.
+ */
+
+/**
+ * Our own page yields (the store's `onversionchange` closes its handle) but a second tab does not: sign out in tab A
+ * with tab B on the mailbox, and the browser reported a clean sign-out while every message, thread and screener
+ * decision stayed on disk. An empty `remaining` is the only thing that means "this browser holds no mirror" — and
+ * only when `inventory` is `complete`. Anything else is the caller's to say out loud.
  */
 export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Promise<WipeVerdict> {
   const f = factory ?? (typeof indexedDB !== "undefined" ? indexedDB : undefined);
@@ -426,30 +414,23 @@ export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Pro
   if (enumerable) {
     try {
       const present = new Set((await f.databases()).map((i) => i.name).filter((n): n is string => !!n));
-      // ── ENUMERATION MAY ONLY ADD, NEVER CLEAR ────────────────────────────────────────────
-      //
-      // This used to `delete` a name the second read did not list, which quietly made
-      // enumeration OUTRANK a direct `onblocked` — and `databases()` is the weaker witness of
-      // the two. It is specified to answer databases "in this origin", implementations have
-      // shipped it stale or partial, and a name omitted from it is not evidence that the
-      // database is gone; `onblocked` IS evidence that the delete did not happen. Trusting the
-      // weaker one erased a known survivor from the verdict and handed `signOut` a clean
-      // `cleared: true` over a mirror another tab was still holding — the defect this whole
-      // function was changed to close, reintroduced by its own read-back.
-      //
-      // So the read-back is one-directional: it can only find a name the delete's own outcome
-      // missed (a tab that re-opened the database between the delete and this read). The cost
-      // is over-reporting a `blocked` that completed a moment later, which is the safe
-      // direction — the remedy the copy names is "close the other tab and press again", and
-      // pressing again on an already-clean browser answers empty.
+      // ENUMERATION MAY ONLY ADD, NEVER CLEAR. This used to delete a name the second read did
+      // not list, letting `databases()` outrank a direct `onblocked` — and it is the weaker
+      // witness: implementations ship it stale or partial, so a name it omits is not evidence
+      // the database is gone, while `onblocked` IS evidence the delete did not happen. That
+      // handed `signOut` a clean `cleared: true` over a mirror another tab still held. The
+      // read-back is therefore one-directional: it can only find a name the delete's own
+      // outcome missed. The cost — over-reporting a `blocked` that completed a moment later —
+      // is the safe direction: the copy says "close the other tab and press again", and
+      // pressing again on a clean browser answers empty.
+
       // EVERY MIRROR THE BROWSER STILL ADMITS TO, not only the ones this call attempted.
-      //
-      // Scoping the read-back to `outcomes` assumed the delete set was the whole inventory,
-      // which is the assumption the first enumeration may have already broken: a listing that
-      // is partial on the first call and complete on the second surfaces a mirror this call
-      // never tried to delete — an earlier account's, older than the registry — and it would
-      // have been reported as absent because it was never attempted. A name the browser says is
-      // there is there, whoever asked for it.
+      // Scoping the read-back to `outcomes` assumed the delete set was the whole inventory —
+      // the assumption the first enumeration may have already broken. A listing partial on the
+      // first call and complete on the second surfaces a mirror this call never tried to
+      // delete (an earlier account's, older than the registry), and it would have been
+      // reported absent because it was never attempted. A name the browser says is there is
+      // there, whoever asked for it.
       for (const n of present) if (n === LEGACY_MIRROR_DB || n.startsWith(MIRROR_DB_PREFIX)) stillHere.add(n);
     } catch {
       /* the read-back is unavailable: the delete outcomes stand, and `inventory` was never
