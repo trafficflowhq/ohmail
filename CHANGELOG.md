@@ -13,6 +13,14 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The phone names the machine organizing your mailbox
+
+Settings → This phone said “Nothing organizes this mailbox” whether nothing did or another
+computer, a server or another phone held it — under a line describing what this phone does while
+it organizes. It now names the holder and says what this phone does instead: it reads the
+mailbox, moves nothing and screens nothing. Where another phone holds it, the line adds that a
+phone organizes only while ohmail is open on it.
+
 ### A self-hosted install's front door reports its version
 
 Dialled by its IP address instead of the name in `OHMAIL_ORIGIN`, the front door answered every
