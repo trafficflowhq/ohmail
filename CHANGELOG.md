@@ -38,6 +38,19 @@ it cannot hold a message for a time you picked. Send later is not offered there,
 says where to set the time instead: a computer, or ohmail Cloud. A phone paired to either is
 unchanged, and a message already waiting for its time can still be cancelled on the phone.
 
+### A .deb or .rpm install no longer offers an update it cannot install
+
+A build installed from the `.deb` or the `.rpm` cannot replace its own files, and the release feed
+publishes no package of either kind — but it offered the update anyway, downloaded the AppImage for
+your architecture, and then said it could not install it. It now reads how it was installed and
+does not ask the feed at all: the menu item says updates come from your package manager, Settings
+says the same beside the version you are running, and nothing is downloaded. Install the newer
+package over the old one, or use the AppImage, which updates itself.
+
+The same holds for a build from source and for an AppImage you have unpacked and are running from
+the extracted files — neither can replace itself, and neither says it can. The AppImage, the
+Windows setup and the macOS app are unchanged.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

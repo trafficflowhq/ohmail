@@ -44,6 +44,7 @@ import { agoStamp } from "../../webapp/app/shell/format.js";
 import {
   onUpdateState,
   updateButtonKey,
+  updateManagedElsewhere,
   updatePress,
   updateSentenceKey,
   updateState,
@@ -178,32 +179,41 @@ export function DesktopUpdate() {
       ? t("neverChecked")
       : t("lastChecked", { when: agoStamp(new Date(report.lastCheckedAt).toISOString(), Date.now()).rel });
 
+  /* NO CONTROL AT ALL ON A COPY SOMETHING ELSE UPDATES. A `.deb`, an `.rpm` or a Flatpak install
+     cannot replace its own files, so the shell never asks the feed for one — a "Check now" there
+     would be a button whose only honest state is disabled, sitting beside a sentence that has
+     already said where to go. The three that CAN install keep the control in every state,
+     disabled while a check runs (`updateButtonKey`). */
+  const managed = updateManagedElsewhere(report);
+
   return (
     <>
       <SettingsSubhead>{t("subhead")}</SettingsSubhead>
       <SettingsRow
         label={t("label")}
         description={sentence}
-        value={checked}
+        value={managed ? undefined : checked}
         control={
-          <Button
-            variant={report.canInstall ? "primary" : undefined}
-            /* A BUTTON LABEL MAY NOT WRAP. The row gives the description all the width it wants
-               and squeezes the control, so a two-line sentence beside "Check now" broke the words
-               across two lines — measured, not guessed. The rule belongs on the control rather
-               than in the row's stylesheet, which is shared by every settings surface. */
-            style={{ whiteSpace: "nowrap" }}
-            disabled={buttonKey === null || busy}
-            onClick={() => {
-              setBusy(true);
-              void press();
-            }}
-          >
-            {/* A press with nothing to press is DISABLED and still says what it would do — a
-                button that changes its own words while it is unavailable reads as broken. The
-                busy word is the one exception, because that is what just happened. */}
-            {busy ? t("working") : t(buttonKey ?? "check")}
-          </Button>
+          managed ? undefined : (
+            <Button
+              variant={report.canInstall ? "primary" : undefined}
+              /* A BUTTON LABEL MAY NOT WRAP. The row gives the description all the width it wants
+                 and squeezes the control, so a two-line sentence beside "Check now" broke the words
+                 across two lines — measured, not guessed. The rule belongs on the control rather
+                 than in the row's stylesheet, which is shared by every settings surface. */
+              style={{ whiteSpace: "nowrap" }}
+              disabled={buttonKey === null || busy}
+              onClick={() => {
+                setBusy(true);
+                void press();
+              }}
+            >
+              {/* A press with nothing to press is DISABLED and still says what it would do — a
+                  button that changes its own words while it is unavailable reads as broken. The
+                  busy word is the one exception, because that is what just happened. */}
+              {busy ? t("working") : t(buttonKey ?? "check")}
+            </Button>
+          )
         }
       />
     </>

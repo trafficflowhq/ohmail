@@ -12,10 +12,12 @@ import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
 import { DesktopUpdate } from "../src/DesktopUpdate.js";
 import {
+  INSTALL_KINDS,
   reportOfPayload,
   resetUpdateFeedForTests,
   subscriberCountForTests,
   updateButtonKey,
+  updateManagedElsewhere,
   updateSentenceKey,
   UPDATE_RESULTS,
   UPDATE_STATES,
@@ -102,6 +104,29 @@ const WIRE: Record<string, Wire> = {
   refused: {
     version: VERSION, state: "idle", offered: null,
     canCheck: true, canInstall: false, lastCheckedAt: CHECKED_AT, lastResult: "refused",
+  },
+
+  /* ── AN INSTALL SOMETHING ELSE UPDATES ──────────────────────────────────────────────────────
+     Exactly what the shell answers on a copy it will not check for: the flow never leaves `idle`,
+     no check has ever finished, and neither press is permitted — `updater.rs` folds the install
+     kind into `canCheck`/`canInstall` so the window cannot offer what the shell would refuse. */
+  deb: {
+    version: VERSION, state: "idle", offered: null, installKind: "deb",
+    canCheck: false, canInstall: false, lastCheckedAt: null, lastResult: "never",
+  },
+  flatpak: {
+    version: VERSION, state: "idle", offered: null, installKind: "flatpak",
+    canCheck: false, canInstall: false, lastCheckedAt: null, lastResult: "never",
+  },
+  unpackaged: {
+    version: VERSION, state: "idle", offered: null, installKind: "unpackaged",
+    canCheck: false, canInstall: false, lastCheckedAt: null, lastResult: "never",
+  },
+  // The control: an AppImage, which is the same flow this file has always driven, now naming its
+  // kind out loud.
+  appImageReady: {
+    version: VERSION, state: "ready", offered: NEXT, installKind: "appimage",
+    canCheck: false, canInstall: true, lastCheckedAt: CHECKED_AT, lastResult: "offered",
   },
 };
 
@@ -325,6 +350,96 @@ describe("every state the update pane can be in renders, and says the true thing
   });
 });
 
+/**
+ * ═══ AN INSTALL SOMETHING ELSE UPDATES ═══════════════════════════════════════════════════════
+ *
+ * A `.deb`, an `.rpm` and a Flatpak cannot replace their own files, and the release feed carries
+ * no package of either kind. Until this slice they were offered the AppImage for their
+ * architecture anyway: the app fetched ~130 MB and then said it could not install it, which is
+ * the sentence a person met after pressing a button that promised a restart.
+ *
+ * The shell now names how it was installed and does not ask the feed at all on those copies — so
+ * what this pane has to draw is a permanently `idle` flow with no check ever recorded, where
+ * "no update check has finished yet" would read as a fault and "Check now" would be a control
+ * whose only honest state is disabled. It says where updates come from instead, and offers
+ * nothing to press.
+ */
+describe("an install ohmail does not update says so, and offers nothing to press", () => {
+  for (const [name, wire, key] of [
+    ["a .deb or .rpm", "deb", "managedPackage"],
+    ["a Flatpak", "flatpak", "managedFlatpak"],
+    ["a build from source, or an unpacked AppImage", "unpackaged", "managedUnpackaged"],
+  ] as const) {
+    it(`${name}: the sentence, and no control at all`, async () => {
+      shell(WIRE[wire]!);
+      await mount();
+      expect(hostEl.textContent).toContain(copy[key]!.replace("{version}", VERSION));
+      // NO BUTTON — not a disabled one. There is nothing this pane could offer that would work.
+      expect(button(), "a control was drawn beside a sentence saying to go elsewhere").toBeNull();
+      // …and no "Not checked yet" beside it either: a check that will never run is not a state
+      // worth reporting, and reads as a fault.
+      expect(hostEl.textContent).not.toContain(copy.neverChecked!);
+      expect(hostEl.textContent).not.toContain("No update check has finished yet");
+      // Never a claim about currency, in either direction.
+      expect(hostEl.textContent).not.toContain("is the newest release");
+      expect(hostEl.textContent).not.toMatch(/could not install|Restart to install/);
+      capture(`9-${wire}`);
+    });
+  }
+
+  it("the sentence points somewhere, and it is the right somewhere", async () => {
+    shell(WIRE.deb!);
+    await mount();
+    expect(hostEl.textContent, "a packaged install is sent to its package manager")
+      .toContain("install the newer package");
+    await unmount();
+
+    shell(WIRE.flatpak!);
+    await mount();
+    expect(hostEl.textContent, "a Flatpak is sent to the software centre, not to a package manager")
+      .toContain("software centre");
+    expect(hostEl.textContent).not.toContain("install the newer package");
+  });
+
+  it("German says it too, and says something different", async () => {
+    shell(WIRE.deb!);
+    await mount("de");
+    const german = (de as { update: Record<string, string> }).update;
+    expect(hostEl.textContent).toContain(german.managedPackage!.replace("{version}", VERSION));
+    expect(button()).toBeNull();
+    // ANTI-VACUITY: the German sentence is not the English one.
+    expect(german.managedPackage).not.toBe(copy.managedPackage);
+  });
+
+  /**
+   * THE POSITIVE CONTROL, and this file would be worth little without it: an AppImage is offered
+   * exactly what it always was. The gate is about the three installs that cannot replace
+   * themselves and must not touch the three that can.
+   */
+  it("an AppImage still offers the restart", async () => {
+    shell(WIRE.appImageReady!);
+    await mount();
+    expect(hostEl.textContent).toContain(`ohmail ${NEXT} is ready`);
+    expect(button()!.textContent).toBe(copy.restart!);
+    expect(button()!.disabled).toBe(false);
+    await click();
+    expect(pressed).toBe(1);
+  });
+
+  /**
+   * A SHELL THAT NAMES NO KIND IS NOT A MANAGED INSTALL. An older build answers no `installKind`
+   * at all, and this bundle must then behave exactly as it did before the field existed — a
+   * degrade to the sentences the flow alone decides, never to a claim about a door nobody named.
+   */
+  it("a shell that names no install kind keeps the old surface", async () => {
+    shell(WIRE.upToDate!);
+    await mount();
+    expect(hostEl.textContent).toContain(`ohmail ${VERSION} is the newest release.`);
+    expect(button()!.textContent).toBe(copy.check!);
+    expect(button()!.disabled).toBe(false);
+  });
+});
+
 // ═══ WHAT PRESSING DOES, AND WHAT ARRIVES BACK ════════════════════════════════════════════════
 
 describe("the pane is the same flow as the menu item, not a second one", () => {
@@ -541,6 +656,20 @@ describe("what the window will accept from a shell that may be a version ahead",
     }
   });
 
+  it("degrades an install kind it has never heard of to the harmless answer", () => {
+    /* A shell a version ahead naming a kind this bundle does not know — a Snap, a port to some
+       other package format. "unknown" is the SAFE side: the pane falls back to the sentences the
+       flow decides and the shell's own `canCheck`/`canInstall` still govern the control, so this
+       window can neither claim a door nobody named nor hide one. */
+    const ahead = reportOfPayload({ ...good, installKind: "snap" })!;
+    expect(ahead.installKind).toBe("unknown");
+    expect(updateManagedElsewhere(ahead)).toBe(false);
+    // A missing field reads the same way, which is what an older shell answers.
+    expect(reportOfPayload(good)!.installKind).toBe("unknown");
+    // …and a kind it DOES know is carried through.
+    expect(reportOfPayload({ ...good, installKind: "rpm" })!.installKind).toBe("rpm");
+  });
+
   it("degrades an unknown state and an unknown result instead of throwing", () => {
     const ahead = reportOfPayload({ ...good, state: "reticulating", lastResult: "vibes" })!;
     expect(ahead.state).toBe("unknown");
@@ -572,7 +701,9 @@ describe("the two pure mappings", () => {
     const keys = new Set<string>();
     for (const state of UPDATE_STATES) {
       for (const lastResult of UPDATE_RESULTS) {
-        keys.add(updateSentenceKey({ ...base, state, lastResult } as UpdateReport));
+        for (const installKind of INSTALL_KINDS) {
+          keys.add(updateSentenceKey({ ...base, state, lastResult, installKind } as UpdateReport));
+        }
       }
     }
     keys.add("check");
@@ -615,6 +746,40 @@ describe("the two pure mappings", () => {
     expect(quiet("offered")).toBe("unchecked");
     // A state this bundle cannot name still has a true last result to report.
     expect(updateSentenceKey({ ...base, state: "unknown", lastResult: "refused" })).toBe("refused");
+  });
+
+  it("the install beats the flow, in every state a shell could report", () => {
+    /* On a copy the shell will not check for, the flow is permanently `idle`/`never` — so this is
+       a claim about which fact leads rather than a race between two. It is asserted across every
+       state anyway: a future path that moved the flow on such an install must not be able to put
+       "ready to install" in front of somebody who cannot install it. */
+    for (const state of UPDATE_STATES) {
+      for (const lastResult of UPDATE_RESULTS) {
+        const on = (installKind: UpdateReport["installKind"]) =>
+          updateSentenceKey({ ...base, state, lastResult, installKind });
+        expect(on("deb")).toBe("managedPackage");
+        expect(on("rpm")).toBe("managedPackage");
+        expect(on("linuxPackage")).toBe("managedPackage");
+        expect(on("flatpak")).toBe("managedFlatpak");
+        expect(on("unpackaged")).toBe("managedUnpackaged");
+        // …and the three that CAN install are decided by the flow, exactly as before.
+        for (const kind of ["appimage", "windowsSetup", "macBundle", "unknown"] as const) {
+          expect(updateSentenceKey({ ...base, state, lastResult, installKind: kind }))
+            .toBe(updateSentenceKey({ ...base, state, lastResult, installKind: "unknown" }));
+        }
+      }
+    }
+  });
+
+  it("exactly five of the kinds are updated by something other than ohmail", () => {
+    const managed = INSTALL_KINDS.filter((installKind) =>
+      updateManagedElsewhere({ ...base, installKind }),
+    );
+    expect(managed).toEqual(["deb", "rpm", "linuxPackage", "flatpak", "unpackaged"]);
+    // The three with an installer, and the shell that named none, keep the pane's control.
+    for (const installKind of ["appimage", "windowsSetup", "macBundle", "unknown"] as const) {
+      expect(updateManagedElsewhere({ ...base, installKind })).toBe(false);
+    }
   });
 
   it("the button offers exactly what the shell permits, and nothing when it permits nothing", () => {

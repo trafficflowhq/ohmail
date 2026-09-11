@@ -207,6 +207,192 @@ pub enum Press {
     Nothing,
 }
 
+/// HOW THIS COPY WAS INSTALLED — and therefore whether it can replace its own files.
+///
+/// Only three of these can: `tauri-plugin-updater` rewrites the file `$APPIMAGE` names, runs the
+/// Windows setup, and swaps the macOS bundle. It has no path that can apply this project's
+/// payload to a `.deb`, an `.rpm` or a Flatpak, and the feed carries no package of either kind on
+/// purpose — so those installs used to fetch a release the press could not apply and say so
+/// afterwards. Read from the machine and never from configuration: an install cannot be asked to
+/// lie about itself. [`classify`] is the whole decision and [`Facts`] its input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstallKind {
+    /// The AppImage, running through its own runtime — the one Linux install that replaces itself.
+    AppImage,
+    /// Installed from the `.deb`.
+    Deb,
+    /// Installed from the `.rpm`.
+    Rpm,
+    /// A Linux binary under a system prefix that this project's bundler never packaged — a
+    /// distribution's own build of this source.
+    LinuxPackage,
+    /// Running inside a Flatpak sandbox.
+    Flatpak,
+    /// Installed by the Windows setup.
+    WindowsSetup,
+    /// The macOS application bundle.
+    MacBundle,
+    /// A Linux binary that is none of the above: built from source, or an AppImage somebody
+    /// unpacked and is running from the extracted tree.
+    Unpackaged,
+}
+
+impl InstallKind {
+    /// The wire name the window switches on. Written out rather than derived, `CheckResult`'s
+    /// reason: a rename in Rust must not silently change what `src/update.ts` reads.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InstallKind::AppImage => "appimage",
+            InstallKind::Deb => "deb",
+            InstallKind::Rpm => "rpm",
+            InstallKind::LinuxPackage => "linuxPackage",
+            InstallKind::Flatpak => "flatpak",
+            InstallKind::WindowsSetup => "windowsSetup",
+            InstallKind::MacBundle => "macBundle",
+            InstallKind::Unpackaged => "unpackaged",
+        }
+    }
+
+    /// Can this install replace its own files? The gate, and the three that can are exactly the
+    /// three the plugin has an installer for.
+    pub fn self_applies(self) -> bool {
+        matches!(
+            self,
+            InstallKind::AppImage | InstallKind::WindowsSetup | InstallKind::MacBundle
+        )
+    }
+
+    /// What the menu item says on an install that cannot update itself, or `None` where the flow's
+    /// own label is the right one. The item stays in the bar and is disabled rather than removed:
+    /// somebody looking for "Check for Updates…" is asking a question, and an answer beats an
+    /// absence.
+    pub fn menu_sentence(self) -> Option<&'static str> {
+        match self {
+            InstallKind::AppImage | InstallKind::WindowsSetup | InstallKind::MacBundle => None,
+            InstallKind::Deb | InstallKind::Rpm | InstallKind::LinuxPackage => {
+                Some("Updates Come from Your Package Manager")
+            }
+            InstallKind::Flatpak => Some("Updates Come from Your Software Centre"),
+            InstallKind::Unpackaged => Some("This Build Does Not Update Itself"),
+        }
+    }
+}
+
+/// Which platform this binary was compiled for. A value rather than `cfg!` inside [`classify`], so
+/// one table drives all three from one test run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Os {
+    Linux,
+    Windows,
+    Mac,
+}
+
+const HOST_OS: Os = if cfg!(target_os = "windows") {
+    Os::Windows
+} else if cfg!(target_os = "macos") {
+    Os::Mac
+} else {
+    Os::Linux
+};
+
+/// Everything [`classify`] is allowed to know, read once by [`read_facts`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Facts {
+    /// What the BUNDLER wrote into this binary, translated from tauri's own `BundleType`. It is
+    /// present in everything this project ships — the shipped `.deb`'s binary carries the deb
+    /// mark and the AppImage's carries the AppImage one, patched in at packaging time — and it is
+    /// the same value `tauri-plugin-updater` switches ITS installer on, so the kind this file
+    /// gates on and the installer that would have run cannot disagree. `None` on a build the
+    /// bundler never packaged.
+    pub bundled_as: Option<InstallKind>,
+    /// Is `$APPIMAGE` set? The runtime sets it to the file it mounted, and the plugin takes it as
+    /// the path to rewrite.
+    pub appimage_env: bool,
+    /// Does `/.flatpak-info` exist? The marker inside the sandbox, and the reliable one —
+    /// `FLATPAK_ID` is not always inherited.
+    pub flatpak_info: bool,
+    /// Is the running executable under a system prefix (`/usr` or `/opt`)?
+    pub system_path: bool,
+    pub os: Os,
+}
+
+/// The one decision, as a pure function of what the machine says. The ORDER is the design:
+///
+///  1. The sandbox marker wins outright — a Flatpak is a Flatpak whatever a bundler wrote, and
+///     the software centre is what updates it.
+///  2. The bundler's record next, for every kind but the AppImage, and ahead of `$APPIMAGE`
+///     because that variable is INHERITED: a process started from a terminal that is itself
+///     inside an AppImage sees it set, and a packaged install must not be talked into replacing a
+///     stranger's file by an environment it did not set.
+///  3. `$APPIMAGE` then decides the AppImage ALONE, not together with the bundler's mark. An
+///     AppImage whose mark went missing would otherwise stop updating with nothing on screen to
+///     say so, and an extracted copy — which has no file to rewrite — is exactly what the
+///     variable's absence names.
+///  4. Under a system prefix with no mark: a distribution built this and owns the files.
+pub fn classify(facts: Facts) -> InstallKind {
+    if facts.flatpak_info {
+        return InstallKind::Flatpak;
+    }
+    if let Some(kind) = facts.bundled_as {
+        if kind != InstallKind::AppImage {
+            return kind;
+        }
+    }
+    match facts.os {
+        Os::Linux if facts.appimage_env => InstallKind::AppImage,
+        Os::Linux if facts.system_path => InstallKind::LinuxPackage,
+        Os::Linux => InstallKind::Unpackaged,
+        Os::Windows => InstallKind::WindowsSetup,
+        Os::Mac => InstallKind::MacBundle,
+    }
+}
+
+/// Is this path under a system prefix? Compared by PATH COMPONENT rather than as a string prefix,
+/// which is what keeps a mounted AppImage out: its executable sits at
+/// `/tmp/.mount_xxxxxx/usr/bin/ohmail`, which contains `/usr/bin` and does not start with it.
+pub fn path_is_system(path: &std::path::Path) -> bool {
+    path.starts_with("/usr") || path.starts_with("/opt")
+}
+
+/// Translate the bundler's record. Exhaustive on purpose: a new `BundleType` upstream is a compile
+/// error here rather than a kind that quietly reads as "not packaged".
+fn bundled_as() -> Option<InstallKind> {
+    use tauri::utils::config::BundleType;
+    match tauri::utils::platform::bundle_type()? {
+        BundleType::Deb => Some(InstallKind::Deb),
+        BundleType::Rpm => Some(InstallKind::Rpm),
+        BundleType::AppImage => Some(InstallKind::AppImage),
+        // One kind for both Windows installers: they differ in what runs the payload, not in
+        // whether this app can be replaced by one.
+        BundleType::Msi | BundleType::Nsis => Some(InstallKind::WindowsSetup),
+        // A `.dmg` installs a `.app`, and tauri's own reader answers `App` for it.
+        BundleType::App | BundleType::Dmg => Some(InstallKind::MacBundle),
+    }
+}
+
+fn read_facts() -> Facts {
+    Facts {
+        bundled_as: bundled_as(),
+        // A variable set to nothing is not a path to an AppImage.
+        appimage_env: std::env::var_os("APPIMAGE").is_some_and(|value| !value.is_empty()),
+        // The ONE disk read this module makes, and `desktop-shell.test.ts` holds it to exactly
+        // this one: an updater that touched the filesystem anywhere else would be applying an
+        // update by hand, outside the plugin that verifies payloads.
+        flatpak_info: std::fs::metadata("/.flatpak-info").is_ok(),
+        system_path: std::env::current_exe()
+            .map(|exe| path_is_system(&exe))
+            .unwrap_or(false),
+        os: HOST_OS,
+    }
+}
+
+/// How this copy was installed — read once, for the life of the process. Cached because it is
+/// asked on every transition, and because a copy is not re-installed underneath itself.
+pub fn install_kind() -> InstallKind {
+    static KIND: std::sync::OnceLock<InstallKind> = std::sync::OnceLock::new();
+    *KIND.get_or_init(|| classify(read_facts()))
+}
+
 /// The flow, as a value: what stage it is in, and whether the one prompt has been answered.
 ///
 /// Deliberately pure — it performs nothing, reaches nothing and has no `AppHandle` — so the whole
@@ -304,6 +490,18 @@ impl Flow {
     }
 }
 
+/// WHAT THE MENU ITEM SAYS, and whether it can be pressed — the flow and the install, composed.
+///
+/// Pure, so `updater_tests.rs` drives every pair, and the only place the two are put together:
+/// an install that cannot replace its own files says so in every stage, because on such a copy
+/// no stage but `Idle` is ever reached.
+pub fn menu_text(kind: InstallKind, flow: &Flow) -> (String, bool) {
+    match kind.menu_sentence() {
+        Some(sentence) => (sentence.to_string(), false),
+        None => (flow.menu_label(), flow.menu_enabled()),
+    }
+}
+
 /// What the LAST COMPLETED CHECK found — a different question from [`Stage`], and it has to be.
 ///
 /// The stage says where the flow is right now, and it collapses two facts a person would want
@@ -397,7 +595,12 @@ fn now_unix_ms() -> u64 {
 /// `canCheck` and `canInstall` are the SAME two questions the menu item asks ([`Flow::press`]),
 /// so the pane and the bar cannot offer different things — one flow, two surfaces, never two
 /// policies.
-pub fn report(flow: &Flow, last: Option<Check>, installed: &str) -> serde_json::Value {
+pub fn report(
+    flow: &Flow,
+    last: Option<Check>,
+    installed: &str,
+    kind: InstallKind,
+) -> serde_json::Value {
     let (state, offered) = match flow.stage() {
         Stage::Idle => ("idle", None),
         Stage::Checking => ("checking", None),
@@ -409,8 +612,11 @@ pub fn report(flow: &Flow, last: Option<Check>, installed: &str) -> serde_json::
         "version": installed,
         "state": state,
         "offered": offered,
-        "canCheck": flow.press() == Press::Check,
-        "canInstall": flow.press() == Press::Restart,
+        "installKind": kind.as_str(),
+        // THE KIND IS FOLDED IN HERE, so the pane and the strip cannot offer a press this module
+        // would refuse. One flow, one install, one policy — never two.
+        "canCheck": flow.press() == Press::Check && kind.self_applies(),
+        "canInstall": flow.press() == Press::Restart && kind.self_applies(),
         "lastCheckedAt": last.map(|c| c.at_unix_ms),
         "lastResult": last.map(|c| c.result.as_str()).unwrap_or("never"),
     })
@@ -475,7 +681,7 @@ pub fn update_state<R: Runtime>(app: AppHandle<R>) -> serde_json::Value {
     let state = app.state::<Updater<R>>();
     let flow = lock(&state.flow);
     let last = *lock(&state.last);
-    report(&flow, last, env!("CARGO_PKG_VERSION"))
+    report(&flow, last, env!("CARGO_PKG_VERSION"), install_kind())
 }
 
 /// SETTINGS → UPDATES, THE PRESS. Exactly what picking the menu item does, and nothing else.
@@ -547,6 +753,15 @@ fn pressed<R: Runtime>(app: AppHandle<R>) {
 /// Check the pinned feed and, if there is a newer signed release, fetch it. Runs
 /// off the main thread so the menu returns at once.
 fn check<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
+    /* AN INSTALL THIS APP CANNOT REPLACE IS NEVER ASKED ABOUT, and this is the only door: the
+       launch check, the press, the daily poll and the failure dialog's Try-again all arrive here.
+       A `.deb`, an `.rpm` or a Flatpak used to reach the feed, be offered the AppImage for its
+       architecture, download it and fail at the install — so the fetch stops before it starts and
+       the surfaces say what is true instead (`InstallKind::menu_sentence`, and the `installKind`
+       the window reads). Nothing is suppressed on the three kinds that CAN install. */
+    if !install_kind().self_applies() {
+        return;
+    }
     {
         let state = app.state::<Updater<R>>();
         let mut flow = lock(&state.flow);
@@ -821,7 +1036,9 @@ fn relabel<R: Runtime>(app: &AppHandle<R>) {
     let (label, enabled, report) = {
         let flow = lock(&state.flow);
         let last = *lock(&state.last);
-        (flow.menu_label(), flow.menu_enabled(), report(&flow, last, env!("CARGO_PKG_VERSION")))
+        let kind = install_kind();
+        let (label, enabled) = menu_text(kind, &flow);
+        (label, enabled, report(&flow, last, env!("CARGO_PKG_VERSION"), kind))
     };
     // A bar that has not been built yet (this runs before `menu.rs` hands the item over on a very
     // early check) simply has nothing to relabel; `adopt_menu_item` relabels once on arrival. On a

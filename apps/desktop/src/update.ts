@@ -76,10 +76,57 @@ export const UPDATE_RESULTS = ["never", "upToDate", "refused", "failed", "offere
 
 export type UpdateResult = (typeof UPDATE_RESULTS)[number];
 
+/**
+ * HOW THIS COPY WAS INSTALLED — the shell's `InstallKind`, and the reason this pane can say
+ * something true on a copy that will never be offered an update.
+ *
+ * Only three of these replace their own files: the AppImage, the Windows setup and the macOS
+ * bundle. A `.deb`, an `.rpm` and a Flatpak cannot, so the shell does not ask the feed on them at
+ * all — which is what makes `idle` + `never` the permanent state there, and why the sentence has
+ * to come from the kind rather than from the flow. `unknown` is a shell that did not name one: an
+ * older build, or one a version ahead. It reads as "nothing special", which keeps this bundle's
+ * behaviour on such a shell exactly what it was.
+ */
+export const INSTALL_KINDS = [
+  "appimage",
+  "deb",
+  "rpm",
+  "linuxPackage",
+  "flatpak",
+  "windowsSetup",
+  "macBundle",
+  "unpackaged",
+  "unknown",
+] as const;
+
+export type InstallKind = (typeof INSTALL_KINDS)[number];
+
+/**
+ * The sentence each install that cannot update itself leads with, by message key.
+ *
+ * A table rather than a boolean, because the three doors are different places: a package manager,
+ * a software centre, and — for a build from source or an unpacked AppImage — nowhere but a fresh
+ * download. A copy told to look in the wrong one has been sent somewhere the release is not.
+ */
+export const MANAGED_SENTENCE_KEYS: Partial<Record<InstallKind, string>> = {
+  deb: "managedPackage",
+  rpm: "managedPackage",
+  linuxPackage: "managedPackage",
+  flatpak: "managedFlatpak",
+  unpackaged: "managedUnpackaged",
+};
+
+/** Is this install updated by something other than ohmail? */
+export function updateManagedElsewhere(report: UpdateReport): boolean {
+  return MANAGED_SENTENCE_KEYS[report.installKind] !== undefined;
+}
+
 export interface UpdateReport {
   /** The build running in this window. */
   version: string;
   state: UpdateState;
+  /** How this copy was installed, and so whether an update could ever be installed from here. */
+  installKind: InstallKind;
   /** The version being fetched or waiting, in the two states that have one. */
   offered: string | null;
   /** Whether a press would start a check. False while one is running and while a payload waits. */
@@ -134,6 +181,10 @@ export function reportOfPayload(payload: unknown): UpdateReport | null {
   return {
     version,
     state: oneOf(raw.state, UPDATE_STATES) ?? "unknown",
+    /* A kind this bundle does not know degrades to "unknown", which is the SAFE side: it drops
+       this window back to the sentences the flow alone decides, rather than claiming a door
+       nobody named. */
+    installKind: oneOf(raw.installKind, INSTALL_KINDS) ?? "unknown",
     offered: typeof raw.offered === "string" && raw.offered !== "" ? raw.offered : null,
     canCheck: raw.canCheck === true,
     canInstall: raw.canInstall === true,
@@ -290,6 +341,11 @@ export function subscriberCountForTests(): number {
  * more useful than "checked two minutes ago", and a payload waiting is more useful than either.
  */
 export function updateSentenceKey(report: UpdateReport): string {
+  /* THE INSTALL BEATS THE FLOW, and it has to: on a copy the shell will not check for, the flow
+     stays `idle` with no check ever recorded, and "no update check has finished yet" would read
+     as a fault where the truth is that this copy is updated somewhere else. */
+  const managed = MANAGED_SENTENCE_KEYS[report.installKind];
+  if (managed !== undefined) return managed;
   switch (report.state) {
     case "checking":
       return "checking";

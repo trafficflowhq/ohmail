@@ -1700,12 +1700,97 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/if user_initiated \{\s*say_it_failed/);
   });
 
+  /**
+   * AN INSTALL THIS APP CANNOT REPLACE IS NEVER ASKED ABOUT — the wiring, which no unit test can
+   * reach.
+   *
+   * `InstallKind`, `classify` and `menu_text` are pure and `updater_tests.rs` drives every kind
+   * through them. What those tests cannot see is WHERE the gate sits, and the whole fix is that it
+   * sits at the one door: `check` is what the launch check, the settings press, the daily poll and
+   * the failure dialog's Try-again all call, so one refusal there covers all four. A gate added to
+   * three of them instead would leave the fourth fetching a release it cannot install.
+   */
+  it("gates the feed at the one door every check goes through", () => {
+    const body = /fn check<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
+    expect(body, "the check helper was not found — every assertion below would be vacuous")
+      .toContain("may_start_check");
+    expect(body, "the feed is reached on an install that cannot apply the payload")
+      .toMatch(/if !install_kind\(\)\.self_applies\(\) \{\s*return;\s*\}/);
+    /* …and it runs BEFORE the flow is moved. Asserted against the line that moves it
+       (`Signal::CheckStarted`) rather than against the flow's own guard, because a gate placed
+       between those two is still ahead of `may_start_check` and already wrong: the stage would go
+       to `Checking`, the bar would relabel to "Checking for Updates…", and the refusal would then
+       return and leave it there for the life of the window. */
+    expect(body, "the check-started signal was not found in this body")
+      .toContain("Signal::CheckStarted");
+    expect(body.indexOf("self_applies"), "the gate runs after the flow has already moved")
+      .toBeLessThan(body.indexOf("Signal::CheckStarted"));
+
+    // The four callers, all of them through `check` and none of them reaching the plugin itself.
+    expect(updater).toMatch(/pub fn on_launch<R: Runtime>[^}]*check\(app\.clone\(\), false\)/);
+    expect(updater).toMatch(/pub fn update_poll<R: Runtime>[^}]*check\(app, false\)/);
+    expect(updater).toMatch(/Press::Check => check\(app, true\)/);
+    expect(updater).toMatch(/check\(retry, true\)/);
+    // One `app.updater()` in the module: the flow's own run, behind the gate.
+    expect([...updater.matchAll(/app\.updater\(\)/g)]).toHaveLength(1);
+
+    /* THE BAR AND THE PANE READ THE SAME INSTALL. `relabel` is the one place both surfaces are
+       written, so the kind is folded in there rather than at each of them — the failure mode of
+       two readers is a pane saying "updates come from your package manager" beside a bar offering
+       to check. */
+    const relabel = /fn relabel<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
+    expect(relabel, "the relabel helper was not found").toContain("set_text");
+    expect(relabel).toContain("menu_text(kind, &flow)");
+    expect(relabel).toMatch(/report\(&flow, last, env!\("CARGO_PKG_VERSION"\), kind\)/);
+  });
+
+  /**
+   * THE KIND'S NAMES ARE WRITTEN DOWN TWICE, in two languages that share no artifact to import
+   * one from — the arrangement the event names and the check results already have. A drift is not
+   * a crash here either: the window reads a name it does not know, degrades it to "unknown", and
+   * quietly shows a packaged install the sentences of a self-updating one.
+   */
+  it("names every install kind the same way in the shell and in the window", () => {
+    const window = read("src/update.ts");
+    const kinds = [
+      "appimage",
+      "deb",
+      "rpm",
+      "linuxPackage",
+      "flatpak",
+      "windowsSetup",
+      "macBundle",
+      "unpackaged",
+    ];
+    for (const kind of kinds) {
+      expect(updater, `the shell does not answer ${kind}`).toContain(`"${kind}"`);
+      expect(window, `the window does not know ${kind}`).toContain(`"${kind}"`);
+    }
+    // Both lists are CLOSED: neither side may carry a ninth name the other has never heard of.
+    const shellNames = [...updater.matchAll(/InstallKind::\w+ => "(\w+)"/g)].map((m) => m[1]);
+    expect(shellNames.sort()).toEqual([...kinds].sort());
+    const windowList = /export const INSTALL_KINDS = \[([\s\S]*?)\] as const;/.exec(window)?.[1];
+    expect(windowList, "the window's list was not found").toBeTruthy();
+    const windowNames = [...(windowList ?? "").matchAll(/"(\w+)"/g)].map((m) => m[1]);
+    // The window carries one more: "unknown", for a shell that named a kind it has never heard of.
+    expect(windowNames.sort()).toEqual([...kinds, "unknown"].sort());
+    expect(updater, "the report does not carry the install kind").toContain('"installKind"');
+  });
+
   it("reaches the network only through the plugin — no hand-rolled socket", () => {
     // updater.rs is ALLOWED to reach the network (that is its job), but only via
     // tauri-plugin-updater; it must not open a raw socket or a second HTTP client.
     expect(updater).toMatch(/tauri_plugin_updater/);
     expect(updater).not.toMatch(/reqwest|hyper|ureq|curl|TcpStream|TcpListener|UnixStream/);
-    expect(updater).not.toMatch(/std::(fs|net|process)/);
+    expect(updater).not.toMatch(/std::(net|process)/);
+    /* ONE DISK READ, AND IT IS NAMED. `install_kind` stats `/.flatpak-info` to tell a sandboxed
+       install — which its software centre updates — from one this app may replace. That is the
+       only filesystem call this module makes: an updater writing files outside the plugin would
+       be applying an update by hand, with none of the verification that lives there. Asserted as
+       the WHOLE list rather than as an allowance, so a second read cannot slip in beside it. */
+    const disk = [...updater.matchAll(/std::fs::[a-z_]+/g)].map((m) => m[0]);
+    expect(disk).toEqual(["std::fs::metadata"]);
+    expect(updater).toMatch(/std::fs::metadata\("\/\.flatpak-info"\)/);
   });
 
   /**

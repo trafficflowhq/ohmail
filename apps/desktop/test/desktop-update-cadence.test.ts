@@ -48,6 +48,11 @@ const report = (over: Partial<UpdateReport> = {}): UpdateReport => ({
   version: VERSION,
   state: "idle",
   offered: null,
+  /* AN APPIMAGE, because that is the install this whole cadence is about: the three kinds that can
+     replace their own files are the only ones the shell checks for at all, and on Linux the
+     AppImage is the one of them. A copy a package manager owns answers `canCheck: false` for the
+     life of the process — the case at the bottom of this file. */
+  installKind: "appimage",
   canCheck: true,
   canInstall: false,
   lastCheckedAt: START,
@@ -860,5 +865,55 @@ describe("the cadence, running", () => {
     clock.at += 3 * CHECK_EVERY_MS;
     await vi.advanceTimersByTimeAsync(3 * CHECK_EVERY_MS);
     expect(s.polls).toEqual([]);
+  });
+
+  /**
+   * AN INSTALL SOMETHING ELSE UPDATES IS NEVER ASKED ABOUT, AND NEVER ASKS.
+   *
+   * A `.deb`, an `.rpm` or a Flatpak cannot replace its own files, so the shell does not reach the
+   * feed on those copies at all and answers `canCheck: false` for the life of the process. Two
+   * things follow, and both are what this cadence is for: it presses NOTHING — no request every
+   * quarter hour, no daily one either — and it says nothing, because there is no offer. The
+   * sentence such a copy needs is a fact about the install rather than about a release, and the
+   * settings pane says it (`desktop-update-pane.test.tsx`).
+   *
+   * Driven for a week of wall clock, which is the window this cadence's whole design is about.
+   */
+  it("never asks, and never speaks, on a copy the shell will not check for", async () => {
+    vi.useFakeTimers();
+    const clock = { at: START };
+    for (const installKind of ["deb", "rpm", "linuxPackage", "flatpak", "unpackaged"] as const) {
+      const managed = report({
+        installKind,
+        canCheck: false,
+        canInstall: false,
+        lastCheckedAt: null,
+        lastResult: "never",
+      });
+      expect(checkDue(managed, clock.at + 7 * 24 * HOUR, START)).toBe(false);
+      expect(offerOf(managed, true)).toBeNull();
+      expect(offerOf(managed, false)).toBeNull();
+
+      const s = shell(() => managed);
+      const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+      clock.at += 7 * 24 * HOUR;
+      await vi.advanceTimersByTimeAsync(7 * 24 * HOUR);
+      expect(s.polls, `${installKind}: the window asked the feed anyway`).toEqual([]);
+      expect(currentUpdateOffer(), `${installKind}: a strip was raised`).toBeNull();
+      stop();
+      resetUpdateStoreForTests();
+    }
+
+    // THE POSITIVE CONTROL. The same week, the same clock, on an AppImage: the cadence does ask.
+    // The stamp is PINNED at the instant the cadence is armed rather than read from the moving
+    // clock — a shell that answers "checked just now" at every tick is never due, and the control
+    // would then pass for the same reason the case above does.
+    const armed = clock.at;
+    const s = shell(() => report({ installKind: "appimage", lastCheckedAt: armed }));
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+    clock.at += 7 * 24 * HOUR;
+    await vi.advanceTimersByTimeAsync(7 * 24 * HOUR);
+    expect(s.polls.length, "the AppImage stopped being asked about too").toBeGreaterThan(0);
+    stop();
   });
 });

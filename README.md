@@ -411,14 +411,20 @@ browser engine already has it.
 > cannot answer.
 
 > [!IMPORTANT]
-> **A packaged install cannot update itself — and it will still offer to.** A
-> build installed from the `.deb` or the `.rpm` asks the release feed for a
-> package of its own kind, does not find one (the feed publishes AppImages, one
-> per architecture), falls back to the AppImage for its architecture, downloads
-> it, and then reports *"ohmail could not install the update."* Nothing on disk
-> is touched and nothing is broken. Update by installing the new package over the
-> old one — or use the **AppImage**, which is the Linux build that applies its
-> own updates.
+> **A packaged install does not update itself, and no longer offers to.** A build
+> installed from the `.deb` or the `.rpm` reads how it was installed and does not
+> ask the release feed at all: "Check for Updates" is in the menu, disabled, and
+> says *"Updates Come from Your Package Manager"*, and Settings → About says the
+> same thing beside the version you are running. Update by installing the new
+> package over the old one — or use the **AppImage**, which is the Linux build
+> that applies its own updates.
+>
+> It used to offer, and this release is where that stops. A packaged build asked
+> the feed for a package of its own kind, did not find one (the feed publishes
+> AppImages, one per architecture), fell back to the AppImage for its
+> architecture, downloaded it, and then reported *"ohmail could not install the
+> update."* Nothing on disk was touched — but it was a button that promised a
+> restart, and 130 MB of download spent on nothing.
 >
 > The feed carries no key for either package format on purpose. Making it work
 > would mean handing a `.deb` to dpkg, or an `.rpm` to rpm, on a machine whose
@@ -440,6 +446,11 @@ cryptographically verified against the public key committed in this tree before
 it may install. There is no repeating timer and no other phone-home.
 `scripts/verify-feeds.mjs` checks both feeds offline; CI runs it on every
 release.
+
+A build that cannot replace its own files does not make that request at all: a
+`.deb` or `.rpm` install, and a build from source, read how they were installed
+and say where updates come from instead. The AppImage, the Windows setup and the
+macOS app are the three that check and install.
 
 ## Where your mail is, and what the app talks to
 

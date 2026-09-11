@@ -29,8 +29,9 @@
 //! what they are NOT shown twice — is something these drive directly.
 
 use super::{
-    refusal_is_unverifiable, report, should_install, should_offer, signed_release, Check,
-    CheckResult, Flow, Press, Signal, Stage,
+    classify, install_kind, menu_text, path_is_system, refusal_is_unverifiable, report,
+    should_install, should_offer, signed_release, Check, CheckResult, Facts, Flow, InstallKind, Os,
+    Press, Signal, Stage,
 };
 use base64::Engine as _;
 use std::fs;
@@ -816,18 +817,18 @@ fn the_pane_is_told_the_installed_version_whatever_the_flow_is_doing() {
     // could not name the build it is running in would be an About pane with nothing in it.
     let mut flow = Flow::default();
     for signal in [Signal::CheckStarted, Signal::Offered("9.9.9".into()), Signal::Downloaded] {
-        let seen = report(&flow, None, "0.13.4");
+        let seen = report(&flow, None, "0.13.4", InstallKind::AppImage);
         assert_eq!(field(&seen, "version"), "0.13.4");
         flow.apply(signal);
     }
-    assert_eq!(field(&report(&flow, None, "0.13.4"), "version"), "0.13.4");
+    assert_eq!(field(&report(&flow, None, "0.13.4", InstallKind::AppImage), "version"), "0.13.4");
 }
 
 #[test]
 fn a_client_that_has_never_checked_says_so_rather_than_saying_up_to_date() {
     // The state a fresh window is in for the second or two before the launch check answers.
     // "Up to date" there would be a claim about a feed nobody has asked yet.
-    let seen = report(&Flow::default(), None, "0.13.4");
+    let seen = report(&Flow::default(), None, "0.13.4", InstallKind::AppImage);
     assert_eq!(field(&seen, "state"), "idle");
     assert_eq!(field(&seen, "lastResult"), "never");
     assert_eq!(seen["lastCheckedAt"], serde_json::Value::Null);
@@ -849,8 +850,8 @@ fn a_refusal_and_an_up_to_date_client_are_the_same_stage_and_not_the_same_report
     flow.apply(Signal::NothingOffered);
     assert_eq!(flow.stage(), &Stage::Idle);
 
-    let fine = report(&flow, Some(Check { at_unix_ms: 1_000, result: CheckResult::UpToDate }), "0.13.4");
-    let refused = report(&flow, Some(Check { at_unix_ms: 1_000, result: CheckResult::Refused }), "0.13.4");
+    let fine = report(&flow, Some(Check { at_unix_ms: 1_000, result: CheckResult::UpToDate }), "0.13.4", InstallKind::AppImage);
+    let refused = report(&flow, Some(Check { at_unix_ms: 1_000, result: CheckResult::Refused }), "0.13.4", InstallKind::AppImage);
 
     assert_eq!(field(&fine, "state"), field(&refused, "state"), "one stage");
     assert_ne!(field(&fine, "lastResult"), field(&refused, "lastResult"), "two facts");
@@ -864,24 +865,24 @@ fn every_stage_the_flow_can_reach_has_its_own_report() {
     // two stages that have one — a "ready" report that could not name the version would leave the
     // pane offering a restart into something unnamed.
     let mut flow = Flow::default();
-    let seen = report(&flow, None, "0.13.4");
+    let seen = report(&flow, None, "0.13.4", InstallKind::AppImage);
     assert_eq!(field(&seen, "state"), "idle");
 
     flow.apply(Signal::CheckStarted);
-    let seen = report(&flow, None, "0.13.4");
+    let seen = report(&flow, None, "0.13.4", InstallKind::AppImage);
     assert_eq!(field(&seen, "state"), "checking");
     assert_eq!(seen["canCheck"], false, "a check is already running");
     assert_eq!(seen["canInstall"], false);
 
     flow.apply(Signal::Offered("0.13.5".into()));
-    let seen = report(&flow, Some(Check { at_unix_ms: 7, result: CheckResult::Offered }), "0.13.4");
+    let seen = report(&flow, Some(Check { at_unix_ms: 7, result: CheckResult::Offered }), "0.13.4", InstallKind::AppImage);
     assert_eq!(field(&seen, "state"), "downloading");
     assert_eq!(field(&seen, "offered"), "0.13.5");
     assert_eq!(seen["canCheck"], false);
     assert_eq!(seen["canInstall"], false, "nothing is installable mid-download");
 
     flow.apply(Signal::Downloaded);
-    let seen = report(&flow, Some(Check { at_unix_ms: 7, result: CheckResult::Offered }), "0.13.4");
+    let seen = report(&flow, Some(Check { at_unix_ms: 7, result: CheckResult::Offered }), "0.13.4", InstallKind::AppImage);
     assert_eq!(field(&seen, "state"), "ready");
     assert_eq!(field(&seen, "offered"), "0.13.5");
     assert_eq!(seen["canInstall"], true, "this is the press that installs");
@@ -890,7 +891,7 @@ fn every_stage_the_flow_can_reach_has_its_own_report() {
     let mut failed = Flow::default();
     failed.apply(Signal::CheckStarted);
     failed.apply(Signal::Failed);
-    let seen = report(&failed, Some(Check { at_unix_ms: 9, result: CheckResult::Failed }), "0.13.4");
+    let seen = report(&failed, Some(Check { at_unix_ms: 9, result: CheckResult::Failed }), "0.13.4", InstallKind::AppImage);
     assert_eq!(field(&seen, "state"), "failed");
     assert_eq!(field(&seen, "lastResult"), "failed");
     assert_eq!(seen["canCheck"], true, "the remedy for a failure is to try again");
@@ -908,7 +909,7 @@ fn the_pane_offers_exactly_what_the_menu_item_offers() {
         Signal::Downloaded,
         Signal::Deferred,
     ] {
-        let seen = report(&flow, None, "0.13.4");
+        let seen = report(&flow, None, "0.13.4", InstallKind::AppImage);
         assert_eq!(seen["canCheck"], serde_json::json!(flow.press() == Press::Check));
         assert_eq!(seen["canInstall"], serde_json::json!(flow.press() == Press::Restart));
         assert_eq!(
@@ -944,7 +945,266 @@ fn the_result_names_are_the_ones_the_window_switches_on() {
 #[test]
 fn the_last_check_is_reported_at_the_instant_it_happened() {
     for at in [0_u64, 1, 1_767_225_600_000, u64::MAX] {
-        let seen = report(&Flow::default(), Some(Check { at_unix_ms: at, result: CheckResult::UpToDate }), "0.13.4");
+        let seen = report(&Flow::default(), Some(Check { at_unix_ms: at, result: CheckResult::UpToDate }), "0.13.4", InstallKind::AppImage);
         assert_eq!(seen["lastCheckedAt"], serde_json::json!(at));
     }
+}
+
+// ═══ HOW THIS COPY WAS INSTALLED ══════════════════════════════════════════════════════════════
+//
+// A `.deb`, an `.rpm` and a Flatpak cannot be replaced by the payload this project publishes, and
+// they used to be offered one anyway: the feed carries no package of either kind, so the plugin
+// fell back to the AppImage for the architecture, fetched ~130 MB and reported that it could not
+// install it. The decision is now made from what the machine says, before anything is fetched.
+//
+// `classify` is pure and `Facts` is its whole input, so every install this project ships — and
+// two that it does not, a distribution's own build and an AppImage somebody extracted — is a row
+// in one table rather than a claim in a comment.
+
+/// The facts of a packaged install, as the shipped binaries actually read.
+fn facts(os: Os) -> Facts {
+    Facts { bundled_as: None, appimage_env: false, flatpak_info: false, system_path: false, os }
+}
+
+#[test]
+fn every_install_this_app_ships_is_named_from_what_the_machine_says() {
+    // The three that can replace themselves.
+    assert_eq!(
+        classify(Facts {
+            bundled_as: Some(InstallKind::AppImage),
+            appimage_env: true,
+            ..facts(Os::Linux)
+        }),
+        InstallKind::AppImage,
+    );
+    assert_eq!(
+        classify(Facts { bundled_as: Some(InstallKind::WindowsSetup), ..facts(Os::Windows) }),
+        InstallKind::WindowsSetup,
+    );
+    assert_eq!(
+        classify(Facts { bundled_as: Some(InstallKind::MacBundle), ..facts(Os::Mac) }),
+        InstallKind::MacBundle,
+    );
+
+    // The two packages, at the path they install to.
+    assert_eq!(
+        classify(Facts {
+            bundled_as: Some(InstallKind::Deb),
+            system_path: true,
+            ..facts(Os::Linux)
+        }),
+        InstallKind::Deb,
+    );
+    assert_eq!(
+        classify(Facts {
+            bundled_as: Some(InstallKind::Rpm),
+            system_path: true,
+            ..facts(Os::Linux)
+        }),
+        InstallKind::Rpm,
+    );
+
+    // THE INHERITED VARIABLE. `$APPIMAGE` is set for every child of a process that is itself
+    // inside an AppImage — a terminal, an editor — so a packaged install can see it without
+    // being one. The bundler's own record decides, and a `.deb` is not talked into replacing a
+    // file it does not own.
+    assert_eq!(
+        classify(Facts {
+            bundled_as: Some(InstallKind::Deb),
+            appimage_env: true,
+            system_path: true,
+            ..facts(Os::Linux)
+        }),
+        InstallKind::Deb,
+    );
+
+    // The sandbox marker wins outright, including over a mark left by a bundler.
+    assert_eq!(
+        classify(Facts { flatpak_info: true, ..facts(Os::Linux) }),
+        InstallKind::Flatpak,
+    );
+    assert_eq!(
+        classify(Facts {
+            bundled_as: Some(InstallKind::Deb),
+            flatpak_info: true,
+            system_path: true,
+            ..facts(Os::Linux)
+        }),
+        InstallKind::Flatpak,
+    );
+
+    // A distribution's own build of this source: under a system prefix, with no mark, because
+    // this project's bundler never touched it.
+    assert_eq!(
+        classify(Facts { system_path: true, ..facts(Os::Linux) }),
+        InstallKind::LinuxPackage,
+    );
+
+    // AN EXTRACTED APPIMAGE. It carries the AppImage mark and has no `$APPIMAGE`, so there is no
+    // file for the plugin to rewrite — it would write the new release over the running binary
+    // inside the extracted tree. Named for what it is instead.
+    assert_eq!(
+        classify(Facts { bundled_as: Some(InstallKind::AppImage), ..facts(Os::Linux) }),
+        InstallKind::Unpackaged,
+    );
+    // …and a build from source, which is the same fact from the other direction.
+    assert_eq!(classify(facts(Os::Linux)), InstallKind::Unpackaged);
+
+    // Windows and macOS with no mark at all — a build nobody packaged. Their behaviour is
+    // unchanged by this gate, which is deliberate: the only Linux install that replaces itself is
+    // the AppImage, and on the other two platforms the ordinary install is the packaged one.
+    assert_eq!(classify(facts(Os::Windows)), InstallKind::WindowsSetup);
+    assert_eq!(classify(facts(Os::Mac)), InstallKind::MacBundle);
+}
+
+/// Every kind, once, and the pairing that is the actual gate: the three installs with an
+/// installer are exactly the three that say nothing extra in the bar.
+#[test]
+fn only_the_three_installs_with_an_installer_can_self_apply() {
+    let all = [
+        InstallKind::AppImage,
+        InstallKind::Deb,
+        InstallKind::Rpm,
+        InstallKind::LinuxPackage,
+        InstallKind::Flatpak,
+        InstallKind::WindowsSetup,
+        InstallKind::MacBundle,
+        InstallKind::Unpackaged,
+    ];
+    let can: Vec<&str> = all.iter().filter(|k| k.self_applies()).map(|k| k.as_str()).collect();
+    assert_eq!(can, ["appimage", "windowsSetup", "macBundle"]);
+
+    for kind in all {
+        assert_eq!(
+            kind.self_applies(),
+            kind.menu_sentence().is_none(),
+            "{}: a kind that cannot install must have a sentence, and one that can must not",
+            kind.as_str(),
+        );
+    }
+
+    // Eight distinct wire names. `src/update.ts` switches on these strings and
+    // `desktop-shell.test.ts` holds the two spellings together.
+    let mut names: Vec<&str> = all.iter().map(|k| k.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), all.len());
+}
+
+/// A MOUNTED APPIMAGE IS NOT A SYSTEM INSTALL, which is why the prefix is compared by path
+/// component: the AppImage runtime mounts its payload and runs `/tmp/.mount_xxxxxx/usr/bin/ohmail`,
+/// a path that CONTAINS `/usr/bin` and does not start with it.
+#[test]
+fn a_mounted_appimage_is_not_read_as_a_system_install() {
+    use std::path::Path;
+    for packaged in ["/usr/bin/ohmail", "/usr/local/bin/ohmail", "/opt/ohmail/ohmail"] {
+        assert!(path_is_system(Path::new(packaged)), "{packaged} is a system prefix");
+    }
+    for elsewhere in [
+        "/tmp/.mount_ohmail123/usr/bin/ohmail",
+        "/home/someone/Applications/ohmail.AppImage",
+        "/home/someone/src/ohmail/target/release/ohmail",
+        "/usrlocal/bin/ohmail",
+        "/app/bin/ohmail",
+    ] {
+        assert!(!path_is_system(Path::new(elsewhere)), "{elsewhere} is not a system prefix");
+    }
+}
+
+/// AN INSTALL THAT CANNOT UPDATE ITSELF SAYS SO IN EVERY STAGE — and the item is disabled, so the
+/// press cannot land from the bar at all.
+///
+/// The stages are driven anyway, because "it never leaves `Idle`" is a consequence of the gate
+/// rather than a thing the bar may rely on: a future path that moved the flow must not be able to
+/// put "Restart to Install" on a copy that cannot install.
+#[test]
+fn an_install_that_cannot_update_itself_says_so_in_every_stage() {
+    let stages: Vec<Flow> = vec![
+        Flow::default(),
+        {
+            let mut f = Flow::default();
+            f.apply(Signal::CheckStarted);
+            f
+        },
+        ready(),
+    ];
+    for kind in [
+        InstallKind::Deb,
+        InstallKind::Rpm,
+        InstallKind::LinuxPackage,
+        InstallKind::Flatpak,
+        InstallKind::Unpackaged,
+    ] {
+        let sentence = kind.menu_sentence().expect("this kind cannot install");
+        for flow in &stages {
+            let (label, enabled) = menu_text(kind, flow);
+            assert_eq!(label, sentence, "{}: the bar said something else", kind.as_str());
+            assert!(!enabled, "{}: the item was pressable", kind.as_str());
+        }
+        // The sentence points somewhere rather than only refusing, and never claims currency.
+        assert!(
+            sentence.contains("Package Manager")
+                || sentence.contains("Software Centre")
+                || sentence.contains("Does Not Update Itself"),
+            "{sentence}",
+        );
+        assert!(!sentence.to_lowercase().contains("up to date"), "{sentence}");
+    }
+
+    // THE POSITIVE CONTROL. An AppImage is untouched by any of this: the flow's own label, the
+    // flow's own enablement, in every stage.
+    for flow in &stages {
+        assert_eq!(
+            menu_text(InstallKind::AppImage, flow),
+            (flow.menu_label(), flow.menu_enabled()),
+        );
+    }
+}
+
+/// THE PANE AND THE STRIP ARE NOT OFFERED A PRESS THE INSTALL CANNOT TAKE.
+///
+/// `canCheck` and `canInstall` are what the window's button and the shared strip read, so the kind
+/// is folded into them here rather than re-derived there — a second policy in the window is how
+/// one of the two ends up offering an install the shell would refuse.
+#[test]
+fn the_window_is_not_offered_a_press_the_install_cannot_take() {
+    for kind in [
+        InstallKind::Deb,
+        InstallKind::Rpm,
+        InstallKind::LinuxPackage,
+        InstallKind::Flatpak,
+        InstallKind::Unpackaged,
+    ] {
+        for flow in [Flow::default(), ready()] {
+            let seen = report(&flow, None, "0.13.4", kind);
+            assert_eq!(seen["installKind"], serde_json::json!(kind.as_str()));
+            assert_eq!(seen["canCheck"], serde_json::json!(false), "{}", kind.as_str());
+            assert_eq!(seen["canInstall"], serde_json::json!(false), "{}", kind.as_str());
+            // The version is still reported: the pane names the build it is running whatever else
+            // it can say.
+            assert_eq!(seen["version"], serde_json::json!("0.13.4"));
+        }
+    }
+
+    // The positive control, and the one the rest of this file's report tests already rest on: an
+    // AppImage is offered both presses in the stages that have them.
+    let idle = report(&Flow::default(), None, "0.13.4", InstallKind::AppImage);
+    assert_eq!(idle["canCheck"], serde_json::json!(true));
+    assert_eq!(idle["installKind"], serde_json::json!("appimage"));
+    let waiting = report(&ready(), None, "0.13.4", InstallKind::AppImage);
+    assert_eq!(waiting["canInstall"], serde_json::json!(true));
+}
+
+/// The impure half, once: the reader answers one kind for this process and remembers it.
+///
+/// WHAT THIS CANNOT ASSERT is which kind — a test binary is an unpackaged build, and a developer
+/// running the suite from a terminal that is itself inside an AppImage would inherit `$APPIMAGE`
+/// and be classified as one. The per-kind decision is the table above; this covers the read (the
+/// bundler's record, `current_exe`, the sandbox marker) and the cache.
+#[test]
+fn the_reader_answers_one_stable_kind_for_this_process() {
+    let first = install_kind();
+    assert_eq!(first, install_kind());
+    assert!(!first.as_str().is_empty());
+    assert_eq!(first.self_applies(), first.menu_sentence().is_none());
 }
