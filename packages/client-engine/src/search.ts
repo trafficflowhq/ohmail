@@ -459,27 +459,20 @@ export class SearchIndex {
   }
 
   /**
-   * A QUERY THAT TOKENIZES TO NOTHING IS STILL A QUESTION — matched verbatim over subject and
-   * sender, case-insensitively.
-   *
-   * This used to return the empty answer, which is the shape the `D-U-N-S` report arrived as:
-   * silence that is indistinguishable from an empty mailbox. `x`, `#4` and `y@d` all name
-   * something; a two-character floor is a sensible rule for TERMS and a wrong answer to a
-   * person who typed one character on purpose.
-   *
-   * ── WHY A SCAN IS ACCEPTABLE HERE AND NOWHERE ELSE ──────────────────────────────────────
-   *
-   * It walks every message, which is exactly what the postings map exists to avoid — and it is
-   * reached only by a query the postings map cannot answer at all: one whose every run of
-   * letters and digits is a single character. Two strings per message, `includes` on each. That
-   * is the first keystroke of an ordinary query (`i` of `invoice`) and nothing else, and
-   * `search-budget.test.ts` measures it on a synthetic twenty-thousand-row index so the claim is
-   * a number. (Spelled out, not written as digits: the publish prose gate reads a bare count
-   * beside the word "messages" as a count of somebody's mail, which is the right rule — it
-   * refused this comment, and the number here is a benchmark size, not a mailbox.)
-   *
-   * `tier` is `exact`: the reader's characters are present, in order, in the field. It is not a
-   * guess and it does not belong under the Similar heading.
+   * A query that tokenizes to nothing is still a question — matched verbatim over subject and sender,
+   * case-insensitively. This used to return the empty answer, the shape the `D-U-N-S` report arrived as: silence
+   * indistinguishable from an empty mailbox. `x`, `#4` and `y@d` all name something; a two-character floor is a
+   * sensible rule for TERMS and a wrong answer to a person who typed one character on purpose. The scan is acceptable
+   * here and nowhere else: it walks every message — exactly what the postings map exists to avoid — but is reached
+   * only by a query the postings map cannot answer at all (every run of letters and digits a single character), which
+   * is the first keystroke of an ordinary query and nothing else.
+   */
+
+  /**
+   * Two strings per message, `includes` on each; `search-budget.test.ts` measures it on a synthetic
+   * twenty-thousand-row index so the claim is a number (spelled out — the publish prose gate reads a bare count
+   * beside "messages" as a count of somebody's mail). `tier` is `exact`: the reader's characters are present, in
+   * order, in the field — not a guess, and not Similar.
    */
   private verbatim(query: string, limit: number): LocalSearchResult {
     const needle = query.trim().toLowerCase();

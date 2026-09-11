@@ -84,26 +84,20 @@ export function fullDateTime(instant: Date, zone: string, locale = "en"): string
 }
 
 /**
- * A MESSAGE'S ROW STAMP — the three bands at the top of this file, applied to one message.
- *
- * `time` wins where a row carries one — and NO ROW THIS PRODUCT SERVES DOES any more. The demo's
- * fixtures used to set it, which meant the rule below never ran over them and the demo showed a
- * shape frozen at whatever was typed; the adapter stopped copying it onto the message, so every
- * row — demo and server-fed alike — derives its stamp from `date` here. The branch stays because
- * the field is still on the type and a caller may set it; it is no longer the demo's path. It lives in this package rather than in the web app
- * because the Screener mints rows for senders that have no message behind them at all, and the
- * phone reads the same function.
- *
- * A message with no `Date:` header answers "" — spam and scripts routinely omit it, and there is no
- * instant to format. Callers render no stamp rather than an empty one.
- *
- * A FUTURE date (a resurfaced or scheduled row) takes the dated branch: `daysAgo` goes negative,
- * and a weekday for something that has not happened yet reads as the past.
- *
- * The zone is REQUIRED and has no default. Every band is a statement about the reader's calendar,
- * so it cannot be computed without knowing which calendar that is, and a default would make the
- * wrong answer the quiet one — a call site that forgot would render a plausible, well-formatted,
- * two-hours-wrong stamp, and nothing in the type system, the suite or the screen would say so.
+ * A message's row stamp — the three bands at the top of this file, applied to one message. `time` wins where a row
+ * carries one, and no row this product serves does any more: the demo's fixtures used to set it, freezing the demo's
+ * shape at whatever was typed; the adapter stopped copying it, so every row derives its stamp from `date` here. The
+ * branch stays because the field is still on the type. It lives in this package because the Screener mints rows for
+ * senders with no message behind them, and the phone reads the same function.
+ */
+
+/**
+ * No `Date:` header answers "" — spam and scripts routinely omit it, and there is no instant to format; callers
+ * render no stamp rather than an empty one. A FUTURE date (a resurfaced or scheduled row) takes the dated branch:
+ * `daysAgo` goes negative, and a weekday for something that has not happened reads as the past. The zone is REQUIRED
+ * and has no default: every band is a statement about the reader's calendar, and a defaulted call site would render a
+ * plausible, well-formatted, two-hours-wrong stamp with nothing in the type system, the suite or the screen saying
+ * so.
  */
 export function messageStamp(
   m: Pick<EngineMessage, "time" | "date">,

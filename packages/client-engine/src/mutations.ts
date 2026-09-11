@@ -74,40 +74,30 @@ function stateRecordIdOf(reader: EntityReader, messageId: string): string {
 }
 
 /**
- * THE OPTIMISTIC SENT COPY OF A CONFIRMED SEND — built on `{status:"sent"}`, never before it.
- *
- * A confirmed `mail_send` is the mailbox's own word that the message left and was appended to
- * Sent, minted under `providerMessageId`. This turns that fact into a provisional message row so
- * the reply appears in its conversation in under a second, minutes ahead of the worker's
- * Sent-folder watch ingesting the real one. Unlike `effectsOf`'s `sending` draft this is NOT a
- * mutate-time optimistic effect — the engine calls it from `dispatch` only after the server
- * confirmed — so it never asserts a delivery the server has not owned.
- *
- * The two load-bearing fields:
- *  · `messageIdHeader = providerMessageId` — the exact header the real Sent copy will carry, which
- *    is how the engine reconciles the two and drops this overlay when the drain delivers the row.
- *  · `folder: "Sent"` (cast — Sent is not one of the six `Destination` folders, exactly as the
- *    server files an ingested Sent twin), beside `local: true` marking it provisional.
- *
- * ── WHERE IT SURFACES, CORRECTED ───────────────────────────────────────────────────────────
- *
- * This used to say the copy "matches no pile view and reaches the surface ONLY through its
- * conversation". That was true when it was written and is NOT true now: `ohboxView`'s own-sent
- * union files the account's own sent mail into "Earlier", and `isOwnSent` asks whether the row's
- * folder is the mailbox's Sent folder — which `folder: "Sent"` satisfies. So the copy appears in
- * Earlier as well as in its conversation, from the moment the send confirms until the real row
- * replaces it.
- *
- * That is the right behaviour and it needs no gate: a message the user just sent belongs in their
- * own sent history, `unread: false` keeps it out of "New for you", and the reconcile is by
- * `messageIdHeader`, so the overlay is dropped the instant the ingested row lands — the two are
- * never in the list together. The note is here because the sentence it replaces was load-bearing
- * for anyone reasoning about which surfaces can see a provisional row: the answer is any surface
- * reading the mirror, so `local` is the flag to test, never the folder.
- *
- * Returns `null` when there is nothing to place it against — no mailbox to attribute it to — which
- * is the same refusal `effectsOf`'s `mail_send` makes, so a send that could not resolve a mailbox
- * produces no overlay rather than a headless row.
+ * The optimistic Sent copy of a CONFIRMED send — built on `{status:"sent"}`, never before it. A confirmed `mail_send`
+ * is the mailbox's own word that the message left and was appended to Sent under `providerMessageId`; this turns that
+ * fact into a provisional row so the reply appears in its conversation in under a second, minutes ahead of the
+ * worker's Sent-folder watch ingesting the real one. Unlike `effectsOf`'s `sending` draft this is NOT a mutate-time
+ * effect — `dispatch` calls it only after the server confirmed — so it never asserts a delivery the server has not
+ * owned.
+ */
+
+/**
+ * Two load-bearing fields: `messageIdHeader = providerMessageId`, the exact header the real Sent copy will carry,
+ * which is how the engine reconciles and drops the overlay when the drain delivers the row; and `folder: "Sent"`
+ * (cast — Sent is not one of the six `Destination` folders, exactly as the server files an ingested Sent twin) beside
+ * `local: true`. Returns `null` with no mailbox to attribute it to — the same refusal `effectsOf`'s `mail_send` makes
+ * — so a send that could not resolve a mailbox produces no overlay rather than a headless row.
+ */
+
+/**
+ * Where it surfaces, corrected: this used to say the copy "matches no pile view and reaches the surface only through
+ * its conversation". No longer true — `ohboxView`'s own-sent union files the account's own sent mail into "Earlier",
+ * and `isOwnSent` asks whether the row's folder is the mailbox's Sent folder, which `folder: "Sent"` satisfies. So
+ * the copy appears in Earlier as well as its conversation, from confirmation until the real row replaces it. That is
+ * right and needs no gate: a just-sent message belongs in the sender's own history, `unread: false` keeps it out of
+ * "New for you", and the `messageIdHeader` reconcile means the two are never in the list together. Any surface
+ * reading the mirror can see a provisional row — `local` is the flag to test, never the folder.
  */
 export function sentOverlayMessage(
   reader: EntityReader,
@@ -917,48 +907,24 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     /**
-     * ONE `rule` ROW, AND NO `message` EFFECT.
-     *
-     * The absent effects are the specification, exactly as they are for `rule_delete`. A rule is
-     * consulted when mail ARRIVES; nothing already filed moves because a rule was written. The
-     * surface that dispatches this composes its own `move`s for the mail it can see, from the
-     * same scope, so the mail that relocates and the rule that is written can never disagree
-     * about whose mail this is — which is the shape of the defect already fixed in `decide`.
-     *
-     * `provenance: "manual"` is not a guess: `RulesService.create` inserts exactly that, and an
-     * optimistic row claiming `promoted` would flip to "you made this one" under the user's eyes
-     * on the echo. `priority` is fabricated as 0 and is NOT sent — `validPriority(undefined)`
-     * answers 0 — so the two agree without the client asserting a ranking it did not choose.
-     *
-     * The id is a CLIENT uuid and the server's row arrives under its own, the same trade
-     * `screener_decide`'s promoted rule already makes. The overlay is dropped the moment the
-     * mutation resolves and the echo carries the real row, so the two never coexist for longer
-     * than one render.
-     *
-     * An empty `match` yields [] ⇒ the engine rejects locally with nothing on the wire, which is
-     * the right answer for a request the server would answer 400. It is unreachable from the
-     * sheet (a domain-less address is never offered domain scope) and is here so that it stays
-     * unreachable rather than becoming a rule matching every malformed sender.
-     *
-     * TWO MORE REFUSALS, both by the same mechanism and both about `subjectContains`:
-     *
-     *  · a term on a NON-`sender` kind — `RulesService.validSubjectContains` answers 400, so the
-     *    honest local answer is a rejection with nothing sent;
-     *  · a term that is a STRING but trims to nothing. `""` is a substring of every subject, so
-     *    storing one literally is a rule that matches everything while its row reads as specific,
-     *    and the server refuses it for that reason. Dropping the field and creating a BARE rule
-     *    instead would be the silent widening the service's own note refuses: the surface asked for
-     *    "just the ones whose subject matches" and the mirror would show a rule covering all of the
-     *    sender's mail — an optimistic row that is a different rule from the one requested. An
-     *    explicit `null`/`undefined` still means "no term" and creates the ordinary bare rule.
-     *
-     * All three refusals are unreachable from the surfaces — the subject sheet is always about one
-     * message's sender and normalizes its term — and all three are written so that they STAY
-     * unreachable rather than becoming a rule that quietly means something else.
-     *
-     * `bodyContains` (mail 0052) gets the same two term refusals by the same mechanism, for the
-     * same reasons: a blank body term is a rule matching every message, and a term on a non-sender
-     * kind is a request the server answers 400.
+     * One `rule` row, and NO `message` effect — the absence is the specification, as with `rule_delete`. A rule is
+     * consulted when mail ARRIVES; nothing already filed moves because a rule was written. The dispatching surface
+     * composes its own `move`s for the mail it can see, from the same scope, so the relocated mail and the written
+     * rule can never disagree about whose mail this is. `provenance: "manual"` is not a guess — `RulesService.create`
+     * inserts exactly that, and an optimistic `promoted` would flip under the echo. `priority` is fabricated as 0 and
+     * NOT sent (`validPriority(undefined)` answers 0). The id is a client uuid; the server's row arrives under its
+     * own, and the overlay drops when the echo carries the real row.
+     */
+
+    /**
+     * Three local refusals, each mirroring a server 400 with nothing on the wire. An empty `match` yields [] —
+     * unreachable from the sheet (a domain-less address is never offered domain scope), kept so it stays unreachable
+     * rather than becoming a rule matching every malformed sender. A `subjectContains` term on a non-`sender` kind —
+     * the server's `validSubjectContains` answers 400. And a term that trims to nothing: "" is a substring of every
+     * subject, so storing it is a match-everything rule that reads as specific; dropping the field to create a bare
+     * rule instead would silently widen the request the surface made. An explicit `null`/`undefined` still means "no
+     * term" and creates the ordinary bare rule. `bodyContains` (mail 0052) gets the same two term refusals for the
+     * same reasons.
      */
     case "rule_create": {
       if (m.match === "") return [];

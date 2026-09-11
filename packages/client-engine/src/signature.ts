@@ -98,32 +98,29 @@ export function signatureHtml(sig: string): string {
 }
 
 /**
- * SEAL THE SIGNATURE INTO THE MUTATION — the one place the block's text joins the message.
- *
- * `sig === null` returns the mutation UNCHANGED (the same object, so the no-signature request is
- * byte-identical on the wire). Otherwise the plain body gains `\n\n` + the text, and a rich
- * body — when the mutation carries one — gains markup: the server derives the delivered
- * plaintext from the markup, so a rich send that appended to `body` alone would show the
- * signature locally and drop it from what recipients read.
- *
- * ── THE THIRD ARGUMENT IS THE MAILBOX'S STORED MARKUP, OR NOTHING ────────────────────────
- *
- * `sigHtml` is {@link effectiveSignatureHtml}'s answer — the markup the Settings editor wrote,
- * already reduced to the compose grammar by the server that stored it, and reduced again by the
- * server that sends it (`sanitizeOutboundHtml` runs on the way out and is idempotent, so this
- * is never the only gate). Absent, `undefined` or `null` takes {@link signatureHtml}'s escaped
- * text path, which is what EVERY caller did before this argument existed and what the phone's
- * two send arms still do — so the two-argument call is byte-identical to the one it replaced.
- *
- * THE TEXT HALF IS NEVER THE MARKUP. `sig` goes onto `body` in both branches, because `body` is
- * the `text/plain` part and a recipient reading it must see words rather than tags.
- *
- * A mutation with NO `html` stays plain in both branches too. `html` present is what puts a
- * message on the wire as `multipart/alternative` (`compose.ts`), and a signature must not turn
- * somebody's plain note into a two-part message.
- *
- * Structural over the two fields it touches (`mail_send` carries them on every client), so
- * the webapp's `MailSend` plan and the engine's own mutation both satisfy it unchanged.
+ * Seal the signature into the mutation — the one place the block's text joins the message. `sig === null` returns the
+ * mutation UNCHANGED (the same object, so the no-signature request is byte-identical on the wire). Otherwise the
+ * plain body gains `\n\n` + the text, and a rich body — when the mutation carries one — gains markup: the server
+ * derives the delivered plaintext from the markup, so a rich send appending to `body` alone would show the signature
+ * locally and drop it from what recipients read. The text half is never the markup: `sig` goes onto `body` in both
+ * branches, because `body` is the `text/plain` part and its reader must see words rather than tags. A mutation with
+ * no `html` stays plain in both branches — `html` is what makes a send `multipart/alternative` (`compose.ts`), and a
+ * signature must not turn a plain note into a two-part message.
+ */
+
+/**
+ * Structural over the two fields it touches, so the webapp's `MailSend` plan and the engine's own mutation both
+ * satisfy it unchanged.
+ */
+
+/**
+ * The third argument is the mailbox's stored markup, or nothing. `sigHtml` is
+ * {@link effectiveSignatureHtml}'s answer — markup the Settings editor wrote, already reduced to
+ * the compose grammar by the server that stored it and reduced again on the way out
+ * (`sanitizeOutboundHtml` is idempotent, so this is never the only gate). Absent, `undefined`
+ * or `null` takes {@link signatureHtml}'s escaped text path — what every caller did before this
+ * argument existed and what the phone's two send arms still do — so the two-argument call is
+ * byte-identical to the one it replaced.
  */
 export function withSignature<M extends { body: string; html?: string }>(
   m: M, sig: string | null, sigHtml?: string | null,
