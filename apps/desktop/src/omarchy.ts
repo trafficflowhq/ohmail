@@ -1,56 +1,23 @@
 /**
- * THE OMARCHY THEME FEED, from the window's side of it.
- *
- * On an Omarchy system the desktop's active theme is a live token source for the ohmarchy
- * face: the shell detects Omarchy, reads the staged theme's raw material, and watches it;
- * this module is the half that turns that material into ohmail token values and holds them
- * where the ohmarchy face can wear them.
- *
- * ── THE TWO CHANNELS, BOTH THE SHELL'S EXISTING ONES ────────────────────────────────────────
- *
- * The PULL is the `omarchy_theme` command, asked once at start — `mailto_claim`'s cold-start
- * reasoning: an event emitted before this bundle's scripts run is an event nobody hears, so
- * the window asks when it is ready. The PUSH is the `omarchy:theme` event, heard over the one
- * receive-only `core:event:allow-listen` grant the menu already uses (`native.ts` carries the
- * asymmetry's reasoning; the small listener here is the same shape because that module keeps
- * its own private on purpose). Nothing new crosses the boundary in either direction: raw
- * text down, nothing up.
- *
- * ── WHERE THE TOKENS GO, AND WHY A SCOPED RULE RATHER THAN INLINE PROPERTIES ────────────────
- *
- * The mapped values land in one <style> element as a single rule scoped to
- * `:root[data-face="ohmarchy"]`. Inline custom properties on <html> would apply to EVERY
- * face — the live feed would repaint paper too, which is exactly the fork-by-side-effect the
- * one-UI law exists to prevent. Scoped, the feed is inert until the theme machinery stamps
- * the ohmarchy face (the settings lane owns the stamp; the attribute name is this
- * module's exported constant so the census/contract can hold the two to each other), and
- * `data-omarchy="live"` on <html> is how that machinery knows a live source exists at all —
- * signal, not styling.
- *
- * Every declaration carries `!important`, and that is a cascade decision, not a shortcut:
- * the static token stylesheet's follow-the-system dark block is
- * `:root:not([data-theme="light"]):not([data-theme="dark"])` — specificity (0,3,0) — which
- * outranks this rule's (0,2,0) however late the element sits, so on a dark desktop the
- * static values would silently win every slot both define. The live desktop theme is BY
- * DESIGN the top of the token cascade whenever the face is on and a live source exists;
- * importance states that once, survives any future static selector, and nothing in the
- * token stylesheets declares importance of its own (checked, and cheap to keep true).
- *
- * ── THE FALLBACK IS "KEEP WHAT YOU HAVE", NEVER "RENDER WHAT YOU GOT" ───────────────────────
- *
- * A payload that does not validate, a colors.toml that does not parse, a palette the law
- * refuses — every failure leaves the last good token set standing (or, before any good set,
- * leaves the static ohmarchy defaults). Broken chrome is the one output this module must
- * never produce, so failures are silent to the person and loud to nobody.
- *
- * ── AND THE VALUES ARE FENCED BEFORE THEY BECOME CSS ────────────────────────────────────────
- *
- * Most mapped values are derived (hex arithmetic, rgba composition), but the law passes a few
- * palette strings through verbatim (`muted` into a ring, a border override's first stop), and
- * a theme file is USER-AUTHORED input: a value carrying `}` could close the declaration block
- * and write arbitrary rules into this document. So every name must match the token grammar
- * and every value must be free of the characters that can restructure a stylesheet — a pair
- * that fails is dropped, not escaped, and the real mapping's outputs never trip it.
+ * THE OMARCHY THEME FEED, from the window's side. On an Omarchy system the shell detects the
+ * desktop theme, reads its raw material and watches it; this module turns that material into
+ * ohmail token values for the ohmarchy face. PULL is the `omarchy_theme` command, asked once
+ * at start (an event emitted before this bundle's scripts run is an event nobody hears); PUSH
+ * is the `omarchy:theme` event over the one receive-only `core:event:allow-listen` grant
+ * (`native.ts` carries the asymmetry's reasoning). Raw text down, nothing up. The mapped
+ * values land in ONE <style> rule scoped to `:root[data-face="ohmarchy"]` — inline properties
+ * on <html> would repaint every face; the attribute's name is this module's exported constant.
+ */
+
+/*
+ * Every declaration carries `!important` — a cascade decision: the static follow-the-system
+ * dark block's selector has specificity (0,3,0), outranking this rule's (0,2,0), so on a dark
+ * desktop the static values would silently win; the live theme is BY DESIGN the top of the
+ * token cascade, and no token stylesheet declares importance of its own. The fallback is
+ * "keep what you have", never "render what you got": a payload that fails validation leaves
+ * the last good set (or the static defaults) standing — broken chrome is the one forbidden
+ * output. Values are fenced before they become CSS — a theme file is USER-AUTHORED, `}` could
+ * write arbitrary rules — so names must match the token grammar; a failing pair is dropped.
  */
 
 import { mapOmarchyTheme, type OmarchyThemeRaw } from "../../../packages/tokens/omarchy/map.js";

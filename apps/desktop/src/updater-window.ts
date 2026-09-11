@@ -1,35 +1,12 @@
 /**
- * THE AUTO-UPDATER'S PROGRESS WINDOW — a tiny static page, and deliberately NOT the main webview.
- *
- * ── WHY A SEPARATE PAGE AND A SEPARATE WINDOW ──────────────────────────────────────────────
- *
- * The updater is Rust-side (`src-tauri/src/updater.rs`) precisely so the main window can stay
- * granted NOTHING — `capabilities/main.json` is `"permissions": []` and stays that way. But a
- * download with no visible progress reads as a hang, so the Rust side emits an
- * `updater://progress` event carrying `{ downloaded, total }` and this page renders it.
- *
- * Rendering it in the MAIN window would mean granting that window `core:event:allow-listen`, which
- * breaks the empty-grant lock. So the progress lives in its OWN window (label `updater`), and that
- * window's OWN capability file (`capabilities/updater.json`) grants it exactly one permission — to
- * LISTEN for the one event above, and nothing else: no command, no emit-back, no filesystem, and
- * no network (the app-wide CSP is `connect-src 'none'`, which this window inherits). The main
- * window's grant is untouched.
- *
- * ── WHY THIS IS EMITTED INTO THE BUNDLE RATHER THAN LEFT AS A STATIC FILE ───────────────────
- *
- * The two strings below are emitted into `dist/` as `updater.html` and `updater.js` by a plugin in
- * `vite.config.ts`. They cannot live under a `public/` folder: the publish payload
- * (`scripts/publish-desktop.mjs`) ships `apps/desktop/src` as `.ts` only, so a static `.html`/`.js`
- * asset would never reach the mirror that builds every released binary — and the updater window
- * would open blank on a downloaded build. Kept as a published `.ts` module, they reach the mirror
- * and are exercised by `test/updater-window.test.ts` as the REAL artifact rather than a copy.
- *
- * ── HOW THE PAGE HEARS THE EVENT WITHOUT `@tauri-apps/api` ──────────────────────────────────
- *
- * The same seam `src/native.ts` uses: `window.__TAURI_INTERNALS__` is defined by the runtime's own
- * bootstrap before any script runs, regardless of `withGlobalTauri` (which is false). Listening is
- * one `invoke("plugin:event|listen", …)`, which the `core:event:allow-listen` grant permits;
- * emitting is neither granted nor attempted.
+ * THE AUTO-UPDATER'S PROGRESS WINDOW — a tiny static page, deliberately NOT the main webview.
+ * The updater is Rust-side so the main window stays granted NOTHING (`capabilities/main.json`
+ * is `"permissions": []`), but a download with no visible progress reads as a hang: the Rust
+ * side emits `updater://progress` (`{ downloaded, total }`) and this page — its OWN window,
+ * label `updater`, `capabilities/updater.json` — renders it with exactly one permission, to
+ * LISTEN for that event. Emitted into `dist/` by a `vite.config.ts` plugin — the payload ships
+ * `apps/desktop/src` as `.ts` only, so a static asset would never reach the mirror
+ * (`test/updater-window.test.ts` drives the REAL artifact).
  */
 
 /** The event the Rust updater emits, and the label of the window that hears it. */
@@ -129,17 +106,13 @@ export const UPDATER_HTML = `<!doctype html>
 `;
 
 /**
- * The page's one script, loaded as a same-origin classic script.
- *
- * It listens for `updater://progress` and renders it. `render` is tolerant BY CONSTRUCTION: a
- * payload that is missing, malformed, or throws while being read leaves the window in a sane state
- * rather than tearing the script down — there is no error surface in a transient window, so an
- * unhandled throw would just freeze the bar. `test/updater-window.test.ts` drives this exact string
- * with a valid payload, an absent one, a garbage one and one whose getter throws, and asserts none
- * of them throws.
- *
- * No `fetch`, no `WebSocket`, no `EventSource`, no `XMLHttpRequest`, no URL of any kind — the only
- * thing it reaches is the runtime's own event plugin, receive-only.
+ * The page's one script, loaded as a same-origin classic script. It listens for
+ * `updater://progress` and renders it; `render` is tolerant BY CONSTRUCTION — a payload that
+ * is missing, malformed, or throws while being read leaves the window sane rather than
+ * tearing the script down, since a transient window has no error surface and an unhandled
+ * throw would freeze the bar. `test/updater-window.test.ts` drives this exact string with a
+ * valid payload, an absent one, a garbage one and one whose getter throws. No `fetch`, no
+ * `WebSocket`, no `EventSource`, no `XMLHttpRequest`, no URL — only the event plugin, receive-only.
  */
 export const UPDATER_JS = `(function () {
   "use strict";

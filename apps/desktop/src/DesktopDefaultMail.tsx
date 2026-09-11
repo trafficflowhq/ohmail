@@ -1,21 +1,17 @@
 /**
  * THE DEFAULT-MAIL SURFACE — one question, asked once, and a row that always tells the truth.
- *
- * Two components over one hook. {@link DefaultMailAsk} is the first-run card: shown once a
- * mailbox is connected, only when another app holds mailto links, and NEVER twice — either
- * answer persists, and "it is already the default" persists too, because a question whose answer
- * is on screen is a nag. {@link DefaultMailRow} is the durable home in Settings → General: the
- * live-detected state and the platform's own action, for whoever said "not now" and changed
- * their mind.
- *
- * ── WHAT "MAKE DEFAULT" ACTUALLY DOES IS THE PLATFORM'S, AND THE COPY SAYS WHICH ────────────
- *
- * The shell answers `how` the request went — macOS takes the change and may confirm with its
- * own dialog or apply it directly (see `default_mail.rs`), Windows opens the Settings page
- * (this app never writes the choice), Linux writes it through `xdg-settings` — and the sentence
- * on screen is derived from that answer rather than from sniffing the platform here. Where the
- * person may still have a dialog or a page in front of them, the state flips only when the OS
- * says so, so the hook re-reads for a while instead of pretending.
+ * Two components over one hook: {@link DefaultMailAsk} is the first-run card — shown once a
+ * mailbox is connected, only when another app holds mailto links, NEVER twice (either answer
+ * persists, and "already the default" persists too — a question whose answer is on screen is
+ * a nag); {@link DefaultMailRow} is the durable home in Settings → General. WHAT "MAKE
+ * DEFAULT" DOES IS THE PLATFORM'S, and the copy says which: macOS takes the change (see
+ * `default_mail.rs`), Windows opens the Settings page (this app never writes the choice),
+ * Linux writes through `xdg-settings`. The sentence derives from the shell's answer, not
+ */
+
+/*
+ * platform sniffing; where a dialog may still be open, the state flips only when the OS says
+ * so — the hook re-reads for a while instead of pretending.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";

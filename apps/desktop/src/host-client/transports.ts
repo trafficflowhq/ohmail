@@ -1,21 +1,16 @@
 /**
- * THE HOST-CLIENT'S INJECTED WIRES — the window's transports, over the bearer socket.
- *
- * The shared shell takes a handful of things it must not know how to fetch (the publish DENYs
- * `app/api-client`, and the desktop window injects bridge-backed implementations). This page is
- * the third consumer of the same seams, and the rule holds: the NARROWING and the refusal
- * contracts live once, in the wire modules (`readMailboxFactsVia`, `profileImportVia`), and this
- * file supplies only the transport — the manager's fetch, which carries the Authorization header
- * and the one 401 recovery.
- *
- * ── AND EVERY ONE OF THOSE MODULES IS DOOR-FREE, WHICH IS A BUILD FACT ──────────────────────
- *
- * The factories used to sit in the window's `local-*` modules beside their bridge bindings, so
- * importing one here pulled `bridge-fetch.ts` into the bundle the host door serves and the shell
- * command's name was in the bytes a phone is handed. `scan:host` refuses that, and the packaged
- * release runs it. So the factories live in `*-wire.ts` modules that import no transport at all,
- * the `local-*` modules bind them to the bridge, and nothing this file imports names a shell
- * channel. `host-client-no-engine-door.test.ts` measures it on the built artifact.
+ * THE HOST-CLIENT'S INJECTED WIRES — the window's transports, over the bearer socket. The
+ * shared shell takes a handful of things it must not know how to fetch; this page is the
+ * third consumer of the same seams, and the rule holds: the NARROWING and refusal contracts
+ * live once, in the wire modules (`readMailboxFactsVia`, `profileImportVia`), and this file
+ * supplies only the transport — the manager's fetch. Every wire module is DOOR-FREE, a build
+ * fact: the factories once sat beside their bridge bindings, so importing one pulled
+ * `bridge-fetch.ts` into the bundle a phone is handed — `scan:host` refuses that. They live
+ * in `*-wire.ts` modules importing no transport; `host-client-no-engine-door.test.ts`
+ */
+
+/*
+ * measures it on the built artifact.
  */
 
 import type { JunkWire } from "../../../webapp/app/shell/junk-window";
@@ -56,23 +51,18 @@ export function olderBodyOverBearer(bearer: BearerManager): OlderBodyWire {
 }
 
 /**
- * THE TWO LIVE WINDOWS OVER THE BEARER — Junk and Trash, and never one of them.
- *
- * Both read a folder the mirror never holds (the provider's own \Junk and \Trash), so neither can
- * be answered from this page's in-memory mirror; `desktopHostRoutes` spreads `localRoutes`, which
- * mounts both groups, so the host's engine serves all four reads one hop away. Without a wire the
- * shared hooks fall back to `api-client` — the refusing stub in this artifact — report "no server"
- * and the shell withholds both sections with nothing on screen naming why.
- *
- * Handed in as a PAIR because they are one absence: fixing either alone leaves the other silently
- * missing on the same door for the same reason. Like every wire here, only the transport is
- * supplied — the paths, the status contracts and the read-only rule are `junkVia`'s and
- * `trashVia`'s, so this door cannot ask for a route the desktop window does not.
- *
- * What each section then DOES is the flag's, not the wire's: both sit behind "Use folders", which
- * a host engine cannot store (`withoutFoldersFlag` strips the field — it serves no folder verb),
- * exactly as on the desktop's own standalone door. The wire is handed in regardless, so the day
- * that door grows the verbs the sections follow the switch with no change here.
+ * THE TWO LIVE WINDOWS OVER THE BEARER — Junk and Trash, and never one of them. Both read a
+ * folder the mirror never holds (the provider's own \Junk and \Trash); `desktopHostRoutes`
+ * spreads `localRoutes`, so the host's engine serves all four reads one hop away. Without a
+ * wire the shared hooks fall back to `api-client` — the refusing stub — and the shell
+ * withholds both sections with nothing naming why. A PAIR because they are one absence:
+ * fixing either alone leaves the other silently missing. Only the transport is supplied —
+ * the paths and read-only rule are `junkVia`'s and `trashVia`'s. What each section DOES is
+ * the flag's: both sit behind "Use folders", which a host engine cannot store
+ */
+
+/*
+ * (`withoutFoldersFlag`), exactly as on the desktop's own standalone door.
  */
 export function junkOverBearer(bearer: BearerManager): JunkWire {
   return junkVia(bearer.fetch);

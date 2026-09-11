@@ -1,23 +1,12 @@
 /**
- * "SUGGEST FOR NEW SENDERS AS THEY ARRIVE", IN THE DESKTOP WINDOW — the transport, and nothing else.
- *
- * The engine on this machine serves `GET/PUT /local/auto-suggest` on the STANDALONE door and on no
- * other, exactly as it serves `/local/ai`. Everything about the shape below follows from that:
- * `bridgeFetch` because this window's content policy is `connect-src 'none'` and the pipe to the
- * engine is the only way out of it, and `404 ⇒ not on this door` because a hosted install arms the
- * same consent on its ACCOUNT, through `/consent/settings`, where the ledger and the worker that
- * spends against it actually live (`local-consent.ts`).
- *
- * The 404 idiom is `local-screening.ts`'s and it is copied deliberately: an engine that does not
- * serve this route is an engine this control has nothing to show for, and an error card would be a
- * lie about a mailbox that is working perfectly well.
- *
- * ── WHY THERE IS NO `503 OFFLINE` ARM HERE, WHERE THE SCREENING PANE HAS ONE ────────────────
- *
- * That pane's route is FORWARDED on the hosted door, so "the account is out of reach" is a real
- * third state it has to say out loud. This route is never forwarded — it exists on one door and is
- * answered out of a database file in this same process. There is no network between the switch and
- * the value, so the only honest outcomes are the two below.
+ * "SUGGEST FOR NEW SENDERS AS THEY ARRIVE", IN THE DESKTOP WINDOW — the transport and nothing
+ * else. The engine serves `GET/PUT /local/auto-suggest` on the STANDALONE door and no other,
+ * exactly as it serves `/local/ai`: `bridgeFetch` because this window's content policy is
+ * `connect-src 'none'`, and `404 ⇒ not on this door` because a hosted install arms the same
+ * consent on its ACCOUNT through `/consent/settings` (`local-consent.ts`). The 404 idiom is
+ * `local-screening.ts`'s, copied deliberately — an error card would lie about a working
+ * mailbox. No `503 offline` arm: this route is never forwarded — it is answered out of a
+ * database file in this process, so the only honest outcomes are the two below.
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";

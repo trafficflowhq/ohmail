@@ -1,29 +1,12 @@
 /**
- * A `mailto:` link, read into a compose prefill — RFC 6068, read defensively.
- *
- * The operating system hands this app whatever string the registered handler was invoked with,
- * and that string is the one input in this window that a WEBSITE composes: any page can write
- * `<a href="mailto:...">` and a click delivers it here. So this parser's contract is stated as
- * what its OUTPUT can never contain, not as what its input should look like:
- *
- *  · PLAIN STRINGS ONLY. The five fields are text for text inputs. Nothing here is HTML, nothing
- *    is a URL to follow, and no header a link author invents is honored — `attach`, `content-type`
- *    and every other name RFC 6068 lets a URI carry are DROPPED, because each one is an
- *    instruction, and instructions from a web page do not run in a mail client.
- *  · NO CONTROL CHARACTERS where one line is expected. Addresses and the subject are single-line
- *    fields; a CR or LF smuggled into one is the classic header-injection shape, so controls are
- *    collapsed to a space there. The body keeps `\n` and `\t` — it is the one multi-line field —
- *    and nothing else below 0x20.
- *  · BOUNDED. A link is a click; a compose prefill the size of a mailbox is not a compose
- *    prefill. Recipients, subject and body are capped, and the caps are stated here rather than
- *    discovered in a hang.
- *
- * Two RFC 6068 readings that are easy to get wrong, pinned by test:
- *
- *  · `+` IS A PLUS. mailto is percent-encoding only — form encoding's `+`-for-space does not
- *    apply, and `tom+filter@example.org` is a real address.
- *  · SPLIT FIRST, DECODE SECOND. `&` and `=` are separators only while still encoded; a `%26`
- *    inside a subject is an ampersand in the text, never a new header.
+ * A `mailto:` link, read into a compose prefill — RFC 6068, read defensively. The OS hands this
+ * app whatever string the registered handler was invoked with, and any web page can compose one
+ * — so the contract is what the OUTPUT can never contain. PLAIN STRINGS ONLY: five text fields;
+ * `attach`, `content-type` and every other header a URI can carry are DROPPED — instructions
+ * from a web page do not run in a mail client. NO CONTROL CHARACTERS in single-line fields
+ * (CR/LF is the header-injection shape; the body keeps `\n` and `\t` only). BOUNDED:
+ * recipients, subject and body are capped here, not discovered in a hang. Pinned by test: `+`
+ * IS A PLUS (percent-encoding only); SPLIT FIRST, DECODE SECOND — `%26` is text, not a header.
  */
 
 export interface MailtoDraft {
@@ -149,20 +132,14 @@ function bodyText(text: string): string {
 }
 
 /**
- * Separator-delimited addr-specs into `into`, filtered rather than trusted.
- *
- * Split on COMMA AND SEMICOLON, and the semicolon is load-bearing: the compose send path
- * (`parseRecipients`) splits its To text on `/[,;]/`, so an entry this parser admitted whole —
- * `a@x;b@y`, reachable as `%3B` in a link — would count as ONE recipient here and mail TWO
- * there, hiding the second from `MAX_RECIPIENTS` and from every per-entry check. The same
- * separators on both sides keep "what was counted" and "what is mailed" the same list. (RFC 6068
- * delimits with commas; a semicolon inside an addr-spec is legal only in a quoted local part,
- * a shape the send path's validator refuses anyway — dropping it costs no deliverable address.)
- *
- * An entry must contain `@` and fit an address's length to join; everything else — empty
- * segments, decorative text, an entry that is only a display name — is dropped. What joins is
- * still only TEXT in an editable To field; the send path's own validation is the authority on
- * whether it is a deliverable address.
+ * Separator-delimited addr-specs into `into`, filtered rather than trusted. Split on COMMA AND
+ * SEMICOLON — the semicolon is load-bearing: the send path (`parseRecipients`) splits its To
+ * text on `/[,;]/`, so an entry admitted whole (`a@x;b@y`, reachable as `%3B`) would count as
+ * ONE recipient here and mail TWO there, hiding the second from `MAX_RECIPIENTS`. The same
+ * separators on both sides keep "what was counted" and "what is mailed" the same list; RFC
+ * 6068's quoted-local semicolon is a shape the send validator refuses anyway. An entry must
+ * contain `@` and fit an address's length to join; everything else is dropped. What joins is
+ * still only TEXT in an editable To field — the send path's validation decides deliverability.
  */
 function addAddresses(into: string[], list: string): void {
   for (const part of list.split(/[,;]/)) {

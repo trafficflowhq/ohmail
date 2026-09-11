@@ -1,18 +1,12 @@
 /**
- * SETTINGS → ABOUT, on the desktop — who publishes this, which build is running, and where the
- * mail actually lives.
- *
- * The shared client's About pane is injected by whoever mounts the shell, because the facts in it
- * differ by surface: the hosted client reads its account's mailbox list and names the operator of
- * the hosted service. Neither is right here. A standalone install has no account, and the operator
- * of a service you are not using is not the answer to "who published the app in front of me". So
- * the pane was absent on the desktop entirely — and it is the one screen in the product whose whole
- * job is to answer the questions somebody asks before trusting an app with their mail.
- *
- * Everything here is a FACT the window already holds or a constant compiled into it. Nothing is
- * fetched, because nothing needs to be: the version comes from the manifest at build time, the
- * mailbox and the door come from the status the shell already answered with, and the rest is the
- * licence and the addresses, which do not vary.
+ * SETTINGS → ABOUT, on the desktop — who publishes this, which build is running, and where
+ * the mail actually lives. The shared About pane is injected by whoever mounts the shell
+ * because its facts differ by surface: the hosted client reads its account's mailbox list and
+ * names the service operator — neither right here, so the pane was absent on the desktop
+ * entirely, and it is the one screen whose whole job is answering the questions somebody asks
+ * before trusting an app with their mail. Everything here is a FACT the window already holds
+ * or a constant compiled in: the version from the manifest, the mailbox and door from the
+ * shell's status, the licence and addresses. Nothing is fetched, because nothing needs to be.
  */
 
 import { SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";

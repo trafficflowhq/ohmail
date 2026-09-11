@@ -1,60 +1,23 @@
 /**
  * THE APP LOOKS FOR ITS OWN UPDATE AT LEAST ONCE A DAY — from the window, on a wall clock.
- *
- * ── WHAT THE SHELL DID BEFORE THIS, WHICH WAS NEARLY ENOUGH ────────────────────────────────
- *
- * `src-tauri/src/updater.rs` checks the signed release feed once, shortly after the window
- * opens, and whenever somebody asks it to. That is the right shape and it has one gap: a window
- * that is never closed never asks again. This is a mail client, and a mail client is the
- * archetype of a program left running for weeks — so "checks at launch" is, for the people who
- * use it most, "checked once, in March".
- *
- * ── WHY THE CADENCE IS HERE AND NOT IN THE SHELL ───────────────────────────────────────────
- *
- * Because the check itself is not moving anywhere. Every part of the update that could be
- * dangerous — the one pinned endpoint, the minisign verification, the version guard read out of
- * signed material, the install — stays in the native process, and this file cannot reach any of
- * it. What it asks for is the LAUNCH CHECK, on a schedule: `update_poll` takes no argument,
- * names nothing, and makes the same request `on_launch` makes.
- *
- * NOT `update_press`, and that distinction is load-bearing rather than tidy. A press is a person
- * asking, and the shell answers a person out loud: a press that finds nothing raises "ohmail is
- * up to date", a press that cannot reach the feed raises an error with a Try-again, and a press
- * that finds a release opens the progress window. Each is right for somebody who just pressed a
- * button; each is wrong once a day, forever. A cadence routed through the press would put a
- * modal over a person's mail every twenty-four hours for as long as the app stayed open and
- * current — the exact nag this file exists to replace. The check the poll starts is silent
- * unless it finds something, and even then the only thing raised is the one dialog `prompt_ready`
- * always raised. A check is started only where the shell's own state says a press WOULD start
- * one, so this can never turn a request into an install.
- *
- * ── WALL CLOCK, NEVER TICKS, AND THAT IS THE WHOLE DESIGN ──────────────────────────────────
- *
- * A timer set for twenty-four hours does not fire twenty-four hours later on a laptop; it fires
- * after twenty-four hours of the machine being awake, because a suspended machine runs no
- * timers and every monotonic clock the platforms offer stops with it. A person who shuts the
- * lid every evening would be checked every three or four days.
- *
- * So nothing here counts firings. A short interval wakes up, asks the shell what it knows —
- * including WHEN its last check finished, which is a wall-clock instant the shell already keeps
- * — and compares two instants. Suspend and resume become a non-event: whatever the machine did
- * in between, the first evaluation after it wakes sees the true gap and acts. The arithmetic is
- * `periodElapsed` in the shared `app-update.ts`, including the guard for a clock that moves
- * backwards.
- *
- * ── AND IT ASKS RATHER THAN INSTALLING ─────────────────────────────────────────────────────
- *
- * Nothing here installs anything, and nothing here can. When a check finds a release, the shell
- * fetches and verifies it and asks once, in a native dialog. "Later" leaves the payload ready
- * and spends that question for the run — which is the correct restraint for a dialog and would,
- * on a window left open for a fortnight, mean a verified update sitting there unmentioned for a
- * fortnight. So this re-raises it, ONCE A DAY AND NEVER MORE, as the quiet strip the shared
- * shell renders (`app/shell/UpdateNotice.tsx`) rather than as a second dialog.
- *
- * The first sight of a ready payload deliberately does NOT raise the strip: the shell's dialog
- * is on screen at that exact moment, and two asks about one release is the nagging this whole
- * cadence is written to avoid. It records that ask instead, and the strip is what the person
- * sees a day later if the payload is still waiting.
+ * The shell (`src-tauri/src/updater.rs`) checks the signed feed at launch and on a press; a
+ * window never closed never asks again, and a mail client is left running for weeks. The
+ * cadence lives HERE because the check is not moving: the pinned endpoint, minisign
+ * verification, version guard and install stay native — `update_poll` takes no argument and
+ * makes the same request `on_launch` makes. NOT `update_press`: a press answers a person out
+ * loud (dialog, error, progress window), each wrong once a day forever; the poll is silent
+ * unless it finds something and starts only where a press WOULD — never a silent install.
+ */
+
+/*
+ * WALL CLOCK, NEVER TICKS: a 24 h timer fires after 24 h of the machine being AWAKE — suspend
+ * stops every monotonic clock, so a lid closed nightly would be checked every three or four
+ * days. Nothing counts firings: a short interval wakes, asks the shell when its last check
+ * finished (a wall-clock instant it already keeps) and compares two instants; the arithmetic
+ * is `periodElapsed` in the shared `app-update.ts`, backwards-clock guard included. It ASKS
+ * rather than installs: a found release is verified and asked about once, natively; "Later"
+ * leaves the payload ready, and this re-raises it ONCE A DAY as the quiet strip
+ * (`app/shell/UpdateNotice.tsx`) — never at first sight, when the shell's dialog is on screen.
  */
 import {
   announceUpdate,
@@ -106,20 +69,12 @@ export const INSTALL_RETRIES = 1;
 export const REQUEST_RETRIES = 3;
 
 /**
- * Did an INSTALL refuse — as opposed to a check failing to reach the feed?
- *
- * ── THE TWO SHARE ONE STAGE, AND THE LAST CHECK'S RESULT SEPARATES THEM EXACTLY ────────────
- *
- * The shell reports a stage and, separately, what the last completed CHECK found, and the pair
- * separates them exactly. Every path that ends a check writes the check's result: a check that
- * could not reach the feed writes `failed`, and so does a download that died after the offer.
- * An install that failed writes nothing — it was not a check — so the last result still reads
- * `offered` from the successful check that produced the payload. `failed` beside `offered` is
- * therefore the one combination that can only mean the install itself refused.
- *
- * This is the whole of the discrimination, and it is exact: every path that ENDS A CHECK writes
- * the check's result, and the install's failure path writes none, because it was not a check. So
- * `failed` beside `offered` is the one pair that can only mean the install itself refused.
+ * Did an INSTALL refuse — as opposed to a check failing to reach the feed? The shell reports a
+ * stage and, separately, what the last completed CHECK found, and the pair separates them
+ * exactly: every path that ENDS A CHECK writes the check's result (`failed` for an unreachable
+ * feed or a dead download), while an install's failure path writes none — it was not a check —
+ * so the last result still reads `offered` from the check that produced the payload. `failed`
+ * beside `offered` is the one combination that can only mean the install itself refused.
  */
 export function installRefused(report: UpdateReport): boolean {
   return report.state === "failed" && report.lastResult === "offered";
@@ -140,34 +95,14 @@ export function cannotSelfInstall(report: UpdateReport, linux: boolean): boolean
 }
 
 /**
- * Is a periodic check due?
- *
- * `canCheck` is the shell's own `Flow::press` answer, carried over rather than re-derived, so
- * this cannot start a check the menu item has disabled — and, more importantly, cannot press in
- * the one state where a press INSTALLS. A payload waiting to be installed is not a state to
- * re-check from; the shell would only fetch an identical copy of what it already holds.
- *
- * ── WHAT IS *NOT* HERE ─────────────────────────────────────────────────────────────────────
- *
- * Giving up. A refused install leaves the flow in a state a press WOULD check from, and stopping
- * there is a decision about how many times to try rather than about time — so it lives in the
- * driver, beside the counter it needs, and [`cannotSelfInstall`] is the classifier both use.
- *
- * `floor` is the earliest instant a periodic check may be counted from, and it carries two
- * facts the report cannot: when this window opened, and when this cadence last pressed.
- *
- *  · THE WINDOW OPENING is the fallback origin for a shell that has no last check to report —
- *    one whose launch check has not finished, or one too old to keep the stamp. Counting from
- *    then is the honest reading of "it has not been checked since", and it puts the first
- *    periodic check a full period after the launch check rather than a moment after it.
- *  · THE LAST PRESS is what stops a press repeating. The shell normally answers the press by
- *    moving to `checking` and then writing a new stamp, and both of those close this on their
- *    own — but a press that lands and produces neither would otherwise be re-pressed at every
- *    tick for as long as the window stayed open, which is a check every quarter of an hour
- *    dressed up as a daily one. The cadence therefore presses at most once a period whatever
- *    the shell does with it.
- *
- * So the instant compared is the LATER of what the shell recorded and what this cadence did.
+ * Is a periodic check due? `canCheck` is the shell's own `Flow::press` answer, carried over
+ * rather than re-derived: this cannot start a check the menu item has disabled, and cannot
+ * press in the one state where a press INSTALLS. Giving up is NOT here — a refused install
+ * leaves a state a press would check from, so the stop lives in the driver beside its counter
+ * (`cannotSelfInstall` is the classifier both use). `floor` is the earliest instant a check
+ * may be counted from: the WINDOW OPENING for a shell with no last check to report, and the
+ * LAST PRESS, which stops a press that produced neither `checking` nor a stamp from being
+ * re-pressed every tick. The instant compared is the LATER of the two.
  */
 export function checkDue(report: UpdateReport, now: number, floor: number): boolean {
   if (!report.canCheck) return false;
@@ -175,19 +110,14 @@ export function checkDue(report: UpdateReport, now: number, floor: number): bool
 }
 
 /**
- * What, if anything, the window should say about this report.
- *
- *  · A verified payload waiting to be installed is the ask: one press restarts into it.
- *  · An install this app could not perform is the other case, and it is a different sentence
- *    rather than a louder one — [`cannotSelfInstall`] carries which state that is and why it is
- *    Linux's alone. "Try again in a moment" is advice that cannot work there.
- *
- * THE SENTENCE HEDGES ITS PROVENANCE ON PURPOSE. What this state establishes is that the
- * replacement failed, not HOW the copy was installed: an AppImage on a read-only mount, or under
- * a directory its user cannot write, reaches it too. So the copy says the app could not replace
- * its own files and names the package manager as a condition rather than as a diagnosis. A
- * sentence that asserted "this copy came from your package manager" would be false for that
- * person and would send them somewhere the release is not.
+ * What, if anything, the window should say about this report. A verified payload waiting is
+ * the ask: one press restarts into it. An install this app could not perform is a different
+ * sentence, not a louder one — `cannotSelfInstall` carries which state that is. THE SENTENCE
+ * HEDGES ITS PROVENANCE ON PURPOSE: the state establishes that the replacement failed, not
+ * HOW the copy was installed — an AppImage on a read-only mount reaches it too — so the copy
+ * says the app could not replace its own files and names the package manager as a condition,
+ * not a diagnosis. Asserting "this copy came from your package manager" would be false for
+ * that person and send them somewhere the release is not.
  */
 export function offerOf(report: UpdateReport, linux: boolean): UpdateOffer | null {
   if (report.state === "ready" && report.canInstall) {
@@ -230,44 +160,24 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
   /** When this cadence last asked — the second half of `checkDue`'s floor. */
   let askedAt: number | null = null;
   /**
-   * Is a refused install still the thing standing in front of this window, and how many scheduled
-   * checks have been spent since it started — the bound on the daily loop a refusal would
-   * otherwise begin.
-   *
-   * A LATCH RATHER THAN A RUN OF CONSECUTIVE REPORTS, and the difference is the whole guard.
-   * Counting consecutive refused reports cannot work, because THE CHECK ITSELF moves the report
-   * off that state: the request starts a check, the flow goes checking → downloading → ready, and
-   * every tick in between reports something that is not a refused install. A counter reset on
-   * those would reset on every cycle it was meant to be counting, so the bound would never engage
-   * — the release re-fetched and the install dialog re-raised every twenty-four hours for ever,
-   * which is exactly the outcome it exists to prevent.
-   *
-   * CLEARED ONLY BY `idle`, and it is worth being exact about how little that is rather than
-   * describing a recovery this does not perform. Once the flow has left `idle` the only way back
-   * is a check that COMPLETED and found nothing to install, so `idle` means the release this
-   * window kept failing on is no longer being offered: withdrawn, or refused by the version
-   * guard. Not "installed some other way" — the guard compares the feed against the version of
-   * the RUNNING binary, so a copy installed beside this one leaves the same release strictly
-   * newer and the check still ends at `ready`. While the release is still offered no report can
-   * be `idle`, so inside one window a refusal that persists is permanent, on every platform.
-   *
-   * That is deliberate, and the alternative was measured against the same states rather than
-   * hoped about. `failed` is the only other candidate and it is ambiguous: a check that could not
-   * reach the feed and a DOWNLOAD that died inside a cycle heading straight back to the same
-   * refused install both land there, both writing `failed` as the last check's result. Reading it
-   * as recovery hands a package-managed copy on flaky wifi a fresh retry — and so a fresh install
-   * dialog — every couple of days, for ever. That is the nag this bound exists to prevent, at a
-   * slower rate, and it is certain rather than possible.
-   *
-   * WHERE THE RECOVERY ACTUALLY IS, since it is not here: the one retry's own cycle ends in
-   * `ready` and the shell raises its install dialog, so somebody who has since freed the disk or
-   * fixed the permission presses Restart and is done. If it refuses again, this window has said
-   * what it can and stops; the app's next launch checks as it always does. Settings → Check now
-   * still reaches the feed and still offers the install, and is unaffected by the latch — but it
-   * does not clear it either, because its cycle ends in `ready` and not in `idle`.
-   *
-   * The in-flight stages are not an end at all — they are what the retry produces, and treating
-   * them as recovery is the defect above.
+   * Is a refused install still what stands in front of this window, and how many scheduled
+   * checks have been spent since — the bound on the daily loop a refusal would begin. A LATCH,
+   * never a run of consecutive reports: the check itself moves the report off that state
+   * (checking → downloading → ready), so a counter reset on those would reset on every cycle
+   * it was meant to count and the bound would never engage. CLEARED ONLY BY `idle`: once the
+   * flow has left `idle` the only way back is a completed check that found nothing, so `idle`
+   * means the refused release is no longer offered — withdrawn, or version-guard refused (a
+   * copy installed beside still ends `ready`); inside one window it is permanent, everywhere.
+   */
+
+  /*
+   * `failed` was measured as the only other candidate and it is ambiguous: an unreachable
+   * feed and a download that died both write `failed` as the last check's result, so reading
+   * it as recovery hands a package-managed copy on flaky wifi a fresh install dialog every
+   * couple of days, for ever. The recovery is the one retry's own cycle: it ends in `ready`,
+   * the shell raises its dialog, and somebody who freed the disk presses Restart. Settings →
+   * Check now still reaches the feed and still offers the install, unaffected by the latch —
+   * and it does not clear it either, because its cycle ends in `ready` and not in `idle`.
    */
   let installWasRefused = false;
   let checksSinceRefusal = 0;
@@ -334,17 +244,13 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
     say(report);
 
     /* ── ONE RETRY AFTER A REFUSED INSTALL, THEN THIS WINDOW STOPS ASKING ──────────────────
-       A refused install leaves the flow somewhere a check would start from, and the release is
-       still newer — so without a bound the day sends this window round the whole loop for ever:
-       fetch the release again, verify it, raise the shell's own "ready to install" dialog (which
-       is not gated on anybody having asked for the check), fail the install again, repeat
-       tomorrow. That is a modal over somebody's mail once a day for the life of the install.
-
-       ONE more attempt, and NOT platform-gated even though the sentence the strip says is. On a
-       copy whose files belong to a package manager the second attempt is certain to fail; the
-       same state is reachable elsewhere from a full disk or a read-only mount and can be repaired
-       while the app is open, so refusing to try again at all would leave that person a window
-       that never checks again. One retry buys the recovery and stops short of a daily dialog. */
+       A refused install leaves the flow where a check would start, and the release is still
+       newer — unbounded, the day sends this window round the loop for ever: fetch, verify,
+       raise the shell's "ready to install" dialog, fail, repeat tomorrow; a modal over
+       somebody's mail once a day for the life of the install. ONE more attempt, and NOT
+       platform-gated even though the strip's sentence is: the same state is reachable from a
+       full disk or a read-only mount and can be repaired while the app is open. One retry
+       buys the recovery and stops short of a daily dialog. */
     const givenUp = installWasRefused && checksSinceRefusal >= INSTALL_RETRIES;
 
     if (givenUp || !checkDue(report, now(), Math.max(armedAt, askedAt ?? armedAt))) {

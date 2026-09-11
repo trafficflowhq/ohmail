@@ -1,28 +1,17 @@
 /**
- * THE BOOT'S OWN SYNC LINE — the quiet card at the foot of the rail, while the engine comes up.
- *
- * The window used to spend the whole of a launch behind a centred card: a wordmark and one
- * sentence, over an empty canvas, for anything from half a second to the minute a write-ahead-log
- * recovery can take. The app already has a place where it reports work that is not the reader's
- * fault and not the reader's job — the sync line at the foot of the rail (`SyncBar`'s `rail`
- * shape) — so the boot borrows that exact surface: same classes, same spinner, same travelling
- * sliver, drawn at the foot of the rail SILHOUETTE the boot skeleton is already painting. When
- * the engine serves, the real rail replaces the silhouette and the real sync line takes over in
- * the same corner; the wait and the work read as one continuous thing in one place.
- *
- * ── THE SENTENCE IS THE ENGINE'S OWN CLAIM, MAPPED — NEVER INVENTED ─────────────────────────
- *
- * {@link bootSentence} is a closed map over the phases the engine actually announces
- * (`bridge-fetch.ts`'s `bootPhase`, straight off the shell's status). Everything else — no phase
- * yet, an engine too old to narrate, a phase this build does not know — gets the one sentence
- * that is true in every one of those cases. A phase this build has never heard of must not
- * surface as itself: it is an identifier, not prose, and rendering it would be showing the user
- * a wire token.
- *
- * `role="status"` + `aria-live="polite"` for the same reason the sync line carries them: the
- * sentence changes a handful of times per boot and each change is the answer to "what is it
- * doing now". The spinner and the track are `aria-hidden`, as they are in `SyncBar` — the region
- * already says it in words.
+ * THE BOOT'S OWN SYNC LINE — the quiet card at the foot of the rail while the engine comes
+ * up. The window used to spend the whole launch behind a centred card, half a second to the
+ * minute a write-ahead-log recovery takes. The app already reports background work at the
+ * sync line (`SyncBar`'s `rail` shape), so the boot borrows that exact surface, drawn at the
+ * foot of the rail SILHOUETTE the boot skeleton paints; when the engine serves, the real sync
+ * line takes over in the same corner. The sentence is the ENGINE'S OWN CLAIM, mapped —
+ * {@link bootSentence} is a closed map over the phases the engine announces
+ * (`bridge-fetch.ts`'s `bootPhase`); everything else gets the one sentence true in every
+ */
+
+/*
+ * case, because an unknown phase is an identifier, not prose. `role="status"` +
+ * `aria-live="polite"` as the sync line carries them; the spinner and track are `aria-hidden`.
  */
 
 import type * as React from "react";

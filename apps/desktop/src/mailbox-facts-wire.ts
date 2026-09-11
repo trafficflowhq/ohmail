@@ -3,12 +3,10 @@
  *
  * `GET /mailboxes` is asked by two surfaces: the desktop window over its bridge
  * (`local-mailbox-facts.ts`) and the served host client over its bearer socket
- * (`host-client/transports.ts`). The narrowing below — which fields are forwarded, and the
- * absent-versus-null discipline every one of them follows — must live once for both.
- *
- * It lives HERE, in a module that imports no transport, because the served host client has no
- * bridge: a factory that shared a file with the window's bridge binding put the shell command's
- * name into the bundle a phone is handed (`scan:host` refuses that).
+ * (`host-client/transports.ts`), so the narrowing — which fields are forwarded, and the
+ * absent-versus-null discipline — lives once for both. It imports no transport because the
+ * served host client has no bridge; a file shared with the bridge binding would put the shell
+ * command's name into the bundle a phone is handed, which `scan:host` refuses.
  */
 
 import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
@@ -52,15 +50,11 @@ interface MailboxWire {
   /**
    * HOW MUCH MAIL THE SERVER SAYS IS IN THIS MAILBOX — the local door's own Σ of
    * `mailbox_folders.server_exists` over the folders a cycle has opened (mail 0083).
-   *
-   * It is the FIRST PULL'S DENOMINATOR and the only fact on this door that can say where the
-   * walk ends: the mirror's own count is the numerator, and without this there is no horizon to
-   * compare it against. The engine has served it all along and this narrowing dropped it, so the
-   * first-run pull stage showed no remaining count, no progress bar and never an ETA — see the
-   * map below.
-   *
-   * Grows as the folder tree is walked, so a consumer must clamp the remainder at zero rather
-   * than treat it as a fixed total (`pull-rate.ts` owns that rule).
+   * It is the first pull's denominator: the mirror's own count is the numerator, and without
+   * this there is no horizon — dropped, the first-run pull stage shows no remaining count, no
+   * progress bar and never an ETA. Grows as the folder tree is walked, so a consumer must
+   * clamp the remainder at zero rather than treat it as a fixed total (`pull-rate.ts` owns
+   * that rule).
    */
   serverMessageCount?: number;
   /** When this install was told it may organize this mailbox (mail 0083); null pre-consent. */
@@ -139,17 +133,12 @@ export async function readMailboxFactsVia(
        machine is already organizing. */
     organizerRole: m.organizerRole === "reader" ? "reader" : "organizer",
     /* ── SPREAD, BECAUSE ABSENT AND `null` ARE DIFFERENT ANSWERS HERE TOO ──────────────────
-     *
-     * This read `m.organizedBy ? {…} : null`, which normalized a field the wire did not carry
-     * into the wire saying "nobody organizes this mailbox". The DTO declares `organizedBy` as
-     * non-optional (`dto/types.ts`) and the service projects it unconditionally, so ABSENT can
-     * only mean an engine older than the field or a body that did not carry one — a read that
-     * did not ANSWER. The first-run claim question routes on exactly that distinction, and with
-     * it collapsed here its "no answer" arm could never be reached: a lagging read took the
-     * screen away and the next press authorizes a takeover.
-     *
-     * The object's own fields are still normalized, because a present object with missing
-     * members is a shape this narrowing owns. */
+     * The DTO declares `organizedBy` non-optional (`dto/types.ts`) and the service projects it
+     * unconditionally, so ABSENT can only mean an engine older than the field or a body that
+     * did not answer — never "nobody organizes this mailbox". Normalizing absent to null here
+     * made the first-run claim question's "no answer" arm unreachable: a lagging read took the
+     * screen away and the next press authorizes a takeover. The object's own fields are still
+     * normalized — a present object with missing members is a shape this narrowing owns. */
     ...("organizedBy" in m
       ? {
           organizedBy: m.organizedBy
@@ -190,21 +179,14 @@ export async function readMailboxFactsVia(
     // strip's comparison upside down. Absent must arrive absent. This seam has dropped a field
     // exactly once before — `smtpMaxSizeBytes`, on the line above — and it did so silently.
     ...("hostedMessageCount" in m ? { hostedMessageCount: m.hostedMessageCount } : {}),
-    // ── AND IT DID IT A SECOND TIME, WITH THE FIELD THAT SAYS WHERE THE PULL ENDS ────────
-    //
-    // `serverMessageCount` is the local door's Σ of `server_exists`, and it never reached the
-    // shell: the engine answers it beside every mailbox row and this narrowing forwarded
-    // nothing, so `pullRemaining` had no denominator, the first-run pull stage rendered
-    // neither the remaining counter nor the bar nor an ETA, and no surface on this door could
-    // tell "the walk reached the end" from "the walk is still going".
-    //
+    // ── THE FIELD THAT SAYS WHERE THE PULL ENDS ───────────────────────────────────────────
+    // `serverMessageCount` is the local door's Σ of `server_exists`; unforwarded, `pullRemaining`
+    // has no denominator and no surface can tell "the walk reached the end" from "still going".
     // Absent must arrive ABSENT, on `hostedMessageCount`'s rule above: a `?? 0` would claim the
-    // server holds no mail, which is a confident wrong answer rather than a missing one.
-    //
-    // The three drops share one cause — a hand-written field list beside a growing wire — so
-    // `test/desktop-facts-census.test.ts` now derives the required set from `MailboxFacts`
-    // itself and fails on any key this map does not forward. A fourth silent drop is not
-    // available any more.
+    // server holds no mail — a confident wrong answer rather than a missing one.
+    // A hand-written field list beside a growing wire drops fields silently, so
+    // `test/desktop-facts-census.test.ts` derives the required set from `MailboxFacts` itself
+    // and fails on any key this map does not forward.
     ...("serverMessageCount" in m ? { serverMessageCount: m.serverMessageCount } : {}),
     ...("organizeConsentedAt" in m ? { organizeConsentedAt: m.organizeConsentedAt } : {}),
     // THE ORGANIZER NOTICE'S PAIR, ITS RELEASE STAMP AND THE HOLDER'S ANSWER, forwarded by the
@@ -231,21 +213,15 @@ export async function readMailboxFactsVia(
     // and must arrive absent, so the pane renders nothing rather than asserting "no episode".
     ...("inboundQuietSince" in m ? { inboundQuietSince: m.inboundQuietSince } : {}),
     ...("inboundQuietDismissedAt" in m ? { inboundQuietDismissedAt: m.inboundQuietDismissedAt } : {}),
-    // ── NEVER `?? new Date()`, AND THAT DEFAULT WAS A BUG THE FLOOR COULD NOT SURVIVE ───
-    //
-    // `importFloorSpeaks` trusts an unwritten `initial_import_completed_at` ABSOLUTELY for
-    // `IMPORT_FLOOR_MAX_MS` (24 h) after `createdAt`, and only past that window does it demand
-    // corroboration before repeating a claim the server never made. Defaulting an absent
-    // `createdAt` to NOW re-based that window on every poll, so `now - connectedAt` was always
-    // ~0, the bound could never elapse, and the strip would announce "Syncing your mail" for
-    // ever over a finished mirror — the exact permanent falsehood the bound exists to end.
-    //
-    // The empty string is "the engine did not say", and every reader of this field already
-    // treats an unparseable stamp as unknown rather than as a time: `importFloorSpeaks`'s
-    // `Number.isFinite` guard takes the CORROBORATED path (documented there as deliberate, so
-    // the floor may still speak — it just may no longer speak unconditionally), `earliest`
-    // skips it and `minutesSince` answers null. Absent therefore degrades to "this client must
-    // have something of its own to say", which is the honest reading of not knowing.
+    // ── NEVER `?? new Date()` ─────────────────────────────────────────────────────────────
+    // `importFloorSpeaks` trusts an unwritten `initial_import_completed_at` absolutely for
+    // `IMPORT_FLOOR_MAX_MS` (24 h) after `createdAt`. Defaulting an absent `createdAt` to NOW
+    // re-based that window on every poll, so the bound could never elapse and the strip said
+    // "Syncing your mail" for ever over a finished mirror.
+    // The empty string is "the engine did not say", and every reader already treats an
+    // unparseable stamp as unknown rather than as a time: `importFloorSpeaks`'s
+    // `Number.isFinite` guard takes the CORROBORATED path, `earliest` skips it and
+    // `minutesSince` answers null.
     createdAt: m.createdAt ?? "",
   }));
 }

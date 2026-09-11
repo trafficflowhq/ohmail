@@ -1,87 +1,24 @@
 /**
  * WHICH MAILBOX THIS INSTALL IS OPENING — the facts, and the Settings pane that shows them.
- *
- * Two surfaces, one read, and they were both empty for the same reason: this window handed the
- * shared client no way to ask about mailboxes.
- *
- *  · the SYNC LINE at the foot of the rail. It is driven by a ladder that starts with "can we see
- *    this account's mailboxes at all?" and answers `null` — say nothing — when it cannot. A browser
- *    tab supplies a probe over the hosted API, which this window may not name; so it supplied none,
- *    the ladder returned its resting value on every render, and a first sync ran to completion with
- *    the window silent throughout. That is the missing loader.
- *  · SETTINGS → MAILBOXES. The shared pane USED TO fall back to the mirror's `mailbox` entities,
- *    and `mailbox` is not a kind of thing the change feed carries — only the invented sample world
- *    has any — so the pane was reliably empty on a real install, which is exactly the surface
- *    somebody opens to find out what their install is connected to. That fallback is deleted now;
- *    the pane is host-supplied on every surface, and this file IS the desktop's host node.
- *
- * Both are answered by `GET /mailboxes`, which BOTH doors serve out of the database on this machine
- * — the standalone engine from its own row, the hosted one from the mirror — so this file needs no
- * knowledge of which door it is behind.
- *
- * ── WHAT THE HOSTED DOOR ACTUALLY ANSWERS WITH, WHICH IS NEWER THAN THIS PANE ───────────────
- *
- * "From the mirror" was, for a while, an overstatement worth correcting rather than deleting. The
- * hosted engine held ONE mailbox row — a placeholder its local schema needs, addressed with the
- * account LOGIN — and answered this route from it. So the pane and the From selector showed a
- * single mailbox that was not one of the account's, an account with two addresses could not be
- * told apart here, and a send carrying that row's id was refused by the account outright.
- *
- * The engine now mirrors the account's mailbox rows themselves, under the account's own ids, at
- * the start of every pull. This pane reads what it always read; what changed is that the rows
- * underneath it are the ones a browser tab would show.
- *
- * ── THE PROBE MUST REJECT, NOT RETURN AN EMPTY LIST ─────────────────────────────────────────
- *
- * "We could not ask" and "there are none" are different facts and the ladder acts on them
- * differently: the second renders "No mailbox connected, so nothing can arrive". Mapping a failed
- * read to `[]` would put that sentence in front of somebody whose mailbox is working and whose
- * engine simply had not answered yet. So a failure propagates and the caller keeps the last thing
- * it actually knew.
- *
- * ── WHAT THIS PANE CAN CHANGE, AND WHY THAT SET IS THE SIZE IT IS ───────────────────────────
- *
- * Exactly one mailbox mutation is available to a desktop install on the HOSTED door, and it is
- * here: `POST /mailboxes/:id/resync`. It is the one route in `mailboxRoutes` that writes and
- * carries no `stepUp` option, so it survives the gate described below; the engine's write-through
- * proxy relays it to the account with the install's bearer, and nothing in this window opens a
- * socket to do it.
- *
- * Everything else that changes a hosted mailbox — `POST /mailboxes`, `PATCH /mailboxes/:id`,
- * `DELETE /mailboxes/:id` — is step-up gated: the account demands a second factor asserted within
- * the last few minutes, because what those three store is a mailbox password. A desktop install's
- * session is stamped with such an assertion exactly once, when its link code was claimed, and
- * nothing rotates that stamp forward (`mintRotation` does not touch `last_twofa_at`). So a form
- * here would work for the first five minutes of an install's life and answer 403 for ever
- * afterwards — a control whose only reliable function is to say it has none, which is the shape
- * this app has removed elsewhere and must not reintroduce.
- *
- * The obstacle is NOT the transport, and that is worth stating plainly because the next reader
- * will find the pipe and wonder why nobody used it: the proxy would carry a PATCH perfectly well,
- * and Cloud would refuse it. Nor is a browser tab getting away with anything — it runs the
- * ceremony itself, with a password field and a passkey against a real origin, which is precisely
- * what this window cannot offer.
- *
- * So the hosted door gets the list, the one action it can take, a sentence, and a way OUT — the
- * browser, where the person is already signed in and where a second factor can actually be asked
- * for. `openWeb` is the same named-place mechanism the account and sign-in links use; this window
- * still names no address.
- *
- * The STANDALONE door is untouched by all of that, and its mailbox IS editable: the door chooser
- * configures the server through the shell and sends the password to the engine over this same
- * bridge (`doors.ts`, `PATCH /local/mailboxes/:id`), which the local engine serves itself against
- * a single-user database with no account and no factor in the picture. Nothing on that door is
- * sent to a browser, because there is no hosted account to administer.
- *
- * ── AND THAT DOOR CAN NOW REMOVE ONE, WHICH IT COULD NOT ────────────────────────────────────
- *
- * `DELETE /local/mailboxes/:id` is the fourth member of that same family and it has been served
- * since the removal was made to mean removal — release the organizer claim, wipe this machine's
- * mirror, stop the timer, close the login. NO CLIENT CALLED IT. This pane offered "Reading only"
- * and "Sync now", its own footnote said "you can remove it and nothing is lost from the mailbox
- * itself", and a release note described a remove-then-re-add walk that nobody standing at this
- * door could perform. The control is below, beside the resync, on the local door alone.
+ * Two surfaces, one read: the SYNC LINE's ladder starts with "can we see this account's
+ * mailboxes at all?" and says nothing when it cannot, and SETTINGS → MAILBOXES is
+ * host-supplied on every surface — this file IS the desktop's host node. Both are answered
+ * by `GET /mailboxes`, served by BOTH doors from the database on this machine (standalone
+ * from its own row, hosted from the mirror, under the account's own ids). THE PROBE MUST
+ * REJECT, NOT RETURN `[]`: "we could not ask" and "there are none"
+ * are different facts — a failed read mapped to `[]` says "No mailbox connected" wrongly.
  */
+
+/*
+ * WHAT THIS PANE CAN CHANGE: on the HOSTED door exactly one mutation,
+ * `POST /mailboxes/:id/resync` — the one writing route in `mailboxRoutes` with no `stepUp`
+ * option. Everything else (`POST/PATCH/DELETE /mailboxes`) is step-up gated: a desktop
+ * session's second-factor stamp is written once, when its link code was claimed, and nothing
+ * rotates it forward (`mintRotation` does not touch `last_twofa_at`) — a form here would work
+ * five minutes and answer 403 for ever; the obstacle is NOT the transport, the account would
+ * refuse the relayed PATCH. So the hosted door gets the list, the one action, a sentence and
+ * a way OUT (`openWeb`); the STANDALONE door's mailbox IS editable and removable
+ * (`PATCH`/`DELETE /local/mailboxes/:id`). */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
@@ -158,34 +95,15 @@ export interface MailboxReachSlice {
 }
 
 /**
- * WHERE ONE POLL OF THE REACH ROUTE LANDED — and the reason "silence" is not one state.
- *
- * There used to be two: a verdict, and `faulted` for "the engine answered and what it answered
- * was not a verdict". Everything else — a transport that never delivered the question, and an
- * engine answering 404 because it predates the route — arrived as an un-faulted empty map, which
- * is byte for byte the value a healthy engine holding no runtimes produces. So a silence and an
- * answer were one state, and the row read whatever it read before this existed.
- *
- * MEASURED, and this is the reading the four states are for: on the Windows guest, 2026-09-09,
- * the Settings row for a mailbox this install organizes read "Up to date" for eleven samples of
- * eleven across a nine-minute cut, while the engine's own log held the death (ECONNRESET), six
- * failed re-dials and twenty-four failed cycles, and the engine's outage clock stayed armed the
- * whole time. The engine was right and the pane never received its answer; with one state for
- * "no answer" and "answered healthy", nothing on screen or in the log could tell the two apart.
- *
- *  · `unasked`  — no poll has landed yet, or this is not the local door. Nothing is claimed and
- *                 nothing denied: the row keeps its ordinary state, which is what keeps the pane
- *                 from flashing "Can't check" on the tick between mounting and the first answer.
- *  · `verdict`  — the engine answered with a roster. A row it NAMES is decided by that record; a
- *                 row it does not name ordinarily has no local runtime at all, which is the state
- *                 of every mailbox ohmail Cloud organizes — see {@link reachUnknownForRow} for
- *                 the one row where that absence is news instead.
- *  · `silent`   — nothing was answered, and WHICH silence decides the sentence: `route-absent` is
- *                 an engine older than the route (an ordinary state on a desktop that updates on
- *                 its own schedule, and on a transport that does not carry the local routes);
- *                 `transport-threw` is the question never arriving, which is not ordinary.
- *  · `faulted`  — the engine on this machine was reached and refused or fell over.
- */
+ * WHERE ONE POLL OF THE REACH ROUTE LANDED — and why "silence" is not one state. Everything
+ * that was not a verdict used to arrive as an un-faulted empty map, byte for byte a healthy
+ * engine with no runtimes — measured on the Windows guest, 2026-09-09: "Up to date" for
+ * eleven samples of eleven across a nine-minute cut while the engine's own log held the
+ * death (ECONNRESET), six failed re-dials, twenty-four failed cycles. Four states: `unasked`
+ * (no poll yet, or not the local door); `verdict` (a roster: a named row is decided by its
+ * record; an unnamed one ordinarily has no local runtime, {@link reachUnknownForRow});
+ * `silent` (`route-absent` = an older engine — ordinary; `transport-threw` — not ordinary);
+ * `faulted` (reached, and refused or fell over). */
 export type MailboxReachPollState = "unasked" | "verdict" | "silent" | "faulted";
 
 /**
@@ -301,33 +219,14 @@ export function reachUnknownForRow(
 }
 
 /**
- * CAN THIS MACHINE REACH ITS MAILBOXES RIGHT NOW — a desktop-only read, on purpose.
- *
- * It is NOT part of `MailboxFacts`, and that is not tidiness. Those facts are the shared shell's,
- * served by `GET /mailboxes` on both doors and consumed by the hosted client too, where "our
- * socket to your provider" is a fact about a worker on a shard that no user is sitting at. The
- * liveness of THIS process's own connections has a reader on exactly one surface, so it has a
- * route on exactly one door.
- *
- * ── SILENCE IS "CANNOT TELL"; A BAD ANSWER IS NOT SILENCE ────────────────────────────────────
- *
- * Two ways this legitimately says nothing and leaves every row alone: an engine older than the
- * route (a desktop updates on its own schedule, so a window newer than its engine is an ordinary
- * state, and that engine answers 404), and a transport that never delivered the question at all.
- * Both mean "no answer", the ladder's fallback for an absent id is the state it had before this
- * existed, and the dangerous default is the other one — a pane that read silence as "unreachable"
- * would tell somebody their mail had stopped every time an update landed.
- *
- * ── AND THE THIRD CASE, WHICH USED TO WEAR THE FIRST TWO'S CLOTHES ───────────────────────────
- *
- * `if (!res.ok) return {}` folded a 401, a 403 and a 500 into that same silence. Those are the
- * route ANSWERING — the engine on this machine is up, it was asked about the sockets it holds,
- * and it refused or fell over. Read as silence, every row kept its last ordinary state, so the
- * pane rendered "Up to date" over an install that could not say whether one byte of mail was
- * moving. That is a confident wrong answer standing in for a missing one, which is the one shape
- * this file's every other absent/null rule exists to avoid, and it was the one place that had it
- * backwards. A body that cannot be parsed is the same fact and takes the same arm: the route
- * answered, and what it answered was not a verdict.
+ * CAN THIS MACHINE REACH ITS MAILBOXES RIGHT NOW — a desktop-only read, on purpose: NOT part
+ * of `MailboxFacts`, which the hosted client also consumes, where this process's own sockets
+ * have no reader. SILENCE IS "CANNOT TELL": an engine older than the route (404 — a window
+ * newer than its engine is ordinary) and a transport that never delivered both leave every
+ * row its last state; silence read as "unreachable" would say mail had stopped on every
+ * update. A BAD ANSWER IS NOT SILENCE: `if (!res.ok) return {}` folded 401/403/500 into
+ * silence, so the pane rendered "Up to date" over an install that could not say whether one
+ * byte was moving — the route ANSWERED and it was not a verdict; unparseable takes that arm.
  */
 export async function readMailboxReachVia(
   fetchImpl: (url: string, init?: unknown) => Promise<Response>,
@@ -361,36 +260,27 @@ export async function readMailboxReachVia(
        for the same reason: an unanswerable question must not be dressed as an answer. */
     return faulted("unparseable-body", res.status);
   }
-  /* ── AND A BODY THAT PARSED IS STILL NOT NECESSARILY A VERDICT ──────────────────────────────
-   *
-   * `body.items ?? []` treated `{}`, `{"items": null}`, a bare string and an array as "the engine
-   * answered about no mailboxes", which is the SILENT slice — every row keeps its last ordinary
-   * state, so a mailbox whose socket died goes on reading "Up to date" for as long as the malformed
-   * answer keeps arriving. That is the same confident-wrong-answer-for-a-missing-one this function
-   * was rewritten to stop, surviving one line below the status check that stopped it.
-   *
-   * The verdict is the SHAPE: an object carrying an `items` ARRAY. `{"items": []}` is a genuine
-   * verdict — an engine holding no runtimes — and stays un-faulted with an empty roster, which is
-   * the case that keeps this from being a check that fires on everything. */
+  /* ── A BODY THAT PARSED IS STILL NOT NECESSARILY A VERDICT ─────────────────────────────
+   * `body.items ?? []` treated `{}`, `{"items": null}`, a bare string and an array as "the
+   * engine answered about no mailboxes" — the SILENT slice, so a mailbox whose socket died
+   * went on reading "Up to date" for as long as the malformed answer kept arriving: the same
+   * confident-wrong-answer this function was rewritten to stop, one line below the status
+   * check that stopped it. The verdict is the SHAPE: an object carrying an `items` ARRAY.
+   * `{"items": []}` is a genuine verdict — an engine holding no runtimes — and stays
+   * un-faulted, which keeps this from being a check that fires on everything. */
   const items = (body as { items?: unknown } | null)?.items;
   if (typeof body !== "object" || body === null || Array.isArray(body) || !Array.isArray(items)) {
     return faulted("not-a-roster", res.status);
   }
-  /* ── ONE ELEMENT IS A FACT ABOUT ONE ROW, AND NEVER ABOUT THE WHOLE READ ──────────────────
-   *
-   * `const it = raw as {…}` followed by `it.mailboxId` THREW on a `null` element, and the throw
-   * left the whole function — past the poll's `.then`, so `setReach` was never called and the
-   * slice on screen stayed whatever it was. After a healthy read that means a mailbox whose
-   * socket has since died goes on saying "Up to date", and so does every row after the bad
-   * element, for as long as the roster keeps carrying it. One unreadable entry silenced the
-   * answer about every OTHER mailbox, which is the opposite of what it is evidence for.
-   *
-   * So the seam's invariant, once, and it is the same one the state line follows: a row's
-   * rendered state comes only from a verdict about THAT row. An element that names a row and
-   * cannot be read marks that row unanswered; an element that names no row is dropped, because
-   * there is nothing to attribute it to; the rest publish. The whole-body checks above stay where
-   * they are — a body that is not a roster is a fact about the READ, and that one is not per-row.
-   */
+  /* ── ONE ELEMENT IS A FACT ABOUT ONE ROW, NEVER ABOUT THE WHOLE READ ───────────────────
+   * `const it = raw as {…}` then `it.mailboxId` THREW on a `null` element, and the throw
+   * left the whole function — `setReach` never ran, the slice on screen stayed whatever it
+   * was, and every row after the bad element read "Up to date" for as long as the roster
+   * carried it: one unreadable entry silenced the answer about every OTHER mailbox. The
+   * invariant, once: a row's rendered state comes only from a verdict about THAT row — an
+   * element that names a row and cannot be read marks it unanswered, an element naming no
+   * row is dropped, and the whole-body checks stay above (a non-roster body is a fact about
+   * the READ). */
   const out: Record<string, MailboxReach> = {};
   for (const raw of items) {
     const it = (typeof raw === "object" && raw !== null ? raw : {}) as {
@@ -423,17 +313,13 @@ export async function readMailboxReachVia(
 
 /**
  * THE DESKTOP'S FRESHNESS SOURCE — `GET /mirror/freshness` over the bridge, for the shared
- * shell's "As of <time> · catching up" arm (INSTANT-ARCH §6.6). The window's own engine drains
- * the sidecar's LOCAL feed and is always current relative to it; this asks the sidecar how old
- * ITS mirror is against the hosted account, which is the only honest answer on this surface.
- *
- * The narrowing is the ladder's own three-state check, and anything that is not one of the
- * three — a route this engine predates (404), a signed-out door (409), a body that is not a
- * verdict — REJECTS, per the `FreshnessProbe` contract: the provider keeps the last answer it
- * saw, and an unanswerable question must not be dressed as "current" (which would silently
- * unlabel a days-old mirror) or "stale" (which would label a current one). The LOCAL door has
- * no such route yet and lands here as a 404: its organizer syncs in-process and the label
- * stays silent — parked, stated in the stage-2 close-out.
+ * shell's "As of <time> · catching up" arm (INSTANT-ARCH §6.6). The window's engine drains
+ * the sidecar's LOCAL feed and is always current relative to it; this asks how old the
+ * sidecar's mirror is against the hosted account — the only honest answer here. Anything not
+ * one of the ladder's three states (a 404 route, a 409 signed-out door, a non-verdict body)
+ * REJECTS, per the `FreshnessProbe` contract: the provider keeps the last answer, and an
+ * unanswerable question must not be dressed as "current" or "stale". The LOCAL door has no
+ * such route yet (404): its organizer syncs in-process, the label stays silent — parked.
  */
 export async function readMirrorFreshness(): Promise<{
   state: "unknown" | "stale" | "current";
@@ -483,55 +369,32 @@ function when(iso: string | null | undefined): string {
 }
 
 /**
- * THE DAY SOMETHING BECAME TRUE — a DATE, with no clock on it.
- *
- * "Organized by ohmail Cloud since 31 Aug 2026" is a standing fact somebody reads once. Putting a
- * timestamp in it ("since 8/31/2026, 3:28:43 AM") makes it look like an event log and invites
- * watching, which is the same reason the DTO deliberately carries when an install BECAME the
- * organizer rather than when it was last seen: a heartbeat on a screen is a thing people stare at.
- *
- * The rule itself moved to the shared shell (`format.ts#dayStamp`) when the browser's Mailboxes
- * pane grew the same released sentence: one catalogue key rendered on two panes must not be able
- * to carry two different dates. This name stays because the call sites below read better with it.
+ * THE DAY SOMETHING BECAME TRUE — a DATE, with no clock on it. "Organized by ohmail Cloud
+ * since 31 Aug 2026" is a standing fact somebody reads once; a timestamp makes it an event
+ * log and invites watching — the same reason the DTO carries when an install BECAME the
+ * organizer rather than when it was last seen. The rule moved to the shared shell
+ * (`format.ts#dayStamp`) when the browser's pane grew the same sentence: one catalogue key
+ * on two panes must not carry two different dates. This name stays for the call sites' sake.
  */
 const day = dayStamp;
 
 /**
- * SETTINGS → MAILBOXES, on the desktop.
- *
- * Read out of the same context the sync line reads, rather than fetched again: there is one poller
- * for this already, and two would be two answers to one question. `null` means the read has not
- * landed or could not be made, and it says so instead of claiming the install has no mailbox.
- *
- * ── THE HEADING NAMES THE DOOR, BECAUSE THE DOOR IS THE MODE ────────────────────────────────
- *
- * The pane names which kind of mailbox it lists — one mode per install, never both in parallel.
- * On the cloud door the mailbox is the hosted account's, organized in the cloud, so the heading is
- * "Cloud mailboxes", the same words the browser client uses — the same catalogue key, in fact.
- * On the local door the engine opens the user's own server on this machine, so it is "Local
- * mailboxes on this computer". Reading the same `door` the rest of the settings pane reads keeps
- * the heading from ever contradicting the door row two lines up.
- *
- * ── THE COPY IS THE CATALOGUE'S, NOT THIS FILE'S ────────────────────────────────────────────
- *
- * It used to be a dozen English literals, which meant a German install read this pane — the one
- * surface that says what an install is connected to and whether it is working — in English, with
- * no way for a translation to ever reach it. The states a desktop install can be in are still a
- * subset of a hosted account's and are still worded for it (nothing here is "waiting for our
- * servers"; on the standalone door there are none), so the keys are the desktop's own; what
- * changed is that they are keys.
+ * SETTINGS → MAILBOXES, on the desktop. Read out of the same context the sync line reads,
+ * rather than fetched again — one poller, one answer; `null` means the read has not landed or
+ * could not be made, and it says so instead of claiming the install has no mailbox. THE
+ * HEADING NAMES THE DOOR: "Cloud mailboxes" on the cloud door (the browser client's own
+ * catalogue key) and "Local mailboxes on this computer" on the local one, read from the same
+ * `door` the rest of the pane reads so the heading cannot contradict the door row above. THE
+ * COPY IS THE CATALOGUE'S, not English literals — a German install used to read this pane in
+ * English; the keys are the desktop's own, worded for its subset of states.
  */
 /**
  * ONE ROW PER ADDRESS — the desktop half of the rule `app/shell/address-key.ts` sets out.
- *
  * Deliberately NOT an import of the browser pane's `groupByAddress`: that one is typed to
- * `MailboxDTO` and lives inside a route component this app must not pull in. What must be shared
- * is the KEY, and it is — everything below is the same three lines of bookkeeping the browser pane
- * does, over this pane's own fact shape.
- *
- * `shown` is the live row when there is one and the first otherwise; `superseded` counts the rest.
- * A group of only-disabled rows therefore keeps a real row with its own state, which is the case
- * the whole fold must not swallow.
+ * `MailboxDTO` and lives in a route component this app must not pull in; what must be shared
+ * is the KEY, and it is. `shown` is the live row when there is one and the first otherwise;
+ * `superseded` counts the rest. A group of only-disabled rows keeps a real row with its own
+ * state — the case the whole fold must not swallow.
  */
 export function foldByAddress<T extends { id: string; address: string; status: string }>(
   items: readonly T[],
@@ -553,14 +416,12 @@ export function foldByAddress<T extends { id: string; address: string; status: s
 
 /**
  * The four answers `POST /local/organizer/takeover` can give, as the copy keys the pane owns.
- *
- * A narrowing function and not a bare template on the wire value, for `standDownToken`'s reason
- * verbatim: an outcome this build does not know — an engine newer than this window, which the
- * desktop's own update flow makes an ordinary state — would otherwise compose a key that does not
- * exist and throw inside a render. `authorized` is the fallback because it is the outcome that
- * changed something, and it is now the one that composes NO key at all: it renders
- * `organizeHereQueued` through the verdict block, so an unrecognised outcome cannot reach the
- * template either. The other three keep their own sentences.
+ * A narrowing function, not a bare template on the wire value (`standDownToken`'s reason): an
+ * outcome this build does not know — an engine newer than this window is ordinary here —
+ * would compose a key that does not exist and throw inside a render. `authorized` is the
+ * fallback because it is the outcome that changed something, and it composes NO key at all
+ * (it renders `organizeHereQueued` through the verdict block), so an unrecognised outcome
+ * cannot reach the template either. The other three keep their own sentences.
  */
 const TAKEOVER_OUTCOMES = ["authorized", "already_organizing", "removed", "no_mailbox"] as const;
 type TakeoverOutcome = (typeof TAKEOVER_OUTCOMES)[number];
@@ -585,35 +446,25 @@ function statusOf(door?: string | null): EngineStatus | null {
 }
 
 /**
- * ── `servedMailboxId` IS GONE, AND ITS ABSENCE IS THE POINT ─────────────────────────────────
- *
- * Remove used to be offered on ONE row: the mailbox `engine_status` said the engine was opening.
- * That gate was correct for exactly as long as the engine opened one mailbox. The local removal
- * route released the claim, wiped this machine's copy of the mail and stopped the timer only
- * `if (mailboxId === world.mailboxId)`; on any other row it tombstoned and deleted the credential
- * and nothing else — so the confirmation's five consequences, one of which is the wipe, would
- * have promised an act the request did not perform.
- *
- * The route keys on the ROSTER now. Every live row has a runtime, and the DELETE wipes whichever
- * row it names — so the consequences are true of every row and the control belongs on every row.
- * The engine still reports one `mailboxId`, and what it MEANS has narrowed to "the seed": the
- * address this install was configured with, or the oldest live row when that one is gone. Gating
- * a per-mailbox verb on it would now hide the control on every mailbox but one, arbitrarily.
- *
- * {@link onShellStatus} is what the LAST removal needs. Removing the final mailbox leaves an
- * install configured for a mailbox it no longer has, so the pane runs the shell's own sign-out
- * after the route — and the gate has to hear about the new engine state or it would keep rendering
- * the app over an install with no door. ABSENT means this pane cannot tell the shell anything, so
- * it does not try: the removal still happens and the door configuration survives it, which is the
- * released behaviour and the honest degradation.
- *
- * ── WHICH "LAST" — AND THE ANSWER IS THE ROSTER'S, NOT THE ENGINE'S ───────────────────────────
- *
- * The single-mailbox shape of this asked whether the row being removed was the one the engine
- * served. With several, that would sign the whole install out on a removal that leaves mailboxes
- * running. It is `isLastLive` — the last row this install still holds, tombstones excluded and
- * legacy stand-downs counted — and the confirmation states the extra consequence only when it is
- * true.
+ * ── `servedMailboxId` IS GONE, AND ITS ABSENCE IS THE POINT ────────────────────────────────
+ * Remove used to be offered on the ONE row the engine said it was opening — correct only
+ * while the engine opened one mailbox: the removal route wiped only
+ * `if (mailboxId === world.mailboxId)`, so on any other row the confirmation's five
+ * consequences promised an act the request did not perform. The route keys on the ROSTER now:
+ * every live row has a runtime and the DELETE wipes whichever row it names, so the control
+ * belongs on every row. `mailboxId` now means "the seed" — the configured address, or the
+ * oldest live row — and gating a per-mailbox verb on it would hide the control arbitrarily.
+ */
+
+/*
+ * {@link onShellStatus} is what the LAST removal needs: removing the final mailbox leaves an
+ * install configured for a mailbox it no longer has, so the pane runs the shell's own
+ * sign-out after the route — the gate has to hear the new engine state or it would render the
+ * app over an install with no door. ABSENT means this pane cannot tell the shell anything:
+ * the removal still happens and the door configuration survives — the honest degradation.
+ * WHICH "last" is the ROSTER's answer, not the engine's: `isLastLive` — the last row this
+ * install still holds, tombstones excluded and legacy stand-downs counted — and the
+ * confirmation states the extra consequence only when it is true.
  */
 export function DesktopMailboxes(
   { door, host, onShellStatus }: {
@@ -685,23 +536,15 @@ export function DesktopMailboxes(
        strictly newer response is allowed to write. */
     let issued = 0;
     let shown = 0;
-    /* ── THE POLL SAYS WHERE IT LANDED, ONCE PER CHANGE ────────────────────────────────────
-     *
-     * The five landings this line tells apart are the ones the row's sentence is derived from:
-     * the engine answered badly; nothing arrived, and which silence it was; it answered a roster
-     * that does not name a row this pane is showing; and it named one — reachable, or not. Before
-     * this, a silence and a healthy verdict produced the same screen AND the same nothing
-     * anywhere else, which is why a nine-minute outage on the Windows guest could be measured on
-     * screen and not attributed afterwards to either half of the pair.
-     *
-     * ON CHANGE, not per poll: four lines a minute for as long as Settings is open would bury the
-     * transition that anybody is actually looking for.
-     *
-     * `console` IS THE WHOLE OF THIS PANE'S REACH, said here so that a later reader does not take
-     * the line for a field instrument. The window holds two shell commands and has no route into
-     * the engine's log, so this is visible in the web inspector and nowhere else; the half a
-     * released install would be diagnosed from is one line where the engine's roster route
-     * ANSWERS, and that line is not in this change. */
+    /* ── THE POLL SAYS WHERE IT LANDED, ONCE PER CHANGE ───────────────────────────────────
+     * The five landings are the ones the row's sentence derives from: answered badly; nothing
+     * arrived (and which silence); a roster naming no shown row; and a named row — reachable
+     * or not. Before this, a silence and a healthy verdict produced the same screen AND the
+     * same nothing anywhere else, which is why a nine-minute outage on the Windows guest
+     * could be measured on screen and not attributed afterwards. ON CHANGE, not per poll —
+     * four lines a minute would bury the transition. `console` IS THE WHOLE OF THIS PANE'S
+     * REACH: two shell commands, no route into the engine's log — visible in the web
+     * inspector and nowhere else. */
     let noted = "";
     const noteLanding = (r: MailboxReachSlice): void => {
       const rows = (factsRef.current ?? []).filter((m) => m.status !== "disabled");
@@ -769,18 +612,14 @@ export function DesktopMailboxes(
   const [reclaimed, setReclaimed] = useState<ReadonlyMap<string, {
     outcome: TakeoverOutcome;
     /**
-     * THE ROW'S RELEASE STAMP AT THE MOMENT OF THE PRESS — what makes this note END.
-     *
-     * The note is a promise about ONE press, and a press is only the newest word until another
-     * one is made. Its render condition was "the role is not organizer yet", which is true again
-     * after a STOP — so a note reading "Asked for. This computer takes over on its next pass"
-     * came back over a row whose organizing this person had since given up, and the same map hid
-     * the button that would undo it. The stop is not the only way: any release, made in any
-     * window, stamps this column afresh, and a press made before that stamp is not about the
-     * state the row is in now.
-     *
-     * `null` when the row carried none — an install that has never let this mailbox go — which
-     * compares equal to itself and to nothing else.
+     * THE ROW'S RELEASE STAMP AT THE MOMENT OF THE PRESS — what makes this note END. The
+     * note is a promise about ONE press, and its render condition was "the role is not
+     * organizer yet", which is true again after a STOP — so "Asked for. This computer takes
+     * over on its next pass" came back over a row whose organizing this person had since
+     * given up, and the same map hid the undo button. Any release, made in any window, stamps
+     * this column afresh, and a press made before that stamp is not about the state the row
+     * is in now. `null` when the row carried none — an install that has never let this
+     * mailbox go — which compares equal to itself and to nothing else.
      */
     releasedAt: string | null;
   }>>(() => new Map());
@@ -826,20 +665,14 @@ export function DesktopMailboxes(
   const heading = cloud ? t("modeCloud") : t("desktopModeLocal");
 
   /**
-   * ASK FOR A FRESH PASS OVER ONE MAILBOX. 202 — nothing is synced when this returns.
-   *
-   * The only mutation this pane makes, and the only one it can make on the hosted door; see the
-   * header. It is the same route the browser's own "Sync now" calls, over the pipe instead of a
-   * socket, and it is served on BOTH doors — by the local engine's own route table on the
-   * standalone one, by the write-through proxy on the hosted one.
-   *
-   * BOTH answers end the queued mark: a refusal, because a row left disabled after one is a
-   * control nobody can retry, and an acceptance — at that point the press is the engine's and the
-   * row's own state line says what the mailbox is doing. "Syncing" is a state, not a lock, and
-   * nothing but a press writes this set.
-   *
-   * Pressing again is safe: the engine honours a forced dial at most once per backoff base step
-   * (`forcedNotBefore`), so rationing it here would be rationing it in the wrong process.
+   * ASK FOR A FRESH PASS OVER ONE MAILBOX. 202 — nothing is synced when this returns. The
+   * only mutation this pane makes on the hosted door (see the header); the same route the
+   * browser's "Sync now" calls, over the pipe, served on BOTH doors — the local engine's own
+   * table, or the write-through proxy. BOTH answers end the queued mark: a refusal, because a
+   * row left disabled is a control nobody can retry, and an acceptance — at that point the
+   * row's own state line says what the mailbox is doing; "Syncing" is a state, not a lock.
+   * Pressing again is safe: the engine honours a forced dial at most once per backoff base
+   * step (`forcedNotBefore`), so rationing here would be rationing in the wrong process.
    */
   const resync = (id: string): void => {
     setProblem(null);
@@ -871,29 +704,14 @@ export function DesktopMailboxes(
   };
 
   /**
-   * ASK FOR THIS MACHINE — the exit from a stand-down, and until it existed there was none.
-   *
-   * A desktop install that has stood down to another organizer had no way back at all. This pane
-   * rendered no control on a `disabled` row; the remedy this file used to name — "reconnect the
-   * address" — goes through the door chooser and is refused by the engine's own invariant that a
-   * disabled mailbox holds no credential ("This mailbox is disconnected. Reconnect it before
-   * setting new credentials."), which is the thing the person just did; and the authorized
-   * takeover existed on the Cloud webapp only. Measured on a released build against a claim whose
-   * last heartbeat was 25 minutes old: the install stood down with `verdict=available` and the
-   * only remaining cure was deleting a message from an IMAP folder by hand.
-   *
-   * `available` is correct and is not the defect: BECOMING an organizer always requires an
-   * explicit human action, which is exactly why a crashed machine's mailbox is not seized. The
-   * defect was that the product offered no such action on this door. This is it.
-   *
-   * IT AUTHORIZES, IT DOES NOT SEIZE — the engine reads the lease first on the next launch, and a
-   * holder that is still renewing keeps the mailbox. So this button cannot make two organizers;
-   * the worst it can do is ask and be told no, which the row then says.
-   *
-   * LOCAL DOOR ONLY. On the hosted door the mailbox belongs to an account, the takeover is the
-   * account's ceremony, and this install is looking at a mirror it does not own — the route
-   * simply is not served there. The pane's `cloud` test is the same one the header uses for every
-   * other asymmetry between the two doors.
+   * ASK FOR THIS MACHINE — the exit from a stand-down, and until it existed there was none:
+   * no control on a `disabled` row, "reconnect the address" refused by the engine's own
+   * invariant (a disabled mailbox holds no credential), the authorized takeover on the Cloud
+   * webapp only. Measured on a released build against a claim whose last heartbeat was 25
+   * minutes old: the only cure left was deleting a message from an IMAP folder by hand. `available` is correct — BECOMING an organizer always requires an
+   * explicit human action; the defect was that this door offered none. IT AUTHORIZES, IT DOES
+   * NOT SEIZE: the engine reads the lease first, so a renewing holder keeps the mailbox.
+   * LOCAL DOOR ONLY: the hosted takeover is the account's ceremony, not served here.
    */
   const reclaim = (id: string, releasedAt: string | null): void => {
     setProblem(null);
@@ -939,16 +757,12 @@ export function DesktopMailboxes(
 
   /**
    * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP THE MAIL — the mirror of `reclaim`.
-   *
-   * `POST /mailboxes/:id/release`, the shared route rather than a local-only one, because the act
-   * is the same on both doors: it records a request on the caller's own row and the organizing
-   * gate honours it on its next pass. Nothing here expunges anything — the claim lives in the
-   * mailbox itself, so only the process holding that connection can give it up, which is why the
-   * copy says "within a minute" rather than reporting it done.
-   *
-   * `refresh` on the answer, so the row's state line moves as soon as the gate has acted rather
-   * than on the poller's slower clock. A failure lands in the pane's one problem line, and the
-   * row keeps saying what it said.
+   * `POST /mailboxes/:id/release`, the shared route, because the act is the same on both
+   * doors: it records a request on the caller's own row and the organizing gate honours it on
+   * its next pass. Nothing here expunges anything — the claim lives in the mailbox itself, so
+   * only the process holding that connection can give it up, which is why the copy says
+   * "within a minute" rather than reporting it done. `refresh` on the answer, so the row
+   * moves as soon as the gate has acted; a failure lands in the pane's one problem line.
    */
   const release = (id: string): void => {
     setProblem(null);
@@ -991,48 +805,23 @@ export function DesktopMailboxes(
 
   /**
    * REMOVE THIS MAILBOX FROM THIS COMPUTER — and until now this door had no way to do it.
-   *
-   * The route has existed since the hotfix that made removal mean removal (release the organizer
-   * claim, wipe this machine's mirror, stop the timer and close the login), and NO CLIENT CALLED
-   * IT: the pane offered "Reading only" and "Sync now" and nothing else, while its own footnote
-   * said "you can remove it and nothing is lost from the mailbox itself" — a promise with no
-   * control behind it, and a released changelog describing a remove-then-re-add walk that a
-   * person standing at this door could not perform.
-   *
-   * `DELETE /local/mailboxes/:id`, NOT the shared `DELETE /mailboxes/:id`. The shared one is
-   * `stepUp: true`, and on this door a step-up is a permanent refusal rather than a guard: the
-   * launch session's second-factor stamp is written once at boot ("there is no second factor on
-   * a local install"), so the shared route answers 403 from five minutes after launch for the
-   * life of the process. The local route's authority is the per-launch bearer, added shell-side,
-   * which is the same protection the other three routes in that family carry.
-   *
-   * LOCAL DOOR ONLY, and structurally so: the hosted door's removal is the ACCOUNT's ceremony —
-   * a password and a fresh factor against a real origin — which is exactly what this window
-   * cannot offer and why the pane sends a hosted install to the browser instead.
-   *
-   * `refresh()` and not an optimistic splice: the row's state moved (it is a tombstone now), and
-   * the shared poller is the one thing entitled to say what this install is connected to.
+   * The route has existed since removal was made to mean removal (release the claim, wipe
+   * this machine's mirror, stop the timer, close the login) and NO CLIENT CALLED IT: the
+   * pane's own footnote promised "you can remove it" with no control behind it.
+   * `DELETE /local/mailboxes/:id`, NOT the shared route — the shared one is `stepUp: true`,
+   * a permanent refusal on this door; the local route's authority is the per-launch bearer.
+   * LOCAL DOOR ONLY, structurally: the hosted removal is the ACCOUNT's ceremony, in the
+   * browser. `refresh()`, not an optimistic splice: the poller says what this install holds.
    */
   /**
-   * IS THIS THE ONLY MAILBOX THIS COMPUTER STILL HOLDS — the condition the sign-out below hangs
-   * on, and the one the confirmation states as a sixth consequence.
-   *
-   * LIVE rows: `status === 'disabled'` with no reason is a tombstone, the service refuses it, and
-   * counting tombstones would make an install that has removed and re-added a mailbox permanently
-   * believe it has several. `foldByAddress` is not used here on purpose — it answers a rendering
-   * question (which row of a group to SHOW), and this one is about what the store still holds.
-   *
-   * ── AND A LEGACY STAND-DOWN COUNTS, WHICH THE FIRST VERSION OF THIS GOT WRONG ─────────────
-   *
-   * It filtered on `status !== "disabled"` alone, and that excludes the pre-role engine's
-   * stand-down shape — `disabled` WITH a `disabled_reason` — which `claimable` deliberately
-   * INCLUDES: such a row is rendered with a state line and a working "Organize here instead".
-   * So on an upgraded install holding one live mailbox beside one legacy stood-down one, removing
-   * the live mailbox made this true: the confirmation announced "this is the only mailbox on this
-   * computer" with the other one visibly listed a row away, and the removal then signed the door
-   * out — deleting the only route back to the mailbox that was still there.
-   *
-   * The test is therefore "is this row a TOMBSTONE", not "is it disabled".
+   * IS THIS THE ONLY MAILBOX THIS COMPUTER STILL HOLDS — the condition the sign-out below
+   * hangs on, stated in the confirmation as a sixth consequence. LIVE rows: a tombstone
+   * (`disabled` with no reason) must not count, or a remove-and-re-add install permanently
+   * believes it has several; `foldByAddress` is a rendering question, not this one. A LEGACY
+   * STAND-DOWN COUNTS: filtering on `status !== "disabled"` alone excluded the pre-role
+   * stand-down shape (`disabled` WITH a reason), which `claimable` includes — removing the
+   * one live mailbox announced "the only mailbox on this computer" with the other visibly a
+   * row away, then signed the door out. The test is "is this row a TOMBSTONE".
    */
   const isTombstone = (r: MailboxFacts): boolean =>
     r.status === "disabled" && r.legacyStandDown !== true;
@@ -1051,71 +840,37 @@ export function DesktopMailboxes(
           method: "DELETE",
         });
         if (!res.ok) throw new Error(await reasonOf(res));
-        /* ── THE MAILBOX IS GONE; ITS CLAIM ON THE MAIL SERVER MAY NOT BE ────────────────────
-         *
-         * The route releases this install's organizer claim out of `ohmail/_meta` before it stops
-         * the runtime, and that release can fail on its own — the mail server can refuse the
-         * search that finds our own records in that folder. When it does the claim STAYS, and
-         * until it goes stale any other install connecting this mailbox stands itself down and
-         * says only that something else organizes it. That is a wait with no visible cause, about
-         * a machine the person has just removed the mailbox from.
-         *
-         * The route reports the outcome because it is the only thing that knows it, and this is
-         * the pane that can say it. Same shape as the sign-out failure below: the removal
-         * committed, what is being reported is the tidying that did not.
-         *
-         * THREE STATES, NOT TWO, and the middle one is why this reads `=== false` rather than
-         * falsy. `true` is released; `false` is a release that was attempted and could not be
-         * completed; ABSENT is an engine that predates the field and cannot answer — which is not
-         * a claim left behind and must not be announced as one. The shell and the engine ship
-         * together, so absent means "older engine", not "unknowable".
-         */
+        /* ── THE MAILBOX IS GONE; ITS CLAIM ON THE MAIL SERVER MAY NOT BE ─────────────────
+         * The route releases this install's organizer claim out of `ohmail/_meta` before it
+         * stops the runtime, and that release can fail on its own — the mail server can
+         * refuse the search. Then the claim STAYS, and until it goes stale any other install
+         * connecting this mailbox stands itself down with no visible cause. The route reports
+         * the outcome because it is the only thing that knows it; the removal committed, what
+         * is reported is the tidying that did not. THREE STATES, why this reads `=== false`:
+         * `true` released; `false` attempted and not completed; ABSENT is an engine that
+         * predates the field — "older engine", not a claim left behind. */
         const outcome = await res.json().catch(() => null) as { claimReleased?: boolean } | null;
         if (outcome?.claimReleased === false) setProblem(t("desktopRemovedClaimLeftBehind"));
-        /* ── THE SINGLE-MAILBOX SIGN-OUT STOOD HERE, AND ITS OWN NOTE ASKED FOR THIS ──────────
-         *
-         * It read: *"the multi-mailbox version of this is a roster-aware decision … and it
-         * supersedes this predicate wholesale. Kept deliberately single-mailbox-shaped so that
-         * replacement is a deletion rather than an untangling."* This is that deletion, and the
-         * measurement it was built on stands: on the released 0.13.7 a removal cleared the row,
-         * the credential, the claim and the mirror and NOT `config.json`, so the next launch
-         * minted a fresh row for the same address and the window opened on a mailbox the person
-         * had removed. `engine_logout` is still the command that ends it.
-         *
-         * What changed is the PREDICATE. It asked `door !== "cloud" && servedMailboxId === m.id &&
-         * every other row is disabled` — correct while the engine opened one mailbox, and wrong
-         * the moment it opens several: `servedMailboxId` has narrowed to meaning "the seed", so
-         * that test would sign the whole install out on a removal that leaves mailboxes running,
-         * and skip the sign-out entirely once the seed itself has gone. `isLastLive` above is the
-         * roster's own answer — tombstones excluded, legacy stand-downs counted — and the
-         * sign-out it gates runs below, after the route rather than inside it. */
+        /* ── THE SINGLE-MAILBOX SIGN-OUT STOOD HERE — this is the deletion its note asked
+         * for, and the measurement it was built on stands: on the released 0.13.7 a removal
+         * cleared the row, credential, claim and mirror and NOT `config.json`, so the next
+         * launch minted a fresh row for the same address and the window opened on a mailbox
+         * the person had removed; `engine_logout` is still the command that ends it. What
+         * changed is the PREDICATE: `servedMailboxId === m.id && every other row disabled`
+         * was correct for one mailbox and wrong for several (`servedMailboxId` now means "the
+         * seed") — it would sign the whole install out while mailboxes were running, or skip
+         * the sign-out once the seed was gone. `isLastLive` above is the roster's own answer,
+         * and the sign-out it gates runs below, after the route rather than inside it. */
         setRemoving(null);
         /**
-         * ── AND WHEN IT WAS THE LAST ONE, THE INSTALL HAS TO STOP BEING CONFIGURED FOR IT ────
-         *
-         * The route does three things — release the claim, wipe this machine's copy, stop the
-         * runtime — and all three are about the ENGINE's store. None of them touches the SHELL's
-         * settings file, and the settings file is what the engine composes its dial from at every
-         * launch. So removing the only mailbox left an install whose store held nothing and whose
-         * door still named an address: the next launch re-created the row as a consent-less reader
-         * with no credential, and a person who had removed their mailbox found it listed again.
-         * Measured, and filed as `REMOVE-DOES-NOT-SURVIVE-A-RELAUNCH`.
-         *
-         * The shell already has the command that clears a door — its sign-out
-         * (`DELETE /local/stored-login`, then the settings file is removed) — and it is the same
-         * one Settings → Desktop presses. Running it HERE is what makes the removal survive: the
-         * engine reports `not_configured`, the gate renders the door chooser, and the next launch
-         * has nothing to dial.
-         *
-         * ONLY WHEN IT WAS THE LAST, and that condition is the whole difference between the two
-         * removals. With mailboxes left the install is still correctly configured — for the seed,
-         * or, when the seed is the one going, for whichever live row the engine settles on — and
-         * signing out would take away mailboxes nobody asked to remove. The route alone is the
-         * answer there, which is why nothing below runs.
-         *
-         * AFTER the route, never before: the sign-out stops the engine, and an engine that is not
-         * running cannot release a claim or wipe a mirror. The order is release → wipe → stop →
-         * forget the door.
+         * ── WHEN IT WAS THE LAST ONE, STOP BEING CONFIGURED FOR IT ──────────────────────
+         * The route's three acts are all about the ENGINE's store; none touches the SHELL's
+         * settings file, which the engine dials from at every launch — so removing the only
+         * mailbox left a door still naming an address, and the next launch re-created the row
+         * as a consent-less reader (filed as `REMOVE-DOES-NOT-SURVIVE-A-RELAUNCH`). The
+         * shell's own sign-out (`DELETE /local/stored-login`) runs HERE — only when it was
+         * the LAST, else it would remove mailboxes nobody asked about — and AFTER the route:
+         * a stopped engine cannot release a claim or wipe a mirror.
          */
         if (last) {
           try {
@@ -1178,24 +933,14 @@ export function DesktopMailboxes(
   }
 
   /**
-   * WHICH ROWS MAY BE CLAIMED, and this predicate is the fix for a control that was offered on
-   * exactly the set the handler refuses.
-   *
-   * The button used to be gated on `status === "disabled" && disabledReason` — a stand-down as the
-   * OLD schema encoded it. The role is its own column now, and the backfill moved every stood-down
-   * row to `status='connected', organizer_role='reader'`, so that arm names a state nothing writes
-   * any more AND the one `organizeHere` declines: a `disabled` row is a tombstone, and offering a
-   * claim on one would resurrect a mailbox somebody deliberately took off this machine.
-   *
-   * A reader is CONNECTED AND SYNCING. That is the whole point of the split, and it is why the
-   * test is on the role rather than on the status.
-   *
-   * NOT COMPLETE, and the missing half is named rather than guessed: the server's predicate is
-   * `status <> 'disabled' AND (organizer_role = 'reader' OR organize_consented_at IS NULL)`, and
-   * `organizeConsentedAt` is not on the DTO. `organizedBy` cannot stand in for it — its own
-   * contract says `null` means "this install organizes it" OR "nobody ever has", which are the two
-   * cases that would have to be told apart. So the reader half is served here and the
-   * consent-less half waits for the field.
+   * WHICH ROWS MAY BE CLAIMED — the fix for a control offered on exactly the set the handler
+   * refuses. The button was gated on the OLD schema's stand-down
+   * (`status === "disabled" && disabledReason`); the backfill moved every stood-down row to
+   * `status='connected', organizer_role='reader'`, so that arm named a state nothing writes
+   * and the one `organizeHere` declines — claiming a tombstone would resurrect a removed
+   * mailbox. A reader is CONNECTED AND SYNCING, so the test is on the role. NOT COMPLETE: the
+   * server also admits `organize_consented_at IS NULL`, a field not on the DTO
+   * (`organizedBy`'s `null` folds two cases), so the consent-less half waits for the field.
    */
   const claimable = (m: MailboxFacts): boolean =>
     !cloud
@@ -1209,20 +954,13 @@ export function DesktopMailboxes(
          is always present and this arm is unreachable. */
       || m.legacyStandDown === true);
 
-  /* ── THE BANNER IS PER ROW, AND "THE FIRST CLAIMABLE ROW" IS RETIRED ────────────────────
-   *
-   * It used to read: *"A standalone install opens one mailbox, so a list of readers would be a
-   * list of one — and a banner per row would repeat the same sentence down the pane."* The first
-   * half stopped being true (a standalone install holds as many mailboxes as somebody adds), and
-   * the second was the consequence of it rather than a reason of its own.
-   *
-   * What the old rule COST once there were two readers: the banner named one holder, the claim
-   * button acted on one mailbox, and both were the first row in list order — so the second
-   * reader was a mailbox with a visible "Reading only" state, no holder, and no way to take it
-   * back. The sentence is not repeated down the pane in practice either; two readers usually
-   * have two different holders, and where they have the same one, saying it twice is what makes
-   * the two rows separately actionable.
-   */
+  /* ── THE BANNER IS PER ROW, AND "THE FIRST CLAIMABLE ROW" IS RETIRED ─────────────────────
+   * The old rule assumed a standalone install opens one mailbox; it holds as many as somebody
+   * adds. What the rule COST with two readers: the banner named one holder and the claim
+   * button acted on one mailbox — both the first row in list order — so the second reader was
+   * a mailbox with a visible "Reading only" state, no holder and no way to take it back. Two
+   * readers usually have two different holders anyway, and where they share one, saying it
+   * twice is what makes the two rows separately actionable. */
 
   /* THE "WOULD THE LEASE REFUSE THIS?" PREDICATE IS GONE, WITH THE RULE IT ENCODED.
    *
@@ -1235,15 +973,13 @@ export function DesktopMailboxes(
    */
 
   /**
-   * The holder's own name for a sentence, or the kind when it did not send one.
-   *
-   * `|| null` AND NOT `??`, because an EMPTY name is not a name. The holder columns are written
-   * together and an install that sent no display name writes `""`, so `??` — which only falls
-   * back on `null`/`undefined` — put the empty string into the sentence: the row read "Organized
-   * by " and the date line ended where the name should be. `readerHolder`, which decides WHICH of
-   * the three reader states this row is in, has trimmed and tested for empty since it was
-   * written, so the row was already correctly classified as "a holder we cannot name" and then
-   * named it blankly — the two halves of one fact disagreeing inside one banner.
+   * The holder's own name for a sentence, or the kind when it did not send one. `|| null` AND
+   * NOT `??`, because an EMPTY name is not a name: the holder columns are written together
+   * and an install that sent no display name writes `""`, so `??` put the empty string into
+   * the sentence — the row read "Organized by " with the date line ending where the name
+   * should be. `readerHolder` has trimmed and tested for empty since it was written, so the
+   * row was correctly classified as "a holder we cannot name" and then named it blankly —
+   * two halves of one fact disagreeing inside one banner.
    */
   const holderOf = (m: MailboxFacts): string =>
     m.organizedBy?.name?.trim()
@@ -1263,20 +999,14 @@ export function DesktopMailboxes(
   };
 
   /**
-   * WHY SENDING IS NOT SET UP for one mailbox, in the product's own words — or `null`.
-   *
-   * ── AN OUTGOING SERVER IS NOT A REASON TO STOP RECEIVING ──────────────────────────────────
-   *
-   * The local door stores the incoming credential when only the SUBMISSION dial is refused, and
-   * records the probe's reason. So a mailbox can be connected, organizing and completely healthy
-   * on the receiving side while sending is not available — a state nothing on this row would
-   * otherwise show, because every other line is about receiving.
-   *
-   * ONE FIELD, ONE SENTENCE. The send path refuses with the same reason and the setup flow's
-   * summary states the same line, so the three surfaces cannot drift. The reason is rendered from
-   * the PROBE TAXONOMY the connect form already uses, and an unrecognised code falls to the
-   * `unknown` wording rather than being interpolated raw — a server's own words are not this
-   * pane's to print.
+   * WHY SENDING IS NOT SET UP for one mailbox, in the product's own words — or `null`. An
+   * outgoing server is not a reason to stop receiving: the local door stores the incoming
+   * credential when only the SUBMISSION dial is refused and records the probe's reason, so a
+   * mailbox can be connected and healthy on the receiving side while sending is unavailable —
+   * a state no other line on the row shows. ONE FIELD, ONE SENTENCE: the send path refuses
+   * with the same reason and the setup flow's summary states the same line, so the three
+   * surfaces cannot drift. Rendered from the PROBE TAXONOMY; an unrecognised code falls to
+   * the `unknown` wording — a server's own words are not this pane's to print.
    */
   const sendingProblem = (m: MailboxFacts): string | null => {
     const code = m.sendingUnsettledReason;
@@ -1288,31 +1018,22 @@ export function DesktopMailboxes(
   };
 
   /**
-   * What each mailbox is doing, in one line — the SENTENCE, and apart from it the one clause that
-   * TICKS. A closure rather than a module function so it reads the same translator the rest of
-   * the pane does; there is nothing to share it with.
-   *
-   * ── WHY TWO PARTS ─────────────────────────────────────────────────────────────────────────
-   * The cell is a live region (the row's value slot, `role="status"`), and a live region announces
-   * every text change inside it. With the relative stamp inside the sentence an outage read
-   * "Last answered 3 minutes ago", then "4 minutes ago", once a minute for as long as it lasted —
-   * a reader told every minute what it was told the first time. So the stamp comes back apart:
-   * `said` is what the live node holds, and it changes only when the STATE moves; `when` stands
-   * beside it in the cell, exposed to the tree but never announced. Every other arm has nothing
-   * that ticks. The visible text is the same two clauses in the same order.
+   * What each mailbox is doing, in one line — the SENTENCE, and apart from it the one clause
+   * that TICKS. A closure so it reads the pane's own translator. TWO PARTS because the cell
+   * is a live region (`role="status"`), which announces every text change: with the relative
+   * stamp inside the sentence an outage read "Last answered 3 minutes ago", then "4 minutes
+   * ago", once a minute — a reader told every minute what it was told the first time. So
+   * `said` is what the live node holds and changes only when the STATE moves; `when` stands
+   * beside it, exposed to the tree but never announced. The visible text is unchanged.
    */
   /**
-   * WHETHER THIS COMPUTER FILES THIS MAILBOX — the row's own claim, in one place.
-   *
-   * The description renders "Organized on this computer" from it and the state ladder reads it to
-   * decide whether an ABSENT connection record is news (see {@link reachUnknownForRow}). Two
-   * spellings of one rule is how the two halves of a row come to contradict each other, so the
-   * expression the description carried is now this and the ladder asks the same question.
-   *
+   * WHETHER THIS COMPUTER FILES THIS MAILBOX — the row's own claim, in one place. The
+   * description renders "Organized on this computer" from it and the state ladder reads it to
+   * decide whether an ABSENT connection record is news ({@link reachUnknownForRow}); two
+   * spellings of one rule is how two halves of a row contradict each other.
    * `organizeConsentedAt` and not the role alone: the column rests at `'organizer'` and the
-   * mapper coerces anything that is not literally `"reader"` to it, so the role by itself says
-   * this about a mailbox that was connected and never agreed to, while nothing is filed and
-   * `ohmail/*` does not exist.
+   * mapper coerces anything not literally `"reader"` to it, so the role by itself says this
+   * about a mailbox that was connected and never agreed to, while nothing is filed.
    */
   const organizesHere = (m: MailboxFacts): boolean =>
     !cloud && m.status !== "disabled" && m.organizerRole !== "reader"
@@ -1346,27 +1067,15 @@ export function DesktopMailboxes(
        answer to the same question and the generic one would send somebody to check a network
        that is working perfectly. */
     if (r?.signInRefused) return say(t("desktopStateSignInRefused"));
-    /* ── THE ENGINE COULD NOT SAY, AND THAT IS ITS OWN SENTENCE ─────────────────────────────
-     *
-     * Only when the row has no answer of its own — the check is written on the row rather than on
-     * the poll, so a partial answer keeps whatever it managed to say — and then only when that
-     * absence is NEWS: {@link reachUnknownForRow} owns that decision, and it owns it because the
-     * arm used to read `reach.faulted` alone. A transport that threw and an engine answering 404
-     * both left this arm unentered and the ladder fell through to "Up to date"; that is the
-     * Windows reading of 2026-09-09, eleven samples of eleven over a nine-minute cut the engine
-     * had recorded correctly the whole time.
-     *
-     * NOT `desktopStateUnreachable`. That sentence — "Can't reach the mail server" — is a claim
-     * about the PERSON'S MAIL SERVER, and what actually happened is that the engine on this
-     * machine refused or fell over when asked about its own sockets. A stale bearer after an
-     * engine restart answers 401 for every poll, and every row would announce an outage at a
-     * provider that is working perfectly, while mail carries on arriving.
-     *
-     * "Can't check the mail server right now" is the honest one, and it is also what makes a
-     * single transient 5xx harmless: the row states an unanswered question for one poll and the
-     * next good answer replaces it, rather than asserting an outage and then withdrawing it. No
-     * debounce for that reason — a delay would hold a true outage back by as long as it holds a
-     * false one, and this arm no longer claims anything that needs holding back. */
+    /* ── THE ENGINE COULD NOT SAY, AND THAT IS ITS OWN SENTENCE ──────────────────────────
+     * Only when the row has no answer of its own, and only when the absence is NEWS —
+     * {@link reachUnknownForRow} owns that, because this arm used to read `reach.faulted`
+     * alone: a throwing transport and a 404 engine both fell through to "Up to date" (the
+     * Windows reading of 2026-09-09). NOT `desktopStateUnreachable`: that claims the PERSON's
+     * server is down, when the local engine merely refused to answer about its own sockets —
+     * a stale bearer 401s every poll, announcing a provider outage while mail arrives.
+     * "Can't check the mail server right now" is honest; a transient 5xx costs one poll, and
+     * no debounce — a delay holds a true outage back as long as a false one. */
     if (!r && reachUnknownForRow(reach, organizesHere(m), now)) {
       return say(t("desktopStateUnknown"));
     }
@@ -1402,65 +1111,25 @@ export function DesktopMailboxes(
 
   /**
    * WHO ORGANIZES THIS MAILBOX, AND THE ONE VERB THAT CHANGES IT — for one row, permanently.
-   *
-   * A closure inside the component rather than a module function, on the rule the rest of this
-   * pane follows: it reads the pane's translator, its `reclaimed`/`reclaiming` records and its
-   * confirm state, and there is nothing to share it with.
-   *
-   * It renders UNDER the row it is about, which is the change multi-mailbox forced. The row
-   * answers "is my mail coming down?"; this answers the other question somebody with two machines
-   * has — which machine files it — and it never goes away. That is the division of labour with
-   * the quiet line above the Ohbox: that one says what CHANGED, once, and disappears; this is the
-   * standing record, with the controls beside it.
-   *
-   * ── THREE STATES, ONE SHAPE ───────────────────────────────────────────────────────────────
-   *
-   *  · ORGANIZING HERE — the ordinary state on a standalone install. Its verb is the release:
-   *    stop filing this mailbox, keep every message where it is, and let any install take it.
-   *  · READING ONLY — somebody else holds it. Its verb is the takeover.
-   *  · NOBODY — this install let it go, or the holder vanished. Its verb is the takeover again,
-   *    and here it is the primary one, because nothing is filing the mailbox at all.
-   *
-   * ONE CHIP for all three, with the verb beside it. The chip's caption is the fact; the sentence
-   * that says since when and what this computer does is the chip's accessible DESCRIPTION, opened
-   * beside it on hover, focus or a press (the `Gloss` primitive in its caption form). It used to
-   * be a `SettingsBanner` — a boxed label, the sentence in full and the verb — under every row,
-   * which spent three lines per mailbox on a sentence a person reads once. Told apart by how loud
-   * the chip is rather than by three constructions — a tint under EVERY row would mean nothing,
-   * so the ordinary state wears a hairline and the two exceptions wear the wash.
-   *
-   * ── AND THE CONSEQUENCE IS STATED BEFORE THE PRESS, NOT AFTER IT ──────────────────────────
-   *
-   * Both verbs open a well under the chip line with one sentence in it and the confirm underneath.
-   * Handing a mailbox between machines is the one act on this pane that changes what another
-   * computer does, and the sentence is what makes the press a decision rather than a discovery.
-   * The verb is withheld while the well is open, so there is exactly one place to answer. The
-   * stop verb carries a (i) of its own as well, for the person who has not pressed yet: what this
-   * computer does from its next pass, and that nothing takes the mailbox over until another
-   * install asks for it.
+   * A closure, on the pane's rule (it reads the translator and the pane's own records). It
+   * renders UNDER the row: the row answers "is my mail coming down?", this answers which
+   * machine files it, and it never goes away. Three states, one shape: ORGANIZING HERE
+   * (verb: release), READING ONLY (verb: takeover), NOBODY (takeover as the primary). ONE
+   * CHIP for all three — caption is the fact, the since-when sentence its accessible
+   * DESCRIPTION (`Gloss`), loudness tells them apart. The consequence is stated BEFORE the
+   * press: both verbs open a well with one sentence and the confirm, verb withheld meanwhile.
    */
   const organizerBlock = (m: MailboxFacts): ReactNode => {
-    /* WHAT THIS ROW IS, in the vocabulary the block renders. `released` is not merely "reader
-       with no holder": a mailbox nobody has ever agreed to organize is a fresh connection whose
-       next screen is the agreement, and putting "nothing organizes this" over it would be a
-       sentence about a state it was never in. `claimable` keeps that rule.
-
-       ── AND "HOLDER" IS THE OBJECT'S PRESENCE, NOT `kind || name` ────────────────────────────
-       This read `Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name))`, so an
-       `organizedBy` OBJECT whose `kind` and `name` are both empty — a peek that read a lease it
-       could not attribute, a claim written before those columns — was classified `released`, and
-       this pane said "Nothing organizes this mailbox" over a row that has a holder record while
-       the browser's rows said "Organized by another install" for the same wire. The holder
-       columns travel together and the projection emits the object only when one of them was
-       written (`mailbox-service.ts`, the `organizedBy` field: "NULL as a whole when nothing is
-       named, rather than an object of three nulls"), so the object's PRESENCE is the recorded
-       -holder fact, and `readerHolder` is the one place that says so.
-
-       NOT the routing predicate. `deriveOnboardingStep`'s row 3 keeps its own `kind || name`
-       test on purpose — it decides whether to put a whole SCREEN in front of somebody, and its
-       comment argues that case. This decides which of three sentences is true on a row that is
-       already on screen. Same fact, two questions, and only this one was disagreeing with the
-       browser. */
+    /* WHAT THIS ROW IS, in the vocabulary the block renders. `released` is not merely
+       "reader with no holder": a mailbox nobody has ever agreed to organize is a fresh
+       connection whose next screen is the agreement — `claimable` keeps that rule. "HOLDER"
+       IS THE OBJECT'S PRESENCE, not `kind || name`: an `organizedBy` object with both empty
+       (a lease read but not attributed) was classified `released`, so this pane said
+       "Nothing organizes this mailbox" while the browser said "Organized by another install"
+       for the same wire. The projection emits the object only when a holder column was
+       written (`mailbox-service.ts`), so presence IS the recorded-holder fact;
+       `readerHolder` is the one place that says so. NOT the routing predicate —
+       `deriveOnboardingStep`'s row 3 keeps its own test: it decides a SCREEN, this a sentence. */
     const holder = readerHolder(m.organizedBy) !== "nobody";
     /* THE LEGACY ARM IS TESTED BEFORE THE HOLDER, and getting that order wrong is not cosmetic.
        A pre-role engine records a stand-down as `disabled` + a reason and carries NO holder
@@ -1477,22 +1146,16 @@ export function DesktopMailboxes(
        to report what the account's worker then did. */
     const offerRelease = !cloud && role === "organizer" && m.status !== "disabled"
       && Boolean(m.organizeConsentedAt);
-    /* ── THE BLOCK CARRIES A STANDING ASK EVEN WHERE IT CARRIES NO CONTROL ────────────────────
-     *
-     * This read `if (role === "organizer" && !offerRelease) return null`, and the consent stamp
-     * inside `offerRelease` is what made that a false state rather than a withheld control. Two
-     * shapes reach it: an install promoted by the gate's own pass, which writes the role and not
-     * the stamp (`engine.ts`, the promotion arm), and a row from before the column existed, whose
-     * `organizer_role` took the migration's `organizer` default. Both organize the mailbox; both
-     * can be asked to stop through another door; and on both the whole banner vanished, so a
-     * standing request showed nowhere at all and the row read as an ordinary organized mailbox
-     * with nothing pending. MEASURED on a release build, on a stop pressed while the link was cut.
-     *
-     * The ask is a FACT about the row and the release is a CONTROL, and only the control needs
-     * the stamp — the route refuses a release the consent never authorized, so offering one here
-     * would be a button whose press cannot work. So the exception is exactly one fact wide: the
-     * block renders when there is something standing to say, and `action` below still withholds
-     * the verb on a row that carries the request. */
+    /* ── THE BLOCK CARRIES A STANDING ASK EVEN WHERE IT CARRIES NO CONTROL ────────────────
+     * This read `if (role === "organizer" && !offerRelease) return null`, and the consent
+     * stamp inside `offerRelease` made that a false state: an install promoted by the gate's
+     * own pass (role written, stamp not — `engine.ts`) and a row from before the column
+     * existed both organize the mailbox and can be asked to stop through another door, and on
+     * both the whole banner vanished — a standing request showed nowhere (measured on a
+     * release build, a stop pressed while the link was cut). The ask is a FACT and the
+     * release is a CONTROL; only the control needs the stamp (the route refuses a release the
+     * consent never authorized), so the block renders whenever there is something standing to
+     * say, and `action` below still withholds the verb. */
     /* THE DTO'S OWN ROLE, never the derived one. `role` above answers `organizer` for anything
        `claimable` refuses, and `claimable` refuses EVERY row on the hosted door — so a hosted row
        the wire calls a `reader` was reclassified here, and a retained release stamp on it made
@@ -1574,21 +1237,15 @@ export function DesktopMailboxes(
                 ? (m.organizerReleasedAt
                   ? t("stateReleased", { when: day(m.organizerReleasedAt) })
                   /* ── NO HOLDER MEANS NO DATE LINE, AND THIS ROW PRINTED ONE ANYWAY ──────
-                     MEASURED on the released build, on a mailbox connected here and never
-                     agreed to: the four holder columns are unwritten, so `day(null)` is an em
-                     dash and the row read *"Since —. This computer reads the mailbox; it moves
-                     nothing and screens nothing"*. Both halves were wrong for this state — a
-                     date the row does not have, and a sentence that stops one clause before the
-                     fact somebody here needs, which is that nothing is organizing the mailbox
-                     and which press changes that.
-
-                     UNCONDITIONAL, and it was a `readerHolder(...) === "nobody"` test until the
-                     classification above started using the same helper. `released` now MEANS no
-                     holder was recorded — that is the one thing it is — so the other side of that
-                     test could not be reached by any row, and a condition whose contrary state
-                     cannot occur is read by the next person as a guarantee the code is keeping.
-                     A row that carries a `since` and nothing else IS a holder now, is classified
-                     `reader` above, and keeps its dated sentence there. */
+                     Measured on the released build, on a mailbox connected here and never
+                     agreed to: the holder columns are unwritten, `day(null)` is an em dash,
+                     and the row read "Since —. This computer reads the mailbox…" — a date the
+                     row does not have, and a sentence stopping one clause before the fact that
+                     nothing organizes the mailbox. UNCONDITIONAL, no longer a
+                     `readerHolder(...) === "nobody"` test: `released` now MEANS no holder was
+                     recorded, so the other side of that test was unreachable — and a condition
+                     whose contrary state cannot occur reads as a kept guarantee. A row with a
+                     `since` and nothing else IS a holder, classified `reader` above. */
                   : t("readerNobodyReads"))
               /* ── A LEGACY STAND-DOWN IS FROZEN, AND SAYING IT READS WOULD CONTRADICT ITS OWN ROW ──
                  The modern reader is CONNECTED AND SYNCING, which is what every sentence below is
@@ -1606,18 +1263,15 @@ export function DesktopMailboxes(
                    that organized for eight months and stopped this morning was reported absent for
                    eight months. The fact worth stating is that it stopped. */
                 ? t("readerStopped", { name: holderOf(m) })
-                /* ── NO DATE LINE WITHOUT A DATE, and the em dash is why this arm exists ───────
-                   `day(null)` is "—" deliberately: these strings are interpolated into sentences
-                   and `format.ts` argues that a dash reads better than "Invalid Date". That is
-                   right for a stamp somebody hovers and wrong for the one clause that PROMISES a
-                   date — a real holder whose `since` column was never written announced "Since —
-                   · ohmail Cloud", which reads as a fault in the mailbox. Every arm below opens
-                   with the date, so with no date there is nothing for any of them to open with,
-                   and the holder's name is not lost with it: the label carries it.
-
-                   ABOVE the kind and BELOW `readerStopped`, which carries no date by design and
-                   would lose its own sentence to this one. The browser's two reader surfaces
-                   select the same arm in the same position, from the same key. */
+                /* ── NO DATE LINE WITHOUT A DATE, and the em dash is why this arm exists ─────
+                   `day(null)` is "—" deliberately (`format.ts`: a dash reads better than
+                   "Invalid Date") — right for a stamp somebody hovers, wrong for the one
+                   clause that PROMISES a date: a real holder whose `since` was never written
+                   announced "Since — · ohmail Cloud", reading as a fault in the mailbox. Every
+                   arm below opens with the date, so with none there is nothing to open with;
+                   the holder's name is not lost — the label carries it. ABOVE the kind and
+                   BELOW `readerStopped`, which carries no date by design; the browser's two
+                   reader surfaces select the same arm in the same position, from the same key. */
                 : !m.organizedBy?.since
                 ? t("readerReadsOnly")
                 /* EVERY KIND ON ITS OWN BRANCH. `unknown` is a legal kind and a reader may have no
@@ -1711,17 +1365,14 @@ export function DesktopMailboxes(
         {role !== "organizer" && m.authKind === "oauth" ? (
           <SettingsNote>{t("oauthDecideElsewhere")}</SettingsNote>
         ) : null}
-        {/* ── THE HANDOVER, AND WHAT IT COSTS THE OTHER SIDE, BEFORE IT IS TAKEN ──────────────
-            The other install is not killed: it becomes a reader on its next pass and keeps its
-            copy of the mail. Saying so here is the difference between a button somebody presses
-            and one they hesitate over for the wrong reason.
-
-            THE SENTENCE PROMISES WHAT THIS ENGINE WILL DO, and the two engines do different
-            things. The modern one says "within a minute" — the gate re-reads the stamp at the top
-            of every cycle, so a press on a running install is honoured on the next poll with no
-            relaunch. A pre-role engine stops its poll timer at the stand-down and spends the stamp
-            at its next process assembly, so on that one the sentence has to say to quit and
-            reopen. It also names no holder, because a legacy row carries none. */}
+        {/* ── THE HANDOVER, AND WHAT IT COSTS THE OTHER SIDE, BEFORE IT IS TAKEN ───────────
+            The other install is not killed: it becomes a reader on its next pass and keeps
+            its copy of the mail — saying so is the difference between a button somebody
+            presses and one they hesitate over for the wrong reason. THE SENTENCE PROMISES
+            WHAT THIS ENGINE WILL DO, and the two engines differ: the modern one says "within
+            a minute" (the gate re-reads the stamp at the top of every cycle); a pre-role
+            engine spends the stamp at its next process assembly, so that sentence says to
+            quit and reopen — and names no holder, because a legacy row carries none. */}
         {open ? (
           <div className="mbx-handover">
             <p className="mbx-handover-what">
@@ -1818,24 +1469,16 @@ export function DesktopMailboxes(
       {facts.length === 0 ? (
         <p className="set-note-inline">{cloud ? t("desktopNoneCloud") : t("desktopNoneLocal")}</p>
       ) : null}
-      {/* ── ADD MAILBOX — ABOVE THE LIST, because it is about the list rather than about a row ──
-          A standalone install holds as many mailboxes as somebody adds. The route that does it
-          (`POST /local/mailboxes`) writes the row, proves its password against its own server and
-          starts a runtime for it; this is the only control that reaches it, and without one the
-          capability would be a claim with nothing behind it — the shape this pane already had
-          once, when the removal route existed and no button called it.
-
-          IT OPENS THE GUIDED FLOW rather than a form of its own. The flow already asks every
-          question adding a mailbox needs answered — the server and the password with a real test
-          verdict, who organizes it if somebody does, consent, how far back to screen — and a
-          second form here would be a second write path into `mailbox_credentials` and a second
-          place for that copy to drift. `#/first-run/add` is the intent: the install has been
-          through setup, so the derivation says "nothing to do" and the ROUTE is what says
-          otherwise. The walk it opens is 1, 2, 3, 4, 7, 8, 9 — no welcome and no AI question,
-          because those are the install's and were answered when it was set up.
-
-          THE STANDALONE DOOR ALONE. On the hosted door mailboxes are the ACCOUNT's and this
-          window sends people to the browser for them, which the rows below already say. */}
+      {/* ── ADD MAILBOX — ABOVE THE LIST, because it is about the list, not a row. The route
+          (`POST /local/mailboxes`) writes the row, proves its password against its own server
+          and starts a runtime; this is the only control that reaches it — without one the
+          capability is a claim with nothing behind it, the shape this pane already had once.
+          IT OPENS THE GUIDED FLOW rather than a form of its own: the flow already asks every
+          question (server and password with a real verdict, who organizes, consent, how far
+          back to screen); a second form would be a second write path into
+          `mailbox_credentials`. `#/first-run/add` is the intent — the walk is
+          1, 2, 3, 4, 7, 8, 9, no welcome and no AI question. THE STANDALONE DOOR ALONE:
+          hosted mailboxes are the ACCOUNT's, managed in the browser. */}
       {firstRunDoorFor(statusOf(door)) === "local" ? (
         <SettingsRow
           label={t("desktopAdd")}
@@ -1853,21 +1496,15 @@ export function DesktopMailboxes(
           failure changes is harder to find than one that does not. */}
       {problem ? <p className="join-error">{problem}</p> : null}
 
-      {/* ── ONE ROW PER ADDRESS, folded with the SAME key the rail and the browser pane use ──
+      {/* ── ONE ROW PER ADDRESS, folded with the SAME key the rail and the browser pane use.
           A stood-down mailbox is taken back with the row's own "Organize from this machine"
-          (`reclaim` above); connecting the address again mints a SECOND row, which is what the
-          partial unique index exists to permit and what leaves the dead row behind for ever.
-          This comment used to name that reconnect as the remedy, and it was wrong in a way that
-          cost a QA lane an afternoon: the door chooser's connect form refuses a disabled mailbox
-          with "Reconnect it before setting new credentials", so the instruction was circular and
-          the install had no exit at all. Rendering `facts` raw put "Handed over to another
-          install" beside "Up to date" for one address — and once the rail began folding, the rail
-          and this pane disagreed on the same screen, which is the defect the fold was for.
-
-          Live row wins; a group with no live row keeps its own row and its reason, because an
-          account whose only mailbox was stood down must still see it. `addressKey` and not a local
-          copy: the browser pane and the rail fold with that function, and a third rule here would
-          be the same divergence wearing different clothes. */}
+          (`reclaim`); connecting the address again mints a SECOND row (the partial unique
+          index permits it), leaving the dead row behind — and the door chooser refuses a
+          disabled mailbox, so naming reconnect as the remedy was circular (it cost a QA lane
+          an afternoon). Rendering `facts` raw put "Handed over to another install" beside "Up
+          to date" for one address, and the rail and this pane disagreed on one screen. Live
+          row wins; a group with no live row keeps its own row and its reason. `addressKey`,
+          not a local copy — a third fold rule would be the same divergence in new clothes. */}
       {/* ONE CARD PER MAILBOX — the row, the quiet role line under it, the wells and the removal
           panel — so the rule between mailboxes runs between cards. The settings grammar draws its
           rules with sibling combinators (`.set-row + .set-row`), which cannot see past the sending
@@ -1878,17 +1515,15 @@ export function DesktopMailboxes(
           <SettingsRow
             label={shown.address}
             description={
-              /* ── THE ROLE, BESIDE WHEN IT LAST LOOKED ──────────────────────────────────────
-                 With one mailbox the role was implicit: this install organized it, and the only
-                 thing worth saying was the exception. With several it is the fact that tells the
-                 rows apart — which of these mailboxes this computer files, and which it only
-                 reads — and it belongs on every row rather than on the ones where it is bad news.
-
-                 ONLY THE ORGANIZING SENTENCE IS HERE. A reader's role, its holder and its since
-                 are one statement and they are made together in the banner under the row
-                 (`organizerBlock`); printing "Reading only" here as well would say it twice, once
-                 without the half that matters. The hosted door says neither — its rows are a
-                 mirror of an account whose organizing is the service's, not this machine's. */
+              /* ── THE ROLE, BESIDE WHEN IT LAST LOOKED ──────────────────────────────────
+                 With one mailbox the role was implicit; with several it is the fact that
+                 tells the rows apart — which of these this computer files, and which it only
+                 reads — so it belongs on every row, not only where it is bad news. ONLY THE
+                 ORGANIZING SENTENCE IS HERE: a reader's role, holder and since are one
+                 statement, made together in the banner under the row (`organizerBlock`) —
+                 printing "Reading only" here too would say it twice, once without the half
+                 that matters. The hosted door says neither: its rows mirror an account whose
+                 organizing is the service's. */
               /* ── CONSENT IS THE CONDITION, NOT THE ROLE ────────────────────────────────────
                  `organizerRole` rests `'organizer'` — the column's default, and the mapper coerces
                  anything that is not literally `"reader"` to it — so the role alone says
@@ -1922,20 +1557,15 @@ export function DesktopMailboxes(
               );
             })()}
             control={
-              /* ── THE CLAIM IS NOT A ROW CONTROL ANY MORE, AND THE ROW IT WAS ON WAS THE WRONG
-                 ONE ────────────────────────────────────────────────────────────────────────────
-                 It was offered here on `status === "disabled" && disabledReason` — a stand-down as
-                 the OLD schema encoded it. Two things ended that. The role is its own column now
-                 and the backfill moved every stood-down row to `connected` + `organizer_role =
-                 'reader'`, so this arm named a state nothing writes; and `organizeHere` REFUSES a
-                 `disabled` row, because a `disabled` row is a tombstone and resurrecting a mailbox
-                 somebody took off this machine is not what the button is for. The control was
-                 therefore offered on exactly the set the handler declines.
-
-                 It lives in the banner UNDER THIS ROW now, where the fact it acts on is stated.
-                 See `claimable` and `organizerBlock`. What stays here is Sync now, withheld on a
-                 disconnected mailbox for its own reason: nothing is opening it, so a pass over it
-                 cannot be asked for. */
+              /* ── THE CLAIM IS NOT A ROW CONTROL ANY MORE — it was offered here on the OLD
+                 schema's stand-down (`status === "disabled" && disabledReason`). The role is
+                 its own column now and the backfill moved every stood-down row to
+                 `connected` + `organizer_role='reader'`, so this arm named a state nothing
+                 writes; and `organizeHere` REFUSES a `disabled` row (a tombstone — the button
+                 does not resurrect removed mailboxes). The control was offered on exactly the
+                 set the handler declines. It lives in the banner UNDER THIS ROW now (see
+                 `claimable`, `organizerBlock`). What stays here is Sync now, withheld on a
+                 disconnected mailbox: nothing is opening it, so a pass cannot be asked for. */
               shown.status === "disabled" ? undefined : (
                 <>
                   <Button
@@ -1945,22 +1575,15 @@ export function DesktopMailboxes(
                   >
                     {queued.has(shown.id) ? t("syncQueued") : t("syncNow")}
                   </Button>
-                  {/* ── RUN SETUP AGAIN, ON THE ROW IT IS ABOUT ──────────────────────────────
-                      It used to be one row at the foot of the pane, which was the right shape
-                      while an install had one mailbox and wrong the moment it had two: the flow
-                      writes a consent stamp and a screening window for a NAMED mailbox, and a
-                      control at the foot of a list of three names none of them. `?mailbox=<id>`
-                      is how the route says which, and `AppShell` resolves the run's subject from
-                      it rather than from the first row.
-
-                      `#/first-run/again`, never the bare hash: a finished install derives to
-                      "nothing to do", correctly, so the RE-RUN INTENT has to ride the route or
-                      the stage would open, find the completion stamp and close again on the same
-                      render.
-
-                      THE STANDALONE DOOR ALONE, because that is the only door this window gives
-                      the flow a host on (`local-first-run.ts`). On the hosted door `#/first-run`
-                      renders nothing at all, so the button would navigate somewhere blank. */}
+                  {/* ── RUN SETUP AGAIN, ON THE ROW IT IS ABOUT — one row at the pane's foot
+                      was right for one mailbox and wrong for two: the flow writes a consent
+                      stamp and a screening window for a NAMED mailbox, and a control at the
+                      foot of a list of three names none of them. `?mailbox=<id>` says which,
+                      and `AppShell` resolves the run's subject from it. `#/first-run/again`,
+                      never the bare hash: a finished install derives to "nothing to do", so
+                      the RE-RUN INTENT must ride the route or the stage would open and close
+                      on the same render. THE STANDALONE DOOR ALONE — the only door this
+                      window gives the flow a host on (`local-first-run.ts`). */}
                   {firstRunDoorFor(statusOf(door)) === "local" ? (
                     <Button
                       className="mbx-btn"
@@ -1969,19 +1592,15 @@ export function DesktopMailboxes(
                       {t("setupAgainAction")}
                     </Button>
                   ) : null}
-                  {/* ── REMOVE — the door out, and this door had none ─────────────────────
-                      Ghost beside the resync, which is the row cluster's own ranking: Sync now
-                      is the ordinary verb and this is the one somebody should have to mean.
-
-                      NO KEYCAP. The registry is checked rather than guessed: the two other verbs
-                      in this pane — Sync now and Organize here — carry none, so a keycap on the
-                      destructive one would be the only shortcut on the surface and it would be
-                      on the press that deletes a stored password.
-
-                      It opens a CONFIRMATION, never the removal. On the hosted door the
-                      destructive press is two screens away behind the account's second factor;
-                      here there is no second factor to ask for, so the statement of consequences
-                      IS the ceremony and it has to carry its weight. */}
+                  {/* ── REMOVE — the door out, and this door had none. Ghost beside the
+                      resync, the row cluster's own ranking: Sync now is the ordinary verb and
+                      this is the one somebody should have to mean. NO KEYCAP — the registry
+                      is checked: the two other verbs here carry none, and a keycap on the
+                      destructive press that deletes a stored password would be the only
+                      shortcut on the surface. It opens a CONFIRMATION, never the removal: on
+                      the hosted door the destructive press sits behind the account's second
+                      factor; here there is none, so the statement of consequences IS the
+                      ceremony and it has to carry its weight. */}
                   {!cloud ? (
                     <Button
                       className="mbx-btn"
@@ -2008,22 +1627,15 @@ export function DesktopMailboxes(
               On a row this machine organizes it is the release; on every other one it is the fact and
               the way back — see `organizerBlock`. */}
           {organizerBlock(shown)}
-          {/* ══ THE REMOVAL CONFIRMATION — FIVE CONSEQUENCES, AND THE FIFTH IS THIS DOOR'S ══
-              The hosted pane's panel, verbatim in shape and in four of its five statements,
-              because they are true on both doors: organizing stops, THE MAIL IS UNTOUCHED (the
-              removal opens no IMAP connection to delete anything), the stored password goes, and
-              scheduled sends are closed rather than sent.
-
-              The fifth differs and had to. On the hosted door the copy already synced STAYS —
-              erasure there is account-scoped and there is no per-mailbox purge, so claiming the
-              local copy goes would be false. On THIS door the local mirror is deleted, by this
-              route, in the same request: that is the wipe the doubling fix added, and it is the
-              honest sentence here. Saying "stays in your account" on a machine that has no
-              account would be the same class of false statement pointing the other way.
-
-              Under the row rather than over the pane, so a machine with two addresses cannot
-              show a confirmation whose subject is ambiguous. `role="alertdialog"` and the SAFE
-              ANSWER FIRST in the DOM, the browser pane's discipline. */}
+          {/* ══ THE REMOVAL CONFIRMATION — FIVE CONSEQUENCES, THE FIFTH THIS DOOR'S OWN. The
+              hosted pane's panel, verbatim in four statements, true on both doors: organizing
+              stops, THE MAIL IS UNTOUCHED (no IMAP connection is opened to delete anything),
+              the stored password goes, scheduled sends are closed rather than sent. The fifth
+              differs and had to: hosted erasure is account-scoped, so "the copy stays" is
+              true there; on THIS door the local mirror IS deleted, by this route, in the same
+              request — the honest sentence here. Under the row rather than over the pane, so
+              a machine with two addresses cannot show a confirmation with an ambiguous
+              subject. `role="alertdialog"`, SAFE ANSWER FIRST in the DOM. */}
           {removing?.id === shown.id ? (
             <div
               className="acct-confirm"
@@ -2147,47 +1759,25 @@ export function DesktopMailboxes(
         />
       ) : null}
 
-      {/* ── HOW MUCH OF THE ACCOUNT IS ON THIS COMPUTER — a fact, not an alarm ───────────────
-          This sentence used to be a warning triangle at the foot of the RAIL, standing in every
-          view for as long as the two numbers differed ("This device holds N of the account's M
-          messages"). It was removed on 2026-08-30; `deviceHoldings` in the shared shell
-          carries the full argument, and the short form is that a windowed copy in front of
-          working reach-past doors is this product behaving correctly, so alarming about it
-          trains people to ignore the alarms that mean something. It also contradicted its own
-          destination: the banner linked HERE, and every row here said "Up to date".
-
-          So it is stated where somebody asking "what is actually on this machine" is standing,
-          in the register of the sentence below it, with no icon of any kind. `set-note-inline`
-          and not `SettingsNote` for exactly that reason — `SettingsNote` leads with a mark, and
-          the one thing this line must not do is carry one.
-
-          THE CLAIM IS PINNED, and it has to be, because it promises a behaviour: the mail
-          outside the window loads from the account when it is reached. Both halves of that are
-          real and both are the sidecar's doing — `cloud-read.ts` deliberately does NOT answer
-          `GET /messages` (the reach-past LIST door) from the mirror, so the ask falls through to
-          the hosted account, and `cloud-engine.ts` falls a body read through the same way for a
-          row the mirror never held. If either door is ever served locally, this sentence becomes
-          false and must go with it.
-
-          `deviceHoldings` is the SHARED derivation — the same every-or-nothing sum and the same
-          strict `total > count` clamp the strip's own `importing` denominator uses — so this
-          pane cannot answer the question differently from the strip. `null` (no counts, one
-          silent mailbox, a caught-up device, a local-only install that has no other copy to
-          compare against) renders nothing at all, which is the resting case. */}
+      {/* ── HOW MUCH OF THE ACCOUNT IS ON THIS COMPUTER — a fact, not an alarm. This was a
+          warning triangle at the foot of the RAIL, removed 2026-08-30 (`deviceHoldings` in
+          the shared shell carries the argument): a windowed copy in front of working
+          reach-past doors is correct behaviour, and alarming about it trains people to
+          ignore real alarms. Stated here, where somebody asking "what is on this machine"
+          stands, with no icon (`set-note-inline`, not `SettingsNote`). THE CLAIM IS PINNED: it
+          promises behaviour: `cloud-read.ts` does NOT answer `GET /messages` from the mirror
+          and `cloud-engine.ts` falls a body read through — served locally, this sentence must
+          go. `deviceHoldings` is the SHARED derivation, so this pane cannot disagree with the
+          strip; `null` renders nothing at all, the resting case. */}
       {(() => {
-        /* TWO GATES IN FRONT OF THE ARITHMETIC, both from review findings, both cases where the
-           pair is comparable and the SENTENCE is false at the moment it would be said:
-
-            · `cloud` — the claim promises that the rest loads FROM THE ACCOUNT, which is only a
-              thing the hosted door can do. A standalone install has no account to reach into, and
-              its engine reports no hosted counts, so the arithmetic would withhold anyway — this
-              gate is the statement of intent in front of that coincidence, and it is what makes
-              the door, rather than the shape of the data, the thing that decides.
-            · `holdingsSpeak` — the mirror has actually been read, and the loop is not frozen. See
-              its own doc-block; the short version is that a cold launch would otherwise announce
-              "holds 0 of your M messages" about a machine whose store already holds them — only
-              this client's own count is still climbing — and that a stopped session cannot keep
-              the sentence's promise. */
+        /* TWO GATES IN FRONT OF THE ARITHMETIC, both cases where the pair is comparable and
+           the SENTENCE is false at the moment it would be said: `cloud` — the claim promises
+           the rest loads FROM THE ACCOUNT, which only the hosted door can do; a standalone
+           engine reports no hosted counts, so the arithmetic would withhold anyway, and this
+           gate makes the DOOR the thing that decides rather than the shape of the data.
+           `holdingsSpeak` — the mirror has actually been read and the loop is not frozen; a
+           cold launch would otherwise announce "holds 0 of your M messages" about a machine
+           whose store already holds them, and a stopped session cannot keep the promise. */
         const held = cloud && holdingsSpeak(mailState, freshness)
           ? deviceHoldings(facts, mirrored)
           : null;

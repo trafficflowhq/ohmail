@@ -1,22 +1,12 @@
 /**
- * HOST MODE, from the window's side of it.
- *
- * The shell can publish this install's mail engine to the user's OWN tailnet — a listener on
- * `127.0.0.1` that Tailscale serves as `https://<machine>.<tailnet>.ts.net`, reachable only from
- * the user's other devices, mail never touching anyone's servers. Everything about that lives in
- * the shell (`src-tauri/src/host.rs`): the setting, the `tailscale` invocations (serve, never
- * funnel — pinned by its tests), the tray, start-at-login. This file is the whole of what the
- * window may say about it, over the same runtime global `native.ts` uses and for the same
- * reasons.
- *
- * ── EVERY ANSWER IS A CLOSED UNION, PARSED AND NEVER CAST ───────────────────────────────────
- *
- * The payloads cross a process boundary, and a shell one version ahead of this bundle can name a
- * state this bundle has never heard of. The rule is `native.ts`'s: refuse what is not
- * recognised. One deliberate asymmetry — an unknown PROBLEM inside an otherwise readable state
- * degrades to `null` (the screens show their generic guidance) rather than discarding the whole
- * answer, because "host mode is degraded for a reason this build cannot name" is still the truth
- * and strictly more useful than pretending the shell said nothing.
+ * HOST MODE, from the window's side. The shell can publish this install's mail engine to the
+ * user's OWN tailnet — a listener on `127.0.0.1` that Tailscale serves as
+ * `https://<machine>.<tailnet>.ts.net`, mail never touching anyone's servers. All of that lives
+ * in the shell (`src-tauri/src/host.rs`): the setting, the `tailscale` invocations (serve,
+ * never funnel — pinned by its tests), the tray, start-at-login. This file is the whole of what
+ * the window may say about it, over the same runtime global `native.ts` uses. Every answer is a
+ * closed union, parsed and never cast; one asymmetry — an unknown PROBLEM inside a readable
+ * state degrades to `null` (generic guidance) rather than discarding the whole answer.
  */
 
 /** The tri-state the tray and the screens render. */
@@ -173,16 +163,13 @@ export async function tailscaleStatus(): Promise<TailscaleStatus | null> {
 
 /**
  * Arm host mode on `port`, with the enable ceremony's start-at-login choice and — when the
- * operator picked one — the same-network interface address. The shell probes the tailnet
- * first; WITHOUT a LAN choice a probe refusal changes nothing and answers with the CURRENT
- * state plus this attempt's `problem`, exactly as before. WITH one, the refusal no longer
- * refuses: the shell arms the LAN-only spawn (the no-Tailscale path), publishes nothing, and
- * answers armed + degraded with the tailnet problem beside a live `lanState`. The safe order
- * stands either way: setting persisted, engine respawned, the tailnet route published LAST and
- * only once the engine's own listener holds the loopback port.
- *
- * The port is checked HERE as well as in the shell, because 1–65535 is the contract and a caller
- * passing 0 is a bug worth an exception rather than a guided state.
+ * operator picked one — the same-network interface address. The shell probes the tailnet first;
+ * WITHOUT a LAN choice a probe refusal changes nothing and answers the CURRENT state plus this
+ * attempt's `problem`. WITH one, the shell arms the LAN-only spawn (the no-Tailscale path),
+ * publishes nothing, and answers armed + degraded with the tailnet problem beside a live
+ * `lanState`. The safe order stands either way: setting persisted, engine respawned, the
+ * tailnet route published LAST, once the engine's listener holds the loopback port. The port
+ * is checked HERE as in the shell: 1–65535 is the contract; 0 is a bug worth an exception.
  */
 export async function armHostMode(
   port: number,

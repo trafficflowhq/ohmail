@@ -1,38 +1,12 @@
 /**
- * THE FIRST SCREEN A FRESH INSTALL SHOWS — which mailbox is this?
- *
- * ── IT IS A REACT SCREEN, NOT A NATIVE ONE ──────────────────────────────────────────────────
- *
- * Every pixel of setup belongs to the frontend. The shell owns the process, the keystore and the
- * settings file, and it owns no user interface at all beyond the menu bar — so onboarding is the
- * same React app the mail is, built from the same design system, and there is no second
- * look-and-feel to keep in step. The alternative — a native window asking for a mail server —
- * would be the one screen in the product that could not be restyled with the rest of it.
- *
- * ── AND IT IS HONEST ABOUT FAILING ──────────────────────────────────────────────────────────
- *
- * A rejected password renders beside the fields, in the card the person is already looking at,
- * and the words are the mail server's or the engine's rather than a category. Nothing here ever
- * falls back to showing sample mail: an install that could not be configured says so and stays
- * on this screen, because a window full of somebody else's invented correspondence is a worse
- * answer to "it did not work" than a sentence is.
- *
- * ── THE COPY IS IN THE CATALOGUE, UNDER A NAMESPACE OF THIS WINDOW'S OWN ────────────────────
- *
- * This paragraph used to argue the opposite — that these screens exist only inside this app, in
- * one language, so their words belonged in the file. The second half was the mistake: the app
- * ships in two languages, and "one language" described the door rather than the product. A German
- * install opened on an English door and then went on in German, which is the one impression a
- * setup screen cannot afford to give.
- *
- * So the words are `desktopDoor` in `messages/{en,de}.json`, read through `DOOR_COPY`
- * (`door-copy.ts`), and the vocabulary argument survives intact: `desktopDoor` is the window's
- * own namespace, not a corner of `settings`, and the served host client never carries it. The
- * machine's own word still comes from `platform.ts` — a fact about the build, one per platform
- * this ships to — and is now translated as well, because "computer" is an ordinary noun and only
- * two of the three are proper ones. The provider table this renders is the shared one, so the
- * sentences that matter most (what an app password is, and which providers actually work) are
- * still written down exactly once.
+ * THE FIRST SCREEN A FRESH INSTALL SHOWS — which mailbox is this? A REACT SCREEN, NOT A
+ * NATIVE ONE: the shell owns the process, the keystore and the settings file, and no user
+ * interface beyond the menu bar, so onboarding is the same React app the mail is — no second
+ * look-and-feel to keep in step. HONEST ABOUT FAILING: a rejected password renders beside the
+ * fields in the mail server's or the engine's own words, and nothing falls back to sample
+ * mail. The copy is `desktopDoor` in `messages/{en,de}.json`, read through `DOOR_COPY`
+ * (`door-copy.ts`) — the window's own namespace, never carried by the served host client; the
+ * provider table is the shared one, so the sentences that matter are written down once.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -87,17 +61,14 @@ export function DoorChooser({
   /** Where the chooser opens. The Settings pane sends somebody straight to one door. */
   start = "doors",
   /**
-   * THE MAILBOXES THE OTHER COMPUTER HELD, for the takeover's first step.
-   *
-   * Three states and they are three different sentences, which is the whole reason this is not
-   * `string[]`: `undefined` is "still reading", `null` is "the read failed", and an array is the
-   * answer — including the empty array, which means that computer was organizing nothing.
-   *
-   * `null` may NEVER be rendered as an empty list. The read happens against a mirror that the
-   * next step is about to discard, so a failure there and a host that genuinely held nothing look
-   * identical afterwards, and telling somebody "there is nothing to take over" about a machine
-   * that was organizing three mailboxes is the failure-looks-healthy shape this window has met
-   * before. The gate captures it BEFORE the door moves; see `DesktopGate`.
+   * THE MAILBOXES THE OTHER COMPUTER HELD, for the takeover's first step. Three states, three
+   * sentences — the whole reason this is not `string[]`: `undefined` is "still reading",
+   * `null` is "the read failed", and an array is the answer (the empty array means that
+   * computer was organizing nothing). `null` may NEVER be rendered as an empty list: the read
+   * happens against a mirror the next step discards, so a failure and a host that held
+   * nothing look identical afterwards — "there is nothing to take over" about a machine
+   * organizing three mailboxes is failure-looks-healthy. The gate captures it BEFORE the
+   * door moves; see `DesktopGate`.
    */
   roster,
   /** What to call the computer being left. Null falls back to sentences that name no machine. */
@@ -126,57 +97,37 @@ export function DoorChooser({
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   /**
-   * THE ADDRESS A BROWSER HANDOFF WAS STARTED FOR, or null when none has been.
-   *
-   * Two jobs, and the first one is not a nicety. It selects which sign-in a code goes to:
-   * `enterCloudDoorWithCode` begins with `engine_configure`, which REPLACES the engine — and the
-   * verifier the whole handoff rests on lives in that process's memory. Reconfiguring after the
-   * commitment has been published throws it away, and the account then answers a perfectly good
-   * code with the same sentence it gives an expired one, because telling those apart is exactly
-   * what it refuses to do. So once a handoff has started, both the deep link AND a retyped code
-   * take the sign-in that does not touch the engine's lifetime.
-   *
-   * It holds the ADDRESS rather than a flag because the engine is now configured for that address
-   * and nothing afterwards will reconfigure it. Editing the field once the browser has been sent
-   * off must not quietly sign a session in against a mailbox this install is not mirroring; the
-   * value the handoff was started with is the one that stays true.
+   * THE ADDRESS A BROWSER HANDOFF WAS STARTED FOR, or null when none has been. It selects
+   * which sign-in a code goes to: `enterCloudDoorWithCode` begins with `engine_configure`,
+   * which REPLACES the engine — and the verifier lives in that process's memory, so
+   * reconfiguring after the commitment is published throws it away and the account answers a
+   * good code with its expired-code sentence. Once a handoff has started, the deep link AND a
+   * retyped code take the sign-in that does not touch the engine's lifetime. It holds the
+   * ADDRESS rather than a flag: editing the field after the browser was sent off must not
+   * quietly sign in against a mailbox this install is not mirroring.
    */
   const [handedOff, setHandedOff] = useState<string | null>(null);
 
   /**
-   * THE ENGINE REFUSED A SIGN-IN BECAUSE THIS INSTALL MIRRORS A DIFFERENT ACCOUNT.
-   *
-   * The same kind of remembered fact as `handedOff` above, doing the same kind of job: it selects
-   * which sign-in the NEXT submit takes. A door that is already chosen signs in with one request
-   * and deliberately does not touch the engine's lifetime — which is exactly why that request can
-   * never be the one that switches accounts. The engine will not activate a session over another
-   * account's database (it would be that account's mail in this window), and it cannot discard that
-   * database either, because by then it is open. The one code path that can is the door CONFIGURE:
-   * it replaces the engine, and the replacement throws a foreign mirror away before it opens
-   * anything. So this flips the form onto that path.
-   *
-   * A BOOLEAN AND NOT AN ADDRESS, unlike `handedOff` — the address to use is whatever is in the
-   * field, because switching accounts is precisely the case where the field is the true thing and
-   * the configured door is the stale one. It is never cleared: taking the configure path with the
-   * install's own address again costs a restart and discards nothing, so the worst case of leaving
-   * it set is a few seconds, and the worst case of clearing it too eagerly is a person stuck on a
-   * refusal with no way through.
+   * THE ENGINE REFUSED A SIGN-IN BECAUSE THIS INSTALL MIRRORS A DIFFERENT ACCOUNT — a
+   * remembered fact that selects which sign-in the NEXT submit takes. The one-request sign-in
+   * deliberately never touches the engine's lifetime, so it can never be the one that
+   * switches accounts: the engine will not activate a session over another account's
+   * database, and cannot discard one already open. The door CONFIGURE can — it replaces the
+   * engine, and the replacement discards a foreign mirror — so this flips the form onto that
+   * path. A BOOLEAN, not an address: the field is the true thing when switching. Never
+   * cleared — a wasted configure costs a restart; clearing too eagerly strands a person.
    */
   const [mustSwitch, setMustSwitch] = useState(false);
 
   /**
-   * THE SELF-HOSTED SERVER THIS INSTALL HAS BEEN POINTED AT AND PROVED, or null.
-   *
-   * The same kind of remembered fact as `handedOff`: it selects what the next submit IS. Null means
-   * the self-hosted card is still asking for an address, and its submit configures the engine and
-   * probes. Set means the engine is configured for that base and serving, and the submit is a
-   * sign-in — the identical request the hosted door makes, because from the engine's side there is
-   * no difference between the two.
-   *
-   * It holds the BASE rather than a flag for `handedOff`'s reason: what was proved is the thing to
-   * report and the thing to sign in against, and a boolean would let a later edit of the field
-   * quietly change which server the sentence on screen was describing. The field is read-only from
-   * the moment this is set, so the two can never disagree.
+   * THE SELF-HOSTED SERVER THIS INSTALL HAS BEEN POINTED AT AND PROVED, or null. It selects
+   * what the next submit IS: null means the card is still asking for an address (its submit
+   * configures and probes); set means the engine is configured for that base and serving,
+   * and the submit is a sign-in — the identical request the hosted door makes. It holds the
+   * BASE rather than a flag: what was proved is the thing to report and to sign in against,
+   * and a boolean would let a later edit change which server the sentence describes. The
+   * field is read-only from the moment this is set, so the two can never disagree.
    */
   const [reachedServer, setReachedServer] = useState<string | null>(null);
 
@@ -193,17 +144,13 @@ export function DoorChooser({
   const [provedLink, setProvedLink] = useState<(HostLinkStep & { base: string }) | null>(null);
 
   /**
-   * THE ONE REFUSAL WITH A WAY OUT — remembered so the card can offer the verb, and cleared the
-   * moment anything else happens.
-   *
-   * `pair_account_mismatch` means the computer at that address was reinstalled: a different
-   * account behind a familiar name, which neither of the engine's existing comparisons can see.
-   * The plain redeem is a dead end there, and the only way through discards the mail this machine
-   * holds for the other account.
-   *
-   * SO IT IS A REMEMBERED REFUSAL AND NOT AN INFERENCE. Start over is never selected by the
-   * refusal itself; it appears as a control and the person presses it. Anything else — a new
-   * link, Back, a successful pairing — clears it, so the verb can never outlive the refusal that
+   * THE ONE REFUSAL WITH A WAY OUT — remembered so the card can offer the verb, cleared the
+   * moment anything else happens. `pair_account_mismatch` means the computer at that address
+   * was reinstalled: a different account behind a familiar name, invisible to the engine's
+   * existing comparisons. The plain redeem is a dead end, and the only way through discards
+   * the mail this machine holds for the other account. A REMEMBERED REFUSAL, NOT AN
+   * INFERENCE: Start over appears as a control and the person presses it; a new link, Back
+   * or a successful pairing clears it, so the verb can never outlive the refusal that
    * justified it and be pressed against a different computer.
    */
   const [mismatch, setMismatch] = useState(false);
@@ -238,15 +185,12 @@ export function DoorChooser({
   };
 
   /**
-   * START THE BROWSER HANDOFF — configure the door, mint the commitment, open the page.
-   *
-   * Three things in one press, and they have to be in this order: the engine must exist before it
-   * can invent a verifier, and the verifier must exist before the page is opened, or the page mints
-   * a code nothing on this machine can spend. `beginBrowserSignIn` owns the ordering; this owns
-   * what the person sees while it happens.
-   *
-   * A refusal from the shell is reported here WITH the address, because somebody who cannot be sent
-   * to the page can still walk to it — and the retype field is still on screen underneath.
+   * START THE BROWSER HANDOFF — configure the door, mint the commitment, open the page, in
+   * that order: the engine must exist before it can invent a verifier, and the verifier must
+   * exist before the page opens, or the page mints a code nothing on this machine can spend.
+   * `beginBrowserSignIn` owns the ordering; this owns what the person sees. A refusal from
+   * the shell is reported WITH the address, because somebody who cannot be sent to the page
+   * can still walk to it — and the retype field is still on screen underneath.
    */
   const startHandoff = async (address: string): Promise<void> => {
     if (busy) return;
@@ -306,23 +250,15 @@ export function DoorChooser({
                looking at a mail client with no session and nothing explaining why. */
             onProve={(typedOrigin, address) => {
               if (busy) return;
-              /* ── A PAIRING LINK PASTED INTO THE SERVER FIELD GOES TO THE DOOR THAT WANTS IT ──
-                 Both doors ask for "an address", and the link a person is holding came from the
-                 other computer's Devices pane — so pasting it here is the ordinary mistake, not an
-                 exotic one. Left alone it is answered by THIS door's refusals, which are about
-                 self-hosting: the worst of them tells somebody to put a root certificate in a
-                 folder, which for a pairing link is advice that cannot help and reads as a
-                 configuration problem with their server.
-
-                 Routed BEFORE any dial, and that is the load-bearing half. `hostLinkProblem`
-                 parses; it opens nothing. So a link recognised here costs zero fetches, nothing is
-                 configured, and the previous door's mirror is untouched — whereas letting the
-                 self-host path take it would have replaced the engine to prove an address that was
-                 never a server.
-
-                 ONLY A PINNED LINK IS TAKEN. An unpinned `#<token>` fragment on a real hostname is
-                 genuinely ambiguous — that is also the shape a self-hosted origin has — so it is
-                 left to this door rather than captured on a guess. `k1.` is unambiguous. */
+              /* ── A PAIRING LINK PASTED INTO THE SERVER FIELD GOES TO THE DOOR THAT WANTS
+                 IT. Both doors ask for "an address", and the link came from the other
+                 computer's Devices pane — the ordinary mistake. Left alone it is answered by
+                 THIS door's refusals, which are about self-hosting (the worst tells somebody
+                 to install a root certificate). Routed BEFORE any dial — `hostLinkProblem`
+                 parses, opens nothing — so a link recognised here costs zero fetches and the
+                 previous door's mirror is untouched. ONLY A PINNED LINK IS TAKEN: an unpinned
+                 `#<token>` on a real hostname is genuinely ambiguous (that is also a
+                 self-hosted origin's shape), so it is left to this door; `k1.` is unambiguous. */
               const pasted = hostLinkProblem(typedOrigin);
               if (pasted.link !== null && pasted.link.pin !== null) {
                 setProblem(null);
@@ -510,33 +446,14 @@ export function DoorChooser({
 }
 
 /**
- * THE THREE DOORS, as three things rather than as a dropdown.
- *
- * They are not variants of one setup. Each one names a DIFFERENT MACHINE as the thing that does the
- * organizing — this computer, a server the person runs, or ours — and that is the only question
- * this screen asks. Rendered as tiles for the reason the provider picker is: a choice between
- * recognisable things, with a factual line under each name saying what will actually happen.
- *
- * ── THE ORDER IS THE ANSWER TO "WHO HOLDS IT", NEAREST FIRST ──────────────────────────────────
- *
- * This computer, then a server you run, then ours. It is not a ranking by how much we would like
- * somebody to pick it, and putting the hosted service last is deliberate: the first two are the
- * ones a person can verify for themselves, and a product whose whole claim is that you can leave
- * should not lead with the door that is hardest to leave from.
- *
- * ── EVERY SENTENCE HERE IS A CLAIM, AND TWO OF THEM ARE LOAD-BEARING ──────────────────────────
- *
- *  · **"Nothing is sent anywhere."** on the local door. Structurally true rather than promised: the
- *    window's CSP is `connect-src 'none'`, `offline-guard.ts` replaces every browser API that could
- *    leave the process, and the engine on this door dials the user's own IMAP server and nothing
- *    else — `engine.ts`'s graph reaches no hosted client at all. Pinned in
- *    `desktop-door-chooser.test.tsx` against the fact that makes it true, so a change that made the
- *    local door talk to anything reddens the sentence rather than leaving it standing.
- *  · **The travel sentence** beneath all three. Also a fact about the code and not a promise about
- *    intentions: the rules and settings are written to the MAILBOX (`ohmail/_meta`, the travelling
- *    profile), which is what every door reads them back out of — `local-profile-import.ts` is the
- *    surface that asks about them on arrival. That is the same sentence the product's own invariant
- *    is written in: the IMAP mailbox is the master, never this app and never Cloud.
+ * THE THREE DOORS, as three things rather than as a dropdown. Each names a DIFFERENT MACHINE
+ * as the thing that organizes — this computer, a server the person runs, or ours. THE ORDER
+ * IS "WHO HOLDS IT", NEAREST FIRST: a product whose claim is that you can leave
+ * should not lead with the door hardest to leave from. Two load-bearing claims: "Nothing is
+ * sent anywhere." on the local door is structurally true (CSP `connect-src 'none'`,
+ * `offline-guard.ts`, an engine dialling only the user's own IMAP server), pinned in
+ * `desktop-door-chooser.test.tsx`; the travel sentence under all three states the invariant —
+ * rules and settings live on the MAILBOX (`ohmail/_meta`; `local-profile-import.ts` reads them).
  */
 function Doors({ onPick, onCancel }: { onPick: (step: Step) => void; onCancel?: () => void }) {
   return (
@@ -579,32 +496,14 @@ function Doors({ onPick, onCancel }: { onPick: (step: Step) => void; onCancel?: 
 }
 
 /**
- * SETTING THIS MACHINE UP ON ITS OWN — step one: what it costs, and what the other computer held.
- *
- * ── WHY THERE IS A STEP BEFORE THE FORM ──────────────────────────────────────────────────────
- *
- * The next screen asks for a mailbox password, which reads as an ordinary setup form. It is not:
- * pressing through it discards the copy of the mail on this machine, reads the mailbox again from
- * the server, and makes this computer the one that organizes it. Every one of those is
- * recoverable, none is free, and a person who meets them as consequences of a form they filled in
- * has been told afterwards.
- *
- * So the consequences are stated first, in the order they happen, and the last sentence is the
- * reassurance that is actually true: nothing on the mail server changes until somebody agrees to
- * organize, one mailbox at a time. That is not a promise about intentions — it is the consent arm
- * the Mailboxes pane already gates every claim behind.
- *
- * ── AND THE ROSTER IS THE USEFUL HALF ────────────────────────────────────────────────────────
- *
- * Which mailboxes the other computer was organizing is a fact that exists only in the copy this
- * step is about to discard. Read afterwards it is an empty list. So it is captured before the
- * door moves and shown here — not as a form to fill in (the mirror carries addresses and no
- * servers, so nothing could be pre-filled), but as the LIST: these are the mailboxes to set up
- * again, and here is what they are called.
- *
- * A read that FAILED says so. It is not spelled the same as a host that held nothing, because
- * "there is nothing to take over" about a machine that was organizing three mailboxes is exactly
- * the kind of confident wrong answer this window is written to avoid.
+ * SETTING THIS MACHINE UP ON ITS OWN — step one: what it costs, and what the other computer
+ * held. A STEP BEFORE THE FORM because the next screen reads as ordinary setup and is not:
+ * pressing through it discards the copy of the mail on this machine, reads the mailbox again
+ * from the server, and makes this computer the organizer. Stated first, ending with what
+ * is true: nothing on the mail server changes until somebody agrees to organize. THE
+ * ROSTER IS THE USEFUL HALF: which mailboxes the other computer organized exists only in the
+ * copy about to be discarded, so it is captured before the door moves and shown as a LIST
+ * (no servers in the mirror — nothing to pre-fill). A read that FAILED says so, never "nothing".
  */
 function TakeoverCard({
   roster,
@@ -817,25 +716,14 @@ function LocalDoor({
 }
 
 /**
- * DOOR TWO: a server the person runs, mirrored onto this machine.
- *
- * ── TWO PHASES IN ONE CARD, AND THE FIRST ONE IS NOT A FORMALITY ──────────────────────────────
- *
- * The address is asked for and PROVED before anything asks for a password. Everything that can go
- * wrong with a self-hosted address goes wrong at that step — a typo, a machine that is not running
- * ohmail, a certificate signed by an authority nobody outside that network has heard of — and every
- * one of those becomes a sentence about the address rather than a sentence about credentials.
- * Asking for all four fields at once and finding out at the end is how somebody concludes their
- * password is wrong when their server is simply not at that name.
- *
- * The proof costs a real `engine_configure`; `configureSelfHostDoor` explains why that is not
- * avoidable from a window that cannot dial, and what a refusal leaves behind.
- *
- * ── WHAT THIS ARM DOES NOT HAVE ───────────────────────────────────────────────────────────────
- *
- * No browser handoff. The shell resolves `link-desktop` to an address it owns, and all of them are
- * ohmail.app's — see `self-host.ts`. The password-and-code form is the whole door here, and the
- * screen says nothing about a handoff rather than offering one that would go to the wrong place.
+ * DOOR TWO: a server the person runs, mirrored onto this machine. TWO PHASES IN ONE CARD,
+ * and the first is not a formality: the address is asked for and PROVED before anything asks
+ * for a password. Everything that can go wrong with a self-hosted address goes wrong at that
+ * step — a typo, a machine not running ohmail, a certificate from an unknown authority — and
+ * each becomes a sentence about the ADDRESS, not about credentials; four fields at once is
+ * how somebody concludes their password is wrong when their server is not at that name. The
+ * proof costs a real `engine_configure` (`configureSelfHostDoor` says why). NO browser
+ * handoff on this arm (`self-host.ts`): the password-and-code form is the whole door here.
  */
 function ServerDoor({
   busy,
@@ -988,33 +876,14 @@ function ServerDoor({
 }
 
 /**
- * DOOR TWO: ANOTHER COMPUTER OF THE PERSON'S OWN, reached over their network or their Tailscale.
- *
- * ── TWO PHASES IN ONE CARD, `ServerDoor`'s SHAPE ──────────────────────────────────────────────
- *
- * The link is PROVED before the token is spent, and the reason is sharper here than on the
- * self-hosted door: a pairing link works ONCE. Redeeming first and finding out afterwards that
- * the address was wrong, or that the key had changed, would consume the one thing the person
- * carried across from the other machine and leave them to go and make another.
- *
- * ── PHASE B SHOWS THE KEY, AND SHOWING IT IS THE WHOLE OF WHAT IT IS FOR ──────────────────────
- *
- * Twelve characters of the fingerprint, mono, beside the sentence saying where to find the same
- * twelve on the other computer. That comparison is the only thing standing between "we reached
- * something" and "we reached the machine you meant" on a network where no authority vouches for
- * anybody. The full forty-three are deliberately not shown: a credential-shaped string nobody
- * actually compares is a ceremony rather than a check.
- *
- * A TAILSCALE ORIGIN CARRIES NO PIN (the link's two forms), so there is no key line there and the
- * sentence says what did the checking instead — the certificate, which the platform verified.
- * Silence would read as a check that was skipped.
- *
- * ── AND THERE IS NO "PAIRED" SCREEN AFTERWARDS ────────────────────────────────────────────────
- *
- * The gate does what it does after every other door: the shell reports a session, `AppShell`
- * mounts, and the sync line says the first sync has not finished yet and then counts. The Ohbox
- * filling is the confirmation; an interstitial announcing something the next frame shows is a
- * sentence in the way.
+ * DOOR TWO: ANOTHER COMPUTER OF THE PERSON'S OWN, over their network or Tailscale. TWO
+ * PHASES, `ServerDoor`'s shape — the link is PROVED before the token is spent: a pairing
+ * link works ONCE. PHASE B SHOWS THE KEY: twelve characters of the fingerprint,
+ * mono, beside where to find the same twelve on the other computer — the only thing between
+ * "we reached something" and "we reached the machine you meant" where no authority vouches;
+ * forty-three characters would be a ceremony nobody compares. A Tailscale origin carries no
+ * pin — that sentence names the certificate instead. NO "paired" screen afterwards:
+ * `AppShell` mounts and the Ohbox filling is the confirmation.
  */
 function HostDoor({
   busy,
@@ -1131,27 +1000,14 @@ function HostDoor({
 }
 
 /**
- * A REFUSAL KIND, AS THE SENTENCE THE READER'S LANGUAGE HAS FOR IT.
- *
- * ── WHY THE MAP IS HERE AND THE DECISION IS IN `doors.ts` ─────────────────────────────────────
- *
- * `doors.ts` is reachable from the SERVED host client's import graph, and `desktopDoor` is a
- * window-only namespace — so a catalogue read there ships the whole namespace to a phone loading
- * that client over the network, where every one of these surfaces would draw a raw dotted key.
- * `desktop-messages.test.ts` caught exactly that. This file is the window's alone, so the words
- * live here and the decision lives there.
- *
- * ── AND AN UNKNOWN KIND IS NOT SILENCE ────────────────────────────────────────────────────────
- *
- * The eight kinds the engine can name get a translated sentence; anything else gets the ENGINE's
- * own words, which are English and true. That is the `guideKey` bargain the Devices pane already
- * strikes, and it matters here because the desktop's update flow makes "the engine is newer than
- * this window" an ordinary state. Composing a catalogue key from an unrecognised code is what
- * throws inside a render; falling back to prose is what does not.
- *
- * The last resort is the status line. A refusal with no kind, no message and no throw behind it
- * still has to say something, and "(409)" is a worse sentence than the others and a better one
- * than a blank card.
+ * A REFUSAL KIND, AS THE SENTENCE THE READER'S LANGUAGE HAS FOR IT. The map is HERE and the
+ * decision in `doors.ts` because that module is reachable from the SERVED host client's
+ * import graph and `desktopDoor` is window-only — a catalogue read there ships the namespace
+ * to a phone or draws raw dotted keys (`desktop-messages.test.ts` caught exactly that). AN
+ * UNKNOWN KIND IS NOT SILENCE: the eight kinds the engine can name get a translated
+ * sentence; anything else gets the ENGINE's own words — the `guideKey` bargain — which
+ * matters because the update flow makes "the engine is newer than this window" ordinary. The
+ * last resort is the status line: "(409)" is a worse sentence, and better than a blank card.
  */
 function refusalSentence(refusal: HostRefusal, host: string): string {
   const known = sentenceForKind(refusal.kind, host);
@@ -1196,32 +1052,14 @@ export function sentenceForKind(kind: HostLinkRefusal | string, host: string): s
 export { shortPin };
 
 /**
- * Door three: a hosted ohmail account, mirrored onto this machine.
- *
- * ── TWO WAYS IN, AND THE PASSWORD ONE IS STILL THE DEFAULT ──────────────────────────────────
- *
- * The form asks for a password and a six-digit code, which means typing a password into a native
- * window — the one place a person cannot check an address bar. So there is a second way: the
- * browser, where the account may already be signed in and where a password manager and a URL both
- * work, hands over a code that is worth a session for two minutes and once.
- *
- * The password form stays first because the browser path needs a browser signed in to the
- * account, and that is not always where somebody is standing — a fresh Mac, a borrowed machine,
- * a person who has just installed this and has never opened ohmail.app. Offering the alternative
- * as the default would make the common case the one with an extra step in it.
- *
- * ── AND THE BROWSER PATH NO LONGER ASKS ANYBODY TO COPY A CODE ──────────────────────────────
- *
- * Pressing "Open ohmail.app" now hands the browser a commitment the mail engine on this machine
- * invented, so the code that page mints is spendable only by this install. That is what makes it
- * safe for the page to hand the code straight back over the `ohmail://` scheme — a scheme any
- * program on the machine may claim, and one that authenticates nobody — and it is why the button
- * on the page can exist at all.
- *
- * THE FIELD STAYS. A scheme handler can be missing, claimed by something that does nothing
- * visible, or simply not fire, and a screen whose only way forward is a button in another
- * application is a dead end. The page shows the code as well as the button; this shows the field
- * as well as the explanation, and the two paths reach the same request.
+ * Door three: a hosted ohmail account, mirrored onto this machine. TWO WAYS IN, the password
+ * one first: the browser path needs a browser signed in to the account, which is not always
+ * where somebody stands (a fresh machine, a first install) — offering it as the default puts
+ * an extra step in the common case. The browser path hands the page a commitment the mail
+ * engine on this machine invented, so the code the page mints is spendable only by this
+ * install — which is what makes it safe to hand back over `ohmail://`, a scheme any program
+ * may claim and which authenticates nobody. THE FIELD STAYS: a scheme handler can be missing
+ * or silent, and the page shows the code as well as the button — both paths reach one request.
  */
 function CloudDoor({
   busy,
@@ -1250,33 +1088,25 @@ function CloudDoor({
   const [viaBrowser, setViaBrowser] = useState(false);
 
   /**
-   * WHAT AN ACTIVATION NEEDS THAT AN ACTIVATION CANNOT CARRY: the address.
-   *
-   * The deep link carries the code and nothing else — deliberately, since a link is composed by
-   * whatever opened it. The address is this install's own answer to "which mailbox is this", typed
-   * into the field above, and it is read through a ref so the one live handler always sees what is
-   * on screen rather than what was on screen when it was registered.
-   *
-   * `onSubmitCode` is in here for a sharper reason than convenience: the parent's version of it
-   * decides — from state the parent updates when the handoff starts — whether the code goes to the
-   * sign-in that reconfigures the engine or the one that does not. A handler holding the version it
-   * was mounted with would take the first, restart the engine, and discard the verifier the code is
-   * bound to. Same fact, one render later, and the handoff fails with nothing on screen saying why.
+   * WHAT AN ACTIVATION NEEDS THAT AN ACTIVATION CANNOT CARRY: the address. The deep link
+   * carries the code and nothing else — deliberately, since a link is composed by whatever
+   * opened it; the address is this install's own answer, typed above, read through a ref so
+   * the one live handler sees what is on screen now. `onSubmitCode` is in here for a sharper
+   * reason than convenience: the parent's version decides whether the code goes to the
+   * sign-in that reconfigures the engine or the one that does not, and a handler holding the
+   * mounted-time version would take the first, restart the engine and discard the verifier
+   * the code is bound to — the handoff fails with nothing on screen saying why.
    */
   const live = useRef({ address, viaBrowser, onSubmitCode });
   live.current = { address, viaBrowser, onSubmitCode };
 
   /**
-   * ANSWER THE SCHEME while this screen is the one on show.
-   *
-   * Registered once and cleared on unmount — `native.ts` keeps a single shell-side listener for the
-   * life of the window and swaps the handler behind it, because taking a listener off would cost a
-   * second core permission this window is deliberately not granted.
-   *
-   * The code is put IN THE FIELD as well as submitted. Somebody who pressed a button in another
-   * application and came back to this one should be able to see what arrived — and if the sign-in
-   * is refused, the value they would otherwise have to fetch again is already where they can retry
-   * with it.
+   * ANSWER THE SCHEME while this screen is the one on show. Registered once and cleared on
+   * unmount — `native.ts` keeps a single shell-side listener for the life of the window and
+   * swaps the handler behind it, because taking a listener off would cost a second core
+   * permission this window is deliberately not granted. The code is put IN THE FIELD as well
+   * as submitted: somebody who pressed a button in another application should see what
+   * arrived, and if the sign-in is refused the value is already where they can retry with it.
    */
   useEffect(() => {
     const answer = (code: string): void => {

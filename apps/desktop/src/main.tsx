@@ -1,20 +1,12 @@
 /**
- * ohmail Desktop — the entry point of the embedded UI.
- *
- * There is no desktop fork of the interface. The mail client this window renders is the same
- * `AppShell` app.ohmail.app renders; the rail, the Screener, the reader, the ⌘K palette and
- * every view come from `apps/webapp/app/{shell,views}` and `@ohmail/ui`. What is different here
- * is only what a window needs and a browser tab does not: providers wired by hand instead of by
- * Next, the offline guard, and `DesktopGate` around the shell — which asks the native process
- * what the engine is doing and shows the door chooser, an honest notice, or the mail client
- * running against the engine on this machine.
- *
- * There is deliberately NO other mount. The app has two states — not connected (the door
- * chooser) and connected (your mail) — and nothing else to show: no sample mailbox, no demo.
- * The one demo lives on ohmail.app's landing page, where "invented mail, nothing leaves this
- * tab" is the point rather than a lie about somebody's own mailbox. Loaded outside the app (a
- * development server, the render check) there is no shell to ask, and the gate shows the
- * not-connected surface, honestly.
+ * ohmail Desktop — the entry point of the embedded UI. There is no desktop fork of the
+ * interface: this window renders the same `AppShell` app.ohmail.app renders, every view from
+ * `apps/webapp/app/{shell,views}` and `@ohmail/ui`. Different here is only what a window needs
+ * and a browser tab does not: providers wired by hand instead of by Next, the offline guard,
+ * and `DesktopGate` around the shell — the door chooser, an honest notice, or the mail client
+ * against the engine on this machine. Deliberately NO other mount: two states — not connected
+ * and connected — with no sample mailbox and no demo (the one demo lives on ohmail.app's
+ * landing page). Loaded outside the app there is no shell to ask; the gate shows not-connected.
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -41,30 +33,14 @@ import { installOfflineGuard } from "./offline-guard.js";
 
 installOfflineGuard();
 
-/* ── THE BOOT CHECK ─────────────────────────────────────────────────────────
-   One status call over the shell's command channel. It proves two things at
-   once: that this window can reach the shell at all, and that this build
-   compiled the real sync client. The engine the MAIL runs on is built by
-   `DesktopGate`, once the shell has said which mailbox is being served.
-
-   ── ITS FAILURE REACHES THE SCREEN, AND THAT IS NOT A REFINEMENT ─────────────
-
-   The rejection arm used to be `console.warn`, and a released build spent its
-   whole life failing this check on every launch, into a console nobody in a
-   packaged app can open, before going white a few seconds later for the same
-   reason. The check was right and worth nothing. A boot check whose failure is a
-   log line is not a check, so this one draws the same notice the gate draws.
-
-   `waitForBoot` is what lets it: the render below is held for the length of one
-   status call, so a failure REPLACES the first paint instead of racing it. The
-   cost is bounded and small — the shell answers this over a pipe on the same
-   machine — and the alternative is the door chooser appearing and then being
-   taken away, which reads as the app changing its mind.
-
-   OUTSIDE the app — a development server, the render check's headless DOM —
-   there is no shell to check against; that is not a boot failure, it is the
-   environment, and the gate already draws the honest not-connected surface for
-   it. So the check simply does not run there, `readShell`'s own rule. */
+/* ── THE BOOT CHECK: one status call over the shell's command channel, proving the shell is
+   reachable and this build compiled the real sync client (the MAIL engine is `DesktopGate`'s).
+   Its failure reaches the SCREEN: the rejection arm used to be `console.warn`, and a released
+   build failed this check on every launch into a console nobody in a packaged app can open — a
+   boot check whose failure is a log line is not a check, so this one draws the gate's notice.
+   `waitForBoot` holds the render for one status call, so a failure REPLACES the first paint
+   instead of racing it. Outside the app (dev server, the render check's headless DOM) there is
+   no shell — that is environment, not boot failure; the check does not run there (`readShell`). */
 /* THE THROWN VALUE, not a sentence — and the difference is a language, not a style.
    `errorSentence` and the notice's button both read the message catalogue, and the catalogue is
    set by `DesktopLocale` DURING ITS RENDER. This function resolves off a promise chain that is
@@ -182,18 +158,14 @@ const root = document.getElementById("root");
 if (!root) throw new Error("ohmail Desktop: #root is missing from index.html");
 
 /**
- * PAINT, AND REPAINT IF THE BOOT CHECK COMES BACK BAD.
- *
- * NOT a top-level `await` on the check, and this is a real constraint rather than a style
- * preference: the render check loads this bundle as a CLASSIC script in a headless DOM, where a
- * top-level await is a syntax error that aborts the whole file and draws nothing — the same trap
- * `vite.config.ts` already neutralises `import.meta.url` for. So the window paints immediately,
- * which costs nothing: `DesktopGate`'s first render has no answer from the shell yet and draws one
- * quiet line, and the notice replaces that rather than replacing a chooser somebody had started
- * reading.
- *
- * Repainted only on FAILURE. The success path never calls this twice, so the gate is mounted once
- * and keeps its state.
+ * PAINT, AND REPAINT IF THE BOOT CHECK COMES BACK BAD. NOT a top-level `await` on the check —
+ * the render check loads this bundle as a CLASSIC script in a headless DOM, where a top-level
+ * await is a syntax error that aborts the whole file and draws nothing (the same trap
+ * `vite.config.ts` neutralises `import.meta.url` for). The window paints immediately, which
+ * costs nothing: `DesktopGate`'s first render draws one quiet line before the shell answers,
+ * and the notice replaces that rather than a chooser somebody had started reading. Repainted
+ * only on FAILURE — the success path never calls this twice, so the gate mounts once and
+ * keeps its state.
  */
 const reactRoot = createRoot(root);
 

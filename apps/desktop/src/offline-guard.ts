@@ -1,47 +1,23 @@
 /**
- * The network, removed from the page.
- *
- * ohmail Desktop is standalone: the Tauri CSP already forbids every connection
- * (`connect-src 'none'`), and there is no code in the bundle that would open
- * one. This is the third lock, and the only one that is observable from inside
- * the app: every browser API capable of leaving the process is replaced with a
- * function that throws.
- *
- * It is not defence in depth for its own sake — it is what makes the promise
- * *testable*. `scripts/smoke.mjs` loads the real built bundle in a headless
- * browser, lets it render, and asserts both that nothing was requested and that
- * calling `fetch` from the page throws. A future dependency that decides to
- * phone home fails loudly in CI instead of quietly in a user's home.
- *
- * It is also what makes the LOCAL ENGINE build's wiring loud when it is wrong.
- * The client's HTTP adapter falls back to the global `fetch` when nothing is
- * injected into it; here that fallback is a thrower, so a build that forgot to
- * hand it the bridge fails at the first request with this file named in the
- * message, instead of quietly trying to reach a server that is not there.
- *
- * Installed from `main.tsx` before React mounts.
- *
- * ── THE ONE ADDRESS THAT IS REFUSED DIFFERENTLY, AND WHY ────────────────────
- *
- * The shell's command channel is not a network client, but on this runtime it
- * is IMPLEMENTED with one: the webview's IPC sends each command as a POST to a
- * custom scheme (`ipc://localhost/…`, or `http://ipc.localhost/…` on Windows)
- * that the app's own process answers. Nothing leaves the machine — there is no
- * socket and no resolver involved — but the call goes through `fetch`, and this
- * guard replaces `fetch`.
- *
- * That runtime already has the right answer for a page whose CSP forbids the
- * custom scheme: when the attempt REJECTS, it gives up on it and falls back to
- * the message channel the webview installs, which is not `fetch` and cannot
- * address anything at all. A synchronous throw skips that recovery, because the
- * recovery is a rejection handler — so a guard that threw here would not make
- * the app more offline, it would only break the bridge.
- *
- * So this address is refused too, and refused in the shape the runtime knows how
- * to recover from. The result is stricter than allowing it: the custom-scheme
- * request is never made at all, every command travels the channel that has no
- * network in it, and every OTHER address — including anything a dependency might
- * reach for — still throws where it is called.
+ * The network, removed from the page. The Tauri CSP already forbids every connection
+ * (`connect-src 'none'`); this is the third lock and the only one observable from inside the
+ * app: every browser API capable of leaving the process is replaced with a function that
+ * throws. That is what makes the promise TESTABLE — `scripts/smoke.mjs` loads the real built
+ * bundle in a headless browser and asserts nothing was requested and that `fetch` throws — and
+ * what makes the LOCAL ENGINE build's wiring loud: the client's HTTP adapter falls back to the
+ * global `fetch` when nothing is injected, and here that fallback is a thrower naming this
+ * file. Installed from `main.tsx` before React mounts.
+ */
+
+/*
+ * THE ONE ADDRESS REFUSED DIFFERENTLY: the shell's command channel is IMPLEMENTED with a fetch
+ * — each command is a POST to a custom scheme (`ipc://localhost/…`; `http://ipc.localhost/…`
+ * on Windows) answered by the app's own process. The runtime recovers from a CSP-refused
+ * scheme when the attempt REJECTS, falling back to the webview's message channel, which cannot
+ * address anything at all; a synchronous throw skips that recovery, because the recovery is a
+ * rejection handler — it would not make the app more offline, only break the bridge. So this
+ * address REJECTS instead: the custom-scheme request is never made, every command travels the
+ * channel with no network in it, and every other address still throws where it is called.
  */
 
 const REFUSAL =

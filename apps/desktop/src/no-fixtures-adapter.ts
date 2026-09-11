@@ -1,20 +1,12 @@
 /**
  * THE SAMPLE WORLD, ABSENT — what `packages/client-engine/src/adapters/fixtures-adapter.ts`
- * resolves to in BOTH desktop artifacts (`vite.config.ts` aliases it here for the window bundle
- * and the served host client alike).
- *
- * The shared shell keeps a demo arm because the landing page's demo is built from it — that is
- * the one sanctioned home of invented mail — and `engine-config.ts` names `FixturesAdapter` in a
- * branch the desktop can never take (`DesktopGate` passes `demo={false}` structurally). A branch
- * that is never taken still puts its imports in the bundle, and the import is the whole fixtures
- * corpus: invented people, invented brands, thousands of lines of sample mail inside an app whose
- * rule is that it opens EMPTY and shows nothing but your own mailbox. So the module is replaced,
- * not merely unreached: grep either desktop dist for the sample senders and there is nothing to
- * find — `scan-artifact.mjs` does exactly that, in both directions.
- *
- * The THREE value exports below are the ones the client-engine barrel re-exports; the class
- * throws in its constructor so that a future arm that somehow reaches the demo branch fails
- * loudly on its first frame instead of quietly showing invented mail as somebody's own.
+ * resolves to in BOTH desktop artifacts (`vite.config.ts` aliases it here for the window
+ * bundle and the served host client alike). The shell's demo arm exists for the landing page;
+ * a branch never taken (`DesktopGate` passes `demo={false}` structurally) still puts its
+ * imports — the whole fixtures corpus of invented mail — into the bundle of an app that opens
+ * EMPTY, so the module is replaced, not merely unreached (`scan-artifact.mjs` greps both dists
+ * for the sample senders). The three value exports below are what the client-engine barrel
+ * re-exports; the class throws in its constructor so a reached demo branch fails loudly.
  */
 
 /** The demo world's frozen clock. Never read here — `demo` is structurally false — but a date,

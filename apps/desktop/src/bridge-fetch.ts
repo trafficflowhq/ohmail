@@ -1,39 +1,22 @@
 /**
- * THE BRIDGE: the client engine's `fetch`, pointed at the local mail engine.
- *
- * The window renders the same client app.ohmail.app renders, and that app talks to its server
- * through one function — `HttpAdapterOptions.fetch`. Here that function does not open a socket. It
- * hands the request to the shell over Tauri's command channel, the shell writes it as a frame down
- * the engine's stdin, and the answer comes back the same way. Nothing listens on a port, at any
- * point, in either process.
- *
- * ── WHY A COMMAND AND NOT A LOCAL SERVER ────────────────────────────────────────────────────
- *
- * A localhost port is reachable by every other program on the machine, and a token that authorises
- * it has to live somewhere the page can read. The pipe the shell holds is reachable by nothing: it
- * is a private file descriptor, the engine's credential is added shell-side (see the Rust
- * `encode_request`), and this file never sees it. That is what lets the UNMODIFIED Cloud client run
- * against a local engine — it authenticates with nothing, because there is nothing for it to hold.
- *
- * ── THE WIRE, WHICH IS THE SHELL'S AND NOT INVENTED HERE ────────────────────────────────────
- *
- * `engine_request(method, url, headers, body)` answers with one byte string:
- *
- *     [ 4 bytes big-endian: metadata length ][ metadata JSON ][ body bytes ]
- *
- * where the metadata is `{ status, statusText, h: [[name, value], …] }`. Bytes rather than JSON
- * because a mail body is not a JSON string: re-encoding one would cost a copy and a UTF-8
- * assumption that attachments break. This file's job is to put that back together into a `Response`
- * the client cannot tell from a network one.
- *
- * ── WHAT THE WINDOW STILL CANNOT DO ─────────────────────────────────────────────────────────
- *
- * `invoke` is not `fetch`, and the difference is the whole security story. The webview's CSP still
- * says `connect-src 'none'`, `offline-guard.ts` still replaces every browser API that could leave
- * the process, and the shell grants the window exactly two commands — ask about the engine, and
- * send it one request. So the page has no way to address anything but this one bridge, and if
- * somebody ever forgets to inject this function, `HttpAdapter` falls back to the global `fetch`,
- * which the guard has replaced with a thrower. A forgotten wire is loud rather than silent.
+ * THE BRIDGE: the client engine's `fetch`, pointed at the local mail engine. The window
+ * renders the same client app.ohmail.app renders, and that app talks through one function —
+ * `HttpAdapterOptions.fetch`. Here it opens no socket: the request goes to the shell over
+ * Tauri's command channel, the shell writes it as a frame down the engine's stdin, and the
+ * answer returns the same way — nothing listens on a port, in either process. A localhost
+ * port would be reachable by every program on the machine and need a token the page can read;
+ * the pipe is a private file descriptor, the credential is added shell-side
+ * (`encode_request`), and the UNMODIFIED Cloud client authenticates with nothing.
+ */
+
+/*
+ * The wire is the shell's: `engine_request(method, url, headers, body)` answers one byte
+ * string — [4 bytes BE: metadata length][metadata JSON][body bytes], metadata
+ * `{ status, statusText, h: [[name, value], …] }`. Bytes rather than JSON because a mail body
+ * is not a JSON string: re-encoding costs a copy and a UTF-8 assumption attachments break.
+ * The window still cannot address anything else: CSP `connect-src 'none'`, `offline-guard.ts`
+ * replaces every leaving API, and the shell grants exactly two commands. A forgotten wire is
+ * loud — `HttpAdapter` falls back to global `fetch`, which the guard replaced with a thrower.
  */
 
 import { HttpAdapter, OhmailEngine, retryingRead } from "@ohmail/client-engine";
@@ -209,15 +192,12 @@ interface BridgeInit {
 }
 
 /**
- * One request to the local engine, and the answer as a `Response`.
- *
- * ── ABORT IS HONOURED FOR THE CALLER AND NOT FOR THE ENGINE ────────────────────────────────
- *
- * The client bounds exactly one call with an `AbortSignal` — the attachment list — and races the
- * abort against the answer, so an aborted request has to REJECT here or that race never settles.
- * It does. What it cannot do is cancel the work: the frame protocol carries no cancellation, so the
- * engine finishes the request and the shell drops the answer. That costs one wasted read and no
- * correctness — the bounded call is a GET — and saying so beats implying a cancellation that does
+ * One request to the local engine, and the answer as a `Response`. ABORT IS HONOURED FOR THE
+ * CALLER AND NOT FOR THE ENGINE: the client bounds exactly one call with an `AbortSignal` —
+ * the attachment list — and races the abort against the answer, so an aborted request has to
+ * REJECT here or that race never settles. It does. What it cannot do is cancel the work: the
+ * frame protocol carries no cancellation, so the engine finishes and the shell drops the
+ * answer — one wasted read on a GET, and saying so beats implying a cancellation that does
  * not happen.
  */
 export const bridgeFetch: BridgeFetch = async (url, init) => {
@@ -264,22 +244,14 @@ function abortError(): Error {
 export type EngineMode = "local" | "cloud";
 
 /**
- * WHAT IS ON THE FAR SIDE OF A CLOUD DOOR, as the engine spells it on the wire.
- *
- * Three things, and they were one `mode: "cloud"` until a desktop could be the far side:
- *
- *  · `managed`     — a hosted ohmail account, `api.ohmail.app`.
- *  · `selfhost`    — a server the person runs. Already a distinct door in the chooser
- *                    (`self-host.ts`) and already indistinguishable from `managed` on this field,
- *                    which is a smaller defect than the one below and not this slice's to fix.
- *  · `desktop-host` — ohmail on another computer of the person's own, reached over their network
- *                    or their Tailscale. No account, no ledger, no second factor, no
- *                    subscription — and no browser tab to send anybody to.
- *
- * The union is OPEN on the read side by construction: {@link EngineStatus.flavor} is typed to
- * this, and `flavorOf` refuses anything that is not a member rather than passing it through, so
- * a fourth flavor from a newer engine lands in `"unknown"` and every surface keeps the behaviour
- * it has for an engine that said nothing.
+ * WHAT IS ON THE FAR SIDE OF A CLOUD DOOR, as the engine spells it on the wire. Three things,
+ * one `mode: "cloud"` until a desktop could be the far side: `managed` (a hosted ohmail
+ * account, api.ohmail.app), `selfhost` (a server the person runs — already a distinct door in
+ * `self-host.ts`), and `desktop-host` (ohmail on another computer of the person's own, over
+ * their network or Tailscale: no account, no ledger, no second factor, no subscription, no
+ * browser tab to send anybody to). The union is OPEN on the read side: `flavorOf` refuses a
+ * non-member rather than passing it through, so a fourth flavor from a newer engine lands in
+ * `"unknown"` and every surface keeps its engine-said-nothing behaviour.
  */
 export type DoorFlavorWire = "managed" | "selfhost" | "desktop-host";
 
@@ -303,24 +275,14 @@ export interface EngineStatus {
    */
   mode?: EngineMode | null;
   /**
-   * WHICH KIND OF CLOUD DOOR — the field that tells a hosted account, a server the person runs
-   * and another computer of theirs apart, and the reason it exists.
-   *
-   * `mode` answers "local or not", which was the whole question while there was one thing on the
-   * far side of a cloud door. There are three now, and every sentence the window writes about a
-   * cloud door — "The organizing happens on our servers", "your hosted account", the Subscription
-   * and Security panes, the price quote behind the Screener's suggest control — is true of
-   * exactly one of them. Rendered on a paired desktop those sentences are not merely vague, they
-   * are false, and four of the panes are about an account that does not exist.
-   *
-   * ABSENT IS NOT `"managed"`, AND IT IS NOT `"desktop-host"` EITHER. It is an engine that
-   * predates the field, and {@link EngineStatus} is full of fields a window must not read a
-   * default into — `credentialState`'s `unknown` arm is the same lesson. The window reads this
-   * through `flavorOf` in `doors.ts`, which names the absent case `"unknown"` and lets each
-   * surface say what it does with it; the surfaces that changed for the paired desktop test
-   * POSITIVELY for `"desktop-host"`, so an engine that says nothing keeps the behaviour it has
-   * always had. That is sound rather than merely safe: the paired door does not exist in an
-   * engine old enough to omit the field, so absent cannot be hiding one.
+   * WHICH KIND OF CLOUD DOOR — what tells a hosted account, a self-run server and another
+   * computer apart. `mode` answers "local or not", and every sentence the window writes about
+   * a cloud door — "The organizing happens on our servers", the Subscription and Security
+   * panes, the price quote — is true of exactly one of the three; on a paired desktop four
+   * panes would be about an account that does not exist. ABSENT IS NOT `"managed"` and not
+   * `"desktop-host"`: it is an engine that predates the field. The window reads this through
+   * `flavorOf` in `doors.ts`, which names absent `"unknown"`; the changed surfaces test
+   * POSITIVELY for `"desktop-host"`, and no engine old enough to omit the field has a paired door.
    */
   flavor?: DoorFlavorWire | null;
   /** The mailbox this install is for, as a person would recognise it. */
@@ -330,20 +292,14 @@ export interface EngineStatus {
   userId?: string;
   baseUrl?: string;
   /**
-   * Whether the engine holds the credential it needs.
-   *
-   * On the LOCAL door that is the mailbox password. On the CLOUD door it is the hosted session, and
-   * `absent` there means "signed out" — the sign-in surface is `POST /cloud/signin` over the bridge,
-   * not a shell command, because the password and the code go to the engine and never through the
-   * shell.
-   *
-   * `foreign-host` is the BOOT CONTRACT: a stored password proved against a different server than
-   * the engine is configured for, and therefore withheld from both transports
-   * (`apps/sidecar/src/credential-host.ts`). It is a state about the CONFIGURATION, so a surface
-   * that folds it into `unreadable` sends somebody to re-enter a password when what moved is the
-   * server. It does NOT assert the credential is readable: the engine compares the servers before
-   * it decrypts, so this state takes PRECEDENCE over `unreadable` rather than excluding it. Local
-   * door only — a hosted session is not proved against a mail server.
+   * Whether the engine holds the credential it needs: the mailbox password on the LOCAL door,
+   * the hosted session on the CLOUD door (`absent` there means "signed out"; sign-in is
+   * `POST /cloud/signin` over the bridge — the password and code never pass the shell).
+   * `foreign-host` is the BOOT CONTRACT: a stored password proved against a different server
+   * than the engine is configured for, withheld from both transports
+   * (`apps/sidecar/src/credential-host.ts`). A state about the CONFIGURATION — folding it
+   * into `unreadable` sends somebody to re-enter a password when what moved is the server —
+   * and it takes PRECEDENCE over `unreadable` (servers are compared before decrypting).
    */
   credentialState?: "ready" | "absent" | "unreadable" | "unknown" | "foreign-host";
   /**
@@ -382,27 +338,14 @@ export interface CloudDoorConfig {
 }
 
 /**
- * The paired door: ohmail on another computer of the person's own, reached over their network or
- * their Tailscale.
- *
- * ── WHY IT IS ITS OWN CONFIG AND NOT A FLAG ON THE ONE ABOVE ────────────────────────────────
- *
- * Two of its three fields have no counterpart there. `hostPin` is a key this install will accept
- * and nothing else — a self-signed leaf on a DHCP address that no authority vouches for — so it
- * is not optional decoration on a hosted URL, it is the whole of what makes the connection worth
- * anything. And `address` is genuinely ABSENT here, not empty: a pairing link names a computer,
- * not a mailbox, and which mailbox this install ends up reading is the host's answer to the
- * redeem. Declaring it optional on the shared shape would have made it optional for the hosted
- * door too, where an absent address is a mirror belonging to nobody.
- *
- * ── AND THE SECRET STILL DOES NOT TRAVEL THIS WAY ───────────────────────────────────────────
- *
- * The pairing TOKEN is not here and must never be. It is a credential, and this file's whole rule
- * is that a credential is never an argument to a shell command: the shell refuses a payload
- * carrying one, and the token goes to the engine over {@link bridgeFetch} at
- * `POST /cloud/pair-redeem`, which exchanges it for the bearer pair and seals that under this
- * install's key. What the shell stores is the origin, the pin and the account the redeem named —
- * enough to rebuild the door at the next launch, and nothing anyone could sign in with.
+ * The paired door: ohmail on another computer of the person's own, over their network or
+ * Tailscale — its OWN config, not a flag on the hosted one: `hostPin` is a key this install
+ * will accept and nothing else (a self-signed leaf on a DHCP address no authority vouches
+ * for), and `address` is genuinely ABSENT, not empty — a pairing link names a computer, and
+ * which mailbox this install reads is the host's answer to the redeem; optional on the shared
+ * shape would be optional for the hosted door too, where an absent address is a mirror of
+ * nobody's. The pairing TOKEN is never here — a credential is never a shell-command argument;
+ * it goes to the engine at `POST /cloud/pair-redeem`, and the shell keeps only origin, pin, account.
  */
 export interface HostDoorConfig {
   mode: "cloud";
@@ -463,58 +406,36 @@ export async function engineLogout(): Promise<EngineStatus> {
 }
 
 /**
- * The client engine's adapter, wired to the bridge.
- *
- * `baseUrl` is empty, so every path stays root-relative — `/sync`, `/messages/…` — which is what
- * the shell's request encoder expects and what keeps the engine's own base URL a fact the page does
- * not need to know. It is also why nothing here reads `EngineStatus.baseUrl`.
- *
- * The class is the REAL one. In the preview build `vite.config.ts` aliases that module to a stub
- * whose constructor throws, and nothing in the preview calls this — so a preview that ever reached
- * for the Cloud protocol would fail loudly at the point of construction rather than open a socket.
+ * The client engine's adapter, wired to the bridge. `baseUrl` is empty, so every path stays
+ * root-relative (`/sync`, `/messages/…`) — what the shell's request encoder expects, and what
+ * keeps the engine's own base URL a fact the page does not need to know (nothing here reads
+ * `EngineStatus.baseUrl`). The class is the REAL one: in the preview build `vite.config.ts`
+ * aliases the module to a stub whose constructor throws, and nothing in the preview calls
+ * this — a preview reaching for the Cloud protocol fails loudly instead of opening a socket.
  */
 export function createEngineAdapter(): HttpAdapter {
   return new HttpAdapter({ baseUrl: "", fetch: bridgeFetch });
 }
 
 /**
- * THE CLIENT ENGINE THIS WINDOW RUNS ON — the same `OhmailEngine` the hosted client builds, over
- * the bridge instead of over a socket.
- *
- * ── WHAT IS DELIBERATELY NOT PASSED ─────────────────────────────────────────────────────────
- *
- * **No `storePolicy`.** The absent branch is `full`, and full is the only correct answer here:
- * this tier's promise is that the mail is on the machine, so a window that evicted the older half
- * of it would be deleting the product. The browser's ninety-day window exists because a browser
- * mirror is a cache in front of a server that still holds everything; nothing about that argument
- * applies to a copy the local engine already keeps on disk.
- *
- * **No `store`.** The mirror is in memory and is rebuilt on each launch. There is already exactly
- * one copy of this mailbox on the disk — the engine's — and writing a second one into the
- * webview's storage would double it for no benefit: the drain that fills this mirror is a pipe to
- * a process on the same machine, not a network round trip, so re-reading it costs a few seconds of
- * local IPC rather than a bootstrap over somebody's connection.
- *
- * ── AND THE BOOTSTRAP IS THE SNAPSHOT, WHICH IT DID NOT USED TO BE ──────────────────────────
- *
- * `OhmailEngine` reaches for an optional `snapshot` method on the adapter it is given and takes
- * `GET /sync/snapshot` — the account's current state, newest first — instead of replaying the
- * change log from the beginning whenever the mirror is cold. This window used to withhold that
- * method, and the cost was visible on every cold start: the mail arrived OLDEST first, a page at a
- * time, so the first thing painted was the least interesting mail in the mailbox and the message
- * somebody opened the app to read appeared last.
- *
- * The withholding was not arbitrary. A snapshot's answer carries `asOfSeq`, the point it was read
- * at, which the client commits as its `/sync` cursor — and the hosted door had no local handler
- * for the route, so it relayed the request onward and returned a cursor counted in the hosted
- * account's sequence, while the very next `/sync` was answered from the local mirror's own. A
- * cursor from the wrong sequence is a mailbox that bootstraps once, looks complete, and then never
- * receives another change. Withholding the method was the correct response to that, and the wrong
- * layer to fix it at.
- *
- * Both doors now answer the route from the database the deltas come from — the standalone engine
- * always did, and `cloud-engine.ts` serves it out of the mirror rather than forwarding it — so
- * there is one sequence per door and the capability is simply passed through.
+ * THE CLIENT ENGINE THIS WINDOW RUNS ON — the same `OhmailEngine` the hosted client builds,
+ * over the bridge instead of a socket. Deliberately NOT passed: no `storePolicy` — the absent
+ * branch is `full`, the only correct answer on a tier whose promise is that the mail is on
+ * the machine (the browser's ninety-day window exists because a browser mirror is a cache in
+ * front of a server that still holds everything). And no `store` — the mirror is in memory,
+ * rebuilt each launch: the disk already holds exactly one copy of this mailbox, the engine's,
+ * and refilling over local IPC costs seconds, not a bootstrap over somebody's connection.
+ */
+
+/*
+ * THE BOOTSTRAP IS THE SNAPSHOT: `OhmailEngine` takes `GET /sync/snapshot` — newest first —
+ * instead of replaying the change log when the mirror is cold. This window used to withhold
+ * that method, and cold starts painted the OLDEST mail first. The withholding was not
+ * arbitrary: a snapshot's `asOfSeq` becomes the `/sync` cursor, and the hosted door once
+ * relayed the route onward, returning a cursor from the hosted account's sequence while the
+ * next `/sync` answered from the mirror's own — a mailbox that bootstraps once and never
+ * receives another change. Both doors now answer the route from the database the deltas come
+ * from (`cloud-engine.ts` serves it out of the mirror), so the capability is passed through.
  */
 export function createLocalEngine(): OhmailEngine {
   /**

@@ -1,15 +1,11 @@
 /**
- * SETTINGS → AI ON THE CLOUD DOOR — the account's off switch, over the bridge.
- *
- * The twin of the browser tab's pane, and a separate file for the reason `DesktopMailboxes` is:
- * this window cannot call `app/api-client` (it is aliased to a module whose every value refuses),
- * so the same two routes are reached through `bridgeFetch` instead. Same flag, same routes, same
- * two sentences from the `settings` catalogue.
- *
- * NOT `DesktopAiSettings`, which is the DESKTOP pane's local-model form. That one is a provider
- * key you supply on a standalone install; this is `accounts.ai_enabled` on a hosted account, and
- * that file's own header says why they are different panes — "the account's AI belongs to the
- * account, and the panes that are about the account say so".
+ * SETTINGS → AI ON THE CLOUD DOOR — the account's off switch, over the bridge. The twin of
+ * the browser tab's pane, a separate file for `DesktopMailboxes`'s reason: this window cannot
+ * call `app/api-client` (aliased to a refusing module), so the same two routes are reached
+ * through `bridgeFetch`. Same flag, same routes, same two sentences from the `settings`
+ * catalogue. NOT `DesktopAiSettings` — that is the standalone door's local-model form; this
+ * is `accounts.ai_enabled` on a hosted account, and that file's header says why they are
+ * different panes.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";

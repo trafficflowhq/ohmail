@@ -1,43 +1,22 @@
 /**
- * THE APP'S OWN UPDATE, from the window's side of it.
- *
- * The updater is Rust (`src-tauri/src/updater.rs`) and stays there: this process makes one pinned
- * HTTPS request, minisign-verifies every payload against the key compiled into the binary, refuses
- * anything that is not strictly newer than the running build, and installs only on a press. None
- * of that moves here. What moves here is the AFFORDANCE — a settings pane that can say what the
- * app knows and ask for a check — and it exists because the menu bar is not always there.
- *
- * ── WHY A SETTINGS PANE AT ALL, WHEN THE MENU ITEM ALREADY DID THIS ─────────────────────────
- *
- * On a tiling Wayland compositor the app draws no menu bar (`src-tauri/src/frame.rs`), so on those
- * desktops "Check for Updates…" in the bar is an affordance nobody can reach. A person who cannot
- * find out whether their mail client is current, on a build whose whole update story is one signed
- * feed, is a person who will not update. Settings is where an app's own facts belong anyway, and
- * the version was already there.
- *
- * ── WHAT CROSSES THE BOUNDARY, WHICH IS AS LITTLE AS BEFORE ────────────────────────────────
- *
- * Three commands, none of them taking an argument. {@link updateState} READS the flow's own
- * value — the installed version, the stage, what the last check found and when.
- * {@link updatePress} does exactly what picking the menu item does, and the shell decides what
- * that means in the stage it is in: start a check, or restart into a payload it already fetched
- * and verified. {@link updatePoll} starts the check the LAUNCH check makes — the same request,
- * without the dialogs a press earns by being somebody asking. There is no "install" verb and no
- * way to name a feed, a version or a file; a window that could would be a window that had been
- * handed the updater, which is the one thing this design has always refused.
- *
+ * THE APP'S OWN UPDATE, from the window's side. The updater is Rust
+ * (`src-tauri/src/updater.rs`) and stays there: one pinned HTTPS request, minisign
+ * verification against the compiled-in key, strictly-newer guard, install only on a press.
+ * What moves here is the AFFORDANCE: on a tiling Wayland compositor the app draws no menu bar
+ * (`src-tauri/src/frame.rs`), so "Check for Updates…" there is unreachable, and Settings is
+ * where the app's own facts belong. Three argument-less commands cross: `updateState` reads
+ * the flow's value, `updatePress` does what the menu item does, `updatePoll` starts the launch
+ * check's request without a press's dialogs. No "install" verb; no feed, version or file names.
+ */
+
+/*
  * The push half is the `updater://state` event over the one receive-only
- * `core:event:allow-listen` grant the menu already uses — the shell can make this window hear
- * things and this window cannot make the shell hear anything. Both halves exist for
- * `mailto_claim`'s cold-start reason: the launch check runs before this bundle's scripts do, so a
- * pane that only listened would open blank after the transition it cared about had already
- * happened. It ASKS at mount and listens afterwards.
- *
- * ── AND EVERY PARSE IS HERE, NOT AT THE CALL SITE ──────────────────────────────────────────
- *
- * The payload crosses a process boundary from a shell that may be one version ahead of this
- * bundle. A state name this file does not know degrades to "unknown", which the pane renders as
- * the version it is running and a button that still works — never to a thrown render.
+ * `core:event:allow-listen` grant — the shell can make this window hear things, never the
+ * reverse. Both halves exist for `mailto_claim`'s cold-start reason: the launch check runs
+ * before this bundle's scripts do, so a pane that only listened would open blank. It ASKS at
+ * mount and listens afterwards. Every parse is HERE, not at the call site: the shell may be a
+ * version ahead, and a state name this file does not know degrades to "unknown" — the pane
+ * renders the running version and a working button, never a thrown render.
  */
 
 /** The event the shell emits whenever the update flow moves. Spelled again in `updater.rs`. */
@@ -77,15 +56,13 @@ export const UPDATE_RESULTS = ["never", "upToDate", "refused", "failed", "offere
 export type UpdateResult = (typeof UPDATE_RESULTS)[number];
 
 /**
- * HOW THIS COPY WAS INSTALLED — the shell's `InstallKind`, and the reason this pane can say
- * something true on a copy that will never be offered an update.
- *
- * Only three of these replace their own files: the AppImage, the Windows setup and the macOS
- * bundle. A `.deb`, an `.rpm` and a Flatpak cannot, so the shell does not ask the feed on them at
- * all — which is what makes `idle` + `never` the permanent state there, and why the sentence has
- * to come from the kind rather than from the flow. `unknown` is a shell that did not name one: an
- * older build, or one a version ahead. It reads as "nothing special", which keeps this bundle's
- * behaviour on such a shell exactly what it was.
+ * HOW THIS COPY WAS INSTALLED — the shell's `InstallKind`, the reason this pane can say
+ * something true on a copy that will never be offered an update. Only three kinds replace
+ * their own files: the AppImage, the Windows setup and the macOS bundle. A `.deb`, an `.rpm`
+ * and a Flatpak cannot, so the shell does not ask the feed on them at all — `idle` + `never`
+ * is the permanent state there, and the sentence has to come from the kind rather than the
+ * flow. `unknown` is a shell that did not name one (older, or a version ahead) and reads as
+ * "nothing special", keeping this bundle's behaviour on such a shell what it was.
  */
 export const INSTALL_KINDS = [
   "appimage",
@@ -160,15 +137,12 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | nul
 }
 
 /**
- * The report a payload carried, or null when it carried nothing usable.
- *
- * Accepts the value itself or the event envelope (`{ payload }`), `native.ts`'s rule — the pull
- * answers one shape and the push the other, and one parser owns both so they cannot drift.
- *
- * A MISSING VERSION IS THE ONE FATAL FIELD, and deliberately: every other slot has an honest
- * fallback ("unknown", null, "never", a disabled button), but a pane that cannot name the build
- * it is running in is a pane with nothing true left to say, and rendering a blank version reads
- * as a bug in the app rather than as a shell that answered oddly.
+ * The report a payload carried, or null when it carried nothing usable. Accepts the value
+ * itself or the event envelope (`{ payload }`), `native.ts`'s rule — the pull answers one
+ * shape and the push the other, and one parser owns both so they cannot drift. A MISSING
+ * VERSION IS THE ONE FATAL FIELD, deliberately: every other slot has an honest fallback
+ * ("unknown", null, "never", a disabled button), but a pane that cannot name the build it
+ * runs in has nothing true left to say, and a blank version reads as a bug in the app.
  */
 export function reportOfPayload(payload: unknown): UpdateReport | null {
   let raw = payload as Record<string, unknown> | null;
@@ -231,22 +205,13 @@ export async function updatePress(): Promise<void> {
 
 /**
  * Ask the shell to CHECK, on nobody's behalf — the launch check's own path, on a schedule.
- *
- * ── WHY THIS IS NOT {@link updatePress}, WHICH IS THE WHOLE POINT ──────────────────────────
- *
- * A press is a person asking, and the shell answers a person OUT LOUD: a press that finds
- * nothing raises "ohmail is up to date", a press that cannot reach the feed raises an error with
- * a Try-again, and a press that finds a release opens the progress window. Every one of those is
- * right for somebody who has just pressed a button and would otherwise face dead air — and every
- * one of them is wrong once a day, forever. A cadence routed through the press would put a modal
- * over somebody's mail every twenty-four hours for as long as the app stayed open and current,
- * which is precisely the nag the cadence exists to replace.
- *
- * The shell cannot tell the two apart from the call: `update_press` takes no argument, by design.
- * So the difference is a second command rather than a flag this window supplies — and, like the
- * other two, it names nothing, takes no argument and cannot install anything.
- *
- * Rejects on a shell too old to have it, which the caller treats as a press that did not land.
+ * NOT {@link updatePress}: a press is a person asking, and the shell answers a person OUT
+ * LOUD — an up-to-date dialog, an error with Try-again, or the progress window — each right
+ * for somebody facing dead air and each wrong once a day, forever; a cadence through the
+ * press would put a modal over somebody's mail every twenty-four hours. The shell cannot tell
+ * the two apart from the call (`update_press` takes no argument, by design), so the
+ * difference is a second command rather than a flag — it also names nothing and installs
+ * nothing. Rejects on a shell too old to have it — a press that did not land.
  */
 export async function updatePoll(): Promise<void> {
   const shell = internals();
@@ -255,19 +220,14 @@ export async function updatePoll(): Promise<void> {
 }
 
 /* ── ONE REGISTRATION FOR THE PROCESS, MANY SUBSCRIBERS ────────────────────────────────────────
- *
- * `plugin:event|listen` HAS NO UNLISTEN on this seam. `native.ts` records that as a deliberate
- * limitation and answers it with a rule — register once, from a component that mounts once — which
- * is the right answer for the sign-in screen and the WRONG one here: Settings → About is opened and
- * closed as often as somebody likes, and a registration per mount would hand the shell a new
- * callback every visit, keep every previous mount's closure alive, and call all of them on every
- * transition. So the registration is the MODULE's, made at most once and never taken back, and the
- * component's subscription is an ordinary set membership it can leave.
- *
- * `listening` is the latch. It is a promise rather than a boolean so a second mount arriving while
- * the first registration is still in flight waits for the same one instead of starting another, and
- * `register` swallows its own failures so the latch can never become a rejected promise every later
- * caller re-throws. */
+ * `plugin:event|listen` has no unlisten on this seam. `native.ts`'s rule — register once, from
+ * a component that mounts once — is right for the sign-in screen and WRONG here: Settings →
+ * About opens and closes freely, and a registration per mount would hand the shell a new
+ * callback every visit, keep every previous mount's closure alive, and call all of them on
+ * every transition. So the registration is the MODULE's, made at most once and never taken
+ * back; a component's subscription is ordinary set membership it can leave. `listening` is a
+ * promise, not a boolean, so a second mount mid-flight waits for the same registration; and
+ * `register` swallows its own failures so the latch can never become a rejected promise. */
 const subscribers = new Set<(report: UpdateReport) => void>();
 let listening: Promise<void> | null = null;
 

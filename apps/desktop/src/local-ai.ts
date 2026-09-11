@@ -1,29 +1,12 @@
 /**
  * THE MODEL THIS INSTALL USES, IF IT USES ONE — the window's half of the engine's AI surface.
- *
- * A standalone install has no account, no subscription and nothing metered, so the two AI features
- * it has — a routing suggestion for a first-contact sender, and a reply draft — run against a model
- * its owner supplies. Three ways to supply one: an Anthropic key you hold, an OpenAI key you hold,
- * or a model server running on this machine. And one honest fourth state, nothing configured, which
- * is not an error: rules-only routing is the product's floor and a complete mail organizer without
- * a model.
- *
- * ── THE SECRET GOES DOWN THE PIPE, NEVER THROUGH THE SHELL ──────────────────────────────────
- *
- * An API key is a credential and follows the rule every other credential here follows: it is the
- * BODY of a request addressed to the engine, over {@link bridgeFetch}, exactly as the mailbox
- * password is. It is never an argument to a native command, never held in the shell's memory and
- * never written to the shell's settings file. The engine seals it under the key this install holds
- * in the operating system's keystore, and nothing — not this module, not the pane above it — can
- * read it back: the status carries `hasKey` and that is the whole of what is said about it.
- *
- * ── AND THE ENGINE IS THE ONE THAT DECIDES ──────────────────────────────────────────────────
- *
- * Everything below is a read or a write of state the engine owns. Whether a provider is usable,
- * where message content would go, which models the endpoint actually has — all of it comes back
- * from the engine, because the engine is the thing that would do it. A window that derived
- * "stays on this machine" from a provider name would go on saying it after the engine had started
- * sending mail elsewhere.
+ * A standalone install has nothing metered: the routing suggestion and the reply draft run
+ * against a model its owner supplies — an Anthropic key, an OpenAI key, or a model server on
+ * this machine — and "nothing configured" is not an error: rules-only routing is the product's
+ * floor. An API key is a credential: it travels as the BODY of a request over
+ * {@link bridgeFetch}, never as a native-command argument, never in the shell's memory or
+ * settings file; the engine seals it under the OS keystore and only `hasKey` comes back.
+ * Usability, destinations and model lists come from the engine — never from a provider name.
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
@@ -152,14 +135,11 @@ export async function readAiStatus(): Promise<LocalAiStatus | null> {
 
 /**
  * Replace the settings, and learn in the same round trip whether what was just saved works.
- *
  * The engine DISCARDS the previous verification on every write and runs a fresh one before it
- * answers, so the status that comes back is about the configuration now in force. That ordering is
- * the point: an unreachable model is a mistake to correct while somebody is looking at the
- * settings, not a failure to discover the next time they try to answer an email.
- *
- * Omitted fields keep their stored value, `apiKey` included — so changing a model does not require
- * re-typing a key.
+ * answers, so the status that comes back is about the configuration now in force — an
+ * unreachable model is a mistake to correct while somebody is looking at the settings, not a
+ * failure to discover the next time they try to answer an email. Omitted fields keep their
+ * stored value, `apiKey` included, so changing a model does not require re-typing a key.
  */
 export async function saveAiSettings(write: LocalAiWrite): Promise<LocalAiStatus> {
   return readStatus(

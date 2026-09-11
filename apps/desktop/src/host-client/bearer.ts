@@ -1,58 +1,33 @@
 /**
- * THE BEARER MANAGER — the served browser client's whole credential, in one small object.
- *
- * The desktop-host door is BEARER-ONLY BY CONSTRUCTION: it composes `allowCookieAuth: false`, its
- * zero-Set-Cookie census sweeps every route, and the redeem answers a token pair and nothing
- * else. So this client holds the pair itself and injects it through the one seam the shared
- * adapter already has (`HttpAdapterOptions.headers`) — there is no cookie code path in this file
- * because there is no cookie anywhere on this door for one to read.
- *
- * ── THE THREAT POSTURE, PLAINLY ──────────────────────────────────────────────────────────────
- *
- * The refresh token persists in `localStorage`; the access token lives in memory only. What that
- * storage IS: the browser of a phone the user owns, on an origin reachable only from inside
- * their own tailnet (`tailscale serve`, funnel forbidden), showing mail that lives on their own
- * computer. The classic argument against localStorage tokens — any script on the origin can read
- * them — is answered where it has to be, at the script boundary: the door serves every HTML
- * document under `script-src 'self'` with NO inline script and NO third-party source
- * (`apps/sidecar/src/host-static.ts`), so the only code that can run on this origin is the
- * artifact the desktop itself packaged. What remains is possession of an unlocked phone, which
- * is possession of its mail apps too — and the take-back for exactly that is the desktop
- * window's Devices pane: a revoke there kills this family's next request, which this manager
- * answers by ending the session locally (below) rather than by retrying into the refusal.
- *
- * ── ROTATION, AND WHAT A FAILURE MEANS ───────────────────────────────────────────────────────
- *
- * `/auth/refresh` on this door takes the body token (the native branch: strict reuse detection,
- * no concurrent grace) — so this manager rotates SERIALLY, single-flighted, because presenting
- * one refresh token twice IS the theft signal the server revokes families over. Three findings
- * from the review sharpened what that means in practice:
- *
- *  · **Only a 401/403 from the refresh is an authentication judgment.** A `503 host_busy` is
- *    the LISTENER's admission bound refusing before the handler ever read the token; clearing
- *    the pair over it signed a working phone out because the laptop was busy. Anything that is
- *    not an explicit refusal keeps the pair and returns the caller its original 401.
- *  · **Storage is the family's shared head.** Tabs on this origin share the refresh token, so a
- *    manager whose in-memory copy has gone stale (another tab rotated) must re-read storage and
- *    present the FRESHEST token, never its own consumed copy — and the whole rotation runs
- *    under `navigator.locks` where the browser has it, so two tabs' simultaneous expiries
- *    serialize instead of double-presenting. (Without the Locks API the re-read narrows the
- *    window; it cannot close it.)
- *  · **Recovery is bound to the token GENERATION.** A 401 judged against a stamp an earlier
- *    rotation already replaced must restamp and replay, not rotate again — rotating on stale
- *    refusals burned the fresh refresh token for nothing and invalidated the fresh access token
- *    under the requests already carrying it.
- *
- * ── THE RESIDUAL THIS CLIENT CANNOT CLOSE, STATED RATHER THAN IMPLIED ────────────────────────
- *
- * A rotation whose RESPONSE is lost (the request reached the engine, the connection died before
- * the answer) leaves the server holding a committed rotation this client never learned about.
- * The next recovery re-presents the old token — which is now, correctly, the reuse signal — and
- * the family is revoked. The wire cannot distinguish that from theft without a grace this
- * door's native branch deliberately refuses (the shared lifecycle machinery is frozen; the
- * cookie surface's `concurrentGrace` exists for exactly this and is a different trust model).
- * The recovery is the product's own: the phone lands on `/pair` and one fresh QR scan re-pairs
- * it. Bounded, visible, and honest — never a silently wrong session.
+ * THE BEARER MANAGER — the served browser client's whole credential, in one small object. The
+ * desktop-host door is BEARER-ONLY BY CONSTRUCTION (`allowCookieAuth: false`, a
+ * zero-Set-Cookie census, a redeem answering a token pair), so this client holds the pair and
+ * injects it through `HttpAdapterOptions.headers` — no cookie code path exists because no
+ * cookie exists. The refresh token persists in `localStorage`, the access token in memory:
+ * the classic script-can-read-it argument is answered at the script boundary — every document
+ * is served `script-src 'self'`, no inline script (`apps/sidecar/src/host-static.ts`) — and
+ * what remains is possession of an unlocked phone, whose take-back is the desktop's Devices
+ */
+
+/*
+ * pane: a revoke kills the next request, which this manager answers by ending the session.
+ */
+
+/*
+ * ROTATION: `/auth/refresh` takes the body token (strict reuse detection, no concurrent
+ * grace), so this manager rotates SERIALLY, single-flighted — presenting one refresh token
+ * twice IS the theft signal. Three sharpenings: only a 401/403 from the refresh is an
+ * authentication judgment (`503 host_busy` is the listener's admission bound — clearing over
+ * it signed a working phone out because the laptop was busy); storage is the family's shared
+ * head (a stale in-memory copy re-reads storage and presents the FRESHEST token, the whole
+ * rotation under `navigator.locks` where the browser has it); recovery is bound to the token
+ * GENERATION (a 401 judged against a replaced stamp restamps and replays, never re-rotates).
+ */
+
+/*
+ * The residual this client cannot close: a rotation whose RESPONSE is lost leaves the server
+ * committed and the next recovery re-presents the old token — the family is revoked, the
+ * phone lands on `/pair`, and one fresh QR scan re-pairs it. Bounded, visible, honest.
  */
 
 import { storageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
@@ -67,26 +42,19 @@ export interface BearerTokens {
 export const REFRESH_STORAGE_KEY = "ohmail.host.refreshToken";
 
 /**
- * WHICH PAIRING THIS BROWSER'S SCRATCH SPACE BELONGS TO — a random id, and never a credential.
- *
- * The shared shell keeps four things in `localStorage` per account: the compose scratch buffer,
- * the durable send lanes, the Screener's intent journal and the Search order. On a cookie-bearing
- * door the account id partitions them. This door mints no cookie by construction, so all four
- * used to land on one key shared by every pairing this origin has ever held — and a host door's
- * origin is an address on a tailnet or a LAN, which is reusable: a laptop paired to one computer,
- * unpaired, and paired to another at the same address would restore the first computer's
- * unfinished message into the second one's composer.
- *
- * This is NOT the mirror's owner id and does not try to be. The mirror on this door is in memory
- * and rebuilt per page load, exactly because naming a persistent one needs a server-CONFIRMED id
- * (this file's own header, and `engine.tsx`). Partitioning scratch space is a weaker question: all
- * it has to guarantee is that two pairings never collide, and a random id per pairing gives that
- * without confirming anything. It authorises nothing, proves nothing, and a forged value gets
- * whoever forged it an empty partition of their own.
- *
- * Minted on a REDEEM and kept across every rotation — a rotated token is the same pairing, and
- * re-minting per rotation would throw away somebody's half-written message every time the access
- * token aged out. Cleared with the refresh token when the session dies.
+ * WHICH PAIRING THIS BROWSER'S SCRATCH SPACE BELONGS TO — a random id, never a credential.
+ * The shared shell keeps four things in `localStorage` per account; this door mints no
+ * cookie, so all four used to land on one key shared by every pairing this origin ever held —
+ * and a host door's origin is a reusable address, so a laptop paired to a second computer at
+ * the first one's address restored the first computer's unfinished message. NOT the mirror's
+ * owner id: that needs a server-CONFIRMED id (`engine.tsx`); partitioning scratch only has to
+ * keep two pairings from colliding, and a forged value earns an empty partition. Minted on a
+ * REDEEM and kept across rotations — a rotated token is the same pairing, and re-minting
+ */
+
+/*
+ * would throw away a half-written message every time the access token aged. Cleared with the
+ * refresh token when the session dies.
  */
 export const PAIR_SCOPE_STORAGE_KEY = "ohmail.host.pairScope";
 
@@ -154,18 +122,14 @@ export class BearerManager {
     this.fetchImpl = opts.fetchImpl ?? (globalThis.fetch.bind(globalThis) as FetchLike);
     this.refresh = this.door.get(REFRESH_STORAGE_KEY);
     /**
-     * A PAIRING THAT EXISTS MUST HAVE A SCOPE BEFORE THE FIRST RENDER, NOT AT ITS FIRST ADOPT.
-     *
-     * The upgrade arm used to live in {@link adopt}, and `adopt` runs on a redeem or a rotation —
-     * neither of which has happened when a browser that already holds a refresh token loads this
-     * build for the first time. `paired()` was therefore true while `pairScope()` was still null,
-     * so `HostGate` set the storage owner to `null` and mounted the shared shell on the old
-     * un-owned `…local` partition: the previous pairing's compose buffer, send lanes and Screener
-     * journal, read by the shell's own effects before any request could 401 and rotate.
-     *
-     * Minting here closes that window because the manager is constructed before anything renders
-     * (`main.tsx` builds it above `createRoot`). It is the same one-time upgrade: a pairing with a
-     * token and no scope gets one, and a browser with no pairing gets nothing.
+     * A PAIRING THAT EXISTS MUST HAVE A SCOPE BEFORE THE FIRST RENDER, NOT AT ITS FIRST
+     * ADOPT. The upgrade arm lived in {@link adopt}, which runs on a redeem or a rotation —
+     * neither has happened when a browser already holding a refresh token loads this build
+     * for the first time. `paired()` was true while `pairScope()` was null, so `HostGate` set
+     * the storage owner to `null` and mounted the shell on the old un-owned `…local`
+     * partition — the previous pairing's compose buffer, read by the shell's own effects
+     * before any request could 401. Minting here closes the window: the manager is
+     * constructed before anything renders (`main.tsx` builds it above `createRoot`).
      */
     this.ensureScope();
     this.scopeAtStart = this.readScope();
@@ -264,17 +228,13 @@ export class BearerManager {
   }
 
   /**
-   * END THIS TAB'S SESSION WITHOUT TOUCHING THE SHARED CREDENTIAL — the difference between
-   * `die()` and this one is the whole reason it exists.
-   *
-   * `die()` clears `localStorage`, which is correct when the SESSION is over: revoked, reused-past,
-   * signed out. It is exactly wrong for the case in `rotate` above, where the storage does not hold
-   * this tab's credential any more — it holds the SUCCESSOR's, because another tab re-paired this
-   * origin. Calling `die()` there deletes the new pairing's refresh token and its scope: the guard
-   * written to stop a stale tab acting as the new account would instead destroy the new account's
-   * session, from a background rotation, with no user act at all.
-   *
-   * So this drops the in-memory pair and tells the gate, and leaves the jar alone.
+   * END THIS TAB'S SESSION WITHOUT TOUCHING THE SHARED CREDENTIAL — the whole difference from
+   * `die()`. `die()` clears `localStorage`, correct when the SESSION is over (revoked,
+   * reused-past, signed out) and exactly wrong for `rotate`'s case above, where storage holds
+   * the SUCCESSOR's credential because another tab re-paired this origin: `die()` there
+   * deletes the new pairing's refresh token and scope — the guard against a stale tab acting
+   * as the new account would destroy the new account's session, from a background rotation,
+   * with no user act. So this drops the in-memory pair, tells the gate, leaves the jar alone.
    */
   private standDown(): void {
     this.access = null;
@@ -372,24 +332,17 @@ export class BearerManager {
   /**
    * The transport `HttpAdapter` and every injected wire run on: the platform fetch with the
    * Authorization header stamped by the MANAGER on every attempt, plus ONE recovery — a 401
-   * rotates the pair and replays the request once with the fresh token. One, not a loop: a
-   * second 401 with a token minted milliseconds ago is a revocation, and the rotation path has
-   * already decided what that means.
-   *
-   * The recovery is bound to the GENERATION the refused attempt was stamped in. A 401 whose
-   * stamp an earlier rotation already replaced is stale evidence — it judged the old token, not
-   * the current one — so it restamps and replays WITHOUT rotating: rotating on stale refusals is
-   * the cascade the review named (each stale 401 burning the fresh refresh token and pulling the
-   * rug from under the requests already carrying the fresh access token).
-   *
-   * The manager's header is merged LAST, so it wins over a caller's copy — the adapter's
-   * extra-headers seam supplies the same value, except in the one moment that matters: a
-   * rotation that landed between the adapter building its headers and this call, where the
-   * seam's copy is the stale token and the manager's is the live one. Everything else the
-   * caller set — the idempotency key included, so a replayed mutation lands on the server's
-   * existing reservation — travels as it was.
-   *
-   * An arrow property so it can be handed to `HttpAdapterOptions.fetch` bare, receiverless.
+   * rotates the pair and replays once. One, not a loop: a second 401 on a token minted
+   * milliseconds ago is a revocation. The recovery is bound to the GENERATION the refused
+   * attempt was stamped in: a 401 whose stamp an earlier rotation replaced restamps and
+   * replays WITHOUT rotating — rotating on stale refusals burns the fresh refresh token and
+   * invalidates the fresh access token under requests already carrying it. The manager's
+   * header merges LAST, so a rotation landing between the adapter building its headers and
+   */
+
+  /*
+   * this call still sends the live token; everything else the caller set (the idempotency key
+   * included) travels as it was. An arrow property so it can be handed bare, receiverless.
    */
   fetch: FetchLike = async (url, init) => {
     const options = (init ?? {}) as LooseInit;

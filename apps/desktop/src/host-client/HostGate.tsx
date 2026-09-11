@@ -1,35 +1,28 @@
 /**
- * THE HOST-CLIENT GATE — which of two things this browser is looking at.
- *
- * Either this browser holds a pairing (a refresh token the BearerManager found in storage), and
- * the answer is the mail client: the SAME `AppShell` the desktop window and app.ohmail.app
- * render, over an engine this gate builds on the shared `HttpAdapter` in bearer mode. Or it does
- * not — a first visit, a signed-out visit, a `/pair` link — and the answer is the pairing
- * landing, which is also where a session that DIES mid-use lands: the manager's dead signal is
- * the server stating the family is revoked or reused-past (the window's take-back, mostly), and
- * rendering mail past that point would be a mailbox that silently stopped being live.
- *
- * ── THE ENGINE, AND WHAT IS DELIBERATELY NOT PASSED ─────────────────────────────────────────
- *
- * `baseUrl: ""` — every path stays root-relative on the one served origin.
- * The `headers` seam injects the Authorization header per request; the `fetch` is the manager's,
- * whose single 401 recovery rotates the pair and replays once. No cookie option is touched
- * anywhere, because the door never mints one — bearer-only in both directions, by construction.
- *
- * **No `store`.** The mirror is in memory and rebuilt per page load, the desktop window's own
- * choice for the same reason at one remove: the authoritative copy is the engine's database on
- * the computer this page is served FROM, and the drain that fills this mirror rides the user's
- * own tailnet — a LAN hop, not a bootstrap over somebody's metered connection. A persistent
- * IndexedDB mirror needs a server-confirmed owner id to be named by (the shared client's
- * cross-account lesson), and this door's surface has no session read to confirm one with; if the
- * reload cost ever proves real on big mailboxes, that is the named follow-up, not a default.
- *
- * **No `storePolicy`.** The absent branch is `full`, correct for an in-memory mirror.
- *
- * `sendSurfaceMaxTotalBytes` IS passed — {@link HOST_SEND_MAX_TOTAL_BYTES}'s value — because a
- * send from this page rides an HTTP body through the host door's adapter, and the door declares
- * exactly this ceiling on its service bag (`apps/sidecar/src/host-listener.ts`). Absent, the
- * compose form would promise the strict hosted constant, under-selling the door it actually has.
+ * THE HOST-CLIENT GATE — which of two things this browser is looking at. Either it holds a
+ * pairing (a refresh token the BearerManager found), and the answer is the mail client — the
+ * SAME `AppShell` the desktop window and app.ohmail.app render, over the shared `HttpAdapter`
+ * in bearer mode — or it does not, and the answer is the pairing landing, which is also where
+ * a session that DIES mid-use lands: rendering mail past a revocation would be a mailbox that
+ * silently stopped being live. `baseUrl: ""` (root-relative on the served origin); the
+ * `headers` seam injects Authorization; the `fetch` is the manager's, with its single 401
+ * recovery; no cookie option is touched — bearer-only in both directions, by construction.
+ */
+
+/*
+ * No `store`: the mirror is in memory, rebuilt per page load — the authoritative copy is the
+ * engine's database on the computer this page is served FROM, and the drain rides the user's
+ * own tailnet, a LAN hop; a persistent IndexedDB mirror needs a server-confirmed owner id
+ * (the shared client's cross-account lesson), and this door's surface has no session read to
+ * confirm one with — if reload cost ever proves real, that is the named follow-up. No
+ * `storePolicy`: the absent branch is `full`, correct for an in-memory mirror.
+ * `sendSurfaceMaxTotalBytes` IS passed ({@link HOST_SEND_MAX_TOTAL_BYTES}): a send here rides
+ * the host door's adapter and the door declares exactly this ceiling on its service bag
+ */
+
+/*
+ * (`apps/sidecar/src/host-listener.ts`) — absent, the compose form would promise the strict
+ * hosted constant, under-selling the door.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -57,19 +50,18 @@ import {
 export const HOST_CLIENT_SEND_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
 
 /**
- * THE DURABLE-DECISION STORES THIS DOOR LEAVES AT REST, and what has to reach them when the
- * pairing ends.
- *
- * The shared shell keeps five things in `localStorage` past a reload: the compose scratch buffer,
- * the per-message reply body and its editor metadata, the durable send lanes, and the Screener's
- * intent journal. Three of those are MAIL TEXT. A phone that has been signed out of this door,
- * or whose session the computer revoked, must not still be holding somebody's half-written
- * message — the same rule, and the same prefix list, that `apps/webapp/app/sign-out.ts` applies
- * on the hosted door.
- *
- * By PREFIX and not by scope, deliberately: ending a pairing means this browser forgets, and a
- * key left behind under a retired scope is unreachable rather than gone. An exact key is a prefix
- * of itself, which is how the legacy un-owned compose key rides along.
+ * THE DURABLE-DECISION STORES THIS DOOR LEAVES AT REST, and what must reach them when the
+ * pairing ends. The shared shell keeps five things in `localStorage` past a reload — the
+ * compose scratch, the per-message reply body and its editor metadata, the durable send
+ * lanes, the Screener's intent journal — and three are MAIL TEXT: a phone signed out of this
+ * door must not still hold somebody's half-written message. The same rule and prefix list
+ * `apps/webapp/app/sign-out.ts` applies on the hosted door. By PREFIX and not by scope,
+ * deliberately: ending a pairing means this browser forgets, and a key left under a retired
+ * scope is unreachable rather than gone; an exact key is a prefix of itself, which is how the
+ */
+
+/*
+ * legacy un-owned compose key rides along.
  */
 export const HOST_SCRATCH_PREFIXES: readonly string[] = [
   COMPOSE_DRAFT_PREFIX,
@@ -81,19 +73,14 @@ export const HOST_SCRATCH_PREFIXES: readonly string[] = [
 ];
 
 /**
- * WHAT THE SWEEP COULD NOT DO IS A FACT, NOT A SHRUG.
- *
- * `dropLocalStorageKeys` returns a verdict — which matched keys are still present, and whether the
- * jar could be walked at all — precisely because a browser that refuses proves nothing by naming
- * no survivors. Both departure paths here discarded it and went straight to the landing, so a
- * private window or a refusing storage layer produced a signed-out screen over mail text that is
- * still on the device.
- *
- * This door has no toast host at the moment either path runs (one is unmounting the shell, the
- * other replacing it), so the verdict goes to the console rather than to a surface that is not
- * there. That is deliberately the weakest useful thing: it is on record, it is greppable, and it
- * does not pretend the sweep succeeded. A visible sentence belongs beside this door's own sign-out
- * copy, and is named as the follow-up rather than invented here.
+ * WHAT THE SWEEP COULD NOT DO IS A FACT, NOT A SHRUG. `dropLocalStorageKeys` returns a
+ * verdict — which matched keys are still present, and whether the jar could be walked —
+ * because a browser that refuses proves nothing by naming no survivors. Both departure paths
+ * discarded it, so a private window or a refusing storage layer produced a signed-out screen
+ * over mail text still on the device. This door has no toast host at the moment either path
+ * runs, so the verdict goes to the console — the weakest useful thing: on record, greppable,
+ * and not pretending the sweep succeeded. A visible sentence beside this door's own sign-out
+ * copy is the named follow-up rather than invented here.
  */
 function reportSweep(sweep: LocalSweep): void {
   if (sweep.enumerated && sweep.survivors.length === 0) return;
@@ -173,18 +160,14 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
   const trash = useMemo(() => trashOverBearer(bearer), [bearer]);
 
   /**
-   * WHOSE `localStorage` PARTITION THE SHARED SHELL USES ON THIS DOOR — established in render,
-   * above the `AppShell` below, for the ordering reason `storage-owner.ts` states: the shell
-   * reads the compose scratch in its own effect, and a child's effects run before its parent's.
-   *
-   * There is no cookie here by construction (bearer-only in both directions), so until this line
-   * every pairing this origin has ever held shared one key. A host door's origin is an address on
-   * a tailnet or a LAN and addresses are reused, so that is not hypothetical: the same phone,
-   * paired to a second computer at an address the first one used, restored the first computer's
-   * unfinished message into the second one's composer.
-   *
-   * `null` while unpaired, which is the correct answer and not a fallback — the branch below
-   * renders the pairing landing, which stores nothing per account.
+   * WHOSE `localStorage` PARTITION THE SHARED SHELL USES ON THIS DOOR — established in
+   * render, above the `AppShell` below, for `storage-owner.ts`'s ordering reason: the shell
+   * reads the compose scratch in its own effect, and a child's effects run before its
+   * parent's. No cookie exists here, so until this line every pairing this origin ever held
+   * shared one key — and addresses are reused: the same phone, paired to a second computer at
+   * an address the first one used, restored the first computer's unfinished message. `null`
+   * while unpaired — correct, not a fallback: the branch below renders the pairing landing,
+   * which stores nothing per account.
    */
   setStorageOwner(paired ? scope : null);
 

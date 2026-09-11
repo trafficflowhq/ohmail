@@ -1,35 +1,12 @@
 /**
- * THE NATIVE CHROME, from the window's side of it.
- *
- * Three things a web page cannot do and an app is expected to: answer the menu bar, put a
- * notice in the operating system's own notification centre, and carry a count on its icon in
- * the dock or taskbar. All three are the SHELL's to perform — the page has no menu, no
- * notification permission and no dock — so each one is either an event the shell emits or a
- * command the shell registers, and this file is the whole of what the window may say about them.
- *
- * ── THE DIRECTION OF EACH ONE, WHICH IS NOT THE SAME ────────────────────────────────────────
- *
- * The MENU pushes: the shell owns the bar and its accelerators, and a chosen item arrives here
- * as one event carrying a view id. Navigation itself stays in the frontend — the menu says where
- * to go and the client goes there through exactly the function the rail, the palette and the
- * number keys already use, so a menu item and a keystroke cannot land in different places.
- *
- * The NOTIFICATION and the BADGE pull: the window decides there is something to say and asks the
- * shell to say it. That is the right way round — what counts as unread is a question about mail,
- * which the client answers and the shell has no opinion on.
- *
- * ── WHY THE COMMAND CHANNEL IS REACHED THROUGH THE RUNTIME'S OWN GLOBAL ─────────────────────
- *
- * The same reason `bridge-fetch.ts` gives: `@tauri-apps/api` is a wrapper around this exact
- * property, and adding the dependency would put a package in the bundle and in the published
- * manifest for lines that read identically either way. `withGlobalTauri` is false, so the
- * friendlier global does not exist; this one always does, because the runtime's bootstrap
- * defines it before any bundle script runs.
- *
- * Listening is `plugin:event|listen`, which is the runtime's own event plugin and is granted to
- * this window by exactly one permission (`core:event:allow-listen`). Emitting is NOT granted:
- * the window can hear what the shell says and cannot make the shell hear anything, which is the
- * asymmetry a menu wants.
+ * THE NATIVE CHROME, from the window's side: the menu bar, the OS notification centre, the
+ * badge on the dock icon. All three are the SHELL's to perform — each is an event the shell
+ * emits or a command it registers, and this file is the whole of what the window may say about
+ * them. The MENU pushes: a chosen item arrives as one event with a view id, and navigation goes
+ * through the same function the rail, palette and number keys use. NOTIFICATION and BADGE pull:
+ * what counts as unread is a question about mail. The command channel is the runtime's own
+ * global (`withGlobalTauri` is false); listening is `plugin:event|listen` under the one grant
+ * `core:event:allow-listen`, and emitting is NOT granted — the window cannot make the shell hear.
  */
 
 /** The event the shell emits when a navigation item is chosen from the menu. */
@@ -39,16 +16,13 @@ export const MENU_NAVIGATE_EVENT = "menu:navigate";
 export const MENU_COMMAND_EVENT = "menu:command";
 
 /**
- * The event the shell emits when an `ohmail://link?code=…` activation arrives.
- *
- * A THIRD channel rather than a third name on one of the menu's, for the reason those two are
- * separate from each other: the payloads are different kinds of value, and each union is closed on
- * its own terms. A menu payload is one of a fixed list this bundle knows; this one is an opaque
- * server-minted string this bundle deliberately does not pattern-check. Sharing an event would mean
- * a shell one version ahead could turn one into the other.
- *
- * What arrives is the handoff CODE and never a token — the shell claims nothing, and the window
- * sends the code down the same bridge the retyped one has always gone down.
+ * The event the shell emits when an `ohmail://link?code=…` activation arrives. A THIRD channel
+ * rather than a third name on the menu's: the payloads are different kinds of value, each union
+ * closed on its own terms — a menu payload is one of a fixed list this bundle knows; this one
+ * is an opaque server-minted string this bundle deliberately does not pattern-check. Sharing an
+ * event would let a shell one version ahead turn one into the other. What arrives is the
+ * handoff CODE and never a token — the shell claims nothing; the window sends the code down
+ * the same bridge the retyped one has always gone down.
  */
 export const LINK_CODE_EVENT = "link:code";
 
@@ -98,18 +72,13 @@ const DEFAULT_MAIL_STATUS_COMMAND = "default_mail_status";
 const DEFAULT_MAIL_REQUEST_COMMAND = "default_mail_request";
 
 /**
- * The places on the web this app can open, named as PLACES and never as addresses.
- *
- * A hosted account is administered on the web — the plan, the password, the authenticator — and
- * every one of those is a ceremony against a server this window cannot reach. So Settings needs a
- * way OUT to the browser, and the way out is deliberately not a URL.
- *
- * The window passes one of these keys and the shell's own table decides what it means. That is the
- * whole of the safety argument: were a URL the argument, anything that ever got a string into this
- * page — a mail body, a sender's display name, a hole in the sanitizer — could open an arbitrary
- * address in the user's real browser, signed in to everything they are signed in to. It is also
- * what keeps this bundle free of any host name at all, which is the claim the preview artifact is
- * built on.
+ * The places on the web this app can open, named as PLACES and never as addresses. A hosted
+ * account is administered on the web — plan, password, authenticator — so Settings needs a way
+ * OUT to the browser, and the way out is deliberately not a URL: the window passes one of these
+ * keys and the shell's own table decides what it means. Were a URL the argument, anything that
+ * ever got a string into this page — a mail body, a display name, a sanitizer hole — could open
+ * an arbitrary address in the user's real browser, signed in to everything. It also keeps this
+ * bundle free of any host name at all, which is the claim the preview artifact is built on.
  */
 export const WEB_PLACES = [
   "account", "security", "billing",
@@ -139,25 +108,14 @@ export const WEB_PLACES = [
 export type WebPlace = (typeof WEB_PLACES)[number];
 
 /**
- * Open one of {@link WEB_PLACES} in the user's own browser.
- *
- * Nothing is fetched here and nothing is fetched by the shell: the browser makes the request, as
- * itself, with its own session. A refusal — no browser, a platform that would not spawn one —
- * comes back as a rejection for the caller to show.
- *
- * ── `challenge` IS A VALUE, AND STILL NOT A URL ─────────────────────────────────────────────
- *
- * The sign-in page needs one parameter: the public half of a PKCE pair whose secret half is in the
- * engine's memory, which is what makes the code that page mints safe to hand back over the
- * `ohmail://` scheme. This window does not compose that address. It passes the place and the 43
- * characters, and the SHELL decides the scheme, the host, the path, the `?`, the parameter's name
- * and whether this key may carry one at all — refusing a value that is not challenge-shaped rather
- * than opening the page without it, because a page opened without the commitment mints an UNBOUND
- * code while this app goes on holding a verifier.
- *
- * Omitted for every other place, and the field is then absent from the payload rather than sent
- * empty: the shell's `Option<String>` and "no such parameter" are the same fact, and a caller that
- * always sent the key would make the exception look like the rule.
+ * Open one of {@link WEB_PLACES} in the user's own browser. Nothing is fetched here or by the
+ * shell: the browser makes the request as itself. A refusal comes back as a rejection for the
+ * caller to show. `challenge` IS A VALUE, AND STILL NOT A URL: the sign-in page needs the
+ * public half of a PKCE pair whose secret half is in the engine's memory. This window passes
+ * the place and the 43 characters; the SHELL decides scheme, host, path and parameter name —
+ * refusing a value that is not challenge-shaped, because a page opened without the commitment
+ * mints an UNBOUND code while this app goes on holding a verifier. Omitted for every other
+ * place, absent rather than empty: the shell's `Option<String>` and "no parameter" are one fact.
  */
 export async function openWeb(place: WebPlace, challenge?: string): Promise<void> {
   const shell = internals();
@@ -235,19 +193,14 @@ export async function onMenuCommand(run: (command: MenuCommand) => void): Promis
 }
 
 /**
- * The handoff code a `link:code` payload carried, or null when it carried none.
- *
- * ── WHY THIS ONE IS NOT A CLOSED UNION, UNLIKE THE TWO ABOVE ────────────────────────────────
- *
- * A menu payload names one of a list this bundle knows, so an unknown name is refused. A handoff
- * code is a server-minted opaque string, and a shape assertion here would be a second, quieter
- * definition of what the account issues — one that keeps working until the issuer changes and then
- * refuses every valid code with a sentence nobody can see. `doors.ts` declines the same assertion
- * for the same reason, and the shell's own parser has already refused every link that is not
- * exactly `ohmail://link?code=…`.
- *
- * So what is checked here is what a TYPE cannot be trusted for across a process boundary: that it
- * is a non-empty string. Everything else is the engine's answer to make.
+ * The handoff code a `link:code` payload carried, or null when it carried none. NOT a closed
+ * union like the two above: a menu payload names one of a known list, but a handoff code is a
+ * server-minted opaque string — a shape assertion here would be a second, quieter definition of
+ * what the account issues, working until the issuer changes and then refusing every valid code
+ * with a sentence nobody can see. `doors.ts` declines the same assertion; the shell's parser
+ * has already refused every link that is not exactly `ohmail://link?code=…`. What is checked is
+ * what a TYPE cannot be trusted for across a process boundary: a non-empty string. The rest is
+ * the engine's answer to make.
  */
 export function codeOfLinkPayload(payload: unknown): string | null {
   const raw =
@@ -261,22 +214,14 @@ export function codeOfLinkPayload(payload: unknown): string | null {
 }
 
 /**
- * ONE SHELL-SIDE LISTENER FOR THE LIFE OF THE WINDOW, and the latest handler wins.
- *
- * ── WHY THIS IS NOT THE SAME SHAPE AS THE MENU'S TWO ────────────────────────────────────────
- *
- * `onMenuNavigate` and `onMenuCommand` are registered once by `DesktopGate`, which mounts once, so
- * a plain registration is correct there. The sign-in screen is different: it is mounted whenever
- * somebody picks the hosted door and unmounted when they go back, which can happen several times
- * in a session. Registering per mount would stack listeners in the SHELL, and every stale one
- * would fire on the next activation — each holding an old mount's props, so one code would be
- * submitted several times against different closures.
- *
- * Unregistering is not available and that is deliberate rather than an oversight: taking a listener
- * off costs `core:event:allow-unlisten`, a SECOND core permission for this window, and the window's
- * grant is one receive-only permission on purpose. So the registration happens once and the handler
- * is swapped behind it — which is the behaviour the screen wants anyway, since the mount a person
- * is looking at is the one that should answer.
+ * ONE SHELL-SIDE LISTENER FOR THE LIFE OF THE WINDOW, and the latest handler wins. The menu's
+ * two are registered once by `DesktopGate`, which mounts once. The sign-in screen mounts
+ * whenever somebody picks the hosted door and unmounts on the way back — registering per mount
+ * would stack listeners in the SHELL, every stale one firing on the next activation with an
+ * old mount's props, submitting one code several times against different closures.
+ * Unregistering is deliberately unavailable: it would cost `core:event:allow-unlisten`, a
+ * SECOND core permission, and the grant is one receive-only permission on purpose. So:
+ * register once, swap the handler — the mount a person is looking at is the one that answers.
  */
 let linkCodeHandler: ((code: string) => void) | null = null;
 let linkCodeListening = false;
@@ -320,20 +265,14 @@ async function listen<T>(
 }
 
 /**
- * Put one notice in the operating system's notification centre.
- *
- * The window composes the words and the shell shows them, which is the only arrangement that
- * works: the page has no notification permission and cannot ask for one under this CSP, and the
- * shell has no idea what a message is. A refusal — the user has notifications turned off for
- * ohmail, or the platform has none — comes back as a rejection and is the caller's to swallow;
- * a notification that could not be shown must never take a mail client down.
- *
- * NAMED `postOsNotice` AND NOT `notify`, WHICH IS WHAT IT USED TO BE. `notify` is also the
- * client-engine's subscriber callback, with dozens of call sites of that unrelated sense
- * across the shared sources. The census that enforces "nothing draws a notice outside an
- * emitter" has to key on a name, and a name meaning two things makes its output mostly false
- * positives — a guard whose result has to be hand-filtered is one nobody keeps. The Rust
- * command this invokes is still `notify`; only the binding was renamed.
+ * Put one notice in the operating system's notification centre. The window composes the words
+ * and the shell shows them — the page has no notification permission under this CSP, and the
+ * shell has no idea what a message is. A refusal (notifications off, a platform without them)
+ * comes back as a rejection and is the caller's to swallow: a notice that could not be shown
+ * must never take a mail client down. NAMED `postOsNotice`, NOT `notify`: `notify` is also the
+ * client-engine's subscriber callback with dozens of unrelated call sites, and the census that
+ * enforces "nothing draws a notice outside an emitter" keys on a name — one name meaning two
+ * things makes its output mostly false positives. The Rust command is still `notify`.
  */
 export async function postOsNotice(title: string, body: string): Promise<void> {
   const shell = internals();

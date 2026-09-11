@@ -1,32 +1,12 @@
 /**
  * BUYING SUGGESTIONS FOR A HOSTED ACCOUNT, FROM THE DESKTOP — the transport and nothing else.
- *
- * An install that came in by the hosted door mirrors an account: the mail is the account's, the AI
- * allowance is the account's, and the balance and the way to add to it are the account's. So the
- * question the Screener's suggest control asks there is exactly the question it asks in a browser
- * tab — what would this cost, and buy it — and the answer has to come from the same server, priced
- * by the same endpoint, charged against the same ledger.
- *
- * What differs is one thing: how the bytes travel. A browser tab opens a socket. This window cannot
- * — its content policy forbids it, and `offline-guard.ts` has replaced every browser API that could
- * — so the request goes down the pipe to the mail engine on this machine, which holds the account's
- * session and forwards a hosted route onward. That is the whole of this file.
- *
- * ── WHY THERE IS NO LADDER, NO QUOTE AND NO CHUNK LOOP HERE ─────────────────────────────────
- *
- * Because those are the parts that decide what a person is charged, and there is exactly one
- * implementation of them: the shared control's. This satisfies the seam that control accepts and
- * supplies four calls. Everything about spending — price the exact set first, consent to the sum,
- * one request-sized chunk at a time, a FRESH key per chunk, halt on the first refusal — is decided
- * above this file and cannot be varied by it. A second copy of that reasoning down here is a second
- * place for a figure on screen to stop matching the figure that is charged.
- *
- * ── AND THE ROUTES ARE THE HOSTED ONES, ADDRESSED ROOT-RELATIVE ─────────────────────────────
- *
- * `GET /screener` and `POST /screener/suggest`. The engine serves neither locally on this door: its
- * mirror is read-only and holds no ledger, so both fall through to its write-through proxy and are
- * relayed to the account with its bearer. The proxy strips only the hop-by-hop headers, so the
- * idempotency key and the query string arrive exactly as they were written here.
+ * On the hosted door the allowance and ledger are the account's, so the suggest control asks
+ * the same server a browser tab would; only the bytes travel differently. This window cannot
+ * open a socket (`offline-guard.ts`), so requests go down the pipe to the engine, which holds
+ * the session and forwards onward. No ladder, quote or chunk loop here: spending — price the
+ * exact set, consent to the sum, chunked with a FRESH key per chunk, halt on the first
+ * refusal — is the shared control's, decided above this file. The hosted routes `GET /screener`
+ * and `POST /screener/suggest` fall through to the engine's write-through proxy.
  */
 
 import { bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";

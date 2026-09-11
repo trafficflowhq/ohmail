@@ -1,39 +1,19 @@
 /**
- * SETTINGS → THIS INSTALL → what reaches your Ohbox, in your words.
- *
- * The sentence a model is given when it is asked where mail belongs. On a standalone install the
- * model doing that judging is one you supplied yourself, which makes this the one sentence in the
- * app that changes what your own model is told — and until recently it was the one thing about
- * screening a standalone install could read and not write.
- *
- * ── IT IS THE SAME EDITOR THE HOSTED CLIENT DRAWS ───────────────────────────────────────────
- *
- * {@link OhboxWords} is the shared control, from the shared shell, exactly as every mail surface in
- * this window is. Only the transport is supplied here: the hosted client hands it its API client,
- * this hands it `local-screening.ts`, which addresses the engine over the shell's pipe. Two editors
- * over one column is how a prefill rule drifts on one tier and not the other.
- *
- * ── NO MODEL NEEDED TO WRITE IT ─────────────────────────────────────────────────────────────
- *
- * This section is NOT gated on the pane below it. Somebody who has not set up a model — which is a
- * complete, supported way to run this app — can still say what belongs in their Ohbox, and the
- * words are there waiting the day they do. Gating it would make the sentence look like a feature of
- * the model rather than a property of the mailbox.
- *
- * ── AND IT IS OFFERED ON BOTH DOORS ─────────────────────────────────────────────────────────
- *
- * It used to be withheld on the hosted door, on the reasoning that such an account already has this
- * control in the web client it signs into. That reasoning was about the wrong window. The hosted
- * client's own copy of this section cannot render inside this app at all — it reaches for an API
- * client that is not part of this build and refuses on the first call — so withholding it here did
- * not avoid a second editor, it left that door with none. The engine forwards both verbs of this
- * route to the account, so the words this box saves are the words the hosted worker files by.
- *
- * What differs between the doors is only where the value LIVES, and therefore what an absence
- * means. The engine answers `404` on a door that keeps no such setting, and `503` while a hosted
- * account cannot be reached; those are different facts and the section says so rather than
- * vanishing in both cases. A section somebody has filled in that disappears with the network reads
- * as lost words.
+ * SETTINGS → THIS INSTALL → what reaches your Ohbox, in your words — the sentence a model is
+ * given when asked where mail belongs; on a standalone install that model is one you supplied
+ * yourself. IT IS THE SAME EDITOR THE HOSTED CLIENT DRAWS: {@link OhboxWords}, the shared
+ * control, with only the transport supplied here (`local-screening.ts`, over the shell's
+ * pipe) — two editors over one column is how a prefill rule drifts on one tier. NO MODEL
+ * NEEDED TO WRITE IT: this section is not gated on the pane below; the words wait for the day
+ * a model exists, and gating would make the sentence look like a feature of the model rather
+ * than a property of the mailbox. OFFERED ON BOTH DOORS: withholding it on the hosted door
+ */
+
+/*
+ * did not avoid a second editor — the hosted client's copy cannot render in this app at all —
+ * it left that door with none; the engine forwards both verbs to the account, so what this
+ * box saves is what the hosted worker files by. `404` = no such setting on this door; `503` =
+ * the account is out of reach — different facts, said rather than vanished.
  */
 
 import { useEffect, useState } from "react";

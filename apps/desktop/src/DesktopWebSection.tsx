@@ -1,34 +1,18 @@
 /**
  * A SETTINGS PANE WHOSE CONTROLS LIVE IN A BROWSER — the honest shape for a step-up ceremony.
- *
- * ── WHY THESE PANES EXIST AT ALL RATHER THAN BEING LEFT OUT ─────────────────────────────────
- *
- * An install on the hosted door HAS a password, an authenticator, recovery codes and an account
- * that can be deleted. The web client puts each of those on a named pane; this window had no
- * Security pane and no Account pane, so the whole Settings nav was shorter here than in a browser
- * tab on the same account and nothing on screen said why. An absent entry does not read as "this
- * is done elsewhere" — it reads as "this product does not have that", which for account deletion
- * is a claim the landing page contradicts.
- *
- * ── AND WHY THEY ARE A LINK AND NOT A FORM ──────────────────────────────────────────────────
- *
- * Every control behind them is STEP-UP GATED: the account demands a second factor asserted within
- * the last few minutes, and nothing this app can do re-asserts one. It holds no password, no
- * authenticator secret, and a passkey ceremony needs a real browser origin this window does not
- * have — its session was stamped with a factor exactly once, when its sign-in code was claimed. So
- * the choice is a form that would collect a password and be refused, or a door to the place where
- * the person is already signed in. `DesktopMailboxes` reached the same conclusion for the same
- * reason and this is that pane's shape, generalised.
- *
- * The copy says the page opens in the browser BEFORE the button is pressed, because a window
- * disappearing to somewhere else is a surprise worth one sentence.
- *
- * ── THE WINDOW NAMES A PLACE, NEVER A URL ───────────────────────────────────────────────────
- *
- * `openWeb` takes one of a closed set of keys and the SHELL's own table decides what each means.
- * That is the whole safety argument and it is `native.ts`'s to make: if a URL could travel from
- * here, anything that ever got a string into this page could open an arbitrary address in the
- * user's real browser, signed in to everything they are signed in to.
+ * An install on the hosted door HAS a password, an authenticator, recovery codes and an
+ * account that can be deleted; this window had no Security or Account pane, and an absent
+ * entry reads as "this product does not have that" — for account deletion, a claim the
+ * landing page contradicts. A LINK AND NOT A FORM: every control behind them is STEP-UP
+ * GATED, and nothing this app can do re-asserts a factor — no password held, no authenticator
+ * secret, no real browser origin for a passkey; its session was stamped exactly once, at
+ * sign-in. So the door goes to the place the person is already signed in
+ */
+
+/*
+ * (`DesktopMailboxes`'s conclusion, generalised). The copy says the page opens in the browser
+ * BEFORE the press. The window names a PLACE, never a URL — `openWeb` takes a closed set of
+ * keys and the SHELL's table decides (`native.ts` makes the argument).
  */
 
 import { useState } from "react";

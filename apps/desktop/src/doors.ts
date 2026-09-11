@@ -1,40 +1,21 @@
 /**
- * THE TWO DOORS, as decisions rather than as screens.
- *
- * A fresh install has to be asked one question — whose mail is this? — and there are exactly
- * two answers: the mailbox on your own server, opened from this machine, or a hosted ohmail
- * account, mirrored. `DoorChooser.tsx` is what that looks like; this file is what it MEANS, and
- * it is separate so the rules can be driven by a test instead of described in a comment.
- *
- * ── WHERE EACH PIECE OF THE ANSWER GOES, AND WHY THEY GO TO DIFFERENT PLACES ────────────────
- *
- * A door's SETTINGS — the mail server, the port, the address — go to the shell, over the
- * `engine_configure` command, because the shell is what has to remember them across a quit and
- * compose the engine's environment from them at every launch.
- *
- * A door's SECRET — the mailbox password, or the hosted sign-in — does NOT. It travels over the
- * bridge, addressed to the ENGINE, which seals it under this install's key and hands it back to
- * nobody. Two reasons, and the second is the one that made it a rule rather than a preference:
- *
- *   1. the shell REFUSES a configuration carrying a secret-shaped field, so a password sent the
- *      other way is not stored badly, it is rejected;
- *   2. a command argument is process state in the shell. The engine's store is the only place a
- *      credential is meant to rest, and the only way to keep that true is for the credential
- *      never to pass through anything else.
- *
- * So the local door is two steps — configure, then `PATCH /mailboxes/:id` with the password —
- * and the cloud door is two steps — configure, then `POST /cloud/signin`. Neither password is
- * ever an argument to a Tauri command.
- *
- * ── THE STEP BETWEEN THE TWO STEPS ──────────────────────────────────────────────────────────
- *
- * `engine_configure` REPLACES the engine: it stops the one that was running and starts a new one
- * against the new settings. The status it answers with is therefore `starting`, not `serving` —
- * the new engine has not announced itself yet, and until it does there is no mailbox id to
- * address a password to and no bridge to send it down. {@link settle} is that wait, and it is
- * bounded: a first launch has a schema to migrate and a directory to lock, and an engine that
- * never announces itself is a state the person in front of it has to be told about rather than
- * shown a spinner for.
+ * THE TWO DOORS, as decisions rather than as screens. A fresh install is asked whose mail this
+ * is — the mailbox on your own server, or a hosted ohmail account, mirrored. `DoorChooser.tsx`
+ * is what that looks like; this file is what it MEANS, separate so the rules are driven by a
+ * test. A door's SETTINGS go to the shell over `engine_configure` (it remembers them across a
+ * quit and composes the engine's environment). A door's SECRET does NOT: it travels over the
+ * bridge to the ENGINE, which seals it under this install's key — the shell REFUSES a
+ * configuration carrying a secret-shaped field, and a command argument is process state in the
+ * shell. So each door is configure, then `PATCH /mailboxes/:id` / `POST /cloud/signin`.
+ */
+
+/*
+ * THE STEP BETWEEN THE TWO STEPS: `engine_configure` REPLACES the engine — stops the running
+ * one, starts a new one against the new settings — and answers `starting`, not `serving`: the
+ * new engine has not announced itself, and until it does there is no mailbox id to address a
+ * password to and no bridge to send it down. {@link settle} is that wait, and it is bounded: a
+ * first launch has a schema to migrate and a directory to lock, and an engine that never
+ * announces itself is a state a person must be told about rather than shown a spinner for.
  */
 
 import { originNeedsPin, parsePairLink, type PairLink } from "@ohmail/client-engine";
@@ -51,17 +32,12 @@ import {
 } from "./bridge-fetch.js";
 
 /**
- * Where a hosted account lives.
- *
- * A constant and not a field on the form: "which ohmail is this" is not a question anybody
- * signing in to ohmail can answer, and a text box for it would be a phishing surface with the
- * app's own chrome around it. It is the same address the macOS client uses, and it is named
- * HERE rather than in `bridge-fetch.ts` on purpose — that file is asserted to contain no URL at
- * all, because it is the one the security story is written about.
- *
- * Nothing in this window ever dials it. The value is handed to the shell, the shell hands it to
- * the engine, and the engine is the process that opens the connection; the page's CSP still says
- * `connect-src 'none'` and `offline-guard.ts` still replaces every API that could leave it.
+ * Where a hosted account lives. A constant and not a field on the form: "which ohmail is this"
+ * is not a question anybody signing in to ohmail can answer, and a text box for it would be a
+ * phishing surface with the app's own chrome around it. Named HERE rather than in
+ * `bridge-fetch.ts` on purpose — that file is asserted to contain no URL at all. Nothing in
+ * this window ever dials it: the value goes shell → engine, and the engine opens the
+ * connection; the page's CSP still says `connect-src 'none'`.
  */
 export const CLOUD_URL = "https://api.ohmail.app";
 
@@ -77,19 +53,14 @@ export type Gate =
   | { kind: "app" };
 
 /**
- * What this window is running inside.
- *
- * `"none"` is NOT an error state and is deliberately not routed to a notice. It means the bundle
- * is being loaded outside the app — a development server, or the render check that loads the
- * built bundle in a headless DOM — where there is no shell to have an engine. The app has two
- * states, not connected and connected, and with no shell there is nothing to be connected TO, so
- * the honest surface there is the not-connected one: the door chooser, whose submits fail with a
- * sentence rather than pretending. (It used to be a sample mailbox; the no-demo rule retired it —
- * demo mail lives on the landing page and nowhere an app opens.)
- *
- * In the packaged app this value is never `"none"`: the runtime defines its command channel
- * before any bundle script runs. So the case that matters — a shell that IS there and an engine
- * that is not — is `"unreachable"`, and that one does get a notice.
+ * What this window is running inside. `"none"` is NOT an error state and is deliberately not
+ * routed to a notice: it means the bundle is loaded outside the app (a development server, the
+ * render check's headless DOM), where there is no shell to have an engine — the honest surface
+ * is the not-connected one, the door chooser, whose submits fail with a sentence. (It used to
+ * be a sample mailbox; the no-demo rule retired it.) In the packaged app this is never
+ * `"none"` — the runtime defines its command channel before any bundle script runs — so the
+ * case that matters, a shell present and an engine not, is `"unreachable"`, which does get
+ * a notice.
  */
 export type Shell =
   | { kind: "none" }
@@ -140,27 +111,14 @@ export function gateFor(shell: Shell): Gate {
 }
 
 /**
- * WHICH MAIL THE WINDOW SHOWS, once {@link gateFor} has said the mail client is what renders.
- *
- * `gateFor` answers the onboarding question — chooser, notice, or the app. This answers the one
- * after it, and they are genuinely different questions: "a door is chosen" is not the same fact as
- * "there is an engine serving mail right now", and the window has two honest things to draw.
- *
- *  · `engine` — the shell says an engine is serving, and `key` names the mailbox it is serving.
- *    The real client runs against it.
- *  · `opening` — a door is chosen and no engine has served yet. Nothing is drawn about the mail,
- *    because the only alternative is a guess. (There used to be a third kind, `sample` — an
- *    invented mailbox for the no-shell case. The no-demo rule retired it: `gateFor` routes the
- *    no-shell case to the chooser now, so this question is only ever asked with a shell present.)
- *
- * ── `mounted` IS WHY A RESTART DOES NOT EMPTY THE SCREEN ─────────────────────────────────────
- *
- * The caller passes the key of the client already on screen, or `null`. Once a mailbox has been
- * served, a status that is no longer `serving` — the engine bouncing after a settings change, a
- * moment of `restarting` — keeps that client mounted rather than replacing the mail with a
- * spinner. Its mirror is already in memory and its next request simply waits. What DOES replace it
- * is a different mailbox, because the key changes, and that is the case where continuing to render
- * would be showing one mailbox's mail under another's name.
+ * WHICH MAIL THE WINDOW SHOWS, once {@link gateFor} has said the mail client renders. A
+ * different question from onboarding: "a door is chosen" is not "an engine is serving mail
+ * right now". `engine` — the shell says an engine is serving and `key` names the mailbox.
+ * `opening` — a door is chosen, no engine has served yet; nothing is drawn about the mail.
+ * `mounted` is why a restart does not empty the screen: once a mailbox has been served, a
+ * status no longer `serving` (the engine bouncing after a settings change) keeps that client
+ * mounted — its mirror is in memory and its next request waits. A DIFFERENT mailbox replaces
+ * it, because the key changes: rendering on would show one mailbox's mail under another's name.
  */
 export type MailMount =
   | { kind: "engine"; key: string }
@@ -183,44 +141,24 @@ export function mailMount(shell: Shell, mounted: string | null): MailMount {
 }
 
 /**
- * ═══ WHAT IS ON THE FAR SIDE OF THIS INSTALL'S DOOR — the ONE seam every branch reads ═══════
- *
- * ── THE DEFECT THIS CLOSES ──────────────────────────────────────────────────────────────────
- *
- * `status.mode === "cloud"` was asked in eleven places, and each one wrote a sentence or opened a
- * pane on the answer: "The organizing happens on our servers", "your hosted account", Settings →
- * Subscription, Settings → Security, Settings → Account, a price quote against an account's
- * ledger, a door out to ohmail.app, "Replies are sent while ohmail is open on this computer".
- * Every one of those is true of a HOSTED account and false of a desktop paired to another
- * computer of the person's own — the same `mode`, a completely different far side. Four of them
- * are panes about an account that does not exist, and one is a spend control with no ledger
- * behind it.
- *
- * So the eleven read this instead. One function, one place to correct, and a table test that can
- * drive every branch — the reason `gateFor` and `accountDoorFor` are functions rather than
- * conditions inside a render.
- *
- * ── `"unknown"` IS A STATE, NOT A DEFAULT, AND THE DISTINCTION IS THE WHOLE CARE HERE ────────
- *
- * An engine that predates `EngineStatus.flavor` sends nothing. That is "this shell has no such
- * thing", which is a different fact from "the far side is a hosted account" — and collapsing the
- * two is the failure this repository has measured from both ends: read absent as `desktop-host`
- * and every shipped Cloud install loses four panes and gains sentences about a computer it has
- * never heard of; read absent as `managed` and the field stops being able to say anything a
- * surface does not already assume. It is named, and the surfaces decide.
- *
- * WHAT THEY DECIDE, uniformly: every branch that changed for the paired door tests POSITIVELY
- * for `"desktop-host"`. So `"unknown"` keeps exactly the behaviour the shipped build has, which
- * is not merely the safe direction but the CORRECT one — the paired door does not exist in an
- * engine old enough to omit the field, so an absent flavor cannot be concealing one. There is no
- * install anywhere for which `"unknown"` is a paired desktop.
- *
- * ── AND IT IS NOT A STRING COMPARISON AT THE CALL SITES ──────────────────────────────────────
- *
- * The wire value is narrowed HERE, against the closed set, and anything else — a flavor a newer
- * engine invented, a value the shell mangled — becomes `"unknown"` rather than travelling on. A
- * call site comparing `status.flavor === "desktop-host"` for itself would be a second, quieter
- * copy of that narrowing, and the first one to be forgotten on the day a fourth flavor exists.
+ * ═══ WHAT IS ON THE FAR SIDE OF THIS INSTALL'S DOOR — the ONE seam every branch reads ══════
+ * `status.mode === "cloud"` was asked in eleven places, each writing a sentence or opening a
+ * pane true of a HOSTED account and false of a desktop paired to another computer of the
+ * person's own — four panes about an account that does not exist, one spend control with no
+ * ledger behind it. The eleven read this instead: one function, one place to correct, and a
+ * table test that drives every branch — the reason `gateFor` and `accountDoorFor` are
+ * functions rather than conditions inside a render.
+ */
+
+/*
+ * `"unknown"` IS A STATE, NOT A DEFAULT: an engine that predates `EngineStatus.flavor` sends
+ * nothing, and collapsing that into either answer fails — absent-as-`desktop-host` strips four
+ * panes from every shipped Cloud install; absent-as-`managed` makes the field unable to say
+ * anything. Every branch that changed for the paired door tests POSITIVELY for
+ * `"desktop-host"`, so `"unknown"` keeps the shipped behaviour — correct, not merely safe: no
+ * engine old enough to omit the field has a paired door. The wire value is narrowed HERE
+ * against the closed set; anything else becomes `"unknown"` rather than travelling on — a call
+ * site comparing `status.flavor` for itself is the first copy forgotten when a fourth exists.
  */
 export type DoorFlavor = "local" | "managed" | "selfhost" | "desktop-host" | "unknown";
 
@@ -247,21 +185,13 @@ export function isDesktopHost(status: EngineStatus | null): boolean {
 
 /**
  * WHAT TO CALL THE OTHER COMPUTER ON SCREEN — the URL's hostname, and for a tailnet name its
- * first label.
- *
- * `/hello` is not widened with a machine name (the architecture ruling says so, and a name
- * volunteered by whatever answered would be worth less than the address the person typed), so
- * the label is derived from the origin this install was configured for. A `*.ts.net` host is
- * `machine.tailnet.ts.net`, whose first label is the machine's own tailnet name — the same fact
- * the host's own pane prints when it starts serving. An IP literal stays an IP: there is nothing
- * to shorten and a truncated address is a wrong address.
- *
- * TWO MACHINES WITH THE SAME NAME ON TWO TAILNETS WOULD READ ALIKE, which is why Settings →
- * Desktop carries the full origin beside this and the rail does not: the rail names the computer
- * a person is looking at, and Settings is where they go to tell two of them apart.
- *
- * An unparseable or absent base is `null`, never a guess and never the empty string — every
- * sentence built on this interpolates it, and "Can't reach ." is worse than not saying it.
+ * first label. `/hello` is not widened with a machine name (a name volunteered by whatever
+ * answered is worth less than the address the person typed), so the label derives from the
+ * configured origin: `machine.tailnet.ts.net`'s first label is the machine's tailnet name; an
+ * IP literal stays an IP — a truncated address is a wrong address. Two machines with one name
+ * on two tailnets read alike, which is why Settings → Desktop carries the full origin beside
+ * this and the rail does not. Unparseable or absent is `null`, never a guess or the empty
+ * string — every sentence built on this interpolates it, and "Can't reach ." is worse.
  */
 export function hostLabelOf(baseUrl: string | null | undefined): string | null {
   if (!baseUrl) return null;
@@ -272,17 +202,13 @@ export function hostLabelOf(baseUrl: string | null | undefined): string | null {
 }
 
 /**
- * WHICH NETWORK THE OTHER COMPUTER IS REACHED OVER — decided from the origin's SHAPE, because
- * that is the only thing this window is told and it is a sound reading of it.
- *
- * The same-network door binds one interface and hands out its address as an IP literal
- * (`host-lan.ts`), and no authority issues a certificate for one — which is exactly why that
- * door's link carries a pin. A NAME is the other case: a tailnet MagicDNS name with a
- * certificate the platform can check. So an IP literal is `"lan"` and anything else is `"ts"`.
- *
- * It selects one sentence — "check it is on the same network" against "check it is signed in to
- * your Tailscale" — and getting it wrong costs a person one wrong thing to check, which is why
- * it is allowed to be a derivation rather than a field. `null` when there is no origin to read.
+ * WHICH NETWORK THE OTHER COMPUTER IS REACHED OVER — decided from the origin's SHAPE, the only
+ * thing this window is told. The same-network door binds one interface and hands out its
+ * address as an IP literal (`host-lan.ts`), and no authority certifies one — why that door's
+ * link carries a pin; a NAME is a tailnet MagicDNS name with a checkable certificate. So an IP
+ * literal is `"lan"` and anything else is `"ts"`. It selects one sentence — same network
+ * versus signed in to Tailscale — and getting it wrong costs one wrong thing to check, which
+ * is why a derivation is allowed. `null` when there is no origin to read.
  */
 export function hostViaOf(baseUrl: string | null | undefined): "lan" | "ts" | null {
   if (!baseUrl) return null;
@@ -294,54 +220,26 @@ export function hostViaOf(baseUrl: string | null | undefined): "lan" | "ts" | nu
 }
 
 /**
- * WHICH SUGGEST CONTROL THE SCREENER GETS, if any — a decision, so it is a function and not a
- * condition buried in a render.
- *
- * The two doors buy different things and the difference is not wording. A STANDALONE install spends
- * nothing: the model is the installer's own, reached over the pipe, so its control names no price
- * and instead says whether there is a model at all. A HOSTED install spends an account's allowance,
- * so the question is the one asked in a browser tab — what would this cost — and the answer has to
- * come from the account.
- *
- * `null` is a control that is not offered, and it covers three states, all of which are the same
- * rule: never a spend control with nothing behind it.
- *
- *  · NO DOOR YET, or no answer from the shell. A control chosen on a guess appears and then changes
- *    its mind about what it is.
- *  · A HOSTED INSTALL WITH NO SESSION. Every press could only be refused, and the refusal would be
- *    about the one thing this window cannot fix from inside the Screener.
- *  · Anything else a later door might add, by construction — the arms are named, not defaulted.
+ * WHICH SUGGEST CONTROL THE SCREENER GETS, if any — a decision, so a function rather than a
+ * condition in a render. A STANDALONE install spends nothing: the model is the installer's
+ * own, so its control names no price and says whether there is a model at all. A HOSTED
+ * install spends an account's allowance, so the question is a browser tab's — what would this
+ * cost — answered by the account. `null` is a control not offered, three states under one
+ * rule, never a spend control with nothing behind it: no door yet or no shell answer (a
+ * control chosen on a guess changes its mind), a hosted install with no session (every press
+ * could only be refused), and anything a later door adds — the arms are named, not defaulted.
  */
 export type SuggestDoor = "local" | "cloud" | null;
 
 /**
- * IS THERE A LIVE HOSTED SESSION BEHIND THIS WINDOW — asked of the engine, never remembered from
- * the launch frame.
- *
- * ── WHY THIS TYPE EXISTS, AND WHAT READING `credentialState` COST ───────────────────────────
- *
- * Every cloud arm below used to read `status.credentialState === "ready"`. That field is a
- * LAUNCH-TIME SNAPSHOT and the protocol says so in as many words — *"It is the value AT LAUNCH
- * and is never updated in place"* (`apps/sidecar/src/protocol.ts`) — and the shell re-emits it
- * from the one `ready` frame on every `engine_status` read, so nothing rewrites it for the life
- * of the process. A window that starts pre-auth reports `absent`; the person signs in through the
- * window's own sign-in surface; the engine's session is real, the mirror pulls, mail arrives —
- * and the field still says `absent`. Six settings panes (the away responder, signatures, folders,
- * subscription, security, account) and three Screener controls (the dormancy dial, the
- * auto-suggest opt-in, auto-unsubscribe) were gated on it, so all nine were missing for the rest
- * of the session with nothing on screen saying why. `unknown` — an engine older than the field —
- * lost the same nine on every launch, while the shell's own parser documents `unknown` as
- * "carry on, nothing is wrong".
- *
- * The window already holds the live answer: it polls `GET /health` on the cloud door and routes
- * the whole window off it (pending ⇒ a boot frame, signed-out ⇒ the sign-in surface, expired ⇒
- * the notice). That answer is what these rules take now.
- *
- *  · `"live"`    — the CURRENT engine's own `/health` said `signedIn`, under a key minted for
- *                  this engine. Every forwarded route will carry a bearer.
- *  · `"out"`     — signed out, or the hosted API's definitive refusal to renew.
- *  · `"unknown"` — not asked yet, or no bridge to ask over. Withheld, `suggestDoorFor`'s rule:
- *                  never a control whose every press could only refuse.
+ * IS THERE A LIVE HOSTED SESSION BEHIND THIS WINDOW — asked of the engine, never remembered
+ * from the launch frame. Cloud arms used to read `status.credentialState === "ready"`, a
+ * LAUNCH-TIME SNAPSHOT ("the value AT LAUNCH, never updated in place",
+ * `apps/sidecar/src/protocol.ts`): sign in through the window's own surface and it still says
+ * `absent`, so six settings panes and three Screener controls stayed missing for the session.
+ * The window already polls `GET /health` on the cloud door, and these rules take that answer:
+ * `"live"` = the CURRENT engine's `/health` said `signedIn`; `"out"` = signed out or a
+ * definitive refusal to renew; `"unknown"` = not asked yet or no bridge — withheld.
  */
 export type HostedSession = "live" | "out" | "unknown";
 
@@ -364,37 +262,14 @@ export function suggestDoorFor(status: EngineStatus | null, session: HostedSessi
 }
 
 /**
- * WHICH DOOR'S AWAY RESPONDER THIS INSTALL MAY CONFIGURE — a decision, so it is a function here and
- * not a condition buried in a render, for the reason `gateFor` and `suggestDoorFor` are.
- *
- * ── IT RETURNS `"local"` NOW, AND THIS DOCBLOCK USED TO ARGUE IT NEVER COULD ────────────────
- *
- * The standalone arm said: *"Nothing on this door SENDS the reply: the responder is a scheduled
- * pass in the hosted service, whose module map publishes four entry points and not that one… An
- * always-on replier cannot live in an app that only runs while its window is open."* The first
- * sentence stopped being true when the pass moved to `@trafficflow/services` — which the desktop
- * engine already bundles — and runs in the sidecar's drain with this machine's own SMTP dial.
- *
- * The second sentence was never an argument for withholding the control; it was an argument for a
- * SMALLER PROMISE. So the promise is smaller and it is stated on the pane: "Replies are sent while
- * ohmail is open on this computer." Mail that arrives overnight is answered on the next launch's
- * first drain, and the per-person throttle is what keeps that drain from answering a week of
- * correspondents at once.
- *
- *  · STANDALONE — `"local"`, whenever the engine is serving. The engine answers `GET/PUT
- *    /away-responder` out of its own database and its own drain sends from it. A credential the
- *    engine cannot read is not a reason to withhold the CONTROL: the responder is configuration,
- *    the pane's own failed-read state already covers an engine that will not answer, and gating on
- *    the password would hide the setting on exactly the launch where somebody is mid-setup.
- *  · HOSTED, SIGNED IN — `"cloud"`. The account is real, the engine forwards this endpoint to it
- *    with the bearer, and the hosted clock sends from the row that is written. Identical to a
- *    browser tab with one hop more.
- *  · HOSTED, NOT SIGNED IN — or no answer from the shell. `null`, like the suggest control's:
- *    every read would be refused, and a settings pane whose only state is an error about something
- *    it cannot fix from inside itself is worse than no pane.
- *
- * The two live arms are NOT interchangeable at the call site: `"local"` also selects the sentence
- * above, and `DesktopGate` reads this function's answer rather than re-deriving the mode.
+ * WHICH DOOR'S AWAY RESPONDER THIS INSTALL MAY CONFIGURE — a function, for `gateFor`'s reason.
+ * STANDALONE — `"local"` whenever the engine is serving: the pass lives in
+ * `@trafficflow/services`, which the desktop engine bundles, and the sidecar's drain sends
+ * with this machine's own SMTP dial — the smaller promise stated on the pane ("Replies are
+ * sent while ohmail is open on this computer"). A credential the engine cannot read does not
+ * withhold the CONTROL: the responder is configuration, and gating on the password hides the
+ * setting exactly when somebody is mid-setup. HOSTED, SIGNED IN — `"cloud"`: forwarded with
+ * the bearer. NOT SIGNED IN — `null`. `DesktopGate` reads this answer, never the mode.
  */
 export function awayDoorFor(
   status: EngineStatus | null,
@@ -414,26 +289,13 @@ export function awayDoorFor(
 
 /**
  * WHETHER THIS INSTALL MAY ASK ABOUT SETTINGS FOUND ON A MAILBOX — the profile-import card's
- * door rule, a pure function here for the reason `gateFor` and `awayDoorFor` are.
- *
- * It now returns the SAME shape as `awayDoorFor` for every status either has been shown, and it is
- * still deliberately a separate function. The old note here said the difference was the standalone
- * arm — "the responder is withheld there because nothing on that door SENDS the reply" — and that
- * ceased to be true when the responder's pass moved into the engine's own bundle. The reason to
- * keep two functions is the one `accountDoorFor` gives below: they ask different questions, and a
- * change to either must not be a silent change to the other.
- *
- * The standalone door is this flow's flagship case: the engine on this machine mounts the three
- * routes itself and answers them out of its own store, and a mailbox that arrives carrying another
- * ohmail's settings (leave Cloud, install the app) is asked before anything is applied.
- *
- *  · STANDALONE — always, even without the mailbox password. The card's resting question is a
- *    marker read the engine answers without dialling, and a held question it cannot re-verify
- *    is a 502 the shared hook already treats as "no card, ask again later". Gating on the
- *    credential here would silence the ask on exactly the launch where the person is mid-setup.
- *  · HOSTED, SIGNED IN — the engine forwards the three routes to the account with the bearer,
- *    so the question and the durable answer are the account's own, shared with every browser
- *    tab. Signed out, every call could only be refused: `null`, `suggestDoorFor`'s rule.
+ * door rule, a pure function for `gateFor`'s reason. It returns the SAME shape as
+ * `awayDoorFor` and is still deliberately separate: they ask different questions, and a change
+ * to either must not be a silent change to the other (`accountDoorFor`'s rule). STANDALONE —
+ * always, even without the mailbox password: the card's resting question is a marker read the
+ * engine answers without dialling, and gating on the credential would silence the ask exactly
+ * when somebody is mid-setup. HOSTED, SIGNED IN — the engine forwards the three routes to the
+ * account with the bearer. Signed out — `null`, `suggestDoorFor`'s rule.
  */
 export function profileImportDoorFor(
   status: EngineStatus | null,
@@ -451,87 +313,39 @@ export function profileImportDoorFor(
 }
 
 /**
- * WHETHER THIS INSTALL MAY ADMINISTER A HOSTED ACCOUNT FROM ITS SETTINGS — the gate on everything
- * that belongs to an ACCOUNT rather than to this machine.
- *
- * One function for one question, so the whole family moves together: the consent row (the dormancy
- * dial, the auto-suggest opt-in, auto-unsubscribe — `local-consent.ts`), the Screener's spend wire
- * (`cloud-suggest.ts`, which the opt-in's quote runs on), and the three panes that exist only
- * because there is an account behind this window — Subscription, Security and Account.
- *
- * It NO LONGER agrees with {@link awayDoorFor}, and that divergence is exactly why the two were
- * kept apart. This note used to say they agreed "on every status either has been shown" while
- * warning that "one of them could move". One of them moved: the away responder now answers
- * `"local"` on the standalone door, because the reply is sent by the engine on this machine.
- * This function still answers `null` there, and must — a standalone install has no account, so
- * there is no subscription, no second factor, no ledger and nothing to administer. Had these been
- * one function, the responder's new arm would have opened four panes onto an account that does not
- * exist.
- *
- *  · STANDALONE. There is no HOSTED account, so there is nothing here to administer: no ledger to
- *    price against, no watermark for the automatic suggestion pass, no subscription and no second
- *    factor. Every one of those surfaces is withheld structurally rather than offered dead, and
- *    expanding that door is not what this gate is for.
- *
- *    THIS BULLET USED TO SAY "no consent row to store a window or a spending watermark in", and
- *    the first half of that died when `consentRoutes` were mounted on `localRoutes`: a standalone
- *    install has `account_settings`, stores its own screening window there, and is handed a
- *    consent transport by `DesktopGate` for exactly that reason. The clause that survives is the
- *    AI one — a ledger and a watermark are hosted facts. Left uncorrected it made this file
- *    contradict `local-consent.ts`, which retires the same premise in full, and a reader checking
- *    whether that door can store a window would have got opposite answers from two files.
- *  · HOSTED, SIGNED IN. The account is real and the engine forwards these routes to it with the
- *    bearer, so what is read and written is the account's own row — identical to a browser tab with
- *    one hop more.
- *  · HOSTED, NOT SIGNED IN — or no door yet, or no answer from the shell. `null`: a settings pane
- *    whose only state is an error about something it cannot fix from inside itself is worse than
- *    no pane.
- *
- * THE SIGNED-IN TEST IS {@link HostedSession} AND NOT `credentialState`. This clause used to read
- * "`READY`, not merely present … on this door the credential IS the session", which was the right
- * idea about the wrong field: `credentialState` is the launch frame's, never rewritten, so an
- * install that signed in through the window's own surface kept answering `absent` and lost all
- * four panes for the rest of the session. See {@link HostedSession} for the whole account.
+ * WHETHER THIS INSTALL MAY ADMINISTER A HOSTED ACCOUNT FROM ITS SETTINGS — the gate on all
+ * that belongs to an ACCOUNT rather than this machine: the consent row (`local-consent.ts`),
+ * the Screener's spend wire (`cloud-suggest.ts`), and the Subscription, Security and Account
+ * panes. Deliberately NOT {@link awayDoorFor}: the responder answers `"local"` standalone,
+ * this stays `null` there — no account, no ledger, no watermark, no second factor (it DOES
+ * store its own screening window since `consentRoutes` mounted on `localRoutes`). HOSTED,
+ * SIGNED IN — the routes forward with the bearer; otherwise `null`. The signed-in test is
+ * {@link HostedSession}, never `credentialState` (a launch frame, never rewritten).
  */
 export function accountDoorFor(
   status: EngineStatus | null,
   session: HostedSession,
 ): "cloud" | null {
-  /* PAIRED TO ANOTHER COMPUTER — `null`, and it is the standalone door's answer for the standalone
-     door's reason: there is no HOSTED account behind this window. The far side is a computer of
-     the person's own running the same app, with no subscription, no second factor, no ledger and
-     no billing history. Left as `"cloud"` this one expression would have opened FOUR panes onto an
-     account that does not exist — Subscription quoting a plan, Security and Account offering doors
-     out to ohmail.app for a machine that has never had an account there, and the consent row's
-     spend quote pricing a batch against no ledger at all. That is why the eleven read one seam.
-
-     It is `null` rather than a third arm because there is nothing to put in these panes. A host's
-     own subscription, if it has one, belongs to the host's window; this install administers
-     nothing. */
+  /* PAIRED TO ANOTHER COMPUTER — `null`, the standalone door's answer for the standalone
+     door's reason: no HOSTED account behind this window — the far side is a computer of the
+     person's own running the same app, with no subscription, no second factor, no ledger.
+     Left as `"cloud"` this one expression would have opened FOUR panes onto an account that
+     does not exist and priced a batch against no ledger at all — why the eleven read one
+     seam. `null` rather than a third arm because there is nothing to put in these panes: a
+     host's own subscription belongs to the host's window; this install administers nothing. */
   if (isDesktopHost(status)) return null;
   return status?.mode === "cloud" && session === "live" ? "cloud" : null;
 }
 
 /**
- * WHICH CONSENT ROW THIS INSTALL WRITES INTO, and which SHAPE of it — a pure function here for
- * the reason {@link accountDoorFor} is, and a separate one from it because the questions parted
- * company the moment a cloud door stopped meaning a hosted account.
- *
- *  · `"cloud"`      — a HOSTED account. The row is the account's own, shared with every browser
- *                     tab, and folders are storable there.
- *  · `"standalone"` — this machine's own `account_settings`, or a paired host's. Same ten calls,
- *                     one field short: neither engine mounts a folder verb, so the transport
- *                     declares the folders flag unstorable and the shared shell withholds that
- *                     pane rather than drawing a switch that snaps back.
- *  · `null`         — no door, or a hosted door with no session. Every call would be refused.
- *
- * THE PAIRED DOOR IS `"standalone"` AND THAT IS THE FINDING. It reads `accountDoorFor` as false
- * (there is no account) and `firstRunDoorFor` as null (the mode is not local), so with no rule of
- * its own it would fall between the two and get NO consent transport at all — which is not a
- * withheld feature but a silently missing screening window, on the door where the row is served
- * perfectly well by the host one hop away. The far side of a paired door IS a standalone install;
- * `"standalone"` is a statement about what is there rather than about which mode this install is
- * in.
+ * WHICH CONSENT ROW THIS INSTALL WRITES INTO, and which SHAPE of it — a pure function,
+ * separate from {@link accountDoorFor} because the questions parted when a cloud door stopped
+ * meaning a hosted account. `"cloud"` — a HOSTED account's own row, folders storable there.
+ * `"standalone"` — this machine's own `account_settings`, or a paired host's: the same ten
+ * calls, one field short (no folder verb, so the flag is declared unstorable). `null` — no
+ * door, or a hosted door with no session. THE PAIRED DOOR IS `"standalONE"`: it reads
+ * `accountDoorFor` false and `firstRunDoorFor` null, so without a rule of its own it would
+ * get NO consent transport — a silently missing screening window; its far side IS standalone.
  */
 export function consentDoorFor(
   status: EngineStatus | null,
@@ -543,46 +357,28 @@ export function consentDoorFor(
 }
 
 /**
- * WHETHER THIS INSTALL MAY OFFER HOST MODE — the Devices pane's door rule, a pure function here
- * for the reason `gateFor` and `accountDoorFor` are: a decision a test can drive is worth more
- * than a condition a component describes.
- *
- * STANDALONE ONLY, and the boundary is the product rather than the plumbing. Host mode publishes
- * the mail engine on THIS computer to the user's own devices; on the standalone door that engine
- * holds the whole mailbox and there is something real to serve. An install mirroring a hosted
- * account has nothing of its own to publish — its devices should talk to the hosted service
- * directly — so the pane is withheld structurally there rather than offered onto the shell's
- * `local-door-required` refusal. The shell enforces the same rule one layer down (that problem
- * code exists precisely so a mis-wired window degrades instead of serving); this function is what
- * keeps the refusal unreachable from the UI.
- *
- * `null` also covers "no door yet" and "no answer from the shell", `suggestDoorFor`'s rule: never
- * a pane whose every control could only refuse.
+ * WHETHER THIS INSTALL MAY OFFER HOST MODE — the Devices pane's door rule, a pure function
+ * for `gateFor`'s reason. STANDALONE ONLY, and the boundary is the product: host mode
+ * publishes the mail engine on THIS computer, and on the standalone door that engine holds
+ * the whole mailbox — something real to serve. An install mirroring a hosted account has
+ * nothing of its own to publish (its devices should talk to the hosted service directly), so
+ * the pane is withheld structurally rather than offered onto the shell's
+ * `local-door-required` refusal — the shell enforces the same rule one layer down; this keeps
+ * it unreachable from the UI. `null` also covers "no door yet" and "no shell answer".
  */
 export function hostDoorFor(status: EngineStatus | null): "local" | null {
   return status?.mode === "local" ? "local" : null;
 }
 
 /**
- * WHETHER THE GUIDED SETUP FLOW EXISTS IN THIS WINDOW — the first-run stage's door rule, a pure
- * function here for the reason `gateFor` and `hostDoorFor` are.
- *
- * STANDALONE ONLY, and the boundary is which install the flow is ABOUT rather than which one can
- * afford it.
- *
- *  · STANDALONE. The flow is this install's own: the mailbox is on the user's own server, the
- *    consent that lets this machine re-arrange it is written on this machine
- *    (`POST /local/mailboxes/:id/organize`), the model is a property of the install, and nobody
- *    else has been asked any of it. This is the door the guided setup was written for.
- *  · HOSTED. The account's setup belongs to the ACCOUNT and has already been run — in a browser
- *    tab, or on whichever install first opened it — and its answers are stored on the hosted
- *    row. A second stage here would ask a person to consent again to something they consented to
- *    elsewhere, and its "Start over" would offer to forget a mailbox that other devices are
- *    mirroring. Withheld structurally: `AppShell` renders no stage without a host, so
- *    `#/first-run` draws nothing rather than drawing something that would refuse.
- *  · NO DOOR YET, or no answer from the shell. `null`, `suggestDoorFor`'s rule — and here it is
- *    also the honest one: with no door chosen the screen a person needs is `DoorChooser`, which
- *    is this door's step 1 and is not part of the stage.
+ * WHETHER THE GUIDED SETUP FLOW EXISTS IN THIS WINDOW — the first-run stage's door rule.
+ * STANDALONE ONLY, and the boundary is which install the flow is ABOUT. Standalone: the flow
+ * is this install's own — the consent that lets this machine re-arrange the mailbox is
+ * written here (`POST /local/mailboxes/:id/organize`), the model is a property of the
+ * install. Hosted: the account's setup has already been run elsewhere and its answers live on
+ * the hosted row — a second stage would re-ask a given consent, and its "Start over" would
+ * offer to forget a mailbox other devices mirror; withheld structurally (`AppShell` renders no
+ * stage without a host). No door or no shell answer — `null`: the needed screen is `DoorChooser`.
  */
 export function firstRunDoorFor(status: EngineStatus | null): "local" | null {
   return status?.mode === "local" ? "local" : null;
@@ -655,16 +451,12 @@ export function cloudProblem(address: string, password: string, totp: string): s
 }
 
 /**
- * The same, for the browser handoff — an address and a code, and no password anywhere.
- *
- * The ADDRESS is still asked for, and it is not a credential: it is what this install configures
- * its engine for and what the window shows in Settings afterwards. The handoff proves who you
- * are; it does not tell this machine which mailbox it is mirroring.
- *
- * The code is NOT pattern-checked beyond being present. It is a server-minted opaque value, and a
- * shape assertion here would be a second, quieter definition of what the server issues — the kind
- * that keeps working until the day the issuer changes and then refuses every valid code with a
- * sentence about a format nobody can see.
+ * The same, for the browser handoff — an address and a code, and no password anywhere. The
+ * ADDRESS is still asked for, and it is not a credential: it is what this install configures
+ * its engine for — the handoff proves who you are, not which mailbox this machine mirrors.
+ * The code is NOT pattern-checked beyond being present: a server-minted opaque value, and a
+ * shape assertion would be a second, quieter definition of what the server issues — working
+ * until the issuer changes, then refusing every valid code with a sentence nobody can see.
  */
 export function handoffProblem(address: string, code: string): string | null {
   if (!address.trim()) return "Your ohmail address is missing.";
@@ -683,24 +475,14 @@ export function handoffProblem(address: string, code: string): string | null {
  */
 
 /**
- * WHY A LINK WAS REFUSED, as a closed set of KINDS — never as a sentence.
- *
- * ── THE SEAM, AND WHY IT IS A KIND AND NOT PROSE ────────────────────────────────────────────
- *
- * This module is a DECISION module and the words for these refusals live in `desktopDoor`, which
- * is a window-only namespace (`vite.config.ts`'s `WINDOW_ONLY_NAMESPACES`): the served host client
- * does not carry it, so a catalogue read from here would either ship the whole namespace to a
- * phone loading that client or draw raw dotted keys there. So the decisions answer kinds and
- * `DoorChooser`'s `sentenceForKind` — which is window-only by construction — owns the sentences.
- *
- * The set is CLOSED with an explicit escape, because the alternative was measured elsewhere in
- * this window: an unrecognised code composing a catalogue key that does not exist and throwing
- * inside a render. An unknown kind maps to no sentence and the card shows the ENGINE's own words,
- * which are English but true and about something that actually happened.
- *
- * `not_sharing` is deliberately absent. A desktop without host mode composes no listener at all,
- * so it is `unreachable`; and `/hello` never answers `local` over a network, so there is no state
- * in which something ohmail-shaped answers and declines to share.
+ * WHY A LINK WAS REFUSED, as a closed set of KINDS — never as a sentence. The words live in
+ * `desktopDoor`, a window-only namespace (`vite.config.ts`'s `WINDOW_ONLY_NAMESPACES`): the
+ * served host client does not carry it, so a catalogue read HERE would ship the namespace to
+ * a phone or draw raw dotted keys — the decisions answer kinds, and `DoorChooser`'s
+ * `sentenceForKind` owns the sentences. CLOSED with an explicit escape: an unrecognised code
+ * once composed a catalogue key that did not exist and threw inside a render; an unknown kind
+ * maps to no sentence and the card shows the ENGINE's own words. `not_sharing` is absent —
+ * no host mode means no listener (`unreachable`), and `/hello` never answers `local` remotely.
  */
 export const HOST_REFUSAL_KINDS = [
   "cleartext",
@@ -763,27 +545,14 @@ export interface HostLinkStep {
 }
 
 /**
- * THE FIRST THING WRONG WITH THE LINK, decided in the WINDOW, before the engine is asked.
- *
- * Three refusals happen here rather than at the engine, and the reason is that all three are
- * facts about the LINK ITSELF — no dial can change the answer, and dialling first would mean
- * opening a connection this app has already decided it will not use. They are the phone's three
- * (`apps/mobile/src/net/pairing.ts`), which is not a coincidence: it is the same ceremony, so the
- * refusals are the same refusals, and a second set of rules for the desktop would be a second
- * opinion about which links are safe to pair with.
- *
- *  · NOT A PAIRING LINK — `parsePairLink` refuses a query string, a path that is not `/pair`, a
- *    foreign scheme, an empty fragment and a `k2` fragment this build cannot read. ONE kind for
- *    all of them, and the sentence names the SHAPE that is wanted: somebody who pasted the wrong
- *    thing has not made five different mistakes.
- *  · CLEARTEXT — `http://`. Refused before anything is sent, because the whole of what a pin buys
- *    is undone by a connection nobody encrypted.
- *  · NO PIN ON AN ORIGIN THAT NEEDS ONE — an IP literal, which no authority issues a certificate
- *    for. `originNeedsPin` is the shared rule (loopback exempt, DNS names verified by the trust
- *    store), asked rather than restated so the desktop and the phone cannot disagree.
- *
- * A refused link is returned as `link: null` even where it parsed, so no caller can reach past
- * the refusal to a token this function has already declined to use.
+ * THE FIRST THING WRONG WITH THE LINK, decided in the WINDOW, before the engine is asked. All
+ * three refusals are facts about the LINK ITSELF — no dial can change the answer — and they
+ * are the phone's three (`apps/mobile/src/net/pairing.ts`): the same ceremony, so a second
+ * set of rules would be a second opinion about which links are safe. NOT A PAIRING LINK —
+ * `parsePairLink` refuses a query string, a wrong path, a foreign scheme, an empty fragment,
+ * a `k2` this build cannot read; ONE kind for all, naming the SHAPE wanted. CLEARTEXT is
+ * refused before anything is sent; NO PIN where one is needed — `originNeedsPin`, the shared
+ * rule. A refused link returns `link: null` even where it parsed — no reaching past it.
  */
 export function hostLinkProblem(text: string): HostLinkStep {
   const none = { link: null, host: null, via: null };
@@ -801,24 +570,14 @@ export function hostLinkProblem(text: string): HostLinkStep {
 }
 
 /**
- * The refusal a bridge answer carries, or null when it succeeded.
- *
- * ── TWO ROUTES, TWO PLACES THE MEANINGFUL KIND LIVES, AND BOTH ARE READ ──────────────────────
- *
- * This read `details.kind` alone, which was right for the one route it was written against and
- * silently wrong for the other:
- *
- *  · `/cloud/probe` answers a GENERIC `code` (`invalid_request`, `cloud_probe_failed`) and puts
- *    what actually happened in `details.kind` — `cleartext`, `no_pin`, `not_ohmail`. Reading
- *    `code` there would collapse eight distinct refusals into two useless ones.
- *  · `/cloud/pair-redeem` has no `details` at all; its `code` IS the kind —
- *    `pair_account_mismatch`, `already_signed_in`, `restart_required`.
- *
- * So `details.kind` wins where it exists and `code` is the fallback, which reads both correctly
- * without either shadowing the other. Before this, every redeem refusal arrived as the empty kind
- * and fell through to the engine's English — including `pair_account_mismatch`, whose whole point
- * is a translated sentence with a verb attached, and `restart_required`, which the window would
- * have shown as an error rather than as the pairing that worked.
+ * The refusal a bridge answer carries, or null when it succeeded. Two routes put the
+ * meaningful kind in two places, and both are read: `/cloud/probe` answers a GENERIC `code`
+ * (`invalid_request`, `cloud_probe_failed`) with what happened in `details.kind`
+ * (`cleartext`, `no_pin`, `not_ohmail`) — reading `code` there collapses eight refusals into
+ * two; `/cloud/pair-redeem` has no `details` at all — its `code` IS the kind
+ * (`pair_account_mismatch`, `already_signed_in`, `restart_required`). So `details.kind` wins
+ * where it exists and `code` is the fallback; reading only `details.kind` sent every redeem
+ * refusal to the engine's English, `restart_required` shown as an error, not a worked pairing.
  */
 async function refusalOf(res: Response): Promise<HostRefusal | null> {
   if (res.ok) return null;
@@ -838,17 +597,13 @@ async function refusalOf(res: Response): Promise<HostRefusal | null> {
 }
 
 /**
- * STEP ONE: ask the ENGINE what is at the link's origin, and whether its key is the one the link
- * names. Null when there is a computer running ohmail there.
- *
- * NOTHING IS CONFIGURED HERE, and that ordering is the self-hosted door's finding applied to this
- * one: `enforceMirrorOwner` discards the previous mirror when the door changes, so configuring
- * for a candidate would cost somebody their whole copy for a typo, before anything had been
- * proved. A refusal at this step leaves the settings file, the previous door, its mirror and its
- * session exactly where they were.
- *
- * The window cannot dial — its content policy forbids it — so the engine is the process that
- * looks, and this hands it the origin and the pin as a CANDIDATE.
+ * STEP ONE: ask the ENGINE what is at the link's origin, and whether its key is the one the
+ * link names — null when a computer running ohmail is there. NOTHING IS CONFIGURED HERE, the
+ * self-hosted door's finding applied to this one: `enforceMirrorOwner` discards the previous
+ * mirror when the door changes, so configuring for a candidate would cost somebody their
+ * whole copy for a typo. A refusal leaves the settings file, the previous door, its mirror
+ * and its session exactly where they were. The window cannot dial — the engine is the process
+ * that looks, handed the origin and the pin as a CANDIDATE.
  */
 export async function proveHostLink(link: PairLink): Promise<HostProof> {
   let res: Response;
@@ -868,18 +623,14 @@ export async function proveHostLink(link: PairLink): Promise<HostProof> {
   if (refusal !== null) return { base: null, refusal };
 
   /**
-   * THE BASE THE ENGINE SAYS ANSWERED, and this window does not recompose it.
-   *
-   * A desktop host serves its API at the ROOT; a self-hosted stack serves it under `/api`. The
-   * door composed `/api` unconditionally, which made a desktop host unreachable from a desktop by
-   * construction — a 404 reported as "that is not an ohmail server" about a machine that was
-   * running one. The engine discovers which shape actually answered, so the base it reports is a
-   * measurement; deriving it again here would be a second opinion about the thing just measured,
-   * and the two would part company the day a third shape exists.
-   *
-   * The ORIGIN is the fallback, not a default: an engine that predates the field has, by that
-   * same fact, not learned to serve this door either, so the fallback is only ever exercised on a
-   * build where the redeem below is going to refuse anyway.
+   * THE BASE THE ENGINE SAYS ANSWERED, and this window does not recompose it. A desktop host
+   * serves its API at the ROOT; a self-hosted stack serves it under `/api`. The door composed
+   * `/api` unconditionally, which made a desktop host unreachable from a desktop by
+   * construction. The engine discovers which shape answered, so the base it reports is a
+   * measurement; deriving it again here would be a second opinion that parts company the day
+   * a third shape exists. The ORIGIN is the fallback, not a default: an engine that predates
+   * the field has not learned to serve this door either, so the fallback is only exercised
+   * on a build where the redeem below will refuse anyway.
    */
   try {
     const body = (await res.json()) as { base?: unknown };
@@ -900,18 +651,14 @@ export interface HostProof {
 }
 
 /**
- * STEP TWO: configure the door and redeem the link.
- *
- * The ORIGIN and the PIN go to the shell, which writes them into the settings file and rebuilds
- * the engine behind them. The TOKEN does not: it goes down the bridge to the engine at
- * `POST /cloud/pair-redeem`, which exchanges it for the bearer pair and seals that under this
- * install's key — the same rule the two older doors follow and for the same two reasons (the
- * shell refuses a payload carrying a secret, and a command argument is process state in the
- * shell).
- *
- * THE ORDER IS CONFIGURE-THEN-REDEEM and it cannot be the other way round. The token is spent
- * once; redeeming it against an engine still pointed at the previous door would seal a session
- * into a mirror that is about to be discarded, and there would be no second link to try with.
+ * STEP TWO: configure the door and redeem the link. The ORIGIN and the PIN go to the shell,
+ * which writes them into the settings file and rebuilds the engine. The TOKEN does not: it
+ * goes down the bridge to `POST /cloud/pair-redeem`, which exchanges it for the bearer pair
+ * and seals that under this install's key — the shell refuses a payload carrying a secret,
+ * and a command argument is process state in the shell. CONFIGURE-THEN-REDEEM, never the
+ * other way: the token is spent once, and redeeming against an engine still pointed at the
+ * previous door would seal a session into a mirror about to be discarded, with no second
+ * link to try.
  */
 export async function enterHostDoor(
   link: PairLink,
@@ -939,40 +686,25 @@ export async function enterHostDoor(
 
 /**
  * PAIR AGAIN, IN PLACE — for an install whose pairing ended and whose mirror is still here.
- *
- * ── WHY THIS IS NOT `enterHostDoor` WITH THE SAME ARGUMENTS ──────────────────────────────────
- *
- * The same distinction the cloud door draws between choosing a door and signing in again, and it
- * is a restarted engine. Choosing the door writes the settings and REPLACES the engine, which
- * takes somebody's mail off the screen for the length of a restart to change nothing — and worse,
- * a reconfigure is a door change, so `enforceMirrorOwner` would have grounds to discard the very
- * copy the pane promises is kept. Re-pairing against the same host is two requests against the
- * running engine and nothing else.
- *
- * THE SIGN-OUT COMES FIRST, and it is not optional: a redeem while a session is still held is
- * refused `409 already_signed_in`. It is also safe — signing out FREEZES the mirror, the cursor
- * and the recorded owner rather than discarding them, which is what makes "the copy of your mail
- * here is kept" a true sentence rather than a hopeful one.
- *
- * A host that was REINSTALLED is a different account behind the same address, and the engine
- * refuses that (`409 pair_account_mismatch`) with nothing sealed and nothing discarded — so this
- * path cannot quietly merge two accounts into one database. The remedy there is the takeover or a
- * fresh door, both of which say what they discard.
+ * Not `enterHostDoor` again: choosing the door writes settings and REPLACES the engine —
+ * mail off the screen for a restart that changes nothing, and a reconfigure is a door change
+ * `enforceMirrorOwner` could discard the promised copy over; re-pairing is two requests
+ * against the running engine. THE SIGN-OUT COMES FIRST, not optional: a redeem while a
+ * session is held is refused `409 already_signed_in` — and signing out FREEZES the mirror,
+ * cursor and recorded owner ("the copy of your mail here is kept" stays true). A REINSTALLED
+ * host is a different account, refused (`409 pair_account_mismatch`), nothing discarded.
  */
 export async function pairAgainWithHost(
   link: PairLink,
   /**
    * START OVER — the person's explicit press, never an inference from the refusal.
-   *
-   * `409 pair_account_mismatch` means this machine holds mail from a DIFFERENT account on that
-   * computer, which happens when the host was reinstalled at the same address: same address, same
-   * base, different account, so neither comparison the engine already makes can see it. The plain
-   * redeem is then a dead end with nothing to press.
-   *
-   * This is that press, and it costs the previous account's copy on this machine. So it is a
-   * separate argument a caller has to pass on purpose — the refusal must never select it by
-   * itself. The code is also SPENT by then (the engine redeems at the host before comparing
-   * accounts), so the caller needs a fresh one from that computer's Settings → Devices.
+   * `409 pair_account_mismatch` means this machine holds mail from a DIFFERENT account on
+   * that computer (a host reinstalled at the same address: same address, same base, different
+   * account — neither comparison the engine makes can see it), so the plain redeem is a dead
+   * end. This press costs the previous account's copy on this machine, so it is a separate
+   * argument a caller passes on purpose — the refusal must never select it by itself. The
+   * code is also SPENT by then (the engine redeems at the host before comparing accounts),
+   * so the caller needs a fresh one from that computer's Settings → Devices.
    */
   startOver = false,
 ): Promise<HostDoorResult> {
@@ -1080,21 +812,13 @@ async function redeemPairing(
 
 /**
  * WHAT THIS INSTALL CALLS ITSELF ON THE HOST'S DEVICES LIST — A CENSUS NOW, NOT A WIRE VALUE.
- *
- * ── IT USED TO RIDE THE REDEEM, AND IT NO LONGER DOES ────────────────────────────────────────
- *
- * The engine composes the device kind from its own `process.platform` and ignores whatever
- * arrives on the wire, deliberately: what platform an install runs on is that process's own fact,
- * not something a caller over the bridge may assert. Sending it too was harmless — same machine,
- * same answer — and misleading, because a reader would take it for the value that decides. The
- * redeem sends only the token now.
- *
- * WHAT THIS STILL BUYS is the parity check. The window and the engine must agree about the
- * vocabulary even though only one of them speaks it, so `desktop-host-door.test.ts` holds this
- * function against the server's admitted set AND against the engine's own derivation. If those
- * ever diverge the census reddens here, where it is cheap, rather than at a redeem in front of
- * somebody — which is what the `desktop-mac`/`desktop-macos` split would have cost: a 400 after
- * the single-use code had already been spent.
+ * The engine composes the device kind from its own `process.platform` and ignores the wire,
+ * deliberately: an install's platform is that process's own fact, not something a caller over
+ * the bridge may assert; sending it too was harmless but misleading, so the redeem sends only
+ * the token. What this still buys is the parity check: `desktop-host-door.test.ts` holds this
+ * function against the server's admitted set AND the engine's own derivation, so a divergence
+ * reddens here, cheaply — not as a 400 after a single-use code was spent (the
+ * `desktop-mac`/`desktop-macos` split's cost).
  */
 export function desktopDeviceKind(platform: string = BUILD_PLATFORM): string {
   switch (platform) {
@@ -1116,35 +840,14 @@ export function desktopDeviceKind(platform: string = BUILD_PLATFORM): string {
 }
 
 /**
- * How long the window waits for a reconfigured engine to announce itself.
- *
- * A first launch on a new door has a database to create and a data directory to take an
- * exclusive lock on, and both are slower on a cold disk than anything that follows. Long enough
- * that a slow first start is not reported as a failure; short enough that an engine which will
- * never serve — a directory another copy already holds, a migration that failed — is said out
- * loud rather than spun on.
- *
- * ── WHY THIS IS MINUTES AND NOT SECONDS ───────────────────────────────────────────────────────
- *
- * It was thirty seconds, and thirty seconds was chosen against a cold-disk open — measured at well
- * under a second on an established mirror. What it did not cover is Postgres CRASH RECOVERY, which
- * happens inside the engine's database open and is bounded by the size of the write-ahead log
- * rather than by the mailbox. An engine whose previous run left a large log replays it before it
- * can serve anything: measured at roughly 305 MB/s, so a directory that had accumulated tens of
- * gigabytes took near two minutes to come up, every launch, and was reported here as an engine that
- * had failed to start.
- *
- * That log is now bounded — the engine checkpoints on a timer while it runs, which it never used to
- * do — so an install made after this change never accumulates one. What the budget still has to
- * cover is the ONE launch that heals an install which grew a large log before it: recovery ends in
- * a checkpoint, after which the directory is small and every later launch is sub-second. Cutting
- * that launch short is the worst possible move, because a recovery that does not finish leaves the
- * log exactly as it found it and the next launch is longer.
- *
- * Note what this bound does and does not do. It ends a WAIT and returns the last status seen; it
- * never stops or kills the engine, which goes on starting either way. So the cost of it being too
- * large is a slower sentence about a genuinely dead engine, and the cost of it being too small is
- * telling somebody their mail engine failed while it is busy repairing itself.
+ * How long the window waits for a reconfigured engine to announce itself: long enough that a
+ * slow first start is not reported as failure, short enough that an engine which will never
+ * serve is said out loud. MINUTES, NOT SECONDS: thirty seconds was chosen against a cold-disk
+ * open and did not cover Postgres CRASH RECOVERY, bounded by the write-ahead log — measured
+ * at roughly 305 MB/s, so tens of accumulated gigabytes took near two minutes every launch
+ * and read as a failed engine. The log is bounded now (the engine checkpoints on a timer), so
+ * the budget covers the ONE launch that heals an install which grew a large log before that.
+ * The bound ends a WAIT and returns the last status seen — it never stops or kills the engine.
  */
 export const SETTLE_MS = 180_000;
 const POLL_MS = 250;
@@ -1243,38 +946,14 @@ function sameAddress(a: string | undefined, b: string): boolean {
 }
 
 /**
- * WHETHER THIS SUBMIT IS A RECONFIGURE OF THE MAILBOX ALREADY OPEN — the decision that picks the
- * order the door takes, exported so a test can drive it without a shell.
- *
- * `standing` is what the shell said about the engine BEFORE this attempt touched anything.
- * `enterLocalDoor` cannot read it for itself: its own first act on the other arm is
- * `engine_configure`, which replaces the engine, so the fact this asks about is one the caller
- * holds and the door destroys. A caller that passes nothing gets `false`, which is the answer
- * that is correct when there is no engine standing — the first-connect order.
- *
- * Every clause is load-bearing, and each one is a case where sealing first would be wrong:
- *
- *  · `serving` WITH a `mailboxId` — there has to be a row to `PATCH`. A starting engine has none.
- *  · `mode === "local"` — a hosted install's credential is a SESSION, and its mailbox row is a
- *    mirror of somebody's account. Choosing the local door there is a door SWITCH, not a
- *    reconfigure, and sealing a mail-server password onto the mirror's row would put a credential
- *    on a mailbox this install is about to throw away.
- *  · `credentialState === "ready"` — this is the precondition of the defect itself, not a
- *    convenience. `ready` means the engine resolved a sealed password it can decrypt
- *    (`engine.ts`: `credentialState: () => (await resolveLogin()).state`), which is exactly the
- *    secret a relaunch against a new host would dial with. `absent` has nothing to leak and no
- *    credential to diverge; `unreadable` means the keystore will not open the row, so the boot
- *    dials with nothing and the install is already asking to be re-entered. Both take the
- *    first-connect order, which is the one that works for them.
- *  · the ADDRESS IS UNCHANGED — and this is the case that needed `ensureLocalWorld` read as
- *    truth rather than assumed. It looks the mailbox up by `lower(address)` within the account
- *    and INSERTS a fresh row when it finds none (`identity.ts`), so a changed address means the
- *    engine that comes back will serve a DIFFERENT, newly minted mailbox id. Sealing onto the
- *    standing id would put the new server's credential on a row that still names the old address
- *    and that nothing will ever read. It also means the leak this reorder exists to stop cannot
- *    happen there: the new row has no credential at all, so `resolveLogin()` answers `absent` and
- *    the boot dials nothing. An address change therefore takes the first-connect order, and it is
- *    safe on that arm rather than merely tolerated.
+ * WHETHER THIS SUBMIT IS A RECONFIGURE OF THE MAILBOX ALREADY OPEN — picks which order the
+ * door takes; exported so a test can drive it without a shell. `standing` is what the shell
+ * said BEFORE this attempt; absent means `false`, the first-connect order. Every clause is
+ * load-bearing: `serving` WITH a `mailboxId` (a starting engine has no row to `PATCH`);
+ * `mode === "local"` (choosing local over a hosted install is a door SWITCH);
+ * `credentialState === "ready"` (the sealed password is exactly what a relaunch would dial;
+ * `absent`/`unreadable` have nothing to leak); ADDRESS UNCHANGED (a new address makes
+ * `ensureLocalWorld` INSERT a fresh row, `identity.ts` — first-connect is the safe order there).
  */
 export function reconfiguresLocalDoor(
   standing: EngineStatus | null | undefined,
@@ -1292,34 +971,14 @@ export function reconfiguresLocalDoor(
 }
 
 /**
- * SEAL THE PASSWORD — the one request in this file that carries a secret, written once so the two
- * orders below cannot disagree about what it sends.
- *
- * Returns null on success, or the sentence to show. The engine tries the password before it seals
- * it, so a refusal here is the mail server's answer and not a stored credential that will fail
- * quietly on the next launch.
- *
- * ── THE TRANSPORT GOES WITH IT, AND BOTH ORDERS DEPEND ON THAT ──────────────────────────────
- *
- * This body used to be the password alone, on the reasoning that the engine had just been
- * configured with the transport and therefore already knew it. It knows it as a SETTINGS FILE;
- * this route reads `mailbox_credentials`, and on a first connect there is no such row. The
- * engine's boot inserts one only when a password arrives in its own config, which on this path it
- * deliberately never does — the shell has no route for a secret. `ensureLocalWorld` inserts the
- * `mailboxes` row and nothing else.
- *
- * So the service merged a pass-only patch over an absent stored meta, got a config with no host,
- * and refused it: **"imap host is required"** — reported by the first external user against their
- * own mail server (issue #5), who had in fact typed every field. The patch is a complete
- * statement about the transport, which is what the merge is built to accept (patch wins field by
- * field) and what `POST /mailboxes` has always sent.
- *
- * On the RECONFIGURE order it is that completeness that makes sealing-before-configuring possible
- * at all: the mailbox service's `probedImapMeta` dials the MERGED PATCH, not whatever the running
- * engine is configured for, so an engine still serving host A proves and seals the credential for
- * host B. The stored `meta` then records the host that was actually DIALLED, and the service holds
- * that invariant on its own account against a concurrent writer: it rebuilds the same merge under
- * the mailbox row's lock and refuses with a 409 rather than store a combination no probe tried.
+ * SEAL THE PASSWORD — the one request in this file that carries a secret, written once so the
+ * two orders below cannot disagree about what it sends; null on success, else the sentence to
+ * show, and the engine tries the password before sealing it. THE TRANSPORT GOES WITH IT: this
+ * route reads `mailbox_credentials`, and on a first connect there is no row — a pass-only
+ * patch merged over absent meta got "imap host is required" (issue #5). A complete patch is
+ * also what allows sealing first on the RECONFIGURE order: `probedImapMeta` dials the MERGED
+ * PATCH, so an engine serving host A proves the credential for host B, and the stored `meta`
+ * records the host DIALLED — held under the row's lock (409 rather than an unprobed combination).
  */
 async function sealLocalPassword(
   mailboxId: string,
@@ -1327,68 +986,36 @@ async function sealLocalPassword(
   password: string,
   /**
    * THE OUTGOING TRANSPORT, AS A BLOCK THE SERVICE CAN STORE — not only the witness below.
-   *
-   * `smtpHost` records which submission server this password was SAVED FOR; it is a string on the
-   * incoming credential's meta and nothing dials it. That was enough while an install held one
-   * mailbox and read its submission coordinates out of the process configuration.
-   *
-   * It stopped being enough the moment an install could hold two. A process setting describes one
-   * server, and the send path now reads the MAILBOX's own `smtp` credential row
-   * (`makeSendAdapter`: the smtp row, else the imap host on 587). A mailbox with no such row
-   * would fall back to a host that belongs to a different mailbox — so #2 would submit through
-   * #1's server, authenticating with #2's password, and the failure would look like a wrong
-   * password rather than a wrong server.
-   *
-   * So the block travels with the seal and the service writes an `smtp` credential row for it,
-   * probing it first exactly as the hosted `PATCH /mailboxes/:id` does (the local route injects
-   * the same `makeSmtpProbe`). `null` where the form and the preset name no outgoing server at
-   * all: nothing is written, and `smtpHost: ""` below still records that the password was saved
-   * for a pair with nothing on the outgoing side.
+   * With two mailboxes the send path reads the MAILBOX's own `smtp` credential row
+   * (`makeSendAdapter`: the smtp row, else the imap host on 587) — a mailbox without one
+   * would submit through another mailbox's server with its own password. So the block travels
+   * with the seal and the service writes an `smtp` row, probed first exactly as the hosted
+   * `PATCH /mailboxes/:id` does; `null` where the form and preset name no outgoing server —
+   * nothing written, and `smtpHost: ""` below still records the outgoing-less pair.
    */
   smtp: LocalTransport | null,
   /**
-   * THE OUTGOING SERVER THIS PASSWORD IS BEING SAVED FOR — recorded with the credential, never
-   * dialled by this request.
-   *
-   * One password covers both transports here, so the person filling this form named two servers
-   * and authorized the secret for both. Only the incoming one was written down: the engine reads
-   * its outgoing coordinates from the settings file, which can be changed without the credential
-   * moving at all. So a change that touched only the outgoing server left the stored password
-   * offerable to a server nobody had named, and the engine had nothing to compare against to
-   * notice. This is that missing half.
-   *
-   * `""` when the form and the preset name no outgoing server, and that is a STATEMENT rather than
-   * a silence: it records that this password was saved for a pair with nothing on the outgoing
-   * side. The engine reads it that way — a submission server that appears afterwards without the
-   * password being saved for it is refused, exactly as a changed one is. An absent value means
-   * something different and weaker ("this row says nothing"), which is what every credential
-   * sealed before this key existed carries, so the two must not be spelled the same.
+   * THE OUTGOING SERVER THIS PASSWORD IS BEING SAVED FOR — recorded with the credential,
+   * never dialled by this request. One password covers both transports, and only the incoming
+   * server used to be written down: a change touching only the outgoing server left the
+   * stored password offerable to a server nobody had named. `""` is a STATEMENT, not a
+   * silence: the password was saved for a pair with nothing outgoing, and a submission server
+   * appearing afterwards without the password being saved for it is refused. ABSENT means
+   * something weaker ("this row says nothing") — every credential sealed before this key
+   * existed carries that — so the two must not be spelled the same.
    */
   smtpHost: string,
 ): Promise<DoorRefusal | null> {
   try {
-    /* -- `/local/…`, AND THAT IS NOT A STYLE CHOICE -----------------------------------------
-     *
-     * The shared `PATCH /mailboxes/:id` is `stepUp: true`. On this door the launch session's
-     * second-factor stamp is written ONCE at boot, so that flag refuses every call from five
-     * minutes after launch for the life of the process — and the measured symptom was
-     * re-connecting a mailbox thirty-five minutes in and being told **"recent two-factor
-     * authentication required"**, on a door that has no second factor and no way to obtain one.
-     * Quitting and reopening the app was the only cure a person had.
-     *
-     * IT PASSED ON THE FIRST CONNECT BY LUCK OF TIMING, which is why it stayed hidden: that arm
-     * seals seconds after `engineConfigure` has replaced the engine, inside the one window where
-     * the stamp is fresh. Only the RECONFIGURE arm — which seals over an engine that has been up
-     * a while, deliberately, so a refusal leaves the working configuration in place — ever met
-     * the refusal. Both call this function, so routing it here makes the first connect's success
-     * structural rather than accidental.
-     *
-     * The local route's authority is the per-launch bearer: minted at boot, added shell-side,
-     * never reaching this window, impossible for a page to compose. It runs the SAME
-     * `MailboxService.update` with the SAME probes, so a password that cannot log in is still
-     * refused on the form. `DELETE /local/mailboxes/:id` and
-     * `POST /local/mailboxes/:id/organize` are the precedent and carry the argument in full.
-     */
+    /* -- `/local/…`, AND THAT IS NOT A STYLE CHOICE ------------------------------------------
+     * The shared `PATCH /mailboxes/:id` is `stepUp: true`, and this door's second-factor
+     * stamp is written ONCE at boot — measured: re-connecting a mailbox thirty-five minutes
+     * in was told "recent two-factor authentication required", on a door with no second
+     * factor. It passed on the FIRST connect by luck of timing (that arm seals seconds after
+     * the engine was replaced); both arms call this function now, making that success
+     * structural. The local route's authority is the per-launch bearer — minted at boot,
+     * added shell-side, never in this window — and it runs the SAME `MailboxService.update`
+     * with the SAME probes; the older `/local/` verbs carry the argument in full. */
     const res = await bridgeFetch(`/local/mailboxes/${encodeURIComponent(mailboxId)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -1414,14 +1041,11 @@ async function sealLocalPassword(
 
 /**
  * WHICH ADDRESS A MAILBOX ROW CARRIES, or `null` when this install cannot say.
- *
- * `GET /mailboxes/:id` on the engine's own route table — `cost: "read"`, no step-up, so it is
- * reachable at any point in a launch. Exported so the first-connect guard above it can be driven
- * without a shell.
- *
- * EVERY FAILURE ANSWERS `null`: a refusal, a 404, a body that is not JSON, a row with no address.
- * The one caller reads `null` as "this is not provably the right row" and refuses, which is the
- * safe direction — the alternative is sealing a password onto a row nobody has identified.
+ * `GET /mailboxes/:id` on the engine's own table — `cost: "read"`, no step-up, reachable at
+ * any point in a launch; exported so the first-connect guard can be driven without a shell.
+ * EVERY FAILURE ANSWERS `null` (a refusal, a 404, non-JSON, a row with no address), and the
+ * caller reads `null` as "not provably the right row" and refuses — the safe direction; the
+ * alternative is sealing a password onto a row nobody has identified.
  */
 export type SettledRowAddress =
   /** The row answered, and this is the address it carries. */
@@ -1465,45 +1089,24 @@ const OPENING_A_DIFFERENT_MAILBOX =
   + "the password you typed was not saved. Add this mailbox from Settings → Mailboxes instead.";
 
 /**
- * Door one: this machine opens the user's own mailbox.
- *
- * Settings over the command, password over the bridge, and never the other way — the shell has no
- * route for a password and the engine has no route for a data directory.
- *
- * ── THE TWO ORDERS, AND WHY THERE ARE TWO ───────────────────────────────────────────────────
- *
- * `engine_configure` REPLACES the engine: it writes the settings and starts a new process against
- * them. Which side of that the password goes on is not a style question, and one order is wrong
- * on each arm of the same step.
- *
- * A FIRST CONNECT must configure first. There is no mailbox row to address a password to until
- * the engine has made one, and no stored secret to leak — the boot resolves `absent` and dials
- * nothing.
- *
- * A RECONFIGURE must seal first, and configuring first fails in both directions:
- *
- *  · ON SUCCESS the replacement engine boots with the NEW host and the PREVIOUSLY sealed password.
- *    `resolveLogin()` has no opinion about which host a secret was sealed for, so the adapter
- *    dials the new server with the old password BEFORE `settle()` returns — before the door has
- *    even asked for the new one. Correcting a typo'd hostname costs nothing; moving a mailbox to
- *    a server you do not control hands that server your previous password.
- *  · ON REFUSAL — wrong password, unreachable host — the settings file already says the new host
- *    and the credential correctly still says the old one. The door returns a sentence, the person
- *    backs out, and nothing rolls the settings back: the next launch configures the new host with
- *    the old password, and a mailbox that worked this morning does not connect.
- *
- * Sealing first ends both, because the seal is provable without changing anything: `PATCH
- * /mailboxes/:id` dials what the BODY says, so the engine still running against the old host is
- * what proves the credential for the new one. A refusal then returns with the install byte-for-
- * byte as it was found, and a success leaves the settings and the credential naming one host.
- *
- * WHAT THIS ORDER DOES NOT DO, said plainly. It fixes the defect FROM THIS DOOR. Any other route
- * that changes an install's servers — a settings file edited by hand, a future surface — still
- * starts the engine against whatever is sealed, and the general close is the ENGINE's, not this
- * one's: it refuses a password whose recorded server disagrees with the one it is configured for,
- * on the incoming side at launch and on the outgoing side at each send. That is why this function
- * now states BOTH servers when it saves a password: the credential records the pair it was saved
- * for, which is what gives the engine something to compare.
+ * Door one: this machine opens the user's own mailbox. Settings over the command, password
+ * over the bridge, never the other way — the shell has no route for a password and the engine
+ * none for a data directory. TWO ORDERS: a FIRST CONNECT must configure first — no mailbox
+ * row exists yet, and the boot resolves `absent` and dials nothing. A RECONFIGURE must seal
+ * first: configured first, a SUCCESS dials the NEW host with the PREVIOUSLY sealed password
+ * before the door has asked for the new one, and a REFUSAL leaves settings naming the new
+ * host while the credential names the old — the next launch configures that pair, and a
+ * mailbox that worked this morning does not connect.
+ */
+
+/*
+ * Sealing first is provable without changing anything: `PATCH /mailboxes/:id` dials what the
+ * BODY says, so the engine still running against the old host proves the credential for the
+ * new one; a refusal returns the install byte-for-byte as found. WHAT THIS ORDER DOES NOT
+ * DO: it fixes the defect FROM THIS DOOR. Any other route that changes an install's servers
+ * still boots against whatever is sealed — the general close is the ENGINE's: it refuses a
+ * password whose recorded server disagrees with the configured one, incoming at launch and
+ * outgoing at each send. That is why this function states BOTH servers when saving.
  */
 export async function enterLocalDoor(
   f: LocalDoorFields,
@@ -1527,15 +1130,12 @@ export async function enterLocalDoor(
   const address = f.address.trim();
   const user = f.user.trim() || address;
   /**
-   * ONE transport, resolved ONCE, used by BOTH steps below.
-   *
-   * The shell is configured with it and the credential is probed and stored with it, and those
-   * two must describe the same dial. Deriving them separately is how they drift; a single value
-   * is why they cannot. See the patch body for what depended on this.
-   *
-   * `smtpHost` above is the same discipline on the outgoing side, and it matters MORE there: the
-   * settings and the credential each get that one value, and the engine later refuses to send when
-   * the two disagree. Two spellings of it would produce an install that refuses its own sends.
+   * ONE transport, resolved ONCE, used by BOTH steps below: the shell is configured with it
+   * and the credential is probed and stored with it, and those two must describe the same
+   * dial — deriving them separately is how they drift. `smtpHost` above is the same
+   * discipline on the outgoing side, where it matters MORE: the settings and the credential
+   * each get that one value, and the engine refuses to send when the two disagree — two
+   * spellings would produce an install that refuses its own sends.
    */
   const imap: LocalTransport = {
     host: f.imapHost.trim() || preset.imap.host,
@@ -1545,17 +1145,12 @@ export async function enterLocalDoor(
   };
 
   /**
-   * THE OUTGOING TRANSPORT, resolved once for the same reason {@link imap} is: the settings file
-   * and the stored credential each take it, and two spellings of it produce an install that
-   * refuses its own sends.
-   *
-   * `null` where nothing names a submission server. It is the ABSENCE that is meaningful there —
-   * `sealLocalPassword` writes no `smtp` credential row, and `smtpHost: ""` still records that the
-   * password was saved for a pair with nothing on the outgoing side.
-   *
-   * The USER is the incoming login. One form, one identity: the person typed one username, and a
-   * mailbox whose submission server wants a different one is a case this door has never offered
-   * a field for.
+   * THE OUTGOING TRANSPORT, resolved once for the same reason {@link imap} is: the settings
+   * file and the stored credential each take it, and two spellings produce an install that
+   * refuses its own sends. `null` where nothing names a submission server — the ABSENCE is
+   * meaningful: `sealLocalPassword` writes no `smtp` row, and `smtpHost: ""` records a pair
+   * with nothing outgoing. The USER is the incoming login — one form, one identity; a
+   * submission server wanting a different one has never been offered a field here.
    */
   const smtp: LocalTransport | null = smtpHost
     ? { host: smtpHost, user, port: smtpPort, secure: implicitTls(smtpPort) }
@@ -1571,29 +1166,14 @@ export async function enterLocalDoor(
 
   if (reconfiguresLocalDoor(standing, address)) {
     /**
-     * ── AND THE ROW THIS WOULD SEAL ONTO HAS TO CARRY THE TYPED ADDRESS, HERE TOO ─────────────
-     *
-     * `reconfiguresLocalDoor` compares the typed address against `standing.address`, which is the
-     * SETTINGS FILE's. `standing.mailboxId` is the engine's ready snapshot, which is "the active
-     * row for the configured address, ELSE THE OLDEST ACTIVE ROW". Those two agreed for as long as
-     * an install held one mailbox, and this release makes them disagree for the first time:
-     * removing the seed while another mailbox remains deliberately does NOT sign out, so
-     * `config.json` goes on naming the removed address A while `mailboxId` is the survivor B.
-     *
-     * Re-entering A's password from Settings → Desktop — the form arrives pre-filled with the
-     * configured address, so this is the ordinary gesture — then took this arm and sealed A's
-     * host, user and password onto ROW B's credential. From the next boot B is a non-seed row and
-     * dials its own credential meta, which now describes mailbox A: it would sync A's mail into
-     * the mirror labelled with B's address.
-     *
-     * The first-connect arm's twin of this was closed with the same helper. This is the same door
-     * one step later and the same class of write, so it gets the same check and the same words —
-     * `localMailboxAddress` returns `null` for every failure, and "we could not check" refuses
-     * with its own sentence rather than claiming a mismatch nobody observed.
-     *
-     * BEFORE THE SEAL AND BEFORE THE CONFIGURE, which is what makes the refusal free: nothing
-     * about this install has changed when it fires, so the mailbox is left on the configuration
-     * that was working — unlike the first-connect arm, where the engine has already been replaced.
+     * ── THE ROW THIS WOULD SEAL ONTO HAS TO CARRY THE TYPED ADDRESS, HERE TOO ─────────────
+     * `reconfiguresLocalDoor` compares the typed address against the SETTINGS FILE's;
+     * `standing.mailboxId` is "the active row for the configured address, ELSE THE OLDEST
+     * ACTIVE ROW", and the two disagree once removing the seed keeps another mailbox signed
+     * in: `config.json` names removed address A while `mailboxId` is survivor B, so
+     * re-entering A's password sealed A's credential onto ROW B — which then syncs A's mail
+     * into the mirror labelled B. Same check as the first-connect twin: `localMailboxAddress`
+     * answers `null` for every failure — refused BEFORE the seal and configure, so it is free.
      */
     const standingRow = await localMailboxAddress(standing.mailboxId);
     /* `unreachable` FALLS THROUGH on purpose — see the union. The seal below fails against the
@@ -1613,33 +1193,14 @@ export async function enterLocalDoor(
     }
 
     /**
-     * ── THE ONE WINDOW THIS ORDER OPENS, NAMED RATHER THAN LEFT TO BE FOUND ─────────────────
-     *
-     * From here until the configure below returns, the CREDENTIAL names host B and the SETTINGS
-     * still name host A. Both halves of that window are real:
-     *
-     *  · IF THE CONFIGURE FAILS, OR THE APP EXITS HERE, the install is left in the mirror image
-     *    of the divergence this ordering exists to end, and the next launch would offer B's
-     *    password to A. The catch below says exactly that, in a sentence a person can act on —
-     *    which covers the half where there is somebody to tell. A crash has nobody to tell.
-     *  · A SEND RACING THIS INTERVAL authenticates to A with B's password: `openLocalSend`
-     *    resolves the credential afresh for every send while holding the SMTP coordinates it
-     *    booted with. Not reachable from this window — the door is a modal over the whole app —
-     *    but a scheduled send fires on the engine's own timer.
-     *
-     * Both close at the same single point and neither closes here — the ENGINE refuses a password
-     * whose recorded server disagrees with the one it is configured for. It does that now, which is
-     * what makes this window survivable rather than merely narrow: a launch that comes up on the
-     * old incoming server withholds the credential, and a send fired into the window is refused
-     * before a socket exists on either transport. This ordering is what made that refusal
-     * load-bearing rather than merely desirable, and the two shipped separately in that order.
-     *
-     * WHY THIS IS STILL THE RIGHT TRADE, said plainly rather than assumed. Before this ordering
-     * the bad state was THE NORMAL PATH: every reconfigure to a new host dialled it with the old
-     * password, and every refused password left the two disagreeing until somebody noticed. After
-     * it, the bad state needs the process to die inside one `engine_configure` — a settings-file
-     * write and a process spawn. A much narrower window in the same class is progress. Calling it
-     * closure would not be, and nothing here or in the release notes says it is.
+     * ── THE ONE WINDOW THIS ORDER OPENS, NAMED ────────────────────────────────────────────
+     * From here until the configure returns, the CREDENTIAL names host B and the SETTINGS
+     * still name host A: a configure failure or an exit here leaves the next launch offering
+     * B's password to A (the catch below says so), and a scheduled send racing the interval
+     * authenticates to A with B's password. Both close at one point, and not here: the ENGINE
+     * refuses a password whose recorded server disagrees with the configured one, which makes
+     * the window survivable. The bad state used to be the NORMAL path; now it needs a death
+     * inside one `engine_configure` — narrower in the same class, and never called closure.
      */
 
     /* ONE configure, not two. The first-connect order needs a second because it seals into an
@@ -1668,28 +1229,14 @@ export async function enterLocalDoor(
   }
 
   /**
-   * ── AND THE ROW THE ENGINE SETTLED ON HAS TO BE THE ONE THAT WAS TYPED ─────────────────────
-   *
-   * `settled.mailboxId` is whatever the replacement engine reports it is opening, and this arm
-   * then seals a password onto it. That was safe while an install held ONE mailbox: the seed
-   * predicate either found the row for the typed address or made one, and there was no other row
-   * it could have named.
-   *
-   * An install that holds several ends that. The engine reports the SEED's mailbox — the active
-   * row matching the configured address, else the OLDEST active row, else `""` — so a first
-   * connect made while other mailboxes are live can settle on somebody else's row and this seal
-   * would put the newly typed password onto it. The reachable shape is the one the ruling names:
-   * remove the seed while #2 remains, and the door is offered again over an install whose oldest
-   * surviving row is #2.
-   *
-   * So the id is CHECKED against the address that was typed, over the engine's own
-   * `GET /mailboxes/:id` — a plain read, no step-up, served by the local route table. A mismatch
-   * is refused rather than sealed, and refused with a sentence about the install rather than
-   * about the password, because the password is not what is wrong.
-   *
-   * IT REFUSES ON AN UNREADABLE ANSWER TOO. A read that fails, or a row that names no address,
-   * cannot establish that this is the right row — and "we could not check" must not be spelled
-   * the same as "it matched", which is the direction that costs a credential.
+   * ── THE ROW THE ENGINE SETTLED ON HAS TO BE THE ONE THAT WAS TYPED ────────────────────
+   * `settled.mailboxId` is whatever the replacement engine reports it is opening, and this
+   * arm seals a password onto it — safe while an install held ONE mailbox. With several, the
+   * engine reports the SEED's mailbox (the active row for the configured address, else the
+   * OLDEST active row, else `""`), so a first connect made while other mailboxes are live
+   * can settle on somebody else's row (remove the seed while #2 remains). So the id is
+   * CHECKED against the typed address over `GET /mailboxes/:id`; a mismatch is refused with a
+   * sentence about the install, and an UNREADABLE answer refuses too — never "it matched".
    */
   const settledRow = await localMailboxAddress(settled.mailboxId);
   if (settledRow.kind === "unreadable") {
@@ -1726,22 +1273,14 @@ export async function enterLocalDoor(
   }
 
   /**
-   * ── AND NOW REPLACE THE ENGINE, BECAUSE THE ONE THAT IS RUNNING CANNOT USE THAT PASSWORD ────
-   *
-   * The engine builds its IMAP adapter ONCE, at boot, from whatever password resolved then —
-   * `engine.ts` says so where it builds it: "A password entered AFTER the process is up therefore
-   * takes effect on the next launch rather than this one". On this path the engine booted seconds
-   * ago with no password at all, so the adapter it is holding cannot log in, and the credential we
-   * have just sealed is not reachable by anything until something re-reads it.
-   *
-   * Without this the door SUCCEEDED and the app stayed empty: no error, no sync, no explanation —
-   * mail appeared only if the person happened to quit and reopen. That is the worst shape a
-   * first-run failure can take, because everything the user can see says it worked.
-   *
-   * `engineConfigure` is the replacement, and it is the same call that started this one — the
-   * settings are identical, so this is a relaunch and not a reconfiguration. A failure here is
-   * reported rather than swallowed: the credential IS stored, so the honest sentence is about the
-   * engine not coming back, and relaunching the app fixes it.
+   * ── NOW REPLACE THE ENGINE — THE RUNNING ONE CANNOT USE THAT PASSWORD ─────────────────
+   * The engine builds its IMAP adapter ONCE, at boot, from whatever password resolved then
+   * (`engine.ts`: a password entered after the process is up takes effect on the next
+   * launch). On this path the engine booted with no password, so the sealed credential is
+   * unreachable until something re-reads it — without this the door SUCCEEDED and the app
+   * stayed empty: no error, no sync, mail only after a quit and reopen. `engineConfigure`
+   * with identical settings is that relaunch; a failure here is reported, not swallowed —
+   * the credential IS stored, so the sentence is about the engine, and a relaunch fixes it.
    */
   try {
     await engineConfigure(config);
@@ -1822,16 +1361,12 @@ export async function signInToCloud(
 }
 
 /**
- * Door two, entered with a code from the browser instead of a password.
- *
- * The SAME two steps `enterCloudDoor` takes — configure the engine for the address, wait for it
- * to serve, then one request over the bridge — with the third argument swapped. It is written as
- * its own pair of functions rather than as a flag on the password ones because the two forms
- * validate different fields and read differently at the call site, and it costs one delegation:
- * both end at `POST /cloud/signin`, which is where the engine decides what it was handed.
- *
- * Nothing about the code is stored here or anywhere else in this process. It is worth a session
- * for about two minutes and only once, and by the time this returns it has been spent.
+ * Door two, entered with a code from the browser instead of a password. The SAME two steps
+ * `enterCloudDoor` takes — configure, settle, one request over the bridge — with the third
+ * argument swapped; its own pair of functions rather than a flag because the two forms
+ * validate different fields, and both end at `POST /cloud/signin`, where the engine decides
+ * what it was handed. Nothing about the code is stored here or anywhere in this process: it
+ * is worth a session for about two minutes, once, and is spent by the time this returns.
  */
 export async function enterCloudDoorWithCode(address: string, code: string): Promise<DoorResult> {
   const problem = handoffProblem(address, code);
@@ -1864,25 +1399,14 @@ export interface HandoffStart {
 }
 
 /**
- * START A BROWSER HANDOFF: configure the door if it is not already, then ask the engine for a
- * commitment.
- *
- * ── THE ORDER IS FORCED, AND GETTING IT WRONG IS SILENT ─────────────────────────────────────
- *
- * The verifier lives in the ENGINE's memory, and `engine_configure` REPLACES the engine — it stops
- * the process that is running and starts a new one. So the door has to be configured BEFORE the
- * pair is minted, never between minting it and claiming the code: a reconfigure in that window
- * takes the verifier with it, and the code the browser is showing becomes unclaimable by anybody.
- * Nothing fails loudly when that happens. The account answers the same sentence it answers an
- * expired code with, because telling the two apart is exactly what it refuses to do.
- *
- * That is why this function does the configure itself rather than leaving it to the sign-in that
- * follows, and why {@link signInToCloudWithCode} — which does NOT reconfigure — is the only sign-in
- * that may be used to finish a handoff this started. `DoorChooser` remembers that it started one.
- *
- * A door that is already chosen and serving is left alone: signing in again on a configured
- * install is one request, and restarting the engine to change nothing would take somebody's mail
- * off the screen for the length of a first launch.
+ * START A BROWSER HANDOFF: configure the door if it is not already, then ask the engine for
+ * a commitment. THE ORDER IS FORCED AND GETTING IT WRONG IS SILENT: the verifier lives in
+ * the ENGINE's memory and `engine_configure` REPLACES the engine, so the door must be
+ * configured BEFORE the pair is minted — a reconfigure between minting and claiming takes
+ * the verifier with it, and the code the browser shows becomes unclaimable, answered with
+ * the expired-code sentence. So this configures itself, and {@link signInToCloudWithCode} —
+ * which does NOT reconfigure — is the only sign-in that may finish a handoff this started
+ * (`DoorChooser` remembers). A door already serving is left alone.
  */
 export async function beginBrowserSignIn(
   address: string,
@@ -2001,17 +1525,12 @@ export async function readShell(): Promise<Shell> {
 }
 
 /**
- * WHAT TO SAY WHEN THE PASSWORD LANDED AND THE SETTINGS DID NOT.
- *
- * The one state the seal-first ordering can leave behind, and the only one in this file where
- * telling the truth costs a longer sentence than the shell's own error. Saying only "the settings
- * could not be written" would be true and would hide the half that matters: the stored password is
- * now the NEW server's, while this install is still pointed at the old one. Somebody who reads the
- * short version and quits has been told nothing about the state they are in.
- *
- * Re-opening the door finishes it, and the retry is safe rather than merely allowed: the credential
- * is still `ready` and the address has not moved, so the attempt takes this same arm, re-proves the
- * password against the new server and commits the settings. Nothing has to be undone first.
+ * WHAT TO SAY WHEN THE PASSWORD LANDED AND THE SETTINGS DID NOT — the one state the
+ * seal-first ordering can leave, and the one where truth costs a longer sentence: "the
+ * settings could not be written" alone would hide that the stored password is now the NEW
+ * server's while the install still points at the old one. Re-opening the door finishes it,
+ * and the retry is safe: the credential is still `ready` and the address has not moved, so
+ * the attempt takes this same arm, re-proves the password and commits the settings.
  */
 function handoffInterrupted(err: unknown): string {
   return (
@@ -2086,34 +1605,14 @@ async function refused(
 }
 
 /**
- * THE PROBE ALREADY KNOWS THE ANSWER — SAY IT, INSTEAD OF SENDING THE PERSON TO THEIR PROVIDER.
- *
- * `mailbox_probe_failed` carries `details.tls` on a TLS refusal, and on a HOSTNAME MISMATCH that
- * detail may name the host the certificate actually covers (`suggestedHost` — the vanity-name
- * shape: someone types `mail.<their-domain>` and the server there presents a certificate for
- * `<their-domain>`). The service's own `message` is deliberately generic, because it is one
- * sentence for every TLS failure; the detail beside it is where the specifics live.
- *
- * Until this existed the door read `error.message` and nothing else, so a person on their own
- * mail server was told *"Check the IMAP host with your provider"* while the engine, in the same
- * response, was holding the exact host to use. Measured against a real mailbox during the
- * onboarding drill: typing `mail.trafficflow.ch` produced
- * `{kind:"hostname_mismatch", expectedHost:"mail.trafficflow.ch", certHost:"trafficflow.ch",
- * suggestedHost:"trafficflow.ch"}` — the answer, one field away from the screen it belonged on.
- * The hosted web app has rendered this since the detail was added; only the desktop door dropped
- * it, which made the STANDALONE customer — the one with no support channel — the worst served.
- *
- * The wording is the hosted app's, verbatim (`probe_tls_hostname_suggest` /
- * `probe_tls_hostname` in `apps/webapp/messages/en.json`), so the two flavors of the same
- * product do not describe the same refusal in two different ways.
- *
- * NOT a trust change, and this is the line worth naming: the sentence is only ever SHOWN. The
- * person retypes the host and the next probe dials it and verifies strictly against it, exactly
- * as before — see `suggestedHostFor` in `packages/api/src/imap-probe.ts`, which explains why a
- * spoofed DNS answer can steer this suggestion but never past validation.
- *
- * Returns null for every shape it does not fully recognise, so an unknown or newer detail falls
- * back to the service's own sentence rather than to a worse one.
+ * THE PROBE ALREADY KNOWS THE ANSWER — SAY IT, instead of sending the person to their
+ * provider. `mailbox_probe_failed` carries `details.tls`, and a HOSTNAME MISMATCH may name
+ * the host the certificate covers (`suggestedHost`, the vanity-name shape). The door read
+ * `error.message` alone — "Check the IMAP host with your provider" while holding the exact
+ * host to use; the wording is the hosted app's, verbatim (`probe_tls_hostname_suggest` /
+ * `probe_tls_hostname` in `apps/webapp/messages/en.json`). NOT a trust change: the sentence
+ * is only SHOWN — the next probe verifies strictly against the retyped host
+ * (`suggestedHostFor`, `packages/api/src/imap-probe.ts`). Null for every unrecognised shape.
  */
 export function probeTlsSentence(details: unknown): string | null {
   return probeTlsRefusal(details)?.sentence ?? null;
@@ -2132,17 +1631,13 @@ export interface DoorRefusal {
 }
 
 /**
- * THE ONE READING OF `error.details`, and it is one because two doors are shown the same answer.
- *
- * The standalone door and the self-hosted door are two screens over one product, and the same
- * engine hands both of them the same `error.details`. Reading it in two places is how they came to
- * describe one refusal in two ways — this door sharpened the sentence and the self-hosted one
- * returned `error.message`, discarding the detail it was holding. `desktop-door-tls-census.test.tsx`
- * drives both and asserts they say the same thing about every shape.
- *
- * The suggestion is returned STRUCTURED as well as inside the sentence, because a host somebody has
- * to retype is not the same as one they can press: the hosted web app has offered the correction as
- * a control since the detail existed, and this is that half.
+ * THE ONE READING OF `error.details` — one because two doors are shown the same answer. The
+ * standalone and self-hosted doors are two screens over one product handed the same
+ * `error.details`; read in two places, they came to describe one refusal in two ways.
+ * `desktop-door-tls-census.test.tsx` drives both and asserts they say the same thing about
+ * every shape. The suggestion is returned STRUCTURED as well as inside the sentence — a host
+ * somebody can press is not one they must retype; the hosted web app has offered the
+ * correction as a control since the detail existed, and this is that half.
  */
 export function probeTlsRefusal(details: unknown): DoorRefusal | null {
   if (typeof details !== "object" || details === null) return null;

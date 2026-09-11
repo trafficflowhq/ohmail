@@ -1,23 +1,12 @@
 /**
  * ACKNOWLEDGING THE ORGANIZER NOTICE FROM THIS WINDOW — the desktop half of one shared line.
- *
- * The shared shell shows a quiet line when who organizes a mailbox has changed and nobody has
- * acknowledged it yet, with one press that makes it go for good. It cannot make that press
- * itself: the published bundle aliases the Cloud client to a refusing stub, and the shell is
- * denied that import in any case, so the wire is injected by whichever host mounted it.
- *
- * ── ONE TRANSPORT FOR BOTH DOORS, WHICH IS NOT TRUE OF EVERY SEAM HERE ────────────────────────
- *
- * The away responder needs a door rule and the profile card needs another, because what those
- * routes DO differs between a standalone install and a Cloud-connected one. This one does not.
- * `POST /mailboxes/:id/organizer-notice/dismiss` stamps one instant on the caller's own mailbox
- * row and is mounted on both doors: the standalone engine serves it out of the store on this
- * machine, and on the Cloud door the write-through proxy forwards it to the hosted account with
- * the session's bearer. The window presses the same path either way.
- *
- * The acknowledgement is deliberately not a local preference. It lives on the row so that a phone,
- * a browser tab and this window agree about whether a change has been seen — a per-install flag
- * would show one change once per install, which is the same sentence three times.
+ * The shared shell shows a quiet line when who organizes a mailbox has changed, with one press
+ * that makes it go for good; the published bundle aliases the Cloud client to a refusing stub,
+ * so the wire is injected by whichever host mounted it. One transport serves both doors:
+ * `POST /mailboxes/:id/organizer-notice/dismiss` stamps one instant on the caller's own
+ * mailbox row — standalone out of the store on this machine, Cloud through the write-through
+ * proxy with the session's bearer. The acknowledgement lives on the row, not in a local
+ * preference, so a phone, a browser tab and this window agree the change has been seen.
  */
 import { bridgeFetch } from "./bridge-fetch.js";
 import type { OrganizerNoticeTransport } from "../../webapp/app/shell/OrganizerNotice";

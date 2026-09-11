@@ -1,18 +1,12 @@
 /**
- * The ohmail Cloud API client, absent.
- *
- * This module mirrors `apps/webapp/app/api-client.ts`'s exported TYPE surface — signatures,
- * generics and class shapes included, because a signature is a shape and not a secret — and
- * every value export is a refusal: the endpoint paths, the header and token handling and the
- * call construction all live in the bodies, and no body is here. `vite.config.ts` aliases the
- * real module to this one in BOTH desktop artifacts, so no released binary carries a Cloud
- * client. It was generated from the real module's emitted declarations while that module was
- * not published; it is an ordinary hand-kept source now, and the desktop suite pins the alias
- * and the exports that must answer instead of refuse. When the real module's surface changes,
- * change this one in the same commit — the desktop typecheck is what notices a drift.
- *
- * The desktop tier has no Cloud account and no server: it talks to a local engine over a pipe.
- * Reaching for anything here throws rather than quietly opening a socket.
+ * The ohmail Cloud API client, absent. This module mirrors `apps/webapp/app/api-client.ts`'s
+ * exported TYPE surface — a signature is a shape, not a secret — and every value export is a
+ * refusal: paths, headers, token handling and call construction live in the bodies, and no body
+ * is here. `vite.config.ts` aliases the real module to this one in BOTH desktop artifacts, so
+ * no released binary carries a Cloud client; the desktop suite pins the alias and the exports
+ * that must answer instead of refuse. When the real module's surface changes, change this one
+ * in the same commit. The desktop tier has no Cloud account and no server — it talks to a local
+ * engine over a pipe; reaching for anything here throws rather than quietly opening a socket.
  */
 
 const UNAVAILABLE = "the ohmail Cloud API is not part of this build — the desktop tier talks to its own local engine";
@@ -80,19 +74,14 @@ export const csrfToken: () => string | null = absent;
 export const api: <T>(path: string, opts?: RequestOptions) => Promise<T> = absent;
 
 /**
- * ── THE OWNER BOUNDARY, AND THE THREE OF THESE THAT ARE **NOT** REFUSALS ───────────────────
- *
- * Everything else in this module refuses, because calling it on a build with no server is a
- * wiring bug worth failing loudly. These three are the exception, and the reason is what they
- * are FOR: on the hosted client they answer "is this window still speaking for the account it
- * was bound to?", and a browser cookie jar shared between tabs is the whole problem they exist
- * to solve. There is no such jar here — the desktop holds its mail through a local process and
- * keys its engine to the mounted mailbox, so no two windows can disagree about whose session
- * this is. The honest answer on this build is "yes, always", not "you should not have asked".
- *
- * Refusing instead would break the shared shell for no gain: `api-client`'s own callers reach
- * these through code that ships in the desktop bundle, and a thrown refusal there would take a
- * working window down over a question that has no meaning on it.
+ * ── THE OWNER BOUNDARY, AND THE THREE OF THESE THAT ARE NOT REFUSALS ────────────────────────
+ * Everything else refuses, because calling it on a build with no server is a wiring bug worth
+ * failing loudly. These three answer "is this window still speaking for the account it was
+ * bound to?" — a browser cookie jar shared between tabs is the problem they exist for, and
+ * there is no such jar here: the desktop holds its mail through a local process and keys its
+ * engine to the mounted mailbox, so no two windows can disagree about whose session this is.
+ * The honest answer is "yes, always", not "you should not have asked" — a thrown refusal would
+ * take a working window down, since these are reached by shared code in the desktop bundle.
  */
 export const bindApiOwner: (accountId: string | null) => void = () => {};
 
@@ -525,21 +514,13 @@ export interface SeedReviewWire {
 }
 
 /**
- * WEB PUSH — the browser's subscription plumbing, absent, and its absence is what BROKE the build.
- *
- * `notification-settings.ts` is shared shell code and imports this name unconditionally
- * (`import { apiConfigured, push as pushApi } from "../api-client"`). `vite.config.ts` aliases
- * that module to THIS one in both desktop artifacts, so a missing export here is not a missing
- * feature — it is an unresolved import, and the desktop bundle fails on every platform.
- *
- * It stayed invisible to `tsc` because the alias is the bundler's, not the compiler's: the
- * typecheck resolves the real module and is green while the bundle cannot be built at all. The
- * file header's rule — "when the real module's surface changes, change this one in the same
- * commit" — is exactly this, and the desktop typecheck is NOT what notices it.
- *
- * A typed refusal rather than a stub that answers: the desktop tier has no Cloud account and no
- * push service, and `notification-settings.ts` asks `apiConfigured()` before it acts, so nothing
- * here is reached on this build. Reaching it anyway must throw rather than quietly open a socket.
+ * WEB PUSH — the browser's subscription plumbing, absent; its absence once BROKE the build.
+ * `notification-settings.ts` is shared shell code and imports this name unconditionally, and
+ * the alias is the BUNDLER's, not the compiler's — a missing export here is an unresolved
+ * import that fails the desktop bundle on every platform while `tsc` resolves the real module
+ * and stays green. A typed refusal rather than an answering stub: the desktop tier has no
+ * Cloud account and no push service, and `notification-settings.ts` asks `apiConfigured()`
+ * before it acts, so nothing here is reached on this build; reaching it anyway throws.
  */
 export interface DeviceDTO {
     id: string;
@@ -569,17 +550,12 @@ export interface PairingTokenDTO {
 }
 
 /**
- * SESSIONS AND PAIRING — the two remaining Cloud surfaces, absent, and added BEFORE anything
- * imports them rather than after a build breaks.
- *
- * `push` above was added reactively, once a shared-shell import of it had already broken the
- * desktop bundle on every platform. These two are the same shape waiting to happen: they are
- * account-scoped Cloud surfaces that shared `shell/` code could reach for at any time, and the
- * failure mode is an unresolved import at bundle time that no typecheck can see — the alias is
- * the bundler's, so `tsc` resolves the REAL module and stays green.
- *
- * `test/no-api-client-census.test.ts` now compares the two export sets directly, so the next
- * addition to the real client is a red test rather than a red release.
+ * SESSIONS AND PAIRING — the two remaining Cloud surfaces, absent, added BEFORE anything
+ * imports them. `push` above was added reactively, after a shared-shell import had already
+ * broken the desktop bundle on every platform; these two are the same shape waiting to happen,
+ * and the failure mode — an unresolved import at bundle time — is invisible to any typecheck
+ * because the alias is the bundler's. `test/no-api-client-census.test.ts` compares the two
+ * export sets directly, so the next addition to the real client is a red test, not a release.
  */
 export const devices: {
     list: () => Promise<{ items: DeviceDTO[] }>;

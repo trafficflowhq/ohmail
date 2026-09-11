@@ -4,11 +4,9 @@
  * The window itself is the shared shell's (`shell/junk-window.ts`); the paths, the status
  * contract and the rescue verbs are here, once, for every door that carries them: the desktop
  * window over its bridge (`local-junk.ts`) and the served host client over its bearer socket
- * (`host-client/transports.ts`).
- *
- * The factory lives in a module that imports no transport because the served host client has no
- * bridge — sharing a file with the window's bridge binding put the shell command's name into the
- * bundle a phone is handed, which `scan:host` refuses.
+ * (`host-client/transports.ts`). This module imports no transport because the served host
+ * client has no bridge — a file shared with the bridge binding would put the shell command's
+ * name into the bundle a phone is handed, which `scan:host` refuses.
  */
 
 import type { JunkWire } from "../../webapp/app/shell/junk-window";

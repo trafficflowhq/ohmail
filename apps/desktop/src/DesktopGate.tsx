@@ -1,53 +1,23 @@
 /**
  * WHAT THE WINDOW SHOWS, AND WHO DECIDES — the engine-bearing build's outermost component.
- *
- * One question is asked at boot ("shell, what is the engine doing?") and the answer routes the
- * whole window: the door chooser on a fresh install, an honest notice when there is an engine
- * and something is wrong with it, and otherwise the mail client — the same `AppShell` the hosted
- * client renders, with one extra Settings pane the web cannot have.
- *
- * ── THE ONE CASE THAT IS NOT AN ERROR ───────────────────────────────────────────────────────
- *
- * "There is no shell at all" is not routed to a notice. It means this bundle is being loaded
- * outside the app — a development server, or the render check that loads the built files in a
- * headless DOM — and there is no engine to have a state. In the packaged app it cannot happen:
- * the runtime defines its command channel before any bundle script runs. So the notice is
- * reserved for the case that matters, which is a shell that IS there and cannot answer — and the
- * no-shell case lands on the door chooser, because "nothing is connected" is exactly what is
- * true there. The app has two states, not connected and connected; there is no third surface and
- * no sample mailbox (the one demo lives on ohmail.app's landing page).
- *
- * ── THE MAIL IS THE MAILBOX'S ───────────────────────────────────────────────────────────────
- *
- * When the shell says an engine is serving, `AppShell` below is handed a real client engine
- * running over the bridge (`bridge-fetch.ts`) and renders that mailbox — the same component, the
- * same views, the same keyboard, with the data coming from the process on this machine.
- * {@link mailMount} is the decision and it is a pure function, so which surface a given engine
- * state produces is something a test drives rather than something this component describes.
- *
- * ── A MAILTO CLICK ANYWHERE ON THIS COMPUTER LANDS HERE ─────────────────────────────────────
- *
- * Once ohmail is the default mail app, the OS delivers every mailto click to the shell, which
- * holds the link until this window claims it (`native.ts`, take-once). The claim happens twice —
- * on the shell's poke, and once at mount for the click that STARTED the app — and the parsed
- * fields (`mailto.ts`, the one parser) wait in state until the mail client is on screen, then
- * seed the compose form through `AppShell`'s `mailtoDraft` seam. Clicked before a mailbox is
- * connected, the draft simply waits: connecting is the thing the person has to do first, and the
- * compose opens once it is done.
- *
- * A CLICK INSIDE THIS WINDOW lands in the same place, and until recently it landed nowhere at
- * all: the window's link seam (`shell/open-external.ts`) hands `http`/`https` to the platform's
- * browser and used to cancel every other scheme, `mailto:` included — so an address clicked in a
- * newsletter or a signature did nothing, silently, in the one app on the computer whose job it
- * is. The same parser and the same `mailtoDraft` seam answer both origins now; the only
- * difference is which side of the process the click came from.
- *
- * ── AND THE NATIVE CHROME IS DRIVEN FROM HERE ───────────────────────────────────────────────
- *
- * The menu's navigation events, the dock badge and the new-mail notification are wired here
- * rather than inside the shared client, because all three are things only this build has. The
- * menu drives `go()` — the same function the rail, the palette and the number keys call — so a
- * menu item and a keystroke can never land in different places.
+ * One question at boot ("shell, what is the engine doing?") routes the whole window: the door
+ * chooser on a fresh install, an honest notice when an engine exists and something is wrong,
+ * otherwise the mail client — the same `AppShell` the hosted client renders, plus one Settings
+ * pane the web cannot have. "There is no shell at all" is NOT an error: the bundle is loaded
+ * outside the app (dev server, render check), and it lands on the door chooser — two states,
+ * not connected and connected, no third surface, no sample mailbox. When an engine is serving,
+ * `AppShell` gets a real client engine over the bridge; {@link mailMount} is the pure decision.
+ */
+
+/*
+ * A MAILTO CLICK ANYWHERE ON THIS COMPUTER LANDS HERE: the OS delivers it to the shell, which
+ * holds the link until this window claims it (`native.ts`, take-once) — claimed on the shell's
+ * poke and once at mount for the click that STARTED the app; the parsed fields (`mailto.ts`)
+ * wait in state until the mail client is on screen, then seed the compose through `AppShell`'s
+ * `mailtoDraft` seam. A click INSIDE the window takes the same path — `shell/open-external.ts`
+ * used to cancel every non-http scheme, so a clicked address did nothing, silently. The native
+ * chrome is wired here too (menu, badge, notification — only this build has them); the menu
+ * drives `go()`, the same function the rail, palette and number keys call.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -128,44 +98,25 @@ const SETTLING_POLL_MS = 250;
 const HOSTED_SESSION_PROBE_MS = 60_000;
 
 /**
- * How often a PAIRED window re-asks the engine how old its copy of the other computer's mail is.
- *
- * The mirror pulls every twenty seconds, so asking on the same beat is the finest granularity
- * there is anything new to learn at. This is NOT a second poller in the sense ruling 4 forbids:
- * it dials nothing and reaches no network — `GET /mirror/freshness` is a local stdio call into
- * the engine on this machine, answered out of a stamp the engine already keeps for its own drain.
- * A poller would be a second opinion about whether the other computer is reachable; this reads
- * the one opinion that exists.
- *
- * Only on the paired door. The hosted door has the shared strip's own arm for the same fact, and
- * the standalone door has no mirror to be behind.
+ * How often a PAIRED window re-asks the engine how old its copy of the other computer's mail
+ * is. The mirror pulls every twenty seconds, so asking on the same beat is the finest
+ * granularity there is anything new to learn at. NOT a second poller in the forbidden sense:
+ * it dials nothing — `GET /mirror/freshness` is a local stdio call answered out of a stamp
+ * the engine keeps for its own drain; a poller would be a second opinion about reachability,
+ * this reads the one that exists. Only on the paired door: the hosted door has the shared
+ * strip's own arm, and the standalone door has no mirror to be behind.
  */
 const HOST_FRESHNESS_PROBE_MS = 20_000;
 
 /**
- * THE STANDALONE DOOR'S ENTRY POINT INTO GUIDED SETUP — the one thing that opens the stage here.
- *
- * `AppShell` renders the first-run stage only at `#/first-run`, and it says why: *"the stage never
- * opens itself; a dialog that appears over somebody's mail unbidden is the thing every entry point
- * is written to avoid."* That rule is right and it leaves a hole on THIS door, because every entry
- * point that existed was on the hosted side or behind Settings → Mailboxes → "Run setup". So a
- * person who chose "On this computer", picked a provider and typed a password landed in the mail
- * client with nothing having asked them anything — measured on a released build, and the release
- * notes' claim that "a first run walks from 'I installed ohmail' to a mailbox that is being
- * organized" was untrue on the main customer door.
- *
- * CONNECTING IS THE ENTRY POINT. It is a person asking for setup as plainly as pressing "Run
- * setup" is, so it navigates, and it is the ONLY thing this function does — WHICH step the stage
- * opens on, and whether it opens at all, stay with `deriveOnboardingStep` over the facts. That
- * separation is why this can be unconditional on the local door: a re-seal of the password on a
- * mailbox whose setup is finished derives to `null`, `FirstRun` renders nothing, and the route's
- * own view (the Ohbox — `parseRoute` picks it precisely so that leaving the stage lands
- * somewhere) is what the person sees. There is no state in which this strands anybody on a blank
- * overlay.
- *
- * The HOSTED door is excluded structurally rather than by a check here: `firstRunDoorFor` is the
- * one door rule, and on a cloud status it answers `null` — `useLocalFirstRun` would hand
- * `AppShell` no host, so `#/first-run` would draw nothing at all.
+ * THE STANDALONE DOOR'S ENTRY POINT INTO GUIDED SETUP — the one thing that opens the stage
+ * here. `AppShell` renders the stage only at `#/first-run` and never opens it itself, which
+ * left this door with no entry at all: a person who chose "On this computer" and typed a
+ * password landed in the mail client with nothing having asked them anything (measured on a
+ * released build). CONNECTING IS THE ENTRY POINT — it navigates, and only that: WHICH step,
+ * and whether the stage opens at all, stay with `deriveOnboardingStep`, so a re-seal on a
+ * finished mailbox derives to `null` and `FirstRun` renders nothing — no blank overlay. The
+ * hosted door is excluded structurally: `firstRunDoorFor` answers `null` there.
  */
 function openSetupOnStandalone(status: EngineStatus | null): void {
   if (firstRunDoorFor(status) !== "local") return;
@@ -260,35 +211,26 @@ export function DesktopGate() {
   const routeNow = useHashRoute();
 
   /**
-   * WHAT THIS INSTALL HAS FOR A MODEL — read once, here, because two surfaces need the answer.
-   *
-   * The Settings pane is one of them and could read it for itself. The Screener's suggest control
-   * is the other, and it cannot: somebody who has never opened Settings still has to be told,
-   * where the control is, that there is nothing behind it yet. Reading it at the gate is what lets
-   * both say the same thing, and the pane publishes what it changes so saving a key makes the
-   * Screener's control live without a relaunch — the engine rebuilds its own services per request,
-   * so there is nothing to restart.
-   *
-   * `null` means "not on this door, or not asked yet". Only the standalone door has a local model
-   * to configure: an install pointed at a hosted account mirrors an account whose AI is that
-   * account's, and asking the engine there would be a request forwarded to a server that has no
-   * such route.
+   * WHAT THIS INSTALL HAS FOR A MODEL — read once, here, because two surfaces need the
+   * answer: the Settings pane could read it itself, but the Screener's suggest control must
+   * tell somebody who never opened Settings that nothing is behind it yet. Reading it at the
+   * gate keeps the two saying the same thing, and the pane publishes what it changes, so a
+   * saved key makes the Screener control live without a relaunch (the engine rebuilds its
+   * services per request). `null` means "not on this door, or not asked yet": only the
+   * standalone door has a local model — a hosted install's AI is the account's.
    */
   const [ai, setAi] = useState<LocalAiStatus | null>(null);
   const door = shell?.kind === "status" ? (shell.status.mode ?? null) : null;
 
   /**
-   * THE FIRST-RUN STAGE'S DOOR — built here, at the top, for the reason `onUnread` is: it is a
-   * hook, and a hook called from inside the JSX below would be skipped on the renders that
-   * return early, which is the "rendered fewer hooks than expected" crash arriving on whichever
-   * render first took a different branch.
-   *
-   * The two injected nodes are MEMOISED rather than written inline at the call. Both are React
-   * elements, so an inline one is a new object every render, which would defeat the host's own
-   * `useMemo` and hand the stage a new `host` on every keystroke anywhere in the app.
-   * `AiProviderForm`'s echo is the gate's own `ai` setter — the same state Settings → AI and the
-   * Screener's suggest control read, so a key saved inside the flow is live everywhere without a
-   * relaunch, and `setAi` is a `useState` setter and therefore stable.
+   * THE FIRST-RUN STAGE'S DOOR — built here, at the top, for `onUnread`'s reason: it is a
+   * hook, and a hook inside the JSX below is skipped on early-return renders ("rendered fewer
+   * hooks than expected" on whichever render first branches). The two injected nodes are
+   * MEMOISED, not inline: an inline element is a new object every render, defeating the
+   * host's own `useMemo` and handing the stage a new `host` on every keystroke.
+   * `AiProviderForm`'s echo is the gate's own `ai` setter — the same state Settings → AI and
+   * the suggest control read, so a key saved in the flow is live everywhere; a `useState`
+   * setter is stable.
    */
   const gateStatus = shell?.kind === "status" ? shell.status : null;
   const providerForm = useMemo(() => <AiProviderForm onStatus={setAi} />, []);
@@ -305,25 +247,13 @@ export function DesktopGate() {
 
   /**
    * THE HOSTED SESSION'S LIVE TRUTH, asked of the engine rather than remembered from launch —
-   * and never remembered ACROSS ENGINES either, which is what the key below enforces.
-   *
-   * `authEpoch` counts engine-lifecycle acts (every status `onStatus` delivers — a door entered,
-   * a sign-in, a reconfigure), and `authKey` names the exact (door, epoch) an answer was earned
-   * under. An answer is BELIEVED only while its key matches the current one, so leaving the
-   * cloud door, coming back to it, or replacing the engine under the same door each mint a key
-   * no stored answer matches — the auth state is structurally PENDING again and the mail app is
-   * withheld until the NEW engine's own first `/health` lands. The stale-latch failure this
-   * closes: a Cloud probe answered once, the person switched to local and back (or re-entered
-   * the door over a replaced engine), and the gate mounted `AppShell` on the old answer before
-   * the new engine reported pre-auth or expiry — mail routes refusing under a mounted client.
-   *
-   * `gone` latches on the engine's own expiry verdict (`sessionExpired`, the hosted API's
-   * definitive refusal to renew): the gate replaces the mail client with an honest sentence and
-   * the sign-in surface, instead of a mailbox that silently stopped moving. `preAuth` is
-   * signedIn:false WITHOUT that verdict — a pre-auth engine (relaunch after an expiry already
-   * removed the seal, an abandoned handoff): the sign-in surface with no "you were signed out"
-   * sentence, because for a session that never existed that sentence would be a lie.
-   * `signInAfterExpiry` is the person taking the offered action.
+   * and never remembered ACROSS ENGINES: `authEpoch` counts engine-lifecycle acts (every
+   * status `onStatus` delivers) and `authKey` names the (door, epoch) an answer was earned
+   * under; an answer is believed only while its key matches, so re-entering a door or
+   * replacing the engine mints a key no stored answer matches — structurally PENDING until
+   * the NEW engine's own first `/health` lands. `gone` latches on the expiry verdict
+   * (`sessionExpired`): an honest sentence plus the sign-in surface. `preAuth` is
+   * signedIn:false WITHOUT that verdict — no "you were signed out" for a session that never was.
    */
   const [authEpoch, setAuthEpoch] = useState(0);
   const authKey = door === "cloud" && bridgeAvailable() ? `cloud:${authEpoch}` : null;
@@ -348,18 +278,12 @@ export function DesktopGate() {
   const hostedRestartRequired = hostedAuthKnown && hostedAuth.restartRequired;
   /**
    * THE ONE FACT EVERY ACCOUNT-SHAPED SURFACE BELOW IS DECIDED BY — this engine's own live
-   * verdict on the hosted session, in the shape the door rules take ({@link HostedSession}).
-   *
-   * It is derived from the SAME probe state the whole-window routing above reads, rather than a
-   * second opinion beside it: pending draws the boot frame, `"out"` draws the sign-in surface or
-   * the expiry notice, and only `"live"` reaches the mail client. Deriving it here — one
-   * expression, one name — is what keeps the settings surface and the window's own routing from
-   * ever disagreeing about whether this install is signed in.
-   *
-   * WHAT IT REPLACED: `status.credentialState`, which the shell copies out of the engine's
-   * one-shot `ready` frame and never rewrites. An install that launched pre-auth and then signed
-   * in through the surface above ran the whole session reported as signed OUT, and the nine
-   * settings surfaces gated on it stayed missing until the app was relaunched.
+   * verdict on the hosted session, in the door rules' shape ({@link HostedSession}). Derived
+   * from the SAME probe state the whole-window routing reads — one expression, one name — so
+   * the settings surface and the routing cannot disagree about whether this install is
+   * signed in. It replaced `status.credentialState`, which the shell copies from the one-shot
+   * `ready` frame and never rewrites: an install that signed in through the surface above ran
+   * the whole session reported signed OUT, nine settings surfaces missing until relaunch.
    */
   const hostedSession: HostedSession =
     door !== "cloud" || !hostedAuthKnown
@@ -370,38 +294,26 @@ export function DesktopGate() {
   const [signInAfterExpiry, setSignInAfterExpiry] = useState(false);
 
   /**
-   * IS THERE A HOSTED ACCOUNT BEHIND THIS WINDOW — the one gate every account-shaped surface below
-   * reads, so they can only appear and disappear together.
-   *
-   * The settings surface an install shows should be the settings surface the same account shows in
-   * a browser tab, wherever the routes behind it are reachable — and on this door they are: the
-   * engine serves the mail READS out of its mirror and forwards everything else to the account with
-   * its bearer (`cloud-proxy.ts`), so `/consent`, `/consent/settings`, `/screener`,
-   * `/billing/subscription` and `/account/ai` are the account's own rows, one hop away.
-   *
-   * What was missing was never the transport, it was the ASKING: `apiConfigured()` is false in
-   * every desktop build, so the shared shell's own reads never ran and each control was withheld as
-   * "there is no server here". That is true of the standalone door and false of this one.
-   * `accountDoorFor` is where the distinction lives, as a pure function a test can drive.
-   *
-   * DERIVED UP HERE, above every early return, because the manage-link hook below now reads it:
-   * `status` is re-derived from the same `shell` further down, so the two spellings are one value.
+   * IS THERE A HOSTED ACCOUNT BEHIND THIS WINDOW — the one gate every account-shaped surface
+   * below reads, so they appear and disappear together. The engine serves mail READS from its
+   * mirror and forwards the rest to the account with its bearer (`cloud-proxy.ts`), so
+   * `/consent`, `/consent/settings`, `/screener`, `/billing/subscription` and `/account/ai`
+   * are the account's own rows one hop away. What was missing was the ASKING:
+   * `apiConfigured()` is false in every desktop build, so the shared shell's reads never ran —
+   * true of the standalone door, false of this one; `accountDoorFor` holds the distinction.
+   * DERIVED UP HERE, above every early return, because the manage-link hook below reads it.
    */
   const accountDoor =
     accountDoorFor(shell?.kind === "status" ? shell.status : null, hostedSession) === "cloud";
 
   /**
-   * WHERE THIS ACCOUNT MANAGES ITS SUBSCRIPTION — `null` where no page is served.
-   *
-   * Read in the GATE, not inside the pane: `SettingsView` grows the nav entry from the prop's
-   * presence, so the only way to withhold the entry is to withhold the node.
-   *
-   * UP HERE with the other unconditional hooks, because everything from the mount switch down is
-   * behind an early return — a hook called below one renders on some paths and not others, which
-   * React answers with "Rendered more hooks than during the previous render" and every SET-C case
-   * red. So the hook is always CALLED and `accountDoor` is passed in: it gates the ask as well as
-   * the mount, because a door with no hosted account behind it has no manage page and no server to
-   * ask for one.
+   * WHERE THIS ACCOUNT MANAGES ITS SUBSCRIPTION — `null` where no page is served. Read in the
+   * GATE, not inside the pane: `SettingsView` grows the nav entry from the prop's presence,
+   * so withholding the entry means withholding the node. UP HERE with the unconditional
+   * hooks — everything below the mount switch sits behind an early return, and a hook below
+   * one renders on some paths only ("Rendered more hooks than during the previous render").
+   * `accountDoor` gates the ask as well as the mount: a door with no hosted account has no
+   * manage page and no server to ask.
    */
   const manageUrl = useDesktopManageLink(accountDoor);
   useEffect(() => {
@@ -496,27 +408,14 @@ export function DesktopGate() {
     };
   }, [authKey, hostedAuthKnown]);
   /**
-   * ═══ IS THE OTHER COMPUTER ANSWERING? — the paired door's standing fact ══════════════════
-   *
-   * AT THE TOP, WITH THE OTHER HOOKS, and not beside the derivation that reads it. Three of the
-   * four statements below are hooks, and this component returns early five times — the boot
-   * frame, the notice card, the chooser, the pre-auth sign-in and the expiry notice. A hook after
-   * any of those is skipped on exactly the renders that take them, which React reports as a change
-   * in hook order and then as "rendered fewer hooks than expected" on whichever render follows.
-   * Measured here: the settings census caught it before this reached a window.
-   *
-   * Read here rather than inside the shell for the reason every other desktop-only fact is: the
-   * shared shell is compiled into a browser tab, and a browser tab is never paired to anybody's
-   * laptop. What the shell gets is the finished sentence.
-   *
-   * ── WHY THE VERDICT IS READ TWICE ────────────────────────────────────────────────────────
-   *
-   * `mirrorFreshness` is already handed to `AppShell` below, and the provider that holds it lives
-   * UNDER this component — so its answer is not reachable from here without lifting the provider
-   * above the gate, which would put a mail-state concern above the routing that decides whether
-   * there is any mail at all. One extra local stdio call every twenty seconds is the cheaper
-   * trade, and the two reads cannot disagree about anything that matters: they ask the same route
-   * and the same engine, and both are describing a stamp that moves on the mirror's own beat.
+   * ═══ IS THE OTHER COMPUTER ANSWERING? — the paired door's standing fact ═════════════════
+   * AT THE TOP, WITH THE OTHER HOOKS: this component returns early five times, and a hook
+   * after any of those is skipped on exactly the renders that take them — the hook-order
+   * crash (the settings census caught it before a window did). Read here rather than in the
+   * shell because the shared shell also compiles into a browser tab, never paired to
+   * anybody's laptop — the shell gets the finished sentence. The verdict is read twice on
+   * purpose: `mirrorFreshness`'s provider lives UNDER this component, and lifting it above
+   * the gate would put a mail-state concern above the routing — both reads describe one stamp.
    */
   const [freshness, setFreshness] = useState<
     { state: "unknown" | "stale" | "current"; asOf: string | null } | null
@@ -573,34 +472,14 @@ export function DesktopGate() {
   }, [paired, authKey]);
 
   /**
-   * ═══ SETTING THIS MACHINE UP ON ITS OWN — the roster, captured BEFORE the door moves ══════
-   *
-   * THE STATE IS UP HERE WITH EVERY OTHER HOOK, and the trigger below is a PLAIN FUNCTION rather
-   * than a `useCallback`. This component returns early five times, and a hook after any of them
-   * is skipped on exactly the renders that take it — React reports "rendered more hooks than
-   * during the previous render" and the window goes white. Not memoising the trigger costs one
-   * function allocation per render and takes the whole class of mistake off the table for it.
-   *
-   * ── THE ORDERING IS THE WHOLE OF THIS ────────────────────────────────────────────────────
-   *
-   * Leaving a paired door for the standalone one is a door CHANGE, and `enforceMirrorOwner` runs
-   * before the replacement engine opens its database and DISCARDS a mirror whose owner has
-   * changed. Which mailboxes the other computer held is a fact that lives only in that mirror.
-   * Read afterwards it is an empty list — and an empty list is not an error: the flow would open
-   * with "no mailboxes to take over" and a person would conclude the host had none, which is the
-   * failure-looks-healthy shape this repository has measured before. So the roster is captured
-   * here, at the press, while the mirror is still this window's.
-   *
-   * ── AND AN UNREADABLE ROSTER IS NOT AN EMPTY ONE ─────────────────────────────────────────
-   *
-   * `null` means the read failed and is rendered as its own sentence ("Could not read which
-   * mailboxes {host} held; enter the server by hand"), never as "none". That is the
-   * `MailboxProbe` rule this window already follows everywhere else, and it is the reason this
-   * holds `MailboxFacts[] | null` rather than defaulting to `[]`.
-   *
-   * The rows kept are the ORGANIZER ones. On a paired install the mirrored rows are the host's,
-   * and an organizer's own row carries no holder columns — so `organizerRole === "organizer"` is
-   * what "the other computer was organizing this" looks like from here.
+   * ═══ SETTING THIS MACHINE UP ON ITS OWN — the roster, captured BEFORE the door moves ═════
+   * The state is up here with every other hook, and the trigger is a PLAIN FUNCTION rather
+   * than a `useCallback` — this component returns early five times, and a hook after any of
+   * them crashes the hook order. THE ORDERING IS THE WHOLE OF THIS: leaving a paired door is
+   * a door CHANGE, `enforceMirrorOwner` DISCARDS the mirror, and the roster lives only in
+   * that mirror — read afterwards it is an empty list, "no mailboxes to take over", failure
+   * looking healthy; so it is captured at the press. An UNREADABLE roster is not an empty
+   * one: `null` renders its own sentence, never "none". Kept: `organizerRole === "organizer"`.
    */
   const [takeoverRoster, setTakeoverRoster] = useState<
     { address: string; id: string }[] | null | undefined
@@ -648,42 +527,26 @@ export function DesktopGate() {
   }, [door]);
 
   /**
-   * THE CLIENT ENGINE ON SCREEN — one per mailbox, kept across a restart of the process behind it.
-   *
-   * It is state rather than a memo because it has to SURVIVE: `mailMount` is told which mailbox is
-   * already mounted and answers with the same key while the engine bounces, which only means
-   * anything if the object itself is still here to be answered about.
-   *
-   * Built during the render that first needs it — React's own "adjusting state when a prop
-   * changes" — rather than in an effect, so the mail surface never paints one empty frame between
-   * the shell saying `serving` and the client that runs against it. The constructor opens nothing;
-   * the shared shell is what starts the engine and drives its sync loop, exactly as it does for a
-   * browser tab.
+   * THE CLIENT ENGINE ON SCREEN — one per mailbox, kept across a restart of the process
+   * behind it. State rather than a memo because it must SURVIVE: `mailMount` answers with the
+   * same key while the engine bounces, which only means anything if the object is still here.
+   * Built during the render that first needs it (React's "adjusting state when a prop
+   * changes"), not in an effect, so the mail surface never paints one empty frame between the
+   * shell saying `serving` and the client. The constructor opens nothing; the shared shell
+   * starts the engine and drives its sync loop, exactly as for a browser tab.
    */
   const [live, setLive] = useState<{ key: string; engine: OhmailEngine } | null>(null);
   const gate = gateFor(shell ?? { kind: "none" });
   const mount = mailMount(shell ?? { kind: "none" }, live?.key ?? null);
   /**
    * WHOSE `localStorage` PARTITION THE SHARED SHELL IS ABOUT TO USE — established HERE, in
-   * render, above the `AppShell` this component returns.
-   *
-   * There is no account cookie on this door, and until this line that meant `readOwner()`
-   * answered `null` and the shared shell's four owner-keyed keys all resolved to the literal
-   * `"local"`. One install serves as many mailboxes as the user has connected and mounts a
-   * different engine for each of them, so a single shared key meant the compose scratch buffer,
-   * the durable send lanes, the Screener's intent journal and the Search order were common to
-   * every mailbox at once. The compose buffer is mail text: an unfinished message written under
-   * one mailbox was restored into the next mailbox's composer, where autosave could persist it
-   * as that mailbox's draft and Send could deliver it under that identity.
-   *
-   * `mount.key` is `status.mailboxId` — the same id `live` is keyed by, so the partition and the
-   * engine change together by construction rather than by two places agreeing.
-   *
-   * **It cannot be an effect.** `AppShell` reads the compose scratch in its own `useEffect`, and
-   * React runs a child's effects before its parent's — so an effect here would set the owner one
-   * commit after the shell had already read the previous mailbox's key. A module write during
-   * render is the ordering the shell needs, it is idempotent, and it is the same shape as the
-   * render-phase state adjustment on the very next line.
+   * render, above the `AppShell` this returns. With no account cookie, `readOwner()` answered
+   * `null` and the four owner-keyed keys all resolved to the literal `"local"` — the compose
+   * scratch, send lanes, intent journal and Search order were common to every mailbox this
+   * install mounts: a message written under one could be sent under another's identity. `mount.key` is `status.mailboxId`, the
+   * same id `live` is keyed by, so partition and engine change together. It CANNOT be an
+   * effect: `AppShell` reads the scratch in its own `useEffect` and a child's effects run
+   * before the parent's — a module write during render is the ordering the shell needs.
    */
   setStorageOwner(mount.kind === "engine" ? mount.key : null);
   if (mount.kind === "engine" && live?.key !== mount.key) {
@@ -742,20 +605,14 @@ export function DesktopGate() {
      mirrored mail is kept on disk (sign-out freezes the directory) and returns with the
      sign-in. */
   /* THE CLOUD DOOR'S AUTH STATE IS PENDING: the CURRENT engine's first answer has not landed —
-     a first launch, or an engine just replaced/re-entered whose predecessor's answer no longer
-     counts. Withhold the mail app — React would otherwise commit it once, over an engine whose
-     mail routes refuse — and draw THE SAME WHOLE-WINDOW frame every other boot branch draws.
-
-     THE FULL GEOMETRY, NOT ROWS ALONE. On a cloud-door cold start this branch is the window for
-     the whole of the engine's climb — `authKey` is non-null from the first status that names the
-     door, and `/health` cannot answer before the engine serves — so a bare `<BootSkeleton
-     active />` here was the 0.12.0 boot frame: full-width rows with no rail, no panels, no
-     wrapper and no sentence, a stack of lines matching no window this app has ever shown. The
-     rail's EXISTENCE is certain at boot even while its contents are not, so every boot-phase
-     branch carries the three-column silhouette. The JSX shape is deliberately identical to the
-     two branches around it: React reconciles the three as one element, so the skeleton's grace
-     runs once across the branch hops instead of restarting at each. On a healthy relaunch this
-     still resolves in milliseconds, inside the grace, and nothing is drawn. */
+     withhold the mail app (React would commit it once over an engine whose mail routes
+     refuse) and draw THE SAME whole-window frame every other boot branch draws. THE FULL
+     GEOMETRY, NOT ROWS ALONE: on a cold start this branch covers the engine's whole climb,
+     and a bare `<BootSkeleton active />` was the 0.12.0 boot frame — full-width rows with no
+     rail and no wrapper, matching no window this app has shown. The rail's EXISTENCE is
+     certain at boot, so every boot branch carries the three-column silhouette, JSX-identical
+     to its neighbours so React reconciles them as one element and the grace runs once. A
+     healthy relaunch resolves inside the grace and nothing is drawn. */
   if (authKey !== null && !hostedAuthKnown) {
     return (
       <div className="gate gate-boot">
@@ -766,32 +623,14 @@ export function DesktopGate() {
   }
 
   /**
-   * ═══ A PAIRING THAT WORKED AND IS WAITING FOR A RELAUNCH ═══════════════════════════════════
-   *
-   * ── THIS ARM IS FIRST, AND THAT IS THE DESIGN RATHER THAN AN ACCIDENT OF WRITING ───────────
-   *
-   * Its `/health` shape is `signedIn:false, sessionExpired:false` — byte-for-byte the shape the
-   * `preAuth` arm below matches. Placed after it, this branch would be correct, unreachable, and
-   * completely invisible: the window would go on drawing the hosted PASSWORD FORM, for an account
-   * that does not exist, at the exact moment a pairing the person asked for had succeeded. Had the
-   * engine chosen `sessionExpired` for this state instead, the arm below THAT would claim "no
-   * longer paired with {host}" — the precise opposite of what happened. Both are false statements
-   * about a pairing that worked, and neither is a wording problem: the window simply had no third
-   * reading available until `restartRequired` existed.
-   *
-   * ── WHY THERE IS NO BUTTON ─────────────────────────────────────────────────────────────────
-   *
-   * Nothing in this window can restart the app. `app.restart()` exists in the shell, but only the
-   * updater calls it and reaching it from here would mean a new command — Rust this slice does not
-   * touch. So the card says the one true thing a person can act on: quit ohmail and open it again.
-   * A Relaunch button that did nothing would be worse than a sentence that is accurate.
-   *
-   * ── AND IT IS NOT `GateNotice` ─────────────────────────────────────────────────────────────
-   *
-   * That card is titled "ohmail cannot open your mailbox" and closes with "Your mail is untouched".
-   * Neither is true here: the pairing SUCCEEDED, and the previous account's copy on this machine
-   * is deliberately about to be replaced. Borrowing the apology card would have meant three
-   * sentences fighting each other on one screen.
+   * ═══ A PAIRING THAT WORKED AND IS WAITING FOR A RELAUNCH ══════════════════════════════
+   * FIRST, by design: its `/health` shape (`signedIn:false, sessionExpired:false`) is
+   * byte-for-byte the `preAuth` arm's — placed after it, this branch would be correct,
+   * unreachable and invisible, and the window would draw the hosted PASSWORD FORM at the
+   * exact moment a pairing succeeded (or, via `sessionExpired`, claim "no longer paired").
+   * NO BUTTON — nothing here can restart the app, so the card says quit and reopen. NOT
+   * `GateNotice`: its "cannot open your mailbox" and "Your mail is untouched" are both false
+   * here — the pairing SUCCEEDED and the previous copy is deliberately replaced.
    */
   if (hostedRestartRequired) {
     return (
@@ -829,21 +668,14 @@ export function DesktopGate() {
 
   if (hostedSessionGone) {
     /**
-     * ── A PAIRED INSTALL WHOSE PAIRING WAS REVOKED — a different fact and a different card ──
-     *
-     * `gateSessionGone` reads *"You were signed out of your hosted account"*, which on this door
-     * names an account that has never existed. What happened is that somebody pressed Remove on
-     * the OTHER computer's Devices list, and the mail on this machine has stopped arriving.
-     *
-     * TWO ACTIONS, because the two remedies are opposites and the second one is the product's own
-     * argument: pair with that computer again, or stop depending on it and open the mailbox from
-     * here. A card with only the first is a dead end for anybody whose other machine is gone for
-     * good — which is the case this sentence most often describes.
-     *
-     * "The copy of your mail here is kept" is a claim about what re-pairing DOES, not a
-     * reassurance: signing out freezes the mirror rather than discarding it, and the redeem that
-     * follows is refused outright if the computer at that address turns out to be a different
-     * one. If either of those changed, this sentence would be the first false thing on screen.
+     * ── A PAIRED INSTALL WHOSE PAIRING WAS REVOKED — a different fact, a different card ──
+     * `gateSessionGone` reads "You were signed out of your hosted account", which on this
+     * door names an account that never existed; what happened is Remove was pressed on the
+     * OTHER computer's Devices list. TWO ACTIONS, because the remedies are opposites: pair
+     * again, or stop depending on that computer and open the mailbox from here — a card with
+     * only the first is a dead end when the other machine is gone for good. "The copy of
+     * your mail here is kept" is a claim about what re-pairing DOES: signing out freezes the
+     * mirror, and the redeem refuses a different computer at that address.
      */
     const revokedHost = hostLabelOf(status?.baseUrl);
     if (paired && revokedHost !== null && !signInAfterExpiry) {
@@ -941,29 +773,15 @@ export function DesktopGate() {
   const shellKey = mount.kind === "engine" ? mount.key : "opening";
 
   if (engine === null) {
-    /* A door is chosen and no engine has served yet — a first launch migrating a database, or an
-       engine on its way back up. No mail: the only thing this window could put on screen instead
-       is a guess, and a guess about somebody's own mailbox is worse than a quiet frame. The
-       settling poll above is what ends this state.
-
-       AND, ONCE THE WAIT STOPS BEING AN ORDINARY ONE, THE SHAPE OF THE WINDOW BEHIND IT.
-       `BootSkeleton` is `mailMount`'s answer drawn out, never a second opinion about it: this
-       branch is chosen entirely above, and the silhouette is decoration inside a decision that
-       has already been made. It carries no text and nothing derived from any mailbox, which is
-       what keeps it on the right side of the rule this comment states — a shape is not invented
-       mail, for exactly as long as there is nothing in it.
-
-       It is delayed behind its own grace, so the ordinary launch is the quiet frame it has always
-       been. The wait it exists for is the one-off recovery launch: an install whose previous run
-       left a large write-ahead log replays it inside the engine's database open (see `SETTLE_MS`
-       in `doors.ts`).
-
-       THE WORDS SIT WHERE THE APP'S OWN SYNC LINE WILL SIT — the foot of the rail — not on a
-       centred card over the canvas. `BootStatus` is the sync line's shape with the boot's
-       sentence in it, and the sentence is the engine's own account of the wait: each `phase`
-       frame the engine writes while starting reaches this window as `status.bootPhase`, so a
-       recovery launch says "Replaying recent changes…" instead of one sentence for every wait.
-       The settling poll above is also what refreshes the phase. */
+    /* A door is chosen and no engine has served yet — a first launch migrating a database,
+       or an engine on its way back up. No mail: the only alternative is a guess about
+       somebody's own mailbox. `BootSkeleton` is `mailMount`'s answer drawn out, never a
+       second opinion: it carries no text and nothing derived from any mailbox — a shape is
+       not invented mail for exactly as long as there is nothing in it — and it is delayed
+       behind its own grace, so the ordinary launch stays a quiet frame; the wait it exists
+       for is the one-off recovery launch (`SETTLE_MS` in `doors.ts`). The words sit at the
+       foot of the rail where the sync line will sit: `BootStatus` renders the engine's own
+       `status.bootPhase` ("Replaying recent changes…"); the settling poll refreshes it. */
     return (
       <div className="gate gate-boot">
         <BootSkeleton active rail />
@@ -976,19 +794,14 @@ export function DesktopGate() {
     <>
       <AppShell
         /**
-         * KEYED BY THE MAILBOX, so a mailbox change REMOUNTS the shell.
-         *
-         * Partitioning the storage was only half of it, and the missing half is worse than the
-         * half that was fixed. `ShellInner` holds the compose form in React state and loads the
-         * scratch buffer in a mount effect with an empty dependency list. Without a key, React
-         * preserves that component across a mailbox switch: the storage owner moves to B and the
-         * engine is replaced, while mailbox A's recipients, subject and body are still sitting in
-         * state — and the next autosave writes them into B's partition, or a press sends them
-         * under B's identity. The keys were per-mailbox and the TEXT was not.
-         *
-         * `mount.key` is the same id the partition and the engine are chosen by, so all three
-         * change together or none does. A remount costs a re-read of the correct buffer, which is
-         * exactly the behaviour that was wanted.
+         * KEYED BY THE MAILBOX, so a mailbox change REMOUNTS the shell. Partitioning the
+         * storage was half of it: `ShellInner` holds the compose form in React state and
+         * loads the scratch in a mount effect, so without a key React preserves the
+         * component across a mailbox switch — the owner moves to B while mailbox A's
+         * recipients, subject and body sit in state, and the next autosave writes them into
+         * B's partition or a press sends them under B's identity. `mount.key` is the same id
+         * the partition and the engine are chosen by, so all three change together; a
+         * remount costs a re-read of the correct buffer, which is what was wanted.
          */
         key={shellKey}
         /* Always false, structurally: the early return above means this line is only reached
@@ -997,18 +810,14 @@ export function DesktopGate() {
            surface at all; the one demo lives on ohmail.app's landing page. */
         demo={false}
         {...(engine ? { engine } : {})}
-        /* WHAT THE SYNC LINE IS ALLOWED TO SAY. Its ladder begins with "can we see this account's
-           mailboxes?" and stays silent when it cannot — which is what this window used to be,
-           silent, through the whole of a first sync. `GET /mailboxes` is served by both doors out
-           of the database on this machine, so the answer costs one call down the pipe. Withheld
-           while there is no engine: the invented mailbox is nobody's account and has nothing to
-           report. See `DesktopMailboxes.tsx` for why the probe must reject rather than answer
-           with an empty list.
-
-           These are the ACCOUNT's own mailboxes on the hosted door — mirrored under the account's
-           own ids by the engine's pull, not the single placeholder row it used to answer with. The
-           same facts feed the From selector, which is why the addresses on offer here are the
-           addresses a send can actually leave from. */
+        /* WHAT THE SYNC LINE IS ALLOWED TO SAY. Its ladder begins with "can we see this
+           account's mailboxes?" and stays silent when it cannot — which this window used to
+           be through the whole of a first sync. `GET /mailboxes` is served by both doors
+           from the database on this machine, so the answer costs one call down the pipe;
+           withheld while there is no engine (see `DesktopMailboxes.tsx` for why the probe
+           must reject rather than answer an empty list). On the hosted door these are the
+           ACCOUNT's own mailboxes under the account's own ids, and the same facts feed the
+           From selector — the addresses on offer are the addresses a send can leave from. */
         {...(engine ? { mailboxFacts: readMailboxFacts } : {})}
         /* HOW OLD IS THE MAIL ON SCREEN — the sidecar's own verdict (`GET /mirror/freshness`),
            because the window engine drains the LOCAL feed and cannot know the desktop is days
@@ -1100,27 +909,15 @@ export function DesktopGate() {
               }
             : undefined
         }
-        /* SETTINGS → DEVICES — one pane id, one entry per door, and the two doors put genuinely
-           different things behind it.
-
-           STANDALONE: host mode's pane. Publishing the mail engine on THIS computer to the
-           person's own devices is something only an install that holds the whole mailbox can
-           offer, and `hostDoorFor` is the rule — a pure function in `doors.ts` for the reason the
-           other door gates are.
-
-           HOSTED: the ACCOUNT's devices — the sessions signed into it, the pairing mint that puts
-           its mail on a phone, and the take-back. A browser tab against the managed service has
-           had that pane since the device-pairing mount, and this window had NO devices entry at
-           all: an install mirroring the account could not see which devices were signed into it,
-           and could not revoke one. That absence read as "this product does not have that", which
-           is the shape this whole surface exists to remove.
-
-           It is a DOOR OUT rather than a form, and for `DesktopWebSection`'s reason exactly:
-           `POST /pair` and `DELETE /devices/:id` are step-up gated, and nothing this app can do
-           asserts a second factor. A list drawn here over verbs that could only be refused would
-           be worse than the absence — so the pane says where the ceremony happens and opens it.
-           `GET /devices` alone is not gated, but a read-only list beside no verb answers the one
-           question ("who is signed in?") and refuses the one that follows it. */
+        /* SETTINGS → DEVICES — one pane id, one entry per door, two different things behind
+           it. STANDALONE: host mode's pane — publishing the engine on THIS computer is
+           something only an install holding the whole mailbox can offer (`hostDoorFor` is
+           the rule). HOSTED: the ACCOUNT's devices — sessions, the pairing mint, the
+           take-back — which this window did not have at all: an install mirroring the
+           account could not see or revoke a device. A DOOR OUT rather than a form,
+           `DesktopWebSection`'s reason: `POST /pair` and `DELETE /devices/:id` are step-up
+           gated and nothing this app does asserts a second factor — a list over verbs that
+           could only refuse would be worse than the absence. */
         {...(hostDoorFor(status) === "local"
           ? { devicesSection: <DesktopDevices /> }
           : accountDoor
@@ -1134,17 +931,13 @@ export function DesktopGate() {
               }
             : {})}
         /* A SUGGEST CONTROL PER DOOR, because the two doors are not buying the same thing.
-           On the STANDALONE door the model belongs to whoever installed it and nothing is
-           metered, so the control names no price and says instead whether there is a model at
-           all. On the HOSTED door there is an account with an allowance behind it, and the
-           question is the one a browser tab asks — what would this cost — so that door renders
-           the SHARED ladder over a transport that reaches the account through the engine.
-           Neither is a control with nothing behind it, which is the thing this surface must
-           never be: the hosted one is offered only once a session is held, because a purchase
-           control on a signed-out install could only ever refuse.
-           Which of the three it is — including "none" — is `suggestDoorFor`, a pure function in
-           `doors.ts` for the reason `gateFor` and `mailMount` are: a decision a test can drive is
-           worth more than a condition a component describes. */
+           On the STANDALONE door nothing is metered, so the control names no price and says
+           whether there is a model at all; on the HOSTED door the question is a browser
+           tab's — what would this cost — so that door renders the SHARED ladder over a
+           transport that reaches the account through the engine. Neither is a control with
+           nothing behind it: the hosted one is offered only once a session is held. Which of
+           the three it is — including "none" — is `suggestDoorFor`, a pure function in
+           `doors.ts` for `gateFor`'s reason. */
         {...(suggestDoor === "local"
           ? {
               screenerSuggest: ({ senders, absorb }) => (
@@ -1168,23 +961,15 @@ export function DesktopGate() {
                 ),
               }
             : {})}
-        /* SETTINGS → AWAY RESPONDER, on the HOSTED door only.
-           The shared shell offers this control when `apiConfigured()` says there is a server — and
-           that is false in EVERY desktop build, both doors, because this bundle aliases the Cloud
-           client to a refusing stub. So the responder was withheld from a hosted install that has a
-           real account behind it, which was wrong — and from a standalone install, which THIS SLICE
-           makes wrong too: the sentence that stood here, "nothing on that door SENDS the reply", was
-           true only while the pass lived in the hosted worker's private module map. It lives in
-           `@trafficflow/services` now, which this engine bundles, and the sidecar's drain runs it
-           with this machine's own SMTP dial.
-
-           A TRANSPORT and not a section, unlike the two seams above: it is the same control over
-           whichever row the door owns, and a second copy of it would be a second definition of what
-           the responder stores. `awayDoorFor` is where the rule lives, as a pure function a test can
-           drive, and it returns WHICH door — because the wire is identical on both and only the
-           pane's promise differs. `awayIsLocal` carries that difference and nothing else: on the
-           standalone door the replies go out only while this window is open, and the pane says so
-           rather than borrowing Cloud's always-on copy. */
+        /* SETTINGS → AWAY RESPONDER. The shared shell offers this when `apiConfigured()`
+           says there is a server — false in EVERY desktop build — so the responder was
+           withheld from a hosted install with a real account, and from a standalone install,
+           wrong too now that the pass lives in `@trafficflow/services` (this engine bundles
+           it; the sidecar's drain runs it with this machine's own SMTP dial). A TRANSPORT
+           and not a section: the same control over whichever row the door owns. `awayDoorFor`
+           returns WHICH door, and `awayIsLocal` carries the one difference: on the
+           standalone door replies go out only while this window is open, and the pane says
+           so rather than borrowing Cloud's always-on copy. */
         {...(awayDoorFor(status, hostedSession) !== null
           ? {
               awayTransport: awayOverBridge,
@@ -1223,30 +1008,15 @@ export function DesktopGate() {
            on the hosted one. `profileImportDoorFor` is the rule, a pure function a test drives. */
         {...(profileImportDoorFor(status, hostedSession) !== null ? { profileImportTransport: profileImportOverBridge } : {})}
         /* SETTINGS → SCREENER AND GENERAL, THE ACCOUNT'S OWN ROW — the dormancy dial, the
-           auto-suggest opt-in and auto-unsubscribe, all of which the shared shell already builds
-           and all of which it withheld here because its `GET /consent` could not run. Two wires
-           rather than one, because the opt-in row needs both halves and they are different
-           questions: `consentTransport` is where the FLAG is read and written, and `suggestWire` is
-           what PRICES the batch turning it on would buy — a switch that authorises spending without
-           a quote is the one thing that control must never be. Both are the same transport-not-a-
-           section rule the away responder states: one implementation of what a consent means, one
-           implementation of how money moves, and only the bytes injected.
-
-           THE TWO WIRES PART COMPANY AT THE STANDALONE DOOR (mail 0083), and the half of the old
-           rule that sent both away was measured wrong. `consentRoutes` are mounted on
-           `localRoutes` now, so a standalone install DOES have the row: `dormancy_days`,
-           `screening_scope` and `screening_baseline_at` live in its own `account_settings`, its
-           sync cycle threads the resolved cutoff exactly as the hosted worker does, and
-           `local-consent.ts` carries the correction in full. Withholding the transport there left
-           the free tier — the one most people meet first — with no screening window at all and no
-           way to say so. It also withheld `consent.known`, which is one of the four conditions
-           `AppShell` gates the first-run stage on, so the guided setup below could not open on
-           the door the guided setup exists for.
-
-           `suggestWire` STAYS hosted-only, and that is the clause of the old rule that survived:
-           it prices a batch against an account's ledger, and there is no ledger and no watermark
-           behind a standalone engine. A spend control with nothing behind it is the one thing
-           that control must never be. */
+           auto-suggest opt-in and auto-unsubscribe, all built by the shared shell and withheld
+           here while its `GET /consent` could not run. Two wires, two questions:
+           `consentTransport` reads and writes the FLAG; `suggestWire` PRICES what turning it
+           on would buy — a switch that authorises spending without a quote is the one thing
+           that control must never be. The wires part company at the STANDALONE door
+           (mail 0083): `consentRoutes` are mounted on `localRoutes`, so that install has the
+           row and threads the resolved cutoff as the hosted worker does (`local-consent.ts`);
+           it also feeds `consent.known`, one of the four first-run gates. `suggestWire` STAYS
+           hosted-only: no ledger, no watermark behind a standalone engine. */
         /* ONE WIRE PER DOOR, and the two differ by exactly one declared capability: the
            standalone engine serves no folder verb, so its transport says the folders flag is not
            storable and the shared shell withholds that pane instead of drawing a switch that
@@ -1274,39 +1044,28 @@ export function DesktopGate() {
            standalone reader with exactly the stalled Retry the wire exists to remove. */
         {...{ olderBodyWire: olderBodyOverBridge }}
         /* THE JUNK WINDOW'S WIRE — BOTH doors, the same transport-not-a-control rule. The
-           segment, its states, its two rescue verbs, the search-append and the sweep offer are
-           the shared shell's (`shell/junk-window.ts`); this hands in the pipe. On the HOSTED door
-           the engine has no junk routes of its own — Junk is never mirrored — so every ask falls
-           through to the write-through proxy and is answered by the hosted account. On the
-           STANDALONE door the engine serves them itself (its organizer knows the mailbox's native
-           \Junk), but the segment stays withheld there by the flag in front of it: that door
-           cannot STORE "Use folders" (§17), and the shell gates the control on the flag. The
-           mechanism is worth spelling out because the obvious phrasing — "no consent row" — is
-           contradicted by the `consentTransport` spread earlier in this same prop list, which
-           hands the standalone door a wire for that row. No line count: three different numbers
-           described this one gap across a comment, a commit message and a public message, in a
-           comment whose whole subject is comments that have drifted from what they describe. A
-           reference that cannot go stale is the name of the thing, not the distance to it. The
-           row exists and is served, and
-           `withoutFoldersFlag` strips this one FIELD out of it because the engine mounts no
-           folder verb. `local-junk.ts` carries the argument. */
+           segment, its states, verbs and sweep offer are the shared shell's
+           (`shell/junk-window.ts`); this hands in the pipe. HOSTED: the engine has no junk
+           routes of its own — Junk is never mirrored — so every ask falls through to the
+           write-through proxy. STANDALONE: the engine serves them itself, but the segment
+           stays withheld by the flag in front of it — that door cannot STORE "Use folders"
+           (§17), and the shell gates the control on the flag. NOT "no consent row": the
+           `consentTransport` spread earlier in this prop list hands that door the row's wire;
+           `withoutFoldersFlag` strips this one FIELD (no folder verb; `local-junk.ts`). */
         {...{ junkWire: junkOverBridge }}
         /* THE LIVE TRASH WINDOW's wire, on the same terms. Both doors serve `/trash/window*` —
            the standalone one from `localRoutes`, the hosted one through the relay — and without a
            wire the section reports "no server" and is withheld, which is what this window did.
            Two reads and no verb; `local-trash.ts` carries the argument. */
         {...{ trashWire: trashOverBridge }}
-        /* SETTINGS → SUBSCRIPTION, SECURITY AND ACCOUNT — the three panes the web client has on a
-           hosted account and this window did not, so its Settings nav was simply shorter with
-           nothing on screen saying why. An absent entry does not read as "this is done elsewhere";
-           it reads as "this product does not have that", which for account deletion contradicts
-           what the site promises.
-
-           All three are now doors and nothing else. Every control behind Security and Account is
-           step-up gated and nothing this app can do asserts a second factor; Subscription is the
-           service operator's own page, which this program does not hold the state for. See
-           `DesktopWebSection` and `DesktopSubscription` — the latter renders nothing at all where
-           no such page is served, so the nav entry follows the page. */
+        /* SETTINGS → SUBSCRIPTION, SECURITY AND ACCOUNT — the three panes the web client has
+           on a hosted account and this window did not: an absent entry reads as "this product
+           does not have that", which for account deletion contradicts what the site promises.
+           All three are doors and nothing else: every control behind Security and Account is
+           step-up gated and nothing this app can do asserts a second factor; Subscription is
+           the service operator's own page, whose state this program does not hold. See
+           `DesktopWebSection` and `DesktopSubscription` — the latter renders nothing where no
+           such page is served, so the nav entry follows the page. */
         /* THE ACCOUNT'S AI SWITCH — behind `accountDoor` like the three panes below, and
            unconditional within it: the flag exists for every hosted account. The standalone door
            has no account and keeps its own local-model form on the Desktop pane instead. */
@@ -1348,43 +1107,26 @@ export function DesktopGate() {
            so a remount cannot seed the same click twice. */
         {...(mailtoDraft ? { mailtoDraft, onMailtoDraftSeeded: () => setMailtoDraft(null) } : {})}
         /* ── THE GUIDED SETUP FLOW, ON THE DOOR IT WAS WRITTEN FOR ─────────────────────────
-         *
-         * The stage itself is the shared shell's (`app/shell/FirstRun.tsx`) and knows about no
-         * door at all; what it asks for is one object that can make the calls, and this is the
-         * standalone door's. Absent on the hosted door and before a door is chosen, which is not
-         * a withheld feature but the whole gate: `AppShell` renders no stage without a host, so
-         * `#/first-run` draws nothing there rather than drawing a flow whose consent belongs to
-         * an account and whose "Start over" would offer to forget a mailbox other devices are
-         * mirroring. `firstRunDoorFor` is the rule, a pure function a test drives.
-         *
-         * THE PROVIDER FORM IS INJECTED RATHER THAN IMPORTED, and the direction is the point:
-         * `apps/webapp` may not import `AiProviderForm` (a pin asserts it does not) because the
-         * form is the standalone install's own and the shell is shared. It is the SAME component
-         * Settings → AI mounts, so there is one write path to this install's model file and not
-         * two, and its `onStatus` echo lands in the same `ai` state the Screener's suggest
-         * control reads — saving a key inside the flow makes that control live without a
-         * relaunch, exactly as saving one in Settings does.
-         *
-         * `pairNode` is the devices surface, on `hostDoorFor`'s rule rather than on a second
-         * opinion about it: the flow's last, skippable step offers to pair a phone, and only an
+         * The stage is the shared shell's (`app/shell/FirstRun.tsx`) and knows no door; it
+         * asks for one object that can make the calls, and this is the standalone door's.
+         * Absent on the hosted door and before a door is chosen — the whole gate, not a
+         * withheld feature (`firstRunDoorFor` is the rule). THE PROVIDER FORM IS INJECTED
+         * RATHER THAN IMPORTED: `apps/webapp` may not import `AiProviderForm` (a pin asserts
+         * it), and it is the SAME component Settings → AI mounts — one write path to the
+         * model file, and its `onStatus` echo lands in the same `ai` state the suggest
+         * control reads. `pairNode` is the devices surface on `hostDoorFor`'s rule: only an
          * install that may publish its engine has anything to pair to. */
         {...(firstRun ? { firstRun } : {})}
         onUnread={onUnread}
       />
-      {/* THE ONE-TIME DEFAULT-MAIL ASK — over the mail, once a mailbox is connected, and never
-          twice: either answer persists, and "already the default" persists too. The Settings row
-          above is the durable way back for whoever says "Not now".
-
-          ── AND NOT WHILE THE SETUP FLOW IS OPEN ─────────────────────────────────────────────
-          MEASURED on the released 0.13.7: at +15 s after connecting a mailbox this prompt was
-          stacked ON TOP of the flow's own Continue and Cancel row and HID them until dismissed,
-          with the ohmarchy banner behind both — three asks at once, and the one covering the
-          buttons was this one.
-
-          `route.firstRun` is the stage's own gate in `AppShell`, read here through the shared
-          hash router so the two cannot disagree. It WAITS rather than being withheld: the ask
-          is one-time and un-answered, so it is offered on the next visit with the flow closed —
-          which is also the visit where somebody has attention for it. */}
+      {/* THE ONE-TIME DEFAULT-MAIL ASK — over the mail, once a mailbox is connected, and
+          never twice: either answer persists, and "already the default" persists too; the
+          Settings row above is the durable way back for "Not now". NOT WHILE THE SETUP FLOW
+          IS OPEN — measured on the released 0.13.7: at +15 s this prompt stacked ON TOP of
+          the flow's own Continue and Cancel and HID them until dismissed. `route.firstRun`
+          is the stage's own gate in `AppShell`, read through the shared hash router so the
+          two cannot disagree. It WAITS rather than being withheld: the ask is one-time and
+          un-answered, so it is offered on the next visit with the flow closed. */}
       {routeNow.firstRun ? null : <DefaultMailAsk />}
       {overlay ? (
         /* OVER the client, not under it. `.gate` is a full-height flow element — correct when it
@@ -1419,21 +1161,15 @@ export function DesktopGate() {
           {...(overlay === "takeover" ? { roster: takeoverRoster, host: hostLabel } : {})}
           onCancel={() => {
             /* CANCEL IS NOT "NOTHING HAPPENED". A door attempt inside this overlay may have
-               already REPLACED the engine (`engine_configure` runs before the credential step —
-               a rejected password, an abandoned browser handoff) without ever reaching
-               `onEntered`, so no status was delivered and the epoch never moved: the stored
-               /health answer still matches the current key while describing the PREVIOUS
-               engine. Closing the overlay is the reveal moment — the mail client underneath
-               would render on that stale answer — so the EPOCH advances here, which does what
-               merely clearing the stored answer cannot: a /health probe already in flight holds
-               the OLD key in its closure (and the shell deliberately lets requests finish
-               against the engine being replaced), so a late old-engine answer would re-store
-               under a still-current key. The bump re-keys the gate, retires both probe effects
-               (their cleanup cancels the in-flight read), and withholds the app until the
-               engine actually behind the bridge gives its own first /health — milliseconds, and
-               a cancel that truly changed nothing costs one local probe. `refresh()` re-reads
-               the shell for the same reason: the door state itself may have moved under an
-               abandoned attempt. */
+               already REPLACED the engine (`engine_configure` runs before the credential
+               step) without reaching `onEntered`, so the epoch never moved and the stored
+               /health answer describes the PREVIOUS engine. Closing the overlay is the reveal
+               moment, so the EPOCH advances here — clearing the stored answer is not enough,
+               because a probe already in flight holds the OLD key in its closure and a late
+               old-engine answer would re-store under a still-current key. The bump re-keys
+               the gate, retires both probe effects and withholds the app until the engine
+               actually behind the bridge gives its own first /health. `refresh()` re-reads
+               the shell: the door state itself may have moved under an abandoned attempt. */
             setAuthEpoch((n) => n + 1);
             setOverlay(null);
             void refresh();
@@ -1462,18 +1198,13 @@ export function DesktopGate() {
 }
 
 /**
- * WHAT THE ICON SAYS, AND WHEN THE MACHINE SPEAKS UP.
- *
- * One sink for the client's unread count, driving both native surfaces:
- *
- *  · the DOCK BADGE is the count itself, set every time it changes and removed at zero — a badge
- *    reading "0" is a badge saying there is nothing, which is what taking it off already says;
- *  · a NOTIFICATION fires only when the count RISES and the window is not the one being looked
- *    at. Falling counts are the user reading their own mail, and notifying somebody about mail
- *    they are looking at is the behaviour every mail client is disliked for.
- *
- * The first render seeds the previous count rather than notifying against zero: an app opened
- * with eleven unread messages has not just received eleven.
+ * WHAT THE ICON SAYS, AND WHEN THE MACHINE SPEAKS UP. One sink for the client's unread
+ * count, driving both native surfaces: the DOCK BADGE is the count itself, set on change and
+ * removed at zero (a badge reading "0" says what taking it off already says); a NOTIFICATION
+ * fires only when the count RISES and the window is not the one being looked at — falling
+ * counts are the user reading their own mail. The first render seeds the previous count
+ * rather than notifying against zero: an app opened with eleven unread has not just
+ * received eleven.
  */
 function useUnreadSink(): (unread: number) => void {
   const previous = useRef<number | null>(null);
@@ -1488,17 +1219,13 @@ function useUnreadSink(): (unread: number) => void {
     void setBadge(unread).catch(() => {});
     if (typeof document !== "undefined" && document.hasFocus()) return;
 
-    /* ── THE GATE, AND WHY THIS CALL EXISTS AT ALL ────────────────────────────────────────
-       This emitter used to fire unconditionally, while Settings said in as many words that
-       ohmail "doesn't send notifications yet — nothing is delivered to this browser or any
-       device". Both halves shipped in the same build: the sentence renders whenever the mirror
-       carries no notifications row, which on the desktop is always, because the only thing that
-       ever wrote that row is the fixture adapter and this build stubs it out. So the app told
-       you about new mail and its own settings screen said it never would.
-
-       Now it asks the shared gate, exactly as the browser and the phone do. `decideNotices` is
-       handed the counts and the stored switches and answers with what may be drawn — nothing at
-       all when the master is off, which is what "fully off" has to mean. */
+    /* ── THE GATE, AND WHY THIS CALL EXISTS ──────────────────────────────────────────────
+       This emitter used to fire unconditionally while Settings said ohmail "doesn't send
+       notifications yet" — the sentence renders whenever the mirror carries no notifications
+       row, which on the desktop is always. So the app told you about new mail and its own
+       settings screen said it never would. Now it asks the shared gate, exactly as the
+       browser and the phone do: `decideNotices` is handed the counts and the stored switches
+       and answers with what may be drawn — nothing at all when the master is off. */
     const spec = decideNotices(
       before === null ? null : { ohboxUnread: before, screenerWaiting: 0 },
       { ohboxUnread: unread, screenerWaiting: 0 },
@@ -1519,25 +1246,14 @@ function useUnreadSink(): (unread: number) => void {
 }
 
 /**
- * WHAT A MENU COMMAND DOES — and every one of them is something the client already does.
- *
- * Three of the five are routes, so they take `go`, exactly as the navigation items do. The other
- * two — the command palette and the shortcut sheet — are state inside `AppShell`, which this file
- * is outside of and must stay outside of: the alternative is two more props threaded down through
- * a component that is also compiled into a browser tab, for two menu items that exist only here.
- *
- * ── SO THEY ARE DELIVERED AS THE KEYSTROKE THE CLIENT ALREADY BINDS ─────────────────────────
- *
- * The shared keymap is ONE `keydown` listener on `document`, and a dispatched event reaches it
- * exactly as a typed one does. So ⌘K from the menu runs the same binding ⌘K from the keyboard
- * runs — not a copy of it, and not a second way to open the palette that could drift from the
- * first. It also means an accelerator the platform swallowed on its way to the menu bar is handed
- * back to the page rather than lost, which is the actual problem: a menu item with ⌘K on it
- * PREVENTS the webview from ever seeing ⌘K.
- *
- * `bubbles` is true because the listener is on `document` and the event is dispatched on it;
- * `cancelable` is true because the binding calls `preventDefault()`, and an uncancelable event
- * makes that a silent no-op rather than an error.
+ * WHAT A MENU COMMAND DOES — every one of them is something the client already does. Three
+ * of the five are routes and take `go`, as the navigation items do. The palette and the
+ * shortcut sheet are state inside `AppShell`, which this file must stay outside of — so they
+ * are DELIVERED AS THE KEYSTROKE THE CLIENT ALREADY BINDS: the shared keymap is one
+ * `keydown` listener on `document`, and a dispatched event reaches it exactly as a typed one
+ * does, so ⌘K from the menu runs the same binding as ⌘K from the keyboard — and an
+ * accelerator the platform swallowed is handed back to the page rather than lost. `bubbles`
+ * because the listener is on `document`; `cancelable` because the binding calls `preventDefault()`.
  */
 function runMenuCommand(command: MenuCommand): void {
   switch (command) {

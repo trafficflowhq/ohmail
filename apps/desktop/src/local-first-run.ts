@@ -1,48 +1,12 @@
 /**
  * THE STANDALONE DOOR'S FIRST-RUN HOST — every call the setup flow makes, over the local pipe.
- *
- * `useCloudFirstRun` is this file's twin and the shape is deliberately its: the shared stage
- * (`app/shell/FirstRun.tsx`) knows nothing about any door and asks for one object
- * (`FirstRunHost`), so the whole difference between "setup on ohmail.app" and "setup on a laptop
- * with nobody's account behind it" lives here. The window cannot import `app/api-client` —
- * `vite.config.ts` aliases it to a stub whose value exports refuse, and the public mirror does not
- * carry the module at all — so this is where the flow's seam is bound to `bridgeFetch`.
- *
- * ── THE THREE CALLS THAT DO NOT GO WHERE THE OTHER DOOR SENDS THEM ─────────────────────────
- *
- * The shared route table is served by the engine on this machine, so most of the flow is the
- * same request one hop shorter. Three are not, and each for a stated reason:
- *
- *  1. {@link FirstRunHost.organize} → `POST /local/mailboxes/:id/organize`, not the shared
- *     `POST /mailboxes/:id/organize`. The shared one is `stepUp: true`, and on this door a step-up
- *     is not a guard but a permanent refusal: the launch session's second-factor stamp is written
- *     once at boot (`identity.ts#mintLaunchSession` — "there is no second factor on a local
- *     install"), so `withStepUp` refuses from five minutes after launch for the life of the
- *     process. Every machine that has been open longer than a coffee would be unable to finish
- *     setup. The local route's authority is the per-launch bearer, which is minted at boot, added
- *     shell-side and never reaches this window — holding it IS being the person sitting at the
- *     machine.
- *  2. {@link FirstRunHost.forgetMailbox} → `DELETE /local/mailboxes/:id`, on the identical
- *     argument; the shared `DELETE /mailboxes/:id` carries the same flag and the same consequence.
- *     {@link FirstRunHost.probe} → `POST /local/mailboxes/probe`, likewise, and it is the one
- *     that USED to be safe on the shared route: see {@link PROBE_PATH} for what changed.
- *  3. {@link FirstRunHost.connect} → the SHELL'S DOOR, not `POST /mailboxes`. See its own note: a
- *     mailbox row created through the API would be a row the shell's settings file has never heard
- *     of, and the engine dials what the settings file says. The create is not a request here, it
- *     is a reconfiguration of the install.
- *
- * ── AND THIS DOOR CAN RECORD "ASKED, AND THE ANSWER WAS NO", WHICH CLOUD CANNOT ────────────
- *
- * `OnboardingAi` is a four-state union because "never asked" and "answered no" select opposite
- * screens, and `useCloudFirstRun` can only supply three of the four — `accounts.ai_enabled` is a
- * boolean that rests false, so that door reports `unset` for both and the stage compensates by
- * walking its own cursor past a "no".
- *
- * Here the answer is a property of the INSTALL, exactly as the model file is, so it is stored the
- * way this window stores every other per-install preference and the fourth state is real. That is
- * not a nicety: `onboardingPath` puts the provider step in the walk for `door === "local" && ai
- * !== "off"`, so without a recordable "no" somebody who declined a model would be walked straight
- * onto the form for choosing one.
+ * `useCloudFirstRun` is the twin: the shared stage (`app/shell/FirstRun.tsx`) asks for one
+ * object (`FirstRunHost`), so the whole door difference lives here, bound to `bridgeFetch`.
+ * `organize`, `forgetMailbox` and `probe` leave the shared table for `/local/…` routes: the
+ * shared ones are `stepUp: true` and this door's second-factor stamp is written once at boot —
+ * they refuse from five minutes after launch; the per-launch bearer is the authority instead. `connect` is the SHELL'S DOOR, not `POST /mailboxes`: a create here
+ * reconfigures the install. `OnboardingAi` keeps four states — a recordable "no" keeps
+ * `onboardingPath` from walking a decliner onto the provider form.
  */
 
 import { useCallback, useMemo, useState } from "react";
@@ -61,23 +25,14 @@ import {
 } from "./doors.js";
 
 /**
- * WHERE THIS DOOR SERVES THE PROBE — `/local/…`, and the move is a fix rather than tidying.
- *
- * The shared `POST /mailboxes/probe` is `stepUp: true` (its body carries a mailbox password), and
- * on this door the launch session's second-factor stamp is written ONCE at boot — so that flag
- * refuses from five minutes after launch for the life of the process. It was satisfiable here by
- * ACCIDENT: the flow's connect form was withheld the moment a mailbox existed, so the only state
- * in which "Test connection" could be pressed was one where the engine had just come up.
- *
- * Settings → Add mailbox ends the accident. The form is reachable at any point in a launch now,
- * and the flow's primary stays disabled until a verdict exists — so on the shared route "Add
- * mailbox" is a dead end on every window open longer than a coffee. Measured against a real
- * sidecar: the shared route answered the mail server's own refusal 170 s after boot and
- * `403 step_up_required` at 330 s.
- *
- * The local route runs the SAME `MailboxService.probeConnection` with the same prober and the
- * same folder count; what differs is the authority, which is the per-launch bearer — the same
- * protection the other five members of this family carry.
+ * WHERE THIS DOOR SERVES THE PROBE — `/local/…`, a fix rather than tidying. The shared
+ * `POST /mailboxes/probe` is `stepUp: true` (its body carries a mailbox password), and on this
+ * door the launch session's second-factor stamp is written ONCE at boot, so that flag refuses
+ * from five minutes after launch. It was satisfiable only by accident while the connect form
+ * was withheld once a mailbox existed; Settings → Add mailbox ends the accident — measured
+ * against a real sidecar, the shared route answered `403 step_up_required` at 330 s. The local
+ * route runs the SAME `MailboxService.probeConnection` with the same prober and folder count;
+ * what differs is the authority: the per-launch bearer, like the other five members here.
  */
 export const PROBE_PATH = "/local/mailboxes/probe";
 
@@ -96,27 +51,13 @@ export const LOCAL_MAILBOXES_PATH = "/local/mailboxes";
 
 /**
  * THE CREATE BODY FOR A FURTHER MAILBOX, in the shared service's own vocabulary.
- *
- * `MailboxService.create` is what serves this route, so the body is `CreateMailboxBody` and not a
- * shape of this door's own: provider, address, and a transport block per transport. Both blocks
- * carry the password, because one password covers both servers on a mailbox somebody typed into
- * a form — and the service probes each block it is given, so what gets stored is what answered.
- *
- * ── THE SMTP BLOCK IS SENT, AND SENDING IT IS THE WHOLE REASON #2 CAN REPLY TO ANYTHING ─────
- *
- * A standalone install used to read its submission server out of the process configuration, which
- * describes ONE server. With a second mailbox that is no longer a description of anything: the
- * send adapter reads the mailbox's own `smtp` credential row, and a mailbox created without one
- * would send through the FIRST mailbox's server carrying the SECOND mailbox's password. So the
- * outgoing coordinates travel with the create, exactly as they do on the hosted door.
- *
- * `port`/`secure` are passed through as typed — including ABSENT, which is a request rather than
- * an omission: the service's probe then walks the standard ladder and stores the combination it
- * proved. A default here would silently withdraw that.
- *
- * The USERNAME defaults to the address on the incoming side, which is what `doorFields` does on
- * the seed path and what `createBody` does on the hosted one — three call sites, one rule, so the
- * probe and the stored credential name the same identity whichever door was used.
+ * `MailboxService.create` serves this route, so the body is `CreateMailboxBody`: provider,
+ * address, a transport block per transport, both blocks carrying the password — the service
+ * probes each block it is given and stores what answered. The SMTP block must travel: the send
+ * adapter reads the mailbox's own `smtp` credential row, and a mailbox created without one
+ * would send through the FIRST mailbox's server carrying the SECOND mailbox's password.
+ * `port`/`secure` pass through as typed, ABSENT included: the probe walks the standard ladder
+ * and stores what it proved. The USERNAME defaults to the address — one rule, three call sites.
  */
 export function addMailboxBody(input: FirstRunMailboxInput): Record<string, unknown> {
   const user = (input.imap.user ?? "").trim() || input.address.trim();
@@ -335,22 +276,14 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
 
   const probe = useCallback(async (input: FirstRunMailboxInput): Promise<FirstRunProbeOk> => {
     /**
-     * TEST THIS CONNECTION — the engine's own dial, `POST /local/mailboxes/probe`.
-     *
-     * ── IT USED TO SAY "REACHABLE ONLY WHILE THIS INSTALL HAS NO MAILBOX" ───────────────────
-     *
-     * That was true and it was load-bearing: the mailbox step withheld its form the moment
-     * `facts.mailbox` was non-null, so the only state in which this could be pressed was one
-     * where the engine had just come up — which was also the only state in which the shared
-     * route's `stepUp: true` was satisfiable on this door. Two windows, one window, and this
-     * could stay on the shared route while `organize` could not.
-     *
-     * Settings → Add mailbox makes the form reachable at ANY point in a launch, so the premise
-     * is gone and the route moved with it. See {@link PROBE_PATH} for the measurement.
-     *
-     * Sent as typed, including an ABSENT username: the service defaults that to the address, and
-     * `doorFields` applies the identical default on the connect that follows, so the test and the
-     * connect dial the same identity.
+     * TEST THIS CONNECTION — the engine's own dial, `POST /local/mailboxes/probe`. It could
+     * stay on the shared route only while the mailbox step withheld its form once
+     * `facts.mailbox` was non-null — the just-booted engine was the one state where
+     * `stepUp: true` was satisfiable on this door. Settings → Add mailbox makes the form
+     * reachable at ANY point in a launch, so the premise is gone and the route moved with it
+     * ({@link PROBE_PATH} has the measurement). Sent as typed, including an ABSENT username:
+     * the service defaults that to the address, and `doorFields` applies the identical default
+     * on the connect that follows, so the test and the connect dial the same identity.
      */
     return jsonOf<FirstRunProbeOk>(
       await bridgeFetch(PROBE_PATH, {
@@ -365,23 +298,14 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
     input: FirstRunMailboxInput, mode: "seed" | "add",
   ): Promise<{ id: string }> => {
     /* ── A FURTHER MAILBOX IS A REQUEST, AND IT MUST NOT TOUCH THE INSTALL ──────────────────
-     *
-     * `POST /local/mailboxes` — the door's own add route. It writes the row and its credential
-     * through the SAME `MailboxService.create` the hosted door uses, with both probes injected,
-     * then attaches a runtime so the mailbox is running by the time this returns.
-     *
-     * IT NEVER CALLS `engine_configure`, and that is the whole difference between the two modes.
-     * `engine_configure` rewrites the shell's settings file and replaces the engine; the settings
-     * file names ONE mailbox — the seed the process dials at launch — so configuring it from here
-     * would re-point the install at the mailbox being added and leave the one it was opening to
-     * be found again by a predicate. Worse, the first-connect order that follows a configure
-     * seals the typed password onto whatever mailbox the replaced engine settles on, which on
-     * this path is the install's ORIGINAL row: mailbox #1 would acquire mailbox #2's password.
-     *
-     * The 409 this route can answer (`same_login`) travels as an ordinary refusal — the stage
-     * renders the server's own sentence, which names the situation exactly ("this machine already
-     * has that mailbox").
-     */
+     * `POST /local/mailboxes` writes the row and its credential through the SAME
+     * `MailboxService.create` the hosted door uses, probes injected, then attaches a runtime so
+     * the mailbox is running by the time this returns. IT NEVER CALLS `engine_configure`: that
+     * rewrites the shell's settings file — which names ONE mailbox, the seed — re-pointing the
+     * install at the mailbox being added; and the first-connect order after a configure would
+     * seal the typed password onto the install's ORIGINAL row: mailbox #1 would acquire mailbox
+     * #2's password. The 409 (`same_login`) travels as an ordinary refusal; the stage renders
+     * the server's own sentence. */
     if (mode === "add") {
       const dto = await jsonOf<{ id?: string }>(
         await bridgeFetch(LOCAL_MAILBOXES_PATH, {
@@ -402,21 +326,15 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
       return { id: dto.id };
     }
     /**
-     * THE SEED — and on this door that is `engine_configure` plus a sealed password, never
-     * `POST /mailboxes`.
-     *
-     * The shared create writes a row into the engine's database. It does NOT write the shell's
-     * settings file, and the settings file is what the engine composes its IMAP dial from at every
-     * launch — so a mailbox created through the API would be a row nothing ever connects to, on an
-     * install whose door is still whatever it was. Worse, the password would have to travel to a
-     * `stepUp: true` route, which on this door refuses after five minutes.
-     *
-     * `enterLocalDoor` is the door's real connect and is already the one `DoorChooser` presses:
-     * configure, settle, seal the password through `PATCH /mailboxes/:id`, then replace the engine
-     * so the adapter it built at boot is rebuilt with a password it can use. It is immune to the
-     * step-up trap for a reason that is structural rather than lucky — it restarts the engine
-     * immediately before it seals, so the launch session it authenticates with is seconds old.
-     */
+     * THE SEED — on this door `engine_configure` plus a sealed password, never
+     * `POST /mailboxes`. The shared create writes a row into the engine's database but NOT the
+     * shell's settings file, and the settings file is what the engine composes its IMAP dial
+     * from at every launch — an API-created mailbox would be a row nothing ever connects to;
+     * its password would also have to travel to a `stepUp: true` route, which on this door
+     * refuses after five minutes. `enterLocalDoor` is the door's real connect, the one
+     * `DoorChooser` presses: configure, settle, seal through `PATCH /mailboxes/:id`, then
+     * replace the engine — restarted just before sealing, so the launch session it seals
+     * with is seconds old, immune to the step-up trap. */
     const problem = localProblem(doorFields(input));
     if (problem) throw new LocalWireError(problem, null, null);
     const result = await enterLocalDoor(

@@ -1,47 +1,12 @@
 /**
- * ASKING YOUR OWN MODEL ABOUT WAITING SENDERS — the part that talks, with nothing that draws.
- *
- * Split out from the control that renders it, and not for tidiness: this is the half that has to be
- * proven against a REAL engine, and the engine's own test suite runs where there is no browser and
- * no React. A loop that could only be exercised through a rendered component could only ever be
- * tested against a stand-in for the thing it talks to, which is how two halves end up green and
- * unable to speak to each other.
- *
- * ── WHAT ONE RUN DOES ───────────────────────────────────────────────────────────────────────
- *
- * A CHOSEN number of senders, in the queue's own order, asked about in small requests. Chunks
- * exist for two reasons that have nothing to do with throughput: answers land as they arrive
- * rather than all at the end, and stopping costs at most one chunk. The transport carries no
- * cancellation — see `bridge-fetch.ts` — so a chunk already in flight runs to completion whatever
- * the caller does. With a key of your own that is your money, which is why the chunk is small.
- *
- * A re-run is cheap: the engine answers from what it has already stored before it reaches the
- * model, so a sender answered for once is not asked about twice.
- *
- * ── HOW MANY CHUNKS ARE IN FLIGHT, AND WHY IT DEPENDS ON WHERE THE MODEL IS ─────────────────
- *
- * This ran strictly serially, and the reason given was that "a burst competes with mail arriving,
- * and against a model server on this machine it competes for the machine". That is exactly right
- * for one of the two places a model can be, and an untested generalisation to the other.
- *
- * IT IS TRUE OF A MODEL ON THIS MACHINE, and now measured rather than believed. Against a real
- * `llama3.2` daemon on `127.0.0.1:11434`, twelve screening calls through the shipped provider:
- * **2 699 ms per sender serially** (min 2 586, p50 2 679, max 2 991 — a very tight spread), and
- * running the same twelve through 2, 4 and 8 lanes changed the total by nothing at all —
- * **1.02x, 0.99x and 1.01x**. One daemon answers one prompt at a time on the hardware it has, so
- * concurrency there buys no time and spends CPU the sync is using. `this_machine` keeps ONE lane.
- * (The box was under other load, so the absolute figures are pessimistic; the RATIO is the
- * finding and every arm ran under the same load.)
- *
- * It is NOT true of a hosted key. There the wait is a network round trip and a vendor's own
- * queue — this machine is idle for essentially all of it — so serial requests leave the whole
- * budget unspent and a backlog of hundreds takes as long as the sum of every round trip. A few
- * lanes there is the difference between minutes and tens of minutes, and it costs this machine
- * nothing.
- *
- * The bound stays SMALL on purpose even so. The key is the user's own, its rate limit is theirs,
- * and a 429 part-way through a run they authorised is a worse outcome than a run that takes
- * longer — the same reasoning that keeps the chunk small.
+ * ASKING YOUR OWN MODEL ABOUT WAITING SENDERS — the part that talks, with nothing that draws;
+ * split from the control so it can be proven against a REAL engine, with no browser and no React.
+ * One run asks a CHOSEN number of senders in small chunks: answers land as they arrive, and a
+ * stop costs at most one chunk — no cancellation in the transport (`bridge-fetch.ts`), and with
+ * your own key that is your money. A re-run is cheap: the engine answers from what it stored
+ * before reaching the model. Measured against a real `llama3.2` daemon, 2, 4 and 8 lanes changed
+ * twelve serial calls (2 699 ms per sender) by 1.02x, 0.99x and 1.01x — `this_machine` keeps ONE
+ * lane; a hosted key waits on the network and gets a few, bounded small (a 429 mid-run is worse).
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
@@ -57,36 +22,24 @@ import { toSuggestion, toSkips, batchSizes } from "../../webapp/app/shell/screen
 export const CHUNK = 5;
 
 /**
- * THE DEFAULT SIZE A PRESS ASKS ABOUT, when nothing has been chosen yet.
- *
- * It used to be the ONLY size, named `PER_PRESS`, fixed at fifty and unchangeable — so a person
- * with three hundred senders waiting read "Suggest for 50 senders" and had no way to ask for the
- * rest except to press again, six times, with no indication that was the intent.
- *
- * The argument recorded for the fifty was that "the endpoint refuses more than this in a single
- * request, and a press that quietly became several requests' worth would be a buy ladder without
- * the number that made one honest". **Both halves of that were wrong about this code.** A press
- * already became several requests — {@link CHUNK} is five, so fifty senders was ten requests, not
- * one — and there is no purchase on this door at all: the model is one its owner set up, under
- * their own key or on their own machine, so there is no price for a number to be honest about.
- * The honest number here is the COUNT, and the control now shows it and lets it be chosen.
- *
- * Fifty remains the RESTING choice because it is a watchable amount of work rather than because
- * anything refuses fifty-one.
+ * THE DEFAULT SIZE A PRESS ASKS ABOUT, when nothing has been chosen yet. It used to be the ONLY
+ * size (`PER_PRESS`, fixed at fifty), so three hundred waiting senders meant "Suggest for 50
+ * senders" six times over with no indication that was the intent. The recorded argument for the
+ * cap — one request, a buy ladder needing an honest number — was wrong about this code: a press
+ * already became several requests ({@link CHUNK} is five), and there is no purchase on this
+ * door at all. The honest number here is the COUNT, and the control now shows it and lets it
+ * be chosen. Fifty remains the RESTING choice because it is a watchable amount of work, not
+ * because anything refuses fifty-one.
  */
 export const DEFAULT_PER_PRESS = 50;
 
 /**
- * THE SIZES ONE PRESS MAY CHOOSE — the hosted control's ladder, over the queue instead of a price.
- *
- * `batchSizes` is imported rather than reimplemented so both doors offer the same rungs: a person
- * who moves between a standalone install and a hosted account should not find a different set of
- * numbers. The second argument is `available` itself, which is what makes the top rung ALL OF
- * THEM — the hosted ladder passes its purchase ceiling there because a purchase has one, and this
- * door has nothing to buy.
- *
- * The endpoint's own per-request cap is not a ceiling on this ladder and never was: a run is
- * already a sequence of {@link CHUNK}-sized requests, each of which is far below it.
+ * THE SIZES ONE PRESS MAY CHOOSE — the hosted control's ladder, over the queue instead of a
+ * price. `batchSizes` is imported rather than reimplemented so both doors offer the same rungs.
+ * The second argument is `available` itself, which makes the top rung ALL OF THEM — the hosted
+ * ladder passes its purchase ceiling there because a purchase has one; this door has nothing to
+ * buy. The endpoint's own per-request cap is not a ceiling on this ladder: a run is already a
+ * sequence of {@link CHUNK}-sized requests, each far below it.
  */
 export function localBatchSizes(available: number): number[] {
   return batchSizes(available, Math.max(1, available));
@@ -264,22 +217,14 @@ export async function runSuggest(run: SuggestRun): Promise<SuggestOutcome> {
   let done = 0;
   run.onProgress?.(0, total);
 
-  /* ── WHAT THE LANES SHARE, AND WHY IT IS THIS AND NOT A `Promise.all` OVER CHUNKS ──────────
-   *
-   * A fixed number of workers pulling from one index, rather than every chunk dispatched at
-   * once. Two properties depend on it and neither is decorative:
-   *
-   *  · THE BOUND IS THE BOUND. `Promise.all(chunks.map(...))` with a hundred chunks opens a
-   *    hundred requests, which is the burst this file's header refuses on either door — and on
-   *    a hosted key it is the shape that earns a 429 mid-run.
-   *  · A STOP STOPS. Every worker re-checks `alive()` before it takes its next chunk, so a stop
-   *    costs at most the chunks already in flight — `lanes` of them, still bounded, and stated
-   *    honestly by the control that offers the button. Dispatched-at-once, a stop would cost the
-   *    whole run because every request is already gone.
-   *
-   * The FIRST REFUSAL WINS AND ENDS THE RUN. It is latched rather than thrown so the lanes still
-   * to notice it drain quietly instead of racing to report different reasons for one stop; the
-   * caller gets the engine's own first sentence, which is the one that explains the rest. */
+  /* ── WHAT THE LANES SHARE — a fixed number of workers pulling from one index, never a
+   * `Promise.all` over chunks. THE BOUND IS THE BOUND: dispatch-all with a hundred chunks opens
+   * a hundred requests — the burst the header refuses, and on a hosted key the shape that earns
+   * a 429 mid-run. A STOP STOPS: every worker re-checks `alive()` before taking its next chunk,
+   * so a stop costs at most the `lanes` chunks in flight — dispatched-at-once, a stop would
+   * cost the whole run. The FIRST REFUSAL WINS AND ENDS THE RUN, latched rather than thrown so
+   * draining lanes do not race to report different reasons; the caller gets the engine's own
+   * first sentence. */
   let refusal: SuggestRefusal | null = null;
   let abandoned = false;
   let next = 0;

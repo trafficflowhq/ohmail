@@ -1,45 +1,20 @@
 /**
- * THE THIRD DOOR — a server the person in front of this app runs themselves.
- *
- * ── IT IS THE HOSTED DOOR WITH THE ADDRESS MADE A VARIABLE. THAT IS THE WHOLE DESIGN. ──────────
- *
- * There is no self-hosted MODE. The engine's cloud branch already takes the server's base as a
- * configuration field (`CloudDoorConfig.cloudUrl`), carries it through the shell as
- * `OHMAIL_CLOUD_URL`, and hands it to `createCloudAuth` as the base every request is composed
- * against. Everything from the sign-in down — the bearer client, the single-flight refresh, the
- * mirror, the write-through proxy, the sealed session — is identical, because from the engine's
- * point of view a self-hosted ohmail IS an ohmail server; it runs the same code from the same
- * repository. `doors.ts` pinned that field to one constant only because until now there was one
- * server. This file un-pins it, and that is the entire mechanism.
- *
- * Writing it as a fork — a fourth engine mode, a second auth client, a parallel mirror — would
- * have been the larger change AND the worse one: two paths that must stay identical and no
- * structural reason they will. One seam, and every fix to the hosted door is a fix to this one.
- *
- * ── WHAT IS GENUINELY NEW, AND IT IS THREE THINGS ─────────────────────────────────────────────
- *
- *  1. **The base is not the origin.** `<origin>/api`, and it is not a nicety — see `apiBaseFor`
- *     in `cloud-origin.ts`, which carries the measurement. A door that used the typed origin would
- *     sign in successfully and then sync nothing for ever.
- *  2. **The address can be wrong**, in ways the hosted door's constant never could be: a typo, a
- *     machine that is not running ohmail, a certificate from an authority nobody outside that
- *     network has heard of. So this door PROBES before it asks for a password, and every refusal
- *     names the address that was actually dialled.
- *  3. **A credential is a fact about ONE server.** A session sealed against our service must never
- *     be offered to an operator's machine, and vice versa. That is the boot contract
- *     (`credential-host.ts`) in its cloud spelling, and it is enforced where the mail is:
- *     `enforceMirrorOwner` compares the recorded server as well as the recorded address, and its
- *     discard already removes `cloud-tokens.seal`. Nothing here has to revoke anything, and this
- *     file deliberately adds no second enforcement point that could fall out of step with it.
- *
- * ── AND WHAT THIS DOOR DELIBERATELY DOES NOT OFFER: THE BROWSER HANDOFF ───────────────────────
- *
- * `openWeb` takes a PLACE — `link-desktop` — and the shell resolves it to an address it owns. Every
- * one of those addresses is ohmail.app's. Sending an operator's browser there to sign in to THEIR
- * server would be nonsense, and making the shell open a URL typed into this window would hand the
- * webview an "open anything on this machine" command, which is a considerably larger door than the
- * one being built. So the self-hosted arm offers the password-and-code form, which needs no
- * browser and no new shell capability, and says nothing about a handoff at all.
+ * THE THIRD DOOR — a server the person in front of this app runs themselves: the hosted door
+ * with the address made a variable, no self-hosted MODE. The engine's cloud branch takes the
+ * base as configuration (`CloudDoorConfig.cloudUrl` → `OHMAIL_CLOUD_URL` → `createCloudAuth`);
+ * sign-in, refresh, mirror, write-through proxy and sealed session are identical — a fork
+ * would be two paths that must stay the same with no structural reason. New: (1) the base is
+ * `<origin>/api`, never the origin (`apiBaseFor` in `cloud-origin.ts` has the measurement);
+ * (2) the address can be wrong, so the door PROBES first and refusals name the address
+ * dialled; (3) a credential is a fact about ONE server (`enforceMirrorOwner` compares it).
+ */
+
+/*
+ * NO BROWSER HANDOFF ON THIS DOOR: `openWeb` takes a PLACE and the shell resolves it to an
+ * address it owns — every one of those is ohmail.app's. Sending an operator's browser there
+ * to sign in to THEIR server would be nonsense, and letting the shell open a URL typed into
+ * this window would hand the webview an "open anything on this machine" command. So the
+ * self-hosted arm offers the password-and-code form: no browser, no new shell capability.
  */
 
 import { engineConfigure, engineLogout, bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
@@ -97,24 +72,14 @@ export function selfHostProblem(typed: string): string | null {
 }
 
 /**
- * ASK THE ENGINE WHAT IS AT AN ADDRESS. Null when there is an ohmail server there; a sentence when
- * there is not.
- *
- * WITH A CANDIDATE, the engine dials the origin given here — validated through the same parse this
- * file uses, with the path composed engine-side — and nothing about this install is configured by
- * asking. WITHOUT one, it answers about the door it is already configured for, over that door's own
- * transport, pin included. Both arms exist and the caller chooses; see the route in
- * `cloud-engine.ts` for what the candidate arm widens and what it buys.
- *
- * ── THIS COMMENT USED TO SAY THE OPPOSITE, AND THAT IS WHY IT IS SPELLED OUT ──────────────────
- *
- * It read *"the engine probes what it is CONFIGURED for and never a URL from this window"* while
- * the code beneath it passed a window-supplied candidate straight through. A false comment about a
- * trust boundary is worse than none: it describes a boundary that WOULD be correct, so five review
- * rounds read it and looked no further, and the ordering defect it hid — a fresh install being told
- * its engine is not configured by the screen that configures it — survived all five. What the
- * boundary actually is: the ORIGIN may come from the window, the PATH never does, and
- * `normalizeOrigin` decides what an origin may be.
+ * ASK THE ENGINE WHAT IS AT AN ADDRESS — null when an ohmail server is there, a sentence when
+ * not. WITH a candidate the engine dials the origin given here (validated through the same
+ * parse this file uses, the path composed engine-side) and nothing about this install is
+ * configured by asking; WITHOUT one it answers about the door it is configured for, pin
+ * included. Spelled out because this comment once said the opposite — "the engine probes what
+ * it is CONFIGURED for and never a URL from this window" — while the code passed a candidate
+ * through; a false comment about a trust boundary survives review after review. The boundary:
+ * the ORIGIN may come from the window, the PATH never does, `normalizeOrigin` decides the rest.
  */
 export async function probeConfiguredServer(candidateOrigin?: string): Promise<DoorRefusal | null> {
   let res: Response;
@@ -128,19 +93,14 @@ export async function probeConfiguredServer(candidateOrigin?: string): Promise<D
     return { sentence: sentence(err), suggestion: null };
   }
   if (res.ok) return null;
-  /* The engine's own sentence, whole. It is the process that dialled, so it is the only thing here
-     that knows what happened; a category invented at this layer would be a worse description of a
-     fact this window never observed. A body that is not the expected shape falls back to the status
-     line rather than throwing inside the handler that was explaining the first failure.
-
-     ── AND THE DETAILS BESIDE IT ARE READ, WITH THE OTHER DOOR'S OWN READER ──────────────────
-     This returned `error.message` and nothing else, so a refusal whose `details` named the host
-     that WOULD have worked arrived here holding the answer and threw it away — while the
-     standalone door, shown the same body by the same engine, sharpened it. Two readings of one
-     answer is how two screens over one product start describing a refusal in two ways, so there
-     is one reader now and `probeTlsRefusal` is it. It declines every shape it does not fully
-     recognise, which is every refusal this route sends today; that is the point — the two doors
-     agree on the shapes they do not rewrite as well as on the ones they do. */
+  /* The engine's own sentence, whole: it is the process that dialled, so a category invented
+     at this layer would describe a fact this window never observed; an unexpected body falls
+     back to the status line rather than throwing inside the handler explaining the first
+     failure. The details beside it are read with the other door's own reader: returning
+     `error.message` alone threw away a `details` naming the host that WOULD have worked,
+     while the standalone door sharpened the same body. One reader now — `probeTlsRefusal` —
+     which declines every shape it does not fully recognise, so the two doors agree on the
+     shapes they do not rewrite as well as on the ones they do. */
   try {
     const parsed = (await res.json()) as { error?: { message?: string; details?: unknown } };
     const sharper = probeTlsRefusal(parsed.error?.details);
@@ -168,58 +128,25 @@ export interface SelfHostStep {
 }
 
 /**
- * STEP ONE OF TWO: point this install at the operator's server, and find out whether it is there.
- *
- * Separated from the sign-in because the person doing it has not been asked for a password yet —
- * this is the "your server's address" step, and its whole job is to fail here rather than three
- * fields later with a sentence about credentials.
- *
- * ── THE PROBE COMES FIRST, AND THE ORDER IS THE FINDING ───────────────────────────────────────
- *
- * This configured the engine and then asked the engine what it could see, on the reasoning that the
- * window cannot dial — its CSP is `connect-src 'none'` — so proving an address requires configuring
- * for it. The first half of that is true and the conclusion was wrong, because configuring for a
- * different server is not free: `enforceMirrorOwner` runs before the database opens and DISCARDS
- * the previous mirror and its sealed session. So a MISTYPED address cost somebody their entire
- * hosted mirror and a full re-sync, for a typo, before anything had been proved, with Back offering
- * no way back. Raised by review, and it contradicted this door's own reason for existing.
- *
- * So the engine is asked about a CANDIDATE first and nothing is configured until it answers. The
- * engine validates the candidate through the same parse this file uses and composes the path
- * itself; see the route in `cloud-engine.ts` for what that widens and what it buys.
- *
- * A REFUSAL NOW COSTS NOTHING. The settings file is untouched, the previous door is still the
- * configured one, and its mirror and session are where they were. Only a server that answered as an
- * ohmail server, set up and self-hosted, gets as far as replacing the engine.
- *
- * ── AND ON A FRESH INSTALL THERE IS NO ENGINE TO ASK, WHICH MADE THIS DOOR IMPOSSIBLE ─────────
- *
- * The probe is a request to the local engine, and a fresh install has none: nothing is configured,
- * so the shell is `NotConfigured` and `Engine::request` answers every bridge request with *"the
- * engine has not been configured: nothing set OHMAIL_IMAP_HOST, OHMAIL_IMAP_USER"*. Measured on a
- * fresh HOME with the shipped build, whose own log says `not started — nothing set …` and which
- * spawns no engine process at all. So the first act of the door was refused by this app talking
- * about itself, on the screen whose entire job is to configure it, and `engineConfigure` was never
- * reached — the primary path of this whole door, on the installs most likely to walk it.
- *
- * THE ORDER IS THEREFORE DECIDED BY WHAT THERE IS TO LOSE, and the shell is the authority on that
- * rather than a guess: `state === "not_configured"` means no door has been chosen, so there is no
- * mirror, no sealed session and no settings for a mistyped address to cost. That install configures
- * FIRST and asks the engine that results — which is an engine built for the CANDIDATE, so the
- * question is answered by a transport dialling the address that was typed.
- *
- * That second property is why this is not merely a workaround for an empty install. The operator's
- * private certificate authority reaches the engine as `NODE_EXTRA_CA_CERTS`, and the shell composes
- * it only for a SELF-HOSTED cloud configuration — so an engine configured for any other door proves
- * the candidate without the candidate's own trust material and fails TLS on a certificate that is
- * perfectly good. On the fresh path the engine doing the proving IS the candidate's, so the CA is
- * in place for its own proof. An install that already holds a door still probes first and still
- * carries that gap; it is a narrower case (somebody moving an existing install to a private-CA
- * server) and it is recorded rather than quietly fixed here, because closing it means giving the
- * probe a per-origin trust store rather than reordering anything.
- *
- * Everything ELSE keeps the probe-first order exactly: an install with a door to lose must not
- * discard it for a typo, which is the finding that put the probe first in the first place.
+ * STEP ONE OF TWO: point this install at the operator's server, and find out whether it is
+ * there — separated from the sign-in so it fails here rather than three fields later. THE
+ * PROBE COMES FIRST: configuring for a different server is not free — `enforceMirrorOwner`
+ * runs before the database opens and DISCARDS the previous mirror and its sealed session, so
+ * the old configure-then-ask order cost a mistyped address somebody's entire hosted mirror.
+ * The engine is asked about a CANDIDATE (validated by the same parse, path composed
+ * engine-side; see the route in `cloud-engine.ts`), and nothing is configured until it
+ * answers: a refusal costs nothing — settings untouched, mirror and session where they were.
+ */
+
+/*
+ * ON A FRESH INSTALL THERE IS NO ENGINE TO ASK — the shell is `NotConfigured` and every
+ * bridge request answers "the engine has not been configured", so probe-first made this door
+ * impossible on the installs most likely to walk it. The order is decided by WHAT THERE IS TO
+ * LOSE, read from the shell: `state === "not_configured"` means no mirror, no sealed session,
+ * no settings to cost — that install configures FIRST, and the probing engine IS the
+ * candidate's, so the operator's private CA (`NODE_EXTRA_CA_CERTS`, composed only for a
+ * self-hosted configuration) is in place for its own proof. An install that already holds a
+ * door still probes first; the private-CA gap there is recorded, not quietly fixed here.
  */
 export async function configureSelfHostDoor(typedOrigin: string, address: string): Promise<SelfHostStep> {
   const addressProblem = selfHostProblem(typedOrigin);
@@ -234,16 +161,13 @@ export async function configureSelfHostDoor(typedOrigin: string, address: string
   if (base === null) return { status: null, problem: selfHostProblem(typedOrigin) };
 
   /**
-   * IS THERE ANYTHING FOR A WRONG ADDRESS TO COST? — the shell's own state, read at the submit.
-   *
-   * `not_configured` is the shell's word for "no door has been chosen", and it is the one state in
-   * which nothing can be lost AND nothing can be asked. Read here rather than passed in for
-   * `enterLocalDoor`'s reason: a door opened from Settings may have been on screen for minutes,
-   * and the order this submit takes has to come from what is true now.
-   *
-   * A shell that will not answer at all is NOT read as a fresh install. That is the difference
-   * between "there is no door yet" and "we could not find out", and only the first is safe to
-   * configure over — so anything else keeps the probe-first order and reports what it finds.
+   * IS THERE ANYTHING FOR A WRONG ADDRESS TO COST? — the shell's own state, read at the
+   * submit. `not_configured` is the shell's word for "no door has been chosen": the one state
+   * in which nothing can be lost AND nothing can be asked. Read here rather than passed in,
+   * for `enterLocalDoor`'s reason: a door opened from Settings may have been on screen for
+   * minutes, and the order this submit takes has to come from what is true now. A shell that
+   * will not answer is NOT read as a fresh install — "there is no door yet" and "we could not
+   * find out" differ, and only the first is safe to configure over.
    */
   const standing = await standingEngine();
   const nothingToLose = standing !== null && standing.state === "not_configured";
@@ -257,22 +181,14 @@ export async function configureSelfHostDoor(typedOrigin: string, address: string
     const unreachable = await probeConfiguredServer();
     if (unreachable !== null) {
       /**
-       * ── AND THEN PUT IT BACK, SO THIS ARM'S REFUSAL COSTS NOTHING EITHER ──────────────────
-       *
-       * The card stays on the address field with the server's own words above it, which is enough
-       * for somebody who keeps typing. It is not enough for somebody who quits: `gateFor` routes
-       * on the SETTINGS, so an install left configured for an address that did not answer comes
-       * back as a chosen door with no session — the mail client and a sign-in surface — and the
-       * chooser it needs is no longer offered. A typo would have cost the person the only screen
-       * that could have fixed it.
-       *
-       * `engine_logout` is the undo and it is exact: it removes `config.json` and returns the
-       * shell to `not_configured`, which is precisely the state this arm found. The mirror and
-       * this install's key are left alone, and on this path there is no sealed session to remove
-       * — nothing has been signed in to yet.
-       *
-       * IF THE UNDO FAILS the person is told, because then the sentence above is incomplete: the
-       * install IS configured for that address and the way back is to open this door again.
+       * ── AND THEN PUT IT BACK, SO THIS ARM'S REFUSAL COSTS NOTHING EITHER ────────────────
+       * The card stays on the address field with the server's own words, which is enough for
+       * somebody who keeps typing and not for somebody who quits: `gateFor` routes on the
+       * SETTINGS, so an install left configured for an address that did not answer comes back
+       * as a chosen door with no session — the chooser it needs no longer offered.
+       * `engine_logout` is the exact undo: it removes `config.json` and returns the shell to
+       * `not_configured`, the state this arm found (mirror and key untouched; no sealed
+       * session exists yet). IF THE UNDO FAILS the person is told — the way back is this door.
        */
       const stranded = await forgetDoor();
       return {
@@ -349,13 +265,10 @@ export async function signInToSelfHost(
 }
 
 /*
- * THERE IS DELIBERATELY NO `enterSelfHostDoor` DOING BOTH STEPS IN ONE CALL.
- *
- * `enterCloudDoor` has that shape because the hosted door genuinely collects everything at once —
- * its server is a constant, so there is nothing to prove before asking for a password. This door's
- * whole argument is that the two steps are SEPARATE: the address is proved while the person has
- * typed no secret, so a machine that is not running ohmail is reported as the wrong address rather
- * than as a failed sign-in. A convenience wrapper that ran them back to back would be an invitation
- * to a caller that collects all four fields first, which is the shape this door exists to avoid —
- * and it was written, called by nothing, and removed for that reason.
+ * THERE IS DELIBERATELY NO `enterSelfHostDoor` DOING BOTH STEPS IN ONE CALL. `enterCloudDoor`
+ * has that shape because the hosted server is a constant — nothing to prove before asking for
+ * a password. This door's whole argument is that the two steps are SEPARATE: the address is
+ * proved while the person has typed no secret, so a machine not running ohmail is reported as
+ * the wrong address rather than a failed sign-in. A convenience wrapper invites a caller that
+ * collects all four fields first — it was written, called by nothing, and removed.
  */

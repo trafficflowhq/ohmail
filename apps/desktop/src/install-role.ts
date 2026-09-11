@@ -1,52 +1,23 @@
 /**
  * WHAT THIS INSTALL DOES WITH THE MAILBOX ITS PANES NAME — "organizes" or "reads", never both.
- *
- * ── THE DEFECT ──────────────────────────────────────────────────────────────────────────────
- *
- * MEASURED on the released 0.13.7, on a standalone install reading a mailbox ohmail Cloud held
- * the live lease on: Settings → Desktop and Settings → About both said
- *
- *     "Mailbox — The mailbox this copy of ohmail organizes."
- *
- * on a machine whose own Mailboxes pane said, correctly and at the same moment, *"Organized by
- * ohmail Cloud · This computer reads the mailbox; it moves nothing and screens nothing."* Two
- * panes, one install, opposite claims — and the Remove confirmation's first bullet, "ohmail stops
- * organizing this mailbox.", made a third about an install that never had.
- *
- * ── WHY A MODULE OF ITS OWN ─────────────────────────────────────────────────────────────────
- *
- * Because two panes render the row and a third renders the bullet, and this repository's own
- * measured failure mode is one rule written twice and drifting. It is a pure function of the
- * predicate, so it has a table test with no React in it.
- *
- * The predicate itself is NOT here: it is `screenerReadOnly` over `readerStandDown` in
- * `app/shell/mail-state.ts`, the same one Settings → Mailboxes renders its banner from and the
- * same one the Screener pane asks. `null` means this install organizes, which is what an absent
- * provider and a host too old to send the role both answer — the safe direction, because the
- * dangerous default would put "reads" on a pane belonging to the organizer.
- *
- * ── AND IT IS NOW SAID IN THE READER'S LANGUAGE ─────────────────────────────────────────────
- *
- * This paragraph used to argue for leaving the three sentences as English literals: the whole
- * install surface around them was English, and translating one row while its neighbours stayed
- * literal would have hidden the real gap rather than closing it. That gap is closed. Both panes
- * read `desktopDoor` now, and so does this module — through `DOOR_COPY`, the non-hook route,
- * because there is no React here and the table test below drives the function directly.
+ * Measured on the released 0.13.7: Settings → Desktop and About said "The mailbox this copy of
+ * ohmail organizes." on a machine whose own Mailboxes pane said, correctly, that ohmail Cloud
+ * organizes it — two panes, opposite claims, and the Remove confirmation made a third. A
+ * module of its own because two panes render the row and a third renders the bullet, and one
+ * rule written twice drifts; it is a pure function of the predicate, table-tested with no
+ * React. The predicate is `screenerReadOnly` over `readerStandDown` (`app/shell/mail-state.ts`);
+ * `null` means this install organizes — the safe direction. `DOOR_COPY` is the non-hook route.
  */
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 
 /**
- * ── AND A THIRD ANSWER, FOR AN INSTALL THAT READS THROUGH ANOTHER COMPUTER ──────────────────
- *
- * The predicate above cannot reach this one, and that is the whole reason the parameter exists.
- * `readerHolder` looks at the mailbox rows this install can see and asks whether THEY say
- * somebody else organizes. On a paired desktop those rows are mirrored from the host — and the
- * host IS the organizer, so its own rows carry no holder and the predicate correctly answers
- * `null`, meaning "this install organizes". Correct about the rows, false about the install: the
- * machine reading them organizes nothing.
- *
- * So the door is asked separately, and it wins. `host` is null on every other door, and null
- * falls through to the two answers this function has always given.
+ * ── A THIRD ANSWER, FOR AN INSTALL THAT READS THROUGH ANOTHER COMPUTER ─────────────────────
+ * The predicate cannot reach this one: `readerHolder` asks whether the mailbox rows this
+ * install sees say somebody else organizes, and on a paired desktop those rows are mirrored
+ * from the host — which IS the organizer, so its rows carry no holder and the predicate
+ * answers `null`, "this install organizes". Correct about the rows, false about the install.
+ * So the door is asked separately, and it wins; `host` is null on every other door and falls
+ * through to the two answers this function has always given.
  */
 export function mailboxRowWhy(
   readOnly: { name: string | null } | null,

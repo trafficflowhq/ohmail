@@ -1,25 +1,16 @@
 /**
  * THE /pair FRAGMENT LANDING — what the QR on the desktop's Devices pane sends a phone to.
- *
- * The QR encodes `https://<magicdns>/pair#<raw-device-pair-token>` — the flow-3 fragment-link
- * idiom (`app/(product)/join/invite/InviteScreen.tsx` is the pattern, discipline for discipline):
- *
- *  · the token rides the FRAGMENT, never the path or query, so it cannot reach an access log or
- *    a `Referer`; a token someone moved into the query is refused outright (`?token=` renders
- *    the scan-again screen), so the safe shape cannot regress by convenience.
- *  · the fragment is READ ONCE into a ref (Strict Mode replays the mount effect; the address bar
- *    read is destructive) and SCRUBBED from the bar the moment it is held, so an abandoned tab
- *    is not a standing credential display.
- *  · the ONLY request that carries the token is the redeem's JSON body.
- *  · the document arrives under the static handler's `script-src 'self'` policy with no inline
- *    script — the mitigation that matters for a fragment credential (`host-static.ts`).
- *
- * Where the invite landing asks for three fields, this one asks for NOTHING: a device pairing is
- * autonomous — the token IS the ceremony (possession of the QR is the desktop's own screen), so
- * the redeem fires on mount, declares `kind: "web"`, and a success hands the bearer pair to the
- * manager and enters the shell. The same screen, without a fragment, is the signed-out landing:
- * the gate sends a dead session here, and the sentence says the one true remedy — scan a fresh
- * QR on the computer that hosts the mail.
+ * The QR encodes `https://<magicdns>/pair#<raw-device-pair-token>`, the flow-3 fragment idiom
+ * (`InviteScreen.tsx` is the pattern): the token rides the FRAGMENT, never the path or query
+ * (`?token=` renders the scan-again screen); it is READ ONCE into a ref and SCRUBBED from the
+ * bar; the ONLY request carrying it is the redeem's JSON body; the document arrives under
+ * `script-src 'self'` with no inline script (`host-static.ts`). Where the invite asks three
+ * fields, this asks NOTHING: the token IS the ceremony, so the redeem fires on mount,
+ * declares `kind: "web"`, and a success enters the shell. Without a fragment, this same
+ */
+
+/*
+ * screen is the signed-out landing — the remedy is a fresh QR on the computer hosting the mail.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -55,18 +46,14 @@ export function PairScreen({
   const [phase, setPhase] = useState<Phase>({ kind: "reading" });
 
   /**
-   * The fragment, read ONCE and kept in a ref — the read is destructive (the scrub below), and
-   * React 18 Strict Mode replays the mount effect: a replay that re-read `location.hash` would
-   * find the emptiness the first pass created and land every valid link on the missing screen.
-   * The InviteScreen's exact discipline, kept for the exact reason it records.
-   *
-   * The REDEEM rides the same ref discipline, and a review earned it: the request itself is as
-   * destructive as the hash read — the token is single-use — and the first version started it
-   * inside the effect body with a `cancelled` flag as the cleanup. Under the replay that flag
-   * only DISCARDED the first request's answer; the request had already consumed the token, so
-   * the second pass's redeem answered `pairing_invalid` and a valid scan failed. So the effect
-   * starts the redeem at most once ({@link redeem}), both passes await the SAME promise, and
-   * `cancelled` gates nothing but this pass's setState.
+   * The fragment, read ONCE and kept in a ref — the read is destructive (the scrub below) and
+   * Strict Mode replays the mount effect: a replay re-reading `location.hash` would find the
+   * emptiness the first pass created and land every valid link on the missing screen
+   * (InviteScreen's discipline). The REDEEM rides the same ref discipline: the request is as
+   * destructive as the hash read — the token is single-use — and a `cancelled`-flag cleanup
+   * only DISCARDED the first request's answer while the token was already consumed, so the
+   * second pass answered `pairing_invalid` and a valid scan failed. The effect starts the
+   * redeem at most once ({@link redeem}); both passes await the SAME promise.
    */
   const fragment = useRef<string | null>(null);
   const redeem = useRef<Promise<{ ok: boolean; answer: RedeemAnswer } | null> | null>(null);

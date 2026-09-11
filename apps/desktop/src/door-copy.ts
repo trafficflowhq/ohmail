@@ -1,38 +1,19 @@
 /**
- * THE STANDALONE WINDOW'S OWN WORDS — every sentence outside the shared shell, in one table.
- *
- * The mail client in this window is `AppShell`, and it reads `messages/{en,de}.json` like the
- * browser does. Around it sits a second interface that the browser has no equivalent of: the door
- * chooser a fresh install opens with, the gate's apology, the boot line, Settings → Desktop and
- * Settings → About, and the mailto ask. Every string in those was an English literal, so a German
- * install read a German rail beside an English door — and nothing could tell, because a literal is
- * invisible to `tsc` and to a suite that renders in English.
- *
- * ── WHY ONE TABLE AND NOT `useTranslations` IN EACH PANE ────────────────────────────────────
- *
- * Half of this copy is produced by functions that are not components and cannot call a hook:
- * `bootSentence` maps an engine phase to a sentence, `errorSentence` turns a throw into one,
- * `credentialLine`/`engineWhy`/`engineLine` are switch tables inside Settings → Desktop, and
- * `mailboxRowWhy` is shared by two panes from a module with no React in it. `liveCopy`
- * (`app/shell/locale.ts`) is the route those four already have in the shared shell: getters over
- * the active catalogue, with the English sentence below as the resting answer.
- *
- * Using it for the components as well buys a second thing that matters more than symmetry: these
- * panes are rendered BARE in two dozen unit tests, with no intl provider above them, and
- * `useTranslations` throws without one. A table keeps every one of those renders working and
- * English, and the German arrives from the catalogue at runtime — which is the same bargain
- * `MessageBody`, `AttachmentStrip` and `BodyText` struck for the same reason.
- *
- * ── WHAT HOLDS THIS AND `desktopDoor` TOGETHER ──────────────────────────────────────────────
- *
- * `test/desktop-door-copy.test.ts`: the key set here is EXACTLY the namespace's, every plain
- * sentence is byte-identical to `en.json`, and with a German catalogue set the same table answers
- * German. Drift in either direction is red — a copy edit made in one place and not the other
- * would otherwise put one sentence in the app and a different one in every test asserting on it.
- *
- * The namespace is on `vite.config.ts`'s {@link WINDOW_ONLY_NAMESPACES}: the served host client
- * mounts none of these files (proved from its import graph in `test/desktop-messages.test.ts`),
- * so shipping it to a phone would be payload that can never be rendered there.
+ * THE STANDALONE WINDOW'S OWN WORDS — every sentence outside the shared shell, in one table:
+ * the door chooser, the gate's apology, the boot line, Settings → Desktop and About, the
+ * mailto ask. Every string was an English literal — a German install read a German rail
+ * beside an English door, invisible to `tsc` and to a suite that renders in English. ONE
+ * TABLE, not `useTranslations` per pane: half the copy comes from functions that cannot call
+ * a hook (`bootSentence`, `errorSentence`, `credentialLine`, `mailboxRowWhy`), and these
+ * panes render BARE in two dozen unit tests with no intl provider — `liveCopy`
+ * (`app/shell/locale.ts`) keeps every render working and English, German arriving from the
+ */
+
+/*
+ * catalogue at runtime. `test/desktop-door-copy.test.ts` holds the key set EXACTLY to the
+ * namespace, byte-identical to `en.json`, German answered under a German catalogue. The
+ * namespace is in `WINDOW_ONLY_NAMESPACES` (`test/desktop-messages.test.ts` proves the served
+ * host client mounts none of it).
  */
 import { liveCopy } from "../../webapp/app/shell/locale.js";
 
@@ -70,17 +51,14 @@ const EN = {
   doorLocalSay:
     "Your own IMAP mailbox, organized right here. Nothing is sent anywhere. Other devices of "
     + "yours can use it later, under Settings → Devices.",
-  /* ── DOOR TWO: ANOTHER COMPUTER OF THE PERSON'S OWN ──────────────────────────────────────
-     THE PRODUCT NEVER SAYS "HOST" TO A PERSON, and this is where that rule is easiest to break.
-     The other machine is "another computer", and inside a sentence it is "that computer" or the
-     name this window derives from the address. The host's own pane already speaks that way
-     ("Turn this computer into your own mail server") and so does the phone's door ("Your own
-     computer"); a fourth vocabulary for the same machine, on the screen where somebody first
-     meets it, would be the product explaining its own internals.
-
-     The second sentence is the offline rule stated before anybody commits to it, in the person's
-     terms rather than the protocol's: reads come from the copy, every write is refused. It is the
-     one thing about this door that is not obvious from the tile above it. */
+  /* ── DOOR TWO: ANOTHER COMPUTER OF THE PERSON'S OWN ────────────────────────────────────
+     THE PRODUCT NEVER SAYS "HOST" TO A PERSON, and this is where that rule is easiest to
+     break: the other machine is "another computer", and inside a sentence "that computer" or
+     the name derived from the address — the host's own pane and the phone's door already
+     speak that way, and a fourth vocabulary on the screen where somebody first meets it would
+     be the product explaining its own internals. The second sentence is the offline rule
+     stated before anybody commits: reads come from the copy, every write is refused — the one
+     thing about this door not obvious from the tile above it. */
   doorHostName: "Another computer",
   doorHostSay: (machine: string) =>
     `ohmail on another computer of yours organizes; this ${machine} works through it. While that `
@@ -207,17 +185,14 @@ const EN = {
   hostLinkShape:
     "That is not a pairing link. It looks like https://…/pair#… and comes from Settings → Devices "
     + "on that computer.",
-  /* ── THE REFUSALS, ONE SENTENCE PER `kind` ───────────────────────────────────────────────
+  /* ── THE REFUSALS, ONE SENTENCE PER `kind` ─────────────────────────────────────────────
      The engine names WHAT it refused and this names what to do about it — the `guideKey`
-     arrangement the Devices pane already uses. An engine sentence is English for ever (its prose
-     is literals in another process), and a German install reading a German card should not drop
-     into English at the one moment something went wrong. A kind this build has never heard of
-     still gets the engine's own words rather than silence.
-
-     Three of these are the phone's, ported with "phone" replaced by this machine's word. They are
-     the same three refusals because they are refusals about the same ceremony, and two spellings
-     of "that computer's key has changed" is how two surfaces come to disagree about what somebody
-     should do next. */
+     arrangement. An engine sentence is English for ever (its prose is literals in another
+     process), and a German card should not drop into English at the one moment something went
+     wrong; a kind this build has never heard of still gets the engine's own words rather than
+     silence. Three of these are the phone's, ported with "phone" replaced by this machine's
+     word — the same three refusals about the same ceremony, and two spellings of "that
+     computer's key has changed" is how two surfaces come to disagree. */
   hostRefuseCleartext:
     "That link is a plain, unencrypted address, and ohmail will not send your mail over one. A "
     + "computer running ohmail gives out a secure link — take it from Settings → Devices there.",
@@ -289,19 +264,15 @@ const EN = {
   doorNotChosen: "Not chosen",
   doorNoneWhy: "No mailbox has been chosen on this install yet.",
 
-  /* ── THE OTHER COMPUTER IS NOT ANSWERING — a STANDING FACT, not a transient ──────────────
-     These six sentences travel to the shared shell as strings on a prop rather than as catalogue
-     keys, because the line renders in the rail — shared code that the browser also compiles, and
-     the browser has no paired desktop and never will. Keeping the words in this window's own
-     namespace is what keeps them out of a payload that can never render them.
-
-     WHAT MAY NOT BE CUT FROM `hostFootStaleWhy`: "nothing can be changed until that computer is
-     back". The age says how stale the copy is and the link says where to go, but that clause is
-     the only thing on screen telling somebody why their next press will be refused. If the line
-     ever has to be shorter, the middle clause goes and that one stays.
-
-     AND THERE IS NO RETRY CONTROL, deliberately. The mirror already asks every twenty seconds; a
-     button that does what is already happening is a claim about agency nobody has. */
+  /* ── THE OTHER COMPUTER IS NOT ANSWERING — a STANDING FACT, not a transient ────────────
+     These six sentences travel to the shared shell as strings on a prop rather than as
+     catalogue keys: the line renders in the rail, shared code the browser also compiles, and
+     the browser never has a paired desktop — keeping the words in this window's namespace
+     keeps them out of a payload that can never render them. WHAT MAY NOT BE CUT from
+     `hostFootStaleWhy`: "nothing can be changed until that computer is back" — the only thing
+     on screen saying why the next press will be refused; if the line must shorten, the middle
+     clause goes and that one stays. NO RETRY CONTROL, deliberately: the mirror already asks
+     every twenty seconds, and a button doing what already happens claims agency nobody has. */
   hostFootStale: (host: string) => `Can't reach ${host}.`,
   hostFootStaleWhy: (when: string, machine: string) =>
     `Last answered ${when}. This ${machine} shows the copy it holds; nothing can be changed until `

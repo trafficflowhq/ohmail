@@ -1,40 +1,12 @@
 /**
- * ASKING YOUR OWN MODEL ABOUT THE SENDERS WAITING AT THE SCREENER.
- *
- * The hosted client has a control for this and it is built around a price: it asks the server what
- * a set of senders would cost, shows the number, and only then offers a button. That control is
- * correct there and wrong here, and not because the wording is off — because there is nothing for
- * it to describe. A standalone install has no account, no balance and nothing metered. The model is
- * one its owner set up, under their own key or on their own machine, so what a run costs is between
- * them and their provider. A ladder of sizes priced in something this app does not sell would be an
- * invented number standing in front of a real one.
- *
- * So this is a different control for a different question, sharing everything that is not about
- * money: the same endpoint, the same request shape, the same overlay the rows read their chips
- * from. What it drops is the dry run and the price. What it adds is the one thing the hosted
- * client never has to say — that there may be no model at all.
- *
- * ── IT KEEPS THE LADDER, WHICH IT USED TO DROP TOO, AND THAT WAS THE DEFECT ─────────────────
- *
- * Dropping the PRICE is right. Dropping the COUNT was not, and the two went together because the
- * hosted ladder is a ladder of prices. This control offered one fixed number — fifty — so a person
- * with three hundred senders waiting read "Suggest for 50 senders", every time, with no way to ask
- * for the rest except to press again six times and no indication that was the intent. The reason
- * recorded for the fifty was that a bigger press "would be a buy ladder without the number that
- * made one honest"; there is nothing bought here, and the number that makes a press honest on this
- * door is simply how many senders it will ask about. So the rungs come back — the hosted ladder's
- * own, over the queue instead of over a price, topping out at ALL of them.
- *
- * ── NEVER A CONTROL WITH NOTHING BEHIND IT ──────────────────────────────────────────────────
- *
- * Three states and all three are honest. No model set up: it says so and points at the pane that
- * fixes it. A model set up that is not answering: the engine's own sentence about why, and the same
- * way out. A model that works: one button, naming exactly how many senders it will ask about. There
- * is no fourth state where a button is pressable and nothing can happen — which is what this
- * surface was before, for the whole life of the local-engine build.
- *
- * The asking itself is `local-suggest-run.ts`, which has no React in it and is proven against a
- * real engine. What is here is the three states and the press.
+ * ASKING YOUR OWN MODEL ABOUT THE SENDERS WAITING AT THE SCREENER. The hosted control is built
+ * around a price; here there is nothing metered — the model is one its user set up — so this
+ * control shares everything that is not about money (endpoint, request shape, overlay) and
+ * drops the dry run and the price. It KEEPS the ladder: dropping the COUNT with the price left
+ * one fixed fifty and no way to ask for three hundred but six presses; the rungs are the
+ * hosted ladder's own, over the queue, topping out at ALL of them. Three states, all honest:
+ * no model set up, a model not answering (the engine's own sentence), a model that works —
+ * never a pressable button with nothing behind it. The asking is `local-suggest-run.ts`.
  */
 
 import { useRef, useState } from "react";
@@ -77,14 +49,11 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
    */
   const [size, setSize] = useState<number | null>(null);
   /**
-   * `run` counts presses and NOTHING ELSE increments it.
-   *
-   * It is captured once when a run starts and compared on the arrival of every chunk, so a stop
-   * mid-run discards what is still in flight instead of painting it. It is deliberately never
-   * re-bumped inside the loop: a per-chunk bump makes each chunk invalidate the next one's check,
-   * which is a run that silently cancels itself and leaves the button spinning for ever.
-   *
-   * `hydrated` latches the one stored read. `busy` latches the press, and it is set BEFORE the
+   * `run` counts presses and NOTHING ELSE increments it. It is captured when a run starts and
+   * compared on every chunk's arrival, so a stop mid-run discards what is still in flight
+   * instead of painting it. Never re-bumped inside the loop: a per-chunk bump makes each chunk
+   * invalidate the next one's check — a run that silently cancels itself and leaves the button
+   * spinning. `hydrated` latches the one stored read. `busy` latches the press, set BEFORE the
    * first await — set after it, two presses that race both read false and both run.
    */
   const io = useRef({ run: 0, hydrated: false, busy: false });

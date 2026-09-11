@@ -1,35 +1,18 @@
 /**
- * A DOOR'S REFUSAL, ON SCREEN — the sentence, and the host it named as a control.
- *
- * ── ONE COMPONENT FOR BOTH DOORS, AND THAT IS THE WHOLE REASON IT IS A COMPONENT ──────────────
- *
- * The standalone door and the self-hosted door are two screens over one product, and the same
- * engine hands both of them the same refusal. They each drew their own `<p className="join-error">`
- * from their own reading of it, and that is how they came to describe one answer in two ways: this
- * door sharpened the sentence and named the host, the other returned the service's generic message
- * and discarded the detail it was holding. One reader (`probeTlsRefusal`) and one renderer is the
- * structural version of "they must agree", and `desktop-door-tls-census.test.tsx` holds it.
- *
- * ── WHY THE HOST IS A CONTROL AND NOT ONLY A WORD IN THE SENTENCE ─────────────────────────────
- *
- * On a certificate hostname mismatch the probe can name the host that WOULD have worked — the
- * vanity shape, where somebody types `mail.<their-domain>` and the server there presents a
- * certificate for `<their-domain>`. The sentence has named it since the door stopped throwing the
- * detail away, and the hosted web app went one step further from the day the detail existed: it
- * offers the correction as a press. The desktop still made the person read a hostname off a
- * paragraph and type it back into a field two lines below, which is the part of this that a
- * standalone customer — the one with no support channel — was worst served by.
- *
- * Pressing it fills the field and nothing else. It sends nothing, dials nothing and skips no check:
- * the next attempt dials that host and verifies strictly against it, exactly as any typed value is.
- *
- * ── AND IT IS ONLY OFFERED WHERE THERE IS A FIELD TO FILL ─────────────────────────────────────
- *
- * `onUse` absent means this screen has nowhere to put it — the self-hosted door asks for one
- * server address rather than a pair of transports, and the standalone door hides its host fields
- * behind the named providers, whose hosts are this app's own facts. The sentence still names the
- * host in both cases, which is what it did before this existed; what is refused is a control that
- * would press into nothing.
+ * A DOOR'S REFUSAL, ON SCREEN — the sentence, and the host it named as a control. ONE
+ * component for both doors, the whole reason it is a component: the standalone and
+ * self-hosted doors are two screens over one product handed the same refusal, and each drew
+ * its own `<p className="join-error">` from its own reading — one reader (`probeTlsRefusal`)
+ * and one renderer is the structural "they must agree", held by
+ * `desktop-door-tls-census.test.tsx`. THE HOST IS A CONTROL, not only a word: on a hostname
+ * mismatch the probe can name the host that WOULD have worked (the vanity shape), and the
+ * desktop made the person read it off a paragraph and re-type it. Pressing it fills the field
+ */
+
+/*
+ * and nothing else — it sends nothing, dials nothing, skips no check; the next attempt
+ * verifies strictly against it. Offered only where there is a field to fill: `onUse` absent
+ * means this screen has nowhere to put it, and the sentence still names the host.
  */
 import { Button } from "@ohmail/ui";
 

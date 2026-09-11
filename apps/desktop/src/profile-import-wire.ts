@@ -1,16 +1,12 @@
 /**
  * THE PROFILE-IMPORT CARD'S THREE CALLS — over an injected transport, and with no door here.
- *
  * The card is the shared client's (`app/shell/ProfileImportCard.tsx`); the route, the narrowing
- * and the engine's-own-sentence rule for a refusal are here, once, for every door that carries
- * them: the desktop window over its bridge (`local-profile-import.ts`) and the served host client
- * over its bearer socket (`host-client/transports.ts`).
- *
- * The factory lives in a module that imports no transport because the served host client has no
- * bridge — sharing a file with the window's bridge binding put the shell command's name into the
- * bundle a phone is handed, which `scan:host` refuses. The fetch shape is spelled here rather than
- * imported from the bridge for the same reason, and it is the LOOSE one on purpose: `init` is
- * `unknown` so both of the adapter option declarations this source is published beside accept it.
+ * and the engine's-own-sentence rule for a refusal live here once for both doors: the desktop
+ * window over its bridge (`local-profile-import.ts`) and the served host client over its bearer
+ * socket (`host-client/transports.ts`). No transport is imported — the served host client has
+ * no bridge, and `scan:host` refuses the shell command's name in the phone bundle. The fetch
+ * shape is the LOOSE one on purpose: `init` is `unknown` so both of the adapter option
+ * declarations this source is published beside accept it.
  */
 
 import type { ProfileImportTransport } from "../../webapp/app/shell/ProfileImportCard";

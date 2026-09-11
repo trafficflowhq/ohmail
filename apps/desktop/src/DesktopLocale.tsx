@@ -1,30 +1,17 @@
 /**
- * THE DESKTOP'S INTL PROVIDER — the same job `(product)/LocaleShell.tsx` does for the web, minus
- * everything that needs a server.
- *
- * There is no Next here, so there is no server render to resolve a cookie against and nothing to
- * negotiate: the window reads `localStorage` and paints. And there is no account — this build is
- * standalone by construction, its Cloud adapter is aliased out of the bundle, and
- * `apiConfigured()` is false — so `localStorage` is not a fallback for an account preference, it IS
- * the preference. The Settings row is the shared one; only what happens when it is pressed differs,
- * and that is the whole point of `LocaleContext`.
- *
- * ── BOTH CATALOGUES ARE STATIC IMPORTS, UNLIKE THE WEB'S ───────────────────────────────────────
- *
- * The web splits `de.json` into a lazy chunk so an English session never downloads it. Here that
- * would buy nothing: `vite.config.ts` sets `inlineDynamicImports`, so every chunk ends up in one
- * file inside the binary regardless, and a `import()` would only add a promise to the boot path. The
- * cost of carrying both is bounded by the same filter that keeps the marketing copy out —
- * `shellMessagesOnly()` rewrites BOTH files to the namespaces the shell reads, so what the binary
- * gains is the German half of the app's own vocabulary and nothing else.
- *
- * ── THE MERGE IS THE WEB'S RULE, RESTATED IN ONE LINE ──────────────────────────────────────────
- *
- * German fills over English, so a key `de.json` is missing renders the English sentence rather than
- * `use-intl`'s default fallback, which is the dotted KEY. It cannot import `i18n/catalog.ts` for
- * this — the publish DENYs `apps/webapp/i18n`, so that module does not exist in the mirror a
- * released binary is built from — so `fillFrom`'s rule lives in `app/shell/locale.ts`, which IS
- * published, and both hosts call it.
+ * THE DESKTOP'S INTL PROVIDER — `(product)/LocaleShell.tsx`'s job, minus everything that
+ * needs a server. No Next, so no cookie to resolve and nothing to negotiate: the window reads
+ * `localStorage` and paints — and with no account, `localStorage` IS the preference, not a
+ * fallback. BOTH catalogues are static imports, unlike the web's lazy `de.json`:
+ * `vite.config.ts` sets `inlineDynamicImports`, so every chunk lands in one file regardless
+ * and an `import()` would only add a promise to the boot path; `shellMessagesOnly()` rewrites
+ * both files to the namespaces the shell reads. The merge is the web's rule restated: German
+ * fills over English, so a missing key renders the English sentence rather than the dotted
+ */
+
+/*
+ * KEY — via `fillFrom` in `app/shell/locale.ts`, which IS published (the publish DENYs
+ * `apps/webapp/i18n`, so `i18n/catalog.ts` does not exist in the mirror).
  */
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { IntlProvider } from "use-intl";

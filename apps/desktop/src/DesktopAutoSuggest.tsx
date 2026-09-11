@@ -1,33 +1,17 @@
 /**
- * SETTINGS → SCREENER → "Suggest for new senders automatically", on the STANDALONE door.
- *
- * A hosted account has this switch too, and it is not the same switch. There it authorises the
- * service to spend the account's CREDITS with no press, so the control is a confirm that names a
- * price before it arms anything (`AutoSuggestRow`). Here there is no ledger and no price: the model
- * is one the person configured themselves — an API key they hold, or a model server on their own
- * machine — so the only honest thing to say is WHOSE model gets used and WHEN, which is what the
- * copy below does. A price this door cannot quote would be an invented number.
- *
- * ── WHY IT IS ITS OWN COMPONENT, BESIDE `DesktopScreening` RATHER THAN INSIDE IT ────────────
- *
- * `DesktopScreeningWords` states the rule: two controls that can each fail need two places to say
- * so, or a stale failure line from one is read as an answer about the other. This one also reads a
- * DIFFERENT route from the pane around it — `/local/auto-suggest`, not `/account/screening` — so
- * folding it in would mean one component holding two reads, two writes and two absences.
- *
- * ── WHAT IT SAYS WHEN THERE IS NO MODEL, AND WHY IT STILL LETS YOU ARM IT ───────────────────
- *
- * A standalone install with no model configured is a complete, supported way to run this app: rules
- * are the product's floor. Without one this pass can do nothing, so a switch that silently stored a
- * flag and reported nothing would be exactly the "control that does nothing" the door's own settings
- * work already refuses.
- *
- * The answer is NOT to hide the row, and not to refuse the write. It is to SAY SO, on the row, in
- * the engine's own reading of whether a model is usable rather than this window's guess — and to
- * keep the switch live, so somebody who arms it before setting up their key gets the behaviour the
- * moment they do rather than a setting that silently did not take. `modelReady` comes off the read
- * for that reason; a window that inferred it from a provider name would go on saying yes after the
- * key was revoked.
+ * SETTINGS → SCREENER → "Suggest for new senders automatically", on the STANDALONE door. The
+ * hosted switch is not the same switch: there it authorises spending the account's CREDITS
+ * with no press, so that control names a price (`AutoSuggestRow`); here there is no ledger —
+ * the model is the person's own — so the honest thing to say is WHOSE model gets used and
+ * WHEN. Its own component beside `DesktopScreening` (`DesktopScreeningWords` states the rule:
+ * two controls that can each fail need two places to say so), and it reads a DIFFERENT route
+ * (`/local/auto-suggest`, not `/account/screening`). With NO MODEL configured the row SAYS SO
+ * — in the engine's own reading (`modelReady` comes off the read; a provider-name inference
+ */
+
+/*
+ * keeps saying yes after a key is revoked) — and the switch stays live, so somebody who arms
+ * it before setting up a key gets the behaviour the moment they do.
  */
 
 import { useEffect, useState } from "react";
@@ -66,18 +50,18 @@ export function DesktopAutoSuggest() {
   /* See `DesktopScreeningWords` for why the namespace has to be on `vite.config.ts`'s list. */
   const t = useTranslations("desktopScreener");
   /**
-   * NULL UNTIL THE ENGINE HAS ANSWERED WITH A VALUE, and null for ever on a door that has none.
-   *
-   * ONE state for three situations, deliberately, where the neighbouring panes keep two: not asked
-   * yet, this door serves no such route, and the read was refused. They differ in cause and not in
-   * what may be drawn — there is no stored value in any of them, and the only thing this row can
-   * render without one is a switch showing a position nobody chose. `local-screening.ts`'s pane
-   * needs the distinction because ONE of its absences (a hosted account out of reach) has a
-   * sentence worth printing; this route is answered out of a database file in this same process, so
-   * that case does not exist here and a second flag for it would be state nothing reads.
-   *
-   * The load-bearing half is therefore in the TRANSPORT rather than here: it must never invent a
-   * value for a door that has none. See `readAutoSuggest`.
+   * NULL UNTIL THE ENGINE HAS ANSWERED WITH A VALUE, and null for ever on a door that has
+   * none. ONE state for three situations, deliberately, where the neighbouring panes keep
+   * two: not asked yet, no such route on this door, and a refused read. They differ in cause,
+   * not in what may be drawn — there is no stored value in any of them, and the only thing
+   * this row can render without one is a switch showing a position nobody chose.
+   * `local-screening.ts` needs the distinction because one of ITS absences (a hosted account
+   * out of reach) has a sentence worth printing; this route is answered out of a database
+   * file in this process, so that case does not exist here. The load-bearing half is in the
+   */
+
+  /*
+   * TRANSPORT: it must never invent a value for a door that has none — see `readAutoSuggest`.
    */
   const [value, setValue] = useState<AutoSuggestState | null>(null);
   const [pending, setPending] = useState(false);

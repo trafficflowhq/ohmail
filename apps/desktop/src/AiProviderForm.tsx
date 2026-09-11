@@ -1,35 +1,21 @@
 /**
- * THE MODEL THIS INSTALL USES — the form, on its own, so two surfaces can ask the same question.
- *
- * Settings → Desktop renders it, and so does the first-run flow's provider step. That is the whole
- * reason it is a file: the alternative is a second form over `/local/ai`, and two write paths to
- * one settings file is how the two disagree about which vendor a key belongs to. It takes no
- * `door`, no pane, no navigation — everything it needs comes back from the engine on every read
- * and write, and everything it says comes from the `aiProvider` catalogue.
- *
- * ── WHAT THIS COMPONENT IS NOT ALLOWED TO DECIDE ────────────────────────────────────────────
- *
- * Whether the model works, which models exist, and where message content goes. All three come from
- * the engine. A form that decided "available" for itself would show a working model to somebody
- * whose key was revoked last night; a form that offered a model list of its own would offer names
- * the endpoint does not have. The `<select>`s below are filled from `probe.models` and from
- * nothing else, which is why they are empty until a test has run — honest, rather than a list of
- * plausible ids typed from memory.
- *
- * ── THERE IS NO ADDRESS FIELD, AND THAT IS DELIBERATE ───────────────────────────────────────
- *
- * The endpoint a provider is reached at selects where message content is sent, so it is a literal
- * the engine holds rather than something this window offers to change. What the form does instead
- * is NAME the address the engine actually holds (`settings.ollama.baseUrl`), because an install
- * that stored a different one while the field existed still holds it — so the sentence is read off
- * the status, and the "nothing leaves this computer" half is a separate sentence that renders only
- * when that origin is loopback. "Forget the provider and keys" restores the default.
- *
- * ── AND THE KEY IS NEVER ON SCREEN ──────────────────────────────────────────────────────────
- *
- * Nothing reads a stored key back — not this form, not the engine's own status. The field is
- * write-only: empty every time the form opens, and leaving it empty keeps whatever is stored.
- * "A key is stored" is the whole of what is ever said about it.
+ * THE MODEL THIS INSTALL USES — the form, on its own, so two surfaces can ask the same
+ * question: Settings → Desktop renders it, and so does the first-run flow's provider step —
+ * the alternative is a second form over `/local/ai`, and two write paths to one settings file
+ * is how the two disagree about which vendor a key belongs to. It takes no `door`, no pane,
+ * no navigation; everything it needs comes back from the engine, and everything it says comes
+ * from the `aiProvider` catalogue. NOT THIS COMPONENT'S TO DECIDE: whether the model works,
+ * which models exist, where message content goes — all three come from the engine; the
+ * `<select>`s are filled from `probe.models` and nothing else, empty until a test has run.
+ */
+
+/*
+ * There is NO ADDRESS FIELD: the endpoint selects where message content is sent, so it is a
+ * literal the engine holds; the form NAMES the address actually held
+ * (`settings.ollama.baseUrl`), the "nothing leaves this computer" half renders only when that
+ * origin is loopback, and "Forget the provider and keys" restores the default. THE KEY IS
+ * NEVER ON SCREEN: nothing reads a stored key back — the field is write-only, empty every
+ * time the form opens, and leaving it empty keeps whatever is stored.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -174,41 +160,28 @@ export function verdictOf(
         case "timeout":
           return { state: "bad", headline: t("verdictTimeout", { vendor }), ...stamped };
         /**
-         * `probe.detail` IS A COMPLETE SENTENCE, NOT A MODEL ID.
-         *
-         * The engine writes `the model server is running and does not have "llama3.2"` and
-         * `"gpt-x" is not a chat model, so it cannot answer suggestions or drafts`
-         * (`ai-ollama.ts:244`, `ai-openai.ts:336`). Interpolating that into "the key works, but
-         * {model} is not on its list" produced a mangled sentence AND told an Ollama user their
-         * key works, when Ollama has no key at all.
-         *
-         * So the headline is OURS — translated, provider-neutral, true of both — and the engine's
-         * sentence rides in the detail beside the pointer that repairs it. That is `local-ai.ts`'s
-         * standing rule: the engine's words for what happened, ours for what to do next.
+         * `probe.detail` IS A COMPLETE SENTENCE, NOT A MODEL ID. The engine writes `the model
+         * server is running and does not have "llama3.2"` (`ai-ollama.ts:244`,
+         * `ai-openai.ts:336`); interpolating that into "the key works, but {model} is not on
+         * its list" produced a mangled sentence AND told an Ollama user their key works, when
+         * Ollama has no key at all. So the headline is OURS — translated, provider-neutral,
+         * true of both — and the engine's sentence rides in the detail beside the pointer
+         * that repairs it: the engine's words for what happened, ours for what to do next.
          */
         /**
-         * ── AN EMPTY LIST IS A DIFFERENT SITUATION, AND THE SHARED SENTENCE LIED ABOUT IT ────
-         *
-         * Reported from a fresh Ollama install, which is exactly when the list is empty. The
-         * block read:
-         *
-         *   "The model you chose cannot be used. the model server is running and does not have
-         *    'llama3.2'. Pick one of the 0 models below."
-         *
-         * Three untruths and no way out. Nobody CHOSE `llama3.2` — it is the shipped default and
-         * the person had never been offered a list. The engine's sentence names one model as the
-         * thing that is missing when every model is missing. And "pick one of the 0 models below"
-         * points at an empty select.
-         *
-         * So a zero-length list gets its own arm, and the engine's own sentence is DROPPED rather
-         * than shown under a better headline: `local-ai.ts`'s rule is "the engine's words for what
-         * happened, ours for what to do next", and here the engine has no words for what happened
-         * that are true. On Ollama the repair is a command, so the command is the detail. On a
-         * keyed vendor there is no command to give and the honest line is that it listed nothing.
-         *
-         * `off` rather than `bad`, on `verdictNoKey`'s precedent: nothing is broken, a step has
-         * not been taken yet. The test verb stays enabled either way — it is gated on `working`
-         * alone — so the sentence and the button agree.
+         * ── AN EMPTY LIST IS A DIFFERENT SITUATION, AND THE SHARED SENTENCE LIED ABOUT IT.
+         * Reported from a fresh Ollama install, exactly when the list is empty: "The model
+         * you chose cannot be used. the model server is running and does not have 'llama3.2'.
+         * Pick one of the 0 models below." Three untruths — nobody CHOSE the shipped default,
+         * the engine names one missing model when every model is missing, and the pointer
+         * aims at an empty select. So a zero-length list gets its own arm and the engine's
+         * sentence is DROPPED: here the engine has no true words for what happened. On Ollama
+         * the repair is a command, so the command is the detail; a keyed vendor has no
+         */
+
+        /*
+         * command, and the honest line is that it listed nothing. `off` rather than `bad`
+         * (`verdictNoKey`'s precedent): nothing is broken, a step has not been taken yet.
          */
         case "model_absent":
           if (count === 0) {
@@ -338,15 +311,13 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
   const [saved, setSaved] = useState(false);
 
   /**
-   * THE HOST'S ECHO THROUGH A REF, so the load effect below keeps its once-per-mount `[]` deps.
-   *
-   * This is not tidiness. `land` closes over `onStatus`, and with `land` in the effect's deps a
-   * host that passes an inline arrow — `onStatus={(s) => setThing(s)}`, the obvious way to write
-   * it — gives a new function every render, a new `land`, a re-run of the effect, a `setStatus`,
-   * and another render. A read loop against the engine for as long as the form is open. The pane
-   * that used to hold this form got away with it because its one host passes a `useState` setter,
-   * which is stable; the form now has a second host and the first-run flow has no reason to know
-   * that rule. `AwayResponderRow` holds its echo the same way, for the same reason.
+   * THE HOST'S ECHO THROUGH A REF, so the load effect below keeps its once-per-mount `[]`
+   * deps. `land` closes over `onStatus`, and with `land` in the deps a host that passes an
+   * inline arrow gives a new function every render — a new `land`, a re-run, a `setStatus`,
+   * another render: a read loop against the engine for as long as the form is open. The pane
+   * that used to hold this form got away with it because its one host passes a `useState`
+   * setter, which is stable; the first-run flow has no reason to know that rule.
+   * `AwayResponderRow` holds its echo the same way, for the same reason.
    */
   const echo = useRef(onStatus);
   echo.current = onStatus;
@@ -401,19 +372,18 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
   const keyed = isKeyed(choice);
   const hasKey = keyed && status.settings[choice].hasKey;
   /**
-   * THE ENDPOINT'S LIST IS THE ENDPOINT'S LIST, WHETHER OR NOT THE VERIFICATION PASSED.
-   *
-   * This was `probe.ok ? probe.models : []`, which reads as caution and is a dead end. The one
-   * failure that carries a NON-EMPTY list is exactly the one the list repairs: `model_absent`
-   * means the endpoint answered, listed what it has, and did not have the model in the settings
-   * (`ai-ollama.ts:239-246` returns `models` alongside the failure, as does `ai-openai.ts`). So
-   * the arm that discarded it hid both selectors at the only moment they were needed, left the
-   * verdict pointing at "the models below" with nothing below, and made every retry repeat the
-   * same failure — an Ollama install holding `mistral:latest` while the settings asked for
-   * `llama3.2` could not be fixed from the pane at all.
-   *
-   * Every other failure returns an empty list anyway (`unreachable`, `timeout`, `unauthorized`),
-   * so reading it unconditionally can only ever ADD the list where the endpoint really sent one.
+   * THE ENDPOINT'S LIST IS THE ENDPOINT'S LIST, WHETHER OR NOT THE VERIFICATION PASSED. This
+   * was `probe.ok ? probe.models : []`, which reads as caution and is a dead end: the one
+   * failure that carries a NON-EMPTY list is exactly the one the list repairs —
+   * `model_absent` means the endpoint answered, listed what it has, and did not have the
+   * model in the settings (`ai-ollama.ts:239-246`, `ai-openai.ts` alike). Discarding it hid
+   * both selectors at the only moment they were needed: an Ollama install holding
+   * `mistral:latest` while the settings asked for `llama3.2` could not be fixed from the
+   * pane. Every other failure returns an empty list anyway, so reading it unconditionally
+   */
+
+  /*
+   * can only ever ADD the list where the endpoint really sent one.
    */
   const models = status.probe?.models ?? [];
   const listed = models.length > 0 && choice !== "none";

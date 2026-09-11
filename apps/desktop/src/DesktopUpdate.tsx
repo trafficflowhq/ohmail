@@ -1,39 +1,19 @@
 /**
- * SETTINGS → ABOUT → UPDATES — the app's own update, where a person can find it.
- *
- * ── WHY THIS EXISTS, GIVEN THE MENU BAR ALREADY HAD IT ─────────────────────────────────────
- *
- * "Check for Updates…" has always been one item in the menu bar, and on a tiling Wayland
- * compositor this app draws no menu bar at all (`src-tauri/src/frame.rs`) — so on those desktops
- * the only way to ask whether your mail client is current was gone. An update affordance that
- * exists on some desktops is not an update affordance. Settings is where an app's own facts
- * belong anyway, next to the version this pane already showed.
- *
- * ── IT IS THE SAME FLOW, NOT A SECOND ONE ──────────────────────────────────────────────────
- *
- * Everything here reads one value the shell computes (`updater.rs`'s `report`) and every press
- * goes to `update_press`, which is the same function the menu item calls. So the pane cannot
- * offer a press the bar has disabled, cannot install anything the shell has not fetched and
- * minisign-verified, and cannot name a feed, a version or a file. The button's own enablement is
- * the shell's `Flow::press`, carried over verbatim rather than re-derived here.
- *
- * ── AND IT SAYS THE TRUE THING RATHER THAN THE COMFORTABLE ONE ─────────────────────────────
- *
- * Five states and six sentences, because two facts share one state: a client that is up to date
- * and a client that REFUSED an update whose version it could not confirm are both idle, and
- * "ohmail is up to date" is a lie in the second case — an update exists and this app will not
- * install it. That refusal is also the shape of this that would be OUR fault (a release signed
- * without its version stops every client), so it is precisely the one that must not read as
- * "you're fine". A window that has not seen a check finish says that too, rather than borrowing
- * the up-to-date sentence for it.
- *
- * ── WHERE IT SITS, AND FOR WHOEVER RESTYLES THIS NEXT ──────────────────────────────────────
- *
- * It renders as a subhead plus ONE row inside the About pane's existing section, using nothing
- * but `SettingsSubhead`, `SettingsRow` and `Button`. There is no layout of its own to unpick:
- * moving it to a pane of its own is moving one JSX element and taking the subhead with it, and
- * nothing outside this file knows where it is. The copy is a namespace of its own (`update`) for
- * the same reason.
+ * SETTINGS → ABOUT → UPDATES — the app's own update, where a person can find it. On a tiling
+ * Wayland compositor this app draws no menu bar (`src-tauri/src/frame.rs`), so "Check for
+ * Updates…" was unreachable there — an update affordance that exists on some desktops is not
+ * one. THE SAME FLOW, NOT A SECOND ONE: everything reads the shell's `report` and every press
+ * goes to `update_press`, the menu item's own function, so the pane cannot offer a press the
+ * bar has disabled, install anything unverified, or name a feed, a version or a file; the
+ * button's enablement is the shell's `Flow::press`, carried over verbatim. IT SAYS THE TRUE
+ * THING: an up-to-date client and one that REFUSED an update whose version it could not
+ */
+
+/*
+ * confirm are both idle, and "ohmail is up to date" is a lie in the second case — precisely
+ * the refusal that must not read as "you're fine". It renders as a subhead plus ONE row
+ * inside the About pane (`SettingsSubhead`, `SettingsRow`, `Button`), no layout of its own;
+ * the copy is its own namespace (`update`).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -52,17 +32,13 @@ import {
 } from "./update.js";
 
 /**
- * Follow the update flow: ask at mount, then listen — and let go on unmount.
- *
- * BOTH HALVES, for `mailto_claim`'s cold-start reason — the launch check runs before this bundle's
- * scripts do, so a pane that only listened would open blank after the one transition it cared
- * about had already happened.
- *
- * THIS COMPONENT MOUNTS MANY TIMES. Settings → About is opened and closed as often as somebody
- * likes, so the subscription has to be releasable; `update.ts` keeps the SHELL-side registration
- * to one for the process's life and hands back an ordinary unsubscribe, which the cleanup calls.
- * The `alive` flag stays beside it because the two guard different windows: unsubscribing closes
- * the push, and `alive` covers the pull that may still be in flight when the pane closes.
+ * Follow the update flow: ask at mount, then listen — and let go on unmount. BOTH halves, for
+ * `mailto_claim`'s cold-start reason: the launch check runs before this bundle's scripts do,
+ * so a pane that only listened would open blank after the one transition it cared about.
+ * THIS COMPONENT MOUNTS MANY TIMES — Settings → About opens and closes freely — so the
+ * subscription must be releasable; `update.ts` keeps the SHELL-side registration to one for
+ * the process's life and hands back an ordinary unsubscribe. The `alive` flag guards a
+ * different window: the pull that may still be in flight when the pane closes.
  */
 function useUpdateReport(): { report: UpdateReport | null; press: () => Promise<void> } {
   const [report, setReport] = useState<UpdateReport | null>(null);
@@ -122,18 +98,13 @@ function useUpdateReport(): { report: UpdateReport | null; press: () => Promise<
   }, []);
 
   /**
-   * Press, then RE-READ — and the re-read is the important half.
-   *
-   * A press's outcome normally arrives on the event, so this could have been fire-and-forget. It
-   * cannot, because there are two ways a press produces no event at all: the invoke REJECTS (an
-   * older shell, a grant that dropped the command), and the shell's own `Press::Nothing` — a press
-   * that raced the flow moving under it — which changes nothing and therefore announces nothing.
-   * In both cases the caller has already marked the button busy, and nothing would ever un-mark it:
-   * the control would sit on "Working…" until the pane was closed and reopened.
-   *
-   * Asking for the state afterwards answers every one of those, and it cannot go stale — it reads
-   * the flow as it is now rather than replaying a moment. The report it sets is a fresh object, so
-   * the effect that clears `busy` fires even when nothing about the flow changed.
+   * Press, then RE-READ — and the re-read is the important half. Two ways a press produces no
+   * event at all: the invoke REJECTS (an older shell, a dropped grant), and the shell's own
+   * `Press::Nothing` — a press that raced the flow moving under it, changing nothing and
+   * announcing nothing. In both, the button is already marked busy and nothing would un-mark
+   * it: "Working…" until the pane was closed and reopened. Asking for the state afterwards
+   * answers every case and cannot go stale — it reads the flow as it is now; the report set
+   * is a fresh object, so the effect that clears `busy` fires even when nothing changed.
    */
   const press = useCallback(async () => {
     const at = pushes.current;
