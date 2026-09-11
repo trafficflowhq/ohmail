@@ -1,24 +1,11 @@
-// THE ONE PLACE A STORED CREDENTIAL BECOMES AN `ImapConfig.auth`.
-//
-// Every host that opens a mailbox — the worker, the API's send + attachment dialers, the add-time
-// probe, the desktop sidecar — reads a `mailbox_credentials` row (or a request body) and has to
-// turn `(meta, secret)` into the `auth` an `ImapAdapter` connects with. Before this they each wrote
-// their own `auth: { user, pass }`, which was correct for the only shape that existed. It is a
-// LOADED GUN the moment a second shape exists:
-//
-//   an OAuth2 mailbox stores a REFRESH TOKEN in `secret_enc`. A site that does not branch on
-//   `meta.authType` decrypts it and hands it to imapflow as an IMAP LOGIN password — i.e. it sends
-//   the user's refresh token, in clear, as a password to Microsoft. That is the single deadliest
-//   failure this whole feature can produce, and the defence is that NO site assembles `auth` by
-//   hand: they all call this, and this is the only thing that reads `authType`.
-//
-// So the contract is deliberately unforgiving: an `authType` this function does not recognise is a
-// THROW, not a default. A new provider must be added HERE, in one diff a reviewer can see, or it
-// does not connect at all. Fail-closed, because the failure of failing-open is a credential on the
-// wire.
-//
-// No runtime imports: this is pure, and stays importable by `packages/services`' onboarding refusal
-// without dragging `imapflow`/`nodemailer` into the API bundle — the same rule `imap-types.ts` keeps.
+// The one place a stored credential becomes an `ImapConfig.auth`. Every host that opens a mailbox
+// turns `(meta, secret)` into the auth an `ImapAdapter` connects with, and no site assembles it
+// by hand: an OAuth2 mailbox stores a refresh token in `secret_enc`, and a site that does not
+// branch on `meta.authType` would hand that token to imapflow as an IMAP LOGIN password — the
+// user's refresh token, in clear, on the wire. So an unrecognised `authType` is a throw, never a
+// default: a new provider is added here, in one visible diff, or it does not connect at all.
+// Pure, no runtime imports, so `packages/services`' onboarding refusal can import it without
+// dragging imapflow/nodemailer into the API bundle.
 import type { ImapAuth } from "./imap-types.js";
 
 /**
@@ -35,45 +22,25 @@ export interface CredMetaAuth {
   /** For `oauth2`: the Azure AD tenant segment of the token endpoint (validated in the token client). */
   tenant?: string;
   /**
-   * For `oauth2`: WHICH APPLICATION REGISTRATION ISSUED THIS REFRESH TOKEN — `"public"` or
-   * `"confidential"`. Absent means `"confidential"`, which is what every token stored before the
-   * device-code door existed came through.
-   *
-   * ── WHY THE MAILBOX HAS TO CARRY THIS, AND WHY A HOST-WIDE SETTING CANNOT ──────────────────
-   *
-   * A refresh token is bound to the client that obtained it. Microsoft refuses to renew one
-   * presented by a different `client_id`, and the whole failure is silent: `refreshAccessToken`
-   * maps a rejected client to `OAuthProviderUnavailableError` deliberately (a rejected client is
-   * not the mailbox's fault), so nothing quarantines and nothing pages — the mailbox simply stops
-   * receiving mail one hour after it was connected, looking like a Microsoft outage.
-   *
-   * One self-hosted install can legitimately hold BOTH kinds at once: a mailbox connected through
-   * the operator's own confidential registration, and one connected through the shared public
-   * client's device-code flow. So "which door does this HOST refresh through" has no single
-   * answer, and a host-wide value would be right for one of those mailboxes and fatal for the
-   * other. The provenance travels with the credential instead.
+   * For `oauth2`: which application registration issued this refresh token — `"public"` or
+   * `"confidential"`; absent means `"confidential"`, the only door older tokens came through. A
+   * refresh token is bound to the client that obtained it: Microsoft refuses one presented by a
+   * different `client_id`, and the failure is silent — `refreshAccessToken` maps a rejected
+   * client to `OAuthProviderUnavailableError`, so the mailbox simply stops receiving mail an hour
+   * after connecting. One self-hosted install can hold both kinds at once, so a host-wide setting
+   * has no single right answer; the provenance travels with the credential.
    */
   clientKind?: string;
 }
 
 /**
- * WHERE AN OAUTH MAILBOX SUBMITS — the coordinates, with the product's defaults applied.
- *
- * An oauth mailbox stores NO `smtp` credential row: one refresh token covers both transports, so
- * the submission host/port/secure live in the imap row's `meta.smtp` and the secret does not
- * repeat. Three sites resolve them — the send adapter, the `SIZE` probe on the API host, and the
- * sync host's credential loader — and each of them wrote the same three `??` defaults by hand.
- * That is a triplicated constant with a sharp failure: a mailbox whose meta carries no submission
- * block would, at the site that drifted, be dialled on somebody else's default port.
- *
- * It lives beside {@link buildImapAuth} because it answers the other half of the same question —
- * that function says WHAT to present, this says WHERE — and because this module is pure, so the
- * services package's onboarding refusal can reach it without pulling nodemailer into the bundle.
- *
- * The defaults are Exchange Online's submission endpoint on the STARTTLS port, which is the only
- * provider `buildImapAuth` will assemble an oauth auth for at all (`provider: "microsoft"`, and
- * anything else throws there). `secure: false` is not plaintext: `smtpTlsFloor` turns it into a
- * MANDATORY STARTTLS, which is what 587 speaks.
+ * Where an OAuth mailbox submits — the coordinates, with the product's defaults applied. An oauth
+ * mailbox stores no `smtp` credential row: one refresh token covers both transports, so
+ * host/port/secure live in the imap row's `meta.smtp`. Three sites resolve them (the send
+ * adapter, the `SIZE` probe, the sync host's loader), and each once wrote the same three `??`
+ * defaults by hand — a triplicated constant whose drift dials somebody else's default port. The
+ * defaults are Exchange Online's submission endpoint on the STARTTLS port; `secure: false` is not
+ * plaintext — `smtpTlsFloor` makes STARTTLS mandatory, which is what 587 speaks.
  */
 export function oauthSmtpEndpoint(
   smtp: { host?: string; port?: number; secure?: boolean } | undefined,
@@ -105,15 +72,13 @@ export type AccessTokenFetcherFactory = (
 ) => () => Promise<string>;
 
 /**
- * A per-process (or per-invocation) source of mailbox access tokens: the {@link
- * AccessTokenFetcherFactory} `buildImapAuth` calls for one mailbox, bound by a host to its own
- * caching and rotation-persist policy.
- *
- * It lives HERE, beside the factory type it returns, rather than in `../oauth/microsoft.js` where
- * its one implementation does: this port is how a host that opens mailboxes NAMES its token source,
- * so it belongs to the auth-assembly seam every host compiles — including one built from the mail
- * half alone. The Microsoft client that fills it stays next door, and a consumer of this module can
- * be handed a provider without being able to construct one.
+ * A per-process source of mailbox access tokens: the {@link AccessTokenFetcherFactory}
+ * `buildImapAuth` calls for one mailbox, bound by a host to its own caching and rotation-persist
+ * policy. It lives here, beside the factory type it returns, rather than in
+ * `../oauth/microsoft.js`: this port is how a host that opens mailboxes names its token source,
+ * so it belongs to the auth-assembly seam every host compiles. The Microsoft client that fills it
+ * stays next door; a consumer of this module can be handed a provider without being able to
+ * construct one.
  */
 export interface OAuthTokenProvider {
   /** The {@link AccessTokenFetcherFactory} `buildImapAuth` calls for one mailbox. */
