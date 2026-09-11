@@ -1,39 +1,18 @@
 "use client";
 
 /**
- * REMOTE IMAGES — the one switch behind the reading pane's oldest behaviour.
- *
- * ON (the product default) means a message's pictures load when you open it, every time, through
- * ohmail's own proxy. OFF means the per-message "Show images" flow this product shipped with: the
- * bar counts what was blocked and you press to admit it, once per message.
- *
- * ── WHY THIS IS A PLAIN SWITCH AND NOT A CONFIRM ──────────────────────────────────────────────
- *
- * {@link AutoSuggestRow} gates its ON with a priced confirm, because turning it on starts spending
- * the account's credits and a switch that costs money on the way up is a control somebody has to
- * pay to discover. Nothing here spends, moves mail, or sends a byte to a sender: both positions of
- * this switch describe what the reading pane does with content that has already arrived, and both
- * are reversible with a second press.
- *
- * ── WHAT THE DESCRIPTION MAY NOT SAY ──────────────────────────────────────────────────────────
- *
- * It must not promise that turning images ON exposes the reader, and it must not imply that
- * turning them OFF is what stops tracking pixels. Neither is true, and the second is the more
- * damaging: a beacon is refused the proxy inside the sanitizer in BOTH positions, so a reader who
- * left this on has exactly the same protection from open-tracking as one who turned it off. What
- * the switch decides is whether a picture waits for a press. The copy says that and stops.
- *
- * ── IT WRITES THROUGH THE HOOK ────────────────────────────────────────────────────────────────
- *
- * `setBlockRemoteImages` is `useConsentState().setBlockRemoteImages`, never `consentApi` directly,
- * for the reason `DormancyRow` gives: `AppShell` passes the same hook's `blockRemoteImages` into
- * `useRemoteImages`, so writing through it re-renders the open message in the new mode. A
- * component with its own fetch would leave the message the reader is looking at on the old one.
- *
- * The switch renders the value the SERVER last answered with, never the optimistic pick, so a
- * refused write leaves it where it was — and here that matters in one direction more than the
- * other: a switch that drew itself ON over a write that failed would be telling somebody their
- * images load when the stored setting still says they do not.
+ * Remote images — the one switch behind the reading pane's oldest behaviour. ON (the default): pictures load on open,
+ * through ohmail's proxy. OFF: the per-message "Show images" flow — the bar counts what was blocked and you press to
+ * admit it. A plain switch, not a confirm: nothing here spends, moves mail, or sends a byte to a sender — both
+ * positions describe what the pane does with content that already arrived, both reversible.
+ */
+
+/**
+ * The description may not promise that ON exposes the reader, nor imply OFF is what stops tracking pixels — a beacon
+ * is refused the proxy inside the sanitizer in BOTH positions; the switch decides whether a picture waits for a
+ * press, and the copy says that and stops. It writes through `useConsentState().setBlockRemoteImages` (`AppShell`
+ * passes the same hook's value into `useRemoteImages`, so the open message re-renders in the new mode) and renders
+ * the server's answer, never the optimistic pick.
  */
 
 import { useEffect, useRef, useState } from "react";

@@ -65,18 +65,13 @@ export type MessageAction =
    */
   | "reply_all"
   /**
-   * FORWARD THIS MESSAGE ON — the third verb of the "answer it" family, and the one that used to
-   * be reachable only from a panel's ⋯ menu.
-   *
-   * Reported from real use: *"fwd message / Forward in general should be within our main
-   * pill-shaped UI besides Reply etc."* It is a row verb on the bar now (`.abar-fwd`, admitted
-   * whenever the measured row has room for it) and a `mm-fwd` item behind More whenever it has
-   * not, so it obeys the same in-the-row-or-in-the-menu rule as every other group.
-   *
-   * The shell answers it with `openForward` — the reply dock in forward mode, docked to THIS
-   * message — which is the same seam the panel menus have always dispatched. NOT a toggle, and
-   * deliberately so: `openForward` refuses a `no_forward` original with a toast, and a verb whose
-   * second press means "close" would swallow that refusal on the second try.
+   * Forward this message on — the third verb of the "answer it" family, once reachable only from a
+   * panel's ⋯ menu (reported from real use: it belongs in the pill beside Reply). A row verb on the
+   * bar now (`.abar-fwd`, admitted whenever the measured row has room) and an `mm-fwd` item behind
+   * More otherwise — the in-the-row-or-in-the-menu rule. The shell answers with `openForward` — the
+   * reply dock in forward mode, docked to THIS message, the seam the panel menus always dispatched.
+   * NOT a toggle, deliberately: `openForward` refuses a `no_forward` original with a toast, and a
+   * verb whose second press means "close" would swallow that refusal on the second try.
    */
   | "forward"
   | "later"

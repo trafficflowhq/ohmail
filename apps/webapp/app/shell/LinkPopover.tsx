@@ -6,39 +6,24 @@ import type { Editor } from "@tiptap/react";
 import { TextField } from "@ohmail/ui";
 
 /**
- * THE LINK POPOVER — the destination input the toolbar's Link button and ⌘K both open.
- *
- * It replaced `window.prompt`, which held this spot deliberately for a while (one line,
- * keyboard-native, screen-reader-announced). What the prompt could not offer is why it went:
- * no visible Remove for an existing link, no way to refuse a bad scheme with an explanation
- * rather than a silent no-op, and a system dialog that names the browser rather than the app.
- * The costs the prompt was avoiding are paid here explicitly — Escape is handled and STOPPED
- * (the shell's escape cascade must not also fire), focus is given to the input on open and
- * handed back to the editor on close, and the whole thing is a `role="dialog"` with a name.
- *
- * ── WHAT APPLY ACCEPTS, AND WHAT IT MAKES OF IT ──────────────────────────────────────────
- *
- * The editor writes markup a MAIL client renders, so a destination may only be something a
- * mail client can open: http, https or mailto — the same three schemes the server's outbound
- * sanitiser enforces (`outbound-html.ts`), stated here as UX rather than re-implemented as
- * security. The server remains the enforcement; this is the courtesy of not accepting what it
- * will strip, because a control that accepts what the server refuses is a button that silently
- * does nothing.
- *
- * People type what they mean, not a scheme. A scheme-less `a.example/docs` would survive BOTH
- * ends as a relative href — TipTap's validator admits relative URLs and so does the sanitiser
- * — and then dangle unresolvable in the recipient's client. So normalisation happens here, at
- * the one point where "what did the author mean" is still answerable: bare domains become
- * https, a bare address becomes mailto, anything with a scheme is taken at its word and judged
- * against the allow-list. `new URL` then has to parse the result, which is what turns "not a
- * url" from a garbage href into the visible refusal below.
- *
- * ── THE INPUT IS UNCONTROLLED ────────────────────────────────────────────────────────────
- *
- * Read on Apply, via a ref. Nothing reacts to the value while it is being typed — there is no
- * live preview and no per-keystroke validation to feed — so controlling it would buy a render
- * per keystroke and nothing else. The error clears on the next keystroke because stale
- * refusals read as "still wrong", and that is the one thing `onInput` is wired for.
+ * The link popover — the destination input the toolbar's Link button and ⌘K both open. It replaced
+ * `window.prompt`, which could offer no visible Remove, no explained refusal of a bad scheme, and a
+ * dialog naming the browser; the prompt's costs are paid explicitly — Escape handled and STOPPED
+ * (the shell's cascade must not also fire), focus given on open and handed back on close, a named
+ * `role="dialog"`. Apply accepts http, https or mailto — the same three schemes the server's
+ * outbound sanitiser enforces (`outbound-html.ts`), stated as UX rather than re-implemented as
+ * security: a control that accepts what the server strips is a button that silently does nothing.
+ */
+
+/**
+ * People type what they mean, not a scheme: a scheme-less `a.example/docs` would survive BOTH ends
+ * as a relative href (TipTap admits relative URLs, so does the sanitiser) and dangle unresolvable
+ * in the recipient's client — so normalisation happens here, at the one point where "what did the
+ * author mean" is still answerable: bare domains become https, a bare address becomes mailto,
+ * anything with a scheme is judged against the allow-list, and `new URL` must parse the result. The
+ * input is uncontrolled, read on Apply via a ref — nothing reacts per keystroke, so controlling it
+ * buys a render per keystroke and nothing else; the error clears on the next keystroke because
+ * stale refusals read as "still wrong".
  */
 
 /** The schemes a composed link may carry — the sanitiser's list, worn as UX. */

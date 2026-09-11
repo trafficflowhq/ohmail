@@ -1,28 +1,17 @@
 "use client";
 
 /**
- * SETTINGS → GENERAL → LANGUAGE.
- *
- * A `SegmentedControl` beside the theme's, because they are the same class of decision — how the
- * app is drawn, changing nothing about anybody's mail — and putting them in different shapes would
- * imply otherwise. Two members today; the control grows sideways cleanly and the list comes from
- * `LOCALES` rather than from this file, so a third language is a catalogue and a constant.
- *
- * ── WHY THIS ROW DISAPPEARS RATHER THAN GOING GREY ─────────────────────────────────────────────
- *
- * `useAppLocale()` is null wherever no host wired a locale provider: the demo's bare panes, and the
- * forty-odd unit tests that render one component with no context around it. A disabled selector
- * there would be a control that cannot control, which is exactly the built-and-unreachable shape
- * `SettingsView`'s injected-node seam exists to avoid. So the row is absent, structurally.
- *
- * ── THE FAILURE IS SAID, AND THE CONTROL DOES NOT MOVE ────────────────────────────────────────
- *
- * On the Cloud client `setLocale` writes the account BEFORE the catalogue swaps, and rejects without
- * having changed anything. So a refused write leaves the segmented control showing the language the
- * account actually holds and puts a sentence in a toast — the same contract every other settings
- * control here keeps ("resolve to what the database holds, never to what the click hoped for"). The
- * alternative, an optimistic swap that reverts, tells somebody their language changed and then takes
- * it away, and leaves them unable to say what their setting is.
+ * Settings → General → Language. A `SegmentedControl` beside the theme's — the same class of decision, how the app is
+ * drawn — and the list comes from `LOCALES`, so a third language is a catalogue and a constant. The row disappears
+ * rather than going grey: `useAppLocale()` is null wherever no host wired a provider (the demo's bare panes,
+ * forty-odd unit tests), and a disabled selector there is a control that cannot control — absent, structurally.
+ */
+
+/**
+ * The failure is said and the control does not move: `setLocale` writes the account BEFORE the catalogue swaps and
+ * rejects without having changed anything, so a refused write leaves the control showing the language the account
+ * holds and puts the sentence in a toast — resolve to what the database holds, never what the click hoped for; an
+ * optimistic swap that reverts leaves someone unable to say what their setting is.
  */
 
 import { useState } from "react";

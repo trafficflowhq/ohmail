@@ -1,36 +1,19 @@
 "use client";
 
 /**
- * THE OPTION B OFFER — the one-line invitation a Linux device gets to take its ohmarchy
- * default account-wide (OHMARCHY-PLAN.md §3a).
- *
- * The DETECTION half lives in the ThemeProvider (a Linux device with no explicit choice
- * anywhere defaults to the ohmarchy face, for that device only); this is the half that asks
- * the person. One press writes the account-level setting through the same
- * `PATCH /consent/settings` every knob rides — so it travels to every signed-in surface via
- * the `settings` change row — and the dismiss is remembered on this device.
- *
- * ── WHEN IT MAY APPEAR, AND WHY EACH GATE ──────────────────────────────────────────────────
- *
- *  · `linuxDevice` — the offer is the detection's question; no detection, no question.
- *  · no explicit choice anywhere (`facePreference` and `accountFace` both null) — "an explicit
- *    prior choice always wins over detection", and a person who has chosen is not re-asked.
- *    This is also what makes "never repeats after a choice" STRUCTURAL rather than a flag:
- *    accepting stores an account face, a settings flip stores a pin, and either one keeps
- *    this component unmounted forever after.
- *  · `apply` non-null — the host can actually store an account-wide setting (the shell
- *    passes null on the demo, before consent is known, and on transports without the knob).
- *    An offer whose one tap cannot work is a control that cannot control.
- *  · not previously dismissed — the only case that needs storage, because dismissal changes
- *    no face and stores no choice: the device default deliberately STAYS ohmarchy (the
- *    dismissal answers the offer, not the detection; Settings holds the way out, and the
- *    note says so).
- *
- * ── THE FAILURE IS SAID ────────────────────────────────────────────────────────────────────
- *
- * A refused account write leaves everything as it was — this device keeps its ohmarchy
- * default, the offer stays up, and a toast carries the sentence. Nothing optimistic to
- * revert, `LanguageRow`'s contract.
+ * The Option B offer — the one-line invitation a Linux device gets to take its ohmarchy default account-wide
+ * (OHMARCHY-PLAN.md §3a). Detection lives in the ThemeProvider; this is the half that asks: one press writes the
+ * account through the same `PATCH /consent/settings` every knob rides, and the dismiss is remembered on this device.
+ */
+
+/**
+ * The gates: `linuxDevice` (no detection, no question); no explicit choice anywhere (`facePreference` and
+ * `accountFace` both null — a person who has chosen is not re-asked, and "never repeats after a choice" is
+ * STRUCTURAL: accepting stores an account face, a flip stores a pin, either keeps this unmounted for ever); `apply`
+ * non-null (an offer whose one tap cannot work is a control that cannot control); not previously dismissed — the only
+ * case needing storage, because a dismissal changes no face: the device default deliberately stays ohmarchy, and
+ * Settings holds the way out. A refused write leaves everything as it was, the offer up, a toast carrying the
+ * sentence.
  */
 
 import { useCallback, useEffect, useState } from "react";

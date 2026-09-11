@@ -1,64 +1,39 @@
 "use client";
 
 /**
- * SIGNATURES — the Settings pane's per-mailbox signature editors.
- *
- * One editor per connected mailbox, each THE COMPOSE EDITOR ITSELF with a live preview beneath
- * it: the preview renders the draft exactly as the compose surfaces' signature block will show
- * it (and exactly as the send will serialize it), so what is approved here is what ships. The
- * stored value is per mailbox because the signature is: two addresses are two sign-offs, and
- * the compose block follows the From selector between them.
- *
- * ── THE EDITOR IS THE COMPOSE EDITOR, WHICH IS THE WHOLE DESIGN (0.16) ────────────────────
- *
- * This pane was a plain textarea. A sign-off is part of the message, and writing mail here
- * already offers bold, italic, strike, links, lists, quotes and code — so the signature offers
- * the same set and NOT ONE THING MORE, by mounting the same component rather than by growing a
- * second formatting surface with its own opinions. Three consequences, all of them the point:
- *
- *   · the grammar cannot drift from the composer's, because there is one grammar;
- *   · the server reduces what arrives through the SAME allow-list the message body passes, so a
- *     control this editor does not offer is refused twice rather than trusted once;
- *   · the preview and the signature block are this same component in read-only mode, so the
- *     pane, the block and the message cannot render three different ways.
- *
- * ── TWO SAVE SHAPES, AND THE EDITOR DECIDES WHICH ─────────────────────────────────────────
- *
- * The editor reports `{text, html}` and answers `html: ""` for a document nobody formatted —
- * the round-trip rule in `rich-text.ts`, and it is load-bearing here exactly as it is on the
- * send path. So:
- *
- *   no markup   the plain half is written and the markup cleared. Byte for byte the request
- *               this pane made before it could format anything, which is what keeps every
- *               existing signature and every plain-text client unaffected.
- *   markup      the markup is written and THE SERVER DERIVES the plain half from it, with the
- *               converter that renders the text part of every composed message.
- *
- * The two are never sent together: one value, one door (`setMailboxSignature` refuses both, and
- * so does the route before anything writes).
- *
- * ── SERVER-CONFIRMED VALUES ONLY ──────────────────────────────────────────────────────────
- *
- * The editors seed from `useConsentState()`'s live maps — text and markup — and a save resolves
- * to the server's echo, which is what the hook stores and this pane re-renders from. That
- * matters more now than it did: the stored markup is the SANITIZED markup, so the pane shows
- * what survived rather than what was typed, and a control the server strips is visibly gone
- * rather than quietly dropped at send time. A DRAFT exists only while an editor differs from
- * the stored value; Save writes it, and a refused write keeps the draft on screen under the
- * failure sentence rather than pretending it landed. The pane renders at all only once the maps
- * are KNOWN (`signaturesKnown`), because an empty editor over stored text is a lie in both
- * directions.
- *
- * ── IT WRITES THROUGH THE HOOK ────────────────────────────────────────────────────────────
- *
- * `setMailboxSignature` is `useConsentState().setMailboxSignature`, never the API client
- * directly: the compose surfaces read the SAME hook's maps, so a saved signature reaches an
- * open composer on the same render the server confirms — and a write from another surface
- * reaches this pane through the settings doorbell (the `settings` change row → stamp → re-ask).
- *
- * Clearing is saving an empty editor: the server stores blank as NULL, both halves, the keys
- * leave both maps, and the compose block stops rendering for that sender. No separate "delete"
- * control — an empty editor IS "no signature", stated once.
+ * Signatures — the Settings pane's per-mailbox signature editors. One editor per connected mailbox,
+ * each THE COMPOSE EDITOR ITSELF with a live preview beneath: the preview renders the draft exactly
+ * as the signature block will show it and the send will serialize it, so what is approved here is
+ * what ships; per mailbox because two addresses are two sign-offs. The editor is the compose editor
+ * (0.16): a sign-off offers the same set as writing mail and NOT ONE THING MORE, by mounting the
+ * same component — the grammar cannot drift (one grammar), the server reduces what arrives through
+ * the SAME allow-list the body passes, and the preview and the block are this same component in
+ * read-only mode, so pane, block and message cannot render three ways.
+ */
+
+/**
+ * Two save shapes, the editor decides: it reports `{text, html}` and answers `html: ""` for a document nobody
+ * formatted (the `rich-text.ts` round-trip rule). No markup ⇒ the plain half is written and the markup cleared — byte
+ * for byte the pre-formatting request; markup ⇒ the markup is written and THE SERVER DERIVES the plain half with the
+ * converter that renders every composed message's text part. Never both (`setMailboxSignature` refuses, so does the
+ * route).
+ */
+
+/**
+ * Server- confirmed values only: editors seed from `useConsentState()`'s live maps and a save resolves to the
+ * server's echo — the stored markup is the SANITIZED markup, so a control the server strips is visibly gone rather
+ * than quietly dropped at send. A draft exists only while an editor differs; a refused write keeps it on screen under
+ * the failure sentence. The pane renders only once the maps are KNOWN (`signaturesKnown`) — an empty editor over
+ * stored text lies in both directions.
+ */
+
+/**
+ * It writes through `useConsentState().setMailboxSignature`, never the API client: the compose
+ * surfaces read the SAME hook's maps, so a saved signature reaches an open composer on the render
+ * the server confirms, and a write from another surface reaches this pane through the settings
+ * doorbell. Clearing is saving an empty editor: the server stores blank as NULL, both halves, the
+ * keys leave both maps, and the compose block stops rendering for that sender — no separate
+ * "delete" control, an empty editor IS "no signature", stated once.
  */
 
 import { useEffect, useRef, useState } from "react";

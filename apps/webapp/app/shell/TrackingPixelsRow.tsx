@@ -1,38 +1,23 @@
 "use client";
 
 /**
- * TRACKING PIXELS — the switch over the one refusal the reading pane makes in every images mode.
- *
- * ON (the product default) means a beacon — a 1×1, a zero-dimension image, a beacon-shaped url — is
- * never fetched, whatever else in the message loads. OFF means it rides the proxy with the pictures.
- * What the sender then learns: that the message was opened — and, since a bulk sender's pixel url
- * usually carries a per-recipient token, WHO opened it. What stays hidden is the reader's network:
- * the proxy's port takes a url and nothing else, so no IP, location or device ever travels.
- *
- * ── WHY IT EXISTS AT ALL, GIVEN THE PRODUCT IS NAMED FOR THE REFUSAL ──────────────────────────
- *
- * Some readers want the open seen: a receipt they expect acknowledged, a colleague's read-tracker,
- * a mailing they send themselves. A product that cannot be told so is deciding for them. The
- * DEFAULT protects; the switch is the control. Both positions describe what the pane does with
- * content that has already arrived — nothing here spends, moves mail, or sends a byte from the
- * reader's machine — so it is a plain switch, like {@link RemoteImagesRow}, and not a confirm.
- *
- * ── WHAT THE DESCRIPTION MAY NOT SAY ──────────────────────────────────────────────────────────
- *
- * It must not promise that ON hides the reader's address (the proxy does that in both positions);
- * it must not imply that OFF loads pictures (that is the row above; in the manual images mode a
- * pixel still waits behind "Show images" with everything else); and it must not describe OFF as an
- * anonymous open — the pixel's own url usually identifies the recipient, so the honest sentence is
- * that the sender can tell the reader opened it. The copy says what the switch decides and stops.
- *
- * ── IT WRITES THROUGH THE HOOK, AND DRAWS THE SERVER'S ANSWER ─────────────────────────────────
- *
- * `setBlockTrackingPixels` is `useConsentState().setBlockTrackingPixels`, never `consentApi`
- * directly, for `RemoteImagesRow`'s reason: `AppShell` passes the same hook's value into
- * `useRemoteImages`, so a flip re-sanitizes the open message. The switch renders the value the
- * SERVER last answered with — a refused write leaves it where it was, and here the direction that
- * matters is a switch drawn OFF over a write that failed, telling somebody their beacons load when
- * the stored setting still refuses them.
+ * Tracking pixels — the switch over the one refusal the reading pane makes in every images mode. ON
+ * (the default): a beacon — a 1×1, a zero-dimension image, a beacon-shaped url — is never fetched,
+ * whatever else loads. OFF: it rides the proxy with the pictures; the sender then learns the open
+ * and usually WHO opened it (a bulk pixel url carries a per-recipient token), while the proxy still
+ * hides the reader's network. It exists because some readers want the open seen — a receipt
+ * acknowledged, a colleague's read-tracker — and a product that cannot be told so is deciding for
+ * them: the DEFAULT protects, the switch is the control; a plain switch like {@link RemoteImagesRow}.
+ */
+
+/**
+ * The description may not promise that ON hides the reader's address (the proxy does that in both
+ * positions), imply that OFF loads pictures (that is the row above), or describe OFF as an
+ * anonymous open — the pixel's url usually identifies the recipient. It writes through
+ * `useConsentState().setBlockTrackingPixels` (`AppShell` passes the same hook's value into
+ * `useRemoteImages`, so a flip re-sanitizes the open message) and renders the server's answer — a
+ * switch drawn OFF over a failed write would say the beacons load while the stored setting refuses
+ * them.
  */
 
 import { useEffect, useRef, useState } from "react";

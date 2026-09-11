@@ -1,35 +1,18 @@
 "use client";
 
 /**
- * "WHAT DESERVES MY OHBOX" — the editable screening preference, injected into the general pane.
- *
- * Three controls over one account setting (`GET/PATCH /account/screening`):
- *
- *  · a POSTURE switch. ON = keep the Ohbox for what is relevant (real people, plus the service
- *    mail you act on) and file obvious bulk — newsletters, promotions — to Reads/Receipts. OFF =
- *    everything from a sender you have written to reaches the Ohbox (today's behaviour, and the
- *    default). It is framed around RELEVANCE, never "only real people", because the mechanism keeps
- *    relevant service mail — a receipt goes to Receipts, an alert can stay in the Ohbox.
- *  · an AUTO-APPLY opt-in, default off.
- *  · a free-text BAR, in your own words, that reaches the AI's judgement of the ambiguous middle.
- *    The control itself is {@link OhboxWords}, which the desktop's own settings pane renders too —
- *    one editor over one column, with the transport handed in. Everything about how it behaves (the
- *    editable prefill, the inert Save, what clearing the box means) is documented there.
- *
- * ── IT RE-FILES FUTURE MAIL, AND SAYS SO ────────────────────────────────────────────────────
- *
- * The honest microcopy: changing the posture changes how the NEXT messages are filed; it does not
- * reach back into mail already in the Ohbox. (A one-click "tidy my Ohbox now" backlog pass is a
- * separate, later control — until it ships, the setting must not imply it moves the past.)
- *
- * ── THE SWITCHES SHOW THE STORED VALUE ──────────────────────────────────────────────────────
- *
- * Like `AutoSuggestRow`, they render what the server answered, not the hoped-for value: the write
- * is confirmed by re-reading the response. A failed write leaves the control where it was and shows
- * one plain sentence — there is no gate in front of this route to carry a more useful reason. That
- * line sits directly under the switches rather than under the bar, because the bar keeps its own:
- * two controls that can each fail need two places to say so, or a stale "Saved." from one is read
- * as an answer about the other.
+ * "What deserves my Ohbox" — the editable screening preference, injected into the general pane. Three controls over
+ * one account setting (`GET/PATCH /account/screening`): a POSTURE switch (ON = keep the Ohbox for what is relevant
+ * and file obvious bulk to Reads/Receipts; OFF = today's default — framed around RELEVANCE, never "only real people",
+ * because the mechanism keeps relevant service mail); an AUTO-APPLY opt-in, default off; and the free-text BAR, which
+ * is {@link OhboxWords} — one editor over one column, the transport handed in.
+ */
+
+/**
+ * It re-files FUTURE mail and says so: the posture does not reach back into the Ohbox, and until a backlog pass ships
+ * the setting must not imply it moves the past. The switches show the STORED value (`AutoSuggestRow`'s contract); the
+ * failure line sits under the switches, not under the bar, which keeps its own — two controls that can each fail need
+ * two places to say so.
  */
 
 import { useEffect, useRef, useState } from "react";

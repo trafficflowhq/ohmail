@@ -1,54 +1,28 @@
 "use client";
 
 /**
- * ═══ THE RECIPIENT FIELD — CHIPS OVER ONE WIRE STRING ════════════════════════════════════
- *
- * Recipients are always editable — To, Cc and Bcc alike, on every surface this field appears
- * on, compose and the reply's opened audience both. So every settled recipient is a CHIP —
- * removable one at a time, draggable within and between the To/Cc/Bcc rows, movable by
- * keyboard — and what is still being typed lives in a text input after the last chip, with
- * the address-book suggestions it always had.
- *
- * ── THE VALUE IS STILL ONE COMMA-SEPARATED STRING, AND THAT IS DELIBERATE ────────────────
- *
- * `ComposeFields.to` is one string and `parseRecipients` splits it on commas. That is the
- * shape the send path, the draft buffer, the autosave row and the validation error all
- * already speak, and the IDN slice's rule — the field's content IS the wire value — holds
- * only if this component never invents a second representation. So the chips are a RENDERING
- * of the string, not a replacement for it:
- *
- *   value = chip, chip, …, tail
- *
- * Every complete segment (one followed by a separator) is a chip; the final segment is the
- * input's text. Committing an entry — comma, Enter, blur, accepting a suggestion — appends a
- * separator, which is what turns the tail into a chip. `splitRecipients`/`joinRecipients`
+ * The recipient field — chips over one wire string. Every settled recipient is a chip — removable, draggable within
+ * and between the To/Cc/Bcc rows, movable by keyboard — and what is still being typed lives in a text input after the
+ * last chip, with the address-book suggestions. The value stays ONE comma-separated string: that is the shape the
+ * send path, the draft buffer, the autosave row and the validation all speak, and the IDN rule — the field's content
+ * IS the wire value — holds only if this component never invents a second representation.
+ */
+
+/**
+ * The chips are a RENDERING of the string: every complete segment is a chip, the final segment is the input's text,
+ * and committing (comma, Enter, blur, accepting a suggestion) appends a separator. `splitRecipients`/`joinRecipients`
  * are that bijection, exported because the move logic and the tests depend on it being one.
- *
- * ── WHAT A CHIP SHOWS vs WHAT IT IS ──────────────────────────────────────────────────────
- *
- * A chip SHOWS the display-decoded address (`displayAddress`, shell/idn.ts) — `nora@müller.ch`
- * for a stored `nora@xn--…` — but the entry underneath stays the wire form verbatim, and it is
- * the entry that travels on drag, on move and back into the string. The decode never reaches
- * the value; the input's own content is untouched wire text, exactly as the IDN slice pinned.
- * An entry that does not parse is shown raw and styled as the field's error idiom.
- *
- * ── KEYBOARD, COMPLETE ───────────────────────────────────────────────────────────────────
- *
- *   in the input   ↑/↓ list · ↵/Tab accept · , commits · Escape dismisses (unchanged)
- *                  Backspace on an EMPTY input removes the last chip
- *                  ← at the start of the input focuses the last chip
- *   on a chip      ←/→ move between chips and back to the input
- *                  Backspace/Delete removes the chip
- *                  Alt+←/→ reorders it within the row
- *                  Alt+↑/↓ moves it to the previous/next row (To ⇄ Cc ⇄ Bcc)
- *
- * The Alt-arrow path is the keyboard equivalent of the drag, and it is not optional: a
- * mouse-only interaction is a regression this product does not ship. Cross-row moves go
- * through `onMove` so the OWNER of both strings applies them as ONE state change — two
- * `onChange` calls would each spread a stale copy of the other row and one would win.
- *
- * ↵ ACCEPTS RATHER THAN SENDS while the list is open; ⌘↵ stays the send chord and is never
- * touched here (see the keymap registry, `inInput: true`).
+ */
+
+/**
+ * A chip SHOWS the display-decoded address (`displayAddress`) while the entry underneath stays wire
+ * form verbatim — the decode never reaches the value; an entry that does not parse is shown raw in
+ * the error idiom. Keyboard, complete: in the input, ↑/↓ list, ↵/Tab accept, comma commits,
+ * Backspace on an empty input removes the last chip, ← at the start focuses it; on a chip, ←/→
+ * move, Backspace/Delete removes, Alt+←/→ reorders, Alt+↑/↓ moves between rows — the keyboard
+ * equivalent of the drag, and not optional: a mouse-only interaction is a regression this product
+ * does not ship. Cross-row moves go through `onMove` so one holder of both strings applies ONE
+ * state change. ↵ accepts rather than sends while the list is open; ⌘↵ stays the send chord.
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";

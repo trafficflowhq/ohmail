@@ -1,25 +1,17 @@
 "use client";
 
 /**
- * EVERY MESSAGE FROM THIS SENDER, AND WHAT ACCOUNTS FOR WHERE IT SITS.
- *
- * The requirement: click through to a detailed view showing every message from one address or
- * domain, and how each of them was classified.
- *
- * The vocabulary — and the three things it refuses to claim — is decided in `sender-audit.ts`
- * and nothing is invented here. This file is the rendering, plus two pieces of honesty that
- * belong to the surface rather than to the data:
- *
- *  1. **The count says "ohmail has synced".** This reads the client mirror, so it holds the
- *     mail that has arrived through `/sync` and no more. "Every message from this sender"
- *     would be a claim about the IMAP mailbox, which is the master and which this has never
- *     seen — the mailbox on the real server is the master, not this mirror. A partial answer
- *     labelled partial is useful; a partial answer labelled
- *     complete is the kind of thing this panel exists to stop.
- *  2. **No rule hit-counts.** `RuleDTO.stats.hits` is declared, reported, and never written by
- *     anything in the repository — every value is the insert default — so a rule that has
- *     filed three thousand messages renders `0`. `RulesView` refuses to show it for exactly
- *     this reason and so does this.
+ * Every message from this sender, and what accounts for where it sits. The vocabulary — and the three things it
+ * refuses to claim — is decided in `sender-audit.ts`; this file is the rendering, plus two pieces of honesty that
+ * belong to the surface: (1) the count says "ohmail has synced" — this reads the client mirror, and "every message
+ * from this sender" would be a claim about the IMAP mailbox, which is the master and which this has never seen; a
+ * partial answer labelled partial is useful, labelled complete it is the thing this panel exists to stop.
+ */
+
+/**
+ * (2) No rule hit-counts: `RuleDTO.stats.hits` is declared, reported, and never written by anything — every value is
+ * the insert default — so a rule that filed three thousand messages would render `0`; `RulesView` refuses it for the
+ * same reason.
  */
 import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
