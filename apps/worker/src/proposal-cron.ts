@@ -37,14 +37,35 @@ export async function proposalGeneratePass(
      * "wipe the suggestions you already had" is a worse experience than showing yesterday's.
      */
     credits?: SpendPort;
+    /** Where the pass says it did not get the claim. Absent ⇒ silent, as a library must be. */
+    log?: Logger;
   },
   now: Date = new Date(),
 ): Promise<{ generated: number }> {
   // The BARE key: the pass's own identity, `<accountId>:<UTC hour>`. Bucketing by the hour is
   // what makes a crash-retry free and a deliberate re-run in a later bucket honest.
   const attemptKey = proposalRunId(deps.accountId, now);
+  const log = deps.log ?? silentLogger;
   /** What a reversal must name, when this pass charged one. */
   let chargedAttempt: string | null = null;
+  /**
+   * DOES THIS PASS HOLD THE CLAIM — `ok` and `duplicate`, and nothing else.
+   *
+   * The claim is exclusive and its key is `<account>:<hour>`, so a second pass in the same
+   * bucket asks about the SAME claim. Releasing one this pass was never granted — an `inflight`
+   * loser, a refusal, a throw before the gate — takes it from the holder mid-model-call.
+   */
+  let claimed = false;
+  /** Given back exactly once: set before the await, so a release that faults cannot be turned
+   *  into a second call by the catch below. */
+  let released = false;
+  const releaseClaim = async (refund: boolean): Promise<void> => {
+    if (!deps.credits || !claimed || released) return;
+    released = true;
+    await deps.credits.release(deps.accountId, refund && chargedAttempt !== null
+      ? { action: "propose", attemptKey, refund: true, attempt: chargedAttempt }
+      : { action: "propose", attemptKey, refund: false });
+  };
   try {
     const stored = await generateProposals(db, deps.accountId, {
       port: deps.port,
@@ -57,14 +78,29 @@ export async function proposalGeneratePass(
         ? async (patterns): Promise<boolean> => {
             const outcome = await deps.credits!.spend(
               deps.accountId, "propose", attemptKey, { patterns: patterns.length });
-            // `ok` charged this pass, `duplicate` found it already paid for — both proceed. A
-            // refusal, an overlap and a fault all abandon the pass without deleting the
+            // ANOTHER PASS IS ALREADY BUYING THIS BUCKET: skip the account, and say so. Not a
+            // failure — the holder generates the proposals this pass would have — so it is not
+            // reported as one, and the line is what tells a skipped account from a stuck pass.
+            // Nothing is claimed here, so nothing is released either.
+            if (outcome.verdict === "inflight") {
+              log.info(cronEvent("proposals", "inflight"), { accountId: deps.accountId });
+              return false;
+            }
+            // `ok` charged this pass, `duplicate` found it already paid for — both proceed, and
+            // both hold the claim. A refusal and a fault abandon the pass without deleting the
             // account's open proposals, which is what `false` does here.
             if (outcome.verdict === "ok") chargedAttempt = outcome.attempt;
-            return outcome.verdict === "ok" || outcome.verdict === "duplicate";
+            claimed = outcome.verdict === "ok" || outcome.verdict === "duplicate";
+            return claimed;
           }
         : undefined,
     });
+    // THE CLAIM GOES BACK ON THE WAY OUT, AND AFTER THE STORE. Held for the rest of the TTL it
+    // costs the next pass in the window a whole cycle on an account whose work is finished;
+    // given back before the store there is a window with proposals not yet on record and
+    // nothing holding the bucket, where a second pass is told to proceed and buys the same
+    // model call again.
+    await releaseClaim(false);
     return { generated: stored.length };
   } catch (err) {
     // Charged for a proposer pass that threw: give it back exactly once, then rethrow so the
@@ -73,15 +109,11 @@ export async function proposalGeneratePass(
     // Unlike the classify path, refunding is right here: the next pass falls in a LATER period
     // bucket and is charged again, so this pass's charge has no future free retry to honour
     // it. The refund closes the attempt, so a re-run inside the same bucket pays afresh rather
-    // than being served free. A no-op when nothing was charged (an empty-pattern pass never
-    // reached the gate).
+    // than being served free. Nothing is sent at all when this pass held no claim — an
+    // empty-pattern pass never reached the gate, and a loser of the race holds nothing.
     // Only an attempt THIS pass charged. A `duplicate` names an earlier pass's attempt, whose
-    // proposals may well have been delivered; a pass that never reached the gate charged nothing.
-    if (deps.credits) {
-      await deps.credits.release(deps.accountId, chargedAttempt === null
-        ? { action: "propose", attemptKey, refund: false }
-        : { action: "propose", attemptKey, refund: true, attempt: chargedAttempt });
-    }
+    // proposals may well have been delivered, so its claim goes back unrefunded.
+    await releaseClaim(true);
     throw err;
   }
 }
@@ -151,7 +183,7 @@ export async function runProposalCron(
     for (const accountId of await loadServedAccounts(db, selectionOf(config))) {
       try {
         const res = await proposalGeneratePass(db as unknown as Tx, {
-          accountId, port,
+          accountId, port, log,
           // ONE port for the invocation; the account is an argument to the spend and the terms
           // come from `SPEND_ACTIONS.propose`.
           ...(metered && spend ? { credits: spend } : {}),
