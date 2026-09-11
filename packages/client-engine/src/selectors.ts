@@ -79,52 +79,14 @@ function byDateAsc(a: EngineMessage, b: EngineMessage): number {
 // ── Bodies ─────────────────────────────────────────────────────────────────
 
 /**
- * THE TEXT A SURFACE RENDERS, AND WHAT THAT TEXT ACTUALLY IS.
- *
- * Every reading surface used to write `m.body ?? m.snippet`, and on a live account that
- * expression has exactly one branch: `body` is a fixture-only extra, so a Cloud message
- * always fell through to the snippet and every pile rendered one line of every message as
- * though it were the whole thing. This is the one place that question is answered, and it
- * answers it with a {@link BodyState} so no caller has to guess.
- *
- * ── READ-TIME MERGE, NOT A WRITE ───────────────────────────────────────────────────────
- *
- * The hydrated text lives in a separate `message_body` record precisely so that a `/sync`
- * delta for the message cannot replace it (see {@link MessageBodyRecord}). The cost of that
- * is one join, here, and it is the reason a body survives the `mark_seen` echo that opening
- * the message emits.
- *
- * ── PRECEDENCE, AND WHY `m.body` IS FIRST ──────────────────────────────────────────────
- *
- * The fixture world's rows carry their full text already. Checking the message first means
- * the demo never consults a record, never has one, and `hydrateBody` short-circuits on the
- * same field — so "the demo performs zero requests" is one fact in two places that read the
- * same source, rather than two rules that have to be kept in agreement.
- *
- * ── PROTECTED MAIL IS NOT SPECIAL-CASED HERE, DELIBERATELY ─────────────────────────────
- *
- * A sensitive message's stored body is redacted server-side, so the text
- * this returns for one is already safe — and `message.protected` is routed through
- * `ProtectedBlock` by the SURFACE, unchanged, which is where that decision has always
- * lived. Moving it in here would mean two places deciding what a protected message shows,
- * and the surface would still need its branch for the fixture case.
- *
- * ── `ready` WITH EMPTY TEXT IS STILL `full` — unless the server SAID why it is empty ────
- *
- * `getBody` answers `text: ""` for a message whose body row was never ingested. That is
- * reported as `full` rather than falling back to the snippet, because the snippet is
- * DERIVED from the body at ingest — the two arrive together — so "an empty body next to a
- * populated snippet" is not a state the pipeline produces, and inventing a fallback for it
- * would mean rendering a preview while claiming it is the whole message. The empty case
- * renders empty, which is what the server has.
- *
- * The storage cap created exactly the state that argument said could not exist — an empty
- * body BESIDE a populated snippet (the snippet is on the message row; the body content was
- * declined) — and the server now says so on the wire (`withheld: "storage_cap"`). That
- * record reports `state: "withheld"` with the SNIPPET as its text: a real preview exists,
- * and rendering nothing while a preview is in hand would waste the one thing the cap kept.
- * Terminal like `full`, honest like `failed`, and neither: no Retry, no claim of
- * completeness.
+ * The text a surface renders, and what it actually is — answered once, as a {@link BodyState}
+ * (`m.body ?? m.snippet` rendered one line of every Cloud message as though it were the whole
+ * thing). A read-time merge, not a write: hydrated text lives in a separate `message_body`
+ * record so a `/sync` delta cannot replace it. `m.body` is checked first so the demo never
+ * consults a record. Protected mail is not special-cased here (the surface routes
+ * `message.protected` through `ProtectedBlock`). `ready` with empty text is still `full` —
+ * except `withheld: "storage_cap"`, which reports `state: "withheld"` with the snippet: no
+ * Retry, no completeness claim.
  */
 export function bodyOf(
   reader: EntityReader,
@@ -185,21 +147,14 @@ export function bodyOf(
 // ── Conversations ──────────────────────────────────────────────────────────
 
 /**
- * ONE SPELLING FOR A MESSAGE-ID — strip one pair of RFC 5322 angle brackets, trim, KEEP the case.
- *
- * The two sides of the optimistic-sent reconcile spell the same id differently: the send
- * confirmation's `providerMessageId` is the minted header, `<id@domain>`, while the ingested
- * row's `messageIdHeader` comes back bracket-stripped (server ingest normalises it exactly this
- * way). Comparing the raw strings therefore NEVER matched, and the optimistic copy was only ever
- * retired by its ten-minute TTL — the just-sent message stood twice in its conversation and in
- * Earlier until then. Both sides go through this before any comparison.
- *
- * Case is preserved for the same reason ingest preserves it: `id-left` is a case-sensitive atom,
- * and folding it would equate ids a sender chose to distinguish.
- *
- * DEFINED HERE (it lived in `mutations.ts`, which re-exports it) because {@link threadOf}'s twin
- * collapse is a consumer and `mutations.ts` imports from this file — the one direction the
- * dependency may point.
+ * One spelling for a Message-ID — strip one pair of RFC 5322 angle
+ * brackets, trim, KEEP the case. The send confirmation's
+ * `providerMessageId` is `<id@domain>` while the ingested row's
+ * `messageIdHeader` is bracket-stripped, so raw comparison never matched
+ * and the optimistic copy was only retired by its TTL. Both sides pass
+ * through here first. Case is preserved: `id-left` is a case-sensitive
+ * atom. Defined here (re-exported by `mutations.ts`) because `threadOf`'s
+ * twin collapse consumes it and the dependency points this way.
  */
 export function messageIdKey(raw: string): string {
   const m = raw.match(/<([^>]+)>/);
@@ -225,27 +180,13 @@ function preferTwin(a: EngineMessage, b: EngineMessage, openId: string): EngineM
 }
 
 /**
- * COLLAPSE THE SELF-SEND TWINS — members sharing a `messageIdKey` are ONE message, one panel.
- *
- * A self-send legitimately puts one logical message in the mirror twice: the optimistic Sent
- * copy stands beside the ingested row until the reconcile retires it (and for up to a drain
- * after the row lands), and a provider that re-renders its Sent filing (Exchange files its own
- * copy of every SMTP submission) can defeat the server-side collapse outright — two REAL rows,
- * one Message-ID, one thread. Rendered plainly, that is twin identical panels in the reading
- * pane. The Message-ID is the one identity both copies carry, so it is the collapse key; a row
- * with NO header never collapses, because absence is not an identity two strangers can share.
- *
- * `members` arrives in reading order and leaves in reading order — the survivor keeps its
- * place; nothing is re-sorted.
- *
- * ── ONLY OUR OWN OUTBOUND COPIES COLLAPSE ───────────────────────────────────────────────────
- *
- * The Message-ID is the sender's own writing, so keying identity on it alone let a stranger who
- * reuses a Message-ID the mailbox already holds take the survivor's place: the real message was
- * not deleted, it was not rendered, which for the reader is the same thing. Both twins this
- * function exists for are OURS — the provisional Sent copy and the provider's re-filed
- * submission — and {@link mayGroupByMessageId} is where that rule lives. Two inbound rows
- * sharing a Message-ID are two messages and both stand.
+ * Collapse the self-send twins — members sharing a `messageIdKey` are one message, one panel. A
+ * self-send legitimately doubles: the optimistic Sent copy stands beside the ingested row until
+ * the reconcile, and Exchange re-files its own copy of every SMTP submission. The Message-ID is
+ * the collapse key; a row with NO header never collapses (absence is not an identity two
+ * strangers can share). Reading order is preserved. Only OUR outbound copies collapse ({@link
+ * mayGroupByMessageId}): a stranger reusing a known Message-ID must not take the survivor's
+ * place — two inbound rows sharing one are two messages and both stand.
  */
 /** This row's collapse key, or `null` where its Message-ID may not stand for identity. */
 function twinKeyOf(m: EngineMessage): string | null {
@@ -269,29 +210,13 @@ function collapseTwins(members: EngineMessage[], openId: string): EngineMessage[
 }
 
 /**
- * THE CONVERSATION a message belongs to, oldest first.
- *
- * `threadId` is populated at ingest, and until this selector existed nothing rendered it.
- * This is the one place the grouping is computed.
- *
- * ── THE EMPTY ARRAY IS A CONTRACT, NOT A DEGENERATE CASE ────────────────────────────────
- *
- * A message with no `threadId`, and a message that is the SOLE member of its thread, both
- * answer `[]`. They are the same fact to a reader — there is no conversation here — and
- * collapsing them means a caller cannot accidentally render "1 message" chrome around a
- * message that has no conversation. Every consumer's condition is `length > 0`; none of
- * them has to know that a thread of one exists in the mirror.
- *
- * NO FOLDER FILTER. A conversation legitimately spans folders: a stranger's first mail sits
- * in `ohmail/Screener` while their accepted follow-ups land in the Ohbox, and hiding the
- * held one would be the reader lying about what it has. The Sent folder is the other side of
- * that coin: the worker watches it now, so the user's own replies ride the mirror under the
- * SERVER'S own folder name — `Sent Items`, `Sent Messages`, `INBOX/Sent`, `[Gmail]/Sent Mail` —
- * and the absence of a folder filter is what keeps them in the conversation they belong to.
- * (This paragraph used to say Sent was not watched; the Sent-folder watch made that false.)
- *
- * O(n) over the mirror, like every selector here. Do NOT call it per row to build list
- * badges — that is O(n²) over a mailbox of any size and wants a one-pass count selector instead.
+ * The conversation a message belongs to, oldest first — the one place the grouping is computed.
+ * The empty array is a contract: no `threadId` and sole-member threads both answer `[]`, so a
+ * caller cannot render "1 message" chrome around a message with no conversation (every consumer
+ * checks `length > 0`). No folder filter: a conversation legitimately spans folders — a
+ * stranger's first mail in `ohmail/Screener`, accepted follow-ups in the Ohbox, and the user's
+ * own replies under the server's Sent name (the worker watches Sent now). O(n) over the mirror;
+ * never call per row for list badges — that is O(n²).
  */
 export function threadOf(reader: EntityReader, messageId: string): EngineMessage[] {
   const self = reader.get<EngineMessage>("message", messageId);
@@ -309,21 +234,14 @@ export function threadOf(reader: EntityReader, messageId: string): EngineMessage
 }
 
 /**
- * ONE date-desc sort of the whole mirror per (reader, version) — the order every whole-mirror
- * selector shares.
- *
- * Every selector here is called once per version bump, and most of them used to end in their
- * own `.sort(byDateDesc)` over the whole mirror — so a single mutation's bump paid for the
- * same sort roughly eight times, which on a mailbox tens of thousands deep was the dominant
- * term of the long task a scroll-time read-mark produced. A `filter` of a sorted array is
- * sorted, and {@link byDateDesc} is total (its own header carries the argument), so deriving
- * each selector's slice from one shared order is byte-identical to sorting each slice.
- *
- * Keyed WEAKLY on the reader object and invalidated by `version()`: `engine.read()` returns
- * one stable view for the life of the engine, and a projection (`presentationReader`) is
- * memoized by its consumer per version, so entries die with their readers and a stale version
- * can never serve. The cached array is FROZEN in spirit — callers filter it, never mutate it;
- * `.filter`/spread copies are what leave this function.
+ * One date-desc sort of the whole mirror per (reader, version) — the order
+ * every whole-mirror selector shares. Selectors used to each end in their
+ * own `.sort(byDateDesc)`, so one mutation's bump paid the same sort about
+ * eight times — the dominant term of a scroll-time long task. A `filter` of
+ * a sorted array is sorted and {@link byDateDesc} is total, so deriving
+ * each slice from one shared order is byte-identical. Keyed weakly on the
+ * reader, invalidated by `version()`; callers filter the cached array,
+ * never mutate it.
  */
 const dateOrderCache = new WeakMap<EntityReader, { v: number; all: EngineMessage[] }>();
 export function messagesByDateDesc(reader: EntityReader): readonly EngineMessage[] {
@@ -340,16 +258,14 @@ export function messagesByDateDesc(reader: EntityReader): readonly EngineMessage
   // sort below touches nothing shared.
   const rows = reader.list<EngineMessage>("message");
   /**
-   * THE REPAIR PATH — most bumps do not move the order, so do not pay the sort for them.
-   *
-   * A read-mark, a body arriving, a label flip: the common mutations change FIELDS on rows
-   * whose ids and dates stay exactly what they were, and the date order is invariant under
-   * every one of them. When the previous order's membership (same ids, same count) and every
-   * row's date survive, the new order IS the old order with fresh entities substituted in —
-   * one pass and a Map, instead of a whole-mirror sort per bump. Anything else — an arrival,
-   * a prune, an edited date — falls through to the honest sort. Correctness does not depend
-   * on classifying the mutation: the repair VERIFIES membership and dates itself, and
-   * `date-order-cache.test.ts` pins both fallthroughs.
+   * The repair path — most bumps do not move the order, so do not pay the
+   * sort for them. Read-marks, arriving bodies and label flips change
+   * fields on rows whose ids and dates stand, so when membership and every
+   * date survive, the new order IS the old order with fresh entities
+   * substituted — one pass and a Map. Anything else (arrival, prune, edited
+   * date) falls through to the honest sort. Correctness does not depend on
+   * classifying the mutation: the repair verifies membership and dates
+   * itself, and `date-order-cache.test.ts` pins both fallthroughs.
    */
   let all: EngineMessage[] | null = null;
   if (hit && hit.all.length === rows.length) {
@@ -380,47 +296,13 @@ export function messagesIn(reader: EntityReader, folder: Folder): EngineMessage[
 }
 
 /**
- * WHICH MAILBOX A FRESH COMPOSE SENDS FROM.
- *
- * A reply inherits its mailbox from the message it answers. A compose has no parent, and the
- * server will not guess: `POST /drafts` requires a `mailboxId` that belongs to the account
- * (`drafts-service.ts` → `validMailbox`), and `SendService` uses that mailbox's own address as
- * the `From`. So the client has to name one.
- *
- * ── WHY IT IS DERIVED FROM MAIL AND NOT FROM A MAILBOX LIST ─────────────────────────────
- *
- * There is no mailbox list to read on a Cloud account. `"mailbox"` is not an entity type in
- * the change log, so `/sync` never emits one and the mirror
- * holds `mailbox` rows ONLY where the FixturesAdapter seeded them — the demo and Desktop.
- * `GET /mailboxes` exists but lives behind the Cloud client's API layer, which the shared shell
- * may not import (it is not part of the Desktop bundle). What every account DOES have is mail, and
- * every message carries the `mailboxId` it arrived in.
- *
- * So: a seeded `mailbox` entity when there is one, else the mailbox holding the account's
- * NEWEST message. Newest rather than "the first one `list()` happens to return", because the
- * order of a mirror scan is not a fact about the user and this answer decides whose address a
- * stranger sees in their From line.
- *
- * ── THE LIMIT THAT USED TO BE STATED HERE IS NOW CLOSED ────────────────────────────────
- *
- * This paragraph said "with two mailboxes connected this picks one of them and offers no way to
- * choose", filed as owed. It was worse than owed: nothing on the compose surface said WHICH one,
- * so the From flipped with whichever address last received mail and no screen mentioned it.
- *
- * The picker exists. `apps/webapp/app/shell/compose-from.ts` owns the rule — a fresh compose
- * defaults to the OLDEST CONNECTED mailbox, a reply keeps the one the message arrived in, and
- * the value is a mailbox id — over the account's real mailboxes, which the Cloud shell reads
- * from `GET /mailboxes` and hands to the shared shell through `MailStateProvider` (the prop
- * threaded from the Cloud shell this note called for; no new `/sync` entity type was needed).
- *
- * SO THIS FUNCTION IS NOW THE LAST RESORT AND NOT THE ANSWER. It is reached only where nothing
- * can name the account's mailboxes at all — the Desktop, and a Cloud tab in the moment before
- * its first mailbox poll lands — and in exactly those cases there is no From line on screen for
- * it to contradict. `Engine.enrich` still falls back to it for a `mail_send` that carries no
- * `mailboxId`, which is what keeps a send possible there rather than refused.
- *
- * `null` ⇒ this account has nothing to send from yet (a mailbox that has not finished its
- * first sync). The compose surface refuses rather than posting a draft the server will 400.
+ * Which mailbox a fresh compose sends from — the LAST RESORT, not the answer: `compose-from.ts`
+ * owns the rule over the account's real mailboxes (fresh compose → oldest connected; reply →
+ * the message's own), fed from `GET /mailboxes` through `MailStateProvider`. This is reached
+ * only where nothing can name the mailboxes — the Desktop, and a Cloud tab before its first
+ * poll — and `Engine.enrich` still falls back to it for a `mail_send` carrying no `mailboxId`.
+ * Derived from mail because `/sync` emits no mailbox entity: a seeded `mailbox` row when there
+ * is one, else the mailbox of the newest message. `null` ⇒ nothing to send from; refuse.
  */
 export function sendingMailboxId(reader: EntityReader): string | null {
   const seeded = reader.list<{ id?: string }>("mailbox")[0]?.id;
@@ -448,43 +330,14 @@ export interface OhboxView {
 }
 
 /**
- * A MESSAGE THE ACCOUNT ITSELF WROTE.
- *
- * The worker watches the Sent folder, so the account holder's own mail rides the mirror like any
- * other row — but it keeps its ARRIVAL folder (the pipeline never refiles Sent). So the question
- * is which mirrored folder is the mailbox's Sent folder, and it is asked POSITIVELY, of the path:
- * {@link isSentFolderPath} recognises every canonical form the worker's own Sent resolver can
- * produce, and it is the SAME value the server's folders inventory excludes from the user-folder
- * class (`packages/services/src/folders.ts`) — one regex, one home (`@trafficflow/core/types`).
- *
- * ── WHY IT IS NOT `!VIEW_OF_FOLDER[m.folder]` ANY MORE ──────────────────────────────────────
- *
- * That is what it was, on the premise — written out here — that "the Sent folder is the only one
- * the worker observes that is NOT one of the six organised ohmail views". The premise is false:
- * the passive read mirrors the mailbox's WHOLE folder tree, and it does so whether or not the
- * account has "Use folders" on (the flag gates the `folder` ENTITY, never the mail). So the
- * negative test answered "the account wrote this" for every folder a mailbox happens to have —
- * a provider's `Promotions`, a project folder, an archive tree — and {@link ohboxView} unions
- * own-sent mail into "Earlier", so all of it landed in the Ohbox.
- *
- * The shape that produces, on any mailbox with folders in it: a QUARTER of "Earlier" can be mail
- * the reader filed rather than mail they wrote. And because {@link readTimeOf} hands an own-sent
- * row its own DATE as a reading time, those rows rank against real read stamps — so one pass that
- * adopts a batch of externally observed `\Seen` flags stamps them all at the same instant and
- * lifts a block of months-old filed mail to the TOP of the Ohbox, above everything that has
- * arrived since. `apps/webapp/app/shell/format.ts#sentRowRecipient` labels them "Me → …" for good
- * measure. Both halves were observed on a real mailbox before this changed.
- *
- * ── WHAT THIS SHARES WITH THE SERVER, INCLUDING THE RESIDUAL ────────────────────────────────
- *
- * A Sent folder advertising SPECIAL-USE under a name neither belt knows is not recognised here
- * either, and that account's sent mail is absent from "Earlier" until the resolved Sent path is
- * persisted (the hand-off `packages/services/src/folders.ts` already names). That is the same
- * residual the folders inventory carries, in the same direction — a row missing from one list —
- * and it is bounded by the mailbox's own naming, where the old rule was unbounded by anything.
- *
- * These rows land already `\Seen` (the pipeline forces it — nothing you wrote is new to you), so
- * they never belong in "New for you"; {@link ohboxView} files every one of them under "Earlier".
+ * A message the account itself wrote. Sent mail keeps its arrival folder, so the question is which
+ * folder is the Sent folder, asked POSITIVELY of the path: {@link isSentFolderPath} recognises
+ * every canonical form the worker's Sent resolver produces — one regex, one home
+ * (`@trafficflow/core/types`), the same value the folders inventory excludes. Not
+ * `!VIEW_OF_FOLDER[m.folder]`: the passive read mirrors the WHOLE folder tree, so the negative
+ * test claimed every filed folder as own-sent and lifted blocks of filed mail into "Earlier".
+ * Residual: an unrecognised SPECIAL-USE Sent name is absent from "Earlier" until the resolved path
+ * is persisted. These rows land `\Seen` — never "New for you".
  */
 export function isOwnSent(m: Pick<EngineMessage, "folder">): boolean {
   return isSentFolderPath(m.folder);
@@ -504,69 +357,28 @@ export function isResurfaced(m: Pick<EngineMessage, "triage">): boolean {
 }
 
 /**
- * ═══ READ STATE AS EVERY SURFACE DRAWS IT — RESURFACE IS UNREAD, DERIVED ═════════════════
- *
- * Owner ruling, 2026-08-31: "resurfaced messages should always be marked as unread, until they
- * are done / replied to." This is the ONE place that rule lives, and it is a DERIVATION rather
- * than a stamp — which is the whole of why it can be true on two screens at once.
- *
- * ── WHY NOT A STAMP: THE HISTORY THIS CORRECTS ──────────────────────────────────────────
- *
- * The product has now tried both stamps. The FIRST was the worker's: `bubbleUpPass` forced
- * `messages.unread = true`, cleared `lastReadAt` and queued a `\Seen` removal against the real
- * mailbox, with a rescue pass re-applying the mark to rows it judged had missed it. That is the
- * flip-flopping this was reported for — the pass and the reader argued, cycle after cycle, over a
- * row the reader had just read. It was removed on 2026-08-26 (`bubbleUpPass`,
- * `TriageService.setState`, `mutations.ts` triage_set), and the reading now sticks.
- *
- * What was ALSO removed with it was the attention signal the pin is FOR, and the
- * ruling above puts it back — WITHOUT the stamp. Nothing writes read state to say a row is
- * resurfaced; the row's placement already says it, and this reads that placement. So:
- *
- *   · no pass can fight the user, because no pass writes anything;
- *   · no `\Seen` intent is queued, so the user's other mail clients are left alone — the
- *     mailbox stays the master, and a resurface is a fact about OUR triage, not about theirs;
- *   · the presentation cannot race the mirror, because it is computed from the mirror;
- *   · a GLANCE (the Ohbox's two-second dwell) still lands its read and still does not spend the
- *     pin, and the row does not visibly change under the reader — which is exactly the
- *     flip-flop the 2026-08-26 change was reported for. The genuine read is recorded; it simply
- *     is not what this row is drawn from while it is pinned.
- *
- * ── WHAT RELEASES IT ────────────────────────────────────────────────────────────────────
- *
- * Anything that clears `triage.state` away from `resurfaced`: Done (`resurface_done`), a reply
- * settling, and every other DELIBERATE verb that already spends the pin (the read pill, `⇧I`,
- * bulk read, read-all, move, delete). After the release the row's GENUINE read state applies,
- * unchanged — which is the second half of the ruling, and it needs no code of its own because
- * this function stops answering `true` the moment the state is gone.
- *
- * ── PRESENTATION ONLY. IT MUST NEVER REACH A WRITE OR A COUNT OF REAL MAIL ──────────────
- *
- * Every caller here is drawing something. The things that ACT on read state — `commitPendingRead`
- * re-judging the debt, `markRead`, mark-all-read's id list, the Ohbox header's "N new", the
- * per-folder unread badges — keep reading `m.unread`, the stored flag. Feeding this into any of
- * them would mark a message read that was never read (mark-all-read), or claim mail is new that
- * is not (the header), which is the same class of lie the stamp was.
+ * Read state as every surface draws it — a resurfaced message presents UNREAD until done or
+ * replied (owner ruling 2026-08-31). A DERIVATION, not a stamp: the stamp was tried
+ * (`bubbleUpPass` forced `unread`, queued `\Seen` removals, fought the reader; removed
+ * 2026-08-26). Reading the row's placement instead means no pass fights the user, no `\Seen`
+ * intent touches other clients (the mailbox stays the master), and a glance still lands its
+ * read without visibly flipping the row. Released by anything clearing `triage.state` off
+ * `resurfaced`. PRESENTATION ONLY: writes and counts (`markRead`, mark-all-read, "N new",
+ * badges) keep reading `m.unread`.
  */
 export function presentsUnread(m: Pick<EngineMessage, "unread" | "triage">): boolean {
   return isResurfaced(m) || m.unread;
 }
 
 /**
- * WHICH BOTTOM PILE A TRIAGE STATE FILES INTO — the ONE answer, for the lister and the filter.
- *
- * {@link triagePiles} calls this to decide which pile a record joins, and {@link parkedMessageIds}
- * calls it to decide which rows the Ohbox holds out. That is the whole reason it is a named
- * function rather than the ternary it used to be inside `triagePiles`: those two questions are the
- * same question asked from opposite ends, and while they were two expressions they gave two
- * answers. A message with a `bubbled_up` record was filed under Resurface by the lister and left
- * standing in the Ohbox by the filter — one mail in two piles, which is the state the product
- * exists to make impossible. See {@link ohboxView} for what that looked like on screen.
- *
- * `resurfaced` is deliberately NOT here and answers `null`: a resurfaced row belongs to no bottom
- * pile — it is back at the TOP of the Ohbox, in {@link OhboxView.resurfaced} — so it is not parked
- * and the Ohbox must not hold it out. `muted` and `none` answer `null` for the plainer reason that
- * no pile renders them.
+ * Which bottom pile a triage state files into — the ONE answer for the
+ * lister and the filter. {@link triagePiles} files rows with it and
+ * {@link parkedMessageIds} holds rows out with it; while those were two
+ * expressions they gave two answers, and a `bubbled_up` message stood in
+ * Resurface AND the Ohbox at once. `resurfaced` answers `null`
+ * deliberately: a resurfaced row belongs to no bottom pile — it is back at
+ * the top of the Ohbox — so it is not parked; `muted` and `none` answer
+ * `null` because no pile renders them.
  */
 export function pileOfState(
   state: string,
@@ -578,25 +390,14 @@ export function pileOfState(
 }
 
 /**
- * THE WINNING `message_state` CLAIM PER MESSAGE — one record per message, newest claim first.
- *
- * ── ONE MESSAGE, ONE CLAIM ────────────────────────────────────────────────────────────────
- *
- * The mirror can briefly hold TWO `message_state` records for one message under different
- * record ids: the live server keys the entity by the `message_states` ROW's uuid
- * (`TriageService.setState` emits `entityId: row.id`), while an optimistic effect that found
- * no settled record yet keys by the only id it has — the message's. A poll drain landing the
- * settled row while that overlay still stands is therefore two records saying "this message
- * is parked", and a pile that renders records verbatim counts the message twice — the rail
- * badge inflating past the pile it renders beside (a drag-park was measured at 6-vs-1 on a
- * live account, corrected only by reload). The message is the unit a pile is ABOUT, so the
- * message is the dedup key; when two records disagree, the NEWEST `updatedAt` is the latest
- * claim and ties keep the later-listed record (the overlay reads after the store, so the
- * user's own in-flight intent wins a tie — user-always-wins).
- *
- * EXTRACTED so {@link triagePiles} and {@link parkedMessageIds} cannot disagree about which
- * claim is current. Two copies of this loop would be two answers to "is this message parked",
- * and the one the reader saw would depend on which surface asked.
+ * The winning `message_state` claim per message. The mirror can briefly
+ * hold TWO records for one message under different record ids: the server
+ * keys by the `message_states` row uuid while an optimistic effect keys by
+ * the message id — a drain landing the settled row beside the overlay made
+ * a pile count one message twice (6-vs-1 measured live). The message is the
+ * unit a pile is about, so it is the dedup key; the newest `updatedAt`
+ * wins, ties keep the later-listed record (user-always-wins). Extracted so
+ * {@link triagePiles} and {@link parkedMessageIds} cannot disagree.
  */
 export function winningStates(reader: EntityReader): Map<string, MessageStateDTO> {
   const claimOf = new Map<string, MessageStateDTO>();
@@ -609,30 +410,13 @@ export function winningStates(reader: EntityReader): Map<string, MessageStateDTO
 }
 
 /**
- * EVERY MESSAGE PARKED IN A BOTTOM PILE — the set the Ohbox holds out of all three of its groups.
- *
- * ── A MAIL IS IN EXACTLY ONE PILE, AND THIS IS WHAT MAKES THAT STRUCTURAL ──────────────────
- *
- * The Ohbox used to hold out only {@link isResurfaced} rows, which closed one case of a general
- * hole: `triagePiles` files a row under a bottom pile from its `message_state` record, and
- * `ohboxView` grouped by FOLDER and knew nothing about that record. So ANY parked row still
- * sitting in the Ohbox folder — every `reply_later`, every `set_aside`, every not-yet-due
- * `bubbled_up` — was listed in a bottom pile AND in the Ohbox at the same time. Nothing moves a
- * parked message's folder (`TriageService.setState` writes state and never `folder_state`), so
- * this was not an edge case: it was every parked message the product has ever had.
- *
- * The way it was reported is the sharpest form of it. Deferring an ALREADY-RESURFACED row —
- * "resurface tomorrow" on a row sitting in the pin group — writes `bubbled_up` while the row
- * still carries the forced `unread: true` its resurface put there (`mutations.ts` re-unreads for
- * `resurfaced` only, so nothing takes it back). The row left the pin group, was filed under
- * Resurface by the pile lister, and reappeared at the TOP OF THE OHBOX under "New for you" —
- * bold, as if it had just arrived — then sank into "Earlier" when its read state settled, still
- * listed under Resurface the whole time. The user put it away and the product handed it back.
- *
- * Derived from {@link winningStates} through {@link pileOfState} — the SAME two steps
- * {@link triagePiles} takes to build its rows — so the filter and the lister are one derivation
- * and cannot drift. A row this set contains is in a bottom pile by construction, and a row it
- * does not is in none.
+ * Every message parked in a bottom pile — the set the Ohbox holds out of all three groups. It
+ * used to hold out only resurfaced rows: `triagePiles` files from the `message_state` record,
+ * `ohboxView` grouped by folder and knew nothing of it, and nothing moves a parked message's
+ * folder — so every parked row stood in a pile AND the Ohbox (deferring an already-resurfaced
+ * row put it bold at the top of "New for you" while listed under Resurface). Derived via {@link
+ * winningStates} → {@link pileOfState}, the same two steps the lister takes, so filter and
+ * lister are one derivation and cannot drift.
  */
 export function parkedMessageIds(reader: EntityReader): Set<string> {
   const parked = new Set<string>();
@@ -643,59 +427,23 @@ export function parkedMessageIds(reader: EntityReader): Set<string> {
 }
 
 /**
- * "EARLIER" IS A HISTORY OF READING, SO IT IS ORDERED BY READING.
- *
- * `messagesIn` sorts date-descending, which is right for mail that has not been read — the
- * question there is what arrived — and wrong for mail that has. Someone who reads a message from
- * last week and then one from this morning has most recently finished with the older one, and a
- * date sort files it seven days down, under mail they finished with days ago.
- *
- * ── EVERY UNSTAMPED ROW SORTS BELOW EVERY STAMPED ONE ─────────────────────────────────────
- *
- * `lastReadAt` is absent or null on two kinds of row: mail read before the field existed, and mail
- * whose read state came from somewhere that could not date it. Neither has an honest position
- * among the stamped rows, and interleaving them BY DATE would put a message with no recorded
- * reading time above one with a real one purely because it is newer — a claim about reading order
- * made out of a send time. So the list is two blocks: what is known, most recently finished first;
- * then, below it, what is not, newest first. The boundary moves down on its own as mail is
- * re-read, and it needs no backfill to do it.
- *
- * `id` breaks the remaining ties, because a batch marked read in one gesture shares one instant
- * and a comparator that returned 0 there would leave the browser's sort free to reorder equal rows
- * differently on each render.
+ * "Earlier" is a history of reading, so it is ordered by reading — a date
+ * sort files the message you finished with a minute ago under mail finished
+ * days ago. Every unstamped row sorts below every stamped one: `lastReadAt`
+ * is absent on mail read before the field existed or dated by nothing, and
+ * interleaving those BY DATE would make a claim about reading order out of
+ * a send time. Two blocks: known, most recently finished first; then
+ * unknown, newest first — the boundary moves down on its own as mail is
+ * re-read. `id` breaks remaining ties so equal-instant batches cannot reorder per render.
  */
 /**
- * The reading instant as a number, or `null` for "not known".
- *
- * THREE INPUTS COLLAPSE TO ONE ANSWER and that is the reason this is a function rather than a
- * `Date.parse` inline in the comparator: the field can be absent (a mirror written before it
- * existed), explicitly `null` (never read, or read where nothing could date it), or a string that
- * does not parse. All three mean the same thing to a reader, so they have to mean the same thing
- * to the sort. Normalising here — instead of handling `null` in the comparator and NaN separately
- * — is what stops an unparseable stamp from being ranked as a real one against a `null` row, and
- * keeps it from being read as the epoch, which is a position that looks deliberate and is not.
- *
- * ── OWN-SENT MAIL IS STAMPED BY WHEN IT WAS SENT, AND THAT IS A READING TIME ──────────────
- *
- * Nothing anywhere stamps `lastReadAt` on outbound mail, and nothing should: the ingest creates
- * a Sent row already read — nothing you wrote is new to you — but with no reading INSTANT, since
- * there was never a moment somebody opened it; and the optimistic copy the engine mints on a
- * confirmed send has none either. So EVERY sent message an account has ever had was unstamped,
- * and the rule above — an unstamped row sorts below every stamped one — put the message the
- * reader had pressed Send on ten seconds ago underneath everything they had ever opened. On a
- * live account that is hundreds of rows down, outside the mounted window: in the list, and not
- * findable, which a reader cannot tell apart from not being there.
- *
- * The fix is not an exemption from the reading order — it is the observation that WRITING a
- * message is finishing with it. The send time is the instant the reader last dealt with that
- * mail, exactly as a read time is for mail somebody else wrote, so it belongs in the same block
- * and ranks against the same numbers: a message sent five minutes ago sits above one read an
- * hour ago, and below one read a minute ago. That is a claim about the reader's own activity,
- * derived from something they did, which is what separates it from the fallback this comment's
- * first paragraph refuses — an inbound row's date says when a STRANGER acted.
- *
- * A stamp, when there is one, still wins: the date stands in for the missing value and never
- * overrides a present one, or re-reading your own sent mail could not move it.
+ * The reading instant as a number, or `null` for "not known". Absent, explicitly `null`, and
+ * unparseable all mean the same thing to a reader, so they must mean the same thing to the sort
+ * — normalising here stops an unparseable stamp ranking as real or reading as the epoch.
+ * Own-sent mail is stamped by its SEND time, and that is a reading time: writing a message is
+ * finishing with it — without this every sent message was unstamped and sorted below everything
+ * ever opened, so a just-sent message was hundreds of rows down. A real stamp still wins over
+ * the date, or re-reading your own sent mail could not move it.
  */
 function readTimeOf(m: EngineMessage): number | null {
   const raw = m.lastReadAt ?? null;
@@ -722,17 +470,14 @@ function byLastReadDesc(a: EngineMessage, b: EngineMessage): number {
 }
 
 /**
- * A MAIL IS IN EXACTLY ONE PILE, and these three groups plus the three bottom piles are the six.
- *
- * Every group here holds out {@link parkedMessageIds}, so mail the reader filed under Answer Later,
- * Set aside or Resurface is absent from all of them — see that function for the double presentation
- * this closes and how it was reported. The consequence is deliberate and worth stating plainly:
- * parked mail leaves "Earlier" as well as "New for you". Putting a message away takes it out of the
- * Ohbox; the pile you put it in is where it is, and the only place it is.
- *
- * SCOPE: this is the only surface that holds parked rows out. Reads and Receipts are STREAMS rather
- * than piles and still list a parked issue — `openTargetFor` (`apps/webapp`) depends on that
- * asymmetry, and `search-locate.test.ts` pins it.
+ * A mail is in exactly one pile — these three groups plus the three bottom
+ * piles are the six. Every group holds out {@link parkedMessageIds}, so
+ * filed mail is absent from all of them: putting a message away takes it
+ * out of the Ohbox, "Earlier" included; the pile it went to is the only
+ * place it is. Scope: this is the only surface that holds parked rows out —
+ * Reads and Receipts are streams and still list a parked issue;
+ * `openTargetFor` depends on that asymmetry and `search-locate.test.ts`
+ * pins it.
  */
 export function ohboxView(reader: EntityReader): OhboxView {
   // The shared date-desc order (`messagesByDateDesc`): a filter of it is newest-first by
@@ -740,55 +485,38 @@ export function ohboxView(reader: EntityReader): OhboxView {
   const all = messagesByDateDesc(reader);
   const inbox = messagesIn(reader, FOLDER_OF_VIEW.ohbox);
   /**
-   * THE ACCOUNT'S OWN SENT MAIL, folder-agnostic (see {@link isOwnSent}), newest first — MINUS
-   * the replies the away responder sent on the person's behalf.
-   *
-   * The union exists because WRITING a message is finishing with it, so a message the reader
-   * sent belongs in the same block as one they read ({@link readTimeOf} spells that out). An
-   * automatic reply is the case where that reasoning does not hold: nobody finished with
-   * anything, and the row still arrived here carrying the send date — which, because `readTimeOf`
-   * falls back to that date, put it at the TOP of the pile.
-   *
-   * The reported shape: the responder answers a Reads or Receipts message, its reply is an
-   * own-sent row threaded to that message, and one Ohbox row appears per answered message wearing
-   * the bulk message's subject as "Re: …". They accumulate for as long as the responder is on,
-   * and because the send date stands in for a reading time they accumulate at the top.
-   *
-   * `!== true` and never `=== false`: the field is absent on a mirror or a server older than it,
-   * and absent has to mean "the person's" — see `EngineMessage.autoReplyByUs`. Nothing is hidden
-   * by this filter; the replies stay in the Sent folder view, which is where sent mail lives.
+   * The account's own sent mail, folder-agnostic ({@link isOwnSent}), newest first — MINUS the
+   * replies the away responder sent on the person's behalf. Writing a message is finishing with
+   * it, which is why own-sent mail joins this block at all; an automatic reply is the case
+   * where that reasoning fails — nobody finished with anything — and the send-date fallback put
+   * one "Re: …" row per answered message at the top. `!== true`, never `=== false`: the field
+   * is absent on older mirrors/servers and absent must mean "the person's". Nothing is hidden;
+   * the replies stay in the Sent folder view.
    */
   const sent = all.filter((m) => isOwnSent(m) && m.autoReplyByUs !== true);
 
   /**
-   * THE PIN IS STATE-DRIVEN AND FOLDER-AGNOSTIC, and the whole mirror is scanned for it —
-   * not just the INBOX slice above. `resurfaced` is a claim the USER made about a message
-   * ("show me this again now"), and its ONLY home in the product is this group: the state
-   * belongs to no bottom pile by construction (`triagePiles` ignores it), so a resurfaced row
-   * this group declines is a row NO view files. That was a real orphan, measured on a live
-   * mailbox: a message snoozed for yesterday came due, left the Resurface pile with the flip,
-   * and its folder-filtered pin never picked it up — reachable by search and by nothing else.
-   * Filtering `inbox` here would keep exactly that bug for every row whose folder — physical
-   * or presented (the consent cutline re-homes undecided senders' mail) — is not the Ohbox's.
-   * Newest bubble first — the order the two groups below use for anything that has no reading
-   * time to sort by.
+   * The pin is state-driven and folder-agnostic — the whole mirror is
+   * scanned, not just the INBOX slice above. `resurfaced` is a claim the
+   * user made, and this group is its only home in the product
+   * (`triagePiles` ignores it), so a resurfaced row this group declines is
+   * a row NO view files — a real orphan, measured: a snooze come due left
+   * the Resurface pile and a folder-filtered pin never picked it up,
+   * reachable only by search. Newest bubble first — the order the groups
+   * below use for anything with no reading time.
    */
   const resurfaced = all.filter(isResurfaced);
   const pinned = new Set(resurfaced.map((m) => m.id));
 
   /**
-   * MAIL THE USER PUT AWAY IS NOT IN THE OHBOX — the whole of {@link parkedMessageIds}, applied
-   * to all three groups.
-   *
-   * Held out of the PIN group as well, and that is not redundancy: it is what makes "one pile"
-   * a property of this function rather than a property of two states happening not to overlap.
-   * `pileOfState("resurfaced")` is null, so a genuinely resurfaced row is never in this set and
-   * the pin is untouched; but if a row ever carried a stale `resurfaced` projection on
-   * `message.triage` while its winning `message_state` record said `bubbled_up`, the pile lister
-   * would file it under Resurface and the pin would show it at the top — the same double
-   * presentation, one entity over. Holding the parked set out of every group makes the bottom
-   * piles authoritative wherever the two sources could disagree, which is the only way the
-   * disjointness guard can be a statement about the derivation instead of about the fixtures.
+   * Mail the user put away is not in the Ohbox — the whole of
+   * {@link parkedMessageIds}, applied to all three groups, the pin group
+   * included. That is not redundancy: `pileOfState("resurfaced")` is null,
+   * so a genuine resurface is never in the set — but a row carrying a stale
+   * `resurfaced` projection while its winning record says `bubbled_up`
+   * would otherwise stand in the pile AND at the pin. Holding the parked
+   * set out of every group makes the bottom piles authoritative wherever
+   * the two sources could disagree.
    */
   const parked = parkedMessageIds(reader);
   const held = (m: EngineMessage): boolean => !pinned.has(m.id) && !parked.has(m.id);
@@ -799,21 +527,15 @@ export function ohboxView(reader: EntityReader): OhboxView {
     // order to use and the question the group answers is what came in. Resurfaced rows are held
     // out — they sit pinned above, never doubled here.
     newForYou: inbox.filter((m) => m.unread && held(m)),
-    // "Earlier" is read INBOX mail joined by the account's own sent mail, ordered by when the
-    // reader finished with each — for a sent row that is when it was SENT (see `readTimeOf`), so
-    // the message somebody just pressed Send on is the first row here.
-    // Pinned ids are held out of BOTH inputs, so a resurfaced row is never doubled below its pin.
-    //
-    // COLLAPSED BY Message-ID, for the same reason the reading pane is ({@link collapseTwins}).
-    // A just-sent message legitimately stands in the mirror twice — the optimistic Sent copy
-    // beside the ingested row the worker's Sent-folder watch delivers minutes later — and
-    // `reconcileOptimisticSent` retires the copy only at the END of a drain. A backfill drain is
-    // many pages and notifies after every one of them, so between the page carrying the real row
-    // and the end of the drain the list rendered the same message twice; the same doubling is
-    // reachable outright from a provider that files its own re-rendered copy of an SMTP
-    // submission (Exchange). The reading pane has collapsed this ever since; the pile had no
-    // such rule. No `openId` here: a pile has no open message, and the ranking's remaining terms
-    // — a real row beats a `local: true` one, then reading order — are exactly what this wants.
+    // "Earlier" is read INBOX mail joined by the account's own sent mail,
+    // ordered by when the reader finished with each — for a sent row that
+    // is its SEND time (`readTimeOf`), so a just-sent message is first.
+    // Pinned ids are held out of BOTH inputs. Collapsed by Message-ID for
+    // the reading pane's reason ({@link collapseTwins}): the optimistic
+    // Sent copy stands beside the ingested row until the END of a drain,
+    // and Exchange re-files its own SMTP copies — the pane collapsed this,
+    // the pile did not. No `openId`: a pile has no open message; a real row
+    // beats a `local: true` one, then reading order.
     previouslySeen: collapseTwins(
       [
         ...inbox.filter((m) => !m.unread && held(m)),
@@ -828,23 +550,14 @@ export function ohboxView(reader: EntityReader): OhboxView {
 export const THREAD_PARTICIPANTS_MAX = 3;
 
 /**
- * THE PEOPLE IN A CONVERSATION, newest voice first.
- *
- * Distinct from {@link threadOf}, which returns the counterpart's MESSAGES for the reading pane.
- * This returns the SENDERS, de-duplicated by address, so a ten-mail exchange between two people
- * yields two circles rather than a "10" badge. Own-sent mail rides the mirror now (the Sent-folder
- * watch), so the account holder is one of the voices wherever they have written in the thread.
- *
- * Capped at {@link THREAD_PARTICIPANTS_MAX}: the row shows three circles and no more, and the
- * fourth would widen a slot the row holds at a constant width.
- *
- * `[]` for a message with no thread, or the sole member of one — the same "there is no
- * conversation here" contract {@link threadOf} keeps, so the caller renders circles only on a real
- * multi-message thread and never a lone circle standing in for a thread of one.
- *
- * O(mirror) per call, like every selector here. The Ohbox calls it only for the handful of rows
- * its window has mounted, and only for rows that carry a `threadId` — bounded by the window, not
- * the mailbox.
+ * The people in a conversation, newest voice first. Distinct from
+ * {@link threadOf} (the messages): this returns the SENDERS, deduplicated
+ * by address, so a ten-mail exchange between two people yields two circles,
+ * and the account holder is a voice wherever they have written. Capped at
+ * {@link THREAD_PARTICIPANTS_MAX} — the row holds a constant-width slot.
+ * `[]` for no thread or a sole member, the same "no conversation here"
+ * contract as {@link threadOf}. O(mirror) per call; the Ohbox asks only
+ * for mounted rows carrying a `threadId`.
  */
 export function threadParticipants(reader: EntityReader, threadId: string): EmailAddress[] {
   return participantsOfMembers(
@@ -853,23 +566,14 @@ export function threadParticipants(reader: EntityReader, threadId: string): Emai
 }
 
 /**
- * EVERY THREAD'S PEOPLE IN ONE PASS — the same answer as {@link threadParticipants}, for callers
- * that need MANY of them.
- *
- * {@link threadParticipants} scans the whole mirror to answer about one thread, which is the right
- * shape for a handful of rows and the wrong one for a list: five list surfaces asking per row is
- * O(mirror × rows) on every render, and the mirror is the largest thing the client holds. This
- * walks the messages ONCE, buckets them by thread and answers every thread at the same cost as
- * answering one. A caller memoizes it on the engine version and then reads rows out of the map in
- * constant time.
- *
- * Threads with no conversation of people in them — one member, or several from one sender — are
- * ABSENT from the map rather than present with `[]`, so a missing key and an empty answer are the
- * same thing and a lookup needs no second check.
- *
- * Both forms share {@link participantsOfMembers}, which is the point: two implementations of
- * "who is in this conversation" would be two answers, and the one the row draws would depend on
- * which surface drew it.
+ * Every thread's people in one pass — the same answer as
+ * {@link threadParticipants}, for callers that need many: per-row calls are
+ * O(mirror × rows), this walks the messages once and answers every thread
+ * at the cost of one; memoize on the engine version and read the map.
+ * Threads with no conversation of people are ABSENT rather than `[]`, so a
+ * missing key and an empty answer are the same thing. Both forms share
+ * {@link participantsOfMembers} — two implementations would be two answers,
+ * and the one drawn would depend on which surface asked.
  */
 export function threadParticipantsIndex(reader: EntityReader): Map<string, EmailAddress[]> {
   const byThread = new Map<string, EngineMessage[]>();
@@ -906,17 +610,14 @@ function participantsOfMembers(members: EngineMessage[]): EmailAddress[] {
 }
 
 /**
- * THE CONVERSATION'S NAME — the mirror's thread row's stored subject, or `null` while no
- * thread row for this id has synced.
- *
- * The server names a thread at CREATE with the localized reply/forward prefixes stripped
- * (`baseSubject`, `packages/core`), and a heal pass renamed the rows stored before that table
- * was complete — so the stored name is already clean, and the client deliberately does NOT
- * re-derive it: a second copy of the prefix table here would be a second definition to drift.
- *
- * `null` is a real state, not an error: snapshot pages carry the threads their OWN messages
- * name, so a mirror can briefly hold a message whose thread row is a page behind. The caller
- * falls back to a member message's subject until the row lands.
+ * The conversation's name — the mirror's thread row's stored subject, or
+ * `null` while no thread row for this id has synced. The server names a
+ * thread at CREATE with localized reply/forward prefixes stripped
+ * (`baseSubject`, `packages/core`) and healed the earlier rows, so the
+ * stored name is clean and the client does NOT re-derive it — a second
+ * prefix table would drift. `null` is a real state: snapshot pages carry
+ * their own messages' threads, so a thread row can be a page behind; the
+ * caller falls back to a member's subject.
  */
 export function threadSubject(reader: EntityReader, threadId: string): string | null {
   const t = reader.get<{ subject?: unknown }>("thread", threadId);
@@ -933,66 +634,27 @@ export interface FeedPartition {
   /** At and below the anchor — the anchor was on screen when the reader last left. */
   seen: EngineMessage[];
   /**
-   * ═══ THE STREAM'S BADGE — ONE NUMBER, ONE DERIVATION, EVERY SURFACE ══════════════════════
-   *
-   * `fresh` that is STILL UNREAD. Not `fresh.length`, and not "every unread row in the pile" —
-   * both of those shipped, on different surfaces, for the same badge.
-   *
-   * ── WHY THE COUNT MAY NOT BE `fresh.length` ────────────────────────────────────────────
-   *
-   * The anchor is CLIENT state and says so ({@link MessageMutation} `feed_mark_seen` — `/sync`
-   * has no `view_meta` entity type), so each device carries its own "last visit". For the LINE
-   * that is correct and load-bearing: it must hold still for the whole visit and move exactly
-   * once, on the way out, or the list re-sorts under the reader. For a COUNT it is a lie the
-   * moment two devices disagree — and it was reported as exactly that: one account open on a
-   * desktop and in a browser, side by side, the browser's rail saying "Reads 13" and the
-   * desktop's saying nothing, while the mail server held ZERO unread messages in that pile.
-   * Both numbers were `fresh.length`. Only the anchors differed, and one was thirteen visits
-   * stale.
-   *
-   * The mailbox is the master and it answers the question the badge is actually asking. A
-   * message the server reports `\Seen` has been read — here, on the phone, in whatever client
-   * the reader used — and read mail does not demand attention. So the badge is the intersection:
-   * above this device's line AND unread on the server. Two devices with different lines agree
-   * whenever the mail is read, which is the case that produced the report; where they still
-   * differ, the mail really is unread and the smaller line is the honest one.
-   *
-   * It also keeps the LINE exactly where it was — nothing here moves `fresh`/`seen`, so
-   * "a committed waterline outranks `\Seen`" (R10-5) is untouched and reading a row mid-visit
-   * still does not re-partition the list under the cursor. Only the number drops, which is what
-   * a badge is for.
-   *
-   * ── AND WHY IT MAY NOT BE "EVERY UNREAD ROW IN THE PILE" ────────────────────────────────
-   *
-   * That was the phone's answer (`liveReads`/`liveReceipts` counted `items.filter(unread)` over
-   * the whole stream) while the shell's was `fresh.length`. Two surfaces, two derivations, one
-   * badge: on a stream holding old unread mail below the line the phone demanded attention the
-   * shell did not. The line means something — mail below it was on screen when you left — so the
-   * count respects it.
+   * The stream's badge — one number, one derivation, every surface: `fresh` that is STILL
+   * UNREAD. Not `fresh.length`: the anchor is per-device client state, and two devices with
+   * different lines reported "Reads 13" beside a silent desktop over a pile the server held
+   * zero unread in. The mailbox is the master: the badge is the intersection — above this
+   * device's line AND unread on the server — and the LINE itself stays put (R10-5: a committed
+   * waterline outranks `\Seen`). Not "every unread row in the pile" either — that was the
+   * phone's answer, and old unread mail below the line was on screen when you left; the count
+   * respects it.
    */
   newCount: number;
 }
 
 /**
- * One partition for both reading streams, around the view's own waterline row
- * (`waterlineIdOf` — the same mapping the `feed_mark_seen` effect writes through).
- *
- * The cut is EXCLUSIVE: `newestSeenId` was on screen at the end of the last visit, so it
- * belongs BELOW the line — a leave at the top of the pile yields `fresh: []`, the line above
- * everything, which is the honest "nothing new since you were here".
- *
- * WITHOUT A USABLE ANCHOR, `\Seen` FROM THE MAILBOX IS THE LINE. A live mirror holds no
- * waterline row until the first leave-commit writes one (`/sync` has no `view_meta` entity
- * type), and the committed anchor can vanish — it is usually a READ message, and deleting
- * read mail is ordinary. Both absences used to degrade to everything-fresh, which over a
- * mirror built from an EXISTING mailbox presented years of already-read mail as "new since
- * last visit". The IMAP mailbox is the master: the fallback junction is the newest
- * already-read message — the R10-5 anchor semantic ("the newest message that was on screen
- * when the reader last left") extended to the visit that happened in the user's previous
- * client. A pile with no read mail in it stays everything-fresh, which is now a statement
- * about the mail rather than about a row that was never written. Either way the cut is
- * positional, so `[...fresh, ...seen]` is always the pile's display order — the receipts
- * junction arithmetic counts on that.
+ * One partition for both reading streams, around the view's own waterline row (`waterlineIdOf` — the
+ * same mapping the `feed_mark_seen` effect writes through). The cut is EXCLUSIVE: `newestSeenId` was
+ * on screen at the last leave, so it belongs below the line; a leave at the top yields `fresh: []`.
+ * Without a usable anchor, `\Seen` from the mailbox is the line: both absences (no first commit yet;
+ * a deleted anchor row) used to degrade to everything-fresh, presenting years of read mail as new.
+ * The fallback junction is the newest already-read message; a pile with no read mail stays
+ * everything-fresh. The cut is positional, so `[...fresh, ...seen]` is always display order —
+ * receipts arithmetic counts on it.
  */
 export function feedPartition(reader: EntityReader, view: FeedView): FeedPartition {
   const all = messagesIn(reader, FOLDER_OF_VIEW[view]);

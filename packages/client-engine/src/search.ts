@@ -208,13 +208,18 @@ export class SearchIndex {
   /** term → messageId → best field weight */
   private readonly postings = new Map<string, Map<string, Posting>>();
   /**
-   * EXACT ADDRESS → messageId → which sides — a SEPARATE map from {@link postings}, and the separation is the whole
-   * feature. {@link tokenize} splits on every non-alphanumeric character, so `anna@corp.com` enters `postings` as the
-   * three unrelated terms `anna`, `corp`, `com` — and `com` is a term that every address on the internet shares.
-   * There is therefore no way to ask `postings` for one ADDRESS: the query `anna@corp.com` matches `anna@other.com`
-   * and `bob@corp.com` on two of its three tokens each, and a prefix arm widens it further. That is right for
-   * searching and useless for identity. So an address is stored WHOLE and lowercased, and the only operation on this
-   * map is a map lookup — no prefix arm, no trigrams, no scoring. It costs one entry per distinct address per
+   * EXACT ADDRESS → messageId → which sides — a SEPARATE map from {@link postings}, and the
+   * separation is the whole feature.
+   *
+   * {@link tokenize} splits on every non-alphanumeric character, so `anna@corp.com` enters
+   * `postings` as the three unrelated terms `anna`, `corp`, `com` — and `com` is a term that
+   * every address on the internet shares. There is therefore no way to ask `postings` for one
+   * ADDRESS: the query `anna@corp.com` matches `anna@other.com` and `bob@corp.com` on two of its
+   * three tokens each, and a prefix arm widens it further. That is right for searching and
+   * useless for identity.
+   *
+   * So an address is stored WHOLE and lowercased, and the only operation on this map is a map
+   * lookup — no prefix arm, no trigrams, no scoring. It costs one entry per distinct address per
    * message, which is bounded by the recipients a message actually names.
    */
   private readonly addresses = new Map<string, Map<string, AddressSides>>();
@@ -282,19 +287,23 @@ export class SearchIndex {
   }
 
   /**
-   * EVERY MESSAGE ON THIS DEVICE INVOLVING ONE ADDRESS, newest first, with the counts for all three directions — the
-   * address view's whole device half. THE COUNTS ARE ALWAYS ALL THREE, WHATEVER `direction` ASKS FOR: `items` is
-   * filtered by `direction`; `counts` is not, and that asymmetry is deliberate. The toggle has to be able to say "All
-   * 12 · From them 9 · To them 4" while showing one of the three, and a caller that had to call three times to fill
-   * in its own control would either walk the postings three times or (far more likely) label the two it did not ask
-   * for with the number it did. ORDER: NEWEST FIRST, BY {@link compareRanked} WITH AN EQUAL SCORE: Not a private date
-   * comparator.
-   */
-
-  /**
-   * With every `score` equal, `compareRanked` degrades exactly to `date desc, nulls last, id` — which IS
-   * newest-first, with the undated-sorts-last rule and the stable `id` tail that keep a list from reshuffling itself
-   * between renders. Writing a second comparator here would be a second place for those two rules to be got wrong.
+   * EVERY MESSAGE ON THIS DEVICE INVOLVING ONE ADDRESS, newest first, with the counts for all
+   * three directions — the address view's whole device half.
+   *
+   * ── THE COUNTS ARE ALWAYS ALL THREE, WHATEVER `direction` ASKS FOR ─────────────────────
+   *
+   * `items` is filtered by `direction`; `counts` is not, and that asymmetry is deliberate. The
+   * toggle has to be able to say "All 12 · From them 9 · To them 4" while showing one of the
+   * three, and a caller that had to call three times to fill in its own control would either
+   * walk the postings three times or (far more likely) label the two it did not ask for with the
+   * number it did.
+   *
+   * ── ORDER: NEWEST FIRST, BY {@link compareRanked} WITH AN EQUAL SCORE ──────────────────
+   *
+   * Not a private date comparator. With every `score` equal, `compareRanked` degrades exactly to
+   * `date desc, nulls last, id` — which IS newest-first, with the undated-sorts-last rule and
+   * the stable `id` tail that keep a list from reshuffling itself between renders. Writing a
+   * second comparator here would be a second place for those two rules to be got wrong.
    */
   messagesWith(address: string, direction: AddressDirection = "any"): AddressResult {
     const key = addressMatchKey(address);
@@ -381,13 +390,15 @@ export class SearchIndex {
   }
 
   /**
-   * One query token's hits WITH typo tolerance — the literal arms plus the padded-trigram arm. Two length floors, and
-   * they bound different strings. The QUERY token must be long enough to be worth guessing about at all; the INDEXED
-   * TERM must be long enough that a guess against it means something. The second one did not exist, and its absence
-   * was the loudest half of the complaint this tier model answers: on the demo corpus `invoce` matched the two-letter
-   * word `in` at a similarity over the threshold and dragged nineteen unrelated messages into a one-answer query, and
-   * `anna` reached twelve of them through `and`. Both floors live in `@trafficflow/core/search-rank` so the hosted
-   * door can be held to the same shape.
+   * One query token's hits WITH typo tolerance — the literal arms plus the padded-trigram arm.
+   *
+   * Two length floors, and they bound different strings. The QUERY token must be long enough to
+   * be worth guessing about at all; the INDEXED TERM must be long enough that a guess against it
+   * means something. The second one did not exist, and its absence was the loudest half of the
+   * complaint this tier model answers: on the demo corpus `invoce` matched the two-letter word
+   * `in` at a similarity over the threshold and dragged nineteen unrelated messages into a
+   * one-answer query, and `anna` reached twelve of them through `and`. Both floors live in
+   * `@trafficflow/core/search-rank` so the hosted door can be held to the same shape.
    */
   private fuzzyHits(q: string): Map<string, { score: number; match: SearchMatch }> {
     const hits = this.literalHits(q);
@@ -459,20 +470,27 @@ export class SearchIndex {
   }
 
   /**
-   * A query that tokenizes to nothing is still a question — matched verbatim over subject and sender,
-   * case-insensitively. This used to return the empty answer, the shape the `D-U-N-S` report arrived as: silence
-   * indistinguishable from an empty mailbox. `x`, `#4` and `y@d` all name something; a two-character floor is a
-   * sensible rule for TERMS and a wrong answer to a person who typed one character on purpose. The scan is acceptable
-   * here and nowhere else: it walks every message — exactly what the postings map exists to avoid — but is reached
-   * only by a query the postings map cannot answer at all (every run of letters and digits a single character), which
-   * is the first keystroke of an ordinary query and nothing else.
-   */
-
-  /**
-   * Two strings per message, `includes` on each; `search-budget.test.ts` measures it on a synthetic
-   * twenty-thousand-row index so the claim is a number (spelled out — the publish prose gate reads a bare count
-   * beside "messages" as a count of somebody's mail). `tier` is `exact`: the reader's characters are present, in
-   * order, in the field — not a guess, and not Similar.
+   * A QUERY THAT TOKENIZES TO NOTHING IS STILL A QUESTION — matched verbatim over subject and
+   * sender, case-insensitively.
+   *
+   * This used to return the empty answer, which is the shape the `D-U-N-S` report arrived as:
+   * silence that is indistinguishable from an empty mailbox. `x`, `#4` and `y@d` all name
+   * something; a two-character floor is a sensible rule for TERMS and a wrong answer to a
+   * person who typed one character on purpose.
+   *
+   * ── WHY A SCAN IS ACCEPTABLE HERE AND NOWHERE ELSE ──────────────────────────────────────
+   *
+   * It walks every message, which is exactly what the postings map exists to avoid — and it is
+   * reached only by a query the postings map cannot answer at all: one whose every run of
+   * letters and digits is a single character. Two strings per message, `includes` on each. That
+   * is the first keystroke of an ordinary query (`i` of `invoice`) and nothing else, and
+   * `search-budget.test.ts` measures it on a synthetic twenty-thousand-row index so the claim is
+   * a number. (Spelled out, not written as digits: the publish prose gate reads a bare count
+   * beside the word "messages" as a count of somebody's mail, which is the right rule — it
+   * refused this comment, and the number here is a benchmark size, not a mailbox.)
+   *
+   * `tier` is `exact`: the reader's characters are present, in order, in the field. It is not a
+   * guess and it does not belong under the Similar heading.
    */
   private verbatim(query: string, limit: number): LocalSearchResult {
     const needle = query.trim().toLowerCase();
@@ -480,15 +498,18 @@ export class SearchIndex {
       return { items: [], similar: [], tier: "exact", facets: emptyFacets(), coverage: this.coverage() };
     }
     const match: SearchMatch = { token: needle, term: needle, fuzzy: false };
-    /**
-     * ORDERED ON A PRECOMPUTED KEY, and this is not a micro-optimisation — it is what keeps the scan inside a
-     * keystroke. `rank` calls `stampOf` (a `Date.parse`) on BOTH SIDES OF EVERY COMPARISON, which is right and free
-     * for a token arm's handful of candidates and about 285 000 parses for a single common character that matched a
-     * whole mirror: measured 25.7 ms on the twenty-thousand-row benchmark index, most of it there, against 12 ms for
-     * the scan and the sort themselves. So the date is parsed ONCE PER MESSAGE and the rows are ordered by {@link
-     * compareRanked} — the shared comparator, unchanged — before the surviving page is materialised. A top-of-list
-     * selection under the ordering rule, never a window ranked after the fact. There is no phrase bonus to apply: a
-     * query with no tokens has no token sequence to prefer.
+    /*
+     * ORDERED ON A PRECOMPUTED KEY, and this is not a micro-optimisation — it is what keeps the
+     * scan inside a keystroke. `rank` calls `stampOf` (a `Date.parse`) on BOTH SIDES OF EVERY
+     * COMPARISON, which is right and free for a token arm's handful of candidates and about
+     * 285 000 parses for a single common character that matched a whole mirror: measured 25.7 ms
+     * on the twenty-thousand-row benchmark index, most of it there, against 12 ms for the scan
+     * and the sort themselves.
+     *
+     * So the date is parsed ONCE PER MESSAGE and the rows are ordered by {@link compareRanked} —
+     * the shared comparator, unchanged — before the surviving page is materialised. A top-of-list
+     * selection under the ordering rule, never a window ranked after the fact. There is no phrase
+     * bonus to apply: a query with no tokens has no token sequence to prefer.
      */
     const rows: RankedRow[] = [];
     for (const [id, m] of this.messages) {
@@ -512,12 +533,16 @@ export class SearchIndex {
   }
 
   /**
-   * THE ANSWER, IN TIERS. Exact and prefix matches are the result; typo tolerance is a second, separately-labelled
-   * answer that exists only when the first one is empty. THE FUZZY ARM IS NOT RUN AT ALL WHEN THERE ARE EXACT HITS:
-   * That is the rule's shape and it is also where the cost went. The literal arms are a map lookup plus one pass over
-   * the term list for prefixes; the fuzzy arm computes a trigram set intersection against EVERY indexed term, for
-   * every query token, on every keystroke. On a large mirror that is the dominant cost of a search, and under this
-   * rule the common case — a query with an answer — never pays it.
+   * THE ANSWER, IN TIERS. Exact and prefix matches are the result; typo tolerance is a second,
+   * separately-labelled answer that exists only when the first one is empty.
+   *
+   * ── THE FUZZY ARM IS NOT RUN AT ALL WHEN THERE ARE EXACT HITS ───────────────────────────
+   *
+   * That is the rule's shape and it is also where the cost went. The literal arms are a map
+   * lookup plus one pass over the term list for prefixes; the fuzzy arm computes a trigram
+   * set intersection against EVERY indexed term, for every query token, on every keystroke.
+   * On a large mirror that is the dominant cost of a search, and under this rule the
+   * common case — a query with an answer — never pays it.
    */
   search(query: string, opts: { limit?: number } = {}): LocalSearchResult {
     const qTokens = tokenize(query);

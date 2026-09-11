@@ -6,57 +6,16 @@ import { ownAddressKeys } from "./own-address.js";
 import { isOwnSent, isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
 import type { EngineMessage, Folder, RuleDTO } from "./types.js";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   CONSENT, THE CUTLINE, AND HISTORY
-
-   Two rules decide where a message is PRESENTED, and neither of them is "where the message
-   physically sits".
-
-     1. Consent comes from the user's own actions. Sitting in the INBOX is not consent, and
-        having been read is not consent. The record of a decision is a RULE — that is why
-        "why is this person here?" always has an answer.
-     2. Decisions rule the future. The past moves only when somebody asks for it explicitly.
-
-   Rule 2 is the reason this file exists at all. Once consent is a real thing a user grants,
-   every mailbox has a large backlog of mail from senders who were never granted it — and the
-   honest response is to present that mail differently, not to move thousands of messages
-   around somebody's server on the first day. So placement stays exactly as the mail server has
-   it, and the product filters what it shows.
-
-   ── THE THREE OUTCOMES ────────────────────────────────────────────────────────────────────
-
-   For a message sitting in one of the two "undecided residences" — the INBOX, or the Screener
-   folder — the sender decides which of three things happens:
-
-     · the sender has a rule          → the message presents in that rule's destination. This is
-                                        what lets a newly consented sender's old mail appear in
-                                        the Ohbox with ZERO server moves.
-     · no rule, sender is ACTIVE      → the Screener, because a decision is genuinely wanted.
-     · no rule, sender is DORMANT     → History.
-
-   Mail anywhere else — Reads, Receipts, Screened, Quarantine — is already where somebody put
-   it. An explicit placement is itself an answer, so it is never second-guessed here.
-
-   ── HISTORY HAS NO BADGE, AND WITH A BASELINE THAT IS A PRODUCT DECISION ──────────────────
-
-   Without a baseline, a sender with ANY unread mail is active whatever its age, so a message
-   can only reach History if it has been read — History cannot contain anything that wants
-   attention, and the absence of a count follows from {@link senderActivity} rather than from a
-   choice the nav bar made.
-
-   **Under a baseline that derivation no longer holds, and the conclusion is kept deliberately.**
-   Pre-cutoff mail cannot make a sender active even unread (see {@link ConsentOptions.baselineAt}),
-   so History can hold unread mail: the account's old backlog, from senders nobody ever answered
-   for. Badging it would be a permanent unread count over mail the baseline exists to say is
-   finished — the "1,847 unread" every migrated mailbox arrives with, which is the state this
-   product is against. So History stays uncounted, now because that is what it is FOR rather than
-   because it cannot contain anything. Anything genuinely new is post-baseline, and post-baseline
-   undecided senders never reach History at all — they wait in the Screener until decided.
-
-   It is called History rather than Archive for two reasons. "Archive" is a verb in every other
-   mail client — an action this mail never received — and plenty of mailboxes have a real
-   server-side Archive folder whose contents this view would not be showing.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/* Consent, the cutline, and History. Two rules decide where a message is
+   PRESENTED: (1) consent comes from the user's own actions — sitting in the
+   INBOX is not consent, a decision's record is a rule; (2) decisions rule
+   the future — the past moves only on explicit request, so placement stays
+   as the server has it and the product filters what it shows. For mail in
+   the two undecided residences (INBOX, Screener folder): a ruled sender
+   presents in the rule's destination (zero server moves); unruled + active
+   → Screener; unruled + dormant → History. Explicit placements elsewhere
+   are never second-guessed. History has no badge — under a baseline it can
+   hold unread backlog, and that is what it is FOR ("Archive" is a verb). */
 
 /**
  * How recently a sender must have written to still be worth a decision. Days.
@@ -113,15 +72,12 @@ export interface ConsentCounts {
 
 export interface ConsentPartition {
   /**
-   * Where each message presents. A folder, or `null` for History.
-   *
-   * Only messages whose presentation DIFFERS from their folder, plus every History message,
-   * need to be consulted — but the map is total over the mirror so that a caller can never
-   * silently fall through to the physical folder for a message this did consider.
-   *
-   * ONE exception to "null for History": a FOLDER-FILED row shown through the History LENS
-   * (spec §16.5) keeps its folder as its place, because the folder view must keep showing it.
-   * `history` is the authority on History's contents; `placeOf` is the authority on removal.
+   * Where each message presents. A folder, or `null` for History. The map
+   * is total over the mirror so a caller can never silently fall through to
+   * the physical folder for a message this did consider. One exception to
+   * "null for History": a folder-filed row shown through the History lens
+   * (spec §16.5) keeps its folder as its place — `history` is the authority
+   * on History's contents; `placeOf` is the authority on removal.
    */
   readonly placeOf: ReadonlyMap<string, Folder | null>;
   /** History's contents, newest first. Read mail only, by construction. */
@@ -142,80 +98,36 @@ export interface ConsentOptions {
   /** Days. Defaults to {@link DEFAULT_DORMANCY_DAYS}. */
   dormancyDays?: number;
   /**
-   * WHEN THIS ACCOUNT FINISHED SCREENING ITS BACKLOG (`account_settings.screening_baseline_at`,
-   * mail 0056), or `null`/absent for an account that has never decided anything.
-   *
-   * ── THE DEFECT ────────────────────────────────────────────────────────────────────────────
-   *
-   * Without it the cutoff is `now - dormancyDays`, and BOTH halves of {@link senderActivity} move
-   * without anybody doing anything:
-   *
-   *   · the window slides, so a sender leaves the queue because the clock moved;
-   *   · unread outranks age, so any OLD unread mail entering the mirror makes its sender active
-   *     again. Old mail enters the mirror constantly, and that is a property of how a mailbox is
-   *     read rather than an unusual event: the sync walks a mailbox newest-first, so the older mail
-   *     arrives continuously behind it, one folder and one batch at a time, and a `\Seen` flag can
-   *     be adopted well after the message itself. Each such arrival puts a sender the reader had
-   *     already worked past back into "first-time senders waiting"; the read-state then catches up,
-   *     or the window slides, and they disappear again. On a mailbox with years of history the
-   *     overwhelming majority of what a backfill delivers on any given day is older than the
-   *     window, so this is the normal case for that mailbox and not a corner of it.
-   *
-   * ── WHAT A BASELINE CHANGES ───────────────────────────────────────────────────────────────
-   *
-   * The cutoff becomes `baselineAt - dormancyDays` and STOPS MOVING. Two consequences:
-   *
-   *   · pre-cutoff mail can never resurrect a sender, **not even unread**. That mail is the
-   *     backlog the account already worked through;
-   *   · a stranger who wrote AFTER the baseline is newer than the cutoff for ever, so they never
-   *     go dormant and wait until somebody decides. The sliding window could not express that: a
-   *     stranger who wrote once and went quiet used to age out of the queue unanswered.
-   *
-   * ── ABSENT IS EXACTLY THE PRE-0056 BEHAVIOUR, AND IT IS THE DEFAULT ───────────────────────
-   *
-   * `null`/absent ⇒ cutoff `now - dormancyDays` AND unread outranking age ⇒ byte-identical
-   * partitioning to before this field existed. The narrowing in {@link senderActivity} is gated
-   * on the baseline being PRESENT, and writing it instead as an unconditional
-   * `(baselineAt ?? now) - dormancyDays` is a DIFFERENT PROGRAM: it would also stop unread
-   * pre-cutoff mail from making a sender active on accounts that have never decided anything,
-   * which empties a live account's Screener queue on deploy. The `??` form is right for the
-   * cutoff arithmetic and wrong for the unread test, and that asymmetry is the whole care.
-   *
-   * A desktop build has no server to read the column from and passes nothing, which is the same
-   * safe branch — it keeps today's behaviour rather than guessing a baseline.
+   * When this account finished screening its backlog
+   * (`account_settings.screening_baseline_at`, mail 0056); `null` = never
+   * decided anything. Without it the cutoff `now - dormancyDays` moves on
+   * its own: the window slides, and old unread mail entering the mirror
+   * (the normal case — sync walks newest-first) resurrects worked-past
+   * senders. With it the cutoff is fixed at `baselineAt - dormancyDays`:
+   * pre-cutoff mail never resurrects a sender, even unread. Absent = the
+   * pre-0056 behaviour; `(baselineAt ?? now)` would be a different program.
    */
   baselineAt?: Date | string | null;
   /**
-   * SCREENING SCOPE — `account_settings.screening_scope` (mail 0083), the window's other answer.
-   *
-   * `'window'` (or absent) is the dial above. `'all_time'` is a MODE and not a window value, which
-   * is why it needed a column of its own: `dormancy_days` is bounded 1-365 at the write site and
-   * NULL means the default, so no number in that column can spell "no cutoff".
-   *
-   * RE-DECLARED here rather than imported, exactly as {@link DEFAULT_DORMANCY_DAYS} is: this
-   * package ships in the Desktop app and has no `@trafficflow/core` dependency. The parity test
-   * pins this resolution to `resolveScreeningCutoff`'s, and the ORDER is part of that parity —
-   * `all_time` is tested before the baseline, so the mode wins for an account that has already
-   * screened something, which is every account the control is offered to.
-   *
-   * Anything that is not exactly `'all_time'` is the window. An unrecognised stored value reads as
-   * the narrower mode, which is the direction a bad value must fail in: screening everything is a
-   * lot of moved mail to undo by hand.
+   * Screening scope — `account_settings.screening_scope` (mail 0083).
+   * `'window'` (or absent) is the dial above; `'all_time'` is a MODE, not
+   * a window value (`dormancy_days` is bounded 1-365, so no number can
+   * spell "no cutoff"). Re-declared rather than imported, like
+   * {@link DEFAULT_DORMANCY_DAYS}: this package has no `@trafficflow/core`
+   * dependency; the parity test pins this to `resolveScreeningCutoff`,
+   * order included — `all_time` is tested before the baseline. Anything not
+   * exactly `'all_time'` reads as the window, the safe failure direction.
    */
   screeningScope?: "window" | "all_time" | string | null;
   /**
-   * The account's OWN mailbox addresses. Mail from these is the user writing, not a
-   * correspondent writing, so it is never a candidate for a place and never makes anybody
-   * active.
-   *
-   * Most of the user's own mail sits in a Sent folder, which is outside the presented set and
-   * therefore already ignored — but not all of it does. Mail somebody sends to themselves, and
-   * mail a provider files into the INBOX as well as into Sent, lands squarely in the presented
-   * folders. Without this the user appears in their own Screener queue.
-   *
-   * Defaults to whatever mailbox rows the mirror happens to hold. That is empty on a client
-   * whose sync feed carries no mailbox entity, so a caller that KNOWS the addresses should pass
-   * them — `consent-cutline.pg.test.ts` pins the server's answer to this one.
+   * The account's own mailbox addresses. Mail from these is the user
+   * writing, so it is never a candidate for a place and never makes anybody
+   * active. Most of it sits in Sent (already outside the presented set),
+   * but self-sent mail and providers that file into INBOX as well land in
+   * presented folders — without this the user appears in their own Screener
+   * queue. Defaults to the mirror's mailbox rows, which can be empty; a
+   * caller that knows the addresses should pass them
+   * (`consent-cutline.pg.test.ts` pins the server's answer to this one).
    */
   ownAddresses?: Iterable<string>;
 }
@@ -228,45 +140,14 @@ export function domainOfAddress(address: string): string | null {
 }
 
 /**
- * Index the rules that are actually in force.
- *
- * Disabled rules are skipped: a rule the user switched off is not a decision they are still
- * making. `header` rules are skipped too — they are statements about a message, not about a
- * person, so they can neither grant nor withhold consent for a sender.
- *
- * A rule pointing at the SCREENER is skipped as well, and that one is easy to get wrong. Such a
- * rule is representable and means "hold this sender at the gate" — which is the absence of a
- * decision written down, not a decision. Counting it as one would take a dormant sender the
- * user has never answered for and park them in the queue for ever, exempt from the cutline
- * that exists to keep the queue honest.
- *
- * Where two rules of the same kind name the same target, the more permissive one wins. This
- * only decides PRESENTATION, and presenting a sender's mail in the Ohbox when one rule says
- * Ohbox and another says Screened is the reading that shows the user their mail; the reverse
- * hides mail on account of a rule they can no longer see the effect of.
- *
- * ── A SUBJECT- OR BODY-NARROWED RULE COUNTS AS A DECISION ABOUT THE WHOLE SENDER ───────────
- * ── (mail 0050, and mail 0052 on identical reasoning) ──────────────────────────────────────
- *
- * `subject_contains` and `body_contains` are deliberately NOT read here, and that is a ruling
- * rather than an omission — it decides the dormancy cutline, so it is worth stating rather than
- * leaving to be rediscovered. Everything below said of a subject term holds verbatim for a body
- * term: both narrow placement, neither narrows admission.
- *
- * A rule saying *from `info@` AND subject contains `[NinjaFirewall]` → Reads* narrows PLACEMENT for
- * a slice of that sender's mail. It does not narrow ADMISSION: writing it is the user saying they
- * know this sender and want their mail organised, which is exactly the thing this index exists to
- * record. So the sender is treated as decided, and the cutline leaves them alone rather than parking
- * them back in the Screener queue for going quiet — which is what reading the term here would do,
- * and it would do it to a sender the user has demonstrably answered for.
- *
- * The RESIDUAL, named: the `Folder` recorded for that sender is the narrow rule's destination, which
- * is only true of the messages the term names. That is tolerable for the same reason the
- * more-permissive-wins rule above is tolerable — this index decides PRESENTATION and never routing
- * (the router reads `core/src/rules.ts`, which does apply the conjunction) — and where the account
- * carries both a narrow and a bare rule for one address the permissive reading picks the one that
- * shows the user their mail. What must never be added here is a term check that flips a decided
- * sender back to undecided.
+ * Index the rules actually in force. Skipped: disabled rules; `header`
+ * rules (about a message, not a person); rules pointing at the SCREENER
+ * (the absence of a decision written down — counting it would park a
+ * dormant sender in the queue for ever). Same kind, same target: the more
+ * permissive wins — this decides PRESENTATION only, and the permissive
+ * reading shows the user their mail. A subject- or body-narrowed rule
+ * counts as a decision about the WHOLE sender (mail 0050/0052): terms
+ * narrow placement, never admission. Never add a term check here.
  */
 export function consentIndex(rules: readonly RuleDTO[]): ConsentIndex {
   const bySender = new Map<string, Folder>();
@@ -316,20 +197,14 @@ function messageMs(m: EngineMessage): number | null {
 export function cutlineFor(opts: ConsentOptions): { cutoff: number; baselined: boolean } {
   const now = opts.now ?? new Date();
   const raw = opts.baselineAt == null ? null : new Date(opts.baselineAt).getTime();
-  /* -- "ALL TIME" IS NO CUTOFF, AND IT IS THE FIRST TEST FOR THE SERVER'S REASON (mail 0083) --
-   *
-   * `resolveScreeningCutoff` answers `undefined` here — "hold every unruled sender's mail whatever
-   * its date". This side has no `undefined` to answer: `cutoff` is a number both halves compare
-   * against (`ms >= cutoff` for active, `ms < cutoff` for History), so the value that means the
-   * same thing is `-Infinity`. Every parseable date is then at or after it, so every undecided
-   * sender is ACTIVE and nothing at all falls into History — which is the mode's whole promise:
-   * senders past the old cutline join the Screener QUEUE, and no mail moves until a decision.
-   *
-   * ABOVE the baseline read, mirroring the server exactly. The other order would make the mode
-   * silently inert for every account that has ever screened anything.
-   *
-   * `baselined` still answers whether a baseline EXISTS, because it gates a different question —
-   * whether unread mail outranks age — and the mode does not change that fact about the account.
+  /* "All time" is no cutoff, and it is the FIRST test, before the baseline
+   * read — mirroring the server (`resolveScreeningCutoff`); the other order
+   * would make the mode silently inert for every account that ever screened
+   * anything. `resolveScreeningCutoff` answers `undefined`; this side
+   * compares numbers, so the same meaning is `-Infinity` — every parseable
+   * date is at or after it, every undecided sender is ACTIVE, nothing falls
+   * into History, no mail moves until a decision. `baselined` still answers
+   * whether a baseline EXISTS: it gates whether unread outranks age.
    */
   if (opts.screeningScope === "all_time") {
     const baseRaw = raw !== null && Number.isFinite(raw) ? raw : null;
@@ -345,29 +220,14 @@ export function cutlineFor(opts: ConsentOptions): { cutoff: number; baselined: b
 }
 
 /**
- * ACTIVE if the sender has mail worth a decision today. DORMANT otherwise.
- *
- * ── WITHOUT A BASELINE (`baselineAt` absent) ──────────────────────────────────────────────
- *
- * Any unread mail, or any mail inside `now - dormancyDays`. Unread wins regardless of age: a
- * sender with mail from four years ago that was never opened is active, because that is exactly
- * the case where a decision is overdue rather than one that can be assumed away.
- *
- * ── WITH A BASELINE ───────────────────────────────────────────────────────────────────────
- *
- * The unread term NARROWS to `m.unread && inside the window`, and the window is now fixed at
- * `baselineAt - dormancyDays`. Pre-cutoff mail therefore cannot make a sender active by any
- * route, which is the resurrection this exists to stop — see {@link ConsentOptions.baselineAt}
- * for the measurement.
- *
- * **The narrowed unread term is subsumed by the recency term, and that is not dead code being
- * left in.** `(unread && within) || within` is `within`; the term is written out because it is
- * the STATEMENT of the rule at the seam where a future editor will reach for it, and because
- * changing the shape of either half must keep the other visible. What must never happen is the
- * simplification going the other way — dropping `&& within` — which restores the resurrection.
- *
- * Only mail the product presents is counted. A message in a Sent folder is the user writing,
- * not the sender writing, and counting it would make every correspondent permanently active.
+ * ACTIVE if the sender has mail worth a decision today, DORMANT otherwise.
+ * Without a baseline: any unread mail (regardless of age — that is exactly
+ * where a decision is overdue), or any mail inside `now - dormancyDays`.
+ * With one: the unread term narrows to `unread && inside the window`, fixed
+ * at `baselineAt - dormancyDays` — pre-cutoff mail cannot resurrect a
+ * sender. The narrowed unread term is subsumed by the recency term and
+ * written out anyway as the statement of the rule; never drop `&& within`,
+ * which restores the resurrection. Sent mail is the user writing.
  */
 export function senderActivity(
   messages: readonly EngineMessage[],
@@ -399,28 +259,16 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const messages = reader.list<EngineMessage>("message");
   const index = consentIndex(rulesList(reader));
   const own = ownAddressKeys(reader, opts);
-  /* ── THE USER'S OWN FOLDERS, when "Use folders" is on (FOLDERS-SPEC.md §16.5) ────────────
-   *
-   * TWO gates, and both must say yes: the caller's {@link ConsentOptions.foldersEnabled} (the
-   * account's consent answer — the AUTHORITY) and the mirror's `folder` entities (the DATA).
-   * `/sync` emits the entities only while the flag is on, so on a clean account the entity set
-   * is empty whenever the flag is off — but a mirror can hold STALE entities (a disable this
-   * tab never drained, a cached boot), and inferring authority from eventually-deleted rows
-   * would keep the lens on over an interface that says folders are off. The explicit flag is
-   * what makes flag-off parity hold under staleness too.
-   *
-   * MAILBOX-SCOPED, name second (FOLDERS-SPEC.md §17) — the key is `mailboxId|path`, the
-   * spelling every folder-shaped surface already uses (`folderUnreadCounts`, the rail's
-   * sections), because folders are per-mailbox facts and two mailboxes may both keep a
-   * `Projects`. A name-only set conflated them, and per-mailbox enablement is where that
-   * conflation stops being cosmetic: a mailbox switched OFF contributes no entities, so its
-   * folder-resident mail must fall through to the pre-folders partition — which a same-named
-   * folder on a still-enabled mailbox would silently veto. An entity with no `mailboxId` (a
-   * hosted server older than the field) keeps the old name-only reach via the second key, so
-   * the lens degrades to the pre-§17 behaviour rather than to off.
-   *
-   * Junk and Trash can never appear here — they are never watched, never ingested, and never
-   * emitted as entities — so the lens excludes them by construction rather than by filter. */
+  /* The user's own folders, when "Use folders" is on (FOLDERS-SPEC.md
+   * §16.5). Two gates, both must say yes: the caller's
+   * {@link ConsentOptions.foldersEnabled} (the account's consent answer —
+   * the authority) and the mirror's `folder` entities (the data) — a mirror
+   * can hold stale entities, and inferring authority from them would keep
+   * the lens on over an interface that says folders are off. Keys are
+   * `mailboxId|path` (spec §17): two mailboxes may both keep a `Projects`,
+   * and a disabled mailbox's mail falls through rather than being vetoed by
+   * a same-named folder elsewhere; an entity with no `mailboxId` keeps the
+   * name-only reach. Junk and Trash never appear — never ingested. */
   const userFolders = new Set<string>();
   if (opts.foldersEnabled === true) {
     for (const f of reader.list<{ name?: unknown; mailboxId?: unknown }>("folder")) {

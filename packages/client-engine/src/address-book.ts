@@ -1,93 +1,12 @@
 /**
- * ═══ THE ADDRESS BOOK, DERIVED FROM THE MIRROR ═══════════════════════════════════════════
- *
- * Reported as: composing a message, the To field *"won't give me addresses from my actual
- * mailboxes I can fast-select on my typing"*. There was no address book at all — the field was
- * a bare text input, so every recipient had to be typed in full and remembered exactly.
- *
- * ── WHY THIS IS A SELECTOR AND NOT AN ENDPOINT ──────────────────────────────────────────
- *
- * There is no contacts table and this does not need one. Every address the user has ever
- * corresponded with is already in the local mirror, on the messages themselves, and the mirror
- * is on the same machine as the keystroke. A server round trip per keystroke would be slower,
- * would leak what is being typed before it is sent, and would need an endpoint, a rate limit
- * and a cache — for data the client already holds. So this is a pure function over the reader,
- * exactly like `tagsCrossView` or `triagePiles`, and it works offline, in the demo and on the
- * desktop shell for free.
- *
- * ── WHERE THE ADDRESSES COME FROM ───────────────────────────────────────────────────────
- *
- * Three places, and the third is the one that matters most:
- *
- *   · the FROM of every message — everyone who has written to the user;
- *   · the TO and CC of every message — everyone the user is in a thread with, including
- *     people who have never written to them directly;
- *   · the TO and CC of the user's own SENT drafts (`status: "sent"`), a second record of
- *     outbound correspondence, and leaving them out would rank the people the user writes to
- *     below the newsletters that write to them.
- *
- * THE THIRD BULLET USED TO SAY the drafts were the ONLY record, because "`Folder` is a closed
- * six-member union with no Sent in it, so sent MESSAGES never reach the mirror at all". That
- * is FALSE, and it is a claim rather than a caveat, so it is corrected here rather than
- * softened. Sent mail DOES reach the mirror as ordinary `message` entities: `recordSent`
- * (`packages/core/src/sent-record.ts`) writes a real `messages` row for every send through the
- * ingest path, the Sent-folder watch is the backstop behind it, and `/sync`'s snapshot selects
- * on account and `deleted_at is null` with NO folder filter. What is true is the narrower
- * thing: those rows carry `folder: "Sent"`, which is outside the union, so they fall through
- * `folderLeaf()` and match no PILE VIEW. Invisible in the piles is not absent from the mirror,
- * and anything selecting on the message FIELDS (this file, and `SearchIndex.messagesWith`)
- * sees them.
- *
- * ── THE ROBOTS ARE EXCLUDED, AND ONLY THE OBVIOUS ONES ──────────────────────────────────
- *
- * `noreply@`, `mailer-daemon@` and friends are addresses no reply can reach, so offering them
- * as recipients is offering to send mail into a hole. The list is deliberately short and
- * matched on the LOCAL PART only: a heuristic that guessed harder would eventually hide a real
- * person, and the cost of that is far worse than the cost of one dead suggestion. `no-reply`
- * and `donotreply` are the same word with punctuation, so punctuation is stripped before the
- * comparison rather than each spelling being listed.
- *
- * ── WHOSE NAME AN ADDRESS WEARS ─────────────────────────────────────────────────────────
- *
- * Reported against a real mailbox: a recipient chip read
- *
- *     Atelier Papierwerk GmbH - Nora Lindt   nora@atelier.invalid   ×
- *
- * — "this is not Nora". The address was right; the name was somebody else's idea of her. (The
- * shape is the report's; the names are this repository's fixture cast, because the reported ones
- * are a real correspondent's and this file is published.)
- *
- * The three sources above are not three sources of the same fact. A From header is the address
- * OWNER saying what they are called. A To or Cc header is a THIRD PARTY's client saying what IT
- * calls them — their own address book, exported into a header, harvested here under that
- * person's address. And a sent draft's recipient label is whatever the user typed or accepted,
- * which after this bug had run once was frequently the wrong name coming back round.
- *
- * The rule used to be "the longest name ever seen", which knows neither who said it nor when. A
- * long company-shaped label from any of those sources therefore won permanently — over the name
- * the person signs their own mail with, on every surface reading this book, and out onto the
- * wire's To header, because accepting a suggestion writes `Name <address>` into the draft.
- *
- * So the choice is made in two steps, and the first one is a HARD tier:
- *
- *   1. SELF-DECLARED beats OBSERVED. A name seen on a From always wins over one seen on a
- *      To, a Cc or a sent draft — however long, however recent. That is what closes the
- *      feedback loop: a wrong name written into a draft is `observed`, so it cannot re-elect
- *      itself over the sender's own signature.
- *   2. WITHIN a tier, the MOST RECENT wins; an exact tie falls back to the longer name, and
- *      then to the strings themselves, so the derivation is TOTAL and cannot flicker between
- *      two candidates as unrelated mail arrives (the same requirement {@link byRank} states
- *      for the ordering).
- *
- * An EMPTY name is never a candidate. `""` is the absence of a claim, not a claim that somebody
- * is now called nothing — most automated mail carries no display name at all, and one bare
- * message must not blank a correspondent everywhere.
- *
- * Nothing here is persisted: the book is recomputed from the mirror on every render, so this
- * rule takes effect on already-stored mail with no migration and no data repair. What it cannot
- * reach is a name a user ALREADY sent — that string is in a delivered message's headers and in
- * the `drafts` row behind it, and rewriting either would be inventing history. Those rows are
- * `observed`, so they stop influencing what is shown from here on.
+ * The address book, derived from the mirror — a pure selector, no contacts
+ * table, no endpoint: every address the user corresponds with is already on
+ * the mirrored messages. Sources: every From and To/Cc, plus sent drafts;
+ * sent mail also reaches the mirror (folder "Sent" matches no pile view;
+ * field-level selectors see it). Obvious robots (`noreply@` etc.) are
+ * excluded. Names: self-declared (From) beats observed (To/Cc/draft) as a
+ * hard tier — a wrong drafted name cannot re-elect itself; within a tier
+ * most recent, then longer; empty never. Recomputed per render.
  */
 import { counterpartyEvidence, type CounterpartyEvidence } from "@trafficflow/core/sender-headers";
 import { isOwnSent } from "./selectors.js";
@@ -161,15 +80,13 @@ const SELF = 1;
 const NONE = -1;
 
 /**
- * The map's value while the walk is running. `nameTier`/`nameAt` describe the name currently
- * held — NOT the entry — which is why they cannot be folded into `lastAt`: `lastAt` is the
- * newest appearance of the address by any route (it feeds {@link rankOf}), while `nameAt` is
- * the date of the message the held NAME was read off. A bare-From message advances the first
- * and must not touch the second.
- *
- * Internal, and deliberately not on {@link AddressBookEntry}: the two fields are the
- * derivation's working state, and every caller constructs entries as `{address,name,count,
- * lastAt}` literals. {@link addressBook} strips them on the way out.
+ * The map's value while the walk runs. `nameTier`/`nameAt` describe the
+ * name currently held — not the entry — so they cannot fold into `lastAt`:
+ * `lastAt` is the newest appearance of the address by any route (it feeds
+ * {@link rankOf}); `nameAt` is the date of the message the held name was
+ * read off. A bare-From message advances the first and must not touch the
+ * second. Internal, not on {@link AddressBookEntry}: working state, and
+ * {@link addressBook} strips it on the way out.
  */
 interface Acc extends AddressBookEntry {
   nameTier: number;
@@ -184,39 +101,14 @@ const EVIDENCE_ORDER: Record<CounterpartyEvidence, number> = {
 };
 
 /**
- * A message's date, AS EVIDENCE OF RECENCY — or {@link NO_EVIDENCE}.
- *
- * `EngineMessage.date` is the `Date:` HEADER, which the sender writes and nobody checks; the
- * mirror holds no arrival clock to use instead (`updatedAt` is the mirror row's own stamp and
- * moves on a read-mark or a folder change, so keying a name off it would reshuffle names on
- * unrelated activity). Under a most-recent-wins rule an unchecked timestamp is a lever: one
- * message dated 2099 — a broken client, an import, or somebody who wanted the last word — would
- * make its display name unbeatable by every correctly dated message that ever follows.
- *
- * TWO inputs carry no usable evidence, and they are told apart from a real date rather than
- * folded into a number that happens to be small:
- *
- *   · a date in the FUTURE — not evidence that a claim is NEWER, so it is not counted as any;
- *   · `stamp()`'s `0`, which is "no `Date:` header, or one that would not parse".
- *
- * Both become `-Infinity`, and that value rather than `0` is the whole of the second version of
- * this function. **`0` is not below the range of a real date.** `pagination.ts` sets this out at
- * length for the same header: a message dated before 1970 is *"ordinary in imported archives"*
- * and gives a NEGATIVE millisecond value. Ranking a rejected 2099 claim at `0` therefore left it
- * beating a legitimate 1968 one — the defect this function exists to close, still open for the
- * one population where a bogus date is most likely to turn up.
- *
- * The name is still a candidate either way — it may be the only one this address has — it just
- * cannot outrank a dated one.
- *
- * `SKEW` because a `Date:` a few minutes ahead of the reader's clock is ordinary mail, not a
- * forgery, and a device with a slow clock must not have every fresh name demoted. A day is far
- * wider than any real skew and still far narrower than any useful forgery.
- *
- * Deliberately scoped to the NAME. `lastAt` and {@link rankOf} keep taking the raw value: that is
- * the ordering this file already had, a future date has always been able to float an entry to the
- * top of the suggestions, and narrowing it here would be an unrelated behaviour change smuggled
- * into a fix about names. Worth doing; not worth doing quietly.
+ * A message's date, as evidence of recency — or {@link NO_EVIDENCE}.
+ * `EngineMessage.date` is the sender-written `Date:` header; under
+ * most-recent-wins an unchecked timestamp is a lever (a 2099 date would be
+ * unbeatable). A future date and stamp()'s `0` both become `-Infinity` —
+ * NOT `0`, which is not below real dates: a rejected 2099 claim at `0`
+ * still beat a legitimate 1968 one. The name stays a candidate; it cannot
+ * outrank a dated one. `SKEW` (a day) tolerates slow clocks. Scoped to the
+ * NAME — `lastAt` and {@link rankOf} keep the raw value.
  */
 const SKEW = 86_400_000;
 /** Below every value `Date` can hold (±8.64e15), so no real timestamp can lose to a rejected one. */
@@ -369,24 +261,14 @@ export function addressBook(
 }
 
 /**
- * RECENCY AND FREQUENCY, both, and the weighting is stated rather than tuned.
- *
- * Frequency alone ranks a mailing list above the colleague written to twice this week;
- * recency alone ranks whoever happened to send something an hour ago above the person written
- * to every day for a year. So the score is `count` plus a small recency bonus — frequency
- * leads, and recency only reorders addresses of comparable weight. The bonus is capped at 3,
- * which is deliberately less than the difference a handful of extra messages makes: it breaks
- * ties, it does not overturn them.
- *
- * `lastAt` then `address` are the tiebreaks, so the order is TOTAL. A comparator that can
- * return 0 for two different entries gives an order that depends on the engine's sort
- * stability, which is how a suggestion list flickers between two candidates as unrelated mail
- * arrives.
- *
- * EVIDENCE OUTRANKS BOTH, and it has to: count and recency are things a sender can produce on
- * demand, so with the score alone the top suggestion for a name belongs to whoever sent the most
- * mail most recently. People the account has WRITTEN to come first, then people who have written
- * to it, then addresses only a sender ever named ({@link AddressBookEntry.evidence}).
+ * Recency and frequency, both; the weighting is stated, not tuned.
+ * Frequency alone ranks a mailing list above this week's colleague;
+ * recency alone ranks the latest sender above the daily correspondent. So:
+ * `count` plus a recency bonus capped at 3 — it breaks ties, never
+ * overturns them. `lastAt` then `address` make the order total (a
+ * comparator returning 0 for different entries flickers with sort
+ * stability). Evidence outranks both — count and recency can be produced on
+ * demand: written-to, then wrote-to-us, then sender-only-named entries.
  */
 const DAY = 86_400_000;
 
@@ -407,17 +289,13 @@ function byRank(a: AddressBookEntry, b: AddressBookEntry): number {
 }
 
 /**
- * PREFIX MATCHING, on the address and on every word of the name.
- *
- * Prefix and not substring, and that is the whole difference between a useful list and a
- * confusing one: typing `an` should offer "Anna" and "andreas@…", not every address with the
- * letters `an` somewhere inside it. The name is split on whitespace so a surname is reachable
- * — somebody typing `eich` expects "Lena Eichspan" — and the address is matched both whole and
- * from its local part, so `example.com` finds people at that domain while `lena` finds
- * `lena@example.com`.
- *
- * An empty query returns nothing rather than everything. The field is not a browsable
- * directory; suggestions appear because the user started typing a name.
+ * Prefix matching, on the address and on every word of the name — prefix,
+ * not substring: typing `an` should offer "Anna" and "andreas@…", not every
+ * address containing `an`. The name splits on whitespace so a surname is
+ * reachable (`eich` → "Lena Eichspan"); the address matches whole and from
+ * its local part, so `example.com` finds the domain's people and `lena`
+ * finds `lena@example.com`. An empty query returns nothing: the field is
+ * not a browsable directory.
  */
 export function matchAddresses(
   book: readonly AddressBookEntry[],
@@ -447,22 +325,14 @@ export function matchAddresses(
 }
 
 /**
- * WHAT ACCEPTING A SUGGESTION WRITES — "Lena Eichspan <lena@example.com>", or the bare address.
- *
- * ── A NAME RIDES ALONG ONLY WHEN THE FIELD CAN READ IT BACK ─────────────────────────────
- *
- * The recipient field's value is ONE comma-separated string and the splitter that turns it into
- * chips is blind to quoting. So "Lindt, Nora" — the Exchange/Outlook default, not an exotic
- * shape — was written as `Lindt, Nora <nora@…>`, came back as TWO chips, and `Lindt` was
- * reported as not an address. One invalid entry empties the whole envelope by design
- * (`composePlan`), so picking a contact out of your own address book DISABLED SEND.
- *
- * Quoting the name would not save it: the splitter would still cut inside the quotes. So the
- * name is dropped and the bare address kept, which is the decision `formatRecipientLine`
- * (`apps/webapp/app/shell/compose-from.ts`) already made for the reply prefill, in the same
- * words and against the same character class — the envelope is the address; the name is sugar.
- * That rule now has one implementation instead of three: `RecipientField.formatFor` calls this,
- * and `formatRecipientLine` states the shared reason.
+ * What accepting a suggestion writes — "Lena Eichspan <lena@example.com>",
+ * or the bare address. A name rides along only when the field can read it
+ * back: the field's value is one comma-separated string and the chip
+ * splitter is blind to quoting, so "Lindt, Nora <nora@…>" (the Exchange
+ * default) came back as two chips and disabled Send (`composePlan`).
+ * Quoting would not save it, so the name is dropped and the bare address
+ * kept — `formatRecipientLine`'s decision (compose-from.ts); one
+ * implementation now: `RecipientField.formatFor` calls this.
  */
 export function formatRecipient(entry: AddressBookEntry): string {
   if (entry.name === "" || /[<>,;"]/.test(entry.name)) return entry.address;
