@@ -641,6 +641,15 @@ assertApiBaseNotOverridden(process.env[API_BASE_VAR], origin, selfhost);
 assertPublicFlavorNotOverridden(process.env[PUBLIC_FLAVOR_VAR], selfhost);
 
 /** @type {import('next').NextConfig} */
+/**
+ * Flathub reads `/.well-known/org.flathub.VerifiedApps.txt` on this domain to prove the app id
+ * `app.ohmail.desktop` is ours. A Next route segment cannot be named `.well-known`, so the path is
+ * rewritten onto a route that answers it — and 404s while no token is configured.
+ */
+export const FLATHUB_VERIFICATION = [
+  { source: "/.well-known/org.flathub.VerifiedApps.txt", destination: "/flathub-verification" },
+];
+
 const nextConfig = {
   // @trafficflow/core is here for its dependency-free SOURCE subpaths and nothing else — today
   // `@trafficflow/core/ics` (read directly by this app), `@trafficflow/core/reply-subject`
@@ -730,6 +739,7 @@ const nextConfig = {
     // front of this container owns the split. Asserted in test/selfhost-flavor.test.ts.
     if (!origin) return [];
     return [
+      ...FLATHUB_VERIFICATION,
       { source: `${API_BASE}/:path*`, destination: `${origin}/:path*` },
       // The refresh cookie's own Path — see {@link REFRESH_PATH}. Without this the token
       // exists in the jar and is never sent anywhere, and web sessions expire permanently.

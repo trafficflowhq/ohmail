@@ -1,0 +1,18 @@
+# The Flatpak build's desktop entry. The .deb and the AppImage render their own from Tauri's
+# template (../src-tauri/linux/ohmail.desktop); this one is written out because a Flatpak names
+# every exported file after its app id and the template cannot produce that name.
+#
+# StartupWMClass is the BINARY name, not the app id: the window's Wayland app_id and X11 instance
+# name are both `ohmail`, and this line is what attributes the window to this entry instead of an
+# unlabelled second taskbar icon. Exec keeps `%U` for the same reason the template does — without
+# a field code the address somebody clicked is dropped before the app is started.
+[Desktop Entry]
+Type=Application
+Name=ohmail
+Comment=Consent-first email on your mailbox
+Exec=ohmail %U
+Icon=app.ohmail.Desktop
+Terminal=false
+Categories=Network;Email;
+StartupWMClass=ohmail
+MimeType=x-scheme-handler/mailto;x-scheme-handler/ohmail;

@@ -2501,6 +2501,182 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ==========================================================================
+  # The Flatpak — the distribution-agnostic Linux build, x86_64.
+  #
+  # It is NOT a release asset: Flathub builds and signs its own copy from the
+  # same manifest, and a second, unsigned single-file bundle would be an install
+  # path with no update story. What this job is for is that the manifest in this
+  # repository still BUILDS, with no network, from the two generated source
+  # files beside it — the failure it catches is a dependency bump that lands
+  # without regenerating them, which would otherwise be found by a Flathub
+  # builder days later.
+  #
+  # aarch64 is deliberately not claimed here. Flathub builds that arch itself;
+  # asserting it on a runner this repository does not have would be a claim
+  # nothing measured.
+  # ==========================================================================
+  linux-flatpak:
+    name: Linux · flatpak builds offline
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # The builder and the runtimes the manifest names, read OUT OF the
+      # manifest rather than repeated here: a runtime bump in the manifest that
+      # this step did not hear about would install the old one and build against
+      # it, which is the drift the job exists to catch.
+      - name: Install flatpak and the runtimes the manifest names
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+
+          M=apps/desktop/flatpak/app.ohmail.Desktop.yml
+          RUNTIME_VERSION="$(node -e '
+            const t = require("fs").readFileSync(process.argv[1], "utf8");
+            console.log(/^runtime-version: *.(\d+).\s*$/m.exec(t)[1]);
+          ' "$M")"
+          echo "the manifest asks for GNOME $RUNTIME_VERSION"
+
+          flatpak install -y --user flathub org.flatpak.Builder \
+            "org.gnome.Platform//$RUNTIME_VERSION" "org.gnome.Sdk//$RUNTIME_VERSION" \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08 \
+            org.freedesktop.Sdk.Extension.node22//25.08
+          # The extension BRANCH is the freedesktop base the GNOME runtime sits on — 25.08 for
+          # GNOME 49 and 50, read from the Platform's own GL extension versions. It is spelled
+          # here rather than derived because a wrong branch is a loud failure: flatpak-builder
+          # resolves the extension from the SDK and refuses a build when it is not installed.
+
+          # flatpak-builder runs INSIDE org.flatpak.Builder, whose own XDG_DATA_HOME is not the
+          # user's — so the nested flatpak sees only the system installation and reports the SDK
+          # as not installed. Every step below that reaches the builder passes this.
+          echo "FLATPAK_USER_DIR=$HOME/.local/share/flatpak" >> "$GITHUB_ENV"
+
+      # Every tool this job SPAWNS, asserted by name before the subject starts —
+      # a missing one otherwise reads as the app failing rather than the runner.
+      - name: The tools this job spawns
+        run: |
+          for t in flatpak node; do
+            command -v "$t" >/dev/null || { echo "$t is not installed" >&2; exit 1; }
+          done
+          for c in flatpak-builder appstreamcli desktop-file-validate flatpak-builder-lint; do
+            flatpak run --command="$c" org.flatpak.Builder --version >/dev/null 2>&1 \
+              || flatpak run --command="$c" org.flatpak.Builder --help >/dev/null \
+              || { echo "$c is not in org.flatpak.Builder" >&2; exit 1; }
+          done
+
+      # The release notes in the metainfo are DERIVED from the changelog. This is
+      # the check half of the generator: a version that landed in CHANGELOG.md
+      # without the metainfo being regenerated is red here, not in a software
+      # centre showing a release behind.
+      - name: The metainfo's releases are the changelog's
+        run: node scripts/appstream-releases.mjs
+
+      - name: The desktop entry is valid
+        run: |
+          flatpak run --command=desktop-file-validate org.flatpak.Builder \
+            apps/desktop/flatpak/app.ohmail.Desktop.desktop
+
+      - name: The metainfo is valid
+        run: |
+          flatpak run --command=appstreamcli org.flatpak.Builder validate --no-net \
+            apps/desktop/flatpak/app.ohmail.Desktop.metainfo.xml
+
+      # TWO PASSES, and the second one is the proof. The first resolves every declared
+      # source and verifies it against the checksum in the two generated files. The
+      # second may not download at all, so anything the build needs beyond what was
+      # just declared is a failure here rather than on Flathub's builders.
+      #
+      # `--sandbox` is not used and cannot be: it refuses a `type: dir` source outside
+      # the manifest's own directory, and this manifest deliberately builds the
+      # checkout. What --sandbox would have enforced — that no module carries
+      # `build-args` to open a network — is asserted offline in
+      # test/flatpak-manifest.test.ts instead.
+      - name: Resolve every declared source
+        run: |
+          flatpak run --command=flatpak-builder org.flatpak.Builder \
+            --user --force-clean --download-only \
+            flatpak-build apps/desktop/flatpak/app.ohmail.Desktop.yml
+
+      - name: Build the Flatpak, with nothing left to fetch
+        run: |
+          flatpak run --command=flatpak-builder org.flatpak.Builder \
+            --user --force-clean --disable-download \
+            --repo=flatpak-repo \
+            flatpak-build apps/desktop/flatpak/app.ohmail.Desktop.yml
+
+      # What the app needs at runtime, read out of the finished tree. Each of
+      # these is a path engine.rs composes from Tauri's resource_dir(), and each
+      # absence is an app that installs cleanly and cannot start its engine.
+      - name: The shipped layout is the one engine.rs resolves
+        run: |
+          F=flatpak-build/files
+          for p in bin/ohmail \
+                   lib/ohmail/engine/bin/ohmail-engine.mjs \
+                   lib/ohmail/engine/bin/node_modules/@electric-sql/pglite \
+                   lib/ohmail/engine/drizzle \
+                   lib/ohmail/runtime/node \
+                   lib/ohmail/runtime/node.LICENSE \
+                   lib/ohmail/host-client/index.html \
+                   share/applications/app.ohmail.Desktop.desktop \
+                   share/metainfo/app.ohmail.Desktop.metainfo.xml \
+                   share/icons/hicolor/512x512/apps/app.ohmail.Desktop.png; do
+            [ -e "$F/$p" ] || { echo "the built tree has no $p" >&2; exit 1; }
+          done
+          [ -x "$F/lib/ohmail/runtime/node" ] || {
+            echo "the vendored runtime is not executable" >&2; exit 1; }
+
+          # IN the runtime, not on the runner: this binary links the Platform's libraries
+          # (it fails on a stock ubuntu-latest with `libicui18n.so.77: cannot open shared
+          # object file`), so running it here would be a false red about the app.
+          flatpak build flatpak-build /app/lib/ohmail/runtime/node --version
+
+      # Flathub's own linter, over the manifest and then the built repository.
+      # It is the closest thing to the review the submission gets.
+      - name: flatpak-builder-lint
+        run: |
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
+            manifest apps/desktop/flatpak/app.ohmail.Desktop.yml
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
+            repo flatpak-repo
+
+      # The permission set, asserted against the built metadata rather than
+      # against the manifest it was written from — the finished app is what a
+      # person installs. A --filesystem grant of any kind is a refusal here:
+      # this build reaches the host's files only through the portal.
+      - name: The app ships the permissions it says it does
+        run: |
+          META=flatpak-build/metadata
+          cat "$META"
+          ! grep -q 'filesystems=' "$META" || {
+            echo "the built app carries a --filesystem grant" >&2; exit 1; }
+          for want in 'shared=network;ipc' 'sockets=wayland;fallback-x11' \
+                      'org.freedesktop.secrets=talk' 'org.freedesktop.Notifications=talk'; do
+            grep -q "$want" "$META" || { echo "the built app is missing $want" >&2; exit 1; }
+          done
+
+      - name: Run summary
+        if: always()
+        run: |
+          {
+            echo '### Linux · Flatpak'
+            echo
+            echo 'Built `app.ohmail.Desktop` from the committed manifest with no network access,'
+            echo 'asserted the shipped layout, and ran the Flathub linter. Not a release asset:'
+            echo 'Flathub builds and signs its own copy.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ==========================================================================
   # The engine — packages/{core,api,db,services,db-mail} and apps/{sidecar,worker}.
   # Every job above PACKAGES the app; none of them reads the engine source the
   # app now carries. This one does. It installs the locked dependency tree,
