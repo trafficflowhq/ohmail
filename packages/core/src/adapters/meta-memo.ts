@@ -1,46 +1,12 @@
 /**
- * WHAT ONE INSTALL REMEMBERS ABOUT ONE MAILBOX'S `ohmail/_meta`, AND FOR HOW LONG.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Three separate walks over this folder keep a place: the claim read remembers the uid it wrote
- * its own record at, the settings read remembers the uid of the document it published, and the
- * acknowledgement sweep and the request drain each remember how far down they got. Every one of
- * them is the same kind of fact — a POSITION IN A NUMBERING — and every one of them is worthless,
- * or worse than worthless, the moment that numbering is replaced.
- *
- * ── WHY THEY LIVE TOGETHER, AND WHY NOT WHERE THEY USED TO ─────────────────────────────────────
- *
- * They were kept in three places, each keyed by something that is not the thing they belong to:
- *
- *   - keyed by the CONNECTION object, which loses everything on a reconnect that changes nothing
- *     about the folder, and which cannot tell two installs apart if they ever share one;
- *   - keyed by the MAILBOX id alone, which survives a reconnect and a folder replacement equally,
- *     so a position from a numbering that no longer exists is read as current;
- *   - and none of them keyed by the INSTALL, so what one install learned could answer another's
- *     question.
- *
- * A position remembered under the wrong key is not a hint that fails to help. The claim read uses
- * its remembered uid as the FLOOR of a search, so a wrong one decides how far down the folder is
- * looked at — and the answer comes back short while looking complete, which for an election is
- * how a mailbox ends up with two organizers. That defect was real and is what this module exists
- * to make structurally impossible rather than individually remembered.
- *
- * ── THE KEY IS THE PAIR; THE GENERATION IS A FIELD ─────────────────────────────────────────────
- *
- * Keyed by `(install, mailbox)` with UIDVALIDITY held INSIDE the value, rather than by all three.
- * The two are equivalent for correctness — a memo is usable only when its generation matches the
- * folder's — but keying by the triple would orphan the old entry on every replacement and the map
- * would grow for the life of the process. One entry per pair, overwritten in place, is bounded by
- * the number of mailboxes the process actually organizes.
- *
- * A read against a different generation does not merely decline to answer: it CLEARS the entry
- * and says so, so the caller can report why its walk started from the top instead of leaving a
- * permanent stall looking like a quiet mailbox.
- *
- * Deliberately in memory only. Every field here records WHERE TO LOOK and never WHAT WAS SETTLED,
- * so losing the lot costs one re-walk and can never lose a record. That is what makes it safe for
- * a process to forget everything on restart, and it is why nothing here is worth a database row.
+ * What one install remembers about one mailbox's `ohmail/_meta`. Every field is a POSITION IN A
+ * NUMBERING (the claim read's own uid, the settings uid, the sweep and drain floors), worthless
+ * the moment the numbering is replaced — and the claim read uses its uid as a search FLOOR, so a
+ * wrong one returns a short answer that looks complete, which is how a mailbox gets two
+ * organizers. Keyed by `(install, mailbox)` with UIDVALIDITY inside the value: keying by the
+ * triple would orphan entries on every replacement. A generation mismatch CLEARS the entry and
+ * says so. In memory only: every field records where to look, never what was settled, so losing
+ * the lot costs one re-walk and can never lose a record.
  */
 
 /** Whose memory this is. Both required, both explicit — never inferred from a connection. */

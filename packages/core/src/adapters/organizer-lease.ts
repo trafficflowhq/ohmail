@@ -20,149 +20,14 @@ export {
 } from "./meta-memo.js";
 
 /**
- * THE ORGANIZER LEASE — how two databases that can never see each other agree on who organizes
- * a mailbox.
- *
- * A LOCAL desktop install runs on its own on-disk PGlite and structurally cannot query the hosted
- * cloud database; Cloud runs on that database and cannot see the desktop's PGlite. The mailbox is
- * the only medium they share, so the claim lives **in the mailbox**: one message per organizer in
- * an unsubscribed `ohmail/_meta` folder.
- *
- * ── THE INVARIANT, WRITTEN ONCE AND NOWHERE ELSE ─────────────────────────────────────────
- *
- * A destructive IMAP write — move, flag, folder op, claim removal; ohmail never expunges mail —
- * happens only under a PERMIT that names (install, mailbox, uidvalidity, claim nonce, issued-at)
- * and is younger than `DEFAULT_PERMIT_TTL_MS`. A permit is re-validated by a `_meta` peek at least
- * every `PERMIT_WRITES_PER_RECHECK` writes AND every TTL; a stand-down invalidates every permit at
- * once and none may be revived. The local clock is never the sole authority: an install's own skew
- * is its claim's heartbeat measured against that record's IMAP `INTERNALDATE` — the server's own
- * stamp for the same instant — and past the tolerance it writes no claim at all. The permit and
- * its one predicate live in `apps/worker/src/lease.ts`; this is the only statement of the rule.
- *
- * ── IT IS A LEASE, NOT A MUTEX, AND THAT IS NOT A HEDGE ───────────────────────────────────
- *
- * IMAP has no compare-and-swap. Two installs can APPEND in the same instant and both succeed.
- * What this buys is conflict DETECTION with every-cycle re-verification, and that is enough for
- * the actual requirement: a transient one-cycle overlap is idempotent-safe, while steady-state dual
- * organizing becomes impossible because the loser's next gate refuses. Do not upgrade the naming or
- * the comments to "lock" — the word would be a claim the mechanism cannot make.
- *
- * **The REASON for that idempotence changed under this comment.** It used
- * to read "the pipeline dedups by Message-ID"; that is no longer true — `dedup_key` is
- * `fp1:<sha256>` over every field a sender chooses, and the Message-ID is one input among ten. The
- * conclusion survives for a BETTER reason: the fingerprint is a strictly finer identity, so two
- * engines ingesting the same bytes still resolve to the same row, and the second engine's
- * observation of a locator the first already recorded is now an `external_copy` — which writes one
- * instance row and changes no placement — rather than an adoption. A transient overlap therefore
- * costs a duplicate fetch, not a fought-over `desired_folder`.
- *
- * Why two organizers must never coexist, concretely: `runSyncCycle` ingests *through* the
- * pipeline, so syncing and organizing are one loop. Two organizers means two engines classifying
- * the same new message and issuing competing moves — and `adopt_external` ("reality changed in a
- * way we did not cause, so the user wins") was written for a HUMAN in another mail client, not
- * for a second ohmail fighting the first. `adopt_external` is explicitly
- * NOT load-bearing here.
- *
- * ── THE WIRE FORMAT, IN ONE PLACE ────────────────────────────────────────────────────────
- *
- * `ohmail/_meta` is a protocol between builds that update on completely different clocks: the
- * hosted service in minutes, a desktop install in days, a phone in months. Every one of them reads
- * and writes this one folder, so the format is the compatibility surface and it is defined HERE
- * rather than inferred from four parsers.
- *
- * **Every record is HEADERS-ONLY.** One `X-Ohmail-*` header names the kind; the rest of the record
- * is that kind's fields; the body is one sentence for a human who opens the folder in another mail
- * client. Nothing reads the body. Records are APPENDED with `\Seen` and are removed only by the
- * install that wrote them or by the organizer that has handled them.
- *
- * ### The four kinds, and the ONE header that tells them apart
- *
- * | discriminator          | kind      | written by | parsed by                                  |
- * | ---------------------- | --------- | ---------- | ------------------------------------------ |
- * | `X-Ohmail-Lease: 1`    | claim     | organizer  | {@link parseClaim}                         |
- * | `X-Ohmail-Request: 1`  | request   | reader     | {@link parseRequestEnvelope}               |
- * | `X-Ohmail-Ack: 1`      | ack       | organizer  | {@link parseAck}                           |
- * | `X-Ohmail-Profile`     | profile   | organizer  | `organizer-profile.ts`                     |
- *
- * {@link META_RECORD_KINDS} is that table as data, and {@link classifyMetaRecord} is the only
- * function that reads a discriminator. **A fifth kind is one entry in that array** plus its own
- * parser — not a fourth predicate that four call sites must remember to consult.
- *
- * A record carrying no discriminator this build knows is `null`: not ours, not touched, not
- * counted. Somebody else's mail client may keep something in this folder and it is not ours to
- * destroy.
- *
- * ### Two protocol numbers, and they move independently
- *
- * {@link CLAIM_PROTOCOL} versions the claim; {@link REQUEST_PROTOCOL} versions the request and its
- * acknowledgement. They are separate because the election and the decision channel change for
- * unrelated reasons, and a shared number would force a fleet-wide step for either.
- *
- * ### What a build does with a record it was not built for — BOTH directions
- *
- * | | an OLDER build meets a NEWER record | a NEWER build meets an OLDER record |
- * | --- | --- | --- |
- * | **claim** | ranks it as `kind: "unknown"` and treats it as LIVE — an unrankable fresh claim refuses even an authorized takeover, so the mailbox is left to whoever holds it rather than contested by a build that cannot read the holder. Never expunged. | ranks it normally. Fields it does not carry read as absent, and absence has a defined meaning at every one of them (`authorizedAt: null` is "nobody pressed for this install", which is the resting state). |
- * | **request** | LEAVES IT STANDING — `protocol > REQUEST_PROTOCOL`, or a kind with no applier here, is neither applied nor expunged, and the record waits for a build that understands it. **This courtesy is extended only to records that VERIFY**, because an unauthenticated record that could reach a permanent disposition is a denial of service anyone with folder rights can mount. | applies it. New fields are additive and optional; the signature is over a canonical form that names its own fields, so an older record hashes the older list. |
- * | **ack** | leaves it standing, same rule and the same verification-first ordering. | reads it. **The ack's signed field list is FIXED at protocol 1** — see {@link REQUEST_PROTOCOL} for why adding a field there is a breaking change that needs a bump and a tolerant, protocol-keyed canonicalization. |
- * | **profile** | ignores a document version it cannot read, and does not overwrite it. | reads it; `organizer-profile.ts` carries that half. |
- *
- * The rule underneath all eight cells: **an unreadable record is evidence, never permission.** A
- * build that cannot understand something in this folder must leave both the record and the mailbox
- * alone, because "I do not understand this" and "there is nothing here" have to stay
- * distinguishable.
- *
- * ── AND THE FOLDER-LEVEL RULE IS NOT THE SAME AT EVERY READER — a DECISION, not an oversight ─
- *
- * One record this build cannot read is one record. A folder too full to read in one window is a
- * different question, and the three readers of `ohmail/_meta` deliberately answer it differently.
- * This paragraph is here rather than buried at the implementation because it is the kind of thing a
- * later reader "tidies" into consistency, and consistency is the wrong answer.
- *
- * | reader | a truncated read | why |
- * | --- | --- | --- |
- * | the read-only PEEK | REFUSES — reports the mailbox unknown, never unheld | it exists to tell a person who holds their mailbox; being wrong prints a false sentence and invites a takeover of a mailbox somebody is actively organizing |
- * | both record DRAINS | REFUSE — skip the cycle, expunge nothing, append nothing | the reader's state machine reads "my record is not in the folder" as "the organizer took it", so a partial view tells a person a decision nobody ever saw was applied. Refusing costs one cycle |
- * | the lease GATE | ELECTS over the CLAIM SET, asked of the server by header search, and logs the count; refuses (`meta_folder_full`) only when the server cannot be asked or the claim set itself exceeds the ceiling | an organize verdict needs proof that no live claim is hidden, and a window cannot give it; a header search can, at the cost of one round trip, and only on the cycles where the folder is over the ceiling |
- *
- * ── AND IT APPLIES AGAIN INSIDE THE GATE, BETWEEN ITS OWN THREE READS ───────────────────────
- *
- * The gate reads this folder three times, and "acts on the window" is right for only one of them.
- *
- * | the gate's read | a truncated read | why |
- * | --- | --- | --- |
- * | the ELECTION | never on the window: on a truncated read it elects over the server-side claim set, or refuses | the window drops old records, and a live claim renewed under a burst is exactly an old record |
- * | the VERIFY after a renew | acts — safely | every claim it could NEWLY need to see was appended AFTER the election (our own, and a rival that renewed in the gap), and anything appended after the election is inside a newest-first window by construction. An older rival is the election's own documented residual, not a gap in this read |
- * | the handover CONFIRM | acts only where the window COVERS the ref, and not at all across a UIDVALIDITY change | it asks whether specific OLD refs are gone, and old is exactly what a newest-first window drops — while a renumbering makes the two reads' refs incomparable outright |
- *
- * The distinction is between choosing and CUSTODY. An election over a partial folder picks the best
- * of what it can see and is bounded by the next cycle. A custody check asks "is the claim I
- * displaced really gone", and a ref outside the window is absent from the read for the same reason
- * a successfully expunged one is — so reading that absence as success confirms a handover that
- * never landed, spending the caller's one-shot authorization while the beaten claim stands to win
- * the next election. UIDs ascend with arrival, so the window covers the highest of them and a ref
- * below its floor is one the read could not have seen; such a ref is treated exactly as a survivor
- * is, because "still there" and "I could not look" have the same correct answer here.
- *
- * **The asymmetry follows from what being wrong COSTS at each reader, not from tidiness.** The peek
- * and the drains fail into a false sentence, which a person acts on; the gate fails into lost mail,
- * which is the product. Where the two conflict, mail wins.
- *
- * A forged claim yields one organizer; a flood over a live incumbent yields two. The second
- * outcome is not available directly, which is why hiding a claim is the attack worth closing and
- * why the election reads the claim set rather than the folder.
- *
- * ── THREE LAYERS, AND THE SPLIT IS THE POINT ──────────────────────────────────────────────
- *
- *   1. FORMAT  — {@link formatClaim} / {@link parseClaim}. Pure string work.
- *   2. DECISION — {@link decideLease}. A pure function over parsed claims, so the whole table is
- *      unit-testable without a server and every arm can be watched fail.
- *   3. IO — {@link LeaseIo} and {@link runLeaseGate}. The only part that needs a connection.
- *
- * The decision layer never touches IO and the IO layer never decides. That is what makes the
- * priority table checkable at all: a decision function that could also fail to read is a
- * function whose "stand down" and "could not look" are the same code path, and §3.4 exists
- * because those two must never be reachable from one another.
+ * The organizer lease: two databases that can never see each other agree on who organizes a
+ * mailbox through the one medium they share — one claim message per organizer in the unsubscribed
+ * `ohmail/_meta`. The invariant: a destructive IMAP write happens only under a permit naming
+ * (install, mailbox, uidvalidity, nonce, issued-at) younger than `DEFAULT_PERMIT_TTL_MS`,
+ * re-validated on a cadence (`apps/worker/src/lease.ts`). A LEASE, not a mutex — IMAP has no
+ * compare-and-swap; a one-cycle overlap is idempotent-safe. Records are headers-only; an
+ * unreadable record is evidence, never permission. Three layers: format, decision ({@link
+ * decideLease}, pure), IO ({@link runLeaseGate}).
  */
 
 /**
@@ -179,33 +44,14 @@ export const META_FOLDER = "ohmail/_meta";
 /** `true` iff {@link META_FOLDER} is absent from the watched set. Asserted by the suite. */
 export const META_FOLDER_IS_UNWATCHED: boolean = !(WATCHED_FOLDERS as readonly string[]).includes(META_FOLDER);
 
-/* ══ WHERE `ohmail/_meta` ACTUALLY LIVES ON THIS SERVER ═══════════════════════════════════════
- *
- * `toServerPath(META_FOLDER)` answers what the folder is CALLED — `ohmail._meta` on a
- * dot-delimited server, `ohmail/_meta` on a slash-delimited one. It does not answer where it
- * IS, and on a server with a personal-namespace prefix those are different strings.
- *
- * ── THE FAILURE, MEASURED LIVE ──────────────────────────────────────────────────────────────
- *
- * Dovecot with `NAMESPACE` personal prefix `INBOX.` and delimiter `.` — the shape both live
- * mailboxes this project has ever run against report — files a root-named CREATE under the
- * prefix and then LISTS it there. So the folder Cloud has been writing its claim into for
- * months is `INBOX.ohmail._meta`, while `toServerPath(META_FOLDER)` says `ohmail._meta`, and
- * every read that asked `list.some((f) => f.path === p)` answered NO on a mailbox holding a
- * live claim with a heartbeat minutes old.
- *
- * That answer was load-bearing in the worst possible place. The pre-consent peek reports "no
- * holder" from it, the guided flow's "somebody else organizes this mailbox" step never renders,
- * and a person connecting a mailbox their other machine is actively organizing is shown the
- * plain consent statement and agrees to take it without ever being told. The single-organizer
- * invariant rests on this read.
- *
- * ── SO THE RESOLUTION IS ONE FUNCTION, USED BY BOTH SIDES ──────────────────────────────────
- *
- * The consented path and the APPEND-less peek go through {@link makeMetaFolderRef} and nothing
- * else. Two spellings of "where is `_meta`" is precisely how a reader and a writer end up
- * pointed at different folders — the reader seeing nobody while the writer renews beside it —
- * so there is one, and `meta-folder.test.ts` censuses the source to keep it that way.
+/**
+ * Where `ohmail/_meta` actually lives on this server. `toServerPath(META_FOLDER)` answers what
+ * the folder is CALLED, not where it IS: Dovecot with personal prefix `INBOX.` files a root-named
+ * CREATE under the prefix, so the claim lives at `INBOX.ohmail._meta` while the mapped name says
+ * `ohmail._meta` — and every path-equality read answered NO on a mailbox holding a live claim, so
+ * the pre-consent peek reported no holder and a person was never told their other machine
+ * organizes this mailbox. The resolution is one function used by both sides ({@link
+ * makeMetaFolderRef}); `meta-folder.test.ts` censuses the source to keep it that way.
  */
 
 /**
@@ -251,17 +97,13 @@ export interface MetaFolderLocation {
 }
 
 /**
- * TWO FOLDERS BOTH LOOK LIKE `ohmail/_meta`, AND PICKING ONE IS THE THING THIS MUST NOT DO.
- *
- * Reachable on a server offering both a root namespace and a prefixed one, where an older build
- * created `ohmail._meta` at the root and a newer one created `INBOX.ohmail._meta`. Choosing
- * either would put the reader and the writer in different folders for as long as both exist,
- * which is the dual-organizer bug with a longer fuse: each install renews a claim the other
- * cannot see, and both organize.
- *
- * It THROWS, and every caller's wrapper turns that into {@link LeaseUnavailableError} — "I could
- * not look", which §3.4 requires be unreachable from "nobody holds it". A mailbox in this state
- * needs a person to delete one of the two folders; nothing here can know which.
+ * Two folders both look like `ohmail/_meta`, and picking one is the thing this must not do.
+ * Reachable when an older build created `ohmail._meta` at the root and a newer one created
+ * `INBOX.ohmail._meta`: choosing either puts the reader and the writer in different folders for
+ * as long as both exist — the dual-organizer bug with a longer fuse. It THROWS, and every
+ * caller's wrapper turns that into {@link LeaseUnavailableError} — could-not-look, which must be
+ * unreachable from nobody-holds-it. A person has to delete one of the two folders; nothing here
+ * can know which.
  */
 export class AmbiguousMetaFolderError extends Error {
   readonly paths: readonly string[];
@@ -293,46 +135,14 @@ export function personalNamespacesOf(client: MetaNamespaceSource | undefined): r
 }
 
 /**
- * ONE ALPHABET FOR THE WHOLE RESOLUTION — the delimiter, and `ohmail/_meta` re-spelled in it.
- *
- * A namespace prefix is CONCATENATED onto the mapped name, so the two must be spelled the same
- * way. When they are not, the result is a folder name in two alphabets — and it is not
- * hypothetical: `ImapAdapter.connect` falls back to `delimiter = "/"` when the LIST carries no
- * INBOX row and no delimiter of its own, while NAMESPACE still reports `.`, which produced
- * `INBOX./ohmail/_meta` — a name `ensureMetaFolder` would then CREATE.
- *
- * So the FIRST personal namespace's delimiter wins, because it is the one the prefix is written
- * in and the prefix is the half that cannot be re-spelled. `bare` can be, and is:
- * {@link META_FOLDER} is exactly two segments, so re-joining them costs nothing and leaves the
- * comparison and the concatenation in the same alphabet.
- *
- * Below that, THE LIST ROW'S OWN DELIMITER — the server's statement about its own hierarchy —
- * and only then `bare`'s separator.
- *
- * ── THAT ORDER IS A FIX, AND THE OLD ONE HAD A FALSE PREMISE IN IT ────────────────────────
- *
- * `bare`'s separator used to outrank the LIST row, justified here in these words: "`toServerPath`
- * IS the live connection's delimiter mapping, so whatever it put between the two segments is this
- * server's delimiter, discovered rather than guessed."
- *
- * It is not, and the exception is not exotic. `ImapAdapter` initialises `delimiter = "/"` BEFORE
- * it connects (`imap.ts`), and `toServerPath` short-circuits on `"/"` and returns the canonical
- * name UNCHANGED. So on any adapter that has not learned its delimiter — or has learned `"/"` as
- * the fallback when the LIST carried none — `between` is the CANONICAL's own separator, a default
- * wearing the costume of a discovery, and it was being trusted over the server's own answer.
- *
- * The consequence was a wrong ANSWER rather than a refusal, which is the one direction this file
- * exists to prevent: on a prefixed server with no NAMESPACE reply, `bare` stayed `ohmail/_meta`,
- * no LIST row ends in that, and the resolution returned "absent" — which `makeLeasePeekIo` reads
- * as ZERO CLAIMS and the peek reports as `state=none`. A mailbox another install was actively
- * organizing looked free. Measured: of the four combinations of {delimiter learned, NAMESPACE
- * answered}, exactly one failed — unlearned delimiter AND no namespaces — and neither half failed
- * alone, which is why it survived a resolver written to fix this very family.
- *
- * A LIST row's delimiter is the server saying what its hierarchy separator is. An adapter's
- * spelling of a name it was asked to map is, at best, a report of the same fact and, at worst,
- * the absence of one. So the server's own statement goes first of the two. `between` remains
- * below it for the case the LIST answers nothing at all.
+ * One alphabet for the whole resolution — the delimiter, and `ohmail/_meta` re-spelled in it. A
+ * namespace prefix is concatenated onto the mapped name, so the two must be spelled the same way;
+ * the adapter once produced `INBOX./ohmail/_meta` by mixing them. The FIRST personal namespace's
+ * delimiter wins, because the prefix is the half that cannot be re-spelled; below it the LIST
+ * row's own delimiter, and only then `bare`'s separator — `toServerPath` short-circuits on `"/"`
+ * and returns the canonical unchanged, so `between` can be a default wearing the costume of a
+ * discovery, and trusting it over the server returned "absent" on a prefixed server with no
+ * NAMESPACE reply: the peek reported `state=none` on an actively organized mailbox.
  */
 function metaAlphabet(
   bare: string,
@@ -370,33 +180,14 @@ function metaAlphabet(
 }
 
 /**
- * FIND `ohmail/_meta` ON THIS SERVER, OR SAY WHERE TO PUT IT. Pure — a LIST and a NAMESPACE in,
- * a path out.
- *
- * ── HOW A PREFIX IS ACCEPTED, AND WHY NOT ANY SUFFIX MATCH ─────────────────────────────────
- *
- * Matching every row that merely ENDS in `ohmail._meta` would adopt a customer's own
- * `Backup.ohmail._meta` as the organizer lease. So a prefix has to be credible:
- *
- *  · **When the client reports personal namespaces, only those prefixes count.** This is the
- *    authoritative branch and the one that runs against any real connection.
- *  · **Otherwise a prefix counts when the server LISTS the mailbox it names** — `INBOX.` because
- *    `INBOX` is a mailbox on that server. Derived from the LIST rather than hardcoded, so a
- *    server whose personal namespace is not spelled `INBOX` is found on the same rule.
- *
- * The root spelling is always a candidate, whatever NAMESPACE says. The reason is the flat
- * server — most of them: `personal[0].prefix` is empty, and the root IS where the folder lives.
- * It also covers a client that hands back the server's paths unaltered. It does NOT, on a
- * prefixed server reached through `ImapFlow`, catch a folder an older build left at the root:
- * that client normalizes LIST output by prepending the namespace prefix, so a genuinely
- * root-level `ohmail._meta` is reported as `INBOX.ohmail._meta` and is indistinguishable here
- * from the prefixed one. Which also makes {@link AmbiguousMetaFolderError} close to unreachable
- * through that client — it is the honest answer where two really are visible, not a case anyone
- * should expect to meet. Two matches is that error, never a choice.
- *
- * When nothing matches, the path returned is the FIRST declared personal prefix plus the mapped
- * name: the server would file a root-named CREATE there anyway, and creating at the name LIST
- * will report is what stops the next reader from having to guess at all.
+ * Find `ohmail/_meta` on this server, or say where to put it. Pure — a LIST and a NAMESPACE in, a
+ * path out. A prefix has to be credible, never any suffix match (which would adopt a customer's
+ * `Backup.ohmail._meta` as the lease): when the client reports personal namespaces, only those
+ * prefixes count; otherwise a prefix counts when the server LISTS the mailbox it names. The root
+ * spelling is always a candidate — on a flat server the root is where the folder lives. Two
+ * matches is {@link AmbiguousMetaFolderError}, never a choice. When nothing matches, the answer
+ * is the first declared personal prefix plus the mapped name: the server would file a root-named
+ * CREATE there anyway.
  */
 export function resolveMetaFolder(input: {
   list: readonly MetaFolderRow[];
@@ -408,18 +199,12 @@ export function resolveMetaFolder(input: {
 }
 
 /**
- * THE SAME RESOLUTION, FOR ANY ONE OF OUR FOLDERS — `ohmail/_meta` is just the caller with the
- * strictest need.
- *
- * Generalised from one canonical name to the set because `ImapAdapter.ensureFolders` had the
- * defect this function was written to fix, in the same shape and for the same reason: it matched
- * `OHMAIL_FOLDERS` against the LIST by string equality, so on a server with a personal-namespace
- * prefix NONE of the five watched folders was ever recognised and all five were re-CREATEd on
- * every connect. Every CREATE was caught as "already exists", so it cost round trips and nothing
- * else — which is why it is a generalisation rather than an incident.
- *
- * Read {@link resolveMetaFolder}'s docstring for the rule itself; the prefix-credibility argument
- * is identical and is not restated here. The only difference is which name is being looked for.
+ * The same resolution, for any one of our folders — `ohmail/_meta` is just the caller with the
+ * strictest need. Generalised because `ImapAdapter.ensureFolders` had the identical defect: it
+ * matched `OHMAIL_FOLDERS` against the LIST by string equality, so on a prefixed server none of
+ * the five watched folders was recognised and all five were re-CREATEd on every connect — each
+ * caught as "already exists", costing round trips and nothing else. See {@link resolveMetaFolder}
+ * for the rule; the prefix-credibility argument is identical.
  */
 export function resolveOhmailFolder(input: {
   list: readonly MetaFolderRow[];
@@ -440,39 +225,27 @@ export function resolveOhmailFolder(input: {
   // `Archive/ohmail/_meta` — any folder under any listed parent — be adopted as the lease.
   const authoritative = ns.length > 0;
 
-  // ── THE FIRST PERSONAL NAMESPACE, AND ONLY IT ─────────────────────────────────────────────
-  //
-  // A server may declare several personal namespaces. `ImapFlow` uses exactly one — it sets
-  // `namespace = namespaces.personal[0]` and `tools.normalizePath` prepends THAT prefix to
-  // every path it sends and to every path LIST hands back — so a folder under a SECOND declared
-  // namespace is not where this connection's own organizer would ever write, and treating it as
-  // the lease would read a claim out of somewhere the writer will never renew. On a server
-  // declaring personal = (("" "/") ("Shared/" "/")) that is a customer's — or another
-  // account's — `Shared/ohmail/_meta` adopted as this mailbox's organizer lease.
-  //
-  // It is also the create path, for the same reason and with the same spelling: the earlier
-  // version filtered empty prefixes out before taking the first, which on that same server
-  // skipped the empty personal[0] and created the folder under `Shared/`.
+  // The FIRST personal namespace, and only it. A server may declare several; `ImapFlow` uses
+  // exactly one — it sets `namespace = namespaces.personal[0]` and prepends that prefix to every
+  // path it sends and receives — so a folder under a second declared namespace is not where this
+  // connection's organizer would ever write, and treating it as the lease would read a claim from
+  // somewhere the writer will never renew (on personal = (("" "/") ("Shared/" "/")), a stranger's
+  // `Shared/ohmail/_meta`). Also the create path, same spelling: filtering empty prefixes out
+  // before taking the first once created the folder under `Shared/`.
   const head = authoritative ? (ns[0]?.prefix ?? "") : "";
   const primary = head === "" || head.endsWith(delimiter) ? head : `${head}${delimiter}`;
 
   const credible = (prefix: string): boolean => {
     if (prefix === "" || !prefix.endsWith(delimiter)) return false;
     if (authoritative) return prefix === primary;
-    // ── NO NAMESPACE TO ASK, AND THIS BRANCH TRADES A RISK FOR AN ANSWER ────────────────────
-    //
-    // Reachable in production, not only against a fake: `ImapFlow`'s NAMESPACE handler assigns
-    // `namespaces.personal[0] = …` when the server answers NIL for the personal list, and
-    // `personal` is `false` there — assigning a property to a boolean throws under strict mode,
-    // the handler's own catch swallows it, and the connection ends up with no namespace at all.
-    //
-    // Here a prefix counts when the server LISTS the mailbox it names. That is weaker than the
-    // authoritative branch and it is weaker in a direction that matters: a customer's
-    // `Backup/ohmail/_meta` IS adopted when `Backup` is a listed folder. The alternative is
-    // refusing to resolve at all on a connection that cannot say where its own mail lives,
-    // which makes the lease unreadable rather than occasionally wrong. The root candidate is
-    // always in play beside this, so an ordinary install still resolves; and two matches are
-    // refused rather than picked. The trade is recorded rather than hidden.
+    // No NAMESPACE to ask, and this branch trades a risk for an answer. Reachable in production:
+    // `ImapFlow`'s handler assigns onto `personal[0]` when the server answers NIL, `personal` is
+    // `false` there, strict mode throws, its own catch swallows it — no namespace at all. Here a
+    // prefix counts when the server LISTS the mailbox it names — weaker, and weaker in a
+    // direction that matters: a customer's `Backup/ohmail/_meta` IS adopted when `Backup` is
+    // listed. The alternative is a lease unreadable rather than occasionally wrong; the root
+    // candidate stays in play, and two matches are refused rather than picked. The trade is
+    // recorded rather than hidden.
     const parent = prefix.slice(0, prefix.length - delimiter.length);
     return list.some((f) => f.path === parent);
   };
@@ -559,42 +332,24 @@ export const CLAIM_PROTOCOL = 1;
 export const DEFAULT_STALE_AFTER_MS = 10 * 60 * 1000;
 
 /**
- * Who is holding a claim. A closed set — an unrecognised value is foreign-and-unknown
- * ({@link readClaim}'s parse arm answers `"unknown"` for anything else).
- *
- * ── `mobile` IS A MEMBER, AND WHAT THAT COST TO GET WRONG ─────────────────────────────────
- *
- * A standalone phone stamps `mobile`, and for one release this set did not carry it: a writable
- * set held the member and the read set did not. That asymmetry was written as the safe direction
- * and it was safe in every direction but one. A renew APPENDS its new claim and expunges the old
- * copy afterwards, so the folder briefly holds two of this install's claims at different nonces —
- * and `decideLease`'s rules 1/2 exclude only `rawOurs` (install id AND the armed nonce), so the
- * phone's own older copy was a LIVE claim it could not rank. It stood down from its own mailbox
- * every cycle. A phone is the one install whose own kind it cannot rank, which is why nothing
- * else in the fleet met it. Both halves are one set now.
- *
- * The database carries the member too (`ORGANIZER_KINDS`, `packages/db/src/organizer-role.ts`,
- * behind `mailboxes_organized_by_kind_closed`), so a reader may store what it parses.
+ * Who is holding a claim. A closed set — an unrecognised value is foreign-and-unknown ({@link
+ * readClaim} answers `"unknown"`). `mobile` is a member, and its absence from the read set once
+ * cost this: a renew appends the new claim then expunges the old, so the folder briefly holds two
+ * of an install's claims, and `decideLease` excludes only `rawOurs` (install id AND the armed
+ * nonce) — the phone's own older copy was a live claim it could not rank, and it stood down from
+ * its own mailbox every cycle. Both halves are one set now; the database carries the member too
+ * (`ORGANIZER_KINDS`, `packages/db/src/organizer-role.ts`).
  */
 export type OrganizerKind = "local" | "cloud" | "mobile";
 
 /**
- * A HUMAN ASKED FOR THIS INSTALL, AND WHEN.
- *
- * ── IT USED TO BE THE STRING `"authorized"`, AND THE INSTANT IS THE WHOLE 0.14.1 CHANGE ──────
- *
- * A boolean-shaped authorization can answer "may I take this mailbox" and nothing else, so the
- * only way to rank two installs that had BOTH been pressed was to rank something else — which is
- * what `kind` was doing, and why a local install had no path over a live Cloud however recently
- * its owner had asked. The instant makes the press itself rankable, so the election orders by the
- * thing a person actually did, and a stale press loses to a fresh one on both doors from the same
- * folder contents.
- *
- * It is an object rather than a bare `Date | null` so that the type CANNOT accept the old string:
- * `takeover: "authorized"` compiles nowhere now, which is the point. A union that still admitted a
- * string would leave a call site nobody updated reading as "pressed at the epoch" — the lowest
- * rank there is — so every authorized takeover in the fleet would be stale, silently, with the
- * suite green.
+ * A human asked for this install, and WHEN. It used to be the string `"authorized"`: a
+ * boolean-shaped authorization cannot rank two installs that were both pressed, so `kind` ranked
+ * instead and a local install had no path over a live Cloud however recently its owner asked. The
+ * instant makes the press itself rankable — a stale press loses to a fresh one from the same
+ * folder contents. An object rather than a bare `Date | null` so the type CANNOT accept the old
+ * string: a union still admitting a string would leave an un-updated call site reading as
+ * pressed-at-the-epoch, silently, with the suite green.
  */
 export interface TakeoverAuthorization {
   /** The instant the press was recorded, as the row holds it. */
@@ -656,23 +411,14 @@ export function isMalformed(c: ClaimRecord): c is MalformedClaim {
 }
 
 /**
- * Who we are, for the gate.
- *
- * ── THE CLONE DEFENCE, AND WHY `lastNonce` IS MEMORY-ONLY ─────────────────────────────────
- *
- * Restore-from-backup clones the install id. Two machines then both believe every claim carrying
- * that id is their own, and identity matching — which is what makes own-role resumption work —
- * silently permits exactly the dual organizing it was written to prevent.
- *
- * So every write carries a fresh nonce and the writer remembers the last one it wrote. An "own"
- * claim whose nonce is NOT the one we wrote, and whose heartbeat is NEWER than ours, is somebody
- * else with our id: treat it as foreign.
- *
- * `lastNonce` is held IN MEMORY ONLY and deliberately forgotten on restart. Persisting it would
- * break own-role resumption — after a crash we would not recognise our own claim and would stand
- * down from a mailbox nobody else wants. Forgetting it means a fresh process trusts any claim
- * bearing its id exactly once, which is the correct trade: the clone case needs two LIVE writers
- * to be dangerous, and two live writers is exactly the case a null nonce cannot reach.
+ * Who we are, for the gate. The clone defence: restore-from-backup clones the install id, and two
+ * machines then both believe every claim carrying it is their own — identity matching silently
+ * permits exactly the dual organizing it exists to prevent. So every write carries a fresh nonce
+ * and the writer remembers the last one: an "own" claim whose nonce is not ours with a newer
+ * heartbeat is somebody else with our id. `lastNonce` is memory-only, deliberately: persisting it
+ * would break own-role resumption after a crash, and forgetting it means a fresh process trusts
+ * any claim bearing its id exactly once — the clone case needs two LIVE writers to be dangerous,
+ * exactly what a null nonce cannot reach.
  */
 export interface LeaseSelf {
   installId: string;
@@ -695,44 +441,23 @@ export interface OrganizeVerdict {
   verdict: "organize";
   renew: true;
   /**
-   * REFS OF THE FOREIGN CLAIMS THIS WIN DISPLACED, for the IO layer to expunge.
-   *
-   * ── WHY A TAKEOVER MUST CHANGE THE FOLDER, AND NOT JUST OUR MIND ───────────────────────────
-   *
-   * Populated only on an AUTHORIZED takeover — never on an ordinary renew, and never on
-   * own-role resumption. It is the mechanism that makes a handover converge, and without it the
-   * whole arbitration below is undone one cycle after it runs.
-   *
-   * The sequence it closes, measured rather than imagined: a human authorizes install B over
-   * install A's claim. B wins and appends. On the NEXT cycle both sides election over `{A, B}`
-   * and A wins on incumbency — so B stands down again, and the takeover the user asked for is
-   * quietly reversed. A permanent state, because nothing else ever changes.
-   *
-   * The folder is the only medium the two installs share, so the decision has to be recorded
-   * THERE. Once A's claim is gone, A's own next read finds its claim missing and another live
-   * claim present, and A stands down — which is the correct outcome reached from the shared
-   * medium rather than from either side's opinion about the other's clock.
-   *
-   * Expunging somebody else's bookkeeping is a real side effect and it is deliberately narrow:
-   * it happens only when a human explicitly asked this install to take this mailbox, and its
-   * worst case if the peer is alive is that the peer stands down — the SAFE direction, fewer
-   * organizers and never more.
+   * Refs of the foreign claims this win displaced, for the IO layer to expunge. Populated only on
+   * an AUTHORIZED takeover — never on a renew or own-role resumption. Without it the arbitration
+   * is undone one cycle later, measured: a human authorizes B over A; B wins and appends; next
+   * cycle both elect over {A, B} and A wins on incumbency, so B stands down and the takeover
+   * quietly reverses, permanently. The folder is the only shared medium, so the decision is
+   * recorded THERE: once A's claim is gone, A's own next read stands down. Narrow by design —
+   * only when a human asked, and the worst case with a live peer is fewer organizers, never more.
    */
   displace: readonly unknown[];
   /**
-   * DID THIS WIN COME FROM THE PRESS, or from continuation? (0.14.1)
-   *
-   * `true` only on rule 6 — a human asked for this install and its press outranked every live
-   * claim. `false` on rules 3 and 4, which are continuation and an empty folder, and which are
-   * reached with a press outstanding often enough that "was a press present" is not the same
-   * question.
-   *
-   * The gate needs the distinction to decide what STAMP to write onto the renewed claim: an
-   * authorized win writes the press this decision rested on, and everything else carries forward
-   * whatever the install's own prior claim held. Deriving it from `displace.length > 0` would be
-   * true today by accident — every ref the IO layer hands over is defined — and would silently
-   * become wrong for a rule-6 win whose beaten claims had no refs, which is the case where the
-   * gate would then write no stamp at all and hand the mailbox straight back on the next election.
+   * Did this win come from the PRESS, or from continuation? `true` only on rule 6 — a press
+   * outranked every live claim; `false` on rules 3 and 4, which can be reached with a press
+   * outstanding, so "was a press present" is not the same question. The gate needs it to decide
+   * what stamp the renewed claim carries: an authorized win writes the press it rested on,
+   * everything else carries forward the prior claim's. Deriving it from `displace.length > 0`
+   * would be true today by accident and silently wrong for a rule-6 win whose beaten claims had
+   * no refs — the gate would write no stamp and hand the mailbox back on the next election.
    */
   authorized: boolean;
 }
@@ -746,19 +471,13 @@ export interface StandDownVerdict {
 }
 
 /**
- * Nobody is organizing this mailbox, but somebody WAS.
- *
- * The third verdict, and the one a two-verdict table gets wrong. "No fresh foreign claim ⇒
- * organize" is precisely §4's forbidden auto-resume: a Cloud subscription lapses, and a
- * forgotten install on an office machine silently becomes the thing that moves someone's mail,
- * triggered by a billing event, with a rules store frozen at stand-down.
- *
- * §4's governing principle is that **ceasing to organize is always automatic; BECOMING an
- * organizer always requires an explicit human action** — including for Cloud. `available` is
- * that principle with a name. It converts to `organize` only when the caller passes
- * `takeover: "authorized"`, which means a human clicked something.
- *
- * Zero claims is NOT this. A mailbox nobody has ever organized has nobody to take over from.
+ * Nobody is organizing this mailbox, but somebody WAS — the third verdict a two-verdict table
+ * gets wrong. "No fresh foreign claim, so organize" is the forbidden auto-resume: a Cloud
+ * subscription lapses and a forgotten office install silently becomes the thing that moves
+ * someone's mail, triggered by a billing event, with a rules store frozen at stand-down. Ceasing
+ * to organize is always automatic; BECOMING an organizer always requires an explicit human
+ * action, Cloud included. `available` converts to `organize` only with `takeover: "authorized"`.
+ * Zero claims is NOT this: a mailbox nobody ever organized has nobody to take over from.
  */
 export interface AvailableVerdict {
   verdict: "available";
@@ -800,19 +519,12 @@ const H = {
 
 /**
  * The one capability there is today: this organizer drains decision records out of the meta
- * folder. Re-exported here because both writers and the reader's door name the same string, and
- * two spellings of a capability are a capability that is never detected.
- *
- * ── IT WAS TWO LITERALS UNTIL 0090, HELD EQUAL BY A TEST ────────────────────────────────────
- *
- * The argument for duplicating it was a dependency direction: `@trafficflow/db` must never import
- * `@trafficflow/core`, so `organizer-role.ts` could not reach a constant defined here. That half
- * is true and still is. The half that was wrong is the conclusion — the edge runs the OTHER way
- * and always has (`packages/core/package.json` names `@trafficflow/db`, and
- * `drizzle-repo.ts`, `pipeline.ts`, `husk-restore.ts` and `organizer-profile-store.ts` all import
- * from it), so THIS module can import the constant from THERE. One definition, in the package that
- * cannot reach the other, and the equality test it used to need is deleted along with the second
- * literal: there is nothing left for it to compare.
+ * folder. Re-exported because writers and the reader's door name the same string, and two
+ * spellings of a capability is a capability never detected. It was two literals held equal by a
+ * test, argued from a dependency direction — `@trafficflow/db` must never import
+ * `@trafficflow/core`, which is true; the wrong half was the conclusion, since the edge runs the
+ * other way (`packages/core` already imports from db). One definition, in the package that cannot
+ * reach the other; the equality test is deleted with the second literal.
  */
 export { CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE };
 
@@ -831,18 +543,13 @@ export interface ClaimInput {
   nonce: string;
   protocol?: number;
   /**
-   * THE PRESS THIS TENURE RESTS ON, or `null` for a tenure nobody pressed for.
-   *
-   * ── REQUIRED, AND NOT OPTIONAL, AND THE DIFFERENCE IS THE WHOLE FIELD ─────────────────────
-   *
-   * `authorizedAt?: Date` would compile at every existing call site and write NOTHING at all of
-   * them — so every claim this build wrote would rank as an unpressed one, every authorized
-   * takeover would read as stale to the next election, and the feature would be off in production
-   * with a green suite behind it. Making it required means a caller has to decide, once, per
-   * write site, and the compiler names the sites.
-   *
-   * `null` is a real answer and the common one: a claim on an empty folder is arm 4's
-   * "nobody has ever organized this mailbox", which is not a press and must not rank as one.
+   * The press this tenure rests on, or `null` for a tenure nobody pressed for. REQUIRED, not
+   * optional — `authorizedAt?: Date` would compile at every existing call site and write nothing
+   * at all of them, so every claim this build wrote would rank as unpressed, every authorized
+   * takeover would read stale to the next election, and the feature would be off in production
+   * behind a green suite. Required means every write site decides once, and the compiler names
+   * the sites. `null` is a real answer and the common one: a claim on an empty folder is not a
+   * press and must not rank as one.
    */
   authorizedAt: Date | null;
   /**
@@ -919,18 +626,14 @@ export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
   const malformed = (reason: string): MalformedClaim =>
     ref === undefined ? { malformed: true, reason } : { malformed: true, reason, ref };
 
-  // ── A RECORD THAT SAYS `X-Ohmail-Lease: 1` ANYWHERE IS NEVER INVISIBLE ────────────────────
-  //
-  // The discriminator used to be read with last-value-wins, so a record whose headers were
-  // `X-Ohmail-Lease: 1` … `X-Ohmail-Lease: 0` parsed as NOT A CLAIM AT ALL — `null`, which the
-  // gate drops entirely. An incumbent's only claim could therefore be erased from every reader's
-  // view by one duplicated header, and the next install to look would find an empty folder and
-  // start organizing beside it. Reproduced against the parser, not inferred.
-  //
-  // So the DUPLICATE is what is refused, and it is refused as `malformed` rather than as `null`:
-  // "a message that announces itself and cannot be read" is evidence somebody claimed, and
+  // A record that says `X-Ohmail-Lease: 1` anywhere is never invisible. The discriminator was
+  // read last-value-wins, so `X-Ohmail-Lease: 1 … X-Ohmail-Lease: 0` parsed as not-a-claim —
+  // `null`, dropped entirely — and an incumbent's only claim could be erased from every reader's
+  // view by one duplicated header; the next install found an empty folder and organized beside
+  // it. Reproduced against the parser. So the DUPLICATE is refused, as `malformed` rather than
+  // `null`: a message that announces itself and cannot be read is evidence somebody claimed, and
   // evidence produces `available` at worst. `null` is reserved for a record that never claimed
-  // anything — a stray note, or a future meta record type this build does not know.
+  // anything.
   if (count(H.lease) > 1) return malformed("duplicate lease header");
   if (get(H.lease) !== "1") return null; // not a claim — a stray, or a future meta record type
   // Every field the decision reads gets the same treatment, for the same reason: a duplicated
@@ -1020,19 +723,13 @@ export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
 // ── LAYER 2: THE DECISION ───────────────────────────────────────────────────────────────────
 
 /**
- * THIS INSTALL'S OWN CLOCK SKEW, measured from a record IT wrote — or `null` when it wrote none.
- *
- * Every claim carries two stamps for one instant: `X-Ohmail-Heartbeat`, written by the install's
- * clock, and IMAP INTERNALDATE, written by the server's when it took the append. Their difference
- * IS that install's skew, and it depends on neither the reader's clock nor on how old the folder
- * is. That independence is the whole reason this is the reading and a comparison against `now` is
- * not: `now − INTERNALDATE` cannot tell "my clock is ahead" from "nothing has been appended here
- * for a long time", and refusing to claim on the second is the seventy-three-year lockout from the
- * writer's side. Measured while building this: every fixture with a fixed clock read as days of
- * skew under the `now` form.
- *
- * The NEWEST of our own records by server time, because that is the most recent instant this
- * install's clock is known to have been at.
+ * This install's own clock skew, measured from a record IT wrote — or `null` when it wrote none.
+ * Every claim carries two stamps for one instant: `X-Ohmail-Heartbeat` (the install's clock) and
+ * IMAP INTERNALDATE (the server's), and their difference is the skew, independent of the reader's
+ * clock and of the folder's age. That independence is why `now − INTERNALDATE` is not the
+ * reading: it cannot tell "my clock is ahead" from "nothing has been appended in a while" — every
+ * fixture with a fixed clock read as days of skew under that form. The newest of our own records
+ * by server time, the most recent instant this clock is known to have been at.
  */
 export function ownClockSkewMs(
   records: readonly RawClaimMessage[], installId: string,
@@ -1051,22 +748,14 @@ export function ownClockSkewMs(
 }
 
 /**
- * IS THIS INSTALL'S CLOCK FIT TO WRITE A CLAIM? — the WRITER-side check, and it has to be here.
- *
- * No reader-side rule can fix a wrong writer clock: a reader that believes an old-looking
- * heartbeat is the seventy-three-year lockout, and one that disbelieves it lets a live organizer be
- * displaced. They are one decision read from two sides. What breaks the tie is the SERVER's clock,
- * which both machines can see.
- *
- * TWO BOUNDS, BECAUSE THE DIRECTIONS ARE NOT SYMMETRIC. A clock AHEAD is tolerated to
- * {@link MAX_FUTURE_SKEW_MS} — past it every other reader excludes our heartbeat from the renewal
- * evidence, so the folder reads as quiet and the mailbox is offered to somebody else while we go on
- * organizing it. A clock BEHIND is tolerated only to `staleAfterMs`: at a one-minute window, 61
- * seconds of lag is enough for a reader to find nothing renewing and take the mailbox with our live
- * record in `displace`. So the effective tolerance is the SMALLER of the two, and the refusal names
- * which bound fired.
- *
- * `null` skew — this install has written no record the server stamped — refuses nothing.
+ * Is this install's clock fit to write a claim — the WRITER-side check, and it has to be here: no
+ * reader-side rule can fix a wrong writer clock, and the tie-breaker is the server's clock, which
+ * both machines see. Two bounds, because the directions are not symmetric: AHEAD is tolerated to
+ * {@link MAX_FUTURE_SKEW_MS} — past it every reader excludes our heartbeat from the renewal
+ * evidence and the mailbox is offered to somebody else while we go on organizing it; BEHIND only
+ * to `staleAfterMs` — at a one-minute window, 61 seconds of lag lets a reader take the mailbox
+ * with our live record in `displace`. The refusal names which bound fired. `null` skew refuses
+ * nothing.
  */
 export function clockSkewRefusal(input: {
   skewMs: number | null; staleAfterMs: number;
@@ -1142,51 +831,36 @@ function compareRecency(a: OrganizerClaim, b: OrganizerClaim): number {
 }
 
 /**
- * HOW FAR INTO THE FUTURE A PEER'S CLOCK IS BELIEVED.
- *
- * A heartbeat later than our own clock is normal and must be tolerated — two machines have two
- * clocks, and treating a slightly-ahead peer as gone is how both sides conclude they are the
- * organizer. But the tolerance has to have an END, and it did not: a claim dated 2099 by a machine
- * with a dead clock battery stayed "fresh" for seventy-three years, and no authorization could
- * take the mailbox back from it. Measured against the decision function, not inferred: a `cloud`
- * claim dated `2099-01-01` produced `stand_down` for an authorized local, indefinitely.
- *
- * One staleness window, so a peer may be believed up to twice the window ahead of reality and no
- * further. Beyond that the heartbeat is CLAMPED rather than rejected — the claim still counts as a
- * claim, it simply stops being able to look newer than now.
+ * How far into the future a peer's clock is believed. A heartbeat ahead of our own clock is
+ * normal — two machines, two clocks — but the tolerance has to end, and it did not: a claim dated
+ * 2099 by a dead clock battery stayed "fresh" for seventy-three years and no authorization could
+ * take the mailbox back (measured against the decision function: a `cloud` claim at `2099-01-01`
+ * produced `stand_down` for an authorized local, indefinitely). One staleness window; beyond it
+ * the heartbeat is CLAMPED rather than rejected — the claim still counts, it simply stops being
+ * able to look newer than now.
  */
 export const MAX_FUTURE_SKEW_MS = DEFAULT_STALE_AFTER_MS;
 
 /**
- * IS THIS HEARTBEAT EVIDENCE OF ANYTHING? A stamp beyond `now + MAX_FUTURE_SKEW_MS` is not.
- *
- * A claim dated 2099 by a machine with a dead clock battery is still a CLAIM, and it must still be
- * RANKED — two readers that disagreed about the candidate set could each conclude they won, which
- * is why {@link clampFuture} clamps rather than drops it. What it must not do is grant its writer
- * the protections reserved for an organizer that is demonstrably alive, and "when was this last
- * renewed" is the question its stamp cannot answer. So implausibility is tracked here, beside
- * liveness, rather than by removing the claim from the election.
- *
- * The tolerance is one staleness window: two machines have two clocks, and treating a peer that is
- * slightly ahead as gone is how both sides conclude they are the organizer. Beyond that the stamp
- * says more than a clock can be wrong by.
+ * Is this heartbeat evidence of anything? A stamp beyond `now + MAX_FUTURE_SKEW_MS` is not. A
+ * 2099 claim is still a CLAIM and must still be RANKED — two readers disagreeing about the
+ * candidate set could each conclude they won, which is why {@link clampFuture} clamps rather than
+ * drops. What it must not do is grant its writer the protections reserved for an organizer that
+ * is demonstrably alive: "when was this last renewed" is the question its stamp cannot answer, so
+ * implausibility is tracked beside liveness rather than by removing the claim from the election.
  */
 function isBelievableHeartbeat(heartbeat: Date, now: Date): boolean {
   return heartbeat.getTime() <= now.getTime() + MAX_FUTURE_SKEW_MS;
 }
 
 /**
- * EVIDENCE THAT SOMETHING RENEWED THIS RECORD RECENTLY — believable, AND inside the window.
- *
- * The conjunction has a name because its two halves were written apart and drifted: the election
- * excluded implausible stamps from "has the folder gone quiet" while both the gate's unrankable
- * scan and the preview's per-holder `fresh` read the bare reader-clock test, under which a 2099
- * stamp is fresh at every real instant. Naming it is what makes the pair greppable.
- *
- * Its caller today is {@link peekLease}'s per-holder `fresh`. {@link readFolderClock} asks the same
- * question and does NOT call this, deliberately: it establishes believability first with a
- * `continue`, because an unbelievable stamp is excluded from the REFERENCE as well as from the
- * evidence, and calling this afterwards would test believability twice.
+ * Evidence that something renewed this record recently — believable, AND inside the window. The
+ * conjunction has a name because its halves drifted apart: the election excluded implausible
+ * stamps while the gate's unrankable scan and the preview's per-holder `fresh` read the bare
+ * reader-clock test, under which a 2099 stamp is fresh at every real instant. Its caller today is
+ * {@link peekLease}'s per-holder `fresh`; {@link readFolderClock} deliberately does not call it —
+ * it establishes believability first with a `continue`, and calling this afterwards would test
+ * believability twice.
  */
 function isRenewalEvidence(heartbeat: Date, now: Date, staleAfterMs: number): boolean {
   // CAPPED AT `now`, exactly as the reference is, and for the same reason: a stamp ahead of us is
@@ -1208,41 +882,14 @@ function isRenewalEvidence(heartbeat: Date, now: Date, staleAfterMs: number): bo
  */
 interface FolderClock {
   /**
-   * The newest believable heartbeat present, CAPPED AT `now`, `-Infinity` when no claim carries a
-   * believable one.
-   *
-   * ── AND IT IS NOT THE NEWEST CLAMPED ONE, WHICH IS A TWO-ORGANIZER FIX RATHER THAN TIDYING ──
-   *
-   * It was `min(heartbeat, now + MAX_FUTURE_SKEW_MS)` over every claim, on the argument that a
-   * ceiling stops a writer whose clock reads 2099 from lapsing every honest claim in the folder by
-   * more than one window. The ceiling did bound it — and one window is enough, because at ship
-   * values `MAX_FUTURE_SKEW_MS` EQUALS `DEFAULT_STALE_AFTER_MS`. A 2099 record clamped to
-   * `now + 10 min` dragged the reference there, so an honest record stamped ten seconds ago sat
-   * 610 s behind it, past the 600 s window, and read STALE. `decideLease`'s rule 1/2 then did not
-   * fire and an authorized press took the mailbox from an organizer that was alive and checking
-   * in — two organizers, from a wrong date in another machine's record.
-   *
-   * Excluding unbelievable stamps removes the class rather than bounding it: a stamp we have
-   * already decided says nothing about renewal (see {@link isBelievableHeartbeat}) cannot lapse
-   * anything either. The tolerance itself is untouched — a stamp INSIDE it is believable, enters
-   * the reference at its own value, and can still lapse a claim by up to one window, which is the
-   * price of believing a peer whose clock runs ahead — and that price turned out to be a
-   * two-organizer bug, which is why the value is capped.
-   *
-   * ── CAPPED AT `now`: BELIEVING A SKEWED PEER IS ALIVE IS NOT BELIEVING ITS CLOCK ────────────
-   *
-   * Excluding stamps BEYOND the tolerance was not enough. A stamp one millisecond INSIDE it still
-   * dragged the reference nearly a whole window forward, and an organizer renewing at `now − 10 s`
-   * was then more than a window behind that reference and read STALE — so rule 1/2 did not refuse
-   * the press, and rule 6 put the LIVE record it could not rank into `displace`. Two organizers,
-   * and an expunge of a claim we cannot read, from an unrelated residue with a slightly fast clock.
-   * Measured against this decision table, not inferred.
-   *
-   * The tolerance exists for exactly one purpose: so that a peer whose clock runs ahead is not
-   * treated as GONE. It was never meant to let that peer's stamp age everybody else. Capping the
-   * reference at `now` keeps the first and removes the second — the skewed record is still LIVE
-   * itself (its own heartbeat is ahead of the cap, so the difference is negative), and it can no
-   * longer lapse a neighbour.
+   * The newest believable heartbeat present, CAPPED AT `now`; `-Infinity` when no claim carries
+   * one. Not the newest clamped one: a 2099 record clamped to `now + 10 min` dragged the
+   * reference there, so an honest record stamped ten seconds ago sat past the 600 s window and
+   * read STALE — rule 1/2 did not fire and an authorized press took the mailbox from a live
+   * organizer. Excluding unbelievable stamps removes the class. And capped at `now`, because a
+   * stamp one millisecond inside the tolerance still dragged the reference a window forward with
+   * the same outcome. The tolerance keeps an ahead peer from being treated as GONE; it was never
+   * meant to let that peer's stamp age everybody else.
    */
   newestHeartbeat: number;
   /**
@@ -1278,82 +925,14 @@ function readFolderClock(
 }
 
 /**
- * IS THIS CLAIM STILL BEING RENEWED? One predicate, read everywhere the question is asked of a
- * claim in the company of the other claims in its folder.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * A LONE CLAIM IS NOT ITS OWN CLOCK
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * The reference is IN THE FOLDER rather than on this machine, which is the property {@link
- * runElection} is built on: two readers with two clocks cannot disagree about the candidate set,
- * so they cannot each conclude they won. It has one degenerate case, and it is the ordinary shape
- * of a mailbox rather than an exotic one — **the claim that IS the folder's newest heartbeat is
- * measured against itself.** The difference is zero, so it reads live at ANY age, and a folder
- * holding exactly one claim is nothing but that case.
- *
- * That is harmless where liveness only decides who wins an election among present claims, and it
- * is not harmless in {@link decideLease}'s rules 1 and 2, which refuse a press — including an
- * authorized one — while a claim this build cannot RANK is live. That refusal is bounded, and the
- * bound is the whole of it: *until the claim is stale or released*. Folder-relative liveness gave
- * the "until" no content. An install that stopped
- * organizing a year ago and left its record behind — a decommissioned VPS, a phone whose `mobile`
- * kind a desktop one release older reads as `unknown` — refused every press from every door, for
- * ever, and the only cure was a person deleting the bookkeeping message by hand. That is the
- * failure {@link MAX_FUTURE_SKEW_MS} was written for, reached through the other field.
- *
- * So the FRESHEST claim present is judged by the READER's clock, which is the only clock that can
- * tell "nothing has renewed here within a window" from "this is the newest thing present"; every
- * other claim keeps the folder-relative form, which is what the reference exists for. The escape
- * is not new — `Election.quiet` has applied exactly it, one function over, since the seventy-three
- * years were measured; what is new is that rule 1/2 and `quiet` now read ONE predicate instead of
- * two expressions that happened to be written by different hands. A stale unrankable record is
- * residue and displaces exactly as a stale rankable one does; a live one still refuses everything.
- *
- * ── AND THE BOUND BELONGS TO THE FOLDER, NOT TO ITS FRESHEST CLAIM ───────────────────────────
- *
- * Judging only the folder's NEWEST claim by the reader's clock was the wrong shape, and it failed
- * with two records where it worked with one. Two records both stale by a year — an unrankable one
- * at 09:00:00, any believable residue at 09:00:01 — put the unrankable one below the newest, so it
- * was judged by the folder-relative arm against a reference that was itself a year old, saw a
- * one-second difference, and read LIVE. Rule 1/2 refused every authorized press for ever. Adding
- * an OLDER sibling made a recoverable mailbox unrecoverable, which is nobody's mental model.
- *
- * So the reader's clock decides ONE thing about the folder as a whole — has anything believable
- * renewed here within a window (`FolderClock.renewing`) — and if the answer is no, every record in
- * the folder is residue regardless of which is newest. Only when the folder IS being renewed does
- * the folder-relative comparison mean anything, and there it does exactly what it was written for:
- * two readers with two clocks judge the same set the same way.
- *
- * That gate makes the old reader-clock arm provably dead, which is why it is gone rather than kept
- * "for clarity": the newest believable claim is fresh by the reader's clock EXACTLY when `renewing`
- * is true (it is the maximum, so if any believable claim is fresh, it is), so the arm could only
- * ever return the value the gate above it had already established.
- *
- * ── AN UNBELIEVABLE STAMP IS NO EVIDENCE OF RENEWAL, AND THIS FUNCTION NEVER MENTIONS IT ──────
- *
- * A stamp beyond `now + MAX_FUTURE_SKEW_MS` is AHEAD of the reader's clock, so `now − heartbeat`
- * is negative and such a record read "fresh" at every real instant — a lone record dated 2099
- * refused every press for ever, which is the seventy-three-year lockout by another route.
- * `Election.quiet` had always excluded such stamps; rules 1/2 had not. A record carrying one now
- * rides on the FOLDER's evidence and never on its own: live while something believable here is
- * renewing, residue otherwise.
- *
- * **That happens without a branch for it, and the absence is deliberate.** {@link readFolderClock}
- * excludes an unbelievable stamp from the reference, so the reference is at most `now`, and such a
- * heartbeat is by definition greater than `now + MAX_FUTURE_SKEW_MS` — the difference below is
- * therefore negative and the record is live exactly while the gate above lets anything be live. An
- * explicit `if (!isBelievableHeartbeat(…)) return true;` sat here for one round and was removed
- * after being MEASURED as unobservable: deleting it left all 149 rows green and the build clean,
- * and changing its body to the reader-clock test changed no answer either. A line no fixture can
- * make matter is read by the next author as a guarantee, so it is gone and this paragraph plus two
- * rows carry the property instead — "still refuses a press over a 2099 claim beside a genuinely
- * fresh record" and "admits a press over a 2099 claim beside a record that also lapsed". The
- * load-bearing exclusion is the `continue` in {@link readFolderClock}, which has its own mutation.
- *
- * A heartbeat INSIDE the tolerance is a different case and is handled by the arithmetic: it is
- * ahead of the capped reference, so its own difference is negative and it stays live, which is the
- * tolerance doing its job for the claim that owns the stamp and for nobody else.
+ * Is this claim still being renewed? One predicate. The reference is IN THE FOLDER, so two
+ * readers cannot disagree — with one degenerate case: the newest heartbeat measures against
+ * itself, live at any age. Harmless for the election; fatal in rules 1/2 — a decommissioned
+ * install's year-old record refused every press for ever. So the reader's clock decides one thing
+ * about the FOLDER — has anything believable renewed within a window (`FolderClock.renewing`) —
+ * and if not, every record is residue; only a renewing folder uses the folder-relative
+ * comparison. An unbelievable stamp rides on the folder's evidence with no branch for it: {@link
+ * readFolderClock} excludes it from the reference, so the arithmetic answers.
  */
 function isClaimLive(
   c: OrganizerClaim,
@@ -1365,52 +944,14 @@ function isClaimLive(
 }
 
 /**
- * THE ELECTION. **A pure function of the folder's contents — never of the reader's clock.**
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE RULE THAT MATTERS, AND THE FAMILY OF BUGS IT REPLACES
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * The previous table asked "is this peer's claim fresh?" as `now(mine) - heartbeat(theirs) <
- * staleAfterMs`. That question mixes two clocks, and **two readers of the same folder could answer
- * it differently** — which is the whole bug family, because two readers that disagree about the
- * candidate set can each conclude they won.
- *
- * Three split-brains were reproduced by execution against the old function, and every one of them
- * is this single mistake:
- *
- *  · **A laptop that slept.** NO CLOCK SKEW REQUIRED, and this is the most reachable of the
- *    three. Install A sleeps past the window; B is active. B sees A as stale, so A is not in B's
- *    candidate set and B continues on its own claim. A wakes, sees B as fresh, and beats B on
- *    incumbency because A's `claimedAt` is older — so A organizes too. Both write, indefinitely.
- *  · **Five minutes of clock skew.** B's clock runs ahead, so A's claim reads as stale to B and
- *    the surface actively OFFERS a takeover. B takes it; A then reads B's future-dated claim as
- *    fresh (correctly) but wins incumbency, so A keeps organizing. No convergence: A is stale to B
- *    forever.
- *  · **Two clouds.** `freshCloud` was computed and then consulted only when `self.kind ===
- *    "local"`, so two cloud organizers each fell through to "I hold a fresh claim, therefore
- *    organize" for ever. The leader lock masks it in one deployment; the lease provided no
- *    protection at all, and the leader lock is not the lease.
- *
- * So freshness is redefined **relative to the folder**: the newest heartbeat present is the
- * reference, and a claim more than one window older than it has LAPSED. Every reader computes the
- * same reference from the same messages, so every reader computes the same candidate set and the
- * same winner. Agreement is now structural rather than probable.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * WHERE THE READER'S CLOCK IS STILL USED, AND WHY NEITHER USE IS THE ARBITER
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- *  1. **As a CEILING on a future heartbeat** ({@link MAX_FUTURE_SKEW_MS}). An upper bound cannot
- *     change the order of two honestly-clocked claims; it can only stop a broken clock from
- *     outranking everything for ever.
- *  2. **To decide whether the whole folder has gone QUIET** — `now - newest >= staleAfterMs`, which
- *     is what makes a mailbox OFFERABLE for takeover. This is single-sided and can only ever lead
- *     to a human being asked a question. Getting it wrong in the permissive direction produces an
- *     authorized takeover that displaces a live install, which is one organizer — the safe
- *     direction — and is exactly what an authorized takeover is defined to do.
- *
- * Nothing else. **A reader's clock can no longer decide who organizes a mailbox.**
+ * The election. A pure function of the folder's contents — never of the reader's clock. The old
+ * table asked "is this peer fresh" as `now(mine) − heartbeat(theirs)`, mixing two clocks, and two
+ * readers could answer differently — three split-brains reproduced by execution: a laptop that
+ * slept (both organize), five minutes of skew (a takeover offered over a live claim), two clouds
+ * (`freshCloud` consulted only for locals). Freshness is folder-relative now: the newest
+ * heartbeat present is the reference, a claim a window older has lapsed, every reader computes
+ * the same winner. The reader's clock keeps two uses — a ceiling on a future heartbeat, and
+ * whether the folder has gone QUIET — and neither can decide who organizes.
  */
 interface Election {
   /** Claims present in the folder, coalesced, with a clamped heartbeat. */
@@ -1429,31 +970,14 @@ interface Election {
    */
   clock: FolderClock;
   /**
-   * Claims whose PRESS is not implausibly far in the future — the same idea as {@link plausible},
-   * one field over, and it exists because 0.14.1 moved the election onto a field the heartbeat's
-   * ceiling does not cover.
-   *
-   * ── WHY THE CLAMP ALONE IS NOT ENOUGH HERE, AND IT IS FOR THE HEARTBEAT ────────────────────
-   *
-   * Measured, not reasoned: a claim stamped `2099-01-01` clamps to `now + MAX_FUTURE_SKEW_MS`, and
-   * an honest press is made AT `now` — so the clamped value is always strictly greater and the
-   * honest press can never win rule 6. The seventy-three-year lockout, reproduced on the field that
-   * now decides the election. The heartbeat does not have this shape because liveness is a
-   * comparison of DIFFERENCES against the newest claim in the folder, so a clamped outlier stops
-   * being able to look newer than everything else; "is my press newer than theirs" is a comparison
-   * against a value, and clamping only moves the value.
-   *
-   * So the clamp is kept (it bounds the RANKING, which every reader must compute identically) and
-   * an implausible press additionally loses the one protection it must not have: the ability to
-   * REFUSE a human's takeover. Rule 6's maximum is taken over this set.
-   *
-   * ── THE CLOCK DEPENDENCE IS THE ONE THE MODULE ALREADY ACCEPTS ─────────────────────────────
-   *
-   * This is the reader's own clock deciding something, which the header's rule confines to two
-   * uses. It is the SECOND of them exactly: single-sided, and it can only ever let a human's
-   * takeover displace a live install — one organizer, the safe direction, and precisely what an
-   * authorized takeover is defined to do. It cannot make two readers both organize, because the
-   * winner is displaced from the folder in the same gate and its own next read finds its claim gone.
+   * Claims whose PRESS is not implausibly far in the future — {@link plausible}'s idea, one field
+   * over, because 0.14.1 moved the election onto a field the heartbeat's ceiling does not cover.
+   * Measured: a claim stamped 2099 clamps to `now + MAX_FUTURE_SKEW_MS`, strictly greater than
+   * any press a human makes at `now`, so the honest press could never win rule 6 — the
+   * seventy-three-year lockout on the deciding field. The clamp is kept (it bounds the ranking
+   * every reader must compute identically); an implausible press additionally loses the one
+   * protection it must not have: the ability to refuse a human's takeover. Reader-clock use two
+   * of two: single-sided, displacing at worst a live install — one organizer, the safe direction.
    */
   plausiblePress: ReadonlySet<OrganizerClaim>;
   /** Nothing PLAUSIBLE in the folder has been renewed within one window of the READER's now. */
@@ -1464,14 +988,10 @@ interface Election {
 
 /**
  * `min(t, now + MAX_FUTURE_SKEW_MS)` for BOTH instants a broken clock can inflate — the heartbeat
- * and the press. See {@link MAX_FUTURE_SKEW_MS}.
- *
- * The press needs the same ceiling as the heartbeat and for a sharper reason. `authorizedAt` is
- * now the FIRST term of the order, so an install whose clock reads 2099 would write a press that
- * outranks every honest one for seventy-three years — the exact seventy-three-year failure the
- * heartbeat ceiling exists to end, moved to the field that decides the election rather than the
- * field that decides liveness. Clamped rather than rejected, on the same argument: a press with a
- * silly clock is still a press, it simply stops being able to look newer than now.
+ * and the press. The press needs the ceiling for a sharper reason: `authorizedAt` is the first
+ * term of the order, so an install whose clock reads 2099 would write a press that outranks every
+ * honest one for seventy-three years. Clamped rather than rejected: a press with a silly clock is
+ * still a press, it simply stops being able to look newer than now.
  */
 function clampFuture(c: OrganizerClaim, now: Date): OrganizerClaim {
   const ceiling = now.getTime() + MAX_FUTURE_SKEW_MS;
@@ -1486,56 +1006,14 @@ function clampFuture(c: OrganizerClaim, now: Date): OrganizerClaim {
 }
 
 /**
- * Strongest first.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * A PRESS RANKS. KIND DOES NOT. (0.14.1)
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * The first term used to be `kind`: `cloud` outranked `local`, on the older reading of the
- * dual-mode rule that "a fresh cloud lease outranks local for CONTINUING coverage". **That term is
- * deleted**, and with it rule 5, whose whole content was refusing an authorized local install over
- * a live cloud one.
- *
- * The case it was wrong about is the ordinary one rather than an exotic one: somebody loses access
- * to the machine their hosted organizer runs on — a VPS they can no longer reach, a subscription
- * on an address they cannot log into — and wants the mailbox organized from the laptop in front of
- * them. Under the kind rule there was no path. The honest action offered was to give the mailbox
- * up on the side they had just lost access to, which is the side that cannot act. A rule whose
- * remedy requires the party that has disappeared is not a rule about continuation; it is a lockout.
- *
- * What replaces it says the same thing the kind rule was reaching for, without the asymmetry:
- * **liveness is not authority, and an explicit press outranks both.** Presence in the folder still
- * protects an incumbent against anything that merely ARRIVES — an install with no press ranks
- * below an incumbent with none, on `claimedAt` — so nobody self-promotes. What presence no longer
- * does is outrank a human who deliberately asked for a different machine.
- *
- * The order, and each term is load-bearing:
- *
- *  1. **The PRESS, newest first**, clamped by {@link clampFuture} so a dead clock battery cannot
- *     mint an unbeatable authorization. `null` — nobody pressed for this tenure — ranks LOWEST,
- *     which is what makes an ordinary renewal lose to any press at all and is the whole mechanism
- *     of a takeover.
- *  2. **Then INCUMBENCY**: the oldest `claimedAt`. Unchanged, and it is what decides between two
- *     unpressed claims (the common steady state) and between two claims pressed in the same
- *     millisecond. Nobody self-promotes by arriving.
- *  3. **Then `installId`, then `nonce`** — a TOTAL order, so no two readers can break a tie
- *     differently. The nonce is what closes the restored-clone case, where two live processes
- *     share an install id AND a `claimedAt`: `compareIncumbency` returned 0, `Array.sort` is not
- *     required to be stable across differing input orders, and two clones reading the same folder
- *     in different orders each elected themselves. Measured, not theorised.
- *
- * `kind` survives on the claim and is still read — `reasonFor` composes the stand-down reason from
- * it and every banner names it — it simply no longer decides anything.
- *
- * ── THE CROSS-VERSION CASE, STATED RATHER THAN DISCOVERED ─────────────────────────────────────
- *
- * An install one release older runs this function without term 1, so it ranks by incumbency alone.
- * Two builds therefore CAN elect differently off one folder for one cycle — and the outcome is
- * bounded and safe in the direction that matters: the older install's own rule 5 still refuses it
- * a live cloud claim, and where it does win, it wins by being the incumbent, which is a claim that
- * is already in the folder. The convergence cases are enumerated as decide-table tests rather than
- * argued here.
+ * Strongest first. A press ranks; kind does not — the old first term let a live Cloud refuse an
+ * authorized local for ever, stranding the person who lost access to the Cloud side. Liveness is
+ * not authority; presence still protects an incumbent against anything that merely arrives. The
+ * order: (1) the press, newest first, clamped by {@link clampFuture}; `null` ranks lowest — the
+ * mechanism of a takeover; (2) incumbency, oldest `claimedAt`; (3) `installId`, then `nonce` — a
+ * TOTAL order, closing the case where two restored clones each elected themselves. `kind`
+ * survives for display; it decides nothing. An older build ranks by incumbency alone — bounded,
+ * enumerated as decide-table tests.
  */
 function compareStrength(a: OrganizerClaim, b: OrganizerClaim): number {
   // Newest press first, and a claim with no press is `-Infinity` — below every real instant, and
@@ -1566,21 +1044,15 @@ function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: nu
     return c;
   });
 
-  /* ── THE CLOCK IS READ OVER THE RAW CLAIMS, NOT THE COALESCED CANDIDATES ────────────────────
-   *
-   * Over the raw list because that is the set rules 1/2 and an authorized displacement judge, and
-   * one question deserves one computation. It also fixes a corner the coalesced form got wrong in
-   * the unsafe direction: coalesce keeps the NEWEST record per install, and a 2099 duplicate is
-   * the newest, so an install renewing honestly beside its own dead-clock record had its fresh
-   * record dropped from the set and the folder read as QUIET — a takeover offered over an install
-   * that was actively organizing. Widening `renewing` can only ever REFUSE a takeover the narrower
-   * form would have offered, which is the safe direction for the single-organizer rule.
-   *
-   * AND NOT OVER `candidates`, which is a second and sharper reason: `clampFuture` has already
-   * pulled every stamp under the ceiling there, so `isBelievableHeartbeat` cannot fail on a
-   * candidate and the whole no-evidence rule would be silently disabled — every 2099 record would
-   * read as renewing again. The two are separate mutations with separate rows, because "coalesced"
-   * and "clamped" are two different ways to lose this and each would otherwise cover for the other.
+  /**
+   * The clock is read over the RAW claims, not the coalesced candidates. Raw because that is the
+   * set rules 1/2 and an authorized displacement judge — and coalesce keeps the NEWEST record per
+   * install, so a 2099 duplicate REPRESENTED an install renewing honestly beside it: the fresh
+   * record dropped, the folder read QUIET, a takeover offered over an active organizer. Widening
+   * `renewing` can only refuse a takeover the narrower form would have offered — the safe
+   * direction. And not over `candidates` for a sharper reason: `clampFuture` has already pulled
+   * every stamp under the ceiling there, so the no-evidence rule would be silently disabled. Two
+   * separate mutations pin the two ways to lose this.
    */
   const clock = readFolderClock(
     claims.filter((c): c is OrganizerClaim => !isMalformed(c)),
@@ -1588,19 +1060,14 @@ function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: nu
     staleAfterMs,
   );
 
-  // THE REFERENCE IS IN THE FOLDER, not on this machine. Clamped, so a broken clock cannot lapse
-  // every honest claim in the folder by more than one window.
-  //
-  // ── AND THE ELECTION'S OWN LIVENESS STAYS FOLDER-RELATIVE FOR EVERY CANDIDATE, INCLUDING THE
-  //    NEWEST, WHICH IS THE OPPOSITE OF WHAT `isClaimLive` DOES ──────────────────────────────
-  //
-  // Deliberate, and it is §4's "continuing is not becoming". `live` is the candidate set the
-  // WINNER is chosen from, and a folder holding only our own claim — a laptop that slept for a
-  // week, a process that crashed and came back — must still elect us on rule 3 without asking
-  // anybody: we are the newest thing in the folder, however old that is. Judging this set by the
-  // reader's clock would empty it, drop the winner to null, and turn own-role resumption into a
-  // takeover that needs a human press. Whether the folder has gone QUIET is a different question,
-  // asked below and answered on the reader's clock, and it decides only arm 7 against arm 8.
+  // The reference is IN THE FOLDER, not on this machine — clamped, so a broken clock cannot lapse
+  // every honest claim by more than one window. And the election's own liveness stays
+  // folder-relative for every candidate, including the newest — the opposite of `isClaimLive`,
+  // deliberately: `live` is the set the WINNER is chosen from, and a folder holding only our own
+  // claim (a laptop that slept a week) must still elect us on rule 3 without asking anybody.
+  // Judging this set by the reader's clock would empty it and turn own-role resumption into a
+  // takeover needing a human press. Whether the folder has gone QUIET is a different question,
+  // asked below on the reader's clock, deciding only arm 7 against arm 8.
   const newest = candidates.reduce<number>((m, c) => Math.max(m, c.heartbeat.getTime()), -Infinity);
   const live = candidates.filter((c) => newest - c.heartbeat.getTime() < staleAfterMs);
   const winner = [...live].sort(compareStrength)[0] ?? null;
@@ -1617,46 +1084,14 @@ function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: nu
 }
 
 /**
- * WHO MAY ORGANIZE THIS MAILBOX. Pure — no clock of its own, no IO, no side effects.
- *
- * The order below is the order of the reasons, and each traces to a ruling rather than a
- * preference:
- *
- *  1. **A live claim in a protocol we do not understand ⇒ stand down.** Never "unparseable, so
- *     ignore": a future format that older installs skipped would silently re-enable dual
- *     organizing against every one of them. No authorization overrides this — we cannot rank what
- *     we cannot read.
- *  2. **A live claim of an unrecognised KIND ⇒ stand down.** Same reasoning. The one thing we know
- *     is that something is organizing this mailbox and we cannot place it.
- *  3. **We hold the strongest live claim ⇒ organize.** This is continuation, and it covers
- *     own-role resumption after a crash, a restore or a long sleep: if the folder holds only our
- *     own claims, however old, we are the newest thing in it and we win. §4: "Continuing is not
- *     becoming."
- *  4. **The folder holds no readable claim at all ⇒ organize.** Nobody has ever organized this
- *     mailbox, so there is nobody to take over from. A transient double-append here is the
- *     designed handover window, and {@link runLeaseGate}'s append-then-verify is what bounds it to
- *     the cycle in which it happens.
- *  5. **DELETED IN 0.14.1, and the deletion is the release.** It read: *"we lost, and the winner
- *     is a LIVE claim of a kind that outranks ours ⇒ stand down, even with authorization"*, on the
- *     older reading that a local install has no path over a live Cloud and that the honest action
- *     is to give the mailbox up on the Cloud side. That remedy requires the side the person has
- *     just lost access to, which is exactly the population it stranded: a VPS nobody can reach any
- *     more, a hosted organizer on an address its owner cannot log into. The asymmetry was recorded
- *     here as deliberate, and it was — it is now ruled wrong. Kind no longer ranks anywhere; see
- *     {@link compareStrength}. The numbering is kept so that the rules below keep the names every
- *     test, log line and neighbouring comment uses for them.
- *  6. **We lost, and a human pressed for THIS install more recently than for any live rival ⇒
- *     organize, and DISPLACE what we beat.** STRICT: an equal instant is not newer, and breaks on
- *     `installId` like every other tie. A press that is NOT newer is STALE — it falls through to
- *     7/8 and the caller voids it there, which is the whole replay protection and is the reason
- *     there is deliberately no "the stamp is older than the holder's claimedAt" check: that check
- *     breaks the two-press race, where the second presser's stamp is legitimately older than the
- *     first presser's tenure.
- *     The displacement is what records the handover in the shared medium; see {@link OrganizeVerdict}.
- *  7. **We lost, and the folder is still being renewed ⇒ stand down.** Somebody is organizing it.
- *  8. **We lost, and the folder has gone quiet ⇒ `available`.** Somebody WAS organizing and
- *     nothing has renewed since. Offerable, never taken: BECOMING an organizer always requires an
- *     explicit human action, including for Cloud.
+ * Who may organize this mailbox. Pure — no clock, no IO. (1) A live claim in a protocol we do not
+ * understand — stand down; no authorization overrides what we cannot rank. (2) A live claim of an
+ * unrecognised KIND — stand down. (3) We hold the strongest live claim — organize; continuation
+ * covers resumption. (4) No readable claim — organize. (5) DELETED — it refused an authorized
+ * local over a live Cloud; the numbering keeps the names tests use. (6) A human pressed for THIS
+ * install more recently than any live rival — organize and DISPLACE; STRICT, and no
+ * stamp-older-than-claimedAt check, which would break the two-press race. (7) Lost, folder
+ * renewing — stand down. (8) Lost, folder quiet — `available`: offerable, never taken.
  */
 export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   const { self, now } = input;
@@ -1719,28 +1154,15 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   // that holds only unreadable claims, or only a claim dated 2099, has evidence in it and belongs
   // to the arms below.
   if (election.candidates.length === 0 && election.malformed.length === 0) {
-    /* ── AND IT STAMPS THE PRESS WHEN THERE IS ONE, WHICH IS NOT OBVIOUS ──────────────────────
-     *
-     * There is nothing to DISPLACE here — an empty folder has no handover to record — so the
-     * tempting answer is `authorized: false`, and it was, for exactly as long as it took to write
-     * down what the caller does next: it SPENDS the row's stamp on this win. That pair is an
-     * inversion, and the sequence is ordinary rather than exotic:
-     *
-     *   FIRST   somebody presses "Organize here" on a laptop that is asleep. The stamp sits on its
-     *           row, unspent — no gate has run.
-     *   SECOND  they change their mind and press on Cloud. `ohmail/_meta` is empty (nobody has ever
-     *           organized this mailbox, or the last organizer released cleanly), so Cloud takes
-     *           arm 4. An unstamped claim means Cloud's tenure ranks at minus infinity.
-     *   THIRD   the laptop wakes, offers its earlier press against Cloud's unpressed claim, and
-     *           wins rule 6.
-     *
-     * The OLDER decision reverses the newer one, and both installs agree it should — which is the
-     * one failure mode ranking by the press exists to make impossible.
-     *
-     * So the flag says what the FIELD says: this tenure rests on that press. It is false on rule 3
-     * because a continuation rests on the prior tenure (whose stamp is carried forward), and false
-     * here when nobody pressed, which is the common arm-4 case — a consented organizer meeting an
-     * empty folder.
+    /**
+     * And it stamps the press when there is one, which is not obvious — there is nothing to
+     * displace on an empty folder, so `authorized: false` tempts, and it inverts a decision:
+     * somebody presses on a sleeping laptop (stamp unspent), changes their mind and presses on
+     * Cloud, Cloud takes arm 4 — an unstamped claim ranks at minus infinity — then the laptop
+     * wakes, offers its EARLIER press against Cloud's unpressed claim, and wins rule 6. The older
+     * decision reverses the newer one. So the flag says what the field says: this tenure rests on
+     * that press; false on rule 3 (continuation carries the prior stamp) and false here when
+     * nobody pressed.
      */
     return { verdict: "organize", renew: true, displace: [], authorized: takeover !== null };
   }
@@ -1756,37 +1178,16 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
    * `isBelievableHeartbeat` (now inside {@link FolderClock}, where it was a `plausible` set) keeps
    * a 2099 claim from being treated as a live organizer. Only the kind comparison is deleted. */
 
-  // 6 — a human asked for this mailbox MORE RECENTLY than for anything alive in it. Take it, and
-  // record the handover in the folder.
-  //
-  // ── STRICTLY NEWER THAN THE LIVE MAXIMUM, AND THAT COMPARISON IS THE REPLAY PROTECTION ─────
-  //
-  // A stamp is a one-shot on the row, spent by the gate that succeeds — but the row and the folder
-  // are two stores, and the case this arm has to survive is the one where they disagree: a press
-  // that already won, was already recorded in `ohmail/_meta` as this install's tenure, and is then
-  // offered again by a caller that failed to void it. Ranking it against the LIVE MAXIMUM answers
-  // that without needing to know anything about the row: our own winning claim carries that very
-  // instant, so `>` is false against ourselves and the replay decides nothing.
-  //
-  // STRICT, so an equal instant is not a win. Two presses recorded in the same millisecond break on
-  // `installId` inside `compareStrength` instead, which every reader of the folder computes the
-  // same way — as opposed to `>=`, under which BOTH installs would displace each other's claim in
-  // the same cycle and the mailbox would end with no claim at all.
-  //
-  // AND DELIBERATELY NOT "the stamp must be newer than the holder's `claimedAt`". That check reads
-  // as an obvious tightening and it breaks the two-press race, which is the ordinary case rather
-  // than an exotic one: A presses and wins, B presses eight seconds later, and B's stamp is older
-  // than A's tenure by construction because A's tenure began when A won. Under that check B — the
-  // person's LATER decision — could never take the mailbox.
-  //
-  // OVER THE LIVE **AND PLAUSIBLY-PRESSED** CLAIMS. The second filter is what keeps this arm from
-  // reproducing the seventy-three-year lockout on the field the election now turns on: a stamp
-  // dated 2099 clamps to `now + MAX_FUTURE_SKEW_MS`, which is strictly greater than any press a
-  // human can make at `now`, so without it one machine with a dead clock battery could refuse every
-  // takeover for ever and the only cure would be a person deleting the bookkeeping message by hand.
-  // See `Election.plausiblePress` for why the clamp alone answers this for the heartbeat and not
-  // for the press. Such a claim is still RANKED — `compareStrength` sees its clamped value, so no
-  // two readers disagree about the winner — it simply loses the power to veto a human.
+  // Rule 6 — a human asked for this mailbox more recently than anything alive in it: take it and
+  // record the handover. Strictly newer than the live maximum, and that comparison IS the replay
+  // protection: a press that already won carries the same instant on our own winning claim, so
+  // `>` is false against ourselves and a re-offered stamp decides nothing. STRICT, so an equal
+  // instant breaks on `installId` in `compareStrength` — under `>=` both installs would displace
+  // each other in one cycle and the mailbox would end with no claim at all. Deliberately not
+  // "newer than the holder's claimedAt": that breaks the two-press race, where B's later press is
+  // older than A's tenure by construction. Over the live AND plausibly-pressed claims — without
+  // the second filter a 2099 stamp clamps above any human press and vetoes every takeover for
+  // ever; such a claim is still ranked, it only loses the veto.
   const livePress = election.live
     .filter((c) => election.plausiblePress.has(c))
     .reduce<number>((m, c) => Math.max(m, c.authorizedAt?.getTime() ?? -Infinity), -Infinity);
@@ -1797,26 +1198,16 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
     // is not a more trustworthy clock than the folder — it is the SAME machine's clock.
     : Math.min(takeover.authorizedAt.getTime(), now.getTime() + MAX_FUTURE_SKEW_MS);
   if (takeover !== null && ourPress > livePress) {
-    // EVERY ref the read held for the beaten organizers — the RAW claim list, deliberately not
-    // the election's candidates: coalesce keeps one claim per install, but the folder
-    // legitimately holds duplicates (append-then-expunge's own crash residue), and a
-    // displacement built from the coalesced set misses the residue copy — which then wins the
-    // gate's verify on incumbency, and the authorized takeover loses to a message the incumbent
-    // itself was going to clean up. Malformed claims displace too.
-    //
-    // "Ours" is decided here by VALUE — install id plus nonce — never through `isOurs`, whose
-    // clone defence keys on the election's own object identity (`election.live.includes`), which
-    // a raw record that coalesce dropped or clampHeartbeat copied can never satisfy. Kept out of
-    // the displacement is exactly the claim that is unambiguously this process's current one
-    // (and, on a fresh start with no armed nonce, anything bearing our id — own-role resumption
-    // must not displace its own history). A same-id claim with a DIFFERENT nonce while ours is
-    // armed is a restored clone's, and it is displaced like any other beaten organizer.
-    //
-    // AND RULES 1/2 HOLD OVER THE RAW LIST TOO — rule 1's own raw scan above already refused a
-    // takeover while a LIVE unrankable record stands, so this arm is unreachable for one today;
-    // the exclusion stays as the belt to that braces, because an authorized expunge of a record
-    // we cannot read must be impossible by construction, not by the ordering of two checks. A
-    // STALE unrankable record is residue and displaces normally.
+    // Every ref the read held for the beaten organizers — the RAW claim list, not the candidates:
+    // coalesce keeps one claim per install, the folder legitimately holds duplicates
+    // (append-then-expunge crash residue), and a displacement built from the coalesced set misses
+    // the residue copy — which then wins the verify on incumbency, and the takeover loses to a
+    // message the incumbent was going to clean up. Malformed claims displace too. "Ours" is
+    // decided by VALUE — install id plus nonce — never `isOurs`, whose clone defence keys on
+    // object identity; kept out is exactly the unambiguously-current claim (and, with no armed
+    // nonce, anything bearing our id). A same-id claim with a different nonce while ours is armed
+    // is a restored clone's and displaces like any other. Rules 1/2 hold over the raw list too:
+    // an authorized expunge of a record we cannot read must be impossible by construction.
     const displaced = input.claims
       .filter((c) => (isMalformed(c)
         ? true
@@ -1858,29 +1249,14 @@ function reasonFor(c: OrganizerClaim): StandDownReason {
 // ── LAYER 2b: LOOKING WITHOUT DECIDING ──────────────────────────────────────────────────────
 
 /**
- * WHO HOLDS THIS MAILBOX, REPORTED RATHER THAN RULED ON.
- *
- * ── WHY THIS IS NOT `decideLease` WITH THE WRITES TURNED OFF ────────────────────────────────
- *
- * A caller that wants to SHOW a person who is organizing their mailbox — before asking them
- * whether to take it over — needs a different thing from what the gate produces. The gate answers
- * "may *I* organize?", and to answer it needs an identity: {@link LeaseSelf}, with an install id
- * and a nonce. A surface that merely reports has no such identity, and giving it a fabricated one
- * is how a read becomes a write. Two concrete failures, both reachable from one fabricated id:
- *
- *  · Against an EMPTY `ohmail/_meta`, arm 7 answers `organize`, and {@link runLeaseGate} then
- *    APPENDS a claim. A preview would have made the previewer the organizer, and every other
- *    install would stand down for the whole staleness window on the strength of somebody opening
- *    a settings pane.
- *  · Against a live claim carrying the same id, {@link runLeaseGate}'s renew expunges the older
- *    claims matching that id — so a preview sharing the worker's id can delete the worker's own
- *    fresh claim out from under it.
- *
- * So this layer takes no `self`, returns no verdict, and cannot write: {@link LeasePeekIo} has
- * exactly one method and it is a read. The confirm step that follows a preview does not consult
- * this result — it stamps an authorization, and the GATE decides, later, in the process that is
- * actually going to do the organizing. A preview that decided would be a second decision site,
- * and §3.4's "exactly one path to stand-down" is the same argument in the other direction.
+ * Who holds this mailbox, REPORTED rather than ruled on. Not `decideLease` with the writes off:
+ * the gate answers "may I organize" and needs an identity ({@link LeaseSelf}), and a reporting
+ * surface has none — fabricating one turns a read into a write. Two reachable failures from one
+ * fabricated id: against an empty `ohmail/_meta` the gate APPENDS, so a preview would make the
+ * previewer the organizer; against a live claim with the same id the renew EXPUNGES older claims,
+ * so a preview sharing the worker's id can delete the worker's fresh claim. So this layer takes
+ * no `self`, returns no verdict, and cannot write; the confirm step stamps an authorization and
+ * the GATE decides later, in the process that will actually organize.
  */
 export interface LeaseHolder {
   kind: OrganizerKind | "unknown";
@@ -1950,17 +1326,13 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
   const { valid, malformed } = coalesce(input.claims);
 
   /**
-   * ── THE PREVIEW SEES WHAT THE GATE SEES, RAW DUPLICATES INCLUDED ──────────────────────────
-   *
-   * `decideLease`'s rule 1/2 scans the RAW list: a fresh record in a format this build cannot
-   * rank — a higher protocol, an unrecognised kind — refuses even an authorized takeover, and
-   * coalescing keeps only the newest record per install, so such a record can hide behind a
-   * rankable sibling. A preview built from the coalesced list alone would then show an ordinary
-   * holder and offer a takeover the gate is going to refuse for ever — a button that no-ops, on
-   * exactly the surface that exists to tell a person the truth about who holds their mailbox.
-   * So an install with a fresh unrankable record among its raw duplicates is REPORTED as
-   * `unknown` and fresh, which is the same sentence the gate's `organized_elsewhere:unknown`
-   * verdict would write.
+   * The preview sees what the gate sees, raw duplicates included. Rule 1/2 scans the RAW list: a
+   * fresh record this build cannot rank refuses even an authorized takeover, and coalescing keeps
+   * only the newest record per install, so such a record can hide behind a rankable sibling. A
+   * preview built from the coalesced list would show an ordinary holder and offer a takeover the
+   * gate will refuse for ever — a button that no-ops on exactly the surface that exists to tell
+   * the truth. An install with a fresh unrankable record among its duplicates is reported
+   * `unknown` and fresh, the gate's own sentence.
    */
   // Liveness for the unrankable scan is {@link isClaimLive} — the SAME FUNCTION the gate's rule
   // 1/2 calls, not a second expression that agrees with it. The preview's per-holder `fresh`
@@ -1972,17 +1344,16 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
   // This is the seam the two copies of the folder-relative test hid from each other.
   const rawValid = input.claims.filter((c): c is OrganizerClaim => !isMalformed(c));
   const clock = readFolderClock(rawValid, input.now, staleAfterMs);
-  /* ── AN INSTALL IS RENEWING IF ANY OF ITS RAW RECORDS SAYS SO ──────────────────────────────
-   *
-   * Coalesce keeps the newest heartbeat per install, and a 2099 cleanup residue IS the newest — so
-   * an install renewing honestly at `now − 5 s` beside its own residue was REPRESENTED by the
-   * residue and reported `fresh: false`. That is not only a wrong screen: `apps/worker/src/index.ts`
-   * certifies a mailbox release only when no holder is fresh and nothing is unreadable, so it
-   * stamped the mailbox RELEASED while another install was demonstrably renewing it, while the
-   * gate — which reads the raw list — said `stand_down` about the same folder at the same instant.
-   *
-   * The clock above already reads the raw list. This is the same lesson applied to the per-HOLDER
-   * projection, which is the half that had been left behind. */
+  /**
+   * An install is renewing if ANY of its raw records says so. Coalesce keeps the newest heartbeat
+   * per install, and a 2099 cleanup residue IS the newest — so an install renewing honestly at
+   * `now − 5 s` was represented by the residue and reported `fresh: false`. Not only a wrong
+   * screen: the worker certifies a mailbox release only when no holder is fresh and nothing is
+   * unreadable, so it stamped RELEASED while another install was demonstrably renewing — and the
+   * gate, reading the raw list, said `stand_down` about the same folder at the same instant. The
+   * clock already reads the raw list; this is the same lesson applied to the per-holder
+   * projection.
+   */
   const renewingInstalls = new Set(
     rawValid
       .filter((c) => isRenewalEvidence(c.heartbeat, input.now, staleAfterMs))
@@ -2015,20 +1386,15 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
          reader its live organizer had gone backwards. */
       capabilities: c.capabilities,
     }))
-    /* ── ORDERED BY BELIEVABLE RECENCY, BECAUSE `holders[0]` IS READ AS "THE ORGANIZER" ───────
-     *
-     * The worker, the sidecar and the API all take the first holder as the machine to NAME
-     * (`index.ts` reader refresh, `engine.ts` reader polling, `organizer-peek.ts`'s projection).
-     * Sorting on the raw heartbeat let a stamp nobody believes decide that name: with two installs
-     * each carrying a live record and a 2099 duplicate, the election chose A on incumbency while
-     * the preview put B first — because B's residue happened to be one day later in 2099 — so the
-     * screen named the election's LOSER as the organizer.
-     *
-     * An unbelievable stamp sorts as `now`, which is the same cap the reference and the renewal
-     * evidence use: it keeps such a holder ahead of genuinely older ones (it may well be the live
-     * organizer; we cannot tell) without letting the size of the lie order the list. Ties break on
-     * the install id so two readers of one folder produce the same order rather than whichever
-     * order the server happened to hand the messages over in. */
+    /**
+     * Ordered by BELIEVABLE recency, because `holders[0]` is read as "the organizer" (the worker,
+     * the sidecar and the API all take the first holder as the machine to name). Sorting on the
+     * raw heartbeat let a stamp nobody believes decide that name: two installs each carrying a
+     * live record and a 2099 duplicate — the election chose A on incumbency, the preview put B
+     * first because B's residue was a day later in 2099, and the screen named the election's
+     * loser. An unbelievable stamp sorts as `now`, the same cap the reference uses; ties break on
+     * the install id so two readers produce the same order.
+     */
     .sort((a, b) => {
       const rank = (h: LeaseHolder): number =>
         Math.min(h.heartbeat.getTime(), input.now.getTime());
@@ -2059,18 +1425,12 @@ export interface LeasePeekIo {
 }
 
 /**
- * A {@link LeasePeekIo} bound to a live connection. LIST, SELECT, FETCH. Nothing else.
- *
- * **It does not create `ohmail/_meta`.** {@link makeLeaseIo} does, because an organizer that is
- * about to write a claim needs somewhere to write it. A reader does not, and creating a folder in
- * somebody's mailbox to answer a question about it is a side effect no read should have — it also
- * changes the answer for the next reader, from "no folder" to "empty folder". An absent folder is
- * reported as zero claims, which is the truth: nobody has ever organized this mailbox.
- *
- * It finds the folder through {@link makeMetaFolderRef}, the same resolution {@link makeLeaseIo}
- * writes through. That sharing is the fix for the defect described there: this read used to
- * compare LIST paths against `toServerPath(META_FOLDER)` for EQUALITY, so on every server with a
- * personal-namespace prefix it reported "nobody organizes this mailbox" while the claim sat one
+ * A {@link LeasePeekIo} bound to a live connection. LIST, SELECT, FETCH — nothing else. It does
+ * not create `ohmail/_meta`: a reader has no business creating a folder to answer a question
+ * about it, and doing so changes the answer for the next reader from "no folder" to "empty
+ * folder". An absent folder is zero claims — the truth. It resolves the folder through {@link
+ * makeMetaFolderRef}, the same resolution the writer uses — the fix for the defect where a
+ * path-equality read reported "nobody organizes this mailbox" while the claim sat one namespace
  * prefix away, renewing.
  */
 export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonical: string) => string): LeasePeekIo {
@@ -2101,21 +1461,16 @@ export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonica
          *
          * The refusal survives for the case where the server cannot be asked, because "I could not
          * see all of it" must still render as unknown rather than as nobody. */
-        /* ── THE PEEK REFUSES AN OVERSIZED CLAIM SET; IT NEVER SHOWS PART OF ONE ────────────
-         *
-         * `searchHeaders` caps what it carries, and for a DECIDER that cap is a bound: the gate
-         * compares the set against its own ceiling and refuses anything past it, so a slice
-         * changes nothing. The peek had no such ceiling, so the cap silently became its ANSWER —
-         * seven hundred claims came back as the first five hundred and one, and what fell off the
-         * end is by uid, which is to say the NEWEST. A live renewal omitted while old residue
-         * survives renders as "stopped": this surface telling a person nobody organizes a mailbox
-         * that somebody is actively organizing, which is the exact sentence it was rewritten to
-         * stop saying.
-         *
-         * So it asks to be REFUSED rather than sliced, and the refusal is the same class every
-         * other lease fault uses — a caller that cannot see the whole claim set cannot decide from
-         * it: a reader does not organize on it, an organizer does not renew on it, and the desktop
-         * renders it as an unreadable lease rather than as an empty one. */
+        /**
+         * The peek refuses an oversized claim set; it never shows part of one. `searchHeaders`
+         * caps what it carries; for a decider that cap is a bound (the gate refuses anything past
+         * its own ceiling), but the peek had no ceiling, so the cap silently became its ANSWER:
+         * seven hundred claims came back as the first five hundred and one, and what fell off is
+         * by uid — the NEWEST. A live renewal omitted while old residue survives renders as
+         * "stopped": telling a person nobody organizes a mailbox somebody is actively organizing.
+         * So it asks to be REFUSED, in the class every lease fault uses — rendered as an
+         * unreadable lease, never an empty one.
+         */
         const claims = await searchHeaders(
           client,
           at.path,
@@ -2158,18 +1513,15 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
   try {
     messages = await input.io.listClaims();
   } catch (err) {
-    /* A FULL FOLDER GETS ITS OWN LINE HERE TOO, and not only its own sentence.
-     *
-     * The counts survive into the message for {@link MetaFolderTruncatedError}'s own reason: of
-     * everything that lands here, a folder too full to read is the only one that does not clear on
-     * its own, and folding it into the generic wording sends whoever reads it to the mail server
-     * for a fault that is a full folder.
-     *
-     * But a thrown message reaches somebody only if the caller renders it, and this refusal is
-     * usually rendered as "we could not check" — a sentence a person reads as a blip. The gate emits
-     * `lease_meta_truncated` on the same condition; the peek was silent, so the same mailbox
-     * reported the fault from one door and not from the other. Same event name, same fields,
-     * because it is the same fact. */
+    /**
+     * A full folder gets its own line here too, not only its own sentence. The counts survive
+     * into the message because a folder too full to read is the only fault here that does not
+     * clear on its own. But a thrown message reaches somebody only if the caller renders it, and
+     * this refusal usually renders as "we could not check" — a blip. The gate emits
+     * `lease_meta_truncated` on the same condition; the peek was silent, so one mailbox reported
+     * the fault from one door and not the other. Same event name, same fields — it is the same
+     * fact.
+     */
     if (err instanceof MetaFolderTruncatedError) {
       input.log?.("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
     }
@@ -2193,39 +1545,22 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
 // ── LAYER 3: IO ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * A LEASE IO FAILURE IS A MAILBOX FAULT, NEVER A STAND-DOWN.
- *
- * §3.4: a mailbox whose `_meta` cannot be read is a mailbox we cannot safely organize, and
- * reading that as "no claim, so organize" is the dual-organizer bug through the back door.
- * Reading it as "stand down" would be almost as wrong in the other direction: stand-down is
- * sticky caller-side, so a transient network error would permanently disable a mailbox nobody
- * else wants.
- *
- * So it is its own class, and callers exempt it BY CLASS — the pattern the worker's sync loop
- * already uses for `ClassifierFaultError`, where exempting by class
- * rather than by threshold arithmetic is what keeps "a model outage can never quarantine a
- * mailbox" true at every tuning of `maxSyncFailures`.
+ * A lease IO failure is a mailbox fault, never a stand-down. A mailbox whose `_meta` cannot be
+ * read is one we cannot safely organize, and reading that as "no claim, so organize" is the
+ * dual-organizer bug through the back door; reading it as stand-down is nearly as wrong the other
+ * way — stand-down is sticky caller-side, so a transient network error would permanently disable
+ * a mailbox nobody else wants. Its own class, exempted BY CLASS by callers — the pattern the
+ * worker uses for `ClassifierFaultError`, which keeps "an outage can never quarantine a mailbox"
+ * true at every tuning.
  */
 /**
- * WHICH LEASE OPERATION FAILED. A closed set of literals, chosen at COMPILE TIME.
- *
- * ── THE GENERAL RULE THIS EXISTS TO STATE ──────────────────────────────────────────────────
- *
- * **A catch that wraps more than one operation must name which one threw.** `runLeaseGate` used to
- * wrap `ensureMetaFolder()` and `listClaims()` in ONE try and report neither, and that once
- * cost half an hour of diagnosis: "the organizer lease could not be read" is the same sentence whether the
- * folder could not be CREATED (a permissions or namespace problem — our path is wrong) or could not
- * be LISTED (the folder exists and the FETCH was refused — which is what actually happened, a
- * `FETCH 1:*` against an empty mailbox that Dovecot rejects and GreenMail tolerates). One literal
- * collapses that ambiguity to one line.
- *
- * ── AND WHY IT COSTS NOTHING TO LOG ────────────────────────────────────────────────────────
- *
- * Every member is a string WE wrote in THIS file. No server, no mailbox and no user chooses it,
- * so it carries exactly zero privacy cost — which is what makes it emittable where the thing an
- * operator actually wants (`err.message`, `responseText`) is not. The same rule governs
- * `serverResponseCode` in the worker's mailbox-error classifier: a value the server chose is a
- * value the server chose, whatever grammar it happens to satisfy.
+ * Which lease operation failed — a closed set of literals, chosen at compile time. The rule this
+ * states: a catch that wraps more than one operation must name which one threw. One try around
+ * `ensureMetaFolder()` and `listClaims()` reported neither, and "the lease could not be read" is
+ * the same sentence whether the folder could not be CREATED (our path is wrong) or could not be
+ * LISTED (a `FETCH 1:*` against an empty mailbox that Dovecot rejects — the actual case). And it
+ * costs nothing to log: every member is a string we wrote in this file — no server, mailbox or
+ * user chooses it — which is what makes it emittable where `err.message` is not.
  */
 export type LeaseOp =
   /** CREATE + UNSUBSCRIBE `ohmail/_meta`. */
@@ -2310,42 +1645,25 @@ export interface LeaseIo {
   /** STORE `\Deleted` + EXPUNGE the given messages. */
   removeClaims(refs: readonly unknown[]): Promise<void>;
   /**
-   * THE RECORDS A RELEASE MAY DECIDE FROM — a complete, current read of the folder, or a refusal.
-   *
-   * Since 0.14.1 this is a CURRENT FOLDER READ under the folder's current UIDVALIDITY, not a
-   * server search: a real provider refused the header search on every poll, so a release that
-   * could only locate its own records through a verb the server may decline was refusable for
-   * ever (see the implementation in {@link makeLeaseIo}). A read that covered the folder whole is
-   * a complete answer to "which of these are mine"; one that could not be throws
-   * {@link ClaimReleaseError} with a code (`over_ceiling`, `unreadable`) rather than returning a
-   * slice, because the caller deletes what comes back and reports a count.
-   *
-   * `null` remains in the signature as a double's refusal shape — "could not enumerate at all" —
-   * and callers convert it to the same typed error. An adapter without the method resolves the
-   * same way.
-   *
-   * The result is CANDIDATES, not claims, and MAY carry records of other installs: the selection
-   * — "which of these are MINE" — is the CALLER's, made with the same parser the gate decides
-   * with, so a folded header cannot be read two ways by two layers. The settings document carries
-   * the install-id header too; expunging it here would delete the mailbox's settings, which is
-   * the other reason selection stays with the parser.
+   * The records a release may decide from — a complete, current read of the folder, or a refusal.
+   * A current folder read under the folder's UIDVALIDITY, not a server search: a real provider
+   * refused the header search on every poll, and a release locatable only through a verb the
+   * server may decline is refusable for ever. A whole-folder read answers "which are mine"
+   * completely; one that could not throws {@link ClaimReleaseError} rather than returning a
+   * slice. The result is CANDIDATES, other installs' records included: the selection is the
+   * caller's, with the gate's own parser — the settings document carries the install-id header
+   * too, and expunging it here would delete the mailbox's settings.
    */
   findOwnRecords?(installId: string): Promise<RawClaimMessage[] | null>;
   /**
-   * EVERY CLAIM IN THE FOLDER, asked of the SERVER by header rather than read out of a window.
-   *
-   * This is what an ELECTION reads when the bounded window could not cover the folder. A window is
-   * newest-first, and a live incumbent renewed just before a burst of five hundred appends is
-   * exactly an old record — so electing on the window can report "nobody organizes this mailbox"
-   * about a mailbox somebody is actively organizing, and a second install then claims it. Two
-   * organizers is the one outcome the lease exists to make impossible, so the election may not rest
-   * on a read that cannot prove a claim is absent.
-   *
-   * Only claims carry `X-Ohmail-Lease`, so the set is complete for claims and independent of
-   * position, and it is a handful of records rather than a folder.
-   *
-   * Optional for `uidValidity`'s reason, and the absence resolves the same safe way: `null` means
-   * the connection cannot ask, and the gate REFUSES rather than guessing.
+   * Every claim in the folder, asked of the SERVER by header rather than read out of a window.
+   * What an election reads when the bounded window could not cover the folder: a window is
+   * newest-first, and a live incumbent renewed just before a burst of appends is exactly an old
+   * record — electing on the window can report "nobody organizes this mailbox" about one somebody
+   * is actively organizing, and a second install then claims it. Only claims carry
+   * `X-Ohmail-Lease`, so the set is complete for claims and position-independent, and it is a
+   * handful of records rather than a folder. `null` means the connection cannot ask, and the gate
+   * refuses rather than guessing.
    */
   listClaimRecords?(): Promise<RawClaimMessage[] | null>;
 
@@ -2442,72 +1760,32 @@ export interface LeaseImapClient extends MetaFolderClient {
 }
 
 /**
- * A {@link LeaseIo} bound to a LIVE connection.
- *
- * `toServerPath` is passed in rather than recomputed, because the delimiter is discovered at
- * login and is private to the adapter. `ohmail/_meta` has to survive a server whose delimiter is
- * `.` (GreenMail) as well as one whose delimiter is `/` (Dovecot), and hand-writing that mapping
- * a second time here is how the two spellings drift.
- *
- * The claim is APPENDED with `\Seen` so a user who does subscribe to the folder in another
- * client is not shown an unread count for our bookkeeping.
+ * A {@link LeaseIo} bound to a live connection. `toServerPath` is passed in rather than
+ * recomputed: the delimiter is discovered at login and is private to the adapter, and
+ * `ohmail/_meta` must survive a `.` server (GreenMail) and a `/` server (Dovecot) — hand-writing
+ * the mapping a second time is how two spellings drift. The claim is appended with `\Seen` so a
+ * user who subscribes to the folder in another client is not shown an unread count for our
+ * bookkeeping.
  */
 /**
- * THE SELECTED FOLDER'S MESSAGE COUNT — and why it is not simply `client.mailbox.exists`.
- *
- * Three reads in this module skip their `FETCH 1:*` when the selected mailbox holds zero
- * messages, because `1:*` is not a valid messageset against an empty mailbox and Dovecot refuses
- * the command outright. Each documented the rule as *"only a POSITIVELY KNOWN zero skips the
- * fetch"*. The value they consulted does not meet that bar.
- *
- * ── WHAT WAS MEASURED, against a real Dovecot, 2026-09-04 ───────────────────────────────────
- *
- * `client.mailbox.exists` is a CACHE that a connection updates only from untagged responses. Two
- * connections, one `ohmail/_meta`: B empties the folder (its cache reaches a true 0), then A
- * appends a claim. B's cache stays 0 — and `getMailboxLock` does NOT re-SELECT a mailbox that is
- * already selected, so taking the lock does not refresh it either. Observed still 0 after gaps of
- * 1.5 s, 3 s, 6 s and 10 s; only by 20 s had imapflow's IDLE delivered the EXISTS. A forced
- * `FETCH 1:*` in that window does not merely return nothing — the server refuses it outright.
- *
- * So a STALE zero was indistinguishable from a true one, and the consequences differed by caller:
- *
- *   · {@link makeLeaseIo}.listClaims — the gate reads an EMPTY folder while a live claim stands,
- *     takes {@link decideLease}'s arm 4 ("nobody has ever organized this mailbox"), and claims it
- *     with an EMPTY displacement. Two live claims, two organizers: the single-organizer invariant
- *     this whole module exists to hold. It also spends the caller's one-shot takeover
- *     authorization while leaving the beaten claim standing to win the next election — the exact
- *     failure `removeClaims` already refuses to let a silently-failed EXPUNGE cause.
- *   · the peek — a reader is told nobody organizes a mailbox that is held.
- *   · the request read — the organizer's drain finds no requests, so a reader's decision is never
- *     applied; and the reader's already-in-folder set comes back empty, so it appends duplicates.
- *
- * The window is bounded by an IDLE this module does not control, which is what made it look like
- * flakiness rather than a defect. One NOOP removes the timing dependence entirely.
- *
- * A NOOP that FAILS leaves the cached value standing, which is exactly where the caller was
- * before — so the failure is swallowed rather than turned into a lease fault.
+ * The selected folder's message count — and why it is not simply `client.mailbox.exists`. Three
+ * reads skip their `FETCH 1:*` on a zero count (Dovecot refuses the command), documented as "only
+ * a POSITIVELY KNOWN zero skips" — and the cached value does not meet that bar. Measured against
+ * a real Dovecot: `exists` updates only from untagged responses and `getMailboxLock` does not
+ * re-SELECT, so a stale 0 survived for ~20 s until IDLE delivered the EXISTS. A stale zero made
+ * the gate elect over an "empty" folder holding a live claim — two organizers — and emptied the
+ * peek and the request read. One NOOP removes the timing dependence; a failed NOOP leaves the
+ * cached value standing, so it is swallowed.
  */
 async function selectedCount(client: LeaseImapClient): Promise<number | undefined> {
-  /* ── THERE IS NO SUCH THING AS A REFRESHED CACHE HERE, AND THE FLAG THAT SAID SO WAS A LIE ──
-   *
-   * This used to NOOP and report `refreshed: true` when the call resolved. The library makes that
-   * unknowable (`imap-flow.js` 1.5.0):
-   *
-   *     async noop() { await this.run('NOOP'); }
-   *
-   * The command's own result is DISCARDED. A server that REFUSES the NOOP produces a `run` that
-   * resolves `false`, and `noop()` resolves normally regardless — so "the NOOP succeeded" was
-   * inferred from the absence of a throw, which is not evidence of anything. Every caller then
-   * trusted a cached count on the strength of it.
-   *
-   * The consequence was the worst one available. A connection holding a cached `exists = 0` from
-   * before another install appended its claim would refuse the NOOP, be recorded as refreshed,
-   * return the stale zero, and the gate would elect over an EMPTY folder and append a second live
-   * claim. Two organizers on one mailbox, from a boolean.
-   *
-   * A refresh must be proven by the thing it is meant to refresh. So the count is asked for
-   * outright — {@link lastSequence} issues a STATUS naming the folder, which the library passes
-   * through and the server answers with a number — and the connection's own cache is consulted
+  /**
+   * There is no such thing as a refreshed cache here, and the flag that said so was a lie.
+   * imapflow's `noop()` discards the command's own result — a REFUSED NOOP still resolves
+   * normally — so success was inferred from the absence of a throw. The consequence: a connection
+   * holding a cached `exists = 0` from before another install appended would refuse the NOOP, be
+   * recorded as refreshed, return the stale zero, and the gate would elect over an empty folder
+   * and append a second live claim. A refresh must be proven by the thing it refreshes: the count
+   * is asked for outright ({@link lastSequence}, a STATUS naming the folder), the cache consulted
    * only where that is impossible.
    */
   const selected = client.mailbox;
@@ -2538,35 +1816,14 @@ export interface SequenceProbeClient {
 }
 
 /**
- * ASK THE SERVER HOW MANY MESSAGES THE FOLDER HOLDS — and ask it in a form the CLIENT cannot
- * answer out of its own cache.
- *
- * ── WHY NOT `FETCH *`, WHICH IS WHAT THIS USED TO DO ─────────────────────────────────────────
- *
- * `*` is the highest existing sequence number, so fetching exactly that message should carry the
- * folder's true count in its own `seq`. Against a real server that is true. It never reached a
- * real server. ImapFlow rewrites the range BEFORE issuing the command (`imap-flow.js`, 1.5.0):
- *
- *     if (range === '*') {
- *         if (!this.mailbox.exists) { return false; }
- *         range = this.mailbox.exists.toString();
- *     }
- *
- * — so the probe was answered with `mailbox.exists`, WHICH IS THE CACHED COUNT IT EXISTS TO
- * DISTRUST. It returned the stale number with extra steps, and on a cached zero it returned
- * `false` rather than an async iterable, which the loop then threw on. The whole mechanism was a
- * no-op wearing a round trip's clothes, and the fake hid it by resolving `*` server-side the way
- * a server does rather than the way THIS CLIENT does.
- *
- * SEARCH is not rewritten. It is issued against the selected folder and answered by the server,
- * and `ALL` returns every sequence number in it — so the highest is the count, and an empty
- * answer is an empty folder rather than an unknown one. It carries no message data, only
- * integers.
- *
- * `undefined` on anything unexpected — no `search` at all, a server that will not answer, a
- * non-array reply. The caller then falls back to the sliding window, which is bounded in memory
- * and correct about WHICH records it keeps and merely costs the whole folder over the wire. Never
- * a throw: this is an optimisation of a read that already works without it.
+ * Ask the server how many messages the folder holds — in a form the CLIENT cannot answer out of
+ * its own cache. Not `FETCH *`: ImapFlow rewrites `*` to `this.mailbox.exists` before issuing the
+ * command, so the probe was answered with the cached count it exists to distrust — the stale
+ * number with extra steps, and on a cached zero it returned `false`, which the loop threw on; the
+ * fake hid it by resolving `*` the way a server does. SEARCH is not rewritten: `ALL` returns
+ * every sequence number, so the highest is the count and an empty answer is an empty folder.
+ * `undefined` on anything unexpected — the caller falls back to the sliding window, which is
+ * correct and merely costs the folder over the wire. Never a throw.
  */
 export async function lastSequence(
   client: SequenceProbeClient,
@@ -2587,69 +1844,14 @@ export async function lastSequence(
 }
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  ONE BOUNDED READ OF `ohmail/_meta`, NEWEST FIRST — the only `FETCH` in this module
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Three reads used to run their own `FETCH 1:*` against this one folder — the lease gate, the
- * read-only peek, and the shared record list. They are one loop now. The module header has claimed
- * since the record channel shipped that the folder's kinds come off "the same headers FETCH", and
- * three copies of a loop is three places for the ceiling, the ordering and the empty-folder
- * defence to drift apart. `client.fetch(` appears exactly twice IN THIS MODULE — the WINDOW itself
- * and the one-message `*` probe that learns the folder's true count — and a census test pins both;
- * the per-kind parsing stays with each caller. (Not "below": the probe is declared above this
- * docblock, and a spatial claim in a file that gets reordered is a claim that quietly stops being
- * true.)
- *
- * ── WHY NEWEST FIRST, AND WHY IT IS NOT A PREFERENCE ────────────────────────────────────────
- *
- * `FETCH 1:*` returns the LOWEST sequence numbers first — arrival order, oldest first. A ceiling
- * applied by breaking out of that loop therefore keeps the OLDEST records and silently drops every
- * later one. In this folder that is backwards in the only case that matters: a claim is renewed by
- * APPENDING, a decision is APPENDED, an acknowledgement is APPENDED. Everything live is at the
- * END of the folder, and everything an ordinary mailbox accumulates is at the start.
- *
- * So five hundred harmless messages — which anyone with APPEND rights on the folder can put there,
- * and which is well inside what a shared folder, a filing rule or another mail client can produce
- * without anybody intending harm — would hide every claim, every decision and every acknowledgement
- * written after them, for good. The drain would find no decisions; the peek would report that
- * nobody organizes a mailbox somebody is actively organizing; and the gate would read an empty
- * election and claim a mailbox that is already held. **A truncated read was indistinguishable from
- * a complete one at every call site**, which is the property that turns a full folder into a
- * silent, permanent fault rather than a visible one.
- *
- * The window therefore runs from the END: with `exists` known and above the ceiling, the FETCH asks
- * for `exists - ceiling + 1 : *`. Where the count is not known — a client that does not expose one
- * — the range stays `1:*` and the ceiling is enforced by counting, which is the older behaviour and
- * is why nothing that fits inside the ceiling reads any differently than it did.
- *
- * ── AND A TRUNCATED READ SAYS SO ────────────────────────────────────────────────────────────
- *
- * `truncated` is the whole point of returning a record rather than an array — and the three callers
- * do NOT all answer it the same way, which took a review round to get right.
- *
- * The PEEK and both DRAINS treat it as "I could not look", never as "there is nothing there": the
- * peek reports the mailbox as unknown rather than unheld, and a drain skips its cycle and expunges
- * nothing. Their cost of being wrong is telling a person something FALSE — that nobody organizes
- * their mailbox, or that a decision nobody ever saw was applied — and their cost of refusing is a
- * cycle's delay. So they refuse.
- *
- * **The GATE acts on the window, and the first cut of this had it refuse.** That was wrong, and the
- * way it was wrong is worth keeping: refusing at the gate raises `LeaseUnavailableError`, which the
- * sync loop exempts by class and answers by not syncing the mailbox at all — so a folder holding one
- * record more than the ceiling would have stopped a customer's MAIL, for readers as well as
- * organizers, with no
- * self-healing path, because the folder never shrinks on its own. That is the very failure this
- * bound was written to remove, reached at a far lower threshold than the timeout it replaced.
- *
- * A forged claim yields one organizer; a flood over a live incumbent yields two. The second
- * outcome is not available directly, which is why hiding a claim is the attack worth closing and
- * why the election reads the claim set rather than the folder.
- *
- * One message beyond the ceiling is read and discarded rather than kept, so "the folder holds more
- * than the window" is a fact off the wire instead of an inference from a full window: a folder
- * holding EXACTLY the ceiling is complete, and reporting it as truncated would stop a mailbox for
- * no reason.
+ * One bounded read of `ohmail/_meta`, NEWEST FIRST — the only FETCH in this module (a census pins
+ * the two `client.fetch(` calls). Newest first because `1:*` returns oldest first and a ceiling
+ * breaking out of that loop keeps the OLDEST records: everything live is appended at the END, so
+ * five hundred harmless messages would hide every claim and decision for good — and a truncated
+ * read was indistinguishable from a complete one. Over the ceiling the FETCH asks `exists -
+ * ceiling + 1 : *`. `truncated` is the point of returning a record: the peek and drains refuse on
+ * it; the GATE acts on the window, because refusing there stops a customer's mail. One message
+ * beyond the ceiling is read and discarded, so exactly-the-ceiling is complete.
  */
 export interface MetaFolderRead {
   /** The records the window covered, in the server's own order (oldest first WITHIN the window). */
@@ -2740,21 +1942,13 @@ export class MetaFolderTruncatedError extends Error {
  * back to keeping the oldest records would pass every guard above it.
  */
 /**
- * WHERE THE PAGE BELOW A BOUND STARTS AND ENDS, and whether it reaches the bottom of the folder.
- *
- * ── AN EMPTY WINDOW AND AN EMPTY FOLDER ARE NOT THE SAME ANSWER ─────────────────────────────
- *
- * A walk that pages downward needs to know two things a list of records cannot tell it: where the
- * window it just asked for began, and whether anything remains beneath it. Without them an empty
- * reply is ambiguous, and the drain resolved that ambiguity the wrong way — it treated a window
- * that happened to fall in a UID GAP as "the folder read whole", cleared its resume point, and
- * started again from the newest page next cycle. Append-and-expunge churn leaves gaps wider than
- * one window routinely, so the walk could oscillate between the top and the gap for ever while
- * the requests below it were never reached.
- *
- * This is arithmetic, not a reply, so it answers for an EMPTY page exactly as well as a full one.
- * It lives here because the read uses it too: two copies of a window calculation is how a caller
- * comes to walk in steps the reader does not take.
+ * Where the page below a bound starts and ends, and whether it reaches the bottom of the folder.
+ * An empty window and an empty folder are not the same answer: the drain once treated a window
+ * that fell in a UID GAP as "the folder read whole", cleared its resume point, and restarted from
+ * the top — append-and-expunge churn leaves gaps wider than one window routinely, so the walk
+ * could oscillate between the top and the gap for ever while the requests below were never
+ * reached. This is arithmetic, not a reply, so it answers for an empty page exactly as well as a
+ * full one; the read uses it too, so the walk and the reader take the same steps.
  */
 export function metaPageBounds(beforeUid: number): { lo: number; hi: number; bottom: boolean } {
   const hi = Math.max(1, beforeUid - 1);
@@ -2781,34 +1975,22 @@ export async function readMetaFolderWindow(
    */
   now: () => number = Date.now,
 ): Promise<MetaFolderRead> {
-  // AN EMPTY `_meta` IS THE NORMAL STATE OF A FRESH MAILBOX, AND `1:*` IS NOT A VALID MESSAGESET
-  // WHEN A MAILBOX HOLDS NOTHING.
-  //
-  // The failure this defends: every genuinely fresh mailbox was unorganizable and the product
-  // showed "waiting for first sync" for ever. The folder is created one call earlier, so on a first
-  // attach this FETCH always ran against zero messages. Some servers tolerate that and answer an
-  // empty set; Dovecot refuses the command outright — measured against a real one:
-  //
-  //     Error in IMAP command FETCH: Invalid messageset
-  //
-  // which becomes a lease that "could not be read", which the sync loop exempts BY CLASS from its
-  // failure counter — so it retried every thirty seconds for ever, wrote nothing and quarantined
-  // nothing. Correct behaviour at every layer, composing into a mailbox that can never be adopted.
-  //
-  // Read DEFENSIVELY: only a POSITIVELY KNOWN zero skips the fetch. A count we cannot see means
-  // "unknown", so the fetch still runs.
+  // An empty `_meta` is the normal state of a fresh mailbox, and `1:*` is not a valid messageset
+  // when a mailbox holds nothing. The failure this defends: the folder is created one call
+  // earlier, so on a first attach this FETCH always ran against zero messages; Dovecot refuses it
+  // outright (`Invalid messageset`), which becomes a lease that "could not be read", which the
+  // sync loop exempts by class — retried every thirty seconds for ever, and every genuinely fresh
+  // mailbox showed "waiting for first sync" permanently. Read defensively: only a positively
+  // known zero skips the fetch; an unknown count still runs it.
   const cached = await selectedCount(client);
-  /* ── ASK THE SERVER, THEN FALL BACK — NOT THE OTHER WAY ROUND ────────────────────────────
-   *
-   * The probe is a STATUS naming the folder, so it costs one scalar round trip and, unlike the
-   * FETCH this used to be, it is answered on an EMPTY folder as readily as a full one. That is why
-   * the zero check now comes AFTER it rather than guarding it: the reason to skip the probe on a
-   * cached zero was that `*` against an empty mailbox is refused by the same servers that refuse
-   * `1:*`, and STATUS is refused by neither.
-   *
-   * The connection's cached `exists` is consulted only where the server cannot be asked at all —
-   * a client with no STATUS. It is not a fast path any more, because there is no way to know
-   * whether it is current: see {@link selectedCount}.
+  /**
+   * Ask the server, then fall back — not the other way round. The probe is a STATUS naming the
+   * folder: one scalar round trip, answered on an empty folder as readily as a full one, which is
+   * why the zero check now comes AFTER it — the reason to skip on a cached zero was that `*` is
+   * refused by the same servers that refuse `1:*`, and STATUS is refused by neither. The
+   * connection's cached `exists` is consulted only where the server cannot be asked at all; it is
+   * not a fast path, because there is no way to know whether it is current ({@link
+   * selectedCount}).
    */
   const probed = await lastSequence(client, path);
 
@@ -2843,34 +2025,27 @@ export async function readMetaFolderWindow(
   const readFrom = async (
     start: number,
   ): Promise<{ records: RawMetaMessage[]; evicted: boolean; by: MetaTruncation | null }> => {
-  /* ── A PAGE ASKS FOR ITS OWN WINDOW, NOT FOR EVERYTHING BELOW THE CURSOR ──────────────────
-   *
-   * This asked for `1:<cursor-1>` and let the eviction keep the newest ceiling's worth. Bounded in
-   * what it RETAINED and unbounded in what it TRANSFERRED: every page re-read the entire older
-   * prefix, so walking eight pages of a full folder pulled the folder down eight times, and the
-   * deeper the walk the more it cost per step. A walk whose cost grows with its own progress is
-   * not a walk anyone should take.
-   *
-   * The window is a uid RANGE now — one ceiling's worth below the cursor — so each page costs the
-   * same as the first. A record whose uid falls in a gap simply is not there; uid space is sparse
-   * by nature and the walk's budget is what bounds the number of steps, not the density. */
+  /**
+   * A page asks for its own window, not for everything below the cursor. This asked
+   * `1:<cursor-1>` and let the eviction keep the newest ceiling's worth — bounded in what it
+   * RETAINED, unbounded in what it TRANSFERRED: every page re-read the entire older prefix, so
+   * walking eight pages pulled the folder down eight times. The window is a uid RANGE now — one
+   * ceiling's worth below the cursor — so each page costs the same as the first. A record whose
+   * uid falls in a gap simply is not there; the walk's budget bounds the steps, not the density.
+   */
   const { lo: pageLo, hi: pageHi } = metaPageBounds(beforeUid ?? 1);
   const range = beforeUid !== undefined ? `${pageLo}:${pageHi}` : `${start}:*`;
   const byUid = beforeUid !== undefined;
   if (beforeUid !== undefined && beforeUid <= 1) return { records: [], evicted: false, by: null };
-  /*
-   * Three ceilings, all three on the READ. COUNT evicts from the FRONT rather than stopping: a
+  /**
+   * Three ceilings, all on the READ. COUNT evicts from the FRONT rather than stopping — a
    * sequence range arrives oldest first, so stopping keeps the superseded half. BYTES, because
    * the count says nothing about how large one header block is and the server chooses that. TIME,
-   * because a server answering glacially resets the socket's inactivity timer for ever.
-   *
-   * A `map` yielding `null` keeps a header-less reply COUNTED — the ceiling bounds what the
-   * server SENDS, not what survives the filter. Nothing is deleted on the way past: the folder is
-   * the customer's.
-   *
-   * `internalDate` beside the headers: one extra field on a FETCH already being issued, and the
-   * only reading of the server's clock this folder can give. See `RawClaimMessage.internalDate`.
-   * The `client.fetch(range,` call stays ONE LINE — the fetch census pins that form structurally.
+   * because a glacial answer resets the socket's inactivity timer for ever. A `map` yielding
+   * `null` keeps a header-less reply COUNTED — the ceiling bounds what the server sends, not what
+   * survives the filter. Nothing is deleted on the way past: the folder is the customer's.
+   * `internalDate` rides along — the only reading of the server's clock this folder gives; the
+   * `client.fetch(range,` call stays one line for the census.
    */
   const read = await boundedFetch(
     client.fetch(range, { uid: true, headers: true, internalDate: true }, { uid: byUid }),
@@ -2898,29 +2073,15 @@ export async function readMetaFolderWindow(
 
   const first = await readFrom(from);
 
-  /* ── THE NUMBERING CAN SHIFT BETWEEN THE COUNT AND THE FETCH, AND EXPUNGE DOES IT SILENTLY ──
-   *
-   * `from` is a SEQUENCE number computed from a count taken one round trip earlier. Sequence
-   * numbers are not stable: when another connection expunges a message, every message above it is
-   * renumbered DOWNWARD immediately. So between the count and this FETCH the window can slide out
-   * from under the range, and the range is the only thing that did not move.
-   *
-   * The renumbering guard the gate already carries does not see this. That one compares
-   * UIDVALIDITY, and **an EXPUNGE does not change UIDVALIDITY** — it is not a renumbering of uids
-   * at all, only of sequence numbers, which is precisely the coordinate this range is written in.
-   *
-   * Mild case: enough messages go that the window covers fewer records than it asked for, and the
-   * read quietly returns a shorter tail than the ceiling it is entitled to. Severe case: enough go
-   * that `from` is now past the end, and the unordered-range rule turns `501:*` into `400:501` —
-   * ONE record, still flagged truncated, and the gate elects on it. That is the same one-record
-   * election window the unconfirmed-count fix closed, reached by a race instead of a stale cache.
-   *
-   * Both are visible in one number. A capped window asks for exactly the ceiling; anything less
-   * means the folder moved while we were reading it, so the answer is thrown away and the folder
-   * read whole. `1:*` needs no such check — it is anchored at both ends and cannot slide.
-   *
-   * Appends are the other direction and are already safe: they only make `*` larger, and the
-   * eviction below keeps the newest.
+  /**
+   * The numbering can shift between the count and the FETCH, and EXPUNGE does it silently: `from`
+   * is a sequence number from a count one round trip earlier, another connection's expunge
+   * renumbers everything above it downward, and UIDVALIDITY does not move. Mild case: the window
+   * covers fewer records than asked. Severe: `from` is past the end and the unordered-range rule
+   * turns `501:*` into `400:501` — one record, and the gate elects on it. Both are visible in one
+   * number: a capped window asks for exactly the ceiling, so anything less means the folder moved
+   * — the answer is thrown away and the folder read whole. `1:*` is anchored at both ends;
+   * appends only grow `*`.
    */
   if (from > 1 && first.records.length < META_RECORDS_MAX_PER_FETCH) {
     const wide = await readFrom(1);
@@ -2947,46 +2108,24 @@ export async function readMetaFolderWindow(
 }
 
 /**
- * EVERY RECORD IN THE FOLDER MATCHING A HEADER, ASKED OF THE SERVER — the one place this module
- * turns a header into a set of messages, and the reason the fetch census stays countable.
- *
- * Three callers route through it: the lease IO's own-records read, the CLAIM SET the election needs
- * when the window could not cover the folder, and the read-only peek. A second copy would be
- * another `client.fetch(` and a second answer to "which messages carry this header", which is how
- * two readers of one folder come to disagree.
- *
- * `null`, never `[]`, when the connection cannot ask or the server refuses. "Could not look" and
- * "there are none" are different answers and every caller acts on them differently — the election
- * refuses on the first and may elect on the second.
- *
- * `true` as a header value compiles to `HEADER <name> ""`, which RFC 3501 defines as
- * header-PRESENT. MEASURED on both IMAP servers this repository tests against before this
- * landed, rather than taken on the RFC's word: from a folder holding a claim, a settings
- * document and an ack, exactly the claim's uid comes back on GreenMail and on Dovecot, the field
- * name is matched case-insensitively, and a header no message carries yields an empty set.
- *
- * The CALLER holds the folder's lock. This issues no APPEND and no STORE: it is a read.
+ * Every record in the folder matching a header, asked of the server — the one place this module
+ * turns a header into a set of messages; three callers route through it (the own-records read,
+ * the election's claim set, the peek), because a second copy is a second answer to "which
+ * messages carry this header". `null`, never `[]`, when the connection cannot ask or the server
+ * refuses: could-not-look and there-are-none are different answers — the election refuses on the
+ * first and may elect on the second. `true` as a header value compiles to `HEADER <name> ""` —
+ * header-PRESENT — measured on GreenMail and Dovecot rather than taken on the RFC's word. The
+ * caller holds the lock; this issues no APPEND and no STORE.
  */
 /**
- * ── AN EXPUNGE THAT RESOLVED `true` IS NOT A REMOVAL, AND THIS IS THE ONLY PLACE THAT SAYS SO ──
- *
- * `messageDelete` is `resolveRange` followed by `run('EXPUNGE', …)`. The STORE that marks
- * `\Deleted` is internal to it and its result is NOT propagated, so a refused STORE under an
- * accepted EXPUNGE resolves `true` having removed nothing. The only way to tell that from a real
- * removal is to ask the folder for the uids again and be told they are gone.
- *
- * TWO OUTCOMES ARE FAILURES HERE, and conflating them was round nine's finding 1:
- *
- *   · the uids are still there — the expunge did nothing;
- *   · the read could not RUN — nothing was established in either direction.
- *
- * The second is the one that reads as success if it is allowed to return normally, because every
- * caller treats a normal return as "removed" and reports a count from it. The expunge is still
- * allowed to have worked; what is refused is REPORTING that it did.
- *
- * One implementation for all three deletion paths — claims, settings documents and stale
- * acknowledgements — because three copies of a rule this fiddly is how two of them come to
- * disagree about what `true` meant.
+ * An expunge that resolved `true` is not a removal, and this is the only place that says so.
+ * `messageDelete` is `resolveRange` then `run('EXPUNGE')`; the STORE marking `\Deleted` is
+ * internal and its result is not propagated, so a refused STORE under an accepted EXPUNGE
+ * resolves `true` having removed nothing — the only proof is asking the folder for the uids
+ * again. Two outcomes are failures: the uids are still there, and the read could not RUN — and
+ * the second must not return normally, because every caller treats a normal return as "removed"
+ * and reports a count. One implementation for all three deletion paths — claims, settings
+ * documents, stale acknowledgements.
  */
 async function proveGone(
   client: Pick<LeaseImapClient, "fetch">,
@@ -3051,38 +2190,25 @@ const SEARCH_WINDOW_BUDGET = 20;
 const SWEEP_DELETE_BATCH = 200;
 
 /**
- * HOW MANY EXPUNGES ONE CYCLE MAY RUN, and how far down the folder it may look to fill them.
- *
- * Batching the deletes bounded each COMMAND and left the CYCLE unbounded: the loop ran a batch
- * for every uid the search returned, so a folder holding a hundred thousand stale
- * acknowledgements was one cycle's work and the drain behind it waited for all of it. The search
- * ahead of it was worse — no `uid` term at all, the one read in this module that still asked a
- * server to name an unbounded set, with the whole reply in memory before any batching happened.
- *
- * Both are bounded here, and the sweep can afford it in a way the election cannot: DELETION IS
- * DURABLE PROGRESS. A cycle that removes a thousand records leaves a thousand fewer for the next
- * one, so a partial sweep is not a partial answer — it is the same answer, later, and the folder
- * is smaller either way. That is why a window budget which would be a refusal in the claim search
- * is simply a smaller day's work here.
+ * How many expunges one cycle may run, and how far down the folder it may look to fill them.
+ * Batching the deletes bounded each COMMAND and left the CYCLE unbounded: a folder holding a
+ * hundred thousand stale acknowledgements was one cycle's work, and the search ahead of it asked
+ * the server to name an unbounded set. The sweep can afford a budget in a way the election
+ * cannot: deletion is durable progress — a partial sweep is the same answer, later, and the
+ * folder is smaller either way.
  */
 const SWEEP_BATCHES_MAX_PER_CYCLE = 5;
 const SWEEP_SEARCH_WINDOW_BUDGET = 12;
 
 /**
- * THE CUTOFF THE ACK SWEEP ACTUALLY DELETES BY — floored to the start of its UTC day.
- *
- * EXPORTED because a test double that answers `before` with the raw instant is MORE PERMISSIVE
- * than the server this module talks to, and a double kinder than production is how a guard comes
- * to pass for something that would not happen. Two implementations of "which acknowledgements are
- * old enough" is the same defect as two implementations of "how many messages are in this folder".
- *
- * Why a floor at all: IMAP SEARCH BEFORE takes a DATE. Where the server does not advertise
- * `WITHIN`, the library turns a cutoff carrying a time of day into a date-only term and ADVANCES
- * it a day so a reader is never given less than it asked for — right for a reader, wrong for
- * something that DELETES, because the widened term then reaches records filed on the cutoff's own
- * day. Flooring makes the term one the library sends unchanged and puts the only remaining error
- * on the safe side: an acknowledgement may outlive its nominal life by up to a day, and none
- * younger than it is ever removed.
+ * The cutoff the ack sweep actually deletes by — floored to the start of its UTC day. Exported
+ * because a test double answering `before` with the raw instant is MORE PERMISSIVE than the
+ * server, and a double kinder than production is how a guard passes for something that would not
+ * happen. Why a floor: IMAP SEARCH BEFORE takes a DATE, and without `WITHIN` the library widens a
+ * time-of-day cutoff by a day — right for a reader, wrong for something that DELETES, since the
+ * widened term reaches records filed on the cutoff's own day. Flooring puts the only remaining
+ * error on the safe side: an ack may outlive its nominal life by up to a day, and none younger is
+ * ever removed.
  */
 export function ackSweepCutoff(before: Date): Date {
   return new Date(Date.UTC(before.getUTCFullYear(), before.getUTCMonth(), before.getUTCDate()));
@@ -3099,38 +2225,14 @@ export function ackSweepCutoff(before: Date): Date {
 const OWN_RECORDS_MAX = 5_000;
 
 /**
- * WHY A RELEASE OF THIS INSTALL'S OWN RECORDS DID NOT HAPPEN — typed, with a code callers can
- * branch on and operators can read.
- *
- * The shape it replaces was measured on a real provider at RC3: the release threw a BARE `Error`
- * (`errorClass:"Error" errorCode:null`) on every poll, 38 times in one session, and the log
- * carried nothing that distinguished "the server refused the enumeration" from "the folder is too
- * full to read whole" from "the connection died mid-read" — three states with three different
- * remedies, indistinguishable for two days.
- *
- * The codes are the release's own taxonomy, and each names the state rather than the verb that hit
- * it:
- *
- *  · `search_refused`   — the io could not enumerate at all (an adapter with no capability, or a
- *                          double reporting the refusal the old server search produced);
- *  · `over_ceiling`     — the folder holds more records than one bounded read may take, so a
- *                          complete answer cannot be told from a partial one and nothing was
- *                          removed. The ceiling STAYS: it is what bounds this read's work, and the
- *                          caller's lapse bound is what keeps a mailbox in this state from being
- *                          stuck for ever;
- *  · `unreadable`       — the read itself failed (the connection, the SELECT, the FETCH); the
- *                          provider's failure rides in `cause`, where the logger reduces it to
- *                          class + code and never its text;
- *  · `renumbered`       — the folder's UIDVALIDITY moved between the read that produced the refs
- *                          and the delete, so the refs name nothing that can be trusted and
- *                          nothing was expunged;
- *  · `still_present`    — the delete ran, and a re-read still finds records of ours: the folder
- *                          moved under the release (the uid-rewrite shape), so the release is not
- *                          confirmed and the next pass locates afresh.
- *
- * Every code is retryable by the same means — the next pass asks again from a current read — and
- * none of them is "released": the one thing this class exists to make impossible is a caller
- * reading any of these five as a count.
+ * Why a release of this install's own records did not happen — typed. The shape it replaces threw
+ * a bare `Error` on every poll (38 in one session), indistinguishable across three states with
+ * three remedies. The codes: `search_refused` — could not enumerate; `over_ceiling` — more
+ * records than one bounded read may take, nothing removed (the caller's lapse bound ends the
+ * state); `unreadable` — the read itself failed, the provider's failure in `cause`, reduced to
+ * class + code; `renumbered` — UIDVALIDITY moved between read and delete; `still_present` — a
+ * re-read still finds our records, so the next pass locates afresh. Every code retries the same
+ * way, and none is "released": the one impossible reading is a count.
  */
 export type ClaimReleaseFailureCode =
   "search_refused" | "over_ceiling" | "unreadable" | "renumbered" | "still_present"
@@ -3155,30 +2257,14 @@ export class ClaimReleaseError extends Error {
 }
 
 /**
- * ── THE SEARCH ITSELF IS BOUNDED, NOT ONLY WHAT IS DONE WITH ITS ANSWER ───────────────────────
- *
- * Capping the uid list after it arrives bounds the FETCH and nothing else: the reply to a bare
- * `UID SEARCH` is however many uids the server chooses to name, materialised in this process
- * before a single line of ours runs. A folder nobody can be stopped from appending to is exactly
- * where that matters, and "we then ignore most of them" is not a defence against having received
- * them.
- *
- * So the folder is searched in DESCENDING UID WINDOWS — `UID SEARCH <criteria> UID <lo>:<hi>` —
- * each of which can name at most one uid per number in the window, so each reply is bounded by
- * construction. Descending because every caller here wants the NEWEST records and stops once it
- * has enough: a live claim, a settings document, the acknowledgements at the end of the folder.
- *
- * TWO THINGS THIS COSTS, both stated rather than hidden:
- *
- *   · round trips. A folder whose uids are sparse — a long-lived mailbox that has expunged most
- *     of what it ever held — needs several windows to find a handful of records. That is why the
- *     walk has a WINDOW BUDGET and gives up rather than paging for ever: exhausting it returns
- *     `null`, which every caller already treats as "could not ask" and refuses on. Slower and
- *     honest beats unbounded.
- *   · a starting point. The walk needs the top of the uid space, which is `uidNext`. Where the
- *     connection cannot say, there is no way to window at all and the single unbounded search is
- *     what remains — the behaviour this module had before, kept deliberately rather than failing
- *     a connection that simply cannot answer the question.
+ * The search itself is bounded, not only what is done with its answer. The reply to a bare `UID
+ * SEARCH` is however many uids the server chooses, materialised before a line of ours runs — "we
+ * then ignore most of them" is not a defence against having received them. So the folder is
+ * searched in DESCENDING UID WINDOWS (`UID SEARCH <criteria> UID <lo>:<hi>`), each reply bounded
+ * by construction; descending because every caller wants the newest records and stops once it has
+ * enough. Two costs, stated: round trips on a sparse folder — hence a WINDOW BUDGET, and
+ * exhausting it returns `null`, which callers treat as could-not-ask; and a starting point — with
+ * no `uidNext` to ask for, the single unbounded search remains, kept deliberately.
  */
 async function searchDescending(
   client: Pick<LeaseImapClient, "search" | "mailbox" | "status">,
@@ -3189,23 +2275,15 @@ async function searchDescending(
 ): Promise<DescendingWalk> {
   if (typeof client.search !== "function") return { kind: "refused" };
 
-  /* ── THE TOP OF THE UID SPACE IS ASKED FOR, NEVER REMEMBERED ─────────────────────────────
-   *
-   * This read `client.mailbox.uidNext`, which is not a fact about the folder — it is whatever the
-   * last untagged response happened to leave on the connection's cached mailbox object. Holding
-   * the mailbox lock does not refresh it, and this module already learned the same lesson about
-   * the message COUNT: a cached value may end a read and may never be counted back from.
-   *
-   * Counting back from a stale one is worse here than it was there. The windows walk DOWN from
-   * this number, so a stale-low value means every window sits below the newest records and the
-   * walk never sees them — and the caller most affected is the ELECTION, which reads a claim set
-   * with the incumbent's live claim missing from it, takes the "nobody organizes this mailbox"
-   * arm, and appends a second one. Two organizers, out of a cached integer.
-   *
-   * So it is a STATUS on the folder, by name, every time — the same shape the count probe uses —
-   * and an absent or unusable answer is "cannot decide" rather than a reason to guess. `null`
-   * here is what every caller already treats as could-not-ask: the election refuses, the release
-   * reports a partial, the peek renders unreadable. None of them organize on it.
+  /**
+   * The top of the uid space is asked for, never remembered. This read `client.mailbox.uidNext`,
+   * which is whatever the last untagged response left on the cached mailbox object; holding the
+   * lock does not refresh it. Counting back from a stale value is worse here than for the count:
+   * the windows walk DOWN from this number, so a stale-low value puts every window below the
+   * newest records — and the caller most affected is the ELECTION, which reads a claim set
+   * missing the incumbent's live claim, takes the nobody-organizes arm, and appends a second one.
+   * So it is a STATUS on the folder by name, every time; an absent or unusable answer is `null`,
+   * which every caller treats as could-not-ask and none organizes on.
    */
   const top = await highestUid(client, path);
 
@@ -3250,17 +2328,12 @@ async function searchDescending(
 }
 
 /**
- * THE HIGHEST UID THE FOLDER COULD HOLD, asked of the SERVER — or `null` for every way of not
- * knowing.
- *
- * One function because there is one question. Both descending walks in this module need a ceiling
- * to start from, and each had grown its own copy of this block; a second copy is how the two come
- * to disagree about what an unusable answer looks like, and the census below counts call sites
- * precisely so a third cannot appear unnoticed.
- *
- * Never `client.mailbox.uidNext`: that is whatever the last untagged response left on the
- * connection, and a stale-low ceiling puts every window below the newest records — which renders
- * as a claim that cannot be found or settings that have vanished, depending on which walk asked.
+ * The highest uid the folder could hold, asked of the SERVER — or `null` for every way of not
+ * knowing. One function because there is one question: both descending walks need a ceiling to
+ * start from, and each had grown its own copy of this block; the census counts call sites so a
+ * third cannot appear unnoticed. Never `client.mailbox.uidNext` — that is whatever the last
+ * untagged response left on the connection, and a stale-low ceiling puts every window below the
+ * newest records, rendering as a claim that cannot be found or settings that have vanished.
  */
 async function highestUid(
   client: Pick<LeaseImapClient, "status">, path: string,
@@ -3284,35 +2357,14 @@ async function highestUid(
  * narrower question about the part that was missed, which is what `floor` is for.
  */
 /**
- * THE UID THE SERVER GAVE OUR OWN CLAIM WHEN WE WROTE IT.
- *
- * ── WHY IT IS KEYED ON THE CONNECTION ───────────────────────────────────────────────────────
- *
- * Not a module-level map keyed by folder path: that string is the same for every mailbox this
- * process talks to, so one account's uid would answer another account's question — and the
- * question is "is my claim still there", which is the one this module may never get wrong. Not a
- * closure inside the io either: a fresh io is built for every call, so a closure would be empty
- * on the next cycle and the memory would never once be used.
- *
- * The connection object is the thing whose lifetime matches: one per mailbox, alive across the
- * cycles that renew, and gone on a reconnect — at which point the walk below does what it has
- * always done. A weak key means the entry disappears with the connection rather than pinning it.
- *
- * ── AND IT IS PAIRED WITH THE GENERATION IT WAS LEARNED UNDER ───────────────────────────────
- *
- * A uid means nothing on its own. Delete a mailbox and recreate it under the same name and the
- * server starts numbering again from one under a NEW UIDVALIDITY, so a remembered 1000 can sit
- * above every record in the folder — including a live rival at 500. The gap read is bounded BELOW
- * by this number, so a stale one does not merely fail to help: it defines a floor that hides
- * exactly the records the election must see, and hands back a set that looks complete. That is a
- * second organizer.
- *
- * So the generation travels with the uid, and a memo whose generation is not the folder's current
- * one is discarded rather than used. Anything unknown on either side counts as a mismatch: a uid
- * that cannot be shown to still mean what it meant is a uid that must not bound a read.
- *
- * It is only ever a HINT. Nothing is concluded from it: it narrows which uids get read, and every
- * decision is still made from records the server returned in this cycle.
+ * The uid the server gave our own claim when we wrote it. Keyed on the CONNECTION: a map keyed by
+ * folder path lets one account's uid answer another's question, and a closure inside the io is
+ * rebuilt every call. The connection's lifetime matches — one per mailbox, gone on reconnect; a
+ * weak key drops the entry with it. Paired with the GENERATION it was learned under: a recreated
+ * folder renumbers from one, and the gap read is bounded BELOW by this number, so a stale uid
+ * hides exactly the records the election must see — a second organizer. A mismatched or unknown
+ * generation discards the memo. Only ever a HINT: every decision is made from records the server
+ * returned this cycle.
  */
 /**
  * THE FOLDER'S CURRENT GENERATION, read from the selected mailbox under the caller's own lock.
@@ -3386,18 +2438,15 @@ async function searchHeaders(
     opts?.onShortfall?.({ floor: walk.floor, ownUid: gap ?? null, closed: false });
     return null;
   } else {
-    /* ── THE UIDS BETWEEN OUR OWN RECORD AND THE WALK'S FLOOR ────────────────────────────────
-     *
-     * The walk goes DOWN from the top, so it meets every record newer than ours before it reaches
-     * ours: uids are handed out increasing on append, and a claim written after ours therefore
-     * has a higher uid. What the budget can leave unread is the stretch between our own record
-     * and where the walk stopped — and a competing claim sitting in there is newer than ours and
-     * would go unseen. So that stretch is read as its own bounded walk, under the same budget,
-     * and only then is the set complete.
-     *
-     * This never SEEDS the main walk from our own uid. Starting there would begin the read
-     * underneath every newer claim, which is how two organizers happen; the walk keeps starting
-     * at the top and this fills in behind it. */
+    /**
+     * The uids between our own record and the walk's floor. The walk goes DOWN from the top, so
+     * it meets every record newer than ours before ours — uids ascend on append. What the budget
+     * can leave unread is the stretch between our record and where the walk stopped, and a
+     * competing claim in there is newer than ours and would go unseen: that stretch is read as
+     * its own bounded walk, and only then is the set complete. This never SEEDS the main walk
+     * from our own uid — starting there begins the read underneath every newer claim, which is
+     * how two organizers happen.
+     */
     opts?.onGapRead?.();
     const below = await searchDescending(client, path, query, max, { from: walk.floor - 1, downTo: gap });
     if (below.kind === "refused") return null;
@@ -3410,35 +2459,25 @@ async function searchHeaders(
     found = [...walk.uids, ...below.uids];
   }
   if (found.length === 0) return [];
-  /* ── THE REPLY IS BOUNDED BEFORE IT IS SPENT, NOT AFTER ────────────────────────────────────
-   *
-   * The uid list comes from a SERVER, and every ceiling that acts on it — the claim-set ceiling,
-   * the caller's own limits — is applied to the RESULT of this function. Between the two sat an
-   * unbounded array turned into ONE comma-separated FETCH: a server answering with a million uids
-   * got a megabytes-long command line built for it and the whole reply materialised in memory,
-   * before anything was in a position to say the set was too large. The check that refuses an
-   * oversized claim set cannot run if the process is already gone.
-   *
-   * So the set is cut to one past the largest ceiling any caller applies — one PAST, so a caller
-   * can still tell "exactly at the ceiling" from "over it", which is the distinction its refusal
-   * is built on — and fetched in batches rather than as a single command. Bounded work for an
-   * unbounded answer, which is the property this seam needed and did not have.
+  /**
+   * The reply is bounded before it is spent, not after. Every ceiling that acts on the uid list
+   * applies to the RESULT of this function, and between the two sat an unbounded array turned
+   * into one comma-separated FETCH: a server answering with a million uids got a megabytes-long
+   * command built for it and the whole reply in memory before anything could refuse — the check
+   * that refuses an oversized claim set cannot run if the process is already gone. The set is cut
+   * to one PAST the largest ceiling (so a caller can tell exactly-at from over) and fetched in
+   * batches. Bounded work for an unbounded answer.
    */
-  /* ── A SLICE IS THE RIGHT ANSWER FOR A DECISION AND THE WRONG ONE FOR A RELEASE ──────────
-   *
-   * The election and the peek are deciding, and both apply their own ceiling to the RESULT: a
-   * set larger than the ceiling is refused by the caller, so carrying one past it costs a round
-   * trip and buys nothing. Slicing there is a bound, not a loss.
-   *
-   * A RELEASE is not deciding, it is enumerating. Every record this install owns has to be found
-   * or the release is partial — and a partial release that returns a COUNT reads as success, so
-   * the omitted claim goes on holding the mailbox against the next install until it goes stale.
-   * Silently slicing that set to the decision ceiling was round ten's finding 3, introduced by
-   * the cap that closed round nine's finding 6.
-   *
-   * So the bound is still there and the callers differ in what they mean by crossing it: the
-   * deciders take the slice, the release asks to be REFUSED, which its caller reports as a
-   * release that did not happen rather than one that did. */
+  /**
+   * A slice is the right answer for a decision and the wrong one for a release. The election and
+   * the peek apply their own ceiling to the result — a set larger than the ceiling is refused by
+   * the caller, so the slice is a bound, not a loss. A release is enumerating, not deciding:
+   * every record this install owns has to be found or the release is partial, and a partial
+   * release that returns a COUNT reads as success — the omitted claim holds the mailbox against
+   * the next install until it goes stale. Same bound, different meaning at the crossing: the
+   * deciders take the slice; the release asks to be REFUSED, reported as a release that did not
+   * happen.
+   */
   if (found.length > max && opts?.refuseWhenOver === true) return null;
   /* ── SORTED BEFORE IT IS CAPPED, BECAUSE THE WINDOWS ARRIVE IN WINDOW ORDER ────────────────
    *
@@ -3520,23 +2559,15 @@ export function makeLeaseIo(
       const metaPath = await meta.path();
       const lock = await client.getMailboxLock(metaPath);
       try {
-        // THE GATE'S READ IS BOUNDED, AND THIS IS THE READ THAT MOST NEEDED IT.
-        //
-        // It had no ceiling at all, so a folder anyone with APPEND rights can write to decided how
-        // much work every election did, on every host, for ever. At a large enough count the FETCH
-        // itself times out, and the gate reads that as "the lease could not be read" — exempted
-        // from the sync failure counter and retried indefinitely, so the mailbox's MAIL stops
-        // moving, not merely its record channel.
-        //
-        // A TRUNCATED READ IS REFUSED RATHER THAN DECIDED ON. The election below would otherwise
-        // run over a partial folder, and its "nobody has ever organized this mailbox" arm is
-        // reached by seeing no claim — which is exactly what a hidden claim looks like. Claiming a
-        // mailbox on that reading is the two-organizer fault the whole module exists to prevent, so
-        // this refuses in the same voice an unreadable folder does. No claim is appended and
-        // nothing is expunged, and the install keeps whatever role it already had. (`ensureMetaFolder`
-        // has already run by the time this is called — it is idempotent, and a folder full enough to
-        // reach here plainly exists — so "no claim is appended, nothing is expunged" is the exact
-        // guarantee rather than "no command is sent".)
+        // The gate's read is bounded, and this is the read that most needed it: it had no ceiling
+        // at all, so a folder anyone with APPEND rights can write to decided how much work every
+        // election did — and at a large enough count the FETCH times out, read as "the lease
+        // could not be read", exempted from the failure counter and retried indefinitely, so the
+        // mailbox's MAIL stops moving. A truncated read is refused rather than decided on: the
+        // nobody-has-organized arm is reached by seeing no claim, which is exactly what a hidden
+        // claim looks like. No claim is appended, nothing is expunged, and the install keeps
+        // whatever role it had — `ensureMetaFolder` has already run, so that is the exact
+        // guarantee.
         const read = await readMetaFolderWindow(client, metaPath);
         // BESIDE THE RECORDS, INSIDE THE LOCK — see `generationAtLastRead`. Sampled before the
         // truncation throw as well, because the gate acts on that window too.
@@ -3578,32 +2609,15 @@ export function makeLeaseIo(
     },
 
     async findOwnRecords(_installId: string): Promise<RawClaimMessage[] | null> {
-      /* ── A CURRENT FOLDER READ, NOT A SERVER SEARCH (0.14.1) ─────────────────────────────
-       *
-       * This was a windowed `UID SEARCH HEADER X-Ohmail-Install-Id <id>`, and a real provider
-       * refused that search on EVERY poll — measured at RC3: `organizer_claim_release_failed`
-       * 38 times in one session, surviving a restart, while a plain current-folder delete of the
-       * same record succeeded every time. A release that can only locate its own records through
-       * a verb the server may decline is a release that can be refused for ever, and "stop
-       * organizing here" is the one instruction that must always be able to finish.
-       *
-       * So the locate is now the SAME bounded read the gate itself decides from
-       * ({@link readMetaFolderWindow}): the folder's newest records, fetched under the caller's
-       * lock and the folder's CURRENT UIDVALIDITY, with the selection — "which of these are
-       * MINE" — made CLIENT-SIDE by the caller's parser rather than by the server. A window that
-       * covered the folder whole (`truncated: false`) is a complete answer to that question by
-       * construction; one that could not be is refused with a code, never sliced, because the
-       * caller deletes what comes back and reports a count.
-       *
-       * What this deliberately gives up is the search's reach PAST the window: crash residue
-       * buried under more than a window's worth of later arrivals is no longer locatable here,
-       * and such a folder refuses `over_ceiling` on every pass. That state is unreadable to the
-       * GATE too (its `listClaims` refuses the same window), and the caller's lapse bound is what
-       * ends a release the folder will not confirm — bounded honesty over unbounded reach.
-       *
-       * The result is CANDIDATES, not claims: the settings document and every other record in the
-       * window come back too, and the caller keeps only claims bearing its id — one parser, in
-       * the caller, exactly where "is this ours" is decided everywhere else.
+      /**
+       * A current folder read, not a server search. This was a windowed `UID SEARCH HEADER
+       * X-Ohmail-Install-Id`, and a real provider refused it on every poll while a plain
+       * current-folder delete succeeded every time; "stop organizing here" must always be able to
+       * finish. The locate is now the bounded read the gate decides from ({@link
+       * readMetaFolderWindow}), under the caller's lock and the current UIDVALIDITY, selection
+       * client-side. A window covering the folder whole is complete; one that could not is
+       * refused with a code, never sliced. Given up: residue buried under more than a window
+       * refuses `over_ceiling` — the caller's lapse bound ends that.
        */
       const metaPath = await meta.path();
       const lock = await client.getMailboxLock(metaPath);
@@ -3723,20 +2737,15 @@ export function makeLeaseIo(
       if (uids.length === 0) return;
       const lock = await client.getMailboxLock(await meta.path());
       try {
-        /* ── A UID IS A FACT ONLY UNDER THE NUMBERING IT WAS READ UNDER ─────────────────────
-         *
-         * Every ref handed here came out of a read that sampled the folder's generation beside
-         * the records (`sampleGeneration`, in `listClaims` and `findOwnRecords`). If the folder
-         * was replaced between that read and this lock — a delete-and-recreate, the one thing
-         * that moves UIDVALIDITY — the numbering starts again from one, and these uids now name
-         * whatever happens to sit at them: another install's live claim, or the settings
-         * document. Expunging by them would be deleting strangers on a stale map.
-         *
-         * Only a PROVEN mismatch refuses — both generations known and different. An unknowable
-         * one proceeds as it always has: a connection that hides UIDVALIDITY gave these refs
-         * minutes ago under the same selection, and the release path's confirm-by-re-read is the
-         * backstop for what a proof cannot cover. `String(…)` because one side may be a bigint
-         * and the other a number for the same generation. */
+        /**
+         * A uid is a fact only under the numbering it was read under. Every ref here came from a
+         * read that sampled the folder's generation beside the records; if the folder was
+         * replaced between that read and this lock, the numbering restarts and these uids name
+         * whatever sits at them — another install's live claim, or the settings document.
+         * Expunging by them would be deleting strangers on a stale map. Only a PROVEN mismatch
+         * refuses — both generations known and different; an unknowable one proceeds, with the
+         * confirm-by-re-read as backstop. `String(…)` because one side may be a bigint.
+         */
         const gen = currentGeneration();
         if (generationAtLastRead !== null && gen !== null && String(gen) !== String(generationAtLastRead)) {
           throw new ClaimReleaseError(
@@ -3755,20 +2764,15 @@ export function makeLeaseIo(
         if (done === false) {
           throw new Error(`the server refused to expunge ${uids.length} claim message(s) from ${META_FOLDER}`);
         }
-        /* ── AND A `true` PROVES ONLY THAT AN EXPUNGE RAN, NOT THAT THESE MESSAGES WENT ──────
-         *
-         * `messageDelete` is `resolveRange` followed by `run('EXPUNGE', …)` (`imap-flow.js` 1.5.0).
-         * The STORE that marks `\Deleted` is internal to it and its result is not propagated, so a
-         * REFUSED store followed by an accepted EXPUNGE — which then deletes nothing — resolves
-         * `true`. The refusal check above cannot see that.
-         *
-         * Custody is read back instead: the uids must be GONE. On the release path this is the
-         * difference between reporting a claim removed and leaving it live while saying otherwise,
-         * which is the whole reason a caller is allowed to trust the count.
-         *
-         * {@link proveGone} holds the rule for all three deletion paths — claims, settings
-         * documents and stale acknowledgements — including the half this file learned late: a read
-         * that could not RUN establishes nothing and must not return normally. */
+        /**
+         * And a `true` proves only that an expunge RAN, not that these messages went:
+         * `messageDelete`'s STORE result is not propagated, so a refused STORE under an accepted
+         * EXPUNGE resolves `true` having removed nothing, and the refusal check above cannot see
+         * it. Custody is read back instead — the uids must be GONE. On the release path this is
+         * the difference between reporting a claim removed and leaving it live while saying
+         * otherwise. {@link proveGone} holds the rule for all three deletion paths, including the
+         * late half: a read that could not RUN establishes nothing and must not return normally.
+         */
         await proveGone(client, uids, "claim message(s)", "remove_claims");
       } finally {
         lock.release();
@@ -3812,26 +2816,14 @@ export interface LeaseGateResult {
 }
 
 /**
- * READ, DECIDE, THEN WRITE — the whole gate, in that order.
- *
- * Reconnect is learn-then-act: the LOCAL sidecar reads the organizer lease BEFORE its
- * first move. Reconnect-after-sleep is exactly when a mailbox is
- * most likely to have changed hands, so writing first — even a renew — would be self-promotion
- * dressed as bookkeeping.
- *
- * On `organize` it renews: append the new claim, then expunge our older ones. **That order is
- * load-bearing.** IMAP has no in-place update, and expunging first means a crash in between
- * leaves the mailbox with NO claim of ours at all — which reads to every other install as a
- * mailbox that became available. Appending first leaves two, which is the harmless direction
- * and which {@link decideLease} coalesces.
- *
- * On `stand_down` it RELEASES: our own claims are expunged. Otherwise the winner has to wait out
- * the whole staleness window before its own gate is clean, and a released claim is what makes
- * "Cloud lapsed" legible to a desktop install at all.
- *
- * Every IO failure becomes {@link LeaseUnavailableError}. There is exactly one place a
- * `stand_down` can be constructed and it is {@link decideLease}, from a parsed fresh foreign
- * claim — §3.4's "exactly one path to stand-down".
+ * Read, decide, then write — the whole gate, in that order. Reconnect is learn-then-act: the
+ * local sidecar reads the lease before its first move, and reconnect-after-sleep is exactly when
+ * a mailbox is most likely to have changed hands. On `organize` it renews: APPEND the new claim,
+ * THEN expunge the older ones — expunging first means a crash leaves no claim of ours, which
+ * reads as an available mailbox; appending first leaves two, which {@link decideLease} coalesces.
+ * On `stand_down` it releases our claims, or the winner waits out the whole staleness window.
+ * Every IO failure becomes {@link LeaseUnavailableError}; the one place a stand-down is
+ * constructed is {@link decideLease}.
  */
 /** One of the gate's three reads of the folder, and whether it covered the whole of it. */
 interface GateRead {
@@ -3875,20 +2867,13 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     );
   }
   /**
-   * ── A FOLDER TOO FULL TO READ IS REPORTED AND THEN WORKED WITH, NOT REFUSED ────────────────
-   *
-   * The gate is the one reader of `ohmail/_meta` that must not answer a full folder by refusing.
-   * `LeaseUnavailableError` is exempted by class in the sync loop and answered by NOT SYNCING THE
-   * MAILBOX — so a gate that refused here would let one record more than the ceiling, in a folder
-   * anyone with APPEND rights can write to, stop a customer's mail, readers as well as organizers,
-   * with no
-   * self-healing path. That is the failure this bound exists to remove, reached at a far lower
-   * threshold than the FETCH timeout it replaced. {@link readMetaFolderWindow}'s header carries the
-   * whole argument, including what acting on a partial election costs.
-   *
-   * So the truncation is LOGGED — once per read, with the counts, because it is the one fault in
-   * this family that does not clear on its own and somebody has to be able to find the folder — and
-   * the newest records it did cover are used. Every OTHER failure still refuses.
+   * A folder too full to read is reported and then WORKED WITH, not refused. The gate is the one
+   * reader of `ohmail/_meta` that must not answer a full folder by refusing:
+   * `LeaseUnavailableError` is exempted by class and answered by not syncing the mailbox, so a
+   * refusal here would let one record over the ceiling — in a folder anyone with APPEND rights
+   * can write to — stop a customer's mail with no self-healing path. The truncation is LOGGED
+   * once per read with the counts (the one fault in this family that does not clear on its own),
+   * and the newest records the window covered are used. Every other failure still refuses.
    */
   const readClaims = async (op: () => Promise<RawClaimMessage[]>): Promise<GateRead> => {
     try {
@@ -3904,52 +2889,28 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   };
 
   /**
-   * ══════════════════════════════════════════════════════════════════════════════════════════
-   *  THE ELECTION'S READ — NEITHER THE WINDOW NOR A REFUSAL
-   * ══════════════════════════════════════════════════════════════════════════════════════════
-   *
-   * Both of the obvious answers to a folder too full to read are wrong, and each is wrong in a way
-   * the other is not.
-   *
-   * ACTING on the window — what this did — reads a newest-first slice as if it were the folder. A
-   * live incumbent that renewed just before five hundred later appends is exactly an old record, so
-   * the election sees no claim, takes arm 4, and appends its own. TWO ORGANIZERS on one mailbox,
-   * which is the single outcome this whole mechanism exists to make impossible.
-   *
-   * REFUSING outright — what it did before that — is `LeaseUnavailableError` on every cycle, which
-   * the sync loop exempts BY CLASS from its failure counter: the mailbox is retried for ever, its
-   * mail stops moving, and nothing is quarantined. A folder anyone with append rights can write to
-   * would then be a way to stop somebody's mail.
-   *
-   * So the election asks a different question. Only claims carry `X-Ohmail-Lease`, so the SERVER
-   * can return every claim in the folder regardless of position, in a reply that is a handful of
-   * records rather than a folder. That set is complete for claims by construction — which is
-   * exactly the property an `organize` verdict needs and a window can never supply.
-   *
-   * It refuses only when it genuinely cannot know: the connection cannot search, the server refused
-   * it, or the claim set ITSELF is over the ceiling. The refusal carries a new `op` and the same
-   * CLASS as every other lease IO fault, so every host's exemption keeps working unchanged.
-   *
-   * `err.records` is never read here again. It stays on the error for the release path, which is
-   * now its only consumer.
+   * The election's read — neither the window nor a refusal; both obvious answers are wrong.
+   * Acting on the window reads a newest-first slice as the folder: an incumbent renewed just
+   * before five hundred appends is exactly an old record, so the election sees no claim, takes
+   * arm 4, and appends — two organizers. Refusing outright is `LeaseUnavailableError` every
+   * cycle, exempted by class: the mail stops and nothing quarantines. So the election asks the
+   * server: only claims carry `X-Ohmail-Lease`, so the reply is complete for claims regardless of
+   * position — the property an `organize` verdict needs. It refuses only when it cannot know.
+   * `err.records` stays on the error for the release path, its only consumer.
    */
   const electionRead = async (windowed: GateRead): Promise<GateRead> => {
     if (!windowed.truncated) return windowed;
 
     const set = await io.listClaimRecords?.();
     if (set === null || set === undefined) {
-      /* ── WHY IT COULD NOT BE READ, WHERE SOMEBODY WILL SEE IT ────────────────────────────
-       *
-       * The refusal below says "the folder holds more than one read may take", which is the
-       * common cause and not always the real one. A read can also refuse because the folder has
-       * been renumbered under a remembered uid, or because the stretch below that uid is itself
-       * past the budget — and those do not heal by waiting, unlike a full folder, which the sweep
-       * eventually trims. Reporting them all as one thing is how a mailbox that is stuck for good
-       * looks like a mailbox that is merely busy.
-       *
-       * The adapter records which it was; this is the only place that reads it, and it exists so
-       * that a fact with no consumer does not sit here being a claim about diagnosis nobody can
-       * check. */
+      /**
+       * Why it could not be read, where somebody will see it. The refusal below says the folder
+       * holds more than one read may take — the common cause, not always the real one: a read can
+       * also refuse because the folder was renumbered under a remembered uid, or the stretch
+       * below that uid is past the budget, and those do not heal by waiting, unlike a full folder
+       * the sweep eventually trims. Reporting them all as one thing is how a mailbox stuck for
+       * good looks merely busy. The adapter records which it was; this is the only reader.
+       */
       const why = io.claimReadFact?.();
       if (why) {
         log("lease_claim_read_refused", {
@@ -3974,18 +2935,16 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
         .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref) }))
         .filter((c): c is { ref: unknown; claim: OrganizerClaim } =>
           c.claim !== null && !isMalformed(c.claim) && c.claim.installId === self.installId);
-      /* ── "NEWEST" MEANS WHAT `coalesce` MEANS BY IT, AND THIS USED TO MEAN SOMETHING ELSE ──
-       *
-       * This compared heartbeats alone with a strict `>`, so among copies sharing an instant it
-       * kept whichever the read happened to yield first — input order deciding which of this
-       * install's own records survives. `coalesce` breaks that tie on the NONCE, and the two
-       * disagreeing is not cosmetic: the record this prune keeps is the one the NEXT gate reads
-       * back as ours. Drop the copy carrying `self.lastNonce` and keep a sibling, and the next
-       * cycle finds a live claim under our own install id that we cannot account for — which is
-       * the clone defence's exact trigger, aimed at ourselves.
-       *
-       * Equal heartbeats are not a curiosity here: a renew and its residue are written in the same
-       * pass, and a claim is stamped to the millisecond. */
+      /**
+       * "Newest" means what `coalesce` means by it, and this used to mean something else:
+       * comparing heartbeats alone with a strict `>` kept whichever copy the read yielded first
+       * among equals — input order deciding which of this install's own records survives.
+       * `coalesce` breaks the tie on the NONCE, and the record this prune keeps is the one the
+       * next gate reads back as ours: drop the copy carrying `self.lastNonce` and keep a sibling,
+       * and the next cycle finds a live claim under our own id it cannot account for — the clone
+       * defence's exact trigger, aimed at ourselves. Equal heartbeats are ordinary here: a renew
+       * and its residue are written in the same pass, stamped to the millisecond.
+       */
       const newest = ours.reduce<{ ref: unknown; claim: OrganizerClaim } | null>(
         (best, c) => (best === null || compareRecency(c.claim, best.claim) < 0 ? c : best),
         null);
@@ -4029,19 +2988,15 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     );
   }
 
-  /* ── THE WRITER'S OWN CLOCK, BEFORE ANY APPEND ────────────────────────────────────────────
-   *
-   * Read from the election's records — this install's OWN claim carries both stamps for one
-   * instant — so it costs no round trip and is judged before this gate can write anything. A
-   * refusal is a `LeaseUnavailableError`, deliberately NOT a stand-down verdict:
-   * both hosts exempt that class, so the mailbox does not sync and is not quarantined, our claim
-   * ages out un-renewed and whoever else wants the mailbox can have it — while a stand-down would
-   * void a one-shot press this pass could never have honoured.
-   *
-   * ONE-CYCLE RESIDUAL, stated rather than discovered: an install that has never written a claim
-   * here has no pair to measure, so its FIRST gate run is unchecked. Its own append supplies the
-   * pair, so the next cycle refuses — and the sequence this closes takes more than one cycle
-   * (claim, be displaced, keep organizing) in every direction.
+  /**
+   * The writer's own clock, before any append — read from the election's records (our own claim
+   * carries both stamps for one instant), so it costs no round trip and is judged before this
+   * gate can write. A refusal is `LeaseUnavailableError`, deliberately not a stand-down: both
+   * hosts exempt the class, the mailbox does not sync and is not quarantined, our claim ages out
+   * un-renewed — while a stand-down would void a one-shot press this pass could never have
+   * honoured. One-cycle residual, stated: an install that has never written a claim has no pair
+   * to measure, so its first gate run is unchecked; its own append supplies the pair and the next
+   * cycle refuses.
    */
   const staleWindowMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
   if (staleWindowMs > MAX_FUTURE_SKEW_MS) {
@@ -4081,28 +3036,15 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     .filter((r): r is unknown => r !== undefined);
 
   if (verdict.verdict !== "organize") {
-    /* ── THE LOSER RELEASES ITS OWN CLAIMS AND NEVER THE WINNER'S ────────────────────────────
-     *
-     * `ourRefs` matches on INSTALL ID ALONE, while the verdict decides ours-ness by install id
-     * AND nonce (`rawOurs` / `isOurs` in `decideLease`). Against a CLONE — two deployments sharing
-     * one install id, which is the hazard the per-write nonce exists for — those two disagree by
-     * construction: the peer's claim carries our id, so the release below treated the claim that
-     * had just BEATEN us as ours and expunged it.
-     *
-     * The folder then read empty, `decideLease`'s "nobody has ever organized this mailbox" arm
-     * said organize, and the loser re-seized on its very next pass — two live deployments taking
-     * one mailbox from each other indefinitely, produced by the defence that exists to stop it.
-     *
-     * This was harmless while a loser DETACHED: there was no next pass. A loser is now a reader
-     * that keeps polling, so the same expunge became a live re-seize loop, and the bound is one
-     * poll interval rather than a staleness window.
-     *
-     * `ourRefs` itself is deliberately not narrowed — the renew below reuses it to expunge our
-     * own superseded claims, and those carry older nonces by design, so a nonce-narrowed
-     * `ourRefs` would leak a claim per cycle. The exclusion belongs to this branch alone, and it
-     * is stated as the invariant rather than as a nonce comparison: whoever won, we do not touch
-     * their claim. On an `available` verdict there is no winner to protect — the residue is stale
-     * or malformed and clearing our own id out of it is the point — so the guard is `stand_down`.
+    /**
+     * The loser releases its own claims and never the winner's. `ourRefs` matches on install id
+     * ALONE while the verdict decides ours-ness by id AND nonce — against a clone those disagree:
+     * the peer's claim carries our id, so the release expunged the claim that had just beaten us,
+     * the folder read empty, arm 4 said organize, and the loser re-seized on its next pass — dual
+     * seizure produced by the defence that exists to stop it. `ourRefs` is deliberately not
+     * narrowed — the renew reuses it for our own superseded claims, which carry older nonces by
+     * design. The invariant: whoever won, we do not touch their claim; on `available` there is no
+     * winner to protect.
      */
     const winner = verdict.verdict === "stand_down" ? verdict.by?.ref : undefined;
     const toRelease = winner === undefined ? ourRefs : ourRefs.filter((r) => r !== winner);
@@ -4110,28 +3052,16 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       try {
         await io.removeClaims(toRelease);
       } catch (err) {
-        // Failing to release is not failing to stand down. We are already not organizing; the
-        // only cost is that the winner waits out the staleness window. Logged, never thrown —
-        // throwing here would turn a clean stand-down into a mailbox fault.
-        //
-        // ── A BARE STRING UNDER `err` IS SAFE HERE, AND NOT BY ACCIDENT. DO NOT "FIX" IT. ──
-        //
-        // `log` is an injected `(event, detail) => void`, and the worker routes it into
-        // `packages/core/src/log.ts`, whose redactor SPECIAL-CASES the `err` key: it hands the
-        // value to `describeError` and emits only `errorClass` + `errorCode`. `describeError`
-        // reads `name` and `code`, and a `string` has neither — so this reduces to
-        // `errorClass: "String"` and the message is DISCARDED before anything is written. That
-        // is the same guarantee an `Error` gets, reached by the same code path.
-        //
-        // The tempting edit is to pass `err` whole "so the class survives". It does not survive
-        // any better, and it costs the one property this line has: an IMAP driver's error object
-        // carries the failing command and, on a login path, the credential — `log.ts`'s header
-        // records a driver message with `host=…&user=…` reaching a log drain. Reducing to a
-        // string HERE means there is no object for a future redactor bug to walk.
-        //
-        // `op` rides along for the reason the throwing sites carry it: this catch wraps ONE
-        // operation today, and the literal is what keeps that true — a second call added inside
-        // this try would have to choose between two ops and the choice would be visible.
+        // Failing to release is not failing to stand down — we are already not organizing; the
+        // only cost is the winner waiting out the staleness window. Logged, never thrown. A bare
+        // string under `err` is safe here, and not by accident — do not "fix" it: `log.ts`'s
+        // redactor special-cases the `err` key through `describeError`, which reads `name` and
+        // `code`; a string has neither, so this reduces to `errorClass: "String"` and the message
+        // is discarded before anything is written. Passing `err` whole survives no better and
+        // costs the one property this line has: an IMAP driver's error carries the failing
+        // command and, on a login path, the credential — reducing to a string HERE means there is
+        // no object for a future redactor bug to walk. `op` rides along because this catch wraps
+        // ONE operation, and the literal keeps that true.
         log("lease_release_failed", {
           op: "remove_claims" satisfies LeaseOp,
           err: err instanceof Error ? err.message : String(err),
@@ -4149,43 +3079,25 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     .sort((a, b) => a.claimedAt.getTime() - b.claimedAt.getTime())[0];
   const claimedAt = priorOwn?.claimedAt ?? now;
 
-  /* ── THE PRESS TRAVELS WITH THE TENURE, EXACTLY AS `claimedAt` DOES (0.14.1) ────────────────
-   *
-   * A tenure has two facts a renewal must carry rather than re-derive: when it began, and what
-   * authorized it. `claimedAt` has always been carried — restarting it on every renew would make
-   * every install look like the newest arrival for ever. The press is the same shape of fact and
-   * needs the same treatment, and it fails in a sharper way if it is not carried:
-   *
-   *   an authorized takeover writes a claim stamped with the press; sixty seconds later the same
-   *   install renews, this time on rule 3 with no press outstanding; a renewal that wrote no stamp
-   *   would replace the winning claim with an UNPRESSED one — and the very next election would
-   *   rank it below the incumbent it had just displaced, if that incumbent were still around, or
-   *   below the next arrival with any press at all. The takeover would undo itself one minute
-   *   later, which is the same class of self-reversal `OrganizeVerdict.displace` exists to close.
-   *
-   * So: an AUTHORIZED win writes the press it rested on; every other win carries forward whatever
-   * this install's own prior claim held. The `authorized` flag comes off the verdict rather than
-   * from `input.takeover !== null`, because a press can be outstanding while the win comes from
-   * rules 3 or 4 — and in those two cases nothing was taken over, so nothing should be stamped.
+  /**
+   * The press travels with the tenure, exactly as `claimedAt` does. The failure if not carried:
+   * an authorized takeover writes a stamped claim; a minute later the same install renews on rule
+   * 3, and a renewal writing no stamp replaces the winning claim with an UNPRESSED one — the next
+   * election ranks it below the incumbent it displaced, and the takeover undoes itself. So an
+   * authorized win writes the press it rested on; every other win carries forward the prior
+   * claim's. The flag comes off the VERDICT, not `input.takeover !== null`: a press can be
+   * outstanding while the win comes from rules 3 or 4, and then nothing was taken over and
+   * nothing should be stamped.
    */
-  /* ── AND IT IS THE NEWEST OWN CLAIM THAT CARRIES IT, NOT `priorOwn` ──────────────────────
-   *
-   * `priorOwn` is the OLDEST of our claims by `claimedAt`, which is right for the incumbency clock
-   * and wrong for this. `claimedAt` is itself carried forward, so a pre-press claim and the
-   * post-press claim share an identical one, the sort is a tie, and array order — IMAP uid
-   * ascending, i.e. the older residue first — decides which one is read.
-   *
-   * That is reachable through a partial expunge, which is the failure this module already refuses
-   * to infer from a driver's return value: an install wins rule 6, `removeClaims` applies the
-   * STORE for the displaced ref and is refused for ours, and the handover verification checks only
-   * that the DISPLACED refs are gone and that our new nonce survived — it never asks about our own
-   * older refs. One cycle later the residue is `priorOwn`, the renewal writes `authorizedAt: null`,
-   * and the tenure a person authorized ranks as unpressed: it then loses rule 6 to any rival with
-   * any stamp at all. Precisely the self-reversal the block above exists to prevent, reached
-   * through the field that was added to prevent it.
-   *
-   * Newest heartbeat wins, with the nonce as the tie-break, so the answer is order-free for the
-   * same reason `coalesce`'s is.
+  /**
+   * And it is the NEWEST own claim that carries it, not `priorOwn`. `priorOwn` is the oldest by
+   * `claimedAt` — right for the incumbency clock, wrong here: `claimedAt` is itself carried
+   * forward, so a pre-press claim and the post-press claim tie, and array order (uid ascending —
+   * the older residue first) decides which is read. Reachable through a partial expunge: a rule-6
+   * win whose own older ref survives a refused STORE leaves the residue as `priorOwn` one cycle
+   * later, the renewal writes `authorizedAt: null`, and the tenure a person authorized ranks
+   * unpressed — the self-reversal this field exists to prevent, reached through the field. Newest
+   * heartbeat wins, nonce as tie-break, so the answer is order-free.
    */
   const newestOwn = claims
     .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
@@ -4217,75 +3129,27 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   }
 
   /**
-   * ── APPEND, THEN LOOK AGAIN BEFORE TOUCHING ANY MAIL ────────────────────────────────────────
-   *
-   * IMAP has no compare-and-swap, so two installs reading the same folder in the same instant can
-   * both decide to organize and both append. The election above makes that impossible to SUSTAIN —
-   * one cycle later both compute the same winner — but "one cycle" was an unbounded promise: the
-   * gate returned `organize` the moment its own APPEND succeeded and never looked at what else had
-   * landed. Every simultaneous start was therefore a real dual-write window a full poll interval
-   * wide, and it was the missing ceiling under every split-brain reproduced above.
-   *
-   * So the claim we just wrote is read back WITH ITS NEIGHBOURS, and the election is re-run over
-   * what is actually in the folder. Three things make this the right shape rather than a retry loop:
-   *
-   *  · `takeover` is deliberately NOT passed. The authorization was spent on the first decision;
-   *    re-offering it here would let one click win an unbounded number of contests.
-   *  · `lastNonce` is set to the nonce we just wrote, so our own new claim is recognised as ours
-   *    and the clone defence is armed against anything else bearing our id.
-   *  · The claims the authorized decision DISPLACED are excluded — by ref, so only the exact
-   *    messages that were ranked and beaten are out of the verify's election. They are not
-   *    rivals: they are the handover's outgoing side, slated for expunge the moment this verify
-   *    passes. Re-counting them re-elects the incumbent on incumbency whenever the two sides are
-   *    of equal kind — a self-hosted server taking a mailbox over from the hosted service, or
-   *    handing it back — so the authorized takeover would lose ITS OWN confirm, release, and
-   *    re-disable the mailbox: the one-click verb that appears to do nothing, at exactly the
-   *    moment somebody chose to leave. By REF and never by install
-   *    id: an incumbent that RENEWED between our read and this verify wrote a message the
-   *    decision never ranked, and that message is proof of an actively live peer — it stays in
-   *    the election and wins, so the press retries rather than steamrolling a live renewal.
-   *
-   * If we lost, we release and report the stand-down — the mailbox has changed hands between our
-   * read and our write, which is exactly the case this exists to catch. A verify that cannot be
-   * READ is not a loss: it is a mailbox fault, and it throws like every other one, because
-   * "somebody else holds this" and "I could not look" must never be reachable from one another.
+   * Append, then look again before touching any mail. Two installs can both decide to organize
+   * and both append; the gate used to return `organize` the moment its APPEND succeeded — a
+   * dual-write window one poll interval wide. So the claim just written is read back and the
+   * election re-run. `takeover` is NOT passed — the authorization was spent; `lastNonce` is the
+   * nonce just written; the displaced claims are excluded BY REF — re-counting them re-elects the
+   * incumbent, so the takeover would lose its own confirm — never by install id: an incumbent
+   * that renewed in the gap wrote a message the decision never ranked, which stays in and wins,
+   * so the press retries. A verify that cannot be READ throws — a mailbox fault, not a loss.
    */
   let verifyClaims: readonly ClaimRecord[];
   try {
-    /* Through `readClaims` for the same reason as the election above: a full folder must not turn a
-     * renew that already landed into a mailbox that stops syncing.
-     *
-     * ── AND THE ABSENCE THIS BLOCK TESTS IS SAFE UNDER A TRUNCATED WINDOW, WHICH THE CONFIRM'S
-     *    IS NOT ─────────────────────────────────────────────────────────────────────────────
-     *
-     * ── THE ARGUMENT THAT USED TO STAND HERE WAS FALSE, AND IT FAILED IN THE ONE DIRECTION
-     *    THAT COSTS TWO ORGANIZERS ──────────────────────────────────────────────────────────
-     *
-     * It read: every claim this verify could NEWLY need to see was appended AFTER the election,
-     * and anything appended after the election is inside a newest-first window BY CONSTRUCTION.
-     * The second half does not follow. A window is bounded by COUNT, not by time, so "appended
-     * later" only implies "inside the window" while fewer than a ceiling's worth of messages
-     * arrive after it. Order the three events the other way and the invariant is simply untrue:
-     *
-     *   1. a rival renews its claim — appended, newest, and at this instant inside any window;
-     *   2. a ceiling's worth of ordinary messages arrive, which anyone with APPEND rights to the
-     *      folder can cause and which a shared mailbox can produce without anybody intending it;
-     *   3. this gate appends its own claim and verifies.
-     *
-     * The rival's renewal is now more than a ceiling back. Our own claim is the newest record, so
-     * `ownSurvived` passes and nothing looks wrong — the window contains this install and nobody
-     * else, the confirm reads `organize`, and the rival goes on organizing the same mailbox from
-     * the other side until its next gate. TWO ORGANIZERS, reached without a single lost write.
-     *
-     * So a verify over a TRUNCATED folder asks the server for the claim set, exactly as the
-     * election does, through the same helper: completeness for claims is the property this check
-     * needs and a window cannot supply it. Below the ceiling nothing changes and no search is
-     * issued. If the set cannot be obtained the gate refuses rather than confirming — our claim is
-     * already in the folder, so the next cycle re-decides with it present, which is the safe
-     * direction.
-     *
-     * The confirm below tests the absence of OLD refs, which a newest-first window genuinely can
-     * miss, and carries its own coverage check for that reason. */
+    /**
+     * Through `readClaims` for the election's reason: a full folder must not turn a landed renew
+     * into a mailbox that stops syncing. The old argument — everything the verify could newly
+     * need is inside a newest-first window by construction — was false: a window is bounded by
+     * COUNT, not time. A rival renews, a ceiling's worth of appends arrive, then we append: the
+     * rival is more than a ceiling back, `ownSurvived` passes, and the rival goes on organizing
+     * from the other side — two organizers without a lost write. So a verify over a TRUNCATED
+     * folder asks the server for the claim set, exactly as the election does; below the ceiling
+     * no search is issued; an unobtainable set refuses.
+     */
     const after = (await electionRead(await readClaims(() => io.listClaims()))).records;
     verifyClaims = after
       .map((m) => parseClaim(m.raw, m.ref))
@@ -4312,19 +3176,15 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   );
   if (!ownSurvived) {
     log("lease_lost_race", { verdict: "own_claim_missing" });
-    // The verdict is still derived from WHAT THE FOLDER HOLDS — with the caller's OWN identity,
+    // The verdict is still derived from what the folder holds — with the caller's OWN identity,
     // not one armed with the vanished nonce: on an ordinary renew the folder still holds our
-    // PRIOR claim (its nonce IS `self.lastNonce`), and arming the clone defence with the nonce
-    // that vanished would classify that prior claim as a live clone of ourselves — a stand-down
-    // naming us, written durably, while our own claim keeps every peer out. Sticky
-    // self-stand-down, the worst of both worlds.
-    //
-    //  · A live FOREIGN winner among the survivors is a genuine lost race: return the
-    //    stand-down naming them, so the row the caller writes says who actually holds it.
-    //  · Anything else — the survivors elect ourselves (the lost write was just a renewal),
-    //    or the folder is empty or stale — is a WRITE THAT WAS LOST, not a loss and not a win:
-    //    retryable, like every other IO fault, and the next gate re-enters with our prior
-    //    claim (or an empty folder) exactly as the election expects.
+    // prior claim (its nonce IS `self.lastNonce`), and arming the clone defence with the vanished
+    // nonce would classify that prior claim as a live clone of ourselves — a durable stand-down
+    // naming us while our own claim keeps every peer out. A live FOREIGN winner among the
+    // survivors is a genuine lost race: return the stand-down naming them. Anything else — the
+    // survivors elect ourselves, or the folder is empty or stale — is a WRITE THAT WAS LOST:
+    // retryable, and the next gate re-enters with our prior claim exactly as the election
+    // expects.
     const survivors = decideLease({
       self,
       claims: verifyClaims,
@@ -4434,25 +3294,16 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       }
     }
 
-    // ── THE HANDOVER IS VERIFIED BY CUSTODY, NOT ASSUMED FROM THE DRIVER ─────────────────────
-    //
-    // Takeovers only (a non-empty displace list): the folder is re-read and BOTH halves of the
-    // handover must hold — every displaced ref actually absent, and our own appended claim
-    // actually present. Neither follows from the removal's outcome. imapflow's `messageDelete`
-    // is STORE-then-EXPUNGE and returns the EXPUNGE's verdict, so a refused STORE under a no-op
-    // EXPUNGE resolves `true` with the message still there; the reverse partial (STORE applied,
-    // EXPUNGE refused) rejects with the message already doomed; and a shared EXPUNGE on a
-    // non-UIDPLUS server can take flagged messages this gate never named — including, through a
-    // racing clone's release, the claim this gate just wrote. An ordinary renew's cleanup keeps
-    // trusting the resolve: its leftovers are our own duplicates, which readers coalesce and
-    // the next renew retries — not worth a FETCH per cycle per mailbox.
-    //
-    // The re-read has its OWN failure path, deliberately: a FETCH that rejects after a removal
-    // that may well have landed is a read fault, not a failed expunge — rolling our claim back
-    // on it could leave the folder with NO claim at all after a fully successful displacement,
-    // handing the mailbox back to whoever returns first. So a read failure here throws
-    // `list_claims`, rolls nothing back, and the next gate's election sorts the folder out from
-    // whatever actually survived.
+    // The handover is verified by CUSTODY, not assumed from the driver. Takeovers only: the
+    // folder is re-read and both halves must hold — every displaced ref absent, our own claim
+    // present. Neither follows from the removal's outcome: `messageDelete` returns the EXPUNGE's
+    // verdict, so a refused STORE under a no-op EXPUNGE resolves `true` with the message still
+    // there, and a shared EXPUNGE on a non-UIDPLUS server can take messages this gate never named
+    // — including, through a racing clone's release, the claim just written. A renew's cleanup
+    // keeps trusting the resolve: its leftovers are our own duplicates, not worth a FETCH per
+    // cycle. The re-read has its own failure path: a FETCH rejecting after a removal that may
+    // have landed is a READ fault — rolling back could leave no claim at all — so it throws
+    // `list_claims` and rolls nothing back.
     if (verdict.displace.length > 0) {
       let read: GateRead;
       try {
@@ -4471,31 +3322,23 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       const ownStanding = afterClaims
         .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce);
       const stillRefs = new Set(after.map((m) => m.ref));
-      /* ── AN ABSENCE IS ONLY EVIDENCE FOR A REF THE WINDOW ACTUALLY COVERED ──────────────────
-       *
-       * This is a CUSTODY check — "is the claim I displaced really gone" — and it is the one place
-       * in the gate where a truncated read cannot simply be worked with. The election can act on the
-       * newest N because it is choosing between what it can see. This is asking about SPECIFIC OLD
-       * REFS, and old is exactly what a newest-first window drops: a displaced claim outside the
-       * window is absent from `stillRefs` for the same reason a successfully expunged one is, and
-       * reading that as success would confirm a handover that never landed — spending the caller's
-       * one-shot authorization while the beaten claim stands to win the next election.
-       *
-       * UIDs ascend with arrival, so the newest-N window covers the HIGHEST uids: a ref below the
-       * window's own floor is one this read could not have seen. Such a ref is treated exactly as a
-       * SURVIVOR is — the handover is not confirmed this cycle — because "still there" and "I could
-       * not look" have the same correct answer here, even though they are different facts. */
-      /* ── AND A UIDVALIDITY CHANGE MAKES THE COMPARISON MEANINGLESS ALTOGETHER ─────────────
-       *
-       * Refs are UIDs, and a UID means nothing across a UIDVALIDITY change: the server has
-       * renumbered the folder, so a ref the election recorded names a different message now, or
-       * none. `stillRefs.has(r)` is then a comparison between two different numbering schemes —
-       * it can answer "gone" for a claim that is sitting there under a new uid, which is the same
-       * false confirmation the coverage rule exists to prevent, arrived at by another route.
-       *
-       * Treated exactly as a truncated read is, because it is the same fact: this read cannot
+      /**
+       * An absence is only evidence for a ref the window actually covered. A custody check — is
+       * the claim I displaced really gone — is the one place a truncated read cannot be worked
+       * with: old is exactly what a newest-first window drops, so a displaced claim outside the
+       * window is absent for the same reason an expunged one is, and reading that as success
+       * confirms a handover that never landed. UIDs ascend with arrival, so a ref below the
+       * window's floor is one this read could not have seen: treated exactly as a SURVIVOR,
+       * because "still there" and "I could not look" have the same correct answer here.
+       */
+      /**
+       * And a UIDVALIDITY change makes the comparison meaningless altogether: refs are UIDs, and
+       * after a renumbering `stillRefs.has(r)` compares two numbering schemes — it can answer
+       * "gone" for a claim sitting there under a new uid, the same false confirmation by another
+       * route. Treated exactly as a truncated read, because it is the same fact: this read cannot
        * speak about those refs. `null` on either side means the connection does not report the
-       * generation, which resolves to "no change detected" and leaves the gate as it was. */
+       * generation, which resolves to "no change detected" and leaves the gate as it was.
+       */
       const renumbered = read.uidValidity !== null
         && electionUidValidity !== null
         && read.uidValidity !== electionUidValidity;
@@ -4597,23 +3440,14 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   return { verdict, nonce, uidValidity: electionUidValidity };
 }
 
-// ══════════════════════════════════════════════════════════════════════════════════════════════
-//  LAYER 4: REQUESTS — A READER'S DECISION, WAITING FOR THE ORGANIZER (0.14.1)
-// ══════════════════════════════════════════════════════════════════════════════════════════════
-//
-// The claim answers "who organizes this mailbox". A request answers a narrower question: "what
-// did a READER decide, and has the organizer taken it yet". Both live in `ohmail/_meta` — it is
-// the only medium two installs share — and both FETCH in the same round trip a cycle already
-// pays for the claim, because the discriminator (`X-Ohmail-Request: 1` vs `X-Ohmail-Lease: 1`) is
-// read off the SAME header block {@link parseClaim} already ignores a request record on (it
-// returns `null` for any message without `X-Ohmail-Lease: 1`, and a request record never carries
-// that header).
-//
-// A request record is HEADERS-ONLY, like a claim, and for the same reason: the payload is a
-// customer's own screener decision — bounded, validated by the same function the organizer's own
-// door validates with — never free text a stranger's mail client could inject into. It travels
-// base64url-encoded in `X-Ohmail-Request-Payload` so a value containing a colon, a CRLF or a
-// header-folding space cannot be misread as a second header.
+// Layer 4: requests — a reader's decision, waiting for the organizer. The claim answers "who
+// organizes this mailbox"; a request answers what a READER decided and whether the organizer has
+// taken it yet. Both live in `ohmail/_meta` and both come off the same headers FETCH a cycle
+// already pays — the discriminator (`X-Ohmail-Request: 1` vs `X-Ohmail-Lease: 1`) is read off the
+// same header block. A request record is headers-only, like a claim: the payload is a customer's
+// own screener decision, bounded and validated by the same function the organizer's own door uses
+// — and it travels base64url-encoded in `X-Ohmail-Request-Payload`, so a value containing a
+// colon, CRLF or folding space cannot be misread as a second header.
 
 /** The one capability a request record needs from the organizer. See {@link CAPABILITY_REQUESTS}. */
 const RH = {
@@ -4637,31 +3471,14 @@ const RH = {
 } as const;
 
 /**
- * The request record's own protocol — independent of {@link CLAIM_PROTOCOL}, additive the same way.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  A CONSTRAINT ON WHOEVER RAISES THIS NUMBER, WRITTEN DOWN WHILE IT IS STILL FREE
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * **"Additive the same way" does not extend to the ACKNOWLEDGEMENT's fields.** {@link parseAck}
- * hard-requires `X-Ohmail-Request-Mailbox` and folds it into {@link canonicalAck} unconditionally,
- * so the acknowledgement's signed shape is fixed at this protocol number. Two consequences follow,
- * and neither is visible from the parser alone:
- *
- *  · **An ack field added later is a BREAKING change, not an additive one.** Fold a new field into
- *    the canonical bytes and every acknowledgement written by a build that predates it fails
- *    verification — not "is ignored", fails — because the two sides hash different strings. Both
- *    installs in a pair are then telling each other that genuine records are unauthenticated.
- *  · So the field goes in behind a protocol BUMP, and the parser that ships with the bump has to
- *    read the OLDER shape tolerantly: canonicalize by the ack's own declared protocol, so a
- *    protocol-1 ack keeps hashing the protocol-1 field list. A build that verifies only the newest
- *    shape cannot be deployed to one side of a pair at a time, which is the only way it ever gets
- *    deployed.
- *
- * This costs nothing today: the field has been required since the acknowledgement existed, and no
- * released build writes an ack without it, so there is no older shape in the wild to be tolerant of
- * yet. That is precisely why it is recorded now rather than discovered by the first build that
- * needs a second field.
+ * The request record's own protocol — independent of {@link CLAIM_PROTOCOL}, additive the same
+ * way, EXCEPT the acknowledgement's fields: {@link parseAck} hard-requires
+ * `X-Ohmail-Request-Mailbox` and folds it into {@link canonicalAck} unconditionally, so the ack's
+ * signed shape is fixed at this number. An ack field added later is a BREAKING change — fold a
+ * new field into the canonical bytes and every ack from an older build FAILS verification, both
+ * installs telling each other genuine records are unauthenticated. So a new field goes behind a
+ * protocol bump whose parser canonicalizes by the ack's own declared protocol, reading the older
+ * shape tolerantly. Recorded now, while no older shape exists in the wild.
  */
 export const REQUEST_PROTOCOL = 1;
 
@@ -4677,84 +3494,24 @@ export const REQUEST_PROTOCOL = 1;
 export const REQUEST_PAYLOAD_MAX_BYTES = 4096;
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  ORIGIN AUTHENTICATION — the signature, and the canonical bytes it is taken over
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * A request record is a message in a shared IMAP folder. Anyone with APPEND rights on the mailbox
- * can write one; nothing in the wire format distinguishes this account's own reader from a
- * stranger, because a forger writes the wire format too. The ONLY thing that distinguishes them is
- * a secret the two installs share and a forger does not — and it is DERIVED, never stored and
- * never delivered: see {@link deriveRequestKey}. Every install that can open the mailbox already
- * holds the one secret that draws exactly the right boundary, because the attacker in this threat
- * model — a shared-folder grantee, a filing rule, another mail client — has folder rights and no
- * password.
- *
- * **This paragraph described a stored `account_settings.request_key` handed to an install that
- * proved it held an account session. That design was REFUSED and is not what ships.** It cannot
- * work here: a single install is either session-bearing or IMAP-bearing and never both, so the
- * process that appends or verifies a record has no session to fetch a key with, and handing one to
- * a local install would mean adding a session to the sealed local artifact. The column, the route
- * and the delivery step are all gone; only this sentence survived them, which is why it is
- * corrected in place rather than deleted — a reader who finds the old design elsewhere should find
- * out here that it was withdrawn.
- *
- * ── THE CANONICAL FORM IS LENGTH-PREFIXED, AND THAT IS NOT FUSSINESS ────────────────────────
- *
- * The obvious canonical form is `fields.join("|")`. It is forgeable. `installId` and `kind` are
- * attacker-influenced strings, so a joined form lets one field's content impersonate the boundary
- * between two others: a record with `installId = "a|screener.decide"` and an empty next field can
- * produce the SAME joined string as a different, legitimate record — and one signature then
- * verifies both. The attack needs no key, only a collision in the encoding.
- *
- * Each field is therefore written as `<byte length>:<field>`, concatenated. That mapping is
- * INJECTIVE for arbitrary field content — the length prefix says exactly how far the field runs,
- * so no content can be read as a delimiter — which is the property "canonical" has to mean here.
- *
- * ── IT SIGNS THE ENCODED PAYLOAD, NOT THE DECODED OBJECT ────────────────────────────────────
- *
- * The payload component is the base64url TEXT exactly as it appears in the header, never the
- * parsed JSON. That is what makes "verify before you decode" possible at all: the organizer
- * checks the signature over bytes it has only read, and reaches `JSON.parse` on a hostile string
- * only after the record has proved it came from a holder of the key. Signing the decoded object
- * would invert that order and require parsing untrusted input to decide whether to trust it.
+ * Origin authentication — the signature and the canonical bytes. Anyone with APPEND rights can
+ * write a record; the only distinction from a stranger is a secret the installs share and a
+ * forger does not — DERIVED, never stored ({@link deriveRequestKey}); the attacker here has
+ * folder rights and no password. (A stored-key design was refused: an install is either
+ * session-bearing or IMAP-bearing, never both.) The canonical form is length-prefixed, not
+ * `join("|")`: attacker-influenced fields can impersonate the boundary between two others in a
+ * joined form; the length prefix makes the mapping injective. It signs the ENCODED payload:
+ * `JSON.parse` runs only after the record proved it came from a key holder.
  */
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE KEY IS DERIVED FROM THE MAILBOX CREDENTIAL, NOT DISTRIBUTED
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Two installs need the same secret to sign and verify a record, and they cannot ask each other
- * for one: a LOCAL install talks only to the mail server, never to the hosted service, and that
- * seal is the product rather than an implementation detail. Handing the key out over the hosted
- * API would have meant giving the local install a session it deliberately does not have.
- *
- * They already share exactly one secret, and it is the right one: **the mailbox password**. Every
- * install that organizes or reads the mailbox holds it — it is how they open IMAP at all — and the
- * attacker this signature exists to stop does NOT: somebody with APPEND rights through a
- * shared-folder ACL, a sieve `fileinto`, or a stray client session can write to the folder without
- * ever knowing the password. The trust boundary the derivation draws is therefore the exact one
- * the threat model asks for.
- *
- * ── ROTATION IS THE PASSWORD CHANGE ITSELF ──────────────────────────────────────────────────
- *
- * There is no key id, no rotation record and no revocation call, because there is nothing stored
- * to revoke: change the password and every install derives a different key on its next cycle,
- * records signed under the old one stop verifying, and the reader expires them. A leaked password
- * yields the signing key — and it already yielded the mailbox, so nothing new is lost.
- *
- * ── NEVER STORED, DERIVED AT USE ────────────────────────────────────────────────────────────
- *
- * The result is a value in memory for the length of one cycle. Persisting it would create a second
- * copy of a credential-equivalent secret in a place the credential store does not protect, for no
- * gain: deriving costs one HKDF.
- *
- * ── AND OAUTH MAILBOXES HAVE NO KEY, WHICH IS AN HONEST ANSWER RATHER THAN A GAP ────────────
- *
- * With OAuth there is no shared secret to derive from: each install holds its own short-lived
- * token, issued to it alone. So this returns `null`, the organizer advertises no `requests`
- * capability, and a reader is refused at its own door naming the holder. Decisions on such a
- * mailbox are made on the install that organizes it.
+ * The key is derived from the mailbox credential, not distributed. Two installs need the same
+ * secret and cannot ask each other: a local install talks only to the mail server, and handing a
+ * key over the hosted API would give it a session it deliberately does not have. They already
+ * share exactly one secret — the mailbox password — and it draws the right boundary: the attacker
+ * with APPEND rights through a shared-folder ACL or a sieve rule never holds it. Rotation IS the
+ * password change: every install derives a different key on its next cycle and old records stop
+ * verifying. Never stored, derived at use. OAuth mailboxes have no shared secret: `null`, no
+ * `requests` capability, and a reader is refused at its own door.
  */
 const REQUEST_KEY_INFO = "ohmail request key v1";
 
@@ -4808,18 +3565,13 @@ export function signRequest(key: string, f: RequestSignatureFields): string {
 }
 
 /**
- * DOES THIS SIGNATURE BELONG TO THESE FIELDS UNDER THIS KEY?
- *
- * Constant-time in the comparison, through `timingSafeEqual` — a byte-at-a-time `===` on an HMAC
- * leaks how much of a guess was right, and an attacker who can append records to the folder can
- * measure the drain's response by watching which records survive a cycle. The length check before
- * it is not a leak: `timingSafeEqual` THROWS on unequal lengths rather than returning false, so
- * the guard is required for correctness, and an HMAC-SHA256's length is a constant that carries no
- * information about the key.
- *
- * Returns FALSE for every failure — a bad signature, a malformed one, an empty key — and never
- * throws. A caller must not be able to turn "this record is forged" into an exception that some
- * enclosing `catch` treats as a transient IO fault and retries.
+ * Does this signature belong to these fields under this key? Constant-time through
+ * `timingSafeEqual` — a byte-at-a-time `===` on an HMAC leaks how much of a guess was right, and
+ * an attacker who can append records can measure the drain's response by watching which survive a
+ * cycle. The length check before it is not a leak: `timingSafeEqual` THROWS on unequal lengths,
+ * so the guard is required, and an HMAC-SHA256's length is a constant. Returns FALSE for every
+ * failure and never throws: a caller must not be able to turn "this record is forged" into an
+ * exception some enclosing catch retries as a transient IO fault.
  */
 export function verifyRequestSignature(key: string, f: RequestSignatureFields, sig: string): boolean {
   if (key === "" || sig === "") return false;
@@ -4858,23 +3610,14 @@ export function isRequestKind(v: unknown): v is RequestKind {
 }
 
 /**
- * WHICH CAPABILITY A HOLDER MUST ADVERTISE BEFORE THIS KIND IS WORTH QUEUEING.
- *
- * A `Record` over the union rather than a function with a `switch` and a default, deliberately:
- * adding a member to {@link REQUEST_KINDS} without deciding its capability is then a COMPILE
- * ERROR rather than a fall-through to some safe-looking constant. A default here would be the
- * quiet failure — the new kind would be gated on `requests`, which every 0.14.1 organizer
- * advertises, so the reader would write a record that organizer has no applier for and the person
- * would watch it sit pending until it expired.
- *
- * The three `rule.*` members share one capability because they share one applier and one table:
- * a build that can create a rule can delete one. `screener.decide` keeps `requests` — that is
- * what the name has meant since 0088 and re-pointing it would strand every organizer already in
- * the field.
- *
- * This map lives HERE, beside the kinds, rather than in `@trafficflow/db` beside the capability
- * strings, because the kinds are this module's vocabulary and the edge runs core → db: this file
- * can import the strings, and that file could not import the kinds.
+ * Which capability a holder must advertise before this kind is worth queueing. A `Record` over
+ * the union rather than a `switch` with a default, deliberately: adding a member to {@link
+ * REQUEST_KINDS} without deciding its capability is a COMPILE ERROR rather than a fall-through —
+ * a default would gate the new kind on `requests`, which every organizer advertises, so the
+ * reader would write a record the organizer has no applier for and the person would watch it sit
+ * pending until it expired. The three `rule.*` members share one capability because they share
+ * one applier and one table. The map lives beside the kinds because the edge runs core → db: this
+ * file can import the strings, that file could not import the kinds.
  */
 export const REQUEST_KIND_CAPABILITY: Readonly<Record<RequestKind, string>> = {
   "screener.decide": CAPABILITY_REQUESTS,
@@ -4923,16 +3666,13 @@ export interface RequestInput {
 }
 
 /**
- * A REQUEST RECORD'S HEADERS, READ AND BOUNDED, WITH THE PAYLOAD STILL ENCODED.
- *
- * This is the halfway state that makes "verify before you decode" expressible. Every field here
- * has been length-checked, but NOTHING has been base64-decoded and no JSON has been parsed — so an
- * organizer can compute the signature over {@link encodedPayload} and refuse a forgery having
- * spent nothing on it but a header read.
- *
- * `kind` is NOT narrowed to {@link RequestKind}: an unrecognised kind is a record for a FUTURE
- * build, and the disposition for one is to leave it standing rather than refuse or destroy it,
- * which requires reading it far enough to know that is what it is.
+ * A request record's headers, read and bounded, with the payload STILL ENCODED — the halfway
+ * state that makes verify-before-decode expressible: every field is length-checked, nothing is
+ * base64-decoded, no JSON is parsed, so an organizer can compute the signature over {@link
+ * encodedPayload} and refuse a forgery having spent nothing but a header read. `kind` is NOT
+ * narrowed to {@link RequestKind}: an unrecognised kind is a record for a future build, and the
+ * disposition is to leave it standing, which requires reading it far enough to know that is what
+ * it is.
  */
 export interface RequestEnvelope {
   requestId: string;
@@ -4990,15 +3730,10 @@ function b64urlDecode(s: string): string {
 }
 
 /**
- * One RFC822 message per outstanding decision. Mirrors {@link formatClaim}'s shape and its rule:
- * the body is a sentence for a human who opens `ohmail/_meta`, and carries no information the
- * headers do not.
- *
- * ── A UNIT TEST PINS THAT THIS NEVER COLLIDES WITH A CLAIM OR A PROFILE RECORD ─────────────
- *
- * `organizer-request.test.ts` asserts the output of this function never contains
- * `X-Ohmail-Lease` or `X-Ohmail-Profile` — the two other record types this folder holds. A
- * request record that accidentally carried either header would be read as evidence of a DIFFERENT
+ * One RFC822 message per outstanding decision. Mirrors {@link formatClaim}'s shape and rule: the
+ * body is a sentence for a human who opens `ohmail/_meta` and carries no information the headers
+ * do not. `organizer-request.test.ts` pins that the output never contains `X-Ohmail-Lease` or
+ * `X-Ohmail-Profile` — a request record accidentally carrying either would be read as a different
  * kind of record by a reader that checks discriminators in a different order than this file does.
  */
 export function formatRequest(r: RequestInput): string {
@@ -5079,17 +3814,14 @@ export function isRequestRecord(raw: string): boolean {
     seen += 1;
     if (line.slice(at + 1).trim() === "1") anyIsOne = true;
   }
-  // ── IT MUST NOT DISAGREE WITH THE PARSER ABOUT WHAT IS A REQUEST ─────────────────────────
-  //
-  // This returned on the FIRST occurrence while {@link parseRequestEnvelope} refuses DUPLICATES
-  // outright. So `X-Ohmail-Request: 0` followed by `X-Ohmail-Request: 1` answered `false` here,
-  // the message never reached the parser, and the `malformed` disposition — the only thing that
-  // would have put its ref on the removal list — was unreachable. One APPEND bought a message
-  // that every drain, every reader cycle and both lease reads re-fetch and re-parse for ever,
-  // with no log line and no way to get rid of it.
-  //
-  // A REPEATED header is therefore always handed on, whatever its values, so the parser can
-  // refuse it and the drain can remove it. A single occurrence still has to say `1`.
+  // It must not disagree with the parser about what is a request. This returned on the FIRST
+  // occurrence while {@link parseRequestEnvelope} refuses duplicates outright — so
+  // `X-Ohmail-Request: 0` followed by `X-Ohmail-Request: 1` answered `false` here, the message
+  // never reached the parser, and the `malformed` disposition — the only thing that would put its
+  // ref on the removal list — was unreachable. One APPEND bought a message every drain and both
+  // lease reads re-fetch and re-parse for ever, with no log line and no way to remove it. A
+  // repeated header is therefore always handed on so the parser can refuse it and the drain can
+  // remove it; a single occurrence still has to say `1`.
   return seen > 1 || anyIsOne;
 }
 
@@ -5198,16 +3930,13 @@ export function verifyRequestEnvelope(e: RequestEnvelope, key: string): boolean 
 }
 
 /**
- * DECODE THE PAYLOAD OF AN ENVELOPE THAT HAS ALREADY BEEN VERIFIED.
- *
- * **The caller owes the verification; this function cannot check it and does not pretend to.** It
- * is separate so that the ORDER is visible at the call site — an organizer's drain reads
- * `verify… then decode…` in sequence, and a future edit that removes the first line leaves an
- * obviously unguarded second one rather than a silently weakened single call.
- *
- * The result is STILL UNTRUSTED CONTENT. A verified signature proves the record came from a
- * holder of this account's key; it proves nothing about whether the decoded object is a decision
- * this build knows how to apply. `validateRequestPayload` is what answers that, after this.
+ * Decode the payload of an envelope that has ALREADY been verified. The caller owes the
+ * verification; this function cannot check it and does not pretend to — it is separate so the
+ * ORDER is visible at the call site: a drain reads verify-then-decode in sequence, and an edit
+ * removing the first line leaves an obviously unguarded second one rather than a silently
+ * weakened single call. The result is STILL untrusted content: a verified signature proves the
+ * record came from a key holder, nothing about whether the decoded object is a decision this
+ * build can apply — `validateRequestPayload` answers that, after this.
  */
 export function decodeRequestPayload(e: RequestEnvelope): RequestMessageRecord {
   const malformed = (reason: string): MalformedRequestRecord =>
@@ -5221,28 +3950,15 @@ export function decodeRequestPayload(e: RequestEnvelope): RequestMessageRecord {
   return { ...e, payload };
 }
 
-// ══════════════════════════════════════════════════════════════════════════════════════════════
-//  LAYER 4b: ACKS — WHAT THE ORGANIZER SAID, CARRIED BACK (0.14.1)
-// ══════════════════════════════════════════════════════════════════════════════════════════════
-//
-// ── ABSENCE WAS THE BUG, AND IT WAS A BUG ABOUT TRUTH RATHER THAN ABOUT PLUMBING ─────────────
-//
-// 0088's reader inferred `applied` from a record's ABSENCE from the folder. But an organizer
-// removes a record for two opposite reasons — it applied it, or it REFUSED it — and expunges in
-// both cases. So a person who screened a sender out was told "done" whether their decision had
-// been carried out or thrown away for being malformed, stale, or about the wrong mailbox. Absence
-// is not evidence, and no amount of care on the reader's side could make it into evidence.
-//
-// An ack is the evidence. The organizer appends one naming the request and the OUTCOME, and the
-// reader moves its row only on an ack it can read: `applied`, or `refused` with a reason it can
-// show the person. A `sent` row with no ack at all stays `sent` until the stale window expires it.
-//
-// ── THE ACK IS SIGNED, FOR THE SAME REASON THE REQUEST IS ────────────────────────────────────
-//
-// A forged ack is not a harmless lie. `applied` on a decision nobody applied tells a person their
-// Screener rule exists when it does not, and the mail keeps arriving where they told it not to;
-// `refused` on one that WAS applied invites them to press again. Both installs already hold the
-// account's key, so signing this direction too costs one HMAC and closes the return path.
+// Layer 4b: acks — what the organizer said, carried back. Absence was the bug, and about truth
+// rather than plumbing: the reader inferred `applied` from a record's absence, but an organizer
+// removes a record for two opposite reasons — applied, or REFUSED — so a person who screened a
+// sender out was told "done" whether their decision was carried out or thrown away. Absence is
+// not evidence. The ack is: the organizer appends one naming the request and the OUTCOME, and the
+// reader moves its row only on an ack it can read; a `sent` row with no ack stays `sent` until
+// the stale window expires it. Signed, for the request's reason: a forged `applied` tells a
+// person their Screener rule exists while the mail keeps arriving; a forged `refused` invites
+// them to press again. One HMAC closes the return path.
 
 const AH = {
   ack: "X-Ohmail-Ack",
@@ -5401,18 +4117,13 @@ export function formatAck(a: AckInput): string {
 }
 
 /**
- * READ AND VERIFY AN ACK IN ONE STEP — deliberately unlike the request path, and the asymmetry is
- * the point.
- *
- * A request is split into parse-then-verify because the ORGANIZER must not decode a hostile
- * payload before it trusts the record. An ack carries no payload: there is nothing to decode and
- * therefore no expensive or dangerous second half to protect. Folding verification in means the
- * reader's state machine cannot be handed an unverified ack at all — the type it receives has
- * already been checked, so there is no order for a later edit to get wrong.
- *
- * Returns `null` for "not an ack" and for "an ack that does not verify" alike. A reader treats
- * both as silence, which is the correct disposition: an unverifiable ack is not evidence, and the
- * `sent` row it names simply waits for a real one or for the stale window.
+ * Read and verify an ack in one step — deliberately unlike the request path, and the asymmetry is
+ * the point. A request splits parse-then-verify because the organizer must not decode a hostile
+ * payload before trusting the record; an ack carries no payload, so there is no dangerous second
+ * half to protect, and folding verification in means the reader's state machine cannot be handed
+ * an unverified ack at all. Returns `null` for "not an ack" and "does not verify" alike: a reader
+ * treats both as silence — an unverifiable ack is not evidence, and the `sent` row waits for a
+ * real one or the stale window.
  */
 export function parseAck(raw: string, key: string, ref?: unknown): AckRecord | null {
   const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
@@ -5511,33 +4222,14 @@ export class RequestUnavailableError extends Error {
 }
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE FOLDER, READ ONCE — and the two ROLES that read it
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * ── ONE FETCH, THREE PARSERS ────────────────────────────────────────────────────────────────
- *
- * `ohmail/_meta` holds three kinds of record — claims, requests and acks — and the module header
- * has claimed since the channel shipped that they come off "the same headers FETCH in one round
- * trip". {@link listMetaRecords} sorts one read into its kinds, and the claim, request and ack
- * parsers all run over ITS output, so a fourth record type costs no round trip at all.
- *
- * **The loop underneath is shared too, and saying so is a correction.** This block used to say the
- * sentence above was "now true rather than aspirational" while three separate `FETCH 1:*` loops —
- * this one, the lease gate's and the read-only peek's — still stood in the module, each with its
- * own copy of the ceiling and the empty-folder defence, and two of the three keeping the OLDEST
- * records when the ceiling bit. They are one function now ({@link readMetaFolderWindow}), and a
- * census test pins the two `client.fetch(` calls that remain — the window and the `*` count probe,
- * both inside the shared read — to keep the claim honest.
- *
- * ── AND TWO OBJECTS, BECAUSE A READER MUST NOT BE ABLE TO EXPUNGE ───────────────────────────
- *
- * The IMAP verbs split cleanly by role: a READER appends its own decisions and never removes
- * anything (its whole write surface on this folder is one APPEND); an ORGANIZER removes what it
- * has handled and appends acks, and never writes a request. Holding both sets on one object made
- * the organizer's expunge reachable from the reader's own accessor — separated only by which
- * function the caller happened to call, which is not a boundary. These are two types, so a
- * reader's object does not HAVE a remove to reach for and the compiler says so.
+ * The folder, read once — and the two ROLES that read it. One FETCH, three parsers: {@link
+ * listMetaRecords} sorts one read into its kinds, so a fourth record type costs no round trip.
+ * The loop underneath is shared too — three separate `FETCH 1:*` loops once stood here, each with
+ * its own ceiling and empty-folder defence, two keeping the OLDEST records when the ceiling bit;
+ * they are one function now ({@link readMetaFolderWindow}), census-pinned. And two objects,
+ * because a reader must not be able to expunge: a READER appends and never removes; an ORGANIZER
+ * removes and appends acks. One object made the expunge reachable from the reader's accessor; two
+ * types, and the compiler says so.
  */
 export interface RawMetaMessage {
   ref: unknown;
@@ -5547,17 +4239,13 @@ export interface RawMetaMessage {
 }
 
 /**
- * THE CEILING ON ONE FOLDER READ.
- *
- * Every legitimate population of `ohmail/_meta` is tiny: one claim per install, one acknowledgement
- * per decision still in flight, and the decisions themselves — which the drain removes as it
- * handles them. This is far above all of that, because its job is to stop anyone with APPEND rights
- * on the folder choosing how much work a cycle does, not to be tight.
- *
- * It bounds ONE READ, and it is not a filter: passing it does not drop records, it makes the read
- * REFUSE. {@link readMetaFolderWindow} explains why — a ceiling that silently keeps a subset makes
- * a partial view of this folder indistinguishable from a complete one, and every decision taken
- * from this folder is wrong on a partial view.
+ * The ceiling on one folder read. Every legitimate population of `ohmail/_meta` is tiny — one
+ * claim per install, one ack per decision in flight, the decisions themselves — and this is far
+ * above all of it: its job is to stop anyone with APPEND rights choosing how much work a cycle
+ * does, not to be tight. It bounds ONE READ and is not a filter: passing it makes the read
+ * REFUSE, never drop records — {@link readMetaFolderWindow} explains why a ceiling that silently
+ * keeps a subset makes a partial view indistinguishable from a complete one, and every decision
+ * taken from this folder is wrong on a partial view.
  */
 export const META_RECORDS_MAX_PER_FETCH = 500;
 
@@ -5600,43 +4288,27 @@ export interface RequestOrganizerIo extends MetaRecordsIo {
   /** STORE `\Deleted` + EXPUNGE the given messages, in ONE round trip. */
   remove(refs: readonly unknown[]): Promise<void>;
   /**
-   * EXPUNGE every ack older than `before`, WITHOUT reading the folder first.
-   *
-   * The organizer's ack sweep is the only thing that ever makes `ohmail/_meta` smaller, and it sat
-   * behind the bounded read — which refuses a folder over the ceiling. So a folder that crossed the
-   * ceiling BY ACKS could never come back down: the read refuses, the sweep never runs, the acks
-   * stay, and every drain refuses for ever. The compactor was locked behind the thing it exists to
-   * fix.
-   *
-   * Asked of the server by header and date, so it is integers in and an expunge out — no FETCH, no
-   * window, bounded by construction. The sweep was already "by AGE alone", and INTERNALDATE of an
-   * ack this organizer appended is its `ackedAt` to the day.
-   *
-   * Optional: a client that cannot search simply does not sweep, which is where it was before.
-   * Returns how many were removed, for the log.
+   * Expunge every ack older than `before`, WITHOUT reading the folder first. The ack sweep is the
+   * only thing that ever makes `ohmail/_meta` smaller, and it sat behind the bounded read — which
+   * refuses a folder over the ceiling — so a folder that crossed the ceiling BY ACKS could never
+   * come back down: the read refuses, the sweep never runs, every drain refuses for ever. The
+   * compactor was locked behind the thing it exists to fix. Asked of the server by header and
+   * date — integers in, an expunge out, no FETCH, bounded by construction; INTERNALDATE of an ack
+   * this organizer appended is its `ackedAt` to the day. Optional: a client that cannot search
+   * does not sweep. Returns how many were removed.
    */
   sweepStaleAcks?(before: Date): Promise<number>;
 }
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE PARSER REGISTRY — one discriminator per kind, in one place
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * The module header's table, as data. It exists so that adding a fifth record type to
- * `ohmail/_meta` is ONE ENTRY here plus a parser, rather than a fourth hand-written predicate that
- * every reader of the folder has to remember to consult — which is how the third one went wrong:
- * `isRequestRecord` answered on the FIRST occurrence of its header while the parser refused
- * duplicates outright, so a class of message was permanently unremovable and nothing said so.
- *
- * The `match` functions are the EXISTING predicates rather than a new uniform one, deliberately.
- * They differ in what they do with a repeated discriminator, and each difference is a decision that
- * was argued at the parser it belongs to — replacing them with one generic reader here would quietly
- * re-decide all three.
- *
- * `profile` is listed and has no matcher: its records live in this folder and are parsed by
- * `organizer-profile.ts`, which owns the document format. Listing it is what makes the count four
- * everywhere instead of three here and four in the header.
+ * The parser registry — one discriminator per kind: the module header's table as data, so a fifth
+ * record type is ONE ENTRY plus a parser rather than a fourth hand-written predicate — which is
+ * how the third went wrong: `isRequestRecord` answered on the first occurrence while the parser
+ * refused duplicates, leaving a class of message permanently unremovable. The `match` functions
+ * are the EXISTING predicates, deliberately: each differs on a repeated discriminator, and each
+ * difference was argued at its parser — a uniform reader would quietly re-decide all three.
+ * `profile` is listed with no matcher: `organizer-profile.ts` owns that format; listing it keeps
+ * the count four everywhere.
  */
 export type MetaRecordKind = "claim" | "request" | "ack" | "profile";
 
@@ -5698,22 +4370,14 @@ export function acksIn(records: readonly RawMetaMessage[], key: string): AckReco
 }
 
 /**
- * THE SHARED READ — one `FETCH 1:*` of `ohmail/_meta`'s headers, unfiltered.
- *
- * Unfiltered on purpose: the folder's three record types (claims, requests, acks) are told apart
- * by a header the caller's own parser reads, and filtering here would mean a second round trip the
- * moment a caller wants two of them. {@link requestEnvelopesIn} and {@link acksIn} are the cheap
- * negatives that sort one read into its kinds.
- *
- * ── AN ABSENT FOLDER THROWS, AND THAT IS A CORRECTNESS FIX RATHER THAN STRICTNESS ────────────
- *
- * The version this replaces answered `[]` when `ohmail/_meta` did not exist. For the organizer's
- * drain that was harmless — nothing to drain. For the READER it was not: its state machine reads
- * "my record is not in the folder" as "the organizer took it", so an absent folder told a person
- * that every decision they had made was applied, at the exact moment the evidence was that nobody
- * was organizing the mailbox at all. "I could not look" and "there is nothing there" must not be
- * reachable from one another, so this raises {@link RequestUnavailableError} and the reader
- * transitions nothing.
+ * The shared read — one `FETCH 1:*` of `ohmail/_meta`'s headers, unfiltered on purpose: the three
+ * record kinds are told apart by a header the caller's own parser reads, and filtering here would
+ * mean a second round trip the moment a caller wants two of them; {@link requestEnvelopesIn} and
+ * {@link acksIn} sort one read into its kinds. An absent folder THROWS, and that is a correctness
+ * fix: answering `[]` was harmless for the organizer's drain and wrong for the READER, whose
+ * state machine reads "my record is not in the folder" as "the organizer took it" — an absent
+ * folder told a person every decision was applied at the exact moment the evidence said nobody
+ * was organizing at all. {@link RequestUnavailableError}, and the reader transitions nothing.
  */
 function makeMetaRecordsList(
   client: LeaseImapClient,
@@ -5780,19 +4444,13 @@ function makeMetaRecordsList(
 }
 
 /**
- * THE READER'S HALF — look, and append its own decisions.
- *
- * ── IT NEVER CREATES `ohmail/_meta` ─────────────────────────────────────────────────────────
- *
- * A request is offered to a reader ONLY while a holder's claim advertises
- * {@link CAPABILITY_REQUESTS} and `organizer_state='held'` (the HTTP door's own gate, in
- * `packages/db`) — which is only ever true once an organizer has already run `ensureMetaFolder()`
- * at least once. So by the time `append` is ever called, the folder is guaranteed to exist, and
- * creating it here — the way {@link makeLeaseIo} does for a claim — would be a write this object
- * has no standing to make: a reader that could conjure the organizer's own folder into existence
- * is a reader one step from conjuring a claim into it.
- *
- * **There is no `remove` on this object and that is the point.** See {@link RequestReaderIo}.
+ * The reader's half — look, and append its own decisions. It never creates `ohmail/_meta`: a
+ * request is offered to a reader only while a holder's claim advertises {@link
+ * CAPABILITY_REQUESTS} and `organizer_state='held'`, which is only true once an organizer has run
+ * `ensureMetaFolder()` — so by the time `append` is called the folder exists, and creating it
+ * here would be a write this object has no standing to make: a reader that could conjure the
+ * organizer's folder is one step from conjuring a claim into it. There is no `remove` on this
+ * object and that is the point — see {@link RequestReaderIo}.
  */
 export function makeRequestReaderIo(
   client: LeaseImapClient, toServerPath: (canonical: string) => string,
@@ -5861,21 +4519,16 @@ export function makeRequestOrganizerIo(
             { op: "sweep_acks" },
           );
         }
-        /* ── THE CUTOFF IS FLOORED TO A DAY BOUNDARY, AND THAT IS NOT ROUNDING ───────────────
-         *
-         * IMAP's SEARCH BEFORE takes a DATE, not an instant. Where the server does not advertise
-         * `WITHIN`, the library turns a `before` carrying a time of day into a date-only term and
-         * ADVANCES it by one day, so that a caller asking for "older than this instant" is never
-         * given less than it asked for. That is the right direction for a READER and exactly the
-         * wrong one here: this call DELETES, so the widened term reaches records filed on the
-         * cutoff's own day — an acknowledgement barely half a day old, removed as though it were
-         * a day past its life.
-         *
-         * Flooring to midnight makes the term one the library sends unchanged, and moves the only
-         * remaining error to the safe side: acknowledgements may survive up to a day longer than
-         * the nominal life, and none younger than it is ever removed. Keeping a record too long
-         * costs one row in a folder that gets swept again next cycle; removing a live one loses
-         * an answer somebody is waiting for. */
+        /**
+         * The cutoff is floored to a day boundary, and that is not rounding. IMAP's SEARCH BEFORE
+         * takes a DATE; without `WITHIN` the library widens a time-of-day cutoff by one day so a
+         * caller is never given less than it asked for — right for a reader, exactly wrong here,
+         * because this call DELETES and the widened term reaches records filed on the cutoff's
+         * own day: an acknowledgement half a day old removed as though a day past its life.
+         * Flooring makes the term one the library sends unchanged and moves the only error to the
+         * safe side: keeping a record too long costs one row in a folder swept again next cycle;
+         * removing a live one loses an answer somebody is waiting for.
+         */
         const floored = ackSweepCutoff(before);
         /* ── WINDOWED, LIKE EVERY OTHER READ HERE ────────────────────────────────────────────
          *
@@ -5951,34 +4604,26 @@ export function makeRequestOrganizerIo(
           else if (resumeBelow !== null) writeMemo(identity, sweepGeneration, { sweepCursor: resumeBelow });
         };
         if (found.length === 0) { markProgress(); return 0; }
-        /* ── SWEPT IN BOUNDED BATCHES, BECAUSE THE SET IS AS LARGE AS THE FOLDER GOT ─────────
-         *
-         * The whole matching set used to go into ONE expunge and one custody read. That makes the
-         * compactor's command grow with the mess it exists to clear: thousands of stale
-         * acknowledgements produce a command line a provider can refuse outright, and a refusal
-         * leaves every one of them standing. The folder is then over the ceiling, the bounded read
-         * refuses, and the only thing that could have made it smaller is the command that just
-         * failed — so the state never heals, which is the shape this sweep was moved ahead of the
-         * read to prevent in the first place.
-         *
-         * {@link SWEEP_DELETE_BATCH} uids per expunge, each batch proved gone before the next is
-         * attempted. A batch that fails throws with the batches BEFORE it already removed, so a
-         * refusal part-way through still leaves the folder smaller than it was and the next cycle
-         * resumes on a shorter set. Progress that survives a failure is the property this needs;
-         * an all-or-nothing sweep has none. */
-        /* ── TWO BOUNDS, AND THEY BOUND DIFFERENT THINGS ────────────────────────────────────
-         *
-         * `wanted` above stops the WALK once it holds a cycle's worth, which bounds the reply.
-         * This clamps what is DELETED. They are not the same number in practice, and reasoning
-         * that they were is how this clamp came to be removed once already: the walk tests its
-         * total only after pushing a whole window, so a walk holding one short of `wanted` takes
-         * another full window and comes back with up to `SEARCH_UID_WINDOW - 1` more than asked
-         * for. Deleting all of it is a cycle half again as long as the one that was promised.
-         *
-         * The mutation that should have caught the removal was green, because the fixture's
-         * acknowledgements happened to fall so that the windows summed to exactly `wanted`. A
-         * fixture that aligns is not a property; the case below now has a hole in it for that
-         * reason. */
+        /**
+         * Swept in bounded batches, because the set is as large as the folder got. One expunge
+         * over the whole matching set grows with the mess it exists to clear: thousands of stale
+         * acks produce a command a provider can refuse outright, the refusal leaves every one
+         * standing, the folder stays over the ceiling, the bounded read refuses — and the only
+         * thing that could shrink it is the command that just failed. {@link SWEEP_DELETE_BATCH}
+         * uids per expunge, each batch proved gone before the next; a failing batch throws with
+         * earlier batches already removed, so the folder is smaller either way. Progress that
+         * survives a failure is the property this needs.
+         */
+        /**
+         * Two bounds, and they bound different things: `wanted` stops the WALK once it holds a
+         * cycle's worth; this clamps what is DELETED. They are not the same number — the walk
+         * tests its total only after pushing a whole window, so a walk one short of `wanted`
+         * takes another full window and returns up to `SEARCH_UID_WINDOW - 1` more than asked;
+         * deleting all of it is a cycle half again as long as promised. Reasoning they were equal
+         * is how this clamp was removed once already; the mutation that should have caught it was
+         * green because the fixture's windows summed to exactly `wanted` — a fixture that aligns
+         * is not a property.
+         */
         let swept = 0;
         const budget = Math.min(found.length, SWEEP_DELETE_BATCH * SWEEP_BATCHES_MAX_PER_CYCLE);
         for (let i = 0; i < budget; i += SWEEP_DELETE_BATCH) {
