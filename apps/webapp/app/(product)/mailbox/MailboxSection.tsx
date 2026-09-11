@@ -1969,10 +1969,9 @@ export function MailboxSection() {
                   pointed at ohmail when the answer was upstream. `showInboundQuiet` (exported
                   above, bitten by the suite) carries the whole gate: health on screen, and the
                   dismissal-vs-episode comparison that keeps a dismissal durable until genuine
-                  inbound flows again. `mbx-sub`, not `mbx-bad`: nothing is broken, and alarm
-                  styling would make the first sentence a lie. Two keys because "the last mail
-                  came {when}" is false for a mailbox that never received any — the pass stamps
-                  `createdAt` there, and the DTO's own `createdAt` tells the two apart. */}
+                  inbound flows again. `mbx-sub`, not `mbx-bad`: nothing is broken. Two keys
+                  because "the last mail came {when}" is false for a mailbox that never received
+                  any — the pass stamps `createdAt` there, and the DTO's own tells them apart. */}
               {/* ── WHO ORGANIZES THIS ONE, AND THE VERB THAT CHANGES IT ────────────────
                   The row above answers "is my mail coming down?"; this answers the other question
                   somebody with two machines has — which one files it — and it never disappears.
@@ -2057,18 +2056,15 @@ export function MailboxSection() {
             </div>
             <div className="mbx-state">
               {/* The row's states, and why "Waiting for first sync" is gone. This read
-                  `status === 'connected' && lastSyncAt === null` and said one sentence for every
-                  state a first sync can be in — measured live, it sat on this row for half an
-                  hour while the first import poured messages in. Two reasons, both in the
-                  column: `last_sync_at` is stamped for every mailbox a cycle served in one
-                  `UPDATE … WHERE id IN (…)` (`apps/worker/src/mailboxes.ts`), which is why two
-                  rows can report an identical age; and it is pushed even when the cycle ended
-                  with `hasBacklog` true (`apps/worker/src/index.ts:1281`), landing EARLY
-                  mid-import — the `syncedAgo` branch would say "Synced just now" thirty seconds
-                  into a thirty-minute import. So the row decides nothing about progress: it
-                  renders what is strictly per-mailbox (error, block, queued, connected-at), and
-                  the account-wide "the mirror is growing" answer comes from the single
-                  derivation in the shell (`shell/mail-state.ts`), never re-derived here. */}
+                  `status === 'connected' && lastSyncAt === null` — one sentence for every state
+                  a first sync can be in; measured live, it sat here half an hour while the first
+                  import poured mail in. Two reasons: `last_sync_at` is stamped for every mailbox
+                  a cycle served in one `UPDATE … WHERE id IN (…)` (`apps/worker/src/mailboxes.ts`),
+                  and it is pushed even when the cycle ended with `hasBacklog` true
+                  (`apps/worker/src/index.ts:1281`) — so `syncedAgo` would say "Synced just now"
+                  thirty seconds into a thirty-minute import. The row decides nothing about
+                  progress: it renders what is strictly per-mailbox, and the account-wide answer
+                  comes from the shell's single derivation (`shell/mail-state.ts`). */}
               {m.status === "disabled" ? null : m.status === "error" ? (
                 /**
                  * ── A DISCONNECTED MAILBOX REPORTS NO PROGRESS. FIRST, SO IT CANNOT BE OUTVOTED
@@ -2337,16 +2333,14 @@ export function MailboxSection() {
               </Button>
               {/* Connect Outlook — beside the password form, not instead of it. A SECOND door,
                   not a provider inside the first: the password ceremony asks for an address, a
-                  host and a password, and this one asks for none of them — Microsoft states the
-                  address in the token, the host is fixed by the issuer, and there is no password
-                  to have; behind the provider picker it would be a form that empties itself. A
-                  modern Microsoft 365 tenant refuses basic IMAP outright, so for those accounts
-                  this is the only path. `secondary`, because the generic path is still the one
+                  host and a password, and this one asks for none — Microsoft states the address
+                  in the token, the host is fixed by the issuer, and there is no password to
+                  have. A modern Microsoft 365 tenant refuses basic IMAP outright, so for those
+                  accounts this is the only path. `secondary`: the generic path is still the one
                   most mailboxes take. Gated on EITHER door being armed, so it is never a button
-                  whose press returns a raw 503 — and ONE button rather than two, because
-                  "Connect Outlook" is one thing a person wants and which ceremony runs is the
-                  server's business. The press opens the disclosure above, which names the
-                  ceremony that will run; only its continue starts anything. */}
+                  whose press returns a raw 503 — and ONE button, because which ceremony runs is
+                  the server's business. The press opens the disclosure above, which names the
+                  ceremony; only its continue starts anything. */}
               {oauthAvailable || deviceAvailable ? (
                 <Button
                   icon="open"
@@ -2671,17 +2665,15 @@ export function MailboxSection() {
       ) : null}
 
       {/* The removal confirmation — a real one, stating CONSEQUENCES rather than asking "are
-          you sure". Every line is what the server actually does, chosen by what a person is
-          about to lose track of: organizing stops (the visible change); THE MAIL IS UNTOUCHED —
-          the one somebody is actually afraid of, and the product's central promise
-          (`MailboxService.delete` opens no IMAP connection, so no folder or message on their
-          server is reachable from this press); the stored password is deleted — the thing a
-          reconnect cannot undo without typing it again; scheduled sends are closed rather than
-          sent — a consequence with no other surface; and THE COPY ALREADY SYNCED STAYS, said
-          plainly because it is true and unflattering — erasure is account-scoped with no
-          per-mailbox purge, and a claim that the local copy goes would be exactly the false
-          statement this panel exists to avoid. `role="alertdialog"` and the safe answer first
-          in the DOM, the delete strip's discipline one surface over. */}
+          you sure". Every line is what the server does: organizing stops; THE MAIL IS
+          UNTOUCHED — the one somebody is actually afraid of, and the product's central promise
+          (`MailboxService.delete` opens no IMAP connection, so nothing on their server is
+          reachable from this press); the stored password is deleted — the thing a reconnect
+          cannot undo without typing it again; scheduled sends are closed rather than sent — a
+          consequence with no other surface; and THE COPY ALREADY SYNCED STAYS, said plainly
+          because it is true and unflattering — erasure is account-scoped with no per-mailbox
+          purge, and claiming the local copy goes would be exactly the false statement this
+          panel avoids. `role="alertdialog"`, the safe answer first in the DOM. */}
       {stage === "remove" && removing ? (
         <div className="acct-confirm" role="alertdialog" aria-label={t("removeTitle", { address: removing.address })}>
           <h3 className="acct-sub">{t("removeTitle", { address: removing.address })}</h3>
