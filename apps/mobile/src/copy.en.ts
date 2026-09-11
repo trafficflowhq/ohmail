@@ -332,6 +332,16 @@ const TABLE = {
     "The mailbox on this phone is not the one this entry names. Forget this entry and open the mailbox again.",
   standaloneNotStored: (detail: string) =>
     `This phone could not record the mailbox it just opened: ${detail}`,
+  /* The consent press (`net/mailboxes.ts#organizeHere`). Each one names what the mailbox answered;
+     none of them claims the phone is organizing, because on these arms it is not. */
+  organizeHereUnreachable: (detail: string) =>
+    `ohmail could not ask to organize this mailbox: ${detail}`,
+  organizeHereUnreadable:
+    "The answer to organizing this mailbox could not be read, so nothing was recorded. Pull to refresh to ask again.",
+  organizeHereDisconnected:
+    "This mailbox is turned off, so ohmail is not filing it. Connect it again and ohmail will take it from there.",
+  organizeHereRefused: (status: number) =>
+    `Organizing this mailbox was refused (${status}). Another machine may hold it — check what organizes it in Settings.`,
 
   /* --------------------------------------------------- servers & pairing */
 

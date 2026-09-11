@@ -184,6 +184,15 @@ export const DE: Deck = {
     "Das Postfach auf diesem Telefon ist nicht das, welches dieser Eintrag nennt. Entferne den Eintrag und öffne das Postfach erneut.",
   standaloneNotStored: (detail: string) =>
     `Dieses Telefon konnte das gerade geöffnete Postfach nicht speichern: ${detail}`,
+  /* Der Einwilligungs-Aufruf. Keine dieser Zeilen behauptet, das Telefon organisiere gerade. */
+  organizeHereUnreachable: (detail: string) =>
+    `ohmail konnte nicht darum bitten, dieses Postfach zu organisieren: ${detail}`,
+  organizeHereUnreadable:
+    "Die Antwort zum Organisieren dieses Postfachs war nicht lesbar, es wurde nichts gespeichert. Zieh zum Aktualisieren, um erneut zu fragen.",
+  organizeHereDisconnected:
+    "Dieses Postfach ist ausgeschaltet, ohmail sortiert es nicht ein. Verbinde es wieder, dann übernimmt ohmail von dort.",
+  organizeHereRefused: (status: number) =>
+    `Das Organisieren dieses Postfachs wurde abgelehnt (${status}). Vielleicht hält es eine andere Maschine — sieh in den Einstellungen nach, was es organisiert.`,
 
   /* --------------------------------------------------- servers & pairing */
 

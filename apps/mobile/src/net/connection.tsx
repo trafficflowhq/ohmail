@@ -43,7 +43,7 @@ import {
   endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizerRestricted,
 } from "../engine/organizer-session";
 import {
-  PHONE_CLAIM_NAME, reopenStandaloneMailbox,
+  PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
   type ReopenOutcome, type StandaloneEngine,
 } from "../engine/standalone-door";
 import { phoneEngineReopen } from "../engine/engine-artifact";
@@ -55,6 +55,7 @@ import { unifiedPushDistributor } from "./unified-push";
 import type { ServerProfile } from "../state/servers";
 import type { FetchLike } from "./bearer";
 import { SyncRunner } from "./drain";
+import { organizeHere, readMailboxes } from "./mailboxes";
 import {
   connectProfileById,
   drainPendingWakeDrops,
@@ -314,6 +315,32 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   );
 
   /**
+   * RECORD THE CONSENT FOR THE MAILBOX THIS PHONE OPENED — the press, and the id it needs.
+   *
+   * The route is `POST /mailboxes/:id/organize` and the id is the ENGINE's, so the roster is read
+   * first through the same session. A roster that cannot be read is a refusal with its own
+   * sentence rather than a silent skip: the whole defect this closes is a phone that reads its own
+   * mailbox and organizes nothing while every surface says it is fine.
+   *
+   * Nothing here waits on anything. An `authorized` or `already` answer clears the sentence the
+   * previous attempt may have left, so a retry that succeeds does not leave a stale refusal under
+   * a session that is now organizing.
+   */
+  const consentHere = useCallback(async (session: ConnectedSession): Promise<void> => {
+    const rows = await readMailboxes(session);
+    const id = rows?.[0]?.id ?? "";
+    if (id === "") {
+      setSyncError(refuse("organizeHereUnreadable"));
+      return;
+    }
+    const outcome = await organizeHere(session, id);
+    /* Only for THIS session: a verdict that outlives its session (a switch, a forget) must not
+       write a sentence under the next one — the rule every other late answer here follows. */
+    if (live.current.k !== "live" || live.current.session !== session) return;
+    setSyncError(outcome.kind === "refused" ? outcome.reason : null);
+  }, []);
+
+  /**
    * ── NO DRAIN BEFORE THE IDENTITY VERDICT (per-account isolation) ──────────────────────────
    *
    * Rendering the local mirror owes the wire nothing, but a DRAIN moves the mirror: a bearer
@@ -403,9 +430,28 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         return { ok: false, reason: outcome.reason };
       }
       adopt(outcome.session);
+      /**
+       * ── AND THE CONSENT THE DOOR ALREADY TOOK IS MADE INTO THE REQUEST THAT RECORDS IT ──────
+       *
+       * A mailbox nobody consented to organizing is READ and nothing else — no claim in
+       * `ohmail/_meta`, no `ohmail/*` tree, an Ohbox that never fills. Every other door records
+       * that consent from a client somewhere; the standalone door's client is the one this arm
+       * just built, so this is where the press belongs. See `net/mailboxes.ts#organizeHere` for
+       * why the limitations screen's confirm IS the consent and why the body is empty.
+       *
+       * HERE rather than on the door screen, because launch, switch and door press all arrive
+       * through this one body and a mailbox organized only on the launch somebody pressed through
+       * is worse than one never organized. Idempotent by the route: a relaunch answers
+       * `already_organizing` and writes nothing.
+       *
+       * `void`, because an open mailbox must not wait on a stamp, and its refusal lands in
+       * `syncError` — the one surface that is live on all three paths and already renders a
+       * sentence beside the session's numbers.
+       */
+      if (organizesHere(outcome.session.profile)) void consentHere(outcome.session);
       return { ok: true };
     },
-    [adopt, env, refreshProfiles, teardown],
+    [adopt, consentHere, env, refreshProfiles, teardown],
   );
 
   // The app launch: whichever profile was active reconnects; none means the connect flow.

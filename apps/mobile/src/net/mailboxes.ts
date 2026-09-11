@@ -1,3 +1,4 @@
+import { faultDetail, refuse, type Refusal } from "../refusal";
 import type { ConnectedSession } from "./pairing.js";
 
 /**
@@ -159,4 +160,83 @@ export async function releaseMailbox(
   } catch {
     return "refused";
   }
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  THE CONSENT — `POST /mailboxes/:id/organize`, and on this phone the door already took it
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * A mailbox nobody has consented to organizing is READ and nothing else: the worker's gate never
+ * claims it, `ensureFolders` never runs, and `ohmail/_meta` is never created. That is right — it is
+ * what "connected, not organized" means on every door — and on the standalone door it left the
+ * phone reading its own mailbox for ever, because the one client that could make this request is
+ * the client bound to the engine, and until the standalone session existed there was none.
+ *
+ * ── WHY THE DOOR'S CONFIRM IS THE CONSENT, AND WHY THAT IS NOT AN ASSUMPTION ──────────────
+ *
+ * The fourth door's first step is the limitations screen, which states what this phone will do —
+ * it organizes while the app is open or behind a notification, one mailbox, and the mail server
+ * keeps everything — and a person reaches the password field only by pressing Continue on it. So
+ * the confirm on that screen is the same statement the web's "Organize here" button takes, made
+ * before any credential was typed. The press is made HERE rather than on the screen because a
+ * relaunch adopts the same session with no screen in front of it, and a mailbox that is organized
+ * only on the launch a person happened to press through is worse than one that is never organized.
+ *
+ * ── THE EMPTY BODY IS THE WHOLE REQUEST ───────────────────────────────────────────────────
+ *
+ * `{}`, deliberately: the password is the ENGINE's, sealed under this install's key ring, and the
+ * route's optional `imap.pass` exists for a caller that has one to prove. Sending the one this app
+ * does not hold would be inventing a credential; sending none takes the no-credential path, which
+ * is the ordinary claim-back. `screening` is omitted for the same reason — the window is the
+ * account's own and nothing on this door has asked anybody for it.
+ */
+export type OrganizeOutcome =
+  /** The consent is recorded and one organizing is authorized. The engine claims on its next cycle. */
+  | { kind: "authorized" }
+  /** This install already organizes it and consent is already recorded — a second press is not a second becoming. */
+  | { kind: "already" }
+  /** Nothing was recorded, and the sentence says what the route answered. */
+  | { kind: "refused"; reason: Refusal };
+
+export async function organizeHere(
+  session: ConnectedSession,
+  mailboxId: string,
+): Promise<OrganizeOutcome> {
+  let res: Response;
+  try {
+    res = await session.fetch(
+      `${session.profile.origin}/mailboxes/${encodeURIComponent(mailboxId)}/organize`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    );
+  } catch (err) {
+    /* The transport, quoted. On this door that is a call into this process, so a throw here is the
+       engine's own and belongs in the sentence verbatim. */
+    return { kind: "refused", reason: refuse("organizeHereUnreachable", faultDetail(err)) };
+  }
+  /* 202 IS THE ONLY AUTHORIZATION and 200 is the route's idempotent answer — see
+     `MailboxTakeoverResult`. They are told apart because the second must never be reported as a
+     fresh consent: a relaunch presses this every time, and "you are now organizing" on every
+     launch is a sentence about an event that did not happen. */
+  if (res.status === 202) return { kind: "authorized" };
+  if (res.status === 200) {
+    /**
+     * TWO OUTCOMES SHARE THIS STATUS and only one of them is "already yours". `disconnected` means
+     * the mailbox was turned off by the person, and reporting it as organizing would leave an
+     * Ohbox that never fills behind a state the app called healthy.
+     */
+    let body: { outcome?: unknown };
+    try {
+      body = (await res.json()) as { outcome?: unknown };
+    } catch {
+      return { kind: "refused", reason: refuse("organizeHereUnreadable") };
+    }
+    if (body.outcome === "already_organizing") return { kind: "already" };
+    return { kind: "refused", reason: refuse("organizeHereDisconnected") };
+  }
+  /* EVERY OTHER STATUS IS A REFUSAL WITH ITS NUMBER IN IT. The route answers 409 where another
+     install holds the mailbox and 422 where the account cannot take it; neither is a state this
+     app can mend, and both are sentences a person can act on — which an Ohbox that never fills
+     is not. */
+  return { kind: "refused", reason: refuse("organizeHereRefused", res.status) };
 }
