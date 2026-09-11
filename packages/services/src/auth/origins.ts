@@ -2,99 +2,25 @@ import { parse as parseHost } from "tldts";
 import { ServiceError } from "../errors.js";
 import type { AuthConfig } from "./config-types.js";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Multi-origin WebAuthn.
-//
-// ONE relying party (`rpID = "ohmail.app"`), SEVERAL browser origins
-// (`https://ohmail.app`, `https://admin.ohmail.app`). WebAuthn permits this: the
-// rpID may be the origin's own host OR a registrable-domain suffix of it, and a
-// credential scoped to `ohmail.app` is therefore usable from every subdomain of
-// `ohmail.app` — staff do NOT need a second passkey for the admin console.
-//
-// Two rules make the allow-list safe, and they are different rules:
-//
-//  1. **Admission** (this module, at OPTIONS time): the request's `Origin` must be
-//     a member of the allow-list, or the ceremony never starts —
-//     `origin_not_allowed` (403). Rejecting at verify time instead would let an
-//     unknown origin mint challenge rows.
-//  2. **Binding** (auth-service `consumeChallenge`, at VERIFY time): the ceremony is
-//     pinned to the origin that OPENED it. The origin recorded on the stored
-//     challenge row is what `expectedOrigin` receives — never the raw header of the verify
-//     request. Both `https://ohmail.app` and `https://admin.ohmail.app` are allowed,
-//     yet a ceremony begun on one may not be completed on the other.
-//
-// NOT an auth origin, ever: hosts that only ever REDIRECT — see
-// {@link NEVER_AUTH_HOSTS}, which is also where the history of this rule lives.
-// ─────────────────────────────────────────────────────────────────────────────
+// Multi-origin WebAuthn: ONE relying party (`rpID = "ohmail.app"`), SEVERAL browser origins.
+// WebAuthn permits it — the rpID may be the origin's host or a registrable-domain suffix of it,
+// so one credential works from every subdomain. Two different rules make the allow-list safe: (1)
+// ADMISSION, this module, at OPTIONS time — the request's `Origin` must be a member or the
+// ceremony never starts (403; a verify-time rejection would let an unknown origin mint challenge
+// rows); (2) BINDING, `consumeChallenge`, at VERIFY time — the ceremony is pinned to the origin
+// that OPENED it: the stored challenge row's origin is what `expectedOrigin` receives, never the
+// verify request's raw header, so a ceremony begun on one allowed origin may not be completed on
+// another. Hosts that only REDIRECT are never auth origins ({@link NEVER_AUTH_HOSTS}).
 
 /**
- * Hosts under the product's own registrable domain that must never appear in the
- * allow-list, because none of them SERVES anything — each is a 308 to `ohmail.app`.
- *
- * Unconditional, deliberately: there is no deployment flag under which a redirect host
- * becomes an auth surface, so there is nothing to key this on. Every `AuthConfig` —
- * `makeAuthConfig`'s output AND a hand-built literal handed to `new AuthService(...)` —
- * passes through {@link assertOriginConfig}, so this is the prod-config assertion.
- *
- * ## THE RULE THIS REPLACES, AND WHY IT COULD NOT SURVIVE
- *
- * The original invariant was **"the landing is never an auth origin"**, and it has now
- * been through three states. It is written out in full because the third state is a
- * genuine LOSS, and a comment that quietly restated the rule about different hosts would
- * be describing a guarantee that no longer exists.
- *
- *  1. **Two-domain era — a registrable-domain rule on the rpID.** The landing and the
- *     product lived on two DIFFERENT registrable domains, so the check sat on the rpID
- *     and it was total. An origin under the landing's domain
- *     could only be admitted by an rpID whose registrable domain was the landing's, so
- *     refusing that one rpID shape refused every landing origin by construction. The
- *     per-origin pass below was a redundant tripwire.
- *
- *  2. **Single-domain rename — an exact HOST list.** `ohmail.app` (landing),
- *     `app.ohmail.app` (product) and `admin.ohmail.app` (console) came to share one
- *     registrable domain, and the rpID that had to cover the last two IS `ohmail.app` —
- *     the landing's own host. "Reject an rpID under the landing's registrable domain"
- *     would have rejected the only rpID the product could use, so the rule became
- *     unstateable at the rpID and moved DOWN to an exact host match on the origin list.
- *     Weaker, but still a real mechanism: no landing host could be admitted.
- *
- *  3. **One origin — THE RULE IS GONE, and nothing can restate it.**
- *     `ohmail.app` now serves the marketing page to a stranger and the mail client to a
- *     session, from one deployment. It is the product's origin. It mints the session
- *     cookie, it serves the passkey ceremonies, it IS the auth origin. "The landing is
- *     never an auth origin" is no longer a rule that has a subject: there is no landing
- *     host distinct from the product host to keep out.
- *
- * ## WHAT ACTUALLY ENFORCES WHAT NOW — stated plainly, including the losses
- *
- * **Lost, with no replacement at this layer.** The marketing surface and the app share
- * one cookie scope, one credential scope and one script origin. An XSS in a marketing
- * component is an XSS in the app's origin; it can read the non-HttpOnly `tf_csrf` and
- * issue same-origin authenticated requests. Under state 1 the registrable domain made
- * that impossible; under state 3 nothing at the origin layer can. This is the accepted
- * price of the single origin and it is accepted DELIBERATELY, not by omission.
- *
- * **What carries the risk instead**, and neither of these is an origin rule:
- *   • the marketing surface is now the same codebase, the same deploy and the same
- *     review gate as the product — it is not a separately-deployed site that can acquire
- *     a tag manager without anyone noticing. A test in the browser app enforces the
- *     replacement rule mechanically: **the marketing surface loads nothing off-origin** —
- *     no tag manager, no analytics, no font CDN, no embedded widget. Adding one is a change
- *     to the security posture of the mail client, and it turns that test red.
- *   • the session cookie stays HOST-ONLY (no `Domain=`), so the scope shared is exactly
- *     one host and never `*.ohmail.app`. That is the whole reason the collapse onto one
- *     origin was worth doing rather than widening the cookie across two.
- *
- * **What this list still does**, and it is a smaller and honest job: it keeps hosts that
- * REDIRECT out of the allow-list. `www.ohmail.app` and `app.ohmail.app` both 308 to
- * `ohmail.app`; a browser can never complete a ceremony on either (it follows the
- * redirect and the ceremony happens on `ohmail.app`), so admitting them would widen the
- * allow-list by hosts that cannot legitimately use it. Adding a redirect host means
- * adding it here.
- *
- * Exact host matching, not suffix matching: `ohmail.app` and `admin.ohmail.app` are
- * subdomains of — or equal to — entries' parents and MUST stay admissible, so a suffix
- * test would refuse the whole product.
+ * Hosts under the product's own registrable domain that must never appear in the allow-list: none
+ * SERVES anything — each is a 308 to `ohmail.app`. Unconditional: every `AuthConfig` passes
+ * {@link assertOriginConfig}. The old rule — "the landing is never an auth origin" — is GONE:
+ * `ohmail.app` serves the marketing page and the mail client from one deployment. The loss is
+ * accepted deliberately: an XSS in a marketing component is an XSS in the app. What carries the
+ * risk: one codebase and deploy, a browser-app test enforcing that the marketing surface loads
+ * NOTHING off-origin, and a HOST-ONLY session cookie. This list keeps redirect hosts (`www.`,
+ * `app.`) out; exact host matching — a suffix test would refuse the product.
  */
 const NEVER_AUTH_HOSTS: readonly string[] = ["www.ohmail.app", "app.ohmail.app"];
 
@@ -151,35 +77,16 @@ export function tryNormalizeOrigin(raw: string | null | undefined): string | nul
   }
 }
 
-// ── rpID validation: structural, then PUBLIC-SUFFIX-LIST-aware ───────────────
-//
-// A dot-boundary suffix test alone is NOT the WebAuthn rule, and the gap is a real
-// cross-origin hole rather than a cosmetic one. `rpID: "app"` with origins
-// `https://app.ohmail.app` + `https://evil.app` passes `host.endsWith("." + rp)` for both,
-// and `rpID: "co.uk"` spans `acme.co.uk` + `evil.co.uk` the same way — at which point
-// `withRequestGuard` treats a FOREIGN registrable domain as first-party and one
-// credential store spans two owners. A browser would refuse such an rpID at ceremony
-// time (so would malformed labels and IP literals), which means the deployment is
-// green and every passkey on a user's device fails. Both must fail at BOOT.
-//
-// The rule enforced here, against the real PSL (`tldts`, private section included so
-// e.g. `github.io` / `pages.dev` count as suffixes):
-//
-//   1. rpID is a syntactically valid DNS host: LDH labels, 1–63 chars each, ≤253
-//      total, no empty/leading/trailing-hyphen label, not an IPv4/IPv6 literal.
-//   2. rpID contains a dot AND is not itself a public suffix — so never a TLD
-//      (`app`, `io`), never a multi-label suffix (`co.uk`, `s3.amazonaws.com`).
-//   3. For EVERY origin: the origin's host is rpID or a dot-boundary subdomain of it
-//      (the WebAuthn suffix relation — this is what rejects an rpID MORE specific
-//      than the origin), and the origin's REGISTRABLE DOMAIN equals rpID's. Rule 3's
-//      second half is independent of rule 2: rpID `amazonaws.com` structurally
-//      "covers" `bucket.s3.amazonaws.com`, whose registrable domain is the whole
-//      thing — a different owner.
-//   4. ONE narrow exemption, for dev: an rpID of `localhost` (or `*.localhost`) or
-//      the loopback literals, where the PSL treats `localhost` as a public suffix and
-//      rules 2–3 would reject the config the whole test suite and `pnpm dev` use.
-//      Only rule 1's IP/label checks are skipped; the suffix relation in rule 3 still
-//      applies, so `rpID: "localhost"` still cannot cover `https://app.ohmail.app`.
+// rpID validation: structural, then PUBLIC-SUFFIX-LIST-aware. A dot-boundary suffix test alone is
+// not the WebAuthn rule: `rpID: "app"` passes `endsWith` for `https://app.ohmail.app` AND
+// `https://evil.app`, and `rpID: "co.uk"` spans two owners. A browser refuses such an rpID at
+// ceremony time, so the deployment is green and every passkey fails; both must fail at BOOT. The
+// rule, against the real PSL (`tldts`, private section included): (1) rpID is a valid DNS host —
+// LDH labels, ≤253 bytes, no IP literal; (2) rpID contains a dot and is not itself a public
+// suffix; (3) every origin's host is rpID or a dot-boundary subdomain AND its registrable domain
+// equals rpID's (independent of rule 2: `amazonaws.com` covers a bucket owned by someone else);
+// (4) one dev exemption for `localhost`/loopback, skipping only rule 1's IP/label checks — `rpID:
+// "localhost"` still cannot cover `https://app.ohmail.app`.
 
 /** One DNS label: LDH, no leading/trailing hyphen. Punycode (`xn--…`) qualifies. */
 const DNS_LABEL = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -292,15 +199,13 @@ function assertRpIdCovers(rpID: { rp: string; domain: string | null }, origin: s
 const NORMALIZED = new WeakMap<AuthConfig, readonly string[]>();
 
 /**
- * Validate + canonicalize `cfg.origin` (one string or many) into the allow-list.
- * Memoized per config object: `AuthService` is rebuilt per request in `apps/web`,
- * and this must not re-parse on every ceremony.
- *
- * Fails fast, at construction, on: zero origins, a non-absolute/pathful/credentialed
- * origin, non-loopback `http:`, an `rpID` that is empty / malformed / an IP literal /
- * a PUBLIC SUFFIX, an `rpID` that does not cover EVERY origin (dot-boundary suffix AND
- * the same registrable domain), and any origin whose host only ever REDIRECTS
- * ({@link NEVER_AUTH_HOSTS}).
+ * Validate + canonicalize `cfg.origin` (one string or many) into the allow-list. Memoized per
+ * config object: `AuthService` is rebuilt per request in `apps/web`, and this must not re-parse
+ * on every ceremony. Fails fast, at construction, on: zero origins, a
+ * non-absolute/pathful/credentialed origin, non-loopback `http:`, an `rpID` that is empty,
+ * malformed, an IP literal or a PUBLIC SUFFIX, an `rpID` that does not cover EVERY origin
+ * (dot-boundary suffix AND the same registrable domain), and any origin whose host only ever
+ * redirects ({@link NEVER_AUTH_HOSTS}).
  */
 export function assertOriginConfig(cfg: AuthConfig): readonly string[] {
   const memo = NORMALIZED.get(cfg);

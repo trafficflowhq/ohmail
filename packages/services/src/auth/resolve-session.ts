@@ -39,18 +39,13 @@ export interface ResolvedSessionCore {
 }
 
 /**
- * Resolve an opaque session/bearer access token to its live session row, or
- * `null` when it matches nothing usable. A session is usable iff its
- * `accessTokenHash` equals `hashToken(token)` (tokens are only ever stored
- * hashed), it is not revoked, and its access window has not elapsed. The
- * single lookup is shared by cookie and bearer auth so `packages/api` never
- * duplicates the session query.
- *
- * **The `users` JOIN is INNER, and that is a decision.** A session row whose user has been
- * erased (`deleteAccount` deletes `users` rows) resolves to `null` here rather than to a
- * session with a null address — so an erased account's live session stops authenticating on the
- * next request instead of surviving as an identity with no user behind it. `sessions.user_id`
- * is a FK, so the join can only fail for a row that is genuinely gone.
+ * Resolve an opaque session/bearer access token to its live session row, or `null`. Usable iff
+ * `accessTokenHash` equals `hashToken(token)` (tokens are only stored hashed), not revoked, and
+ * the access window has not elapsed; one lookup shared by cookie and bearer auth so
+ * `packages/api` never duplicates the query. The `users` JOIN is INNER, and that is a decision: a
+ * session row whose user has been erased resolves to `null` rather than to an identity with no
+ * user behind it, so an erased account's live session stops authenticating on the next request.
+ * `sessions.user_id` is a FK, so the join can only fail for a row that is genuinely gone.
  */
 export async function resolveSession(db: Db, token: string, now: Date): Promise<ResolvedSessionCore | null> {
   const rows = await db

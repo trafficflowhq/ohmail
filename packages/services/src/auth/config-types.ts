@@ -1,35 +1,22 @@
 /**
- * THE AUTH CONFIGURATION — the shape a deployment states, with nothing that performs a ceremony.
- *
- * It sits apart from the ceremony DTOs next door for one reason: modules that merely READ a
- * configuration are shared. Origin validation and the defaults builder run in every deployment,
- * including a local install that mints and resolves a per-launch session and performs no
- * registration, no passkey enrolment and no second factor at all. Those modules need this
- * interface; they must not need the vocabulary of a ceremony they never run.
- *
- * A type-only import is erased from the emitted JavaScript and is still perfectly visible in the
- * source, which is where it counted — the shared modules named the ceremony's own module in order
- * to describe their argument. `types.ts` re-exports this, so nothing that already imports
- * `AuthConfig` from there has to move.
+ * The auth configuration — the shape a deployment states, with nothing that performs a ceremony.
+ * Apart from the ceremony DTOs because modules that merely READ a configuration are shared:
+ * origin validation and the defaults builder run in every deployment, including a local install
+ * that mints a per-launch session and runs no registration or second factor — those modules need
+ * this interface, not the vocabulary of a ceremony they never run. A type-only import is erased
+ * from the emitted JavaScript but visible in the source, which is where it counted. `types.ts`
+ * re-exports this, so existing importers of `AuthConfig` need not move.
  */
 
 /**
- * WHICH DOOR A SESSION CAME THROUGH, for the two decisions that differ by door.
- *
- *  · `cookie` — the browser. The token lives in `tf_refresh`, HttpOnly, `Path=/auth/refresh`,
- *    host-only, in a jar shared by every tab. This is the STRICT surface for lifetimes and the
- *    DEFAULT everywhere a surface is not stated: see `surfaceTtls` in `config.ts` for why the
- *    fall-through has to land here and not on the native branch.
- *  · `native` — a bearer client holding its token privately: the desktop app's sidecar over the
- *    `POST /auth/refresh` body branch, and the OAuth `refresh_token` grant.
- *
- * It is NOT the same axis as `refresh`'s `concurrentGrace`, and the two must not be collapsed
- * into one flag however tempting the symmetry looks. Their strict ends point in OPPOSITE
- * directions: the strict LIFETIME is the cookie one (shorter), while the strict REUSE response is
- * the native one (no grace at all). One flag would have to weaken one of them, and deriving grace
- * from a surface that defaults to `cookie` would hand the OAuth grant a grace window it has never
- * had — a public-client replay buying a parallel credential, which is exactly what confining the
- * grace to the browser prevents.
+ * Which door a session came through, for the two decisions that differ by door. `cookie` — the
+ * browser: `tf_refresh`, HttpOnly, host-only, one jar shared by every tab; the STRICT surface for
+ * lifetimes and the DEFAULT wherever a surface is not stated (see `surfaceTtls`). `native` — a
+ * bearer client holding its token privately: the desktop sidecar's body branch and the OAuth
+ * `refresh_token` grant. NOT the same axis as `concurrentGrace`: their strict ends point in
+ * OPPOSITE directions — the strict LIFETIME is the cookie one (shorter), the strict REUSE
+ * response is the native one (no grace). One flag would weaken one of them, and deriving grace
+ * from a cookie-defaulting surface would hand the OAuth grant a replay window.
  */
 export type SessionSurface = "cookie" | "native";
 
@@ -56,66 +43,25 @@ export interface AuthConfig {
   /** Accepted registration invite codes (single-tenant, invite-gated). */
   inviteCodes: Set<string>;
   /**
-   * **OPEN REGISTRATION.** `false` — the default, and what every test runs against:
-   * `POST /auth/register` demands an invite code and refuses without one.
-   *
-   * `true` makes the invite code OPTIONAL, and that is the whole of the change to the
-   * authorization decision. What does NOT change:
-   *
-   *  · a code that IS supplied is still consumed and validated exactly as before — used,
-   *    expired, revoked and bound-elsewhere each keep their own refusal. The tempting
-   *    reading ("the gate is open, so anything goes") would let a REVOKED code succeed,
-   *    which would make revocation — the documented remedy for a leaked or misdirected
-   *    invite — a no-op the moment this flag flipped. The branch is therefore on whether a
-   *    code was OFFERED, never on whether one was REQUIRED;
-   *  · every ceremony downstream: the enrollment-scoped session, 2FA enrollment,
-   *    recovery codes behind their own independent step-up, and the step-up +
-   *    mailbox-allowance gate on `POST /mailboxes`. One gate is removed, not the ceremony;
-   *  · `consumeInvite`'s transaction semantics and every billing-ledger path.
-   *
-   * Two things it DOES change, both because the invite row was silently carrying them:
-   *
-   *  · the per-IP registration limit tightens to {@link maxPublicRegistrationsPerWindow},
-   *    because an email-bound invite row was what bounded a stranger before;
-   *  · an UNKNOWN client IP stops meaning "skip the limit" and starts meaning "refuse".
-   *    Under invite-gating an unkeyable limiter was a bounded loss — the invite row still
-   *    bounded the request. With the gate open there is nothing else, and "no IP ⇒
-   *    unlimited account creation" is the entire abuse surface.
-   *
-   * **What it must NOT open is an account-existence oracle, and closing that took work.**
-   * An earlier version of the open path answered 201 for a fresh address and 409
-   * `email_taken` for a registered one; with no email binding to constrain which address a
-   * caller may type, that split is a probe anyone can run over any address they like. The
-   * open path therefore answers a CONSTANT 202 with no session and no `Set-Cookie`,
-   * byte-identically for a fresh address and for one that already has an account. The news
-   * a real person needs — "check your mail", or "you already have an account, sign in" — is
-   * delivered by the verification mail instead, which only the address owner can read.
-   * `AuthService.register` documents the full shape.
-   *
-   * The INVITE path is unchanged and still answers 409 `email_taken`. That is not an oracle:
-   * `consumeInvite` is email-BOUND, so the only address a caller can put through it is one
-   * an operator mailed them a code for, and the 409 tells them a fact about themselves.
-   *
-   * {@link maxPublicRegistrationsPerWindow} still bounds the open endpoint — but it now
-   * bounds outbound MAIL rather than a probe.
+   * Open registration. `false` — the default: `POST /auth/register` demands an invite code.
+   * `true` makes the code OPTIONAL, and that is the whole change: an OFFERED code is still
+   * consumed and validated — a revoked code must refuse. The per-IP limit tightens to {@link
+   * maxPublicRegistrationsPerWindow}, and an UNKNOWN client IP refuses instead of skipping the
+   * limit. No account-existence oracle: the open path answers a CONSTANT 202 with no session,
+   * byte-identical for fresh and registered addresses — the news arrives in the verification
+   * mail. The INVITE path still answers 409 `email_taken`: `consumeInvite` is email-BOUND, so
+   * that 409 tells the caller a fact about themselves.
    */
   publicSignup: boolean;
   /**
-   * The CAPACITY VALVE. `null` ⇒ uncapped.
-   *
-   * When {@link publicSignup} is on and the deployment already holds this many accounts,
-   * the OPEN path answers `signup_capacity` (503) and the client sends the visitor to the
-   * waitlist — which is what the waitlist is for once it is no longer the front door.
-   *
-   * **The invite path is never capped.** An operator who mints an invite has already made
-   * the capacity decision by hand, and a cap that locked out the people we invited would be
-   * the valve closing on the wrong side.
-   *
-   * A SOFT cap, and documented as one: the count and the insert share a transaction, but
-   * READ COMMITTED lets two concurrent registrations both read `cap - 1`, so the real
-   * ceiling is "cap, plus however many signups land in the same instant". A hard cap needs
-   * a serialized counter row — a write lock on every signup, to enforce a number an
-   * operator picked as a rough limit.
+   * The capacity valve. `null` = uncapped. When {@link publicSignup} is on and the deployment
+   * already holds this many accounts, the OPEN path answers `signup_capacity` (503) and the
+   * visitor goes to the waitlist — which is what the waitlist is for once it is no longer the
+   * front door. The invite path is never capped: an operator who mints an invite has already made
+   * the capacity decision, and a cap that locked out invited people would close the valve on the
+   * wrong side. A SOFT cap: the count and the insert share a transaction, but READ COMMITTED lets
+   * two concurrent registrations both read `cap - 1` — a hard cap needs a serialized counter row,
+   * a write lock on every signup, to enforce a rough limit.
    */
   publicSignupCap: number | null;
   /** Registered native OAuth clients → their allowed redirect URIs. */
@@ -124,14 +70,12 @@ export interface AuthConfig {
   accessTtlMs: number;
   /**
    * The ROLLING refresh window of the COOKIE surface — and the value every unqualified reader
-   * gets, which is deliberate: it is the SHORTER of the two, so a caller that never learned about
-   * surfaces cannot accidentally hand out the long one. `cookies.ts` reads exactly this for the
-   * `tf_refresh` / `tf_resume` / `tf_owner` `Max-Age`, so the browser's copy and the server's
-   * stored refresh row can never describe different windows.
-   *
-   * Rolling means rolling: every rotation re-issues it from NOW, and with
-   * {@link sessionAbsoluteTtlMs} null on this surface nothing bounds the chain from the session's
-   * creation. See `config.ts` for the number and the argument.
+   * gets, deliberately: it is the SHORTER of the two, so a caller that never learned about
+   * surfaces cannot hand out the long one. `cookies.ts` reads exactly this for the `tf_refresh` /
+   * `tf_resume` / `tf_owner` `Max-Age`, so the browser's copy and the stored refresh row can
+   * never describe different windows. Rolling means rolling: every rotation re-issues it from
+   * NOW, and with {@link sessionAbsoluteTtlMs} null nothing bounds the chain. See `config.ts` for
+   * the number and the argument.
    */
   refreshTtlMs: number;
   /**
@@ -167,19 +111,14 @@ export interface AuthConfig {
   /** The same ceiling for the NATIVE/BEARER surface. `null` — see `config.ts`. */
   nativeSessionAbsoluteTtlMs: number | null;
   /**
-   * How long after a refresh token is CONSUMED a second presentation of that same token is read
-   * as a benign CONCURRENT rotation rather than as theft — on the COOKIE surface ONLY. See
-   * `config.ts` for the number and the security argument; `AuthService.rotateRefresh` applies it,
-   * and only when `refresh`'s `concurrentGrace` is set (the `/auth/refresh` cookie branch).
-   *
-   * It exists because reuse detection cannot, at a single instant, tell "one browser, two tabs,
-   * both refreshing at the same access-token expiry" apart from "a stolen token replayed" — the
-   * two are byte-identical on the wire. A short window keys the distinction on TIME-SINCE-CONSUMED
-   * instead: a duplicate that lands within it (the client single-flights refresh only per tab, so
-   * a second tab or a second client sharing one cookie jar races structurally) is re-rotated off
-   * the live family; anything presented after it — which is what a replayed stolen token looks
-   * like once the real client has rotated past it — still revokes the whole family. Native/bearer
-   * and the OAuth `refresh_token` grant never pass `concurrentGrace`, so they stay strict.
+   * How long after a refresh token is CONSUMED a second presentation reads as a benign CONCURRENT
+   * rotation rather than theft — on the COOKIE surface ONLY (`AuthService.rotateRefresh` applies
+   * it when the `/auth/refresh` cookie branch passes `concurrentGrace`). Reuse detection cannot,
+   * at one instant, tell "two tabs refreshing together" from "a stolen token replayed" —
+   * byte-identical on the wire — so the distinction is keyed on TIME-SINCE-CONSUMED: a duplicate
+   * inside the window (a second tab or client sharing one jar races structurally) is re-rotated
+   * off the live family; anything after it still revokes the whole family. Native/bearer and the
+   * OAuth grant never pass grace: they stay strict.
    */
   refreshReuseGraceMs: number;
   // Lockout
@@ -207,16 +146,13 @@ export interface AuthConfig {
    */
   maxPublicRegistrationsPerWindow: number;
   /**
-   * How many `POST /auth/desktop-claim` attempts one client may make per `failureWindowMs`.
-   *
-   * A SLOT CLAIM answering 429 `rate_limited`, never the 423 lockout: the claim names no
-   * account until the code has already been read, so there is nothing to lock, and a counter
-   * keyed on a value the caller chooses is a denial of service handed to whoever is attacking.
-   *
-   * Ten, because this is a value a person RETYPES: a mistyped code, a code that expired while
-   * they looked for the window, and a second attempt after each is four before anything has
-   * gone wrong. It is not the guess bound — the code's own 128 bits are — it is the bound on
-   * an anonymous caller's ability to make this endpoint do database work.
+   * How many `POST /auth/desktop-claim` attempts one client may make per `failureWindowMs`. A
+   * SLOT CLAIM answering 429, never the 423 lockout: the claim names no account until the code
+   * has been read, so there is nothing to lock, and a counter keyed on a value the caller chooses
+   * is a denial of service handed to the attacker. Ten, because this is a value a person RETYPES:
+   * a mistyped code, one that expired while they looked for the window, and a retry after each is
+   * four before anything went wrong. It is not the guess bound — the code's 128 bits are — it
+   * bounds an anonymous caller's ability to make this endpoint do database work.
    */
   maxDesktopClaimsPerWindow: number;
   // TOTP
