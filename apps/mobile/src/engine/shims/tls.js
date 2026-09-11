@@ -11,6 +11,10 @@
 "use strict";
 
 const TcpSocket = require("react-native-tcp-socket");
+/* THE SAME BRIDGE, AND THEREFORE THE SAME WRITABLE DOOR. A write into a closed connection is
+   refused in `NativeSocketBridge._write` (see `net.js`), so this transport inherits the refusal
+   rather than repeating it — a second copy here is how the two halves come to disagree. The
+   seam test drives BOTH entry points for exactly that reason. */
 const { NativeSocketBridge } = require("./net.js");
 
 /**

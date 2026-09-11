@@ -4991,7 +4991,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const detectedBy = connectionDeadBy;
         try {
           const old = adapter;
-          try { await old.close(); } catch { /* the connection is already broken */ }
+          /* ── THE DEAD CONNECTION IS DESTROYED, NOT ASKED TO LEAVE POLITELY ─────────────────
+           *
+           * `close()` issues a LOGOUT and IMAP commands are serialized, so it queues behind a
+           * command that is already hung and waits out the hang it was escaping — the contract
+           * {@link MailboxAdapter.forceClose} states, on the one caller that had not read it.
+           * A half-open link (a phone losing its route: the socket answers TCP, nothing answers
+           * IMAP) has nothing to end that wait, so the LOGOUT never settled, `finally` never
+           * ran, and `redialling` — the latch EVERY later attempt returns on, the poll's and the
+           * person's press alike — was held for the life of the process. Measured on a device:
+           * one `mailbox_reconnect_failed`, then no dial ever again and zero bytes on the wire
+           * with the route restored, while the drain went on failing every fifteen seconds.
+           * Destroying the socket is also the only thing that ends the hung command. */
+          if (old.forceClose !== undefined) {
+            try { old.forceClose(); } catch { /* the socket is going away regardless */ }
+          } else {
+            /* An injected double with no `forceClose`. NOT awaited, for the reason above: a
+               teardown this function waits on is a latch this function can park on, and nothing
+               below needs the old connection's last byte. */
+            try { void Promise.resolve(old.close()).catch(() => undefined); }
+            catch { /* threw synchronously; it is going away either way */ }
+          }
           /* RE-CHECKED AFTER EVERY AWAIT, not once at the top. `detach()` can complete inside any
              of these suspensions — a mailbox removal, a password re-attach, the engine shutting
              down — and each check below is a point at which this stops rather than installing a

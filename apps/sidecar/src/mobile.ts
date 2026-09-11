@@ -38,6 +38,16 @@
  * why the refusal is here: a caller that asked for a host door and got a silently disarmed one
  * would believe it had a door. The census over this refusal is `phone-engine-boot.test.ts`.
  */
+/**
+ * `net` — THE ALIAS, and under Node the builtin, which is why the call below is optional.
+ *
+ * On a phone this specifier resolves to `apps/mobile/src/engine/shims/net.js`, the same module
+ * instance the mail client's socket comes from, so this is the one place inside the artifact that
+ * can hand the socket bridge the engine's own diagnostic. Node's `net` has no such export and the
+ * optional call is simply not made — the shim's sink stays the no-op it starts as.
+ */
+import * as socketModule from "net";
+
 import { and, asc, eq } from "drizzle-orm";
 import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 /* The two tables a relaunch reads to find out where this mailbox lives. The barrel, like
@@ -606,6 +616,11 @@ async function composePhoneEngine(
   const wired = deps.log !== undefined || deps.logSink !== undefined;
   const log: Diagnostic = deps.log
     ?? (deps.logSink !== undefined ? createSidecarLog({ sink: deps.logSink }) : (): void => undefined);
+
+  /* THE SOCKET BRIDGE GETS THE SAME DIAGNOSTIC, so a write refused at a closed connection is a
+     line rather than a silence. See the `net` import: present only on a phone, where that
+     specifier is the shim the mail client's socket is built by. */
+  (socketModule as { setSocketLog?: (l: Diagnostic) => void }).setSocketLog?.(log);
 
   const store = await openPhoneStore(deps.exec);
   /**
