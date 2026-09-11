@@ -2,10 +2,10 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { drafts, mailboxes, messages, recordChanges, threadNotes, threads, type LedgerTx, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  conversationJoinVerdict, counterpartyEvidence, mergeCounterpartyEvidence, silentLogger,
+  conversationJoinVerdict, counterpartyEvidence, isSentFolderPath, mergeCounterpartyEvidence,
+  silentLogger,
   type ConversationJoinFacts, type CounterpartyEvidence, type EmailAddress, type Logger,
 } from "@trafficflow/core/mail";
-import { isSentFolderPath } from "@trafficflow/core/folder-name";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    THE THREAD-JOIN HEAL — the deferred merge for conversations a forward split
