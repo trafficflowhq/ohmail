@@ -675,14 +675,31 @@ export const folderState = pgTable("folder_state", {
    */
   lastErrorClass: text("last_error_class"),
   /**
-   * Where a deleted message came from — the origin a restore puts it back to (mail 0099). Written
-   * by the DELETE verb alone: the value is `observed_folder` as it stood at the press; NULL when
-   * that already equalled Trash. CLEARED BY EVERY NON-TRASH DESIRED WRITE: a message filed out of
-   * Trash and later deleted elsewhere must not inherit its previous life's origin;
-   * `upsertDesired` takes the value as an argument, so a caller cannot write `desired_folder`
-   * without saying what this becomes. A path, never trusted: `restore` resolves it and falls back
-   * to INBOX — no CHECK, no FK. NOT a `change_log` read: the log has a retention horizon — a
-   * restore would work for a week, then silently stop.
+   * WHERE A DELETED MESSAGE CAME FROM — the origin a restore puts it back to (mail 0099).
+   *
+   * Written by the DELETE verb alone, in the same upsert that sets `desired_folder` to the
+   * mailbox's Trash path: the value is `observed_folder` as it stood at the press, which is the
+   * folder the message was actually in. NULL when that already equalled the Trash path (there is
+   * nothing to remember) and NULL on every row this column predates.
+   *
+   * CLEARED BY EVERY NON-TRASH DESIRED WRITE, and that is the load-bearing half: a message filed
+   * out of Trash and later deleted from somewhere else must not inherit the origin of its
+   * previous life. `MessageService.upsertDesired` takes the value as an argument for exactly that
+   * reason — a caller cannot forget to clear it, because it cannot write `desired_folder` without
+   * saying what this column becomes.
+   *
+   * ── A PATH, NEVER TRUSTED AS ONE ──────────────────────────────────────────────────────────
+   *
+   * It is a folder path and the folder may be gone by the time somebody restores: mail sits in
+   * Trash while its origin folder is deleted. `MessageService.restore` therefore resolves it —
+   * INBOX, one of the six, or a LIVE `mailbox_folders` path of that mailbox — and falls back to
+   * INBOX otherwise. No CHECK and no foreign key: a CHECK cannot know which folders exist, and an
+   * FK to `mailbox_folders` would erase this row's origin at the moment the fallback is needed.
+   *
+   * NOT a `change_log` read, which is the obvious alternative and is wrong: the log has a
+   * retention horizon (`change-log.ts`), so a restore would work for a week and then silently
+   * stop. A column has no horizon. The `delete` change row gains `meta: {from, to}` in the same
+   * slice for history's sake, and nothing reads it.
    */
   trashedFrom: text("trashed_from"),
 }, (t) => ({ uqMessage: unique().on(t.messageId) }));
@@ -728,15 +745,42 @@ export const rules = pgTable("rules", {
   demotions: integer("demotions").notNull().default(0),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 
-  /**
-   * Mail 0034 — applying a rule to mail that is ALREADY filed. The default: creating a rule
-   * applies it to all messages, future and previous. `retro_requested_at` set with
-   * `retro_done_at` NULL is the ONE definition of owed work. `retro_done_at` is written LAST
-   * (claiming first makes a crash permanent); re-running is safe because the candidate query is
-   * the idempotency. `retro_cursor` is the resume point, ACCOUNT-scoped. Known limit:
-   * `messages.id` is a random UUID, so a message ingested after the cursor passed its id is
-   * skipped forever — acceptable; a rule routes new mail at arrival. `retro_moved` is reported,
-   * not read. These columns ship to the desktop engine where nothing writes them yet.
+  /* ── mail 0034 — APPLYING A RULE TO MAIL THAT IS ALREADY FILED ────────────────
+   *
+   * A rule has always been consulted when mail ARRIVES and never afterwards, so writing one
+   * left the mailbox exactly as it was. The required behaviour is the opposite, and it is about
+   * the DEFAULT: creating a rule should apply it to ALL messages, future and previous, so the
+   * mailbox is managed efficiently — and that is the default rather than an opt-in.
+   *
+   * These four columns are the whole of the durable state for that. `retro_requested_at` set
+   * with `retro_done_at` NULL is the ONE definition of owed work; the worker's retro-apply pass
+   * is the only writer of the other three, and `RulesService` the only writer of the first.
+   *
+   *   retro_requested_at  the user asked for this rule to reach mail already on disk.
+   *   retro_done_at       the pass finished. Written LAST, on 0030's rule: claiming it first
+   *                       makes a crash permanent — a rule marked applied with most of its
+   *                       mail unmoved and nothing that would ever look again. Written last, a
+   *                       crash re-runs, and re-running is safe because the candidate query is
+   *                       itself the idempotency (a message already desired into the rule's
+   *                       destination is no longer a candidate).
+   *   retro_cursor        resume point: the last `messages.id` of the last COMMITTED page.
+   *                       ACCOUNT-scoped, not mailbox-scoped, because `rules.account_id` is the
+   *                       rule's scope — one cursor pages every mailbox on the account, which a
+   *                       per-mailbox marker (0025, 0030) could not do.
+   *
+   *                       KNOWN LIMIT, written here so it is not rediscovered as a bug:
+   *                       `messages.id` is a random UUID, so it is monotone only WITHIN one
+   *                       run's ordering. A message ingested after the cursor has passed its id
+   *                       — a backlog still draining — is skipped by this pass for ever. That
+   *                       is acceptable (a rule routes new mail at arrival, which is the
+   *                       ordinary path) and it is a second reason no copy anywhere may say
+   *                       "every message".
+   *   retro_moved         desired-state rows this rule's pass has written. Reported, not read.
+   *
+   * `rules` is a MAIL table, so these columns ship to the desktop LOCAL engine too, where
+   * nothing writes them yet. That is deliberate and has precedent — `messages.auth_verdict`
+   * landed the same way, ahead of its reader — and is recorded here so the next reader does not
+   * file it as dead schema.
    */
   retroRequestedAt: timestamp("retro_requested_at", { withTimezone: true }),
   retroDoneAt: timestamp("retro_done_at", { withTimezone: true }),
@@ -755,15 +799,31 @@ export const rules = pgTable("rules", {
    */
   subjectContains: text("subject_contains"),
 
-  /**
-   * Mail 0052 — the other half of the same requirement: the MESSAGE TEXT. Some senders write the
-   * SAME subject on every message and put the distinguishing text in the body; the same
-   * conjunction one field deeper. The 0050 comment holds: NULL is the resting state, no backfill
-   * ever, an extra term above the kind switch, the CHECK makes NULL the only spelling of "no
-   * term". The haystack is the canonical PLAIN TEXT — `NormalizedMessage.textBody`,
-   * byte-identical to `message_bodies.text`, which the retro passes read back, so arrival and
-   * retro consult the SAME haystack. A body not on disk reads as `""`, satisfying no term —
-   * fail-closed. Rank: both terms, subject-only, body-only, bare. Same 200-char ceiling.
+  /* ── mail 0052 — THE OTHER HALF OF THE SAME REQUIREMENT: THE MESSAGE TEXT ───────
+   *
+   * `subject_contains` above splits one sender by subject. Some senders defeat that by writing
+   * the SAME subject on every message — "Notification", "Alert" — and putting the distinguishing
+   * text in the body. This column is the same conjunction one field deeper: *from this address
+   * AND with this in the message text*.
+   *
+   * Everything the 0050 comment says holds here unchanged, deliberately: NULL is the resting
+   * state, there is no backfill and can never be one, `core/src/rules.ts#matches` reads it as an
+   * EXTRA term above the kind switch so a present term can only make a rule fire LESS often, and
+   * the CHECK (`rules_body_contains_nonempty`) makes NULL the only representation of "no term".
+   *
+   * ── WHAT IT IS MATCHED AGAINST, WHICH IS THE ONE NEW DECISION ──────────────────
+   *
+   * The message's canonical PLAIN TEXT: `NormalizedMessage.textBody` on arrival, which is the
+   * byte-identical string `message_bodies.text` stores (mailparser's text part, or its html→text
+   * derivation for html-only mail). The retroactive passes read that stored column back, so
+   * arrival and retro consult the SAME haystack. A message whose body is not on disk reads as
+   * `""`, which satisfies no term — the fail-closed direction for a narrowing conjunct: the rule
+   * declines to fire and the mail stays where it is.
+   *
+   * In the order, a body term counts exactly as a subject term does — below `kind`, above
+   * `provenance` — with the subject clause ranked first, so a rule carrying both terms outranks
+   * subject-only, which outranks body-only, which outranks bare. Same 200-char ceiling: a term
+   * is a needle, and the haystack being bigger is not a licence to store a bigger needle.
    */
   bodyContains: text("body_contains"),
 }, (t) => ({
@@ -1329,14 +1389,33 @@ export const awayResponders = pgTable("away_responders", {
    */
   audience: text("audience").notNull().default("screened_in"),
   /**
-   * Which piles are answered — `'{INBOX}'` by default (mail 0096), as FOLDER names. The second
-   * dimension beside {@link audience}: `audience` is a fact about a SENDER and cannot express
-   * "answer this person's mail when it reaches me, but not when it files itself away" — the gap
-   * that sent eight automatic replies to shop and notification senders. MEMBERS ARE FOLDERS, NOT
-   * PILE WORDS: the pile a person calls "Ohbox" is `INBOX`, and the compared value is
-   * `folder_state.desired_folder`. CHECKed: an unhandled member falls through to the branch that
-   * sends mail; `ohmail/Screener` is not a member. NOT NULL with the NARROW default: widening a
-   * standing order's reach is the only irreversible thing here. EMPTY means "answer nobody".
+   * WHICH PILES ARE ANSWERED — `'{INBOX}'` by default (mail 0096), as FOLDER names.
+   *
+   * The second, independent dimension beside {@link audience}, and the two answer different
+   * questions on purpose. `audience` is a fact about a SENDER — past the Screener, decided once,
+   * true for ever — and it cannot express "answer this person's mail when it reaches me, but not
+   * when it files itself away". That gap is what sent eight automatic replies to shop and
+   * notification senders who had each been let in once, months earlier.
+   *
+   * MEMBERS ARE FOLDERS, NOT PILE WORDS. The pile a person calls "Ohbox" is `INBOX`
+   * (`VIEW_OF_FOLDER` in client-engine maps the six destinations onto the six words); there is no
+   * `ohmail/Ohbox`, and this feature's own fixture carried that string for three cases before
+   * anything read it. The value compared at decision time is `folder_state.desired_folder`, which
+   * holds a destination, so this column holds destinations.
+   *
+   * The closed set is `{INBOX, ohmail/Reads}` and the CHECK
+   * (`away_responders_piles_closed`) lives in the migration, for `audience`'s reason: an
+   * unhandled member is resolved by whichever branch the rule falls through to, and here that is
+   * the branch that sends mail. `ohmail/Receipts`, `ohmail/Screened` and `ohmail/Quarantine` are
+   * refused by the never-answered map in `away-eligibility.ts`; `ohmail/Screener` is deliberately
+   * not a member, because it is the AUDIENCE's decision and two settings ruling on one population
+   * is a contradiction whichever is consulted second.
+   *
+   * NOT NULL with a default, and the default is the NARROW member — unlike `throttle`, whose
+   * default is the middle of its range. Widening what a standing order reaches is the only
+   * irreversible thing this feature does, so the value nobody chose is the one that reaches
+   * fewest people. An EMPTY array is representable and means "answer nobody", which the rule
+   * handles by name rather than reading as "no filter".
    */
   piles: text("piles").array().notNull().default(["INBOX"]),
   /**
