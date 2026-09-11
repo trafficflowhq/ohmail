@@ -1,28 +1,12 @@
 /**
- * THE ORDERING RULES FOR THE LANGUAGE, AS SHIPPED CODE RATHER THAN AS A DIAGRAM.
- *
- * ── WHY THIS IS ITS OWN FILE ──────────────────────────────────────────────────────────────────
- *
- * There are three orderings here and every one of them has been wrong at some point:
- *
- *  · the keystore read that starts at mount can resolve AFTER somebody has chosen a language, and
- *    must not publish the value it found;
- *  · two presses in one render both see a `busy` flag React has not committed yet, so the older
- *    write can settle last and publish a language the person already moved off;
- *  · a foreground wake must resolve against the choice as of NOW, not as of the last render.
- *
- * They were fixed inside `LocaleProvider.tsx` and tested by a MODEL — a second little state machine
- * written in the test file, tied to the real thing by regexes over the source. Review's verdict was
- * exact: "the locale race tests exercise a duplicate state machine; the source regexes do not
- * preserve the claimed ordering." Move the boot guard after publishing and the model stays green
- * while the tokens the regexes look for are all still present.
- *
- * A renderer would be the other answer, and this app has none: nothing in `apps/mobile/test`
- * mounts a React tree, `react-test-renderer` is not a dependency, and `AppState` does not resolve
- * under node. Adding a renderer to test three orderings is the larger change and the worse one.
- *
- * So the rules live here, the provider wires state setters into them, and the tests drive THIS.
- * There is no second copy to drift.
+ * The ordering rules for the language, as shipped code rather than a diagram. Three orderings,
+ * each once wrong: the keystore read that starts at mount can resolve after somebody has
+ * chosen and must not publish what it found; two presses in one render both see a `busy` flag
+ * React has not committed, so the older write can settle last; a foreground wake must resolve
+ * against the choice as of now, not the last render. Testing them by a model — a second state
+ * machine tied to the source by regexes — preserved nothing, and a renderer is not available
+ * (`react-test-renderer` absent, `AppState` unloadable under node). So the rules live here,
+ * the provider wires state setters in, and the tests drive THIS — no second copy to drift.
  */
 import { deviceLocale, resolveLocale, setActiveLocale, type AppLocale } from "./locale";
 import { readStoredLocale, writeStoredLocale } from "./store";
@@ -53,16 +37,13 @@ export interface LocaleSequencer {
   /** The choice as of now — not as of the last render. */
   chosen(): AppLocale | null;
   /**
-   * THE PROVIDER IS GOING AWAY. Everything still in flight finishes its keystore work — a press
-   * accepted before the unmount is a press that must persist — and then publishes NOTHING and
-   * calls no callback.
-   *
-   * Without this, a boot read or a write settling after the unmount points the module register
-   * from a provider that no longer exists. Where a second one has since mounted (a re-mount, a
-   * test's next case, a screen swapped under a fast refresh) the dead one's late answer lands on
-   * top of the live one's, and the language changes for a reason nothing on screen explains.
-   * `onChosen`/`onBusy` are React state setters, so they are the visible half; the register is
-   * the half that outlives the component.
+   * The provider is going away. Everything still in flight finishes its keystore work — a
+   * press accepted before the unmount must persist — and then publishes nothing and calls no
+   * callback. Without this, a boot read or write settling after unmount points the module
+   * register from a provider that no longer exists; where a second one has since mounted, the
+   * dead one's late answer lands on top of the live one's and the language changes for a
+   * reason nothing on screen explains. `onChosen`/`onBusy` are React state setters — the
+   * visible half; the register is the half that outlives the component.
    */
   dispose(): void;
 }
@@ -107,19 +88,14 @@ export function localeSequencer(deps: LocaleSequencerDeps): LocaleSequencer {
       const ticket = ++decisions;
       if (!disposed) deps.onBusy(true);
       try {
-        /* ── THE STORE IS A DECISION TOO, AND IT IS GATED ON THE SAME TICKET ─────────────────
-           This used to be a bare `await deps.write(next)`, with only the PUBLISH gated. Two
-           presses in one render therefore issued two concurrent keystore writes, and whichever
-           the keystore happened to finish LAST was the value left on the device. The publish was
-           correctly ordered, so the app showed the newer language and the next launch came back
-           in the older one — a disagreement between the screen and the disk that no screen can
-           show you, and that survives the relaunch which is the only thing a person would try.
-
-           Awaiting the queue orders the writes. Re-reading the ticket AFTER the turn arrives
-           drops a press that has already been superseded: a keystore the newest press is about to
-           overwrite anyway should not first be made to hold a value nobody chose, and if that
-           newest write then fails, the store is left as it was rather than at some intermediate
-           choice. One press, one decision, one write. */
+        /* The store is a decision too, and it is gated on the same ticket. As a bare
+           `await deps.write(next)` with only the publish gated, two presses in one render
+           issued two concurrent keystore writes, and whichever finished last was the value on
+           the device: the app showed the newer language and the next launch came back in the
+           older one — a screen/disk disagreement that survives the relaunch. Awaiting the
+           queue orders the writes; re-reading the ticket after the turn arrives drops a
+           superseded press, so the store never holds a value nobody chose, and a failed
+           newest write leaves the store as it was. One press, one decision, one write. */
         const mine = queue.then(() => (decisions === ticket ? deps.write(next) : undefined));
         /* A refusal belongs to the press that caused it; it must not poison the presses behind. */
         queue = mine.then(() => undefined, () => undefined);
@@ -146,20 +122,14 @@ export function localeSequencer(deps: LocaleSequencerDeps): LocaleSequencer {
 }
 
 /**
- * THE PROVIDER'S WIRING, AS A VALUE.
- *
- * `LocaleProvider` is a React component in an app with no renderer in its test suite — nothing in
- * `apps/mobile/test` mounts a tree, `react-test-renderer` is not a dependency, and `AppState` does
- * not resolve under node. So the four lines that connect the sequencer to the keystore were the
- * one part of this feature nothing could look at: the orderings were driven directly, and a
- * provider wired to the wrong store, or to a stale one, would have satisfied every case.
- *
- * They are this function instead. The provider calls it and does nothing else with `deps`, so a
- * test holding the same value is holding the wiring rather than a description of it.
- *
- * `kv` is a FUNCTION on purpose: the provider reads it through a ref, so a caller passing a fresh
- * keystore object on each render does not rebuild the sequencer and does not keep writing to the
- * object the first render happened to see.
+ * The provider's wiring, as a value. `LocaleProvider` is a React component in an app with no
+ * renderer in its suite, so the four lines connecting the sequencer to the keystore were the
+ * one part nothing could look at — a provider wired to the wrong store, or a stale one, would
+ * have satisfied every case. They are this function instead: the provider calls it and does
+ * nothing else with `deps`, so a test holding the same value holds the wiring rather than a
+ * description of it. `kv` is a function on purpose: the provider reads it through a ref, so a
+ * fresh keystore object per render neither rebuilds the sequencer nor keeps writing to the
+ * object the first render saw.
  */
 export function keystoreDeps(
   kv: () => SecureKV,

@@ -1,26 +1,12 @@
 /**
- * THE LOGGER THE MAIL CLIENT LOADS WHETHER OR NOT IT LOGS — and the reason this file is CommonJS.
- *
- * `imapflow/lib/logger.js` loads this module and CALLS the export AT MODULE LOAD, before anything
- * has decided
- * whether logging is on. The adapter passes `logger: false` and the client then never uses the
- * result, but the call has already happened — and the real package needs worker threads and a
- * filesystem sink, neither of which exists here.
- *
- * ── THIS FILE IS COMMONJS ON PURPOSE, AND IT IS THE MEASURED CASE ─────────────────────────
- *
- * A stub consumed by `require` must itself be CommonJS. An ES module handed to `require` arrives as
- * a NAMESPACE OBJECT, so calling the loaded value throws "pino is not a function" — inside the client's
- * own module initialisation, with a stack that names the logger and nothing that names a polyfill.
- * `module.exports = fn` is what makes the call work.
- *
- * ── IT DISCARDS RATHER THAN REFUSING, WHICH IS THE OPPOSITE OF THE OTHER STUBS HERE ───────
- *
- * The other shims throw, because reaching them means a path nobody expected was taken. This one is
- * reached on EVERY launch by design, so throwing would stop the app from starting. Discarding is
- * also the correct behaviour rather than a compromise: the engine has its own redacting logger, and
- * the one thing a second, unredacted log must never do on a device is write mail content or a
- * credential anywhere. A logger that keeps nothing cannot leak anything.
+ * The logger the mail client loads whether or not it logs — and the reason this file is CommonJS.
+ * `imapflow/lib/logger.js` calls the export at module load, before anything decides whether logging is
+ * on; the adapter passes `logger: false`, but the call has already happened and the real package needs
+ * worker threads and a filesystem sink. CommonJS on purpose, the measured case: an ES module handed to
+ * `require` arrives as a namespace object, so calling it throws "pino is not a function" inside the
+ * client's own init. It discards rather than refusing — the opposite of the other stubs — because it is
+ * reached on every launch by design, and discarding is also correct: the engine has its own redacting
+ * logger, and a second, unredacted log must never write mail content or a credential anywhere.
  */
 "use strict";
 

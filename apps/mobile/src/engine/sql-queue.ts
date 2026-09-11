@@ -1,56 +1,12 @@
 /**
- * ONE WRITER AT A TIME PER DATABASE FILE — the platform half's side of `SqlExecutor`'s promise.
- *
- * ── THE DEFECT THIS CLOSES (measured on the shipped 0.14.1 Android build) ────────────────────
- *
- * Every message opened on the phone rendered `Only the preview could be loaded. Reopen to try
- * again.` while the server answered `GET /messages/:id/body` with HTTP 200 and the whole text.
- * The wire was never the problem; the WRITE was.
- *
- * `SqlExecutor.batch` is contracted to run its statements atomically, and the expo half delivered
- * that with `withExclusiveTransactionAsync`. What that call does is open a SECOND CONNECTION to
- * the same file (`SQLiteDatabase.js` → `Transaction.createAsync`, `useNewConnection: true`) and
- * drive `BEGIN` / statements / `COMMIT` across real `await`s. Two overlapping `batch` calls are
- * therefore two connections both trying to write, and expo's own documentation says what happens:
- * *"As long as the transaction is converted into a write transaction, the other async write
- * queries will abort with `database is locked` error."*
- *
- * Overlap was not rare, it was the ordinary case. `liveActions.openMessage` hydrates the body and
- * — for an unread message — dispatches `mark_seen` in the same tick, so the body's `ready` write
- * and the mutation's writes reach the mirror together. Every message in a mailbox is unread the
- * first time somebody opens it, which is why a race read as "this app never loads bodies". The
- * losing write threw, `OhmailEngine.fetchBodyInto` caught it and wrote a `failed` record, and the
- * surface rendered the sentence above over a body the phone had already been given.
- *
- * The device said all of this out loud once it was asked: with the mirror pulled off the
- * emulator, the message the screen called failed held `{state: "loading"}` — the marker written
- * before the request — while a message opened with NO concurrent mutation held
- * `{state: "ready"}` and its full text.
- *
- * ── WHY THE FIX IS HERE AND NOT IN THE ENGINE ───────────────────────────────────────────────
- *
- * `SqlExecutor` is a seam with a stated contract, and the engine above it is entitled to it: the
- * browser arm (IndexedDB) and the node arm (`node:sqlite`'s fully SYNCHRONOUS `DatabaseSync`,
- * which no other JS can interleave with) both honour it for free. Only this platform half does
- * not. Serialising in the engine would make every other arm pay for one host's transaction model,
- * and would leave the next caller of `expoSqlExecutor` — a tool, a probe, a later screen — with
- * the same broken guarantee.
- *
- * ── AND IT IS KEYED ON THE FILE, NOT ON THE OBJECT ──────────────────────────────────────────
- *
- * The thing SQLite locks is the database, so that is what the queue has to be about. Two
- * `SqlExecutor` instances over one path do occur — `forgetMirror` opens the same name again for
- * its read-back probe — and a per-instance queue would let those two collide exactly as before
- * while looking serialised. `databasePath` is the identity.
- *
- * Reads are queued too. Expo's sentence names write queries, but the guarantee it describes rests
- * on the journal mode, and a read that loses is a `load()` that throws where a body write used to
- * — the same class of silent damage one layer over. The store issues a handful of reads per open,
- * so there is nothing to buy by leaving them out.
- *
- * This module imports NOTHING from Expo, which is what lets the node suite drive the real batch
- * runner against a database with the platform's transaction semantics
- * (`test/helpers/expo-sqlite-shape.ts`) rather than against one that cannot express the defect.
+ * One writer at a time per database file — the platform half's side of `SqlExecutor`'s promise. On the shipped 0.14.1
+ * Android build every opened message rendered "Only the preview could be loaded" while the server answered 200:
+ * `withExclusiveTransactionAsync` opens a SECOND connection, and two overlapping `batch` calls became two writers —
+ * the loser aborted with "database is locked". Overlap was the ordinary case (`openMessage` hydrates the body and
+ * dispatches `mark_seen` in the same tick). The fix is here, not in the engine: `SqlExecutor` is a seam with a stated
+ * contract the other arms honour for free. Keyed on the FILE, not the object — two of them over one path occur
+ * (`forgetMirror`'s read-back), and a per-instance queue would let them collide while looking serialised. Reads are
+ * queued too. Imports nothing from Expo, so the node suite drives the real batch runner.
  */
 import type { SqlExecutor, SqlRow, SqlStatement, SqlValue } from "@ohmail/client-engine";
 
@@ -118,24 +74,14 @@ export function serialSqlExecutor(db: ExclusiveTxnDatabase): SqlExecutor {
       return inLane(path, () => db.getAllAsync<SqlRow>(sql, [...params]));
     },
     /**
-     * ON THIS CONNECTION, NOT A SECOND ONE.
-     *
-     * `withExclusiveTransactionAsync` opens a fresh connection for the transaction, and a fresh
-     * connection is a fresh set of per-connection settings. `PRAGMA foreign_keys` is one of them:
-     * SQLite defaults it OFF, the migrator turns it ON for the connection it runs on, and nothing
-     * turns it on for a connection opened later by the driver. Every write in a batch therefore
-     * ran with the schema's references UNENFORCED — an orphaned row committed as readily as a good
-     * one, and the store's shape was being kept by luck.
-     *
-     * It cannot be fixed by setting the pragma inside the task, either: SQLite makes that
-     * statement a no-op while a transaction is open, so the obvious repair would have been silent
-     * and the guard would still have been green.
-     *
-     * The second connection was only ever there to get a write transaction that survives a
-     * concurrent read — and this queue already guarantees there is no concurrent anything on this
-     * file. So the transaction runs here, on the connection that was configured, and the
-     * serialisation that made the second connection unnecessary is the same serialisation that
-     * made it dangerous.
+     * On this connection, not a second one. A fresh connection is a fresh set of
+     * per-connection settings, and `PRAGMA foreign_keys` is one: SQLite defaults it off, the
+     * migrator turns it on for the connection it runs on, and nothing turns it on for a
+     * connection the driver opens later — every write in a batch ran with the schema's
+     * references unenforced. It cannot be fixed inside the task either: the pragma is a no-op
+     * while a transaction is open, so the obvious repair would have been silent. The second
+     * connection only existed to survive a concurrent read, and this queue already guarantees
+     * there is no concurrent anything on this file.
      */
     batch(statements: ReadonlyArray<SqlStatement>): Promise<void> {
       return inLane(path, async () => {

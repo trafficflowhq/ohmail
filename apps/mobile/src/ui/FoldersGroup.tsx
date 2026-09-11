@@ -1,49 +1,12 @@
 /**
- * THE MORE SCREEN'S FOLDERS GROUP — the webapp rail's Folders group (FoldersRailGroup.tsx is
- * the reference), in the phone's list idiom (FOLDERS-SPEC.md §14/§15, verbs §18).
- *
- * Rendered ONLY while "Use folders" is on — the caller withholds the node entirely otherwise,
- * so a flag-off More screen is the pre-feature screen (spec §10). What it renders, per mailbox
- * (an address label above each tree when 2+ mailboxes exist; one mailbox ⇒ no labels):
- *
- *  · the folder TREE, first level only by default — a branch with children starts closed and
- *    opens when the user opens it (the OPENED-set walk; spec §15). The set is view state for
- *    the visit: this app persists no UI preference yet (`store.tsx`'s own posture — the theme
- *    itself resets), so persisting one set here would be a new mechanism, not parity.
- *  · unread badges, with ROLL-UP on a collapsed parent: own + hidden descendants — collapsing
- *    must never hide unread truth. Expanded, every folder shows its own count again.
- *  · the MANY-FOLDERS treatment above {@link FOLDER_FILTER_AT} roots: a type-to-filter line,
- *    the first 12 roots + a "Show all N…" expander. Filtered matches render flat wearing
- *    their parent path.
- *
- * ── STAGE 2 — THE VERBS (spec §18): create, rename, delete, new subfolder ──────────────────
- *
- * USER-COMMANDED REAL IMAP OPERATIONS, dispatched through the injected {@link FolderVerbs}
- * (the world layer owns the engine) and rendered in the phone's idiom — bottom sheets, never
- * an anchored menu:
- *
- *  · `+ New folder` per mailbox section — the create names WHICH mailbox by construction.
- *  · a `…` control per row → the VERB SHEET: Rename / New subfolder / Delete…. ABSENT while
- *    a command is in flight (two commands on one folder have no defined order; the server
- *    refuses them too) and on the read-only render (no `verbs` — the foundation group,
- *    byte-for-byte).
- *  · DELETE asks BEFORE the act, inside the sheet, with the SERVER-truth numbers ("N messages
- *    across M folders move to Trash") — the phone's mirror is windowed, so only
- *    `GET /folders/:id/summary` can count honestly; a failed count states the uncounted
- *    sentence rather than inventing numbers. No Undo after (there is no un-delete on the wire).
- *  · PENDING rows (`op` without `error`) render dimmed with the sentence under their leaf —
- *    optimistically-pending, never pretended-done; a rename in flight wears its TARGET leaf
- *    while `name` (every join) stays the mailbox's truth. FAILED rows carry the refusal
- *    sentence inline and an OK dismiss — the only way past a refusal is reading it.
- *  · names are validated with the SAME `folderNameError` the server runs (shared through the
- *    engine), BEFORE the wire — the honest sentence appears in the name sheet, and the
- *    server's 400 is the race, not the normal path.
- *
- * The one stated degradation against the webapp: a mailbox with ZERO folders has no section
- * to hang `+ New folder` on — the webapp grows one from its `GET /mailboxes` facts, which
- * this phone does not read. When the WHOLE account shows no folder entities and the mirror's
- * mail names exactly one mailbox, the caller passes {@link soleMailboxId} and the invite line
- * gains the create affordance; two ambiguous mailboxes wait for a mailbox read.
+ * The More screen's Folders group — the webapp rail's `FoldersRailGroup.tsx` in the phone's list idiom
+ * (FOLDERS-SPEC.md §14/§15, verbs §18). Rendered only while "Use folders" is on — withheld entirely otherwise (spec
+ * §10). Per mailbox: the tree, first level open by default (the opened set is view state — this app persists no UI
+ * preference); unread badges with roll-up on a collapsed parent; the many-folders treatment above {@link
+ * FOLDER_FILTER_AT}. Verbs dispatch through the injected {@link FolderVerbs} in bottom sheets: the sheet is absent
+ * mid-flight and on the read-only render; delete asks first with server-truth numbers (`GET /folders/:id/summary`);
+ * pending rows render dimmed, never pretended-done; names are validated with the server's own `folderNameError`
+ * before the wire. {@link soleMailboxId} restores the zero-folder create invite where the account is unambiguous.
  */
 import { useRef, useState } from "react";
 import { TextInput, View } from "react-native";

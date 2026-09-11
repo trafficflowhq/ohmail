@@ -1,44 +1,12 @@
 /**
- * Der Kopie-Satz des Telefons auf Deutsch — the phone's copy deck, in German.
- *
- * ── WHAT THIS FILE IS HELD TO ─────────────────────────────────────────────────────────────────
- *
- * `Deck` is derived from the English table in `copy.en.ts`, so this file is checked on shape by the
- * compiler: a key that is missing, a key that does not exist over there, and a function whose
- * parameter list differs are all build errors rather than blank text on a phone.
- * `test/copy-parity.test.ts` adds what a type cannot see — a sentence left in English, an
- * interpolation dropped from a template, a plural that ignores the number it was handed.
- *
- * ── THE VOCABULARY IS NOT INVENTED HERE ───────────────────────────────────────────────────────
- *
- * The web client has spoken German for several releases and `apps/webapp/messages/de.json` is where
- * that vocabulary was settled. Every term this deck shares with it is taken from there rather than
- * translated again: **Ohbox**, **Reads**, **Screener**, **Spam**, **Tag**, **paper** and
- * **ohmarchy** stay as they are; Receipts is **Belege**, screened out is **aussortiert**, Answer
- * Later is **„Später antworten“**, Park is **Parken** / **Geparkt**, Resurface is **wieder
- * auftauchen**, a first-time sender is an **Erstabsender**, Trash is the **Papierkorb**, and a mail
- * server is a **Mailserver**. A person who reads ohmail on a laptop and then opens it on their
- * phone must not meet a second set of words for the same six places.
- *
- * Where the phone shares a whole SENTENCE with the web client — the folder verbs, the Look block,
- * the message actions, the send-later presets, the tag note — this deck carries the web client's
- * German byte for byte, and `test/copy-parity.test.ts` holds the equality the same way
- * `folders-parity.test.ts` and `ohmarchy-face.test.ts` hold the English one.
- *
- * ── REGISTER ──────────────────────────────────────────────────────────────────────────────────
- *
- * **Du**, never Sie — the catalogue's own choice throughout. Plain statements of what the app did
- * or refused, no reassurance and no slogans: Blanc's rule from the English deck applies unchanged,
- * and a translation is the easiest place in a product to smuggle in a promise the code does not
- * keep. Where German is longer than English it is shortened rather than allowed to wrap a button —
- * the phone's smallest supported width is 360 px, which is roughly 26 characters on a control.
- *
- * ── PLURALS ───────────────────────────────────────────────────────────────────────────────────
- *
- * German has the same two plural categories as English, so every count sentence keeps the shape it
- * has over there — a ternary on the number, not an ICU message. What changes is that German
- * inflects the noun rather than adding a letter to it (`1 Nachricht` / `2 Nachrichten`), so the
- * branch carries the whole noun phrase instead of a suffix.
+ * Der Kopie-Satz des Telefons auf Deutsch — the phone's copy deck, in German. `Deck` is derived
+ * from the English table in `copy.en.ts`, so shape is compiler-checked: a missing key, an extra
+ * key or a differing parameter list is a build error; `test/copy-parity.test.ts` adds what a
+ * type cannot see. The vocabulary is not invented here: `apps/webapp/messages/de.json` settled
+ * it — Ohbox, Reads, Screener, Spam, Tag, paper and ohmarchy stay; Receipts is Belege, screened
+ * out is aussortiert, Park is Parken/Geparkt, Trash is the Papierkorb. Where the phone shares a
+ * whole sentence with the web client, this deck carries its German byte for byte. Register: Du,
+ * never Sie; plain statements, no slogans. Plurals are a ternary on the number.
  */
 
 import { isPinFailure } from "./net/host-pinning";
@@ -451,17 +419,12 @@ export const DE: Deck = {
   ohboxEmptyTitle: "Hier ist noch nichts.",
   ohboxEmptyHint: "Post von Absendern, zu denen du Ja gesagt hast, landet hier, sobald sie synchronisiert wird.",
   /*
-   * THE VERB LIVES ON THIS SIDE IN GERMAN, AND IT HAS TO.
-   *
-   * The doorbell is drawn as two pieces — the count, then a quieter tail — and `chrome.tsx`
-   * renders them from two separate keys, so the tail cannot see the number. English gets away
-   * with that because "waiting" does not inflect. German does not: "357 neue Absender wartet" is
-   * what an invariant tail produces, and it was on screen.
-   *
-   * So the verb moves into the half that HAS the count, and the tail becomes a phrase with no
-   * verb in it to disagree — the same information, split where German can carry it. The web
-   * client makes the same choice inside one ICU message (`ohbox.doorbell`: "1 wartet" / "# warten").
-   * `test/copy-parity.test.ts` holds the agreement.
+   * The verb lives on this side in German, and it has to. The doorbell is drawn as two pieces —
+   * the count, then a quieter tail — and `chrome.tsx` renders them from two separate keys, so
+   * the tail cannot see the number. English gets away with it ("waiting" does not inflect);
+   * German produced "357 neue Absender wartet" on screen. So the verb moves into the half that
+   * has the count, and the tail becomes a phrase with no verb to disagree — the web client's
+   * own choice inside one ICU message (`ohbox.doorbell`). `test/copy-parity.test.ts` holds it.
    */
   doorbell: (n: number) => `${n} ${n === 1 ? "neuer Absender wartet" : "neue Absender warten"}`,
   doorbellRest: "im Screener",

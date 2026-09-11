@@ -1,12 +1,9 @@
 /**
- * HOW MANY FACES A KNOCK SHOWS — `packages/ui/src/composites/Doorbell.tsx`'s rule, and its own
- * reason: the count lives in the LABEL, the stack is a texture, not a census.
- *
- * The phone's doorbell drew one circle per waiting sender, so an account with 351 waiting drew
- * 351 letters and pushed the sentence and "Screener" off the right-hand edge. Four faces still
- * read as "some people are waiting" on the narrowest phone and leave room for the sentence that
- * says how many.
- *
+ * How many faces a knock shows — `packages/ui/src/composites/Doorbell.tsx`'s rule, for its own
+ * reason: the count lives in the label, the stack is a texture, not a census. The phone's
+ * doorbell drew one circle per waiting sender, so an account with 351 waiting drew 351 letters
+ * and pushed the sentence and "Screener" off the right-hand edge. Four faces still read as "some
+ * people are waiting" on the narrowest phone and leave room for the sentence that says how many.
  * Dependency-free so the suite can drive it without a renderer.
  */
 export const DOORBELL_MAX = 4;

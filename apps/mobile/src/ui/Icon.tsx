@@ -1,15 +1,11 @@
 /**
- * Blanc's thin geometric icon set, ported to `react-native-svg`.
- *
- * The paths in `PATHS` are copied byte-for-byte from the `<symbol>` defs in
- * `design/proposals/blanc/index.html`, on the same 16×16 grid, drawn with the
- * prototype's own `svg.ic` rule: `stroke:currentColor; fill:none;
- * stroke-width:1.3; linecap/linejoin:round`. No icon here was redrawn.
- *
- * Three glyphs have no prototype twin, because the desktop rail is purely
- * typographic and a phone tab bar is not: `reads`, `receipts` and `more` are
- * new, drawn on the same grid with the same stroke so they sit in the set
- * rather than beside it. They are marked below.
+ * Blanc's thin geometric icon set, ported to `react-native-svg`. The paths in `PATHS` are copied
+ * byte-for-byte from the `<symbol>` defs in `design/proposals/blanc/index.html`, on the same
+ * 16×16 grid, with the prototype's own `svg.ic` rule (`stroke:currentColor; fill:none;
+ * stroke-width:1.3; linecap/linejoin:round`). No icon was redrawn. Three glyphs have no
+ * prototype twin, because the desktop rail is purely typographic and a phone tab bar is not:
+ * `reads`, `receipts` and `more` are new, drawn on the same grid with the same stroke so they
+ * sit in the set rather than beside it. They are marked below.
  */
 import Svg, { Circle, Path, type SvgProps } from "react-native-svg";
 

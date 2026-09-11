@@ -1,29 +1,12 @@
 /**
- * A REFUSAL AS A VALUE, NOT AS A SENTENCE.
- *
- * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────────────────────────
- *
- * `net/connection.tsx` used to put a FORMATTED string into React state —
- * `setState({ k: "refused", reason: Copy.notPairedHere })` — and `app/servers.tsx` rendered it.
- * The deck's getters make every READ live, but they cannot help a value that was read once and
+ * A refusal as a value, not as a sentence. A formatted string in React state is read once and
  * kept: switch the app to German with a refusal on screen and the heading turns over while the
- * sentence underneath stays in the language it was produced in. `test/locale.test.ts` measured
- * exactly that and recorded it as a boundary; this is the boundary being moved.
- *
- * The same argument as `StoreFault`, one layer up. There, a failure that crosses a `throw` carries
- * a code because the sentence would be frozen in the language of the moment it was raised. Here, a
- * failure that crosses a `setState` carries a key for the same reason. Format at RENDER, never at
- * production.
- *
- * ── WHY A KEY AND ARGUMENTS RATHER THAN A CLOSED UNION ────────────────────────────────────────
- *
- * A hand-written union of every refusal shape would need a member per sentence and would be a
- * second place to keep in step with the deck. The key IS the deck's key: `RefusalKey` is derived
- * from `Deck`, so a typo does not compile and a key removed from the deck breaks every producer
- * that names it. What the type does NOT check is arity — `args` is a plain list — and that is the
- * deliberate trade: the alternative is a mapped conditional type per arity that reads worse than
- * the thing it protects. `test/refusal.test.ts` closes it at runtime instead, by rendering every
- * refusal the app can produce and asserting none of them comes back with an unfilled hole.
+ * sentence stays in the language it was produced in (`test/locale.test.ts` measured it). The
+ * same argument as `StoreFault`, one layer up: a failure that crosses a `setState` carries a
+ * key for the reason one that crosses a `throw` carries a code — format at render, never at
+ * production. A key and arguments rather than a closed union: `RefusalKey` is derived from
+ * `Deck`, so a typo does not compile and a removed key breaks every producer. Arity is
+ * deliberately unchecked; `test/refusal.test.ts` renders every refusal and refuses unfilled holes.
  */
 import { Copy, type Deck } from "./copy";
 import { isStoreFault } from "./state/servers";
@@ -92,17 +75,13 @@ export function sayRefusal(r: Refusal): string {
 export const sayArg = (a: RefusalArg): string => (isRefusal(a) ? sayRefusal(a) : String(a));
 
 /**
- * THE DETAIL INSIDE A TRANSLATED REFUSAL — our own failures worded, everything else quoted.
- *
- * The places that render a caught error used `String(err)`, which is right for a platform
- * exception and wrong for a failure this app authored: an English sentence ends up inside a German
- * one. A {@link StoreFault} carries a code, so it becomes language — but as a nested REFUSAL, not
- * as a sentence. It used to return `Copy.storeFault(err.code)`, formatted at the moment the error
- * was caught, which put frozen English inside six refusals that were otherwise live. Anything that
- * is not ours stays the platform's own words exactly as they are, because a paraphrase would be
- * worse for whoever has to search for the text.
- *
- * It lives here rather than in `copy.ts` because what it returns is a refusal argument.
+ * The detail inside a translated refusal — our own failures worded, everything else quoted.
+ * `String(err)` is right for a platform exception and wrong for a failure this app authored:
+ * an English sentence inside a German one. A {@link StoreFault} carries a code, so it becomes
+ * language — but as a nested refusal, not a sentence: formatting at the catch put frozen
+ * English inside six refusals that were otherwise live. Anything not ours stays the platform's
+ * own words exactly, because a paraphrase is worse for whoever has to search for the text. It
+ * lives here rather than in `copy.ts` because what it returns is a refusal argument.
  */
 export function faultDetail(err: unknown): RefusalArg {
   return isStoreFault(err) ? refuse("storeFault", err.code) : String(err);

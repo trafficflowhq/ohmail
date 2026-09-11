@@ -1,31 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE ONE LIVE ORGANIZER SESSION — what holds `background.ts` to the app's own lifecycle
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * `createBackgroundOrganizing` decides what happens to the mailbox at every app-state edge, and it
- * landed with no call site: the fourth door started an engine and nothing subscribed to `AppState`,
- * so every arm in that file was unreachable. This module is the subscription, and it is MODULE
- * SCOPE rather than a hook because the screen that opens the door (`app/standalone.tsx`) is
- * replaced the instant the engine is up — a session owned by that component would be disposed by
- * the navigation that follows its own success.
- *
- * ── ONE, AND THE FIRST WINS ───────────────────────────────────────────────────────────────
- *
- * Exactly one active organizer per mailbox is the product's invariant, and two sessions would be
- * two answers to "what happens when this app is backgrounded" — two `AppState` listeners, two
- * hand-backs racing one release. So a second start does not replace the live one; it answers
- * `false` and leaves it alone, which is `registerPhoneEngine`'s rule for the same reason.
- *
- * ── THE STOP IS A PERSON'S ACT AND TAKES THE NOTIFICATION WITH IT ─────────────────────────
- *
- * `BackgroundOrganizing.dispose()` deliberately leaves the service up — it is disposed on teardown,
- * where stopping somebody's organizing would be this app's decision rather than theirs.
- * {@link stopOrganizerSession} is the other case: it runs from "Stop organizing here", where the
- * release route has ALREADY removed the claim and recorded this install as a reader, so a
- * notification left standing would say "Organizing" over an install that reads. The claim is not
- * handed back here for that same reason — it is already gone, and asking the server to expunge
- * records by our own id afterwards is a write about a mailbox this install no longer holds.
+ * The one live organizer session — what holds `background.ts` to the app's own lifecycle.
+ * `createBackgroundOrganizing` decides what happens to the mailbox at every app-state edge;
+ * this module is its subscription, at module scope because the screen that opens the door is
+ * replaced the instant the engine is up. One, and the first wins: exactly one active organizer
+ * per mailbox, so a second start answers `false` rather than replacing the live one. The stop
+ * is a person's act: `dispose()` leaves the service up (teardown must not stop somebody's
+ * organizing); {@link stopOrganizerSession} runs from "Stop organizing here", where the claim
+ * is already released — a standing notification would say "Organizing" over a reader.
  */
 import type { Refusal } from "../refusal";
 import type { StandaloneEngine } from "./standalone-door";
@@ -73,16 +54,13 @@ export function appPhaseOf(status: string): AppPhase {
 }
 
 /**
- * ══ THE DOOR THIS PROCESS HOLDS — one, and the first wins ══════════════════════════════════
- *
- * The connection layer builds its session over this door (`net/pairing.ts`'s standalone arm), so
- * something has to hold it between the moment it opens and the moment a screen asks for it. Here,
- * beside the session, because the invariant is the same one and the module already enforces it:
- * exactly one engine in this process, first-start-wins.
- *
- * It is SEPARATE from `live` on purpose. Two acts that look alike are not: "Stop organizing here"
- * ends the session and leaves the engine serving this phone's cached mail as a reader, so it must
- * not release the door. Only {@link endStandaloneHere} — the forget — does.
+ * The door this process holds — one, and the first wins. The connection layer builds its
+ * session over this door (`net/pairing.ts`'s standalone arm), so something has to hold it
+ * between the moment it opens and the moment a screen asks. Here, beside the session, because
+ * the invariant is the same one: exactly one engine in this process, first-start-wins.
+ * Separate from `live` on purpose: "Stop organizing here" ends the session and leaves the
+ * engine serving cached mail as a reader, so it must not release the door — only
+ * {@link endStandaloneHere}, the forget, does.
  */
 let door: StandaloneEngine | null = null;
 
@@ -116,18 +94,13 @@ export interface StandDownHolder {
 }
 
 /**
- * WHAT THE DOOR IN THIS PROCESS SAYS ABOUT THE MAILBOX IT SERVES — the address, and whether this
- * install organizes it. `null` when no door is held.
- *
- * The engine's own word, with NO request. Settings' "This phone" panel used to derive this from a
- * loopback `GET /mailboxes`, and that read has three outcomes — never asked, asked and refused,
- * answered empty — which all reached the panel as one `known: false`. So a phone with an engine
- * running behind it showed no panel at all and nothing anywhere said which of the three it was:
- * measured on a device, three builds running.
- *
- * `organizing: null` is "the engine has not said yet" and is its own state: the map is empty until
- * the first gated cycle, and reading that as "nothing organizes this mailbox" would put a false
- * sentence on screen a second after the door opened.
+ * What the door in this process says about the mailbox it serves — the address, and whether
+ * this install organizes it; `null` when no door is held. The engine's own word, with no
+ * request: deriving this from a loopback `GET /mailboxes` folded three outcomes (never asked,
+ * refused, answered empty) into one `known: false`, so a phone with an engine running behind
+ * it showed no panel at all. `organizing: null` is "the engine has not said yet" and is its
+ * own state: the map is empty until the first gated cycle, and reading that as "nothing
+ * organizes this mailbox" would put a false sentence on screen a second after the door opened.
  */
 export function standaloneHere():
   { id: string | null; address: string; organizing: boolean | null; heldBy: StandDownHolder | null }
@@ -184,16 +157,13 @@ export function standaloneHere():
 }
 
 /**
- * ══ WHAT THE CONSENT PRESS ANSWERED, WHERE A PERSON ASKS THE QUESTION ══════════════════════
- *
- * `restrictedSaid`'s idiom one fact over, and it exists because the first surface chosen for this
- * was wrong: a consent refusal was written into `syncError`, which the Servers screen renders
- * INSIDE "Sync failed — the mirror keeps what it has". Read on a device: a mailbox whose sync had
- * not failed announced a sync failure. A sentence in the wrong frame is a false sentence.
- *
- * So it lives here and is rendered by the panel that names this phone, under the line describing
- * what this phone does — which is where somebody asking "is my mail being filed?" is looking.
- * Cleared by a later success, so a refusal cannot outlive the thing it was about.
+ * What the consent press answered, where a person asks the question. `restrictedSaid`'s idiom
+ * one fact over; the first surface chosen for this was wrong — a consent refusal written into
+ * `syncError` rendered inside "Sync failed — the mirror keeps what it has", so a mailbox
+ * whose sync had not failed announced a sync failure. A sentence in the wrong frame is a
+ * false sentence. It lives here and renders in the panel that names this phone, under the
+ * line describing what this phone does — where somebody asking "is my mail being filed?" is
+ * looking. Cleared by a later success, so a refusal cannot outlive the thing it was about.
  */
 let organizeRefused: Refusal | null = null;
 
@@ -311,20 +281,14 @@ export function sayOrganizerRestricted(): void {
 }
 
 /**
- * END IT HERE — the forget's verb, and the only one that stops the engine.
- *
- * Three effects in one call because a person pressing Forget on this phone's own mailbox is asking
- * for all three, and any two of them without the third is a state nothing describes:
- *
- *  1. the CLAIM goes back — the engine's own `handBack`, so another machine can take the mailbox
- *     immediately rather than waiting out the staleness window;
- *  2. the SESSION stops, which takes the notification down with it;
- *  3. the ENGINE stops, because the profile row that named it is about to go.
- *
- * In that order: the hand-back needs a running engine, and a notification left standing over a
- * stopped one would say this phone is organizing mail it no longer holds. Never throws — the row
- * removal must not be blocked by a mailbox that could not be reached. The claim not going back is
- * the recoverable half: it ages out.
+ * End it here — the forget's verb, and the only one that stops the engine. Three effects in
+ * one call, because any two without the third is a state nothing describes: the claim goes
+ * back (the engine's own `handBack`, so another machine can take the mailbox immediately);
+ * the session stops, taking the notification down; the engine stops, because the profile row
+ * that named it is about to go. In that order — the hand-back needs a running engine, and a
+ * notification over a stopped one would say this phone organizes mail it no longer holds.
+ * Never throws: the row removal must not be blocked by an unreachable mailbox; a claim that
+ * did not go back is the recoverable half — it ages out.
  */
 export async function endStandaloneHere(): Promise<void> {
   const held = door;

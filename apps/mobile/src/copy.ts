@@ -1,40 +1,12 @@
 /**
  * `Copy` — the accessor every screen already imports, now resolving a language per read.
- *
- * ── NOTHING ABOUT THE CALL SITES CHANGED, AND THAT IS THE POINT ───────────────────────────────
- *
- * `Copy.settings`, `Copy.doorbell(n)`, `Object.entries(Copy)` — all of them mean what they meant
- * before this file existed. The English text moved to `copy.en.ts`, German arrived in `copy.de.ts`,
- * and what stands here is a table of the SAME shape whose string members are GETTERS over whichever
- * deck the register names and whose function members forward to that deck's function.
- *
- * A property that is read on every access cannot go stale. These modules are imported at the top of
- * the graph, long before any provider renders and long before a language is chosen, so a value
- * captured at construction would be English for the life of the process. A getter has no such
- * moment — it answers English before the boot read, German after, and German again on the next
- * render, with nothing to invalidate.
- *
- * This is the webapp's `liveCopy` (`apps/webapp/app/shell/locale.ts`) with the ICU half removed:
- * there, the fallback is an English constant and the live value comes from a catalogue through
- * `createTranslator`; here both sides are ordinary TypeScript decks, so there is no ICU compiler in
- * a phone bundle and no message that can fail to parse at runtime. What ICU bought — plurals — the
- * decks do themselves, which they already did in English (`${n === 1 ? "" : "s"}`) and which German
- * does the same way, in the same two categories.
- *
- * ── ENUMERABLE, BECAUSE THE GUARDS WALK IT ────────────────────────────────────────────────────
- *
- * `test/copy-tails.test.ts` reads `Object.entries(Copy)` to hold every tail sentence to its shape
- * and `test/doors.test.ts` reads `Object.keys(Copy)` to assert a retired key is gone. Both keep
- * working because the getters are defined `enumerable` and the function members are plain
- * assignments. A non-enumerable accessor would have made those two guards silently pass over
- * everything.
- *
- * ── AND THERE IS NO PER-KEY FALLBACK, DELIBERATELY ────────────────────────────────────────────
- *
- * The webapp fills a missing German key from English at load time, because its catalogues are JSON
- * that nothing type-checks. Here the German deck is typed `Deck`: a key it does not hold is a
- * compile error, so the case that fallback exists for cannot reach a build. Adding one anyway would
- * mean an untranslated string could ship quietly, which is the exact failure the type is preventing.
+ * `Copy.settings`, `Copy.doorbell(n)`, `Object.entries(Copy)` all mean what they meant before:
+ * the English text lives in `copy.en.ts`, German in `copy.de.ts`, and this table's string
+ * members are getters over whichever deck the register names. A getter cannot go stale: these
+ * modules load before any provider renders, so a value captured at construction would be
+ * English for the life of the process. Enumerable, because the guards walk it (`copy-tails`
+ * reads `Object.entries`, `doors` reads `Object.keys`). No per-key fallback: the German deck is
+ * typed `Deck`, so a missing key cannot build — a fallback would ship untranslated strings quietly.
  */
 
 import { EN, type Deck } from "./copy.en";

@@ -1,31 +1,12 @@
 /**
- * The Blanc lift ladder for React Native.
- *
- * Blanc reads its structure from layered, warm-tinted shadows instead of
- * borders — a tight contact ring plus wide ambient falloff sculpts every panel
- * out of the page. `shadow.lift0…lift3` in `packages/tokens/src/tokens.ts` are
- * authored as multi-layer CSS `box-shadow` stacks *with negative spread*.
- *
- * The retired macOS port had to approximate (SwiftUI's `.shadow` has no spread,
- * so it halved every blur radius and dropped the spread). React Native
- * does **not** need that compromise: since 0.76 the `boxShadow` style prop
- * accepts an array of `{offsetX, offsetY, blurRadius, spreadDistance, color}`
- * layers, which is the CSS model exactly. So this file is a *transcription*,
- * not a translation — every offset, blur and spread below is the token's own
- * number, and `test/theme.test.ts` parses `@ohmail/tokens`' CSS strings and
- * asserts they match layer for layer.
- *
- * Two things RN still imposes, both documented rather than hidden:
- *
- *  1. **A shadowed view must own its background and its radius.** RN shapes the
- *     shadow from the view's own border box, so `lift()` is always applied to
- *     the same View that carries `backgroundColor` + `borderRadius`, never to a
- *     transparent wrapper.
- *  2. **Android.** `boxShadow` is implemented natively on API 28+; below that
- *     the outer shadow degrades (no spread, single layer). `elevation` is
- *     deliberately NOT set alongside — mixing the two double-draws. The
- *     degradation is a softer sculpt on very old devices, never a missing
- *     surface, because every panel also carries its own background step.
+ * The Blanc lift ladder for React Native. Blanc reads its structure from layered, warm-tinted shadows instead of
+ * borders; `shadow.lift0…lift3` are authored as multi-layer CSS `box-shadow` stacks with negative spread. RN since
+ * 0.76 accepts the CSS model exactly (`boxShadow` as an array of `{offsetX, offsetY, blurRadius, spreadDistance,
+ * color}`), so this file is a transcription, not a translation — every number is the token's own, and
+ * `test/theme.test.ts` parses `@ohmail/tokens`' CSS strings and asserts a layer-for-layer match. Two RN constraints,
+ * documented: a shadowed view must own its background and radius (`lift()` is applied to the View carrying both,
+ * never a transparent wrapper); on Android below API 28 the outer shadow degrades — `elevation` is deliberately not
+ * set alongside, because mixing the two double-draws, and every panel also carries its own background step.
  */
 import type { ViewStyle } from "react-native";
 import type { FaceName } from "./face";

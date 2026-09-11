@@ -1,18 +1,12 @@
 /**
- * THE HEADLESS TASK, REGISTERED — the JS half of what keeps this app's timers running.
- *
+ * The headless task, registered — the JS half of what keeps this app's timers running.
  * `OrganizerHeadlessService` starts a task under this name, and React Native keeps its timer
- * manager alive for as long as the task's promise is pending. That is the whole mechanism: a
- * foreground service keeps the PROCESS unfrozen, and an active headless task keeps the TIMERS
- * going. The engine's poll and the claim watch are timers, so without this they stop the moment
- * the Activity pauses and the notification would stand over a runtime that had stopped.
- *
- * The task therefore never resolves. It is ended by the SERVICE going away, which is what the
- * person's stop does — and the service's own watchdog ends it too if the beats stop, so a task
- * that somehow outlived its purpose cannot hold this app awake silently.
- *
- * It does no work. Everything that organizes the mailbox is the engine, already running in this
- * runtime; this exists so that runtime keeps ticking.
+ * manager alive for as long as the task's promise is pending: the foreground service keeps the
+ * process unfrozen, the active headless task keeps the timers going. The engine's poll and the
+ * claim watch are timers, so without this they stop when the Activity pauses and the
+ * notification would stand over a runtime that had stopped. The task never resolves: it is ended
+ * by the service going away — the person's stop — and the service's own watchdog ends it if the
+ * beats stop. It does no work; it exists so the runtime keeps ticking.
  */
 import { AppRegistry } from "react-native";
 

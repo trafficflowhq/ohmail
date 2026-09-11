@@ -1,41 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  WHAT HAPPENS TO THE MAILBOX WHEN THE APP LEAVES THE SCREEN — one state machine, two platforms
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * A standalone phone IS the organizer of its mailbox, and an app that is not running organizes
- * nothing. The two platforms allow different answers to that, so this app gives different answers
- * — and the SENTENCES on the fourth door already say which:
- *
- *  · Android — *"It organizes while its notification is shown. Dismiss the notification to stop."*
- *    A foreground service keeps this process alive and unfrozen, so the engine's own poll timer
- *    goes on firing, and the notification is what makes that visible. It is the ONLY background
- *    surface: no notification, nothing organizing.
- *  · iPhone — *"It organizes while ohmail is open. When you leave the app, it hands the mailbox
- *    back."* iOS suspends the process, and a claim held by a suspended app is the
- *    double-organizer hazard: somebody's desktop would stand itself down against a phone in a
- *    pocket. So the claim is GIVEN BACK on the way out and taken again on the way in.
- *
- * ── IT IS ONE MODULE AND NOT TWO, WHICH IS THE PLATFORM-PARITY RULE APPLIED HONESTLY ──────
- *
- * Both platforms run every line below. What forks is one field — {@link BackgroundDeps.platform}
- * — and whether {@link BackgroundDeps.service} is present, and the iOS arms are therefore driven
- * by the node suite on the same seams the Android arms are. A second module per platform would be
- * two answers to "may this install organize right now", and that question has exactly one.
- *
- * ── AND IT IMPORTS NO NATIVE MODULE, FOR `local-engine.ts`'s REASON ────────────────────────
- *
- * The Android binding lives in `background-native.ts`. The expo packages ship Flow-typed
- * JavaScript that the node suite's transform refuses, so a module that reached for the platform
- * here could not be imported by a test at all — not a tidiness rule, a loadability one.
- *
- * ── THE RELEASE IS THE ENGINE'S OWN, ALWAYS ───────────────────────────────────────────────
- *
- * Nothing here writes to `ohmail/_meta`. {@link BackgroundEngine.handBack} is the engine's
- * `handBack()`, which calls the same `releaseOwnClaim` the detach arm and the release route call;
- * the re-claim is the ordinary gated cycle, reached by forcing one. A lease write from this app
- * would be a second implementation of "who organizes this mailbox", and the one thing two halves
- * of that must never do is differ.
+ * What happens to the mailbox when the app leaves the screen — one state machine, two
+ * platforms. A standalone phone IS the organizer, and an app that is not running organizes
+ * nothing; the fourth door's sentences say each platform's answer. Android: a foreground
+ * service keeps the process alive — no notification, nothing organizing. iPhone: iOS suspends
+ * the process, and a claim held by a suspended app is the double-organizer hazard, so the claim
+ * is given back on the way out and taken again on the way in. One module: what forks is
+ * {@link BackgroundDeps.platform} and whether `service` is present (`background-native.ts`
+ * binds Android). The release is the engine's own `handBack()` — nothing writes `ohmail/_meta`.
  */
 
 /** Which set of arms this install runs. `Platform.OS` in the app; a literal in the suite. */
@@ -149,17 +120,13 @@ export interface BackgroundDeps {
    */
   readonly announceRestricted: () => void;
   /**
-   * HOW OFTEN THE SERVICE ASKS THE ENGINE WHETHER IT STILL ORGANIZES ANYTHING — armed WITH the
-   * service and cleared with it, never otherwise.
-   *
-   * The claim can be lost while the app is in the background and nothing in JS chose it: somebody
-   * presses "Organize here" on their desktop and this install's next gated cycle stands down. The
-   * notification would then be a false statement on a surface a person cannot argue with, for as
-   * long as the app stayed backgrounded. Checking only on the way back in would leave exactly that
-   * window open, so the watch exists for as long as the notification does.
-   *
-   * Armed from the service's own state rather than from a flag: a check running with no service is
-   * a timer nothing needs, and a service with no check is the false-state window.
+   * How often the service asks the engine whether it still organizes anything — armed with
+   * the service and cleared with it, never otherwise. The claim can be lost while the app is
+   * backgrounded and nothing in JS chose it: somebody presses "Organize here" on their desktop
+   * and this install's next gated cycle stands down — the notification would then be a false
+   * statement on a surface a person cannot argue with, for as long as the app stayed
+   * backgrounded. Armed from the service's own state rather than a flag: a check with no
+   * service is a timer nothing needs, and a service with no check is the false-state window.
    */
   readonly checkEveryMs?: number;
   /** Diagnostics. NEVER the address — see {@link ServiceNotice}; the body is not logged. */
@@ -294,16 +261,13 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   /**
-   * ARM THE CLAIM WATCH — ONCE, and the caller is what decides it is wanted.
-   *
-   * This used to re-check `deps.service.running()` here as a belt. Both call sites have already
-   * established that the notification is showing — one from `start()`'s own answer, the other from
-   * the platform's `running()` — so that clause's contrary state was unreachable: it could not be
-   * watched fail, which is the whole of why it is gone rather than tested around.
-   *
-   * `watch !== null` is NOT such a clause. A background followed by a foreground reaches this
-   * twice for one service, and a second interval would ask the engine twice a minute for ever and
-   * outlive the first `clearInterval`.
+   * Arm the claim watch — once, and the caller is what decides it is wanted. The
+   * `deps.service.running()` re-check that stood here is gone: both call sites have already
+   * established the notification is showing, so that clause's contrary state was unreachable —
+   * it could not be watched fail, which is why it is removed rather than tested around.
+   * `watch !== null` is NOT such a clause: a background followed by a foreground reaches this
+   * twice for one service, and a second interval would ask the engine twice a minute for ever
+   * and outlive the first `clearInterval`.
    */
   const armWatch = (): void => {
     if (watch !== null) return;
@@ -389,16 +353,13 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       await handBack(deps.platform === "ios" ? "left_the_foreground" : "no_background_service");
       return;
     }
-    /* ══ A READER DOES NOT POST "ORGANIZING" ════════════════════════════════════════════════
-     *
-     * Another install took the mailbox and this install's gate stood down. The notification names
-     * this phone as the organizer, so starting one here states something false on a surface a
-     * person cannot argue with — and it would stand until the claim watch ran, which is a minute
-     * away at best. The watch is the belt for a claim lost LATER; this is the state at the moment
-     * of backgrounding, and it is a different question with the same reader.
-     *
-     * `!== false` and not `=== true`: an engine that cannot say is not evidence that it organizes
-     * nothing, and taking that as a decline would hand the mailbox back over a momentary failure.
+    /* A reader does not post "Organizing". Another install took the mailbox and this
+     * install's gate stood down; the notification names this phone as the organizer, so
+     * starting one states something false on a surface a person cannot argue with — and it
+     * would stand until the claim watch ran, a minute away at best. The watch is the belt for
+     * a claim lost later; this is the state at the moment of backgrounding. `!== false` and
+     * not `=== true`: an engine that cannot say is not evidence that it organizes nothing,
+     * and taking that as a decline would hand the mailbox back over a momentary failure.
      */
     if (organizingNow() === false) {
       log("organizer_background_declined_reader", { why: "claim_lost" });

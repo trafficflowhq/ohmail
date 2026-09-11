@@ -1,36 +1,12 @@
 /**
- * THE APPEARANCE FACE ON A PHONE — paper / ohmarchy, and which scope wins.
- *
- * The face is a SECOND appearance dimension, orthogonal to light/dark (OHMARCHY-PLAN.md §3a,
- * OHMARCHY-CONTRACT.md). Light/dark decides which palette; the face decides WHICH SET of
- * palettes, radii, lifts and easings the theme is built from. Every value comes from
- * `./ohmarchy.ts`, which is generated from the same web face — see that file's header.
- *
- * Pure and renderer-free on purpose (the `live.ts` charter): the provider in `./index.tsx`
- * imports react-native and therefore cannot be driven by the node suite, so every rule that
- * could be got wrong lives here, where `test/ohmarchy-face.test.ts` drives it directly.
- *
- * ── THE RESOLUTION ORDER, AND THE ONE ARM A PHONE DOES NOT HAVE ────────────────────────────
- *
- *   1. `pin` — THIS DEVICE's explicit choice ("only this device"). It outranks the account on
- *      this device because that is exactly what the scope option promised when it was chosen; a
- *      pinned phone deliberately ignores an account change made on a laptop.
- *   2. `account` — the account-level synced choice, as last answered by `GET /consent`
- *      (`themeFace`). `null` means the account has no preference, never "paper" — the two are
- *      different answers and only the first may be overridden by a later account write.
- *   3. `paper`. Nothing else.
- *
- * **There is deliberately NO device-detection arm here, and that is a judgment worth stating.**
- * The web provider has a third input: a LINUX desktop with no choice at either scope defaults
- * to ohmarchy (plan §12, Option B — the wedge bet on Linux visitors, made because a browser can
- * reveal "Linux" but never "Omarchy"). A phone is not that device. Android reports a Linux
- * kernel and every Android phone would flip to a tiling desktop face nobody asked for; iOS
- * reports nothing to bet on. More basically, the offer Option B exists to make — "go full
- * ohmarchy on all your devices" — is a DESKTOP-DOOR offer aimed at someone who is already
- * running the window manager the face is homage to. So on a phone the face is opt-in only: the
- * Settings control, or an account that adopted it somewhere it made sense. The plan's guardrails
- * (one tap back, an explicit choice always wins) are unaffected because there is no detection
- * for them to guard.
+ * The appearance face on a phone — paper / ohmarchy, and which scope wins. A second appearance
+ * dimension, orthogonal to light/dark (OHMARCHY-PLAN.md §3a): light/dark decides which
+ * palette, the face decides which SET of palettes, radii, lifts and easings (`./ohmarchy.ts`).
+ * Pure and renderer-free, driven by `test/ohmarchy-face.test.ts`. Resolution: (1) `pin` — this
+ * device's explicit choice, which outranks the account here because that is what the scope
+ * option promised; (2) `account` — `GET /consent`'s `themeFace`, where `null` means "no
+ * preference", never "paper"; (3) `paper`. Deliberately no device-detection arm: the web's
+ * Linux default would flip every Android phone (a Linux kernel) to a face nobody asked for. On a phone the face is opt-in only.
  */
 
 /** The appearance face — `paper` is today's look, `ohmarchy` the tiling one. */
@@ -71,21 +47,14 @@ export function accountGovernsFace(
 }
 
 /**
- * MAY THE "APPLY ON ALL DEVICES" AFFORDANCE BE OFFERED AT ALL? (review-caught.)
- *
- * Two conditions, and the first is the one a first draft gets wrong. `account` is `null` both
- * when the account has NO preference and when nobody has asked it yet, and those must not be
- * treated alike by a WRITE: with no device pin the control shows paper, so a press made before
- * the account's face was read would PATCH paper over an ohmarchy the account really holds whose
- * read was slow or failing. `accountKnown` is "an answer has been adopted this session — a
- * successful read, or a write's own echo", the same fact the webapp carries as `themeFaceKnown`
- * and gates the same affordance on.
- *
- * The second condition is {@link accountGovernsFace}: there is nothing to offer when the account
- * already governs this device — the scope line simply says so.
- *
- * A withheld affordance is drawn NOWHERE, never disabled: a control that cannot control is worse
- * than a sentence saying which scope this device is in.
+ * May the "apply on all devices" affordance be offered at all? Two conditions, and the first
+ * is the one a first draft gets wrong: `account` is `null` both when the account has no
+ * preference and when nobody has asked yet, and a write must not treat those alike — with no
+ * device pin the control shows paper, so a press before the account's face was read would
+ * PATCH paper over an ohmarchy the account really holds. `accountKnown` is "an answer has been
+ * adopted this session" — the webapp's `themeFaceKnown`, gating the same affordance. The
+ * second is {@link accountGovernsFace}: nothing to offer when the account already governs this
+ * device. A withheld affordance is drawn nowhere, never disabled.
  */
 export function accountWideOffered(
   accountKnown: boolean,

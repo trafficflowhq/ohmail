@@ -1,39 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  `net` — the platform's TCP socket, wrapped in the STREAM the mail clients are written against
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * The IMAP and SMTP clients do not merely read and write their socket, they PIPE it: the IMAP
- * client pipes the socket into its parser and pipes a literal back out, in four places. The
- * platform's socket is an event emitter with `write`, `pause`, `resume` and `destroy` and NO
- * `pipe`, so this is not a convenience shim standing in for a missing convenience — it is the
- * stream the client's own code requires in order to run at all.
- *
- * ── WHAT A BRIDGE HAS TO GET RIGHT, AND WHY EACH ONE IS HERE ──────────────────────────────
- *
- *  · **Backpressure both ways.** `push()` returning false must pause the native socket, and
- *    `_read()` must resume it. Without it a fast server fills the readable buffer of a Duplex that
- *    never applies pressure, and a large mailbox's first sync is where that shows up — the one
- *    place a phone has least memory to spare.
- *  · **`_write`'s callback is the native write's callback.** The Duplex's own `drain` semantics are
- *    derived from it. Calling back early makes the writable side claim capacity it has not got;
- *    never calling back stalls the client after one command.
- *  · **The socket's INFORMATIONAL surface.** `setKeepAlive`, `setNoDelay`, `setTimeout`, `address`,
- *    `ref`/`unref`, `remoteAddress`/`remotePort`/`localAddress`/`localPort`, `connecting`,
- *    `destroyed`. The clients read these for logging and for idle handling; a missing one is a
- *    `TypeError` deep inside a library, at a moment that has nothing to do with the property.
- *  · **`ref`/`unref` are no-ops and that is correct.** They exist to hold a Node event loop open.
- *    There is no such loop here, and a thrower would fail an idle-keeping call that means nothing
- *    on this platform.
- *
- * ── WHAT IS NOT VERIFIED IN THIS PACKAGE, STATED PLAINLY ──────────────────────────────────
- *
- * Nothing here can be exercised without a device: the module below is the only import in the engine
- * bundle that resolves to a native module, and the harness has no TCP stack behind it. The bundle
- * census proves this file is what `net` resolves to and that nothing else reaches a Node builtin.
- * It does NOT prove a byte moved. The transport criteria — a real mailbox synced, TLS refused
- * against a certificate that does not name the host, an upgrade from plaintext, a connection held
- * open — are device criteria and are measured on a build, not here.
+ * `net` — the platform's TCP socket, wrapped in the stream the mail clients are written against. The clients PIPE
+ * their socket (parser in, literal out), and the platform socket has no `pipe`, so this is the stream the client's
+ * code requires in order to run at all. What a bridge has to get right: backpressure both ways (`push()` false pauses
+ * the native socket, `_read()` resumes — a large mailbox's first sync is where its absence shows); `_write`'s
+ * callback is the native write's callback (early claims capacity, never stalls the client); the informational surface
+ * (`setKeepAlive` … `localPort` — a missing one is a `TypeError` deep inside a library); `ref`/`unref` as no-ops (no
+ * Node event loop to hold). Nothing here runs without a device: the bundle census proves `net` resolves here and no
+ * Node builtin is reached; the transport criteria are measured on a build.
  */
 "use strict";
 

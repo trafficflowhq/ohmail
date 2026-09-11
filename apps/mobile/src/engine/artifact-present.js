@@ -1,27 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE BUNDLE-TIME REFUSAL — a build without the phone's engine stops here, by name
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * Required by `metro.config.js` while the bundler's configuration is being read, which is the one
- * moment every phone build passes through: `expo start`, `expo export:embed`, and the Gradle and
- * Xcode bundle steps all load that file before they resolve a single module.
- *
- * ── WHY A REFUSAL HERE AT ALL, WHEN THE `require` ALREADY FAILS ───────────────────────────
- *
- * `src/engine/engine-bundle-native.ts` requires the artifact by path, so a build without it cannot
- * be produced either way. What Metro says about it is `Unable to resolve module
- * ../../generated/phone-engine.js` — a path, and no hint that a generator writes it or what to run.
- * This turns that into a sentence naming the command. It is the message, not the enforcement; the
- * resolution failure is the enforcement, and deleting this file would not make a three-door release
- * buildable.
- *
- * ── AND IT IS A PLAIN CommonJS MODULE WITH NO DEPENDENCIES ────────────────────────────────
- *
- * So the check can be driven directly by `test/engine-packaging.test.ts` — both arms, with the
- * artifact present and with it moved aside — without loading `expo/metro-config` or any of React
- * Native. A gate nobody has watched fail is not evidence, and a gate reachable only by running a
- * native build is a gate nobody watches.
+ * The bundle-time refusal — a build without the phone's engine stops here, by name. Required by
+ * `metro.config.js` while the bundler's configuration is being read, the one moment every phone build passes
+ * through. `src/engine/engine-bundle-native.ts` requires the artifact by path, so a build without it cannot
+ * be produced either way; what Metro says is "Unable to resolve module ../../generated/phone-engine.js" — a
+ * path, no hint that a generator writes it. This turns that into a sentence naming the command. The message,
+ * not the enforcement: the resolution failure is the enforcement, and deleting this file would not make a
+ * three-door release buildable. Plain CommonJS with no dependencies, so `test/engine-packaging.test.ts`
+ * drives both arms without loading `expo/metro-config`.
  */
 const { existsSync } = require("node:fs");
 const { join } = require("node:path");

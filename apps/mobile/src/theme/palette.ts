@@ -1,11 +1,8 @@
 /**
- * The Blanc colour scheme for React Native — one palette per appearance.
- *
- * Every value is the verbatim OKLCH from `packages/tokens/src/tokens.ts`, run
- * through `oklch.ts`. The trailing `//` on each line records the sRGB hex it
- * resolves to — the convention the retired macOS client's palette established —
- * so a reviewer can eyeball fidelity across platforms without
- * running a converter, and `test/theme.test.ts` fails if any of them drifts.
+ * The Blanc colour scheme for React Native — one palette per appearance. Every value is the
+ * verbatim OKLCH from `packages/tokens/src/tokens.ts`, run through `oklch.ts`. The trailing
+ * `//` on each line records the sRGB hex it resolves to, so a reviewer can eyeball fidelity
+ * across platforms without running a converter — `test/theme.test.ts` fails if any drifts.
  *
  *   TOKEN                     OKLCH (L C H / a)              -> sRGB hex
  *   ─────────────────────────────────────────────────────────────────────

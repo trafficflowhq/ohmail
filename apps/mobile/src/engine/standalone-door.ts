@@ -1,27 +1,12 @@
 /**
- * ═══ OPENING A MAILBOX ON THIS PHONE ═══════════════════════════════════════════════════════════
- *
- * The form's fields in, a running engine and a client bound to it out. Everything about providers,
- * ports and TLS is decided before this module is called; everything about mail is decided by the
- * engine. What is here is the composition and the two refusals it can honestly make.
- *
- * ── THE ENGINE IS A PRE-BUNDLED ARTIFACT, AND THAT IS WHY `startEngine` IS A PARAMETER ─────────
- *
- * `local-engine.ts` states the rule: the engine reaches this app as a bundle whose specifiers are
- * already resolved and whose Node builtins are already substituted, and importing its SOURCE from
- * here would undo all of it. So this module never names the engine's module — it takes the
- * artifact's `startPhoneEngine` as a value.
- *
- * That parameter is also what keeps the fourth door from being a dead control. Whether the artifact
- * is in a build is a packaging fact, so the DOOR is offered exactly where the artifact resolves
- * ({@link standaloneAvailable}) — a build without it shows three doors rather than a fourth one
- * that refuses. Data-driven, not a flag.
- *
- * ── THE PASSWORD PASSES THROUGH AND IS NEVER WRITTEN DOWN HERE ─────────────────────────────────
- *
- * It goes into `imap.auth.pass` and nowhere else: not into a log line, not into a refusal's
- * arguments, not into the mirror. The only thing that may keep it is the engine, sealed under the
- * key ring `kek.ts` produces. Nothing in this file calls `console`.
+ * Opening a mailbox on this phone: the form's fields in, a running engine and a client bound
+ * to it out. Providers, ports and TLS are decided before this module; mail is decided by the
+ * engine — what is here is the composition and its two honest refusals. The engine is a
+ * pre-bundled artifact (`local-engine.ts` states the rule), so `startEngine` is a parameter:
+ * importing the engine's source would undo the bundling, and the door is offered exactly
+ * where the artifact resolves ({@link standaloneAvailable}) — never a dead control. The
+ * password passes through into `imap.auth.pass` and nowhere else — no log, no refusal
+ * argument, no mirror; only the engine may keep it, sealed under `kek.ts`'s key ring.
  */
 import { portMeansImplicitTls } from "@ohmail/client-engine";
 import { LOCAL_ENGINE_ORIGIN } from "./boot";
@@ -30,15 +15,12 @@ import type { EngineLogSink } from "./engine-log";
 import type { StandaloneFields } from "../ui/standalone-form";
 
 /**
- * THE RUNNING ENGINE, AS THIS APP USES IT. Structural, because the bundle is not typed — so every
- * member here is a CLAIM about the artifact, and `test/engine-bundle-loads.test.ts` reads them off
- * a real booted one rather than off this declaration.
- *
- * The first three are the client's seam and the next two name the mailbox it serves. The last three
- * are the background half's: `handBack` and `resume` are the acts `background.ts` drives at every
- * app-state edge, and `runtimes` is the three-answer read the claim watch and the reader check both
- * ask. They were absent from this type while `createBackgroundOrganizing` had no call site, which
- * is what made the omission invisible.
+ * The running engine, as this app uses it. Structural, because the bundle is not typed — every
+ * member here is a claim about the artifact, and `test/engine-bundle-loads.test.ts` reads them
+ * off a real booted one rather than off this declaration. The first three are the client's
+ * seam and the next two name the mailbox it serves. The last three are the background half's:
+ * `handBack` and `resume` are the acts `background.ts` drives at every app-state edge, and
+ * `runtimes` is the three-answer read the claim watch and the reader check both ask.
  */
 export interface StandaloneEngine {
   handle(req: Request): Promise<Response>;
@@ -104,17 +86,13 @@ export type StartPhoneEngine = (deps: {
 } & StartPhoneEngineLogging) => Promise<StandaloneEngine>;
 
 /**
- * THE RELAUNCH'S ENTRY — the same engine, started from what it sealed for itself.
- *
- * No `imap` and no `address`: a phone's credential form exists once, and every later launch has
- * only the store. Measured over the real composition, against an engine booted on a store:
- * the first launch seals the typed password beside the coordinates it was proved against, and a
- * launch given neither dials with both. So this app keeps no mailbox password anywhere — the one
- * copy is the engine's own sealed row, under the key ring `kek.ts` holds in the keystore.
- *
- * `no-credential` is a STATE and not a failure: a store with nothing sealed has no mailbox to open,
- * and the door that renders this says so rather than starting an engine that would authenticate to
- * nothing.
+ * The relaunch's entry — the same engine, started from what it sealed for itself. No `imap`
+ * and no `address`: a phone's credential form exists once, and every later launch has only the
+ * store — the first launch seals the typed password beside the coordinates it was proved
+ * against, and a launch given neither dials with both. So this app keeps no mailbox password
+ * anywhere; the one copy is the engine's own sealed row, under the key ring `kek.ts` holds in
+ * the keystore. `no-credential` is a state, not a failure: a store with nothing sealed has no
+ * mailbox to open, and the door that renders this says so.
  */
 export type StartPhoneEngineFromSealed = (deps: {
   exec: unknown;
@@ -186,16 +164,13 @@ export function imapConfigFor(fields: StandaloneFields): {
 }
 
 /**
- * HOW THIS PHONE NAMES ITSELF IN THE CLAIM — a constant, and deliberately NOT a deck string.
- *
- * This value is written into the organizer claim in the mailbox, read back by every install, and
- * rendered on somebody else's desktop as the holder line. Two consequences decide it:
- *
- *  · it must not depend on the language. `claimFrom` recognises this install's own claim BY NAME,
- *    so a name read from the deck would change when the person switches language and the phone
- *    would stop recognising its own claim — the misread-own-claim class, arriving through copy.
- *  · it is DATA leaving this app, like an address, not a sentence this app renders. What the reader
- *    sees is the other client's `readerLabel("<name>")` around it, in the reader's own language.
+ * How this phone names itself in the claim — a constant, deliberately not a deck string. The
+ * value is written into the organizer claim in the mailbox, read back by every install, and
+ * rendered on somebody else's desktop as the holder line. It must not depend on the language:
+ * `claimFrom` recognises this install's own claim by name, so a deck-read name would change on
+ * a language switch and the phone would stop recognising its own claim. And it is data leaving
+ * this app, like an address — the reader sees the other client's `readerLabel("<name>")`
+ * around it, in the reader's own language.
  */
 export const PHONE_CLAIM_NAME = "ohmail on a phone";
 
@@ -216,21 +191,14 @@ export type StandaloneOutcome =
   | { ok: false; reason: Refusal };
 
 /**
- * ═══ WHY A DIAL FAILED, AS FAR AS THIS APP MAY JUDGE IT ════════════════════════════════════════
- *
- * The engine refuses a launch the mail server ANSWERED WITH A NO and rethrows the server's own
- * error, which carries imapflow's two flags. These two predicates read them, and they are the
- * whole of what this app decides about a dial.
- *
- * They are not imports. The engine reaches this app as a pre-bundled artifact (see the banner), so
- * its `credentialsRefused`/`tlsRefused` cannot be named from here — and a second READING of the
- * same flag is not a second decision: the flags are imapflow's published surface, not ours.
- * `test/standalone-door.test.ts` pins the pair by BEHAVIOUR, driving the real artifact against a
- * server that refuses, so a divergence is caught by what happens rather than by a name.
- *
- * The `cause` walk and the hop bound are the engine's, for the engine's reason: the adapter wraps,
- * and a predicate that read only the outermost error would answer `false` for the wrapped shape it
- * exists to recognise.
+ * Why a dial failed, as far as this app may judge it. The engine refuses a launch the mail
+ * server answered with a no and rethrows the server's own error, carrying imapflow's two
+ * flags; these predicates read them, and they are the whole of what this app decides about a
+ * dial. Not imports: the engine arrives pre-bundled, so `credentialsRefused`/`tlsRefused`
+ * cannot be named from here — a second reading of a published flag is not a second decision.
+ * `test/standalone-door.test.ts` pins the pair by behaviour against a refusing server. The
+ * `cause` walk and hop bound are the engine's: the adapter wraps, and reading only the
+ * outermost error would answer `false` for the wrapped shape this exists to recognise.
  */
 const flagged = (err: unknown, flag: "authenticationFailed" | "tlsFailed"): boolean => {
   for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {

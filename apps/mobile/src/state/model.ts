@@ -1,16 +1,11 @@
 /**
- * The mail screens' row vocabulary — types and the few pure helpers they share.
- *
- * No data lives here. The app renders exactly one world: the connected
- * session's mirror, through the shared client-engine selectors in `live.ts`.
- * An unconnected app renders the connect flow, never sample mail — demo
- * content belongs to the product's website, not to the client.
- *
- * The few WORDS in here — the five destination names and the three pile titles — read from the
- * copy deck rather than from literals in the table below. They are on screen (a decision button, a
- * toast, the pile rail), so they are copy, and a literal here was a string no language but English
- * could reach. The lookups keep their shape: the table maps a destination to a GETTER over the
- * deck, so a language switch is visible on the next read exactly as it is everywhere else.
+ * The mail screens' row vocabulary — types and the few pure helpers they share. No data lives
+ * here: the app renders exactly one world, the connected session's mirror, through the shared
+ * selectors in `live.ts`; an unconnected app renders the connect flow, never sample mail. The
+ * few words in here — the five destination names and the three pile titles — read from the copy
+ * deck rather than literals: they are on screen, so they are copy, and a literal here was a
+ * string no language but English could reach. The table maps a destination to a getter over the
+ * deck, so a language switch is visible on the next read exactly as everywhere else.
  */
 import { Copy } from "../copy";
 

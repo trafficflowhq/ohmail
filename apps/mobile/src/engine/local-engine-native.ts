@@ -1,19 +1,12 @@
 /**
- * THE REAL PLATFORM BINDINGS FOR THE ENGINE'S STORE AND KEY — the one file that imports expo here.
- *
- * `local-engine.ts` holds the logic and imports nothing native, for the reason its own banner gives
- * and `servers-native.ts` established before it: the expo packages carry Flow-typed JavaScript, so
- * a module that imports them cannot be loaded by the node-side suite at all — the transform refuses
- * with a parse error that names neither the package nor the import that reached it. This file is
- * the other half of that split, and the suite never loads it.
- *
- * Three bindings, and nothing else belongs here:
- *
- *  · the database opener — the engine's OWN file, never the UI mirror's;
- *  · the keystore, which is the app's existing seam rather than a second one for the engine;
- *  · the random source, which is the platform's CSPRNG. Not `Math.random` and not a hash of
- *    anything: this is the key that opens a mailbox password, and a predictable one is the same as
- *    no key at all.
+ * The real platform bindings for the engine's store and key — the one file that imports expo
+ * here. `local-engine.ts` holds the logic and imports nothing native (`servers-native.ts`
+ * established the split: expo packages carry Flow-typed JavaScript the node suite's transform
+ * refuses with a parse error naming neither the package nor the import). The suite never loads
+ * this file. Three bindings, nothing else: the database opener — the engine's own file, never
+ * the UI mirror's; the keystore — the app's existing seam, not a second one; and the random
+ * source — the platform's CSPRNG, not `Math.random` and not a hash of anything: this is the key
+ * that opens a mailbox password, and a predictable one is no key at all.
  */
 import * as Crypto from "expo-crypto";
 import * as SQLite from "expo-sqlite";

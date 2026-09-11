@@ -1,65 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE INSTALL GENERATION — what makes "I deleted the app" a real take-back on iOS
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * ── THE ASYMMETRY THIS EXISTS FOR ─────────────────────────────────────────────────────────
- *
- * The pairings live in the platform keystore (`servers-native.ts`, expo-secure-store under
- * `WHEN_UNLOCKED_THIS_DEVICE_ONLY`), and that choice is right: it is what keeps a refresh
- * token out of every cloud and OS backup. It has one consequence the posture never stated.
- * **iOS Keychain items survive deleting the app** and are readable again by the same bundle
- * id; Android's Keystore-backed preferences go with the app data. So on an iPhone, deleting
- * ohmail and installing it again used to reopen the mailbox with no ceremony at all — the
- * launch effect reads the active profile and connects it — against a refresh family the
- * shipped configuration keeps alive for 400 rolling days.
- *
- * "I deleted the app" is a take-back gesture people believe in. It has to be one.
- *
- * ── THE MARKER IS THE ONE THING iOS DOES REMOVE ───────────────────────────────────────────
- *
- * The app CONTAINER goes with an uninstall on both platforms, and this app already has a
- * store that lives in it: SQLite, behind {@link InstallMarkerHost.openExecutor}. So the
- * generation marker is a two-column table in a database of its own ({@link INSTALL_MARKER_DB})
- * — no new dependency, no new platform seam, and the node suite drives it through the same
- * double it drives every mirror through.
- *
- * A marker that is ABSENT (uninstalled, or never installed) or DIFFERENT from the one this
- * launch expects means the keystore's contents belong to an install that no longer exists, and
- * every pairing in it is purged before a single profile is read.
- *
- * ── THE ORDER, AND WHAT A KILL IN THE MIDDLE COSTS ────────────────────────────────────────
- *
- * Purge FIRST, stamp SECOND. A kill between them repeats the purge on the next launch, which
- * is a no-op on an already-empty keystore; the reverse order would stamp an install whose
- * credentials were still there and never look again.
- *
- * ── AN UPGRADE IS NOT A REINSTALL, AND THE CONTAINER CAN TELL THEM APART ──────────────────
- *
- * This first said there was no evidence separating "upgraded" from "reinstalled", and accepted
- * that every existing user would re-pair once on the first launch of the build that added the
- * marker. That was wrong, and the evidence was already here: **the MIRRORS live in the app
- * container too.** A reinstall has none — the container went with the app — while an upgrade
- * from any earlier build has one for every server that has ever synced. So a missing marker is
- * only a fresh install when the container ALSO holds no mirror for any pairing the keystore
- * names; otherwise it is an upgrade, and the marker is simply stamped.
- *
- * The security property is unchanged, because the sentinel cannot be forged in the direction
- * that matters: a genuine reinstall cannot produce a mirror file, and the check reads only
- * databases named by profiles the keystore already holds. It is the same asymmetry the marker
- * itself rests on, using a file the app was already writing.
- *
- * A pairing that has never synced has no mirror, so an upgrade whose ONLY pairing is unused
- * still purges. That is the honest residual: one re-pair, for a server the person had paired
- * and never opened.
- *
- * ── A STORE THAT WILL NOT OPEN IS "UNKNOWN", NEVER "FRESH" ────────────────────────────────
- *
- * Treating an unreadable marker store as a fresh install would let a transient SQLite failure
- * delete every pairing on the phone — a far worse outcome than the residue this closes, and one
- * an ordinary user would meet by unlucky timing rather than by uninstalling. So the failure
- * arm proceeds with the pairings intact and says so; the case that matters (a genuine
- * reinstall) has a working SQLite by definition, because the app just launched.
+ * The install generation — what makes "I deleted the app" a real take-back on iOS. Pairings
+ * live in the platform keystore, and iOS Keychain items survive deleting the app, so a
+ * reinstall used to reopen the mailbox with no ceremony. The app container does go with an
+ * uninstall, so the marker is a table in its own SQLite database ({@link INSTALL_MARKER_DB}):
+ * a marker absent or different means the keystore belongs to a gone install, and every
+ * pairing is purged before a profile is read. Purge first, stamp second — a kill between them
+ * repeats a no-op purge. An upgrade is not a reinstall: the mirrors live in the container too,
+ * so a missing marker purges only when no named mirror exists. Unreadable = "unknown", never "fresh".
  */
 import type { ServerProfileStore } from "./servers";
 import { faultDetail, refuse, type Refusal } from "../refusal";
@@ -68,15 +15,13 @@ import { faultDetail, refuse, type Refusal } from "../refusal";
 import { Copy } from "../copy";
 
 /**
- * The two calls this module makes on a database — declared HERE, importing nothing.
- *
+ * The two calls this module makes on a database — declared here, importing nothing.
  * `SqlExecutor` from the engine package satisfies it structurally, so the connection layer
- * hands its real deps straight in. It is not IMPORTED for two reasons that point the same way:
- * the privacy census (`test/privacy.test.ts`) confines both `engine/boot` and the engine package
- * itself to a named allow-list, and widening that list so a state module can borrow two method
- * signatures would be paying in blast radius for a type. And the narrower port is the better
- * shape anyway — this file opens one tiny local table and has no business with mirrors,
- * adapters or transports.
+ * hands its real deps straight in. Not imported, for two reasons pointing the same way: the
+ * privacy census (`test/privacy.test.ts`) confines `engine/boot` and the engine package to a
+ * named allow-list, and widening it to borrow two method signatures would pay in blast radius
+ * for a type; and the narrower port is the better shape — this file opens one tiny local
+ * table and has no business with mirrors, adapters or transports.
  */
 export interface MarkerDb {
   all(sql: string, params?: ReadonlyArray<string>): Promise<ReadonlyArray<Record<string, unknown>>>;
@@ -188,16 +133,13 @@ export async function settleInstallGeneration(
 }
 
 /**
- * THE STAMPED GENERATION, READ BACK — this install's durable id, and the only one.
- *
- * `settleInstallGeneration` writes this row at launch and then discards the value, so anything
- * needing the id later had nowhere to ask. The standalone door needs it: the organizer claim is
- * written against an install id, and a claim stamped with a SECOND id is how one install reads its
- * own claim as somebody else's.
- *
- * So this reads the same row that function writes — not a second source, and never a fresh uuid.
- * `null` means the marker has not been settled (or could not be read), which is a refusal for the
- * caller to make rather than a value to invent.
+ * The stamped generation, read back — this install's durable id, and the only one.
+ * `settleInstallGeneration` writes this row at launch and discards the value, so anything
+ * needing the id later had nowhere to ask. The standalone door needs it: the organizer claim
+ * is written against an install id, and a claim stamped with a second id is how one install
+ * reads its own claim as somebody else's. So this reads the same row that function writes —
+ * never a fresh uuid. `null` means the marker has not been settled (or could not be read):
+ * a refusal for the caller to make, not a value to invent.
  */
 export async function installGeneration(deps: InstallMarkerHost): Promise<string | null> {
   try {

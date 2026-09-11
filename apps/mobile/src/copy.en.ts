@@ -1,31 +1,12 @@
 /**
- * Every string the chrome says, in one place — the phone's copy deck, in English.
- *
- * Blanc's rule is **factual microcopy only**: no slogans, no praise, no
- * invented numbers. Each line is either the canonical product wording (the
- * desktop client established the copy deck) or a literal statement of what the
- * app just did. Keeping them together makes that auditable, and keeps the
- * privacy grep to one file's worth of prose.
- *
- * Phone-specific lines are marked. They exist because a thumb does things a
- * cursor did not — nothing here softens or oversells the desktop wording.
- *
- * ── THIS FILE IS ALSO THE CONTRACT EVERY OTHER LANGUAGE IS HELD TO ────────────────────────────
- *
- * It used to export `Copy` directly and be the whole of the app's copy. It now exports the ENGLISH
- * DECK and the {@link Deck} type derived from it; `copy.de.ts` is the same shape in German, and
- * `copy.ts` is the live accessor that resolves one of them per read. The English text below is
- * unchanged by that move — the parity guards that compare it to the webapp catalogue
- * (`action-parity`, `folders-parity`, `ohmarchy-face`) still read these exact strings.
- *
- * The type is what makes the second deck honest, and it is stronger than the webapp's JSON census:
- * a German deck missing a key does not compile, an extra key does not compile, and a function whose
- * arguments differ does not compile. `pnpm -F mobile typecheck` covers `src/**`, so that is a real
- * gate rather than a documented intention. `test/copy-parity.test.ts` adds the things a type cannot
- * see — an untranslated sentence, a dropped interpolation, a plural that ignores its number.
- *
- * NO `as const`. The literal types it produced were never used, and they would make the German deck
- * unassignable to this shape for the trivial reason that its strings are different strings.
+ * Every string the chrome says, in one place — the phone's copy deck, in English. Blanc's rule
+ * is factual microcopy only: no slogans, no praise, no invented numbers; each line is the
+ * canonical product wording or a literal statement of what the app just did, which keeps the
+ * privacy grep to one file's worth of prose. This file is also the contract every other
+ * language is held to: it exports the English deck and the {@link Deck} type derived from it;
+ * `copy.de.ts` is the same shape in German, `copy.ts` the live accessor. The type makes the
+ * second deck honest — a missing key, an extra key or a differing function signature does not
+ * compile — and `test/copy-parity.test.ts` adds what a type cannot see. No `as const`.
  */
 
 import { isPinFailure } from "./net/host-pinning";
@@ -57,49 +38,14 @@ const TABLE = {
   /* ------------------------------------------------------------------ doors */
 
   /*
-   * ═══ THE DOORS, IN THE PHONE'S IDIOM ═════════════════════════════════════════════════════
-   *
-   * The desktop chooser asks one question — this computer, a server you run, or ours — and each
-   * answer names a DIFFERENT MACHINE as the thing that does the organizing. The phone asks the
-   * same question, and since the standalone engine landed one of its answers is the phone in the
-   * reader's hand. Three doors name somebody else's machine and the phone's own half of each of
-   * those sentences is the same — it keeps a copy; the fourth names this phone and says what it
-   * costs ({@link doorPhone}).
-   *
-   * ── AND THE LEAD SENTENCE COUNTS THE DOORS, WHICH IS RULED COPY ─────────────────────────
-   *
-   * It read "One question, three answers" and went false the day the engine started shipping
-   * inside the app and the fourth tile began to render. The count is ruled — CHOOSER-DESIGN
-   * §7.1 and PHONE-DOOR-DESIGN's copy table both name "One question, four answers" — so the
-   * remedy is the number, not its removal. A count in prose beside a data-driven list goes
-   * stale without anybody editing it, so `test/no-host-census.test.ts` §5 reads the word
-   * against the `<Door>` count in both decks rather than pinning the string.
-   *
-   * ── THE ORDER IS DIFFERENT FROM THE DESKTOP'S, AND DELIBERATELY SO ──────────────────────
-   *
-   * The desktop orders by who holds it, nearest first, and puts the hosted service last: the
-   * first two are doors a person can verify for themselves. That argument does not transfer.
-   * On a phone the nearest door — a computer on the same network — is the one with the most
-   * conditions on it (a code that carries a key, a platform half that exists on Android and
-   * not yet on iOS), and leading with it would open the chooser on the answer most likely to
-   * end in a refusal. So the phone orders by how few conditions the door has, and the LAN door
-   * comes last with its conditions written on it.
-   *
-   * ── EVERY SENTENCE IS A CLAIM, AND THREE OF THEM WERE CHECKED AGAINST A LIVE SERVER ────
-   *
-   *  · **The Cloud door pairs, TODAY.** `GET /hello` on the hosted service (`MANAGED_ORIGIN`,
-   *    named once in `net/pairing.ts`) answers `features.pairing: true`, and `POST /pair/redeem`
-   *    there answers `pairing_invalid` to a junk token — the ceremony is mounted, and the code
-   *    comes from the Devices pane the web client shows when `/hello` announces it
-   *    (`CloudShell.tsx` injects `<DevicesSection/>` on exactly that condition). Measured
-   *    2026-09-01. The picker still negotiates rather than trusting this deck: if that server
-   *    ever answers `pairing: false`, the door says what the server said instead of what this
-   *    comment did.
-   *  · **The self-hosted door needs a certificate the PHONE already trusts**, and that is a
-   *    different sentence from the desktop's. See {@link doorSelfCert}.
-   *  · **The desktop door is Android-only for a computer on your own network.** `canPin()` is
-   *    false wherever the pinning module's native half is absent, which today is iOS, and the
-   *    seam REFUSES rather than connecting unpinned. The Tailscale address works on both.
+   * The doors, in the phone's idiom: the desktop chooser's one question — which machine
+   * organizes this mailbox — with four answers, the fourth being the phone itself
+   * ({@link doorPhone}). The lead sentence counts the doors, and the count is ruled copy
+   * (CHOOSER-DESIGN §7.1, PHONE-DOOR-DESIGN): `test/no-host-census.test.ts` §5 reads the word
+   * against the `<Door>` count in both decks. The order is the phone's own: by how few
+   * conditions a door has, the LAN door last with its conditions written on it. The Cloud door
+   * pairs (measured 2026-09-01: `GET /hello` answers `features.pairing: true`), the picker
+   * still negotiates, and the desktop door is Android-only ({@link doorSelfCert}).
    */
   doorsLead: "One question, four answers — which machine does the organizing?",
 
@@ -115,21 +61,13 @@ const TABLE = {
   doorDesktopSay:
     "The ohmail app on your computer does the organizing; this phone keeps a copy. Open Settings → Devices there and scan its code.",
   /**
-   * THE DESKTOP DOOR'S ONE CONDITION, SHOWN ONLY WHERE IT APPLIES.
-   *
-   * The tile above is true on both platforms — a code from that pane does pair a phone — and review
-   * showed the tile alone still leads to a dead end: a computer's SAME-NETWORK code needs the
-   * pinning half, `canPin()` is false where that half is absent, and the seam refuses. So an iPhone
-   * user could follow the tile exactly and be stopped at the scan.
-   *
-   * The original argument for saying nothing was that a door tile is the wrong place for a
-   * conditional. That still holds for the TILE, and this is not the tile: it is a line rendered only
-   * when `canPin()` is false, which is the one platform where it is true. Nobody reads a condition
-   * that does not apply to them, and nobody walks into the refusal either.
-   *
-   * It names the remedy that works rather than the mechanism that does not — the Tailscale address
-   * is on the same Devices pane, so the instruction is one screen, not two. The same sentence the
-   * seam gives on refusal (`admitOrigin`), moved to before the scan instead of after it.
+   * The desktop door's one condition, shown only where it applies. A computer's same-network
+   * code needs the pinning half, `canPin()` is false where that half is absent (today iOS), and
+   * the seam refuses — so an iPhone user could follow the tile exactly and be stopped at the
+   * scan. This line renders only when `canPin()` is false: nobody reads a condition that does
+   * not apply, and nobody walks into the refusal. It names the remedy that works — the
+   * Tailscale address on the same Devices pane — the same sentence `admitOrigin` gives on
+   * refusal, moved to before the scan instead of after it.
    */
   doorDesktopNoPin:
     "On this phone, use the Tailscale address that pane also shows — ohmail cannot yet verify a computer reached over your own network here.",
@@ -152,20 +90,14 @@ const TABLE = {
     "Only while the app is open — or in the background behind a notification you can see.",
 
   /**
-   * THE TRAVEL SENTENCE, IN THE ONE FORM THAT IS TRUE FOR A PHONE.
-   *
-   * The desktop's is *"Your rules and settings live in your own mailbox and travel with you — the
-   * mailbox is always the master."* Both halves hold here, and a phone needs a third clause the
-   * desktop does not: behind three of the four doors what moves is which machine it mirrors, and
-   * nothing the phone holds travels, because behind those three everything it holds is a copy.
-   * Behind the fourth the phone IS the organizer, so the final clause was dropped — it was true
-   * of three doors out of four and the panel carries all four.
-   *
-   * The list is the catalogue's own (`leave.note`: screened senders, rules, notification choices,
-   * the away reply, tag names), shortened to the three a phone actually shows, and it does NOT say
-   * "settings" unqualified — the phone's Look setting is per-device on purpose
-   * (`faceScopeDevice`), and triage piles and Resurface timers stay with the install that made
-   * them. Claiming them would be claiming the payload does not carry.
+   * The travel sentence, in the one form that is true for a phone. The desktop's "rules and
+   * settings live in your own mailbox and travel with you" holds here, plus a clause the
+   * desktop does not need: behind three of the four doors everything the phone holds is a copy,
+   * and behind the fourth the phone is the organizer — so the final clause was dropped rather
+   * than being true of three doors out of four. The list is the catalogue's own (`leave.note`),
+   * shortened to the three a phone shows, and it does not say "settings" unqualified: the Look
+   * setting is per-device on purpose (`faceScopeDevice`), and triage piles and Resurface timers
+   * stay with the install that made them.
    */
   doorsTravel:
     "Move between these anytime. Your screened senders, rules and notification choices live in your own mailbox, so they are the same behind every door — the mailbox is always the master.",
@@ -182,37 +114,14 @@ const TABLE = {
   doorSelfGo: "Continue",
   doorSelfChecking: "Checking your server…",
   /**
-   * WHAT A PHONE CAN AND CANNOT DO ABOUT AN OPERATOR'S OWN CERTIFICATE AUTHORITY.
-   *
-   * ── THIS IS NOT THE DESKTOP'S ANSWER, AND SAYING IT WAS WOULD BE THE LIE ───────────────────
-   *
-   * The desktop tells an operator to drop their root certificate into a file in the app's data
-   * folder (`cloud-ca.pem`), because Node verifies against its own compiled-in roots and
-   * `NODE_EXTRA_CA_CERTS` is how you add one. There is no equivalent here and the copy must not
-   * imply there is.
-   *
-   * MEASURED, from this app's own build rather than from documentation:
-   *
-   *  · **Android.** React Native's fetch is OkHttp, which uses the platform trust manager, which
-   *    is configured by the app's network security config. This app declares NONE
-   *    (`apps/mobile/android/app/src/main/AndroidManifest.xml` carries no
-   *    `android:networkSecurityConfig`, and the release merged manifest has none either), so it
-   *    gets the platform default for `targetSdkVersion` 36 — which since API 24 trusts SYSTEM
-   *    certificate authorities and NOT the ones a person installs themselves. An operator who
-   *    installs their own root on the phone therefore changes nothing for this app, and the
-   *    handshake still fails. Opting in (`<certificates src="user"/>`) is deliberately NOT done:
-   *    it would widen what every connection this app makes will accept, including the hosted
-   *    one, to any authority anything on that device ever installed.
-   *  · **iOS.** URLSession honours a root the person installed AND enabled under
-   *    Settings → General → About → Certificate Trust Settings, so the same stack is reachable
-   *    there once that is done. NAMED rather than measured — there is no Mac or iPhone in the
-   *    environment this was built in, and the parity rule says to name an iOS half rather than
-   *    assert an untested one.
-   *
-   * So the honest sentence names the two remedies that work on BOTH platforms — a certificate
-   * from an authority the phone already trusts, or a Tailscale address, whose MagicDNS name has a
-   * real one — and states the platform split rather than hiding it. The word "Tailscale" is
-   * already in this app's copy (`admitOrigin`'s iOS refusal), so it introduces no new claim.
+   * What a phone can and cannot do about an operator's own certificate authority — not the
+   * desktop's answer (`cloud-ca.pem` has no equivalent here), and the copy must not imply it.
+   * Measured on Android: RN fetch is OkHttp on the platform trust manager; this app declares no
+   * `android:networkSecurityConfig`, so it trusts system authorities and not user-installed
+   * ones — opting in (`<certificates src="user"/>`) would widen what every connection accepts.
+   * On iOS, URLSession honours a root enabled under Certificate Trust Settings (named, not
+   * measured — no iPhone in this environment). So the sentence names the two remedies that work
+   * on both platforms: a certificate the phone already trusts, or a Tailscale address.
    */
   doorSelfCert:
     "Your server needs an https certificate from an authority this phone already trusts. A stack "
@@ -440,15 +349,11 @@ const TABLE = {
   stepManual: "Enter a pairing token",
   stepPairOffered: (flavor: string) => `This is an ohmail server (${flavor}) and it pairs devices.`,
   /**
-   * A MANAGED-FLAVOR SERVER THAT SAYS IT DOES NOT PAIR — and this line used to promise a release.
-   *
-   * It read *"ohmail.app does not offer device pairing yet — it arrives with a later update"*,
-   * which was true when it was written and is not now: measured 2026-09-01, `GET /hello` on the
-   * hosted service answers `features.pairing: true` and `POST /pair/redeem` there answers
-   * `pairing_invalid` to a junk token, so the picker offers the pair step and this
-   * sentence never renders against the live service. A dormant claim is still a claim, and a
-   * roadmap promise is the worst kind to leave lying in a copy deck — the descriptor is what
-   * decides, so the sentence now reports what the descriptor said and nothing about the future.
+   * A managed-flavor server that says it does not pair. The descriptor decides, so this
+   * sentence reports what the descriptor said and promises nothing about the future — a
+   * roadmap promise is the worst kind to leave in a copy deck. Against the live hosted
+   * service it never renders: measured 2026-09-01, `GET /hello` answers
+   * `features.pairing: true`, so the picker offers the pair step.
    */
   managedDeferred:
     "ohmail.app is not offering device pairing right now — its own descriptor says so. Nothing to do here today.",
@@ -548,38 +453,14 @@ const TABLE = {
   connectMirrored: (n: number, cursor: string) =>
     `${n} message${n === 1 ? "" : "s"} on this device · cursor ${cursor}`,
   /**
-   * ── A FAILED HANDSHAKE IS NOT A FAILED NETWORK, AND THIS LINE USED TO SAY IT WAS ──────────
-   *
-   * Measured on a real device against a real desktop whose key had been changed: this read
-   *
-   *   "Sync failed — the mirror keeps what it has. MutationRejectedError: network failure:
-   *    Error: fetch failed: javax.net.ssl.SSLHandshakeException:
-   *    java.security.cert.CertPathValidatorException: Trust anchor for certification path not
-   *    found."
-   *
-   * The BEHAVIOUR was right — nothing was trusted, nothing was fetched, the mirror was kept —
-   * and the sentence was unreadable and, worse, indistinguishable from bad wifi. A person whose
-   * desktop key genuinely changed needs to be told that, and a person whose network is being
-   * interfered with needs to be told that even more.
-   *
-   * So a pin failure gets the pin sentence and everything else keeps the detail it always had.
-   * `isPinFailure` matches by SHAPE (the wording differs across Android versions), and a missed
-   * match degrades to the old line — wrong, but not misleading.
-   *
-   * ── AND IT ONLY MEANS "THIS COMPUTER'S KEY CHANGED" WHERE THERE IS A KEY TO CHANGE ─────────
-   *
-   * `PIN_CHANGED_SENTENCE` names a computer somebody paired with and tells them to mint a fresh
-   * code from its Devices pane. On a pairing that carries NO pin — the hosted service, or a
-   * self-hosted server on a real name — the same handshake shape means something else entirely:
-   * the certificate at that address is not one this phone's trust store accepts. Telling a
-   * self-hoster their computer's identity changed sends them to a screen that does not exist for
-   * them. So the pinned half is gated on the profile actually holding a pin, and the unpinned half
-   * gets its own sentence naming the certificate. Both are true statements about what stopped.
-   *
-   * `pinned` IS REQUIRED, with no default. A default would be a wrong sentence waiting for the
-   * next caller who did not know the question was being asked — and the two answers are not
-   * degradations of each other, they name different remedies on different screens. A required
-   * parameter makes every call site state which pairing it is talking about.
+   * A failed handshake is not a failed network. A raw SSLHandshakeException dump is unreadable
+   * and indistinguishable from bad wifi; a person whose desktop key genuinely changed must be
+   * told that. So a pin failure gets the pin sentence and everything else keeps its detail;
+   * `isPinFailure` matches by shape (wording differs across Android versions), and a missed
+   * match degrades to the old line — wrong, but not misleading. The pinned half is gated on the
+   * profile actually holding a pin: on a pinless pairing the same shape means the certificate
+   * is not trusted, and the self-hoster gets the certificate sentence. `pinned` is required, no
+   * default — the two answers name different remedies on different screens.
    */
   /**
    * WHAT TO SHOW WHEN A PAIRED COMPUTER PRESENTS A KEY THIS PHONE DID NOT AGREE TO.
@@ -603,19 +484,13 @@ const TABLE = {
   /* ------------------------------------------- transport & pairing refusals */
 
   /*
-   * ═══ THE SENTENCES THE NETWORK LAYER HANDS BACK ═══════════════════════════════════════════
-   *
-   * These were literals inside `net/pairing.ts`, `net/server-base.ts` and `net/connection.tsx`,
-   * and every one of them reaches a screen: a `refused` outcome's `reason` is rendered under
-   * {@link connectRefusedTitle}, and an unreachable one goes through {@link unreachable}. They
-   * were the largest body of user-visible prose outside this deck, which made them the largest
-   * body of prose that could not be translated — so they moved, verbatim, and the modules that
-   * produce them read `Copy` like every screen does.
-   *
-   * The modules keep their own DEVELOPER messages: a `throw new Error(…)` about an un-normalized
-   * origin or a missing account id is a programming fault, is never rendered, and would be worse
-   * in German than in English for the person who has to read the stack. `test/copy-census.test.ts`
-   * draws that line and names it.
+   * The sentences the network layer hands back. These were literals inside `net/pairing.ts`,
+   * `net/server-base.ts` and `net/connection.tsx`, and every one reaches a screen (a `refused`
+   * outcome's `reason` renders under {@link connectRefusedTitle}, an unreachable one through
+   * {@link unreachable}) — the largest body of user-visible prose that could not be translated,
+   * so they moved here verbatim and those modules read `Copy` like every screen does. The
+   * modules keep their developer messages: a `throw new Error(…)` about a programming fault is
+   * never rendered. `test/copy-census.test.ts` draws that line and names it.
    */
 
   /** A plain-http address, refused before a socket opens. */
@@ -849,18 +724,14 @@ const TABLE = {
   screenedEmptyHint: "Senders you say No to wait here — held, never deleted.",
   spamEmptyTitle: "No spam held.",
   /**
-   * REWORDED with the junk wave (FOLDERS-SPEC.md §16.1/§16.3): the old sentence — "Suspected
-   * spam waits here for your eyes, never deleted unseen" — stopped being true when the spam
-   * VERDICT started writing the message into the provider's own Junk folder, whose cleanup
-   * schedule is the provider's, not ours (the webapp retired its twin, `en.json`'s "nothing
-   * is deleted unseen", with the segment itself). What is still true, said plainly: suspects
-   * wait here, ohmail deletes nothing ON ITS OWN (the §16.3 claims-sweep scoping), and a
-   * confirmed verdict moves the mail to the mail server's Junk — QUALIFIED, because a mailbox
-   * with no resolvable native Junk folder keeps the verdict here instead
-   * (`junk-filing.ts#physicalDestination`'s stated fallback), and an unconditional sentence
-   * would claim a move that did not happen (codex round 1). This phone has no window into the
-   * Junk folder — the webapp's Junk segment is a live server read this build does not make —
-   * so the sentence names where the mail went rather than promising a view of it.
+   * Reworded with the junk wave (FOLDERS-SPEC.md §16.1/§16.3): "never deleted unseen" stopped
+   * being true when the spam verdict started writing mail into the provider's own Junk folder,
+   * whose cleanup schedule is the provider's. What is still true, said plainly: suspects wait
+   * here, ohmail deletes nothing on its own, and a confirmed verdict moves the mail to the mail
+   * server's Junk — qualified, because a mailbox with no resolvable native Junk folder keeps
+   * the verdict here (`junk-filing.ts#physicalDestination`), and an unconditional sentence
+   * would claim a move that did not happen. This phone has no window into the Junk folder, so
+   * the sentence names where the mail went rather than promising a view of it.
    */
   spamEmptyHint:
     "Suspected spam waits here for your eyes — ohmail never deletes it on its own. Mail you confirm as spam moves to your mail server's own Junk folder, or stays held here when your mailbox has none.",
@@ -876,17 +747,11 @@ const TABLE = {
   pileEmpty: "Nothing here yet.",
 
   /*
-   * THE PILE BLURBS LIVE HERE, not beside the projection that builds the rows.
-   *
-   * They were a second deck — a `PILE_META` const in `state/live.ts`, spread into each pile row,
-   * with its own copies of the three titles. The titles above were already correct and already
-   * used by the More screen, so the two decks agreed in English and nothing looked wrong; the
-   * moment a translated deck existed, the More screen followed it and the Piles screen did not.
-   * A screen that reads a private copy of the wording cannot be translated, and the defect is
-   * invisible until somebody translates.
-   *
-   * The English is the branch that owns `state/live.ts` writing it, byte for byte, so the two
-   * halves of this change cannot disagree when they meet.
+   * The pile blurbs live here, not beside the projection that builds the rows. They were a
+   * second deck (`PILE_META` in `state/live.ts`) whose English agreed with this one, so nothing
+   * looked wrong — until a translated deck existed, at which point the More screen followed it
+   * and the Piles screen did not. A screen that reads a private copy of the wording cannot be
+   * translated, and the defect is invisible until somebody translates.
    */
   replyLaterNote: "Answers you owe. A Reply Run walks them one screen at a time.",
   setAsideNote: "Kept in view without keeping the Ohbox busy.",
@@ -1073,20 +938,14 @@ const TABLE = {
   themeDark: "Dark",
 
   /**
-   * SETTINGS → LANGUAGE — beside Appearance, because they are the same class of decision: how the
-   * app is drawn, changing nothing about anybody's mail. The webapp's language row makes the same
-   * argument and sits in the same place.
-   *
-   * THREE segments where the web client has two, and the extra one is the honest default: a phone
-   * has a language of its own and this app follows it unless told otherwise, so "System" is a state
-   * the control has to be able to express. Without it, choosing English on an English phone would
-   * be indistinguishable from never having chosen — and would then keep the app in English if the
-   * phone were later switched to German.
-   *
-   * The SCOPE line says how far the choice reaches, and on a phone the answer is "this app". There
-   * is no account write here: the language is stored on the device, so claiming it follows you to a
-   * browser would be a claim about a sync that does not happen — the same distinction the webapp
-   * draws between `languageHint` and `languageHintLocal`.
+   * Settings → Language — beside Appearance, the same class of decision: how the app is drawn,
+   * changing nothing about anybody's mail (the webapp's language row sits in the same place).
+   * Three segments where the web client has two, and the extra one is the honest default: a
+   * phone has a language of its own and this app follows it unless told otherwise, so "System"
+   * is a state the control must express — without it, choosing English on an English phone is
+   * indistinguishable from never choosing. The scope line says how far the choice reaches:
+   * "this app". No account write — the language is stored on the device, the same distinction
+   * the webapp draws between `languageHint` and `languageHintLocal`.
    */
   language: "Language",
   languageNote: "Follows this phone unless set. Applies to ohmail on this device.",
@@ -1123,21 +982,13 @@ const TABLE = {
   /* ────────────────────────────────────────────────── who organizes this mailbox */
 
   /*
-   * ═══ THE READER BANNER ═══════════════════════════════════════════════════════════════════
-   *
-   * A phone cannot be the organizer — there is no IMAP client here and no engine dialling a
-   * mail server, which is the same fact the three-doors block above is built on. So every
-   * decision taken here is carried out somewhere else, and this names where.
-   *
-   * The first two lines are the onboarding deck's own (`onboarding.phoneBanner` and
-   * `phoneBannerWhy` in `apps/webapp/messages/en.json`), which were written for this surface
-   * and had no consumer until the phone gained a mailbox read. The third is the mailbox pane's
-   * (`mailboxes.readerStopped`) rather than a phone-specific rewrite: "has stopped checking in"
-   * is the sentence every other client says for that state, and it is already true of a phone
-   * with nothing phone-shaped in it. Byte-equal on purpose, and pinned.
-   *
-   * WITHHELD unless the server names ONE holder for every mailbox — `live.ts#phoneOrganizer`
-   * has the three answers and why two of them are silence.
+   * The reader banner. A phone cannot be the organizer (no IMAP client here), so every decision
+   * taken here is carried out somewhere else, and this names where. The first two lines are the
+   * onboarding deck's own (`onboarding.phoneBanner`/`phoneBannerWhy` in
+   * `apps/webapp/messages/en.json`); the third is the mailbox pane's (`mailboxes.readerStopped`)
+   * rather than a phone-specific rewrite — byte-equal on purpose, and pinned. Withheld unless
+   * the server names one holder for every mailbox: `live.ts#phoneOrganizer` has the three
+   * answers and why two of them are silence.
    */
   phoneBanner: (name: string) => `Organized by ${name}`,
   phoneBannerWhy:
@@ -1153,24 +1004,14 @@ const TABLE = {
   aboutLive: (origin: string) =>
     `Paired with ${origin}. Mail syncs into an on-device mirror; reading, triage, reply, forward and tags are live. Compose from scratch and search arrive with later updates.`,
   /**
-   * WHAT THE ON-DEVICE COPY DOES AND DOES NOT LEAVE. Three true sentences, and the third is
-   * here because the product cannot yet make it false.
-   *
-   * The uninstall sentence is careful for a reason. On iOS the Keychain item survives deleting
-   * the app and no code of ours runs at that moment, so the credential is genuinely still there
-   * until the NEXT launch's install-generation purge discards it — "deleting the app removes
-   * both" was a claim about an instant at which nothing we wrote can act. The remedy that works
-   * immediately is the server-side revoke, so the sentence names it.
-   *
-   * The pairing credential is kept out of every backup (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`), and
-   * on Android this app's own backup rules now keep the mirror out too. On iOS the mirror lives
-   * in the app's Documents directory, which the platform's own cloud and computer backups include
-   * unless the file is marked excluded — and marking it needs native code this build does not
-   * carry. (The brand name for that backup service is deliberately not written here: the privacy
-   * census bans real brand strings in this app's source, and the sentence is clear without it.)
-   * Saying so is the whole of the fix available today: an unstated limitation on a product that
-   * sells on "your mailbox is yours" is the kind of claim CLAIMS-ARE-CONTRACTS exists to stop.
-   * When the exclusion ships, this sentence goes with it.
+   * What the on-device copy does and does not leave. The uninstall sentence is careful: on iOS
+   * the Keychain item survives deleting the app and no code of ours runs at that moment, so the
+   * credential is there until the next launch's install-generation purge — the remedy that works
+   * immediately is the server-side revoke, and the sentence names it. The pairing credential
+   * stays out of every backup (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`); Android's backup rules keep
+   * the mirror out too, while on iOS the mirror sits in Documents, which platform backups
+   * include unless marked excluded — that needs native code this build does not carry, so the
+   * copy says so (no brand name: the privacy census bans real brand strings in this source).
    */
   aboutOnDevice:
     "Forgetting a server deletes its pairing and the mail this phone had copied. Deleting the app "
@@ -1184,17 +1025,13 @@ const TABLE = {
   /* --------------------------------------------- organizing in the background */
 
   /**
-   * ═══ THE ANDROID NOTIFICATION, AND THE ONE SENTENCE IT HAS TO KEEP TRUE ═════════════════
-   *
-   * A standalone phone is the organizer of its mailbox, and Android freezes an app it has put in
-   * the background. A foreground service is what keeps this app running there, and its
-   * notification is not a courtesy: it is the only surface saying a mailbox is being organized,
-   * and dismissing it is how a person ends that. The fourth door promises exactly this —
-   * *"It organizes while its notification is shown. Dismiss the notification to stop."*
-   *
-   * All three strings are read from this deck at the moment the service starts, and handed to the
-   * platform. The alternative — Android string resources — would be a second copy of three
-   * sentences in two languages, and could not hold the ADDRESS, which is not copy.
+   * The Android notification, and the one sentence it has to keep true. A standalone phone is
+   * the organizer of its mailbox, and Android freezes a backgrounded app; the foreground
+   * service keeps it running, and its notification is the only surface saying a mailbox is
+   * being organized — dismissing it is how a person ends that. The fourth door promises
+   * exactly this: "It organizes while its notification is shown. Dismiss the notification to
+   * stop." All three strings are read from this deck when the service starts; Android string
+   * resources would be a second copy in two languages and could not hold the address.
    */
 
   /** The channel's name in system notification settings, and nothing else. */
@@ -1211,16 +1048,12 @@ const TABLE = {
   /** The one action. The words of the desktop's own stop verb, so the two cannot drift. */
   notifStop: "Stop organizing",
   /**
-   * BATTERY SAVER, SAID ONCE.
-   *
-   * Under battery saver — or a per-app background restriction somebody set — Android may kill the
-   * service at any moment with nothing anywhere saying why, so this app does not start one: it
-   * hands the mailbox back and organizes while it is open, which is the iPhone behaviour and is
-   * true on any phone. The sentence names the setting because that is the thing a person can
-   * change, and it does not ask them to change it.
-   *
-   * Shown once per launch rather than at every background: somebody who has battery saver on has
-   * it on all day, and a sentence repeated hourly is a sentence nobody reads.
+   * Battery saver, said once. Under battery saver — or a per-app background restriction —
+   * Android may kill the service at any moment with nothing saying why, so this app does not
+   * start one: it hands the mailbox back and organizes while open, the iPhone behaviour, true
+   * on any phone. The sentence names the setting because that is the thing a person can
+   * change, and it does not ask them to change it. Shown once per launch: somebody with
+   * battery saver on has it on all day, and a sentence repeated hourly is one nobody reads.
    */
   organizerRestricted:
     "Battery saver does not let ohmail organize in the background on this phone. It organizes "
@@ -1258,18 +1091,13 @@ const TABLE = {
     + "would accept. Whoever runs it can generate one — see the self-hosting guide. Mail still "
     + "arrives when you open the app or pull to refresh.",
   /**
-   * REGISTERED — and every clause is measured against what the build actually does.
-   *
-   * While the process is alive (open or in the background) a wake is handled silently: the JS side
-   * syncs and the new mail simply appears, because a wake is not a notification while you are in the
-   * app. When the app has been swiped away, the connector's service still receives the wake in a
-   * fresh process with no JS, and a native renderer draws a single plain "New mail" notice whose tap
-   * opens the app — the one thing a content-free wake can honestly show. Either way the signal
-   * carries no subject, no sender and no count.
-   *
-   * The closed-app notice depends on the OS notification permission being granted (Android asks for
-   * it from Android 13 on); without it the app still syncs the next time it is opened. The copy says
-   * "if you've allowed notifications" so it stays true on a phone that has not.
+   * Registered — every clause measured against what the build does. While the process is
+   * alive a wake is handled silently: the JS side syncs and new mail appears. When the app has
+   * been swiped away, the connector's service receives the wake in a fresh process with no JS
+   * and a native renderer draws one plain "New mail" notice whose tap opens the app — the one
+   * thing a content-free wake can honestly show. Either way the signal carries no subject, no
+   * sender, no count. The closed-app notice needs the OS notification permission (asked from
+   * Android 13 on); the copy says "if you've allowed notifications" so it stays true without it.
    */
   wakeOn:
     "While ohmail is running — open or in the background — your server tells this phone that "
@@ -1362,15 +1190,12 @@ const TABLE = {
   back: "Back",
 
   /*
-   * THE MESSAGE VERBS — the webapp's action bar, word for word.
-   *
-   * Every label below is the webapp catalogue's own string (`apps/webapp/messages/en.json`:
-   * `ohbox.action*`, `ohbox.resurface*`, `ohbox.move*`, `screening.action`,
-   * `message.menuForward`, `reply.*`, `tag.*`), so an open message is named the same on the
-   * phone as in the browser and on the desktop. `test/action-parity.test.ts` derives the verb
-   * list from the webapp's source and holds the equality — a wording change there is a red
-   * test here, never a silent drift. (The desktop composes the same shell; the phone is the
-   * one surface that can diverge, and it is the one this deck keeps in step.)
+   * The message verbs — the webapp's action bar, word for word. Every label below is the
+   * webapp catalogue's own string (`apps/webapp/messages/en.json`: `ohbox.action*`,
+   * `ohbox.resurface*`, `ohbox.move*`, `screening.action`, `message.menuForward`, `reply.*`,
+   * `tag.*`), so an open message is named the same on the phone as in the browser and on the
+   * desktop. `test/action-parity.test.ts` derives the verb list from the webapp's source and
+   * holds the equality — a wording change there is a red test here, never a silent drift.
    */
   actionReply: "Reply",
   actionReplyAll: "Reply all",
@@ -1555,16 +1380,12 @@ const TABLE = {
   senderFirstContact:
     "First contact. Nothing from this sender has reached the Ohbox — it waited here.",
   /**
-   * THE WHOLE SUGGESTION SENTENCE, in one key, because word order is not ours to assume.
-   *
-   * This used to be the fragment "is the AI's suggestion at", with the destination rendered
-   * BEFORE it by the screen and the score and reason after. English survives that; German does
-   * not — the verb moves, and the assembled result read "Ohbox schlägt die KI vor", which says
-   * that Ohbox suggests the AI. A sentence assembled from parts by JSX can only ever have one
-   * language's grammar.
-   *
-   * `reason` is the model's own words, arriving from the server. It is quoted rather than
-   * translated, for the same reason a platform diagnostic is.
+   * The whole suggestion sentence, in one key, because word order is not ours to assume. As a
+   * fragment ("is the AI's suggestion at") with the destination rendered before it by the
+   * screen, German broke — the verb moves, and the assembled result read "Ohbox schlägt die
+   * KI vor", which says that Ohbox suggests the AI. A sentence assembled from parts by JSX can
+   * only ever have one language's grammar. `reason` is the model's own words from the server,
+   * quoted rather than translated, for the same reason a platform diagnostic is.
    */
   senderAiSuggestion: (dest: string, confidence: string, reason: string): string =>
     `${dest} is the AI's suggestion at ${confidence}: “${reason}”`,

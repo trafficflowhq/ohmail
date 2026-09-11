@@ -1,25 +1,12 @@
 /**
- * THE FIRST-RUN GATE — which surface owns the screen, decided from the connection state.
- *
- * The app has two real states: NOT CONNECTED (the connect flow owns the screen) and
- * CONNECTED (the mail screens render the mirror). This function is the whole rule, kept
- * pure so the suite can hold it without a renderer; the tabs layout renders its verdict.
- *
- *  · `boot` — the launch instant, before the keystore has answered whether a pairing
- *    exists. Render NOTHING: painting the welcome screen here would flash onboarding at
- *    every cold start of a paired phone.
- *  · `welcome` — nothing is paired and nothing went wrong. The app opens into the connect
- *    flow, never into an empty mail UI and never into sample data.
- *  · `connecting` — a boot or switch in flight; the instant shell with the list silhouette
- *    (`ui/Skeleton.tsx#BootShell`), never a text screen — and never long: the boot is local
- *    (boot-from-local, `engine/boot.ts`), so this state spans a keystore read and a sqlite
- *    open, not a network round trip.
- *  · `servers` — not live with something to say or act on: disconnected with pairings, a
- *    refusal, an ended session. The Servers screen carries the reason in words and every
- *    remedy — switch, re-pair, forget, add. A refusal lands here even with ZERO pairings
- *    (a dead keystore read, a failed boot): the welcome screen has no status panel, so
- *    routing a refusal there would hide the one sentence that explains what happened.
- *  · `mail` — live. The tabs render the mirror.
+ * The first-run gate — which surface owns the screen, decided from the connection state; pure, so the suite
+ * holds it without a renderer. `boot`: the launch instant, before the keystore has answered — render nothing,
+ * since painting welcome here would flash onboarding at every cold start of a paired phone. `welcome`:
+ * nothing paired, nothing wrong — the connect flow, never an empty mail UI. `connecting`: a boot or switch in
+ * flight — the instant shell with the list silhouette, never a text screen, and never long (the boot is
+ * local). `servers`: not live with something to say — disconnected with pairings, a refusal, an ended
+ * session; a refusal lands here even with zero pairings, because the welcome screen has no status panel to
+ * explain what happened. `mail`: live — the tabs render the mirror.
  */
 import type { ConnectionState } from "../net/connection";
 

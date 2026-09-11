@@ -1,57 +1,23 @@
 /**
- * THE SERVER-PROFILE STORE — every pairing this phone holds, in the device keystore.
- *
- * A profile is one pairing: `{origin, flavor, accountId, refreshToken}`. The list persists in
- * **expo-secure-store** (bound in `servers-native.ts`; tests inject a memory KV through the
- * same two-method seam this module actually uses). That storage choice is the posture: the
- * refresh token is a long-lived credential that can open a mailbox, and the keystore —
- * iOS Keychain, Android Keystore-encrypted storage — is readable by this app alone, which is
- * strictly stronger than the browser client's localStorage-behind-CSP. Nothing secret ever
- * leaves this store except into the BearerManager's memory.
- *
- * ── SHAPE ON DISK ────────────────────────────────────────────────────────────────────────────
- *
- * One small value per profile plus one index, rather than one big JSON blob, because
- * expo-secure-store is a keystore, not a database: iOS warns past 2 KB per value, and a device
- * holding several pairings would cross that in one blob. Keys are `<PREFIX>` (the index:
- * `{active, ids}`) and `<PREFIX>.<id>` (one profile each); ids are locally minted, opaque, and
- * keystore-safe (`[A-Za-z0-9]`).
- *
- * ── IDENTITY, AND WHO OWNS NORMALIZATION ─────────────────────────────────────────────────────
- *
- * A profile's identity is `(origin, accountId)` — the SAME pair `mirrorOwnerKey` names mirror
- * databases with (one mirror per (origin, account)), so profile identity and mirror
- * identity can never disagree. Multiple profiles are multiple accounts on one device; what
- * stops mirror bleed between them is the mirror's own `__owner` stamp, not this list —
- * this list only decides which mirror gets OPENED. `add()` therefore requires an
- * ALREADY-NORMALIZED origin (the pairing seam normalizes with the boot module's own
- * `normalizeOrigin` before calling in) and refuses one that is not — a lower-cased,
- * slash-trimmed origin is what keeps "same server typed twice" ONE profile and one mirror.
- *
- * Re-pairing the same (origin, account) UPDATES the standing profile in place — fresh flavor,
- * fresh refresh token, same id — which is exactly the mid-rotation-kill recovery: one
- * scan, and the dead pairing is whole again rather than duplicated.
- *
- * All mutations run through one internal chain: a single JS runtime has no true concurrency,
- * but two interleaved async read-modify-writes of the index would still lose one — the chain
- * makes every mutation see the previous one's writes.
+ * The server-profile store — every pairing this phone holds, in the device keystore. A profile
+ * is `{origin, flavor, accountId, refreshToken}`, persisted in expo-secure-store (bound in
+ * `servers-native.ts`; tests inject a memory KV through the same seam): the refresh token can
+ * open a mailbox, and the keystore is readable by this app alone. One small value per profile
+ * plus one index — iOS warns past 2 KB per value. Identity is `(origin, accountId)`, the same
+ * pair `mirrorOwnerKey` names mirrors with; `add()` requires an already-normalized origin.
+ * Re-pairing the same identity updates the row in place (the mid-rotation-kill recovery). All
+ * mutations run through one internal chain, so interleaved read-modify-writes cannot lose the index.
  */
 
 /**
- * ═══ AN APP-AUTHORED FAILURE CARRIES A CODE, NOT A SENTENCE ══════════════════════════════════
- *
- * Every throw below used to carry English prose, and the callers that catch them put
- * `String(err)` inside a translated refusal — so a German reader met a German sentence with an
- * English one wedged into it. That is the shape the copy census exists to prevent, arriving
- * through the one door a census cannot watch: a value produced at runtime.
- *
- * The DIAGNOSTIC RULE (see `test/copy-census.test.ts`) draws the line: the platform's own words —
- * a keystore's `SecurityException`, an SQLite failure, an HTTP status — are quoted verbatim,
- * because a German paraphrase of them is worse for whoever has to search for the text. OUR
- * failures are enumerable, so they get a code and the deck says them.
- *
- * The message is kept alongside the code and stays English: it is what a developer reads in a
- * stack trace, and it is the value `String(err)` yields if any caller ever forgets the mapping.
+ * An app-authored failure carries a code, not a sentence. Throws carried English prose, and
+ * catchers put `String(err)` inside a translated refusal — a German sentence with an English
+ * one wedged into it, arriving through the one door a census cannot watch: a value produced at
+ * runtime. The diagnostic rule (`test/copy-census.test.ts`) draws the line: the platform's own
+ * words (a keystore `SecurityException`, an SQLite failure, an HTTP status) are quoted
+ * verbatim; our failures are enumerable, so they get a code and the deck says them. The
+ * message stays English beside the code — it is what a developer reads in a stack trace, and
+ * what `String(err)` yields if a caller forgets the mapping.
  */
 export type StoreFaultCode =
   | "origin_not_normalized" | "account_id_missing"
@@ -92,52 +58,33 @@ export interface ServerProfile {
   /** The server-verified account this pairing opens — half of the mirror's owner key. */
   accountId: string;
   /**
-   * `null` HAS TWO MEANINGS AND THE ORIGIN TELLS THEM APART. Both are states, neither is an error.
-   *
-   *  · on a PAIRED origin: the pairing ended — a refusal cleared it, and one scan re-pairs. The
-   *    picker says so and offers the scan.
-   *  · on the STANDALONE origin (`LOCAL_ENGINE_ORIGIN`): there was never a token to hold. The
-   *    engine in this process mints its own bearer per launch, so the credential a relaunch needs
-   *    is the password the engine sealed for itself and not anything in this store.
-   *
-   * A reader that treats the second as the first sends somebody to the QR scanner for a mailbox on
-   * the phone they are holding, which is what `app/servers.tsx` reads the origin for.
+   * `null` has two meanings and the origin tells them apart; both are states, neither an
+   * error. On a paired origin: the pairing ended — a refusal cleared it, one scan re-pairs.
+   * On the standalone origin (`LOCAL_ENGINE_ORIGIN`): there was never a token to hold — the
+   * engine in this process mints its own bearer per launch, and the credential a relaunch
+   * needs is the password the engine sealed for itself, not anything in this store. A reader
+   * that treats the second as the first sends somebody to the QR scanner for a mailbox on the
+   * phone they are holding, which is what `app/servers.tsx` reads the origin for.
    */
   refreshToken: string | null;
   /**
-   * WHERE THE `/sync` FAMILY LIVES ON THIS SERVER — the origin itself, or `<origin>/api`.
-   *
-   * MEASURED at pairing time ({@link import('../net/server-base').resolveApiBase}) rather than
-   * derived from the door or the flavor, because the phone's credential arrives as a QR and a QR
-   * carries no door. A self-host stack serves ONE origin with the API behind `/api` (its
-   * Caddyfile routes `/hello`, `/pair/*` and `/auth/*` at the bare path and `/sync` NOT), so a
-   * pairing to one used to succeed and then mirror nothing for ever.
-   *
-   * `null` ⇒ THE ORIGIN, and it must stay that way. Every profile stored before this field
-   * existed is on a door whose API is at its root (the hosted service has its own hostname, a
-   * desktop host serves its table unproxied), so reading the absence as the origin is exactly
-   * what those installs have been doing successfully — the same one-sided default
-   * `credentialIsForeign` takes, for the same reason. A self-host pairing made by an earlier
-   * build never mirrored a single message, so there is no mail behind one to lose; re-pairing is
-   * one scan and it comes back with the base measured.
-   *
-   * NOT part of the profile's identity. `(origin, accountId)` names the mirror and this does not
-   * appear in it: the same account on the same server is the same mailbox whichever path its API
-   * answers on, and letting a re-measured base fork the mirror would mean a re-pair after a proxy
-   * change re-downloaded the mailbox.
+   * Where the `/sync` family lives on this server — the origin itself, or `<origin>/api`.
+   * Measured at pairing time ({@link import('../net/server-base').resolveApiBase}) rather than
+   * derived, because a QR carries no door; a self-host stack serves the API behind `/api`, so
+   * a pairing to one used to succeed and then mirror nothing for ever. `null` ⇒ the origin:
+   * every profile stored before this field existed is on a door whose API is at its root, so
+   * reading absence as the origin is what those installs already do. Not part of the profile's
+   * identity — the same account on the same server is the same mailbox whichever path its API
+   * answers on, and a re-measured base must not fork the mirror and re-download the mailbox.
    */
   apiBase: string | null;
   /**
-   * THE DOOR'S KEY, base64url `SHA-256(SubjectPublicKeyInfo)` — for a desktop host on the local
-   * network, whose self-signed certificate no authority vouches for and whose trust therefore
-   * came from the pairing ceremony. `null` for every origin the platform can verify on its own
-   * (the hosted service, a self-host box with a real certificate) — which is why it is nullable
-   * rather than required, and why a null one here is not a missing pin but an absent need for
-   * one.
-   *
-   * Persisted with the profile because it must be re-installed on EVERY launch, before the first
-   * request: a pin held only in memory would work for the pairing and fail on the next cold
-   * start, which is the worst shape this could have.
+   * The door's key, base64url `SHA-256(SubjectPublicKeyInfo)` — for a desktop host on the
+   * local network, whose self-signed certificate no authority vouches for and whose trust came
+   * from the pairing ceremony. `null` for every origin the platform can verify on its own —
+   * not a missing pin but an absent need for one. Persisted with the profile because it must
+   * be re-installed on every launch, before the first request: a pin held only in memory would
+   * work for the pairing and fail on the next cold start, the worst shape this could have.
    */
   pin: string | null;
 }
@@ -147,33 +94,14 @@ interface Index {
   active: string | null;
   ids: string[];
   /**
-   * FORGETS THAT ARE OWED — the durable half of "forget", and it names BOTH stores.
-   *
-   * A forget removes a credential from the keystore and mail from a SQLite file. Those are two
-   * stores, and a kill between them used to leave the mail behind for ever, because the profile
-   * carrying the origin and account that NAME the mirror was already gone. So the intent is
-   * written here BEFORE either store is touched, and cleared only once the deletion has been
-   * read back as landed — the same "persist the decision first, execute it second" rule the
-   * durability class arrived at, applied to a take-back instead of an action.
-   *
-   * **Each entry carries the PROFILE ID as well as the mirror key, and that pairing is
-   * load-bearing.** An owner key alone made the crash boundary this exists for RESURRECT the
-   * thing being forgotten: a kill after the intent was written and before
-   * `remove(profileId)` left the profile standing and still ACTIVE, so the next launch
-   * dutifully deleted the mirror, cleared the debt, then reconnected the pairing and drained
-   * the whole mailbox back onto the phone. A forget interrupted at its documented crash point
-   * came back as a paired server with the mail in it. With the id here, the launch drain
-   * removes the credential FIRST and the profile can never be booted.
-   *
-   * `id` may be empty for an entry written before this field existed, or for a wipe owed
-   * against a mirror whose profile row was already gone; the drain treats that as "mail only".
-   *
-   * Bounded ({@link MAX_PENDING_WIPES}) because this rides one expo-secure-store value and iOS
-   * warns past 2 KB. **Overflow REFUSES the new forget; it never evicts an old one.** Dropping
-   * the oldest was the obvious bound and it was this class's own defect: an unpaid debt is the
-   * ONLY remaining name of a mirror still on disk, so evicting it strands that mail for ever —
-   * while the screen had already promised the app would try again at startup. A refusal is
-   * visible and recoverable; a silent eviction is neither.
+   * Forgets that are owed — the durable half of "forget", naming both stores. A forget removes
+   * a credential from the keystore and mail from a SQLite file; a kill between them used to
+   * leave the mail behind for ever, the profile naming the mirror already gone. So the intent
+   * is written before either store is touched, cleared once the deletion reads back. Each
+   * entry carries the profile id as well as the mirror key: with only an owner key, a kill
+   * before `remove(profileId)` left the profile active, and the next launch deleted the
+   * mirror, cleared the debt, then reconnected and drained the mailbox back. An empty `id`
+   * means "mail only". Bounded ({@link MAX_PENDING_WIPES}); overflow refuses, never evicts.
    */
   wipes?: PendingWipe[];
 }
@@ -204,19 +132,14 @@ export const WIPE_QUEUE_FULL =
   "this phone already has more unfinished deletions than it can record";
 
 /**
- * ONE WAKE ROW THIS PHONE OWES A SERVER — the durable half of "stop waking me for that account".
- *
- * A registration is a row on the server, and taking it down is a request that can be refused.
- * Two paths hit that: a profile SWITCH (the outgoing server's row must go before the next one
- * is made, because this build shares one distributor endpoint across every profile), and a
- * registration SUPERSEDED mid-flight (the request already committed a row on a server the app
- * has since left). Both used to fire the delete and discard both the id and the verdict — so a
- * refusal left a row nothing could ever name again, dialling an endpoint that is still live and
- * therefore never produces the 404/410 the server prunes on.
- *
- * Its OWN keystore value rather than a field on the index: iOS warns past 2 KB per value, the
- * index already carries the profiles and the wipe queue, and these entries are written on a
- * path that must never make an unrelated index write fail.
+ * One wake row this phone owes a server — the durable half of "stop waking me for that
+ * account". A registration is a row on the server, and taking it down can be refused. Two
+ * paths hit that: a profile switch (the outgoing server's row must go before the next one is
+ * made — one distributor endpoint is shared across profiles), and a registration superseded
+ * mid-flight. Both used to fire the delete and discard id and verdict, so a refusal left a
+ * row nothing could ever name again, dialling an endpoint still live and never producing the
+ * 404/410 the server prunes on. Its own keystore value rather than an index field: iOS warns
+ * past 2 KB, and these entries must never make an unrelated index write fail.
  */
 export interface PendingWakeDrop {
   /** Whose credential can retry it — the row is deleted on that profile's own server. */
@@ -413,19 +336,14 @@ export class ServerProfileStore {
         // the case, and one scan is the whole remedy.
         apiBase: input.apiBase ?? null,
       };
-      // ── THE INDEX LEARNS THE ID BEFORE THE CREDENTIAL EXISTS ─────────────────────────────
-      //
-      // These two writes used to be the other way round, and the gap between them could create
-      // a credential NOTHING NAMES: a kill after the profile value landed and before the index
-      // did left `ohmail.servers.v1.<id>` holding a live refresh token with `<id>` in no list —
-      // so the fresh-install purge, which walks `idx.ids`, never even asked for it, removed the
-      // index, and let the generation be stamped as purged. Its "every key was read back" is
-      // vacuous for a key it cannot name.
-      //
-      // Reversed, the same kill leaves an id in the list with no value behind it, which every
-      // reader here already handles by construction: `list()` drops rows whose value is gone,
-      // `active()` answers null, and `purgeAll` names it and removes nothing. An index entry
-      // that over-names is recoverable; a credential that nothing names is not.
+      // The index learns the id before the credential exists. The other order could create a
+      // credential nothing names: a kill after the profile value landed and before the index
+      // did left a live refresh token under a key in no list — the fresh-install purge walks
+      // `idx.ids`, so it never asked for it, and its "every key was read back" is vacuous for
+      // a key it cannot name. Reversed, the same kill leaves an id with no value behind it,
+      // which every reader already handles: `list()` drops such rows, `active()` answers null,
+      // `purgeAll` removes nothing. An index entry that over-names is recoverable; a
+      // credential that nothing names is not.
       await this.writeIndex({
         ...idx,
         active: profile.id,
@@ -444,17 +362,13 @@ export class ServerProfileStore {
   }
 
   /**
-   * ADD THE ROW FOR A MAILBOX THIS PHONE ITSELF ORGANIZES — the one deliberate credential-less row.
-   *
-   * {@link add} requires a refresh token because a pairing without one cannot open anything, and
-   * that is right for every origin on a network. This row is the other kind: there is no server and
-   * no token, and what a relaunch opens the mailbox with is the password the ENGINE sealed under
-   * its own key ring — never anything in this store. See {@link ServerProfile.refreshToken}.
-   *
-   * Everything else is `add`'s ceremony verbatim, through the same chain and the same read-backs:
-   * same `(origin, accountId)` identity so a second door on one mailbox updates the row in place,
-   * the index learning the id before the value exists, and the read-back that refuses a row the
-   * keystore did not record. `add` is not reused with a nullable token because widening it would
+   * Add the row for a mailbox this phone itself organizes — the one deliberate credential-less
+   * row. {@link add} requires a refresh token because a pairing without one cannot open
+   * anything, right for every origin on a network. This row is the other kind: no server, no
+   * token — a relaunch opens the mailbox with the password the engine sealed under its own key
+   * ring (see {@link ServerProfile.refreshToken}). Everything else is `add`'s ceremony
+   * verbatim: same `(origin, accountId)` identity, index before value, the read-back that
+   * refuses an unrecorded row. `add` is not reused with a nullable token — widening it would
    * let any caller store a pairing that can never connect.
    */
   addStandalone(input: { origin: string; flavor: string; accountId: string }): Promise<ServerProfile> {
@@ -705,21 +619,14 @@ export class ServerProfileStore {
   }
 
   /**
-   * REMOVE EVERY PAIRING THIS PHONE HOLDS — the first-launch purge (`install-marker.ts`).
-   *
-   * iOS Keychain items survive an app delete and are readable again by the same bundle id, so
-   * a reinstall used to open the mailbox with no ceremony.
-   *
-   * ── EVERY KEY IS READ BACK, AND THE INDEX IS THE LAST THING TO GO ────────────────────────
-   *
-   * This was written best-effort per key — "one stubborn value must not keep the rest alive" —
-   * and that reasoning had the take-back class's own defect inside it. A `remove` that refused
-   * was swallowed, the INDEX was deleted anyway, and the caller stamped the install as purged:
-   * a live refresh token would have survived the purge that claimed it, permanently stranded
-   * under a key nothing lists any more and never retried. So the loop tries every key (that
-   * part was right — a refusal on one must not skip the others), reads each one back, and
-   * THROWS if any survives, before the index is touched. The index is what names them; while a
-   * value is still there, its name is the only way back to it.
+   * Remove every pairing this phone holds — the first-launch purge (`install-marker.ts`). iOS
+   * Keychain items survive an app delete and are readable again by the same bundle id, so a
+   * reinstall used to open the mailbox with no ceremony. Every key is read back, and the index
+   * is the last thing to go: a best-effort loop swallowed a refused `remove`, deleted the
+   * index anyway, and stamped the install as purged — a live refresh token stranded under a
+   * key nothing lists, never retried. The loop tries every key (a refusal on one must not skip
+   * the others), reads each back, and throws if any survives, before the index is touched:
+   * while a value is still there, its name is the only way back to it.
    */
   purgeAll(): Promise<void> {
     return this.enqueue(async () => {

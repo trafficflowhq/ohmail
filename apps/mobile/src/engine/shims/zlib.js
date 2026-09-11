@@ -1,20 +1,12 @@
 /**
- * COMPRESSION, REFUSED — and the refusal is the safe answer rather than a gap.
- *
- * The IMAP client negotiates the COMPRESS extension only when the server advertises it AND the
- * caller has not turned it off, and this app's adapter passes `disableCompression: true`. So the
- * two compressors below are unreachable on a healthy path, and they THROW rather than pretending.
- *
- * ── WHY A PRETENDING STUB WOULD BE WORSE THAN A THROWING ONE ──────────────────────────────
- *
- * If the option ever stopped reaching the client, a stub that returned a pass-through stream would
- * let the connection agree to compression and then send uncompressed bytes down it. The server
- * would read a corrupt stream: every command after that point fails, mid-session, in a way that
- * looks like a network fault rather than a configuration one. Throwing fails the ONE operation
- * that should never have happened, with a sentence naming why.
- *
- * `apps/sidecar` has a test asserting `disableCompression: true` reaches `new ImapFlow`, which is
- * the guard for the option; this file is the guard for the option's absence.
+ * Compression, refused — and the refusal is the safe answer. The IMAP client negotiates COMPRESS
+ * only when the server advertises it and the caller has not turned it off, and this app's
+ * adapter passes `disableCompression: true` — so the two compressors are unreachable on a
+ * healthy path and throw rather than pretending. A pass-through stub would let the connection
+ * agree to compression and then send uncompressed bytes: the server reads a corrupt stream and
+ * every later command fails mid-session, looking like a network fault. Throwing fails the one
+ * operation that should never have happened, with a sentence naming why. `apps/sidecar` guards
+ * the option reaching `new ImapFlow`; this file guards its absence.
  */
 "use strict";
 

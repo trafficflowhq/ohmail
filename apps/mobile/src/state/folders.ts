@@ -1,17 +1,12 @@
 /**
- * THE FOLDER TREE — pure derivations for the More screen's Folders group and the folder
- * screen (FOLDERS-SPEC.md §14/§15).
- *
- * Mirrored from `apps/webapp/app/shell/folders.ts` (the reference; the webapp shell is not an
- * importable package from React Native — the `live.ts` release-family precedent). Everything
- * here is derived per render from the mirror's `folder` entities and messages — no stored
- * tree, no cached counts. The server owns the hierarchy (it is the IMAP hierarchy); the
- * canonical `/`-joined path is the one spelling everything joins on.
- *
- * The row types are STRUCTURAL rather than the engine's own, deliberately: this module stays
- * off the `@ohmail/client-engine` import allow-list (`test/privacy.test.ts` names `live.ts`
- * as the one state module that reads the engine), and a shape with the same fields is all
- * the arithmetic needs.
+ * The folder tree — pure derivations for the More screen's Folders group and the folder screen
+ * (FOLDERS-SPEC.md §14/§15). Mirrored from `apps/webapp/app/shell/folders.ts` (the reference;
+ * the webapp shell is not importable from React Native). Everything is derived per render from
+ * the mirror's `folder` entities and messages — no stored tree, no cached counts; the server
+ * owns the hierarchy (it is the IMAP hierarchy), and the canonical `/`-joined path is the one
+ * spelling everything joins on. The row types are structural rather than the engine's own,
+ * deliberately: this module stays off the `@ohmail/client-engine` allow-list
+ * (`test/privacy.test.ts` names `live.ts` as the one state module that reads the engine).
  */
 
 /** The fields of the engine's `FolderEntity` this module reads — structural, see the header. */

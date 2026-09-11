@@ -1,28 +1,12 @@
 /**
- * THE ENGINE COMPOSITION FOR THIS APP — how a real `OhmailEngine` is built on React Native.
- *
- * Everything platform-shaped is INJECTED through {@link MobileEngineDeps}: the app's screens
- * hand in `nativeEngineDeps()` (expo-sqlite, expo-crypto — see `native.ts`), the test suite
- * hands in `node:sqlite` and a counter. This module itself imports nothing from Expo or React
- * Native, which is what lets the repo's node-side suite drive the whole composition — store,
- * adapter, engine — without a device.
- *
- * The engine is NOT forked for RN — that is this app's hard line. It is the same
- * `OhmailEngine` the browser and desktop run, adapted at its published seams:
- *
- *  - **store**: `SqlMirrorStore` over the injected executor — the phone's IndexedDB;
- *  - **uuid**: the engine's `uuid` option. Hermes has no `crypto.randomUUID`, so the default
- *    seam would throw at the first mutation; the injected generator (expo-crypto) is a real
- *    RFC 4122 v4, which the mutation queue's Idempotency-Keys require;
- *  - **fetch**: RN's global fetch, through `HttpAdapter`'s own default binding. No CORS and no
- *    secure-context gate exist in RN fetch, which is exactly what makes the plain-http LAN
- *    desktop-host door reachable from the app;
- *  - **cookies**: none. Mobile is bearer-only — the `Authorization` header rides
- *    `HttpAdapter`'s `headers` seam, and `getCookie` is pinned to `null` so nothing ever
- *    consults a cookie jar that does not exist;
- *  - **EventSource**: OFF. This build polls `/sync` (foreground + pull-to-refresh); the
- *    engine's `attachWakeSignal` attach point is simply never called. It is the seam a push
- *    wake would feed later.
+ * The engine composition for this app — a real `OhmailEngine` on React Native. Everything
+ * platform-shaped is injected through {@link MobileEngineDeps} (screens hand in
+ * `nativeEngineDeps()`; the suite hands in `node:sqlite`), so this module imports nothing from
+ * Expo or RN and the node suite drives the composition without a device. The engine is not
+ * forked — the same `OhmailEngine` every client runs, adapted at its seams: store =
+ * `SqlMirrorStore` over the injected executor; uuid = injected (Hermes has no
+ * `crypto.randomUUID`; Idempotency-Keys need a real v4); fetch = RN's global (no CORS, no
+ * secure-context gate); cookies = none, `getCookie` pinned `null`; EventSource off — polls `/sync`.
  */
 import {
   HttpAdapter,
@@ -51,18 +35,13 @@ export interface MobileEngineDeps {
    */
   openExecutor: (dbName: string) => SqlExecutor | Promise<SqlExecutor>;
   /**
-   * REMOVE the named mirror database from the device — the take-back's other half, and
-   * REQUIRED rather than optional on purpose.
-   *
-   * A platform half that can only ever CREATE mail on a phone is not a complete platform
-   * half. Forgetting a server used to close the store handle and stop there: the SQLite file
-   * stayed on disk holding every header in the window plus every hydrated body, and the app
-   * had no deletion path at all. Making this a required member means a new platform half
-   * cannot compile until it answers the question "and how does this device forget?".
-   *
-   * Deleting a name that does not exist MUST resolve, not throw: {@link forgetMirror} deletes
-   * twice by design (once for the mail, once for the empty file its own read-back probe
-   * creates) and a pending wipe is retried at every launch.
+   * Remove the named mirror database from the device — the take-back's other half, required
+   * rather than optional: a platform half that can only create mail on a phone is not complete.
+   * Forgetting a server used to close the store handle and stop there, leaving the SQLite file
+   * on disk with every header and hydrated body and no deletion path at all. A required member
+   * means a new platform half cannot compile until it answers "and how does this device
+   * forget?". Deleting a name that does not exist must resolve, not throw: {@link forgetMirror}
+   * deletes twice by design and a pending wipe is retried at every launch.
    */
   deleteDatabase: (dbName: string) => Promise<void>;
   /** RFC 4122 v4 — the engine's Idempotency-Key generator. */
@@ -84,16 +63,13 @@ export interface ConnectAuth {
 }
 
 /**
- * THE ENGINE RUNNING IN THIS APP — present only on a standalone install, absent on every other.
- *
- * A paired phone talks to a desktop or to the hosted service over the network. A STANDALONE phone
- * organizes its own mailbox, and the engine doing that runs in this same runtime — so there is no
- * network hop, and the client's transport is a function call.
- *
- * Two members, and they are the whole seam: `handle` is `Request → Response` over the engine's own
- * local API, and `sessionToken` is the per-launch bearer it mints for the shell that started it.
- * The adapter is composed against both exactly as it is composed against a real server's, which is
- * the point — the client does not learn a second way to talk to a mailbox.
+ * The engine running in this app — present only on a standalone install. A paired phone talks
+ * to a desktop or the hosted service over the network; a standalone phone organizes its own
+ * mailbox with the engine in this same runtime, so the client's transport is a function call.
+ * Two members, the whole seam: `handle` is `Request → Response` over the engine's local API,
+ * and `sessionToken` is the per-launch bearer it mints for the shell. The adapter is composed
+ * against both exactly as against a real server's — the client does not learn a second way to
+ * talk to a mailbox.
  */
 export interface LocalEngineDoor {
   handle(req: Request): Promise<Response>;
@@ -106,21 +82,14 @@ export interface ConnectConfig {
   /** `https://mail.example.org`, `http://192.168.1.20:8028`, … — no trailing slash needed. */
   origin: string;
   /**
-   * WHERE THE `/sync` FAMILY LIVES on that origin — absent means the origin itself.
-   *
-   * A SECOND FIELD rather than a replacement for {@link origin}, and the split is load-bearing in
-   * both directions:
-   *
-   *  · the MIRROR is named by the origin (`mirrorOwnerKey` below), so the base must not reach it.
-   *    A self-host stack whose API answers under `/api` is the same mailbox at the same address;
-   *    keying the mirror by the base would fork one account's copy in two and re-download it.
-   *  · the ADAPTER is composed against the base, because `/sync`, `/sync/snapshot` and the
-   *    mutation surface are the routes a one-origin self-host deployment does NOT serve at its
-   *    root (its Caddyfile routes `/api/*` there and `/sync` to the web container). See
-   *    `net/server-base.ts` for the measurement and why the phone measures rather than derives.
-   *
-   * `/auth/session` stays on the ORIGIN — it is routed at the bare path on every deployment, and
-   * moving a request that works would be churn on the identity probe for no measured gain.
+   * Where the `/sync` family lives on that origin — absent means the origin itself. A second
+   * field rather than a replacement for {@link origin}, load-bearing both ways: the mirror is
+   * named by the origin (`mirrorOwnerKey`), so the base must not reach it — keying the mirror
+   * by the base would fork one account's copy in two and re-download it; the adapter is
+   * composed against the base, because `/sync` and the mutation surface are the routes a
+   * one-origin self-host deployment does not serve at its root (see `net/server-base.ts` for
+   * the measurement). `/auth/session` stays on the origin — routed at the bare path on every
+   * deployment, and moving a request that works would be churn for no measured gain.
    */
   apiBase?: string | null;
   /**
@@ -139,46 +108,36 @@ export interface ConnectConfig {
   /** Override the identity probe's deadline (tests). Absent, {@link IDENTITY_PROBE_DEADLINE_MS}. */
   identityDeadlineMs?: number;
   /**
-   * THE STANDALONE ARM: the engine in this app, instead of a server on the network.
-   *
-   * Present ⇒ this install organizes its own mailbox and the transport is a call into
-   * {@link LocalEngineDoor.handle}. Absent ⇒ every existing door is unchanged, which is the
-   * property that matters most here: the three doors this app already has must not acquire a
-   * branch, and the diff below is one `if` and one pair of seams.
-   *
-   * `origin` must be {@link LOCAL_ENGINE_ORIGIN} when this is present, and is REFUSED otherwise
-   * rather than corrected. A standalone install whose mirror was keyed by some other string would
-   * silently hold a second copy of the same mailbox, and a caller passing both a local engine and a
-   * remote address has not decided which one it is talking to.
+   * The standalone arm: the engine in this app, instead of a server on the network. Present ⇒
+   * this install organizes its own mailbox and the transport is a call into
+   * {@link LocalEngineDoor.handle}. Absent ⇒ every existing door is unchanged — the property
+   * that matters most: the three doors this app already has must not acquire a branch. `origin`
+   * must be {@link LOCAL_ENGINE_ORIGIN} when this is present, and is refused otherwise rather
+   * than corrected: a standalone mirror keyed by some other string would silently hold a second
+   * copy of the same mailbox, and a caller passing both a local engine and a remote address has
+   * not decided which one it is talking to.
    */
   localEngine?: LocalEngineDoor;
 }
 
 /**
- * THE ADDRESS OF AN ENGINE THAT IS NOT ON A NETWORK.
- *
- * Absolute because the adapter composes URLs against it and a relative base has no meaning in a
- * runtime with no document. The host is a name that cannot resolve anywhere — nothing dials it, the
- * transport never reaches a socket, and a request that somehow escaped this seam would fail rather
- * than leave the device.
- *
- * It is also the mirror's owner key on this door (`mirrorOwnerKey(origin, accountId)`), so it is a
- * fixed string rather than a generated one: a key that varied per launch would fork one install's
- * copy of its own mailbox on every start.
+ * The address of an engine that is not on a network. Absolute because the adapter composes
+ * URLs against it and a relative base has no meaning in a runtime with no document. The host
+ * is a name that cannot resolve anywhere — nothing dials it, and a request that somehow
+ * escaped this seam would fail rather than leave the device. It is also the mirror's owner key
+ * on this door (`mirrorOwnerKey(origin, accountId)`), so it is a fixed string: a key that
+ * varied per launch would fork one install's copy of its own mailbox on every start.
  */
 export const LOCAL_ENGINE_ORIGIN = "http://sidecar";
 
 /**
- * EVERY REQUEST A DOOR IN THIS PROCESS ANSWERS, with this launch's bearer on it.
- *
- * Composed here and read by two callers — {@link bootEngine}'s own adapter and the session the
- * connection layer builds over the same door (`net/pairing.ts`) — because two spellings of "how do
- * you talk to the local engine" is one too many: the app's own reads (`/mailboxes`, the release
- * route) would then be stamped differently from the drain's.
- *
- * `new Request(url, init)` because the engine's door is written against the same `Request`/`Response`
- * pair the network one is; the token is read PER REQUEST rather than captured, which keeps this seam
- * identical in shape to a rotating credential's.
+ * Every request a door in this process answers, with this launch's bearer on it. Composed here
+ * and read by two callers — {@link bootEngine}'s own adapter and the session the connection
+ * layer builds over the same door (`net/pairing.ts`) — because two spellings of "how do you
+ * talk to the local engine" is one too many: the app's own reads would be stamped differently
+ * from the drain's. `new Request(url, init)` because the engine's door is written against the
+ * same `Request`/`Response` pair the network one is; the token is read per request rather than
+ * captured, keeping this seam identical in shape to a rotating credential's.
  */
 export function localEngineTransport(door: LocalEngineDoor): {
   headers: () => Record<string, string>;
@@ -256,16 +215,14 @@ export function normalizeOrigin(origin: string): string {
 }
 
 /**
- * A mirror database name as a filename a storage engine will take — INJECTIVE, or it is a leak.
- *
+ * A mirror database name as a filename a storage engine will take — injective, or it is a leak.
  * Owner keys carry an origin, so they hold `:` and `/`; a lossy sanitizer (`[^\w.-] → "-"`)
- * mapped `http://a-123::acct` and `http://a:123::acct` onto ONE file, and the `__owner` stamp
- * only referees SEQUENTIAL opens — with two live handles on one collided file, either engine can
- * write after the other's check and one server's mail ends up under the other's stamp. So every
- * character outside a conservative set (the escape character `_` included) is encoded as
- * `_<hex>_` of its code point: distinct names cannot meet, decoding is unambiguous, and the
- * result stays a portable filename. Lives here rather than in `native.ts` so the node suite can
- * hold the injectivity, and so every platform half names files the same way.
+ * mapped `http://a-123::acct` and `http://a:123::acct` onto one file, and the `__owner` stamp
+ * only referees sequential opens — with two live handles on one collided file, one server's
+ * mail can end up under the other's stamp. So every character outside a conservative set (the
+ * escape character `_` included) is encoded as `_<hex>_` of its code point: distinct names
+ * cannot meet, decoding is unambiguous, the result stays a portable filename. Lives here so
+ * the node suite can hold the injectivity and every platform half names files the same way.
  */
 export function dbFileName(dbName: string): string {
   const safe = dbName.replace(/[^A-Za-z0-9.-]/gu, (ch) => `_${ch.codePointAt(0)!.toString(16)}_`);
@@ -273,54 +230,24 @@ export function dbFileName(dbName: string): string {
 }
 
 /**
- * REMOVE ONE MIRROR FROM THIS PHONE — and then READ BACK to prove it is gone.
- *
- * ── WHY A READ-BACK AND NOT A CALL ──────────────────────────────────────────────────────────
- *
- * "Forget" is a take-back, and a take-back is a mutation like any other: it has to be performed
- * at the place the thing exists, VERIFIED there, and honest when it cannot be. Awaiting
- * {@link MobileEngineDeps.deleteDatabase} proves only that a function returned — which is
- * exactly the evidence the defect this closes already had, because the app's forget path called
- * `store.close()` (a handle) and no deletion at all. A test that asserts a deleter was called
- * would pass against a deleter that does nothing.
- *
- * So the proof is at the store: re-open the SAME name and ask SQLite's own catalog whether the
- * mirror's two tables are there. `SqlMirrorStore` creates exactly `entities` (every header,
- * every hydrated body, every tombstone) and `meta` (the cursor, the `__owner` stamp and the
- * durable outbox). A database that has neither is a file this call created a moment ago, which
- * is the only shape that means the delete landed. A database that HAS them is mail that
- * survived, and this throws rather than letting a screen say the phone forgot.
- *
- * ── THE SECOND DELETE IS NOT A BELT-AND-BRACES, IT IS THE PROBE'S OWN LITTER ────────────────
- *
- * Opening a deleted name CREATES it (that is what `openExecutor` means on both platform
- * halves). An empty database is not mail, but leaving one behind on every forget is residue
- * from the act whose entire meaning is leaving nothing behind — so the probe cleans up after
- * itself. Best-effort, because by then the assertion is already made and a failure here can
- * only ever strand an empty file.
- *
- * The caller owns the ORDER: every handle on this database must be closed first (a live drain
- * reopens the store through its own opener), and the pending-wipe marker must already be
- * durable, so a kill between the delete and the read-back is retried at the next launch rather
- * than being silently forgotten.
+ * Remove one mirror from this phone — then read back to prove it is gone. Awaiting
+ * {@link MobileEngineDeps.deleteDatabase} proves only that a function returned, which is the
+ * evidence the original defect already had (the forget path closed a handle and deleted
+ * nothing). The proof is at the store: re-open the same name and ask SQLite's catalog whether
+ * the mirror's two tables (`entities`, `meta`) are there. Neither ⇒ the delete landed; either
+ * present ⇒ mail survived, and this throws rather than letting a screen say the phone forgot.
+ * The second delete is the probe's own litter (opening a deleted name creates it). The caller
+ * owns the order: handles closed first, the pending-wipe marker already durable.
  */
 /**
- * DOES THIS PHONE STILL HOLD A MIRROR FOR THIS OWNER? — the sentinel that tells an UPGRADE from
- * a REINSTALL.
- *
- * The install-generation marker (`state/install-marker.ts`) lives in the app container, which the
- * platform removes with the app, and its absence is what makes a reinstall detectable. On the
- * first launch of the build that ADDS the marker there is no marker either, and the two look
- * identical — which would have cost every existing user their pairings.
- *
- * They are not identical, and the difference is also in the container: an upgrade carries the
- * MIRRORS of every server that has ever synced, and a reinstall carries none. So this answers the
- * question with the same read `forgetMirror` uses — SQLite's own catalog for the store's two
- * tables — and cleans up after itself: opening a name CREATES it, so a database that turns out to
- * have no mirror tables was made by this call and is removed again.
- *
- * The asymmetry is what makes it safe: a genuine reinstall cannot produce a mirror file, and the
- * only names asked about are ones a profile the keystore already holds derives.
+ * Does this phone still hold a mirror for this owner? — the sentinel that tells an upgrade
+ * from a reinstall. The install-generation marker lives in the app container, which the
+ * platform removes with the app; on the first launch of the build that adds the marker there
+ * is no marker either, and reading the two as identical would cost every existing user their
+ * pairings. An upgrade carries the mirrors of every server that ever synced, a reinstall
+ * carries none — answered with the same catalog read `forgetMirror` uses, cleaning up after
+ * itself (opening a name creates it). Safe: a genuine reinstall cannot produce a mirror file,
+ * and the only names asked about derive from profiles the keystore already holds.
  */
 export async function mirrorExists(deps: MobileEngineDeps, ownerKey: string): Promise<boolean> {
   const dbName = mirrorDbName(ownerKey);
@@ -377,15 +304,13 @@ export async function forgetMirror(deps: MobileEngineDeps, ownerKey: string): Pr
 export const MOBILE_WINDOW: StorePolicy = { mode: "windowed", days: 90, minRows: 5000 };
 
 /**
- * THE `?types=` FILTER EVERY MOBILE DRAIN CARRIES — the cellular rule (a cold connect uses
- * `?types=` + the windowed bootstrap), stated as this client's COMPLETE vocabulary.
- *
- * It is the whole of `SyncEntityType`, written out, and that is the point on both edges: the
- * request is bounded to categories this client can apply (a server that grows new types cannot
- * flood a phone with vocabulary it has no reader for), and nothing the screens will render is
- * missing — the precedent to fear is the filter that OMITTED `tag` and shipped a client whose
- * tags silently never arrived. Prune deliberately, beside the screen change that stops reading
- * a type — never here alone.
+ * The `?types=` filter every mobile drain carries — the cellular rule, stated as this client's
+ * complete vocabulary. It is the whole of `SyncEntityType`, written out, and that is the point
+ * on both edges: the request is bounded to categories this client can apply (a server that
+ * grows new types cannot flood a phone with vocabulary it has no reader for), and nothing the
+ * screens render is missing — the precedent to fear is the filter that omitted `tag` and
+ * shipped a client whose tags silently never arrived. Prune deliberately, beside the screen
+ * change that stops reading a type — never here alone.
  */
 export const MOBILE_SYNC_TYPES: string[] = [
   "message", "thread", "routing_decision", "approval",
@@ -393,24 +318,14 @@ export const MOBILE_SYNC_TYPES: string[] = [
 ];
 
 /**
- * ASK THE SERVER WHOSE BEARER THIS IS, where the composition has a route to ask.
- *
- * The typed account id names — and, through the `__owner` stamp, CLAIMS — a mirror database.
- * The stamp referees databases against each other; it cannot referee the id against the BEARER,
- * so account A's token entered beside account B's previously-used id would open B's stamped
- * mirror legitimately and then try to drain A's mail into it. Where `GET /auth/session` is
- * mounted (the standalone server), it answers the account id the bearer resolves to — the
- * exact read the browser client names its mirror by — and a POSITIVE mismatch ends the
- * session: the caller runs this AFTER going live (boot-from-local, the boot header) and tears
- * the session down on the mismatch verdict. The mail on screen in that round-trip window is
- * the device's own cached mirror for the named profile — never anything the mismatched bearer
- * delivered, because the drain-time guard below refuses its pages.
- *
- * Only a positive mismatch judges. The desktop-host door mounts no session read (404), an old
- * server may answer anything, and a dead network answers nothing — all of those proceed as
- * "unverified", because the drain-time guard below still refuses a cross-account MERGE, and a
- * judgment here on a route that merely does not exist would brick the one door this app can
- * reach over a LAN.
+ * Ask the server whose bearer this is, where the composition has a route to ask. The typed
+ * account id names — and, through the `__owner` stamp, claims — a mirror; the stamp cannot
+ * referee the id against the bearer, so account A's token beside account B's id would open B's
+ * stamped mirror and drain A's mail into it. Where `GET /auth/session` is mounted it answers
+ * the id the bearer resolves to, and a positive mismatch tears the session down — run after
+ * going live, behind the rendered UI; the mail on screen in that window is the device's own
+ * cached mirror. Only a positive mismatch judges: a 404, an odd answer or a dead network
+ * proceed as "unverified" — the drain-time guard below still refuses a cross-account merge.
  */
 async function verifyAccountId(
   fetchImpl: (url: string, init?: RequestInit) => Promise<Response>,
@@ -431,15 +346,13 @@ async function verifyAccountId(
 }
 
 /**
- * THE DRAIN-TIME HALF of the account rule: no page whose entities name ANOTHER account is ever
- * handed to the store.
- *
- * Wire DTOs carry their `accountId`, and this wrapper reads it on every /sync page and every
- * snapshot page BEFORE the engine can apply them — so even on a door with no session read, a
- * bearer whose mail belongs to somebody other than the mirror's named owner produces a refused
- * drain (a visible sync error), never a merged mirror. Structured like the webapp's sync gate:
- * the wrapper IS the whole surface the engine sees, so every capability is forwarded by hand —
- * an absent forward would silently strip it on the live path only.
+ * The drain-time half of the account rule: no page whose entities name another account is ever
+ * handed to the store. Wire DTOs carry their `accountId`, and this wrapper reads it on every
+ * /sync page and every snapshot page before the engine can apply them — so even on a door with
+ * no session read, a bearer whose mail belongs to somebody other than the mirror's named owner
+ * produces a refused drain (a visible sync error), never a merged mirror. Structured like the
+ * webapp's sync gate: the wrapper is the whole surface the engine sees, so every capability is
+ * forwarded by hand — an absent forward would silently strip it on the live path only.
  */
 type GuardedMobileAdapter = EngineAdapter & Pick<HttpAdapter, "snapshot" | "listMessages">;
 
@@ -511,37 +424,14 @@ function accountGuarded(
 }
 
 /**
- * Build the engine against a real server — or REFUSE, out loud.
- *
- * ── THE REFUSAL IS THE CONTRACT ─────────────────────────────────────────────────────────────
- *
- * A sqlite mirror that cannot open must surface as an error state the user sees — NEVER as a
- * silent fallback to `MemoryMirrorStore`. The fallback would "work": the engine boots, mail
- * renders, and the app has quietly become a cold mirror that re-bootstraps the whole mailbox
- * over the air on every launch and forgets the cursor on every kill — a dangerous default
- * standing in for a missing store. That is why the store is loaded HERE, before any
- * engine exists — `OhmailEngine`'s own `store` default IS a memory mirror, so an engine
- * constructed before the store proved itself would be one `?? new MemoryMirrorStore()` away
- * from the exact failure this refusal exists to prevent. `engine-boot.test.ts` kills the
- * executor and asserts the refusal; reinstating a silent fallback turns that test red.
- *
- * ── AND THE BOOT NEVER TOUCHES THE WIRE (boot-from-local-first, owner feedback 2026-08) ────
- *
- * This function used to await `GET /auth/session` before opening the mirror, which put a
- * network round trip — on a cold launch, THREE: the probe, the 401's rotation, the replay —
- * in front of the first rendered frame. That is the "connecting to mailbox" hold the owner
- * killed: the phone's own mirror was sitting on disk the whole time. Now everything awaited
- * here is local (keystore-shaped validation + the sqlite open/hydrate), the app renders its
- * last known state immediately, and the identity probe is handed back as
- * {@link EngineBoot.verifyIdentity} for the connection layer to run BEHIND the rendered UI.
- *
- * Deferring the probe does not open the cross-account hole the old ordering guarded, because
- * that ordering was never the guard — the drain-time account check below is: no /sync or
- * snapshot page naming another account can reach the store, probe or no probe. What the
- * deferral trades is WHERE a positive mismatch surfaces — as a background teardown one round
- * trip after first paint, instead of a pre-paint refusal — and what it buys is a first frame
- * that owes the network nothing. `engine-boot.test.ts` pins both halves: a boot that resolves
- * while /auth/session hangs forever, and a drain that still refuses a foreign account's pages.
+ * Build the engine against a real server — or refuse, out loud. A sqlite mirror that cannot
+ * open must surface as an error the user sees, never a silent fallback to `MemoryMirrorStore`:
+ * the fallback would "work" while re-bootstrapping the mailbox over the air every launch. The
+ * store is loaded here, before any engine exists — `OhmailEngine`'s own `store` default IS a
+ * memory mirror. `engine-boot.test.ts` kills the executor and asserts the refusal. The boot
+ * never touches the wire (boot-from-local-first): everything awaited is local, the app renders
+ * its last known state immediately, and the identity probe is handed back as
+ * {@link EngineBoot.verifyIdentity} — safe because the drain-time account check is the guard.
  */
 export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig): Promise<EngineBoot> {
   const origin = normalizeOrigin(config.origin);
@@ -565,27 +455,14 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     return { kind: "refused", reason: refuse("bootBadApiBase", config.apiBase ?? "") };
   }
   /**
-   * ── THE BASE MUST BE DERIVABLE FROM THE ORIGIN, AND THAT IS A STRUCTURAL INVARIANT ────────────
-   *
-   * The base is not free-form. `resolveApiBase` only ever answers one of two values — the origin,
-   * or the origin with `/api` on the end — so anything else reaching here did not come from the
-   * measurement, and the ONLY places it could have come from are a corrupted keystore value or a
-   * caller that composed one by hand.
-   *
-   * Review raised the consequence and it is the sharp one: this string is `HttpAdapter`'s
-   * `baseUrl`, so a value naming a foreign address would send the profile's LIVE BEARER there on
-   * every drain — while `origin` and `accountId` stay untouched, so the mirror's owner stamp and
-   * the account guard both pass and nothing else notices. A shape check alone (`^https?://`) does
-   * not stop that; only a comparison against the origin does.
-   *
-   * The check is cheap because the value space is two, and the property it buys is that a base can
-   * never widen what this app talks to beyond the address the pairing already named. A store that
-   * has been tampered with is not a state this can recover from — an attacker who can write the
-   * keystore holds the refresh token too — but it must not be a state in which this app HELPS.
-   *
-   * Refused rather than silently corrected to the origin, on the refusal contract this file states
-   * throughout: quietly dialling something other than what a caller asked for is the dangerous
-   * default standing in for a missing fact.
+   * The base must be derivable from the origin — a structural invariant. `resolveApiBase` only
+   * ever answers the origin or the origin + `/api`, so anything else here came from a corrupted
+   * keystore value or a hand-composed caller. The consequence is sharp: this string is
+   * `HttpAdapter`'s `baseUrl`, so a foreign value would send the profile's live bearer there on
+   * every drain while `origin` and `accountId` stay untouched and every other guard passes. A
+   * shape check does not stop that; only comparison against the origin does. A tampered store
+   * is not recoverable (the attacker holds the refresh token too), but it must not be a state
+   * this app helps. Refused rather than silently corrected, on this file's refusal contract.
    */
   if (apiBase !== origin && apiBase !== `${origin}/api`) {
     return {
@@ -631,18 +508,13 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   // then), so the caller's sequence is verify → drain, and a drain fired early is a loud
   // refusal rather than a mirror a wrong bearer could move.
   /**
-   * ON THE STANDALONE DOOR THE PROBE IS ALREADY ANSWERED, and skipping it is the correct answer
-   * rather than a shortcut.
-   *
-   * The probe exists to catch a bearer that belongs to a DIFFERENT account than the one the mirror
-   * is keyed by — a remote server's answer against a locally stored id. A standalone install has no
-   * remote server: the engine in this runtime minted the bearer for this launch, and there is
-   * exactly one account. Running it anyway would ask the local door a question about itself and
-   * hold the drain routes shut for the full eight-second deadline on every launch when it had no
-   * route to answer with.
-   *
-   * The per-entity account guard stays armed either way — that is the rule every door lives under
-   * permanently, and it is what still refuses a page naming another account's mail.
+   * On the standalone door the probe is already answered, and skipping it is the correct
+   * answer, not a shortcut. The probe catches a bearer belonging to a different account than
+   * the mirror's key — a remote server's answer against a locally stored id. A standalone
+   * install has no remote server: the engine in this runtime minted the bearer for this
+   * launch, and there is exactly one account. Running it anyway would hold the drain routes
+   * shut for the full eight-second deadline on every launch with no route to answer. The
+   * per-entity account guard stays armed either way — the rule every door lives under.
    */
   let identityCleared = local !== undefined;
   const verifyIdentity = async (): Promise<IdentityVerdict> => {

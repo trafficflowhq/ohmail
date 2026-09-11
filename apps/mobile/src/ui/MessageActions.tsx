@@ -1,27 +1,12 @@
 /**
- * THE OPEN MESSAGE'S VERBS — the webapp action bar, in the phone's idiom.
- *
- * The webapp's reading pane offers Reply, Reply all, Later / Park / Resurface (with the horizon
- * chooser), Tag, Screening, Move, the read switch (Mark unread / Mark as read / Done on a
- * resurfaced pin) and, per message, Forward. This screen used to offer three of those. The
- * verbs here are THE SAME VERBS — same names (`src/copy.ts` mirrors the webapp catalogue;
- * `test/action-parity.test.ts` derives the list from the webapp's source and holds it), same
- * engine mutations behind them (`src/state/live.ts`, the arms mirrored from
- * `AppShell.onMessageAction`) — arranged for a thumb instead of a cursor:
- *
- *   · the BAR pins to the bottom (where the Screener's decision bar already lives): the accent
- *     Reply, then the three "not now" horizons the webapp groups as one segment, then More;
- *   · everything else stands in the MORE SHEET, a bottom sheet rather than an anchored menu,
- *     because a popover has nowhere honest to anchor on a phone;
- *   · the two verbs that ask a question — Resurface ("when?") and Move ("where?") — open their
- *     own sheets, the same two ceremonies the webapp swaps its bar row for;
- *   · Tag and Screening open theirs; Reply / Reply all / Forward open the composer.
- *
- * The same absence rules as the webapp: Reply all renders only where `replyAllRecipients`
- * admitted an envelope (`m.canReplyAll` — the send resolves the same call again), Forward never
- * renders on a `no_forward` message, and the read slot holds exactly one of its three faces.
- * The AI drafter ("Draft reply") is not here at all — its offer/price/consent machinery is a
- * webapp shell machine with no engine verb; an absent control, never a dead one.
+ * The open message's verbs — the webapp action bar, in the phone's idiom. The verbs are the
+ * same verbs: same names (`src/copy.ts` mirrors the webapp catalogue;
+ * `test/action-parity.test.ts` derives the list from the webapp's source), same engine
+ * mutations behind them (`src/state/live.ts`, mirrored from `AppShell.onMessageAction`) —
+ * arranged for a thumb: the bar pins to the bottom; everything else stands in the More sheet.
+ * The webapp's absence rules hold: Reply all only where `replyAllRecipients` admitted an
+ * envelope, Forward never on `no_forward`, the read slot holds one of its three faces. The AI
+ * drafter is not here — no engine verb, so an absent control, never a dead one.
  */
 import { useEffect, useState } from "react";
 import {
@@ -429,20 +414,14 @@ function ComposeSheet({
   const [sig, setSig] = useState<SignatureState>(SIG_FOLLOWING);
   const forward = mode === "forward";
   /**
-   * ── SEND LATER (mail 0077) — the picker, INLINE IN THIS PANEL ──────────────────────────
-   *
-   * A panel above the button row, never a second Modal over this one — the webapp
-   * `ComposeView`'s own decision, and on RN it also avoids stacking a Modal inside a Modal.
-   * Three steps, because "a date and time" is two facts and a phone has no datetime input
-   * worth the name: the presets, then the days, then the hours on a chosen day.
-   * `openedAt` FREEZES "now" when the picker opens, so the three presets are
-   * computed once per opening rather than drifting under the reader mid-decision — and
-   * because that freeze is exactly what lets a preset go stale in a long-open sheet, the
-   * press re-checks the lead against the real clock ({@link Copy.sendLaterPast}).
-   *
-   * A DRAFT ROW STORES NO FORWARD REFERENCE (§14), so a forward cannot wear an appointment:
-   * the affordance is disabled with its reason, and the http adapter refuses the same
-   * combination where it cannot be bypassed.
+   * Send later (mail 0077) — the picker, inline in this panel: a panel above the button row,
+   * never a second Modal over this one (the webapp `ComposeView`'s decision; on RN it also
+   * avoids a Modal in a Modal). Three steps because "a date and time" is two facts and a phone
+   * has no datetime input worth the name: presets, days, hours. `openedAt` freezes "now" when
+   * the picker opens so the presets do not drift mid-decision — and because that freeze lets a
+   * preset go stale, the press re-checks the lead against the real clock
+   * ({@link Copy.sendLaterPast}). A draft row stores no forward reference (§14), so a forward
+   * cannot wear an appointment: the affordance is disabled with its reason.
    */
   const [later, setLater] = useState<LaterStep | null>(null);
   /* WHETHER THE AFFORDANCE IS THERE AT ALL — one predicate, two reasons (`sendLaterOffered`): a
@@ -518,15 +497,13 @@ function ComposeSheet({
    */
   const pickLater = (at: Date) => {
     /**
-     * ONE PRESS IS ONE DELIVERY — and this guard is the picker's half of that invariant.
-     *
-     * Send and the picker stand side by side, so a reader can open the chooser, press Send,
-     * and then tap a preset while the first request is still out. `canSend` locks the Send
-     * BUTTON on `phase`, but the picker's rows are their own dispatch site: without this the
-     * second press mints a fresh Idempotency-Key, and the reply is delivered AND a second copy
-     * scheduled. The picker is also closed on dispatch (see `send`), so this is the belt to
-     * that brace — the two together mean neither a stale open panel nor a fast thumb can
-     * produce a second key.
+     * One press is one delivery — the picker's half of that invariant. Send and the picker
+     * stand side by side, so a reader can open the chooser, press Send, then tap a preset
+     * while the first request is still out. `canSend` locks the Send button on `phase`, but
+     * the picker's rows are their own dispatch site: without this the second press mints a
+     * fresh Idempotency-Key, and the reply is delivered AND a second copy scheduled. The
+     * picker also closes on dispatch (see `send`) — the two together mean neither a stale
+     * open panel nor a fast thumb can produce a second key.
      */
     if (phase !== "idle") {
       setLater(null);

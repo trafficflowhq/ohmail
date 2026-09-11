@@ -1,38 +1,12 @@
 /**
- * THE LOCALE DIMENSION ON THE PHONE — the closed set, the device's answer, and the one register
- * every surface reads.
- *
- * The web and desktop clients resolve a locale through `next-intl` and a pair of ICU catalogues
- * (`apps/webapp/app/shell/locale.ts`). This app cannot: it has no next-intl, no RSC payload to
- * carry a catalogue on, and no `localStorage` for a host to read before the first paint. What it
- * has instead is what this file is built on — one JS bundle, a device whose language the platform
- * already knows, and a copy deck that is a TypeScript object rather than a JSON tree.
- *
- * So the SHAPE is the webapp's and the MEDIUM is not:
- *
- *  · the closed set of locales, English as the fallback, and a primary-subtag reduction, all
- *    written the same way and holding the same rules — `de-CH`, `de-DE` and `de` are one deck;
- *  · a module-level register rather than a hook, for the same reason the webapp has one: the copy
- *    is read from places that are not components at all (`state/live.ts` derives a view inside a
- *    memo, `state/model.ts` is a plain function library), and threading a locale through those is
- *    ten signatures where this is one;
- *  · and a SUBSCRIPTION beside it, which the webapp does not need. There, swapping the catalogue
- *    means re-rendering a provider that owns the messages; here the deck is reached through a
- *    module import, so nothing in React knows a switch happened unless it is told. See
- *    {@link subscribeLocale}.
- *
- * ── WHERE THE DEVICE'S OWN ANSWER COMES FROM, AND WHY IT IS NOT A NEW DEPENDENCY ──────────────
- *
- * `expo-localization` is the usual answer and this app does not carry it. It does not need to:
- * `Intl.DateTimeFormat().resolvedOptions().locale` is the platform's resolved language, and this
- * app ALREADY reads the sibling field off the same call — `state/live.ts#readerZone` takes
- * `.timeZone` from it to stamp every mail time in the reader's zone. One call, two fields, no new
- * package in a bundle that ships to a phone.
- *
- * It is wrapped, because an environment with no ICU data at all throws rather than answering, and
- * a language preference is not worth a crash on boot. That arm returns `null` — "the device says
- * nothing" — which is a different answer from "the device says English", and {@link resolveLocale}
- * treats it as such.
+ * The locale dimension on the phone — the closed set, the device's answer, and the one
+ * register every surface reads. The shape is the webapp's, the medium is not: the closed set,
+ * English fallback and a primary-subtag reduction hold the same rules; a module-level register
+ * rather than a hook, because the copy is read from places that are not components; and a
+ * subscription beside it, because the deck is reached through a module import and React must
+ * be told a switch happened ({@link subscribeLocale}). The device's answer is
+ * `Intl.DateTimeFormat().resolvedOptions().locale` — no expo-localization. Wrapped: no ICU
+ * throws, answering `null` ("says nothing") — different from "says English".
  */
 
 /**
@@ -60,16 +34,12 @@ export function isAppLocale(value: unknown): value is AppLocale {
 }
 
 /**
- * Reduce anything to a member of {@link LOCALES}, or `null` for "this says nothing".
- *
- * The PRIMARY SUBTAG only: a phone set to `de-CH` or `de-AT` gets the German deck rather than
- * falling through to English on a tag it happens not to match exactly. Case is folded because a
- * platform locale arrives in either (`de_DE` from Android's `Configuration`, `de-DE` from `Intl`),
- * and the separator may be either too.
- *
- * `null` rather than {@link DEFAULT_LOCALE}, and that is the whole point of the return type: the
- * caller has to tell "nobody has said" from "they said English", because the first keeps looking
- * at the next source and the second stops.
+ * Reduce anything to a member of {@link LOCALES}, or `null` for "this says nothing". The
+ * primary subtag only: a phone set to `de-CH` or `de-AT` gets the German deck rather than
+ * falling through to English on a tag it happens not to match exactly. Case and separator are
+ * folded (`de_DE` from Android, `de-DE` from `Intl`). `null` rather than
+ * {@link DEFAULT_LOCALE} is the whole point of the return type: the caller must tell "nobody
+ * has said" from "they said English" — the first keeps looking, the second stops.
  */
 export function normalizeLocale(value: string | null | undefined): AppLocale | null {
   if (typeof value !== "string") return null;
@@ -110,21 +80,13 @@ export function resolveLocale(
   return chosen ?? fromDevice ?? DEFAULT_LOCALE;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE REGISTER — one live answer, and the subscription that makes a switch visible.
-
-   `Copy` in `src/copy.ts` is a table of GETTERS over whichever deck this register names, so every
-   one of the ~300 call sites is already reading the current language with no change to any of
-   them. What a getter cannot do is tell React that its answer changed: a screen that rendered
-   "Settings" holds an element tree React has no reason to rebuild.
-
-   So the register publishes. `useLocale()` (see `LocaleProvider.tsx`) subscribes through
-   `useSyncExternalStore`, and a screen that calls it re-renders — with its children, which are
-   rebuilt as part of the same render — on the press that changed the language. That is why the
-   listener set lives HERE rather than in the provider: `setActiveLocale` is called from the boot
-   path before any provider has mounted, and from the Settings row after, and both have to reach
-   the same subscribers.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/* The register — one live answer, and the subscription that makes a switch visible. `Copy` is
+   a table of getters over whichever deck this register names, so every call site already reads
+   the current language; what a getter cannot do is tell React its answer changed. So the
+   register publishes: `useLocale()` subscribes through `useSyncExternalStore`, and a screen
+   that calls it re-renders on the press that changed the language. The listener set lives here
+   rather than in the provider because `setActiveLocale` is called from the boot path before
+   any provider has mounted, and from the Settings row after — both reach the same subscribers. */
 
 let active: AppLocale = DEFAULT_LOCALE;
 const listeners = new Set<() => void>();

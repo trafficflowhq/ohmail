@@ -1,29 +1,12 @@
 /**
- * THE SYNC ROUND, AS AN OBJECT THE SUITE CAN HOLD — extracted from the connection provider so
- * its two contracts are testable without a renderer:
- *
- *  · **HONEST SETTLE.** The promise a round hands back resolves when the engine's own
- *    `start()`/`syncOnce()` settles — never on a timer, never early. Pull-to-refresh renders
- *    its spinner on exactly this promise, so the spinner ends when the sync round actually
- *    completed (`drain.test.ts` holds the promise open against a deferred engine; a mutant
- *    that resolves early goes red there).
- *
- *  · **A REFUSAL SETTLES QUIETLY.** The round never rejects: a failure becomes the one
- *    `error` sentence the connection state already carries (the Servers screen's existing
- *    vocabulary — no toast spam), followed by a re-hydrate so the torn-flush guard's refusal
- *    window closes before any retry (the store's own rule, carried verbatim from the
- *    provider this was lifted out of).
- *
- * {@link SyncRunner.request} is the doorbell every "sync now" gesture rings — pull-to-refresh
- * here, exactly as the wake channel and the Servers screen ring the provider's `syncNow`. It
- * COALESCES onto a round already in flight rather than queueing another, which is the
- * engine's own doctrine for poll/wake-shaped asks (`syncOnce()` — "they only ever want
- * 'catch up', and one drain does"); the round it joins is the one whose completion it
- * reports, so the settle stays honest.
- *
- * No network of its own, no React: the engine is handed in per call, the two callbacks are
- * the only outputs, and one runner outlives every session (the provider guards WHICH session
- * may ring it, this class only guards HOW MANY rounds fly — one).
+ * The sync round, as an object the suite can hold — extracted from the connection provider so its two contracts are
+ * testable without a renderer. Honest settle: the promise resolves when the engine's own `start()`/`syncOnce()`
+ * settles — never on a timer, never early; pull-to-refresh renders its spinner on exactly this promise
+ * (`drain.test.ts` holds it open against a deferred engine). A refusal settles quietly: the round never rejects — a
+ * failure becomes the one `error` sentence the connection state carries, followed by a re-hydrate so the torn-flush
+ * guard's refusal window closes before any retry. {@link SyncRunner.request} coalesces onto a round already in flight
+ * rather than queueing another (the engine's own poll/wake doctrine), and the round it joins is the one whose
+ * completion it reports. No network of its own, no React; one runner outlives every session.
  */
 
 /** The three engine calls a round is made of — the seam the suite drives with a fake. */

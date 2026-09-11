@@ -1,44 +1,12 @@
 /**
- * Blanc typography for React Native.
- *
- * Blanc's type is one well-tuned system sans at fixed px sizes — product UI,
- * not fluid type. `typography.family.ui` leads with `-apple-system`, so RN's
- * default family (SF Pro on iOS, Roboto on Android) *is* the token; no font is
- * bundled and none should be.
- *
- * TWO THINGS TRANSLATE EXACTLY, ONE DOES NOT.
- *
- *  · **Size** — RN's `fontSize` is density-independent points, CSS px at 1×.
- *    Every value below is derived from `typography.size`, half-points
- *    included, and the reading band carries the phone type step: this app is
- *    always a phone, so the 10.5–15.5 roles are the token's number **plus
- *    `PHONE_STEP`**, and nothing at 16 and above moves. `PHONE_STEP` below
- *    states the rule and the reasoning.
- *  · **Leading** — CSS `line-height` is a multiplier of the font size and RN's
- *    `lineHeight` is the absolute line box, so `size × multiplier` is exact.
- *    (The retired macOS port had to subtract SF Pro's intrinsic 1.21× first; RN
- *    does not stack lines that way, so this port is closer to the prototype.)
- *  · **Weight — the one lossy step.** Blanc's signature is a micro-graded
- *    scale, 450 / 500 / 550 / 600 / 650, that never jumps a full hundred where
- *    fifty reads calmer. `TextStyle.fontWeight` in RN accepts whole hundreds
- *    only (100…900); iOS maps them onto `UIFont.Weight`, Android onto the
- *    nearest available Roboto cut. There is no half-step to reach, and no
- *    variable-axis API to reach it with. So the five grades compress onto four
- *    platform steps:
- *
- *        css 450  regular   → '400'   .regular
- *        css 500  medium    → '500'   .medium
- *        css 550  semibold  → '600'   .semibold   ← rounds up
- *        css 600  bold      → '600'   .semibold   ← the collision
- *        css 650  heavy     → '700'   .bold
- *
- *    550 and 600 land together. That is the least damaging place to fold,
- *    because the two roles never meet on one line: 550 is decision buttons and
- *    small controls, 600 is row senders and view headings. Folding 600↔650
- *    instead would flatten the wordmark and the pile titles against ordinary
- *    row text, which is a visible loss; folding 450↔500 would thicken body
- *    copy, which is a legibility change. `test/theme.test.ts` pins the table so
- *    the compromise cannot quietly move.
+ * Blanc typography for React Native. One well-tuned system sans at fixed px sizes; `typography.family.ui`
+ * leads with `-apple-system`, so RN's default family IS the token — no font is bundled. Size translates
+ * exactly (RN `fontSize` is dp, CSS px at 1×; the 10.5–15.5 reading roles carry `PHONE_STEP`, nothing at 16+
+ * moves). Leading translates exactly (`size × multiplier`). Weight is the one lossy step: Blanc's
+ * 450/500/550/600/650 compress onto RN's whole hundreds — 450→'400', 500→'500', 550→'600', 600→'600' (the
+ * collision), 650→'700'. 550 and 600 land together because those roles never meet on one line; folding
+ * 600↔650 would flatten the wordmark against row text, folding 450↔500 would thicken body copy.
+ * `test/theme.test.ts` pins the table so the compromise cannot quietly move.
  */
 import type { TextStyle } from "react-native";
 import { typography } from "@ohmail/tokens";
@@ -48,41 +16,14 @@ const px = (v: string) => Number(v.replace("px", ""));
 const tSize = typography.size;
 
 /**
- * THE PHONE TYPE STEP — the whole rule, stated here because this is the only
- * place it is applied.
- *
- * The type scale is deliberately denser than either platform's default, and it
- * was one notch too dense to read comfortably on a phone: rows set the sender
- * at 13, the subject at 13.5, the preview at 12, and timestamps and addresses
- * at 11, against an Android status-bar clock at 14sp, Material's body-medium at
- * 14 and label-small at 11, and iOS's footnote at 13. So every reading role
- * from 10.5 through 15.5 moves up EXACTLY ONE POINT, and the density is
- * otherwise kept. One point, not two: at 13→14 that is +7.7% and at 11→12 it is
- * +9%, which leaves every size on the half-point ladder this scale is built on
- * and every hierarchy relation (sender over subject over preview) intact.
- *
- * The four rules that bound it:
- *
- *  · **Nothing at 16 and above moves.** Titles, the message subject, the
- *    held-mail title, the reader subject and the protected verification code
- *    are already at or above the platforms' body size; stepping them would be a
- *    redesign of the hierarchy rather than a legibility fix.
- *  · **The floor for information-bearing text is 12.** Timestamps, addresses,
- *    the waterline and notes were the roles sitting under what both platforms
- *    put on text a reader has to take a fact from; after the step they are 12.
- *  · **Text inputs are 16 wherever a page can zoom.** That is a browser rule —
- *    Safari zooms on focus of anything smaller — so it binds the web shell and
- *    not this app, which has no page to zoom. Recorded here so the two surfaces
- *    can be compared without going looking.
- *  · **A mark is not text.** The wordmark sits inside the band and does not
- *    step, because it is artwork at a fixed size rather than something read.
- *
- * The web shell reaches the same numbers from the same tokens through a
- * width-driven custom property, so one phone sets the row sender at 14 in a
- * browser and in this app alike.
- *
- * One constant, one place: set it to 0 and every size below is the token's own
- * number again, which is what `test/theme.test.ts` watches.
+ * The phone type step — the whole rule, stated where it is applied. The scale was one notch too dense on a
+ * phone (sender 13, subject 13.5, preview 12, stamps 11, against Material body-medium 14 and iOS footnote
+ * 13), so every reading role from 10.5 through 15.5 moves up exactly one point and the density is otherwise
+ * kept — every size stays on the half-point ladder, every hierarchy relation intact. Bounds: nothing at 16
+ * and above moves (stepping titles would be a hierarchy redesign); the floor for information-bearing text is
+ * 12; text inputs at 16 is a browser rule (Safari zoom) that binds the web shell, not this app; a mark is not
+ * text — the wordmark does not step. The web shell reaches the same numbers from the same tokens. One
+ * constant: set it to 0 and every size is the token's own number again (`test/theme.test.ts` watches).
  */
 export const PHONE_STEP = 1;
 

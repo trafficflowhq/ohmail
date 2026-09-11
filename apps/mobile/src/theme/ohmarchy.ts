@@ -1,18 +1,12 @@
 /**
- * THE OHMARCHY FACE FOR REACT NATIVE — GENERATED, never hand-edited.
- *
- * Written by `scripts/generate-ohmarchy.mjs` from the tokens package's generated ohmarchy set —
- * the same face the browser and the desktop wear, which `packages/tokens/omarchy/mapping.js`
- * derives from the tokyo-night (dark) and flexoki-light (light) palettes and which
- * ships to the web as `packages/tokens/src/ohmarchy.css`. `test/ohmarchy-face.test.ts` re-runs
- * that generation in-process and fails if this file differs, so a hand edit cannot survive a test
- * run, and the phone's face cannot drift from the desktop's.
- *
- * Read the generator's header for the four projections (colour · radius · lift · motion) and for
- * the four token groups deliberately NOT projected onto a phone, each with its reason.
- *
- * Paper is the ABSENT face: nothing here is consulted unless `Theme.face === "ohmarchy"`, which
- * is what keeps the paper look byte-identical by construction.
+ * The ohmarchy face for React Native — generated, never hand-edited. Written by
+ * `scripts/generate-ohmarchy.mjs` from the tokens package's generated ohmarchy set — the same face the
+ * browser and desktop wear (`packages/tokens/omarchy/mapping.js`, shipping to the web as
+ * `packages/tokens/src/ohmarchy.css`). `test/ohmarchy-face.test.ts` re-runs the generation in-process
+ * and fails if this file differs, so a hand edit cannot survive a test run. Read the generator's header
+ * for the four projections (colour · radius · lift · motion) and the four token groups deliberately not
+ * projected onto a phone. Paper is the absent face: nothing here is consulted unless `Theme.face ===
+ * "ohmarchy"`, which keeps the paper look byte-identical by construction.
  */
 import type { LiftLevel } from "./lift";
 import type { Palette, SchemeName } from "./palette";

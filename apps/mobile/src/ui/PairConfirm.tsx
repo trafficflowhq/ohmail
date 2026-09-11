@@ -1,38 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE CONFIRMATION BEFORE A PAIRING CODE IS SPENT — the person in the middle of the ceremony
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * A scan used to pair. `onBarcodeScanned` parsed the code and called the redeem in the same
- * callback, so whatever answered the address inside a QR became this phone's server — with its
- * key pinned for the life of the pairing — before anybody had seen an address.
- *
- * The desktop has claimed otherwise in every shipped release since the same-network door landed.
- * Its Devices pane says: *"a device pairing over your network shows these characters before it
- * pairs. If it shows different ones, something else is answering for this computer."* This screen
- * is that sentence becoming true, and the twelve characters it draws come from `shortPin` on the
- * shared pairing-link module — the same function the desktop draws from, because two ends of a
- * comparison computed by two rules compare nothing.
- *
- * ── A COMPONENT, NOT A ROUTE, AND THAT IS THE TOKEN DISCIPLINE ─────────────────────────────────
- *
- * The app registers the `ohmail` scheme as a BROWSABLE deep link. A route would mean the token and
- * the address travelling as route parameters, which is exactly the attack `net/pairing.ts`
- * documents for `/connect`: any web page could open `ohmail://…` and choose where a live pairing
- * credential is sent. So the scanning screen keeps the token in its own state and renders this
- * inline; nothing here is addressable and nothing here is persisted.
- *
- * ── WHAT IT SHOWS IS MEASURED, NOT CARRIED ────────────────────────────────────────────────────
- *
- * Every line comes from the {@link PairAdmission} a credential-free probe produced against the
- * scanned address — the door's own word for what it is, read over the connection this pairing will
- * use. There is deliberately NO display name: a name in the QR is the attacker's to choose, and it
- * would let a hostile code label a stranger's server "MacBook Pro" on the one screen built to
- * catch that.
- *
- * The KEY ROW renders only where a pin is in play. A tailnet address or a self-host box behind a
- * real certificate carries none, and a row inviting a comparison against a value nothing shows is
- * a check that cannot be performed — the desktop pane keeps the same rule for the same reason.
+ * The confirmation before a pairing code is spent — the person in the middle of the ceremony. The desktop's Devices
+ * pane promises "a device pairing over your network shows these characters before it pairs"; this screen is that
+ * sentence being true, and the twelve characters come from `shortPin` on the shared pairing-link module — two ends of
+ * a comparison computed by two rules compare nothing. A component, not a route: the app registers `ohmail` as a
+ * browsable deep link, and a route would put the token and address in route parameters — the attack `net/pairing.ts`
+ * documents. Everything shown is measured, from the {@link PairAdmission} a credential-free probe produced;
+ * deliberately no display name (a name in the QR is the attacker's to choose). The key row renders only where a pin
+ * is in play — a row inviting comparison against a value nothing shows is a check that cannot be performed.
  */
 import { View } from "react-native";
 /* `shortPin` through the pairing seam, not through the engine barrel: this app's network census

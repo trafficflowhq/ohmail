@@ -1,20 +1,12 @@
 /**
- * A LABELLED FIELD, in the line shape the rest of the product's forms use.
- *
- * `packages/ui`'s `TextField` is the reference for the shape — a rule under the text rather than a
- * box around it — and it is a DOM component, so this is the React Native half of that idiom rather
- * than a use of it. What travels is the shape, the label/hint/error slots and the reveal toggle.
- *
- * ── ONE FIELD, NOT ONE PER SCREEN ──────────────────────────────────────────────────────────────
- *
- * `connect.tsx` had its own copy of this and the standalone door would have made two. Two fields
- * are two answers to "how does a form look here", and the second one is always the one that misses
- * the next a11y fix. The pairing screen now renders this.
- *
- * ── THE SECRET ARM NEVER LEAVES THIS COMPONENT ─────────────────────────────────────────────────
- *
- * A `secret` field's value is not logged, not put in an accessibility label and not echoed into any
- * sentence — the reveal toggle only changes what the platform draws. Nothing here calls `console`.
+ * A labelled field, in the line shape the rest of the product's forms use. `packages/ui`'s
+ * `TextField` is the reference — a rule under the text rather than a box around it — and it is a
+ * DOM component, so this is the React Native half of that idiom. One field, not one per screen:
+ * `connect.tsx` had its own copy and the standalone door would have made two — two fields are
+ * two answers to "how does a form look here", and the second always misses the next a11y fix.
+ * The secret arm never leaves this component: a `secret` field's value is not logged, not put in
+ * an accessibility label, not echoed into any sentence — the reveal toggle only changes what the
+ * platform draws. Nothing here calls `console`.
  */
 import { type ReactNode } from "react";
 import { TextInput, View, type TextInputProps } from "react-native";

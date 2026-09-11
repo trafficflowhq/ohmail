@@ -1,24 +1,12 @@
 /**
- * Theme resolution: preference + system appearance + FACE → one `Theme` in context.
- *
- * `useTheme()` is the only way a screen gets a colour, a shadow or a type
- * preset. No component holds a literal colour; `test/theme.test.ts` greps the
- * screen sources for stray `#rrggbb` / `rgba(` / `oklch(` and fails on a hit —
- * the same audit the retired macOS client ran over its Swift sources.
- *
- * ── THE FACE — paper / ohmarchy (OHMARCHY-PLAN.md §3a) ─────────────────────────────────────
- *
- * A SECOND appearance dimension, orthogonal to light/dark: the scheme picks a palette, the face
- * picks WHICH SET of palettes, radii, lifts and easings the theme is assembled from. Both sets
- * have one shape, and the swap happens here — so every component keeps reading `t.c`, `t.radius`
- * and `t.lift()` exactly as it did, which is the one-UI law expressed structurally rather than
- * policed (OHMARCHY-CONTRACT.md; the webapp's census does not govern this app because this app
- * has its own theming machinery, which is what this file is).
- *
- * The FACE ARRIVES AS A PROP, like `pref`. It is resolved above this provider (`./face.ts`, the
- * pure rules, driven by `test/ohmarchy-face.test.ts`) from the device's pin and the account's
- * synced answer, because the account half is a `GET /consent` field and this module has no wire —
- * the same separation `packages/ui`'s provider keeps for the same reason.
+ * Theme resolution: preference + system appearance + face → one `Theme` in context. `useTheme()` is the only way a
+ * screen gets a colour, a shadow or a type preset; no component holds a literal colour (`test/theme.test.ts` greps
+ * for stray `#rrggbb`/`rgba(`/`oklch(`). The face is a second appearance dimension, orthogonal to light/dark: the
+ * scheme picks a palette, the face picks which SET of palettes, radii, lifts and easings the theme is assembled from
+ * — both sets have one shape and the swap happens here, so every component keeps reading `t.c`, `t.radius` and
+ * `t.lift()` unchanged (the one-UI law expressed structurally, OHMARCHY-CONTRACT.md). The face arrives as a prop,
+ * resolved above this provider (`./face.ts`) from the device pin and the account's synced answer — the account half
+ * is a `GET /consent` field, and this module has no wire.
  */
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AccessibilityInfo, useColorScheme, type ViewStyle } from "react-native";

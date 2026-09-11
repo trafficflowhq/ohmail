@@ -1,55 +1,14 @@
 import type { ConnectedSession } from "./pairing.js";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  NEW-MAIL WAKE — the registration half, and the honest absence of a distributor
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * A UnifiedPush wake works like this and no other way: the phone has a DISTRIBUTOR app installed
- * (ntfy, NextPush, Sunup — the user's choice, not ours), the distributor mints an endpoint URL for
- * this app, the app hands that URL to whichever server it is paired with, and the server POSTs a
- * content-free "something changed" to it. No Google, no Apple, no relay of ours, and no account
- * anywhere except the one the user already has.
- *
- * ── WHAT THIS FILE IS, AND WHAT IT DELIBERATELY IS NOT ────────────────────────────────────────
- *
- * It is the SERVER SIDE of that handshake: fetch the key the device must register with, hand the
- * resulting endpoint to the ACTIVE profile's server, and take it down again on forget.
- *
- * It is NOT the distributor connector. That is `unified-push.ts`, which is the only file that
- * touches the native module, and it arrives here through the {@link UnifiedPushDistributor} port —
- * so every test in this file hands over a double and none of them needs a device.
- * {@link NO_DISTRIBUTOR} remains the answer on a phone with no distributor chosen and on every
- * iPhone, which is a real state rather than a placeholder: Settings says so in one sentence.
- *
- * ── THE SERVER'S VAPID KEY IS PART OF THE HANDSHAKE, AND IT COMES FIRST ───────────────────────
- *
- * A UnifiedPush 3.x connector cannot register without a VAPID public key: it gives the key to the
- * distributor and thereafter renders only wakes signed by the matching private half. The key is
- * per-DEPLOYMENT, so it has to be asked for — `GET /push/vapid-key` on the profile the user paired
- * with. Two consequences that shape this file:
- *
- *  · the fetch happens BEFORE the distributor is asked for anything, because a registration made
- *    with the wrong key is indistinguishable from a working one until a wake silently fails to
- *    render on the phone;
- *  · a server that answers `{ publicKey: null }` has no keypair, and that is a real, supported
- *    configuration rather than an error. It gets its own {@link WakeState} and its own sentence,
- *    because "your server has not set this up" is actionable by the person running the server and
- *    "wake notifications could not be set up" is not.
- *
- * ── THE ENDPOINT GOES TO THE ACTIVE PROFILE'S SERVER. NEVER ANYWHERE ELSE. ────────────────────
- *
- * `session.fetch` is the only transport used here, and it is bound to ONE origin — the
- * profile the user is currently connected to. That is what makes "the endpoint goes to the server
- * you paired with, managed or self-host" a structural property rather than a promise: this file
- * has no origin of its own to send anything to, and the app's own privacy census forbids it one.
- *
- * A DESKTOP-HOST profile is refused before a request is made (see {@link registerWake}). Push
- * registrations live in the hosted journal, which a desktop install's mail-only database does not
- * have, so a desktop-host server would answer 404 or 501 to a registration it has no table for.
- * Refusing locally with a named reason is the difference between "your desktop cannot do this"
- * and an unexplained failure — and it is why the copy for that arm says foreground sync and
- * pull-to-refresh, which is what actually happens there.
+ * New-mail wake — the registration half. The phone's distributor app (the user's choice)
+ * mints an endpoint URL, the app hands it to the server it is paired with, and the server
+ * POSTs a content-free "something changed" — no Google, no Apple, no relay of ours. This file
+ * is the server side; the connector is `unified-push.ts`, reached through the
+ * {@link UnifiedPushDistributor} port, so tests hand over a double. The VAPID key is fetched
+ * first (`GET /push/vapid-key`) — a wrong-key registration fails silently later. The endpoint
+ * goes to the active profile's server only (`session.fetch`, bound to one origin); a
+ * desktop-host profile is refused locally with a named reason ({@link registerWake}).
  */
 
 /** The registration a distributor produced. `keys` is absent on a distributor that has none. */
@@ -57,16 +16,12 @@ export interface WakeRegistration {
   /** The URL the server POSTs the wake to. Opaque to us; the distributor chose every byte. */
   endpoint: string;
   /**
-   * The Web Push key pair a UnifiedPush 3.x connector hands back (`p256dh` = the device's public
-   * key, `auth` = its authentication secret).
-   *
-   * Sent when present and omitted otherwise, and this file reads neither: they are the DEVICE's
-   * key material and their only consumer is the server's sender, which seals the wake to them so
-   * that only this phone can open it.
-   *
-   * Absent is not a broken registration — a distributor that does not implement the encrypted
-   * profile hands back a URL alone, and the server's plaintext arm serves it. Present is the
-   * ordinary case for a UnifiedPush 3.x connector, and it is what makes a wake renderable.
+   * The Web Push key pair a UnifiedPush 3.x connector hands back (`p256dh` = the device's
+   * public key, `auth` = its authentication secret). Sent when present, omitted otherwise, and
+   * this file reads neither: they are the device's key material and their only consumer is the
+   * server's sender, which seals the wake so only this phone can open it. Absent is not a
+   * broken registration — a distributor without the encrypted profile hands back a URL alone,
+   * and the server's plaintext arm serves it.
    */
   keys?: { p256dh: string; auth: string };
 }
@@ -84,34 +39,14 @@ export interface UnifiedPushDistributor {
   /** Is there a distributor on this device we could register with — chosen AND installed? */
   available(): boolean;
   /**
-   * Ask the distributor for an endpoint of `instance`'s own, registering with `vapidPublicKey`.
-   *
-   * The key is a PARAMETER rather than something the implementation holds, and that is the shape
-   * that makes "registered against the wrong server's key" hard to write: the key comes from
-   * whichever profile is active, the app can hold several profiles, and a distributor object that
-   * had been constructed with one key could outlive a switch to another. Passing it per call means
-   * the key and the server it is sent to are read in the same breath.
-   *
-   * ── THE INSTANCE IS WHAT MAKES A REGISTRATION BELONG TO ONE PAIRING ────────────────────────
-   *
-   * This app registered with NO instance, so the connector minted ONE endpoint for the whole
-   * process and every paired server stored its own `push_subscriptions` row against that single
-   * URL. Three consequences, all of them shipped:
-   *
-   *  · a forget told the distributor to unregister — which took the SURVIVING pairings' wakes
-   *    down with it, because there was only ever one registration to unregister;
-   *  · a profile switch had to race the outgoing server's row down, or that server kept POSTing
-   *    wakes to a phone now syncing somebody else (`dropWakeRowOrOwe` exists for this);
-   *  · a delivered wake named no pairing, so it could only ever mean "sync whatever is live".
-   *
-   * The connector is built for this and says so: the `instance` parameter exists "if the app has
-   * an account switcher feature". One instance per PROFILE — `ServerProfile.id`, a locally minted
-   * opaque id and deliberately NOT the account id, because this value is handed to a third-party
-   * distributor app and an account identifier is not ours to give it. Each instance mints its own
-   * endpoint, so each server's row points somewhere different and an unpairing revokes exactly
-   * its own.
-   *
-   * `null` means the distributor declined, timed out, or there is none.
+   * Ask the distributor for an endpoint of `instance`'s own, registering with
+   * `vapidPublicKey`. The key is a parameter, not implementation state: it belongs to
+   * whichever profile is active, and a distributor object constructed with one key could
+   * outlive a switch. The instance makes a registration belong to one pairing — with no
+   * instance the connector minted one endpoint for the whole process, so a forget took the
+   * surviving pairings' wakes down and a delivered wake named no pairing. One instance per
+   * profile: `ServerProfile.id`, locally minted, deliberately not the account id (this value
+   * goes to a third-party app). `null` = declined, timed out, or no distributor.
    */
   register(vapidPublicKey: string, instance: string): Promise<WakeRegistration | null>;
   /**
@@ -159,16 +94,12 @@ export type WakeState =
 const HOSTED_FLAVORS = new Set(["managed", "selfhost", "self-host"]);
 
 /**
- * Ask the active profile's server for its VAPID public key.
- *
- * `null` covers three cases on purpose — no keypair configured, the route not mounted, the request
- * failed — and they collapse because the app's next move is the same in all three: do not register,
- * and say so. Distinguishing "your server has no key" from "your server did not answer" would put a
- * second sentence on the screen for a difference the user cannot act on differently.
- *
- * The key is NOT cached across calls. It is one small request made when a Settings pane opens or a
- * registration is attempted, and a stale key is exactly the failure this whole path exists to avoid:
- * an operator who rotates their keypair must have the next registration pick up the new one.
+ * Ask the active profile's server for its VAPID public key. `null` covers three cases on
+ * purpose — no keypair configured, the route not mounted, the request failed — because the
+ * app's next move is the same in all three: do not register, and say so. The key is not
+ * cached across calls: it is one small request, and a stale key is exactly the failure this
+ * path exists to avoid — an operator who rotates their keypair must have the next
+ * registration pick up the new one.
  */
 export async function serverVapidKey(session: ConnectedSession): Promise<string | null> {
   try {
@@ -188,19 +119,13 @@ export async function serverVapidKey(session: ConnectedSession): Promise<string 
 }
 
 /**
- * Register this device's wake endpoint with the active profile's server.
- *
- * The order is deliberate, and there are now four steps rather than two:
- *
- *  1. LOCAL questions first — is this profile even a hosted one, is a distributor chosen. Every
- *     refusal that can be decided without a round trip is decided without one, so the failure a
- *     user is shown names the actual reason instead of a status code.
- *  2. THE SERVER'S VAPID KEY, before the distributor is asked for anything. A registration made
- *     against the wrong key, or against no key, looks exactly like a working one from here — the
- *     distributor mints an endpoint either way and the server stores it happily — and only fails
- *     later, on the phone, silently. So the key is obtained first and its absence is a refusal.
- *  3. THE DISTRIBUTOR, with that key.
- *  4. THE SERVER, with the endpoint the distributor produced.
+ * Register this device's wake endpoint with the active profile's server. Four steps, in
+ * order: (1) local questions first — hosted profile, distributor chosen — so every refusal
+ * decidable without a round trip names the actual reason; (2) the server's VAPID key, before
+ * the distributor is asked for anything — a registration against the wrong key (or none)
+ * looks exactly like a working one from here and only fails later, silently, on the phone,
+ * so its absence is a refusal; (3) the distributor, with that key; (4) the server, with the
+ * endpoint the distributor produced.
  */
 export async function registerWake(
   session: ConnectedSession, distributor: UnifiedPushDistributor,
@@ -227,16 +152,12 @@ export async function registerWake(
   if (!reg || reg.endpoint === "") return { k: "off", reason: "distributor_refused" };
 
   /**
-   * ── EVERY OUTCOME OF THIS FUNCTION IS A `WakeState`. THAT INCLUDES THE TRANSPORT FAILING. ────
-   *
-   * The key fetch and the distributor call were already wrapped; this POST was not, so a phone that
-   * lost signal between registering with its distributor and telling the server about it got a
-   * REJECTED PROMISE out of `registerWake`. Both callers invoke it as `void attempt(…)`, which makes
-   * that an unhandled rejection and leaves the Settings pane on its previous state — it would still
-   * say "on" while nothing was registered.
-   *
-   * A `catch` around the request rather than around the whole function, so a bug in the branching
-   * below still surfaces instead of being flattened into "server unavailable".
+   * Every outcome of this function is a `WakeState`, the transport failing included. The key
+   * fetch and the distributor call were already wrapped; this POST was not, so a phone that
+   * lost signal between registering with its distributor and telling the server got a
+   * rejected promise out of `registerWake` — an unhandled rejection under `void attempt(…)`,
+   * with the Settings pane still saying "on". A `catch` around the request rather than the
+   * whole function, so a bug in the branching below still surfaces.
    */
   let res: Response;
   try {
@@ -305,24 +226,14 @@ export async function registerWake(
 export type WakeDrop = { ok: true } | { ok: false; reason: string };
 
 /**
- * TAKE ONE SERVER ROW DOWN, and leave the distributor alone.
- *
- * Split out of {@link forgetWake} for the case that has no other answer: SWITCHING PROFILES.
- *
- * THE PREMISE THIS WAS WRITTEN UNDER HAS CHANGED, and the function is still right. It read: one
- * UnifiedPush registration for the whole app, so unregistering it to stop A's wakes would take
- * B's down with it — hence "the row goes and the endpoint stays". Registrations are per PROFILE
- * now, so A's endpoint could be dropped without touching B's.
- *
- * It is kept, unchanged, because the ROW is a separate fact from the endpoint and it is the row
- * that causes traffic. A switch that only unregistered A's instance would leave A's server
- * holding a live row, dialling an endpoint that has stopped answering, until it collects enough
- * 404/410s to prune — which is a server we do not control doing cleanup we asked for implicitly.
- * Removing the row says it outright. The invariant is "no server holds a row for a pairing this
- * phone is not using", and it is this call that discharges it.
- *
- * Never throws: a take-back the user asked for must not fail in their face because a server is
- * unreachable, and a row whose endpoint has gone quiet is pruned server-side on the first 404/410.
+ * Take one server row down, and leave the distributor alone — split out of {@link forgetWake}
+ * for the case that has no other answer: switching profiles. Registrations are per profile
+ * now, so A's endpoint could be dropped without touching B's; this is kept because the row is
+ * a separate fact from the endpoint and the row is what causes traffic. A switch that only
+ * unregistered A's instance would leave A's server dialling a dead endpoint until enough
+ * 404/410s prune it. The invariant: no server holds a row for a pairing this phone is not
+ * using, and this call discharges it. Never throws — a take-back must not fail in the user's
+ * face over an unreachable server, and a quiet endpoint's row is pruned server-side.
  */
 export async function dropWakeRow(session: ConnectedSession, id: string | null): Promise<WakeDrop> {
   if (id === null) return { ok: true };
@@ -349,38 +260,26 @@ export interface WakeDebtStore {
 }
 
 /**
- * TAKE A ROW DOWN, AND IF THE SERVER REFUSES, WRITE THE DEBT DOWN.
- *
- * Both callers of this — a profile SWITCH and a registration SUPERSEDED mid-flight — fire it
- * and walk away: a switch must not wait on a network round trip, and a superseded registration
- * has nothing left to render into. That is exactly what made the earlier version lose things.
- * It dropped the subscription id at dispatch and never read the verdict, so a 401, a 500 or a
- * lost network left a row NOTHING could name again — and because the distributor endpoint is
- * SHARED with the profile now in use and therefore still answering, the server never gets the
- * 404/410 it prunes on. The row and its outbound traffic are permanent.
- *
- * The debt is durable and paid at the next launch (`pairing.ts#drainPendingWakeDrops`).
- *
- * A queue that is full refuses, and that refusal is swallowed here deliberately: there is no
- * surface in a background switch to show it on, and throwing out of a fire-and-forget call is
- * an unhandled rejection rather than a report. Never throws, for the same reason.
+ * Take a row down, and if the server refuses, write the debt down. Both callers — a profile
+ * switch and a registration superseded mid-flight — fire it and walk away, which is exactly
+ * what lost things before: the subscription id was dropped at dispatch and the verdict never
+ * read, so a 401, 500 or lost network left a row nothing could name again — and the shared,
+ * still-answering distributor endpoint means the server never gets the 404/410 it prunes on.
+ * The debt is durable and paid at the next launch (`pairing.ts#drainPendingWakeDrops`). A full
+ * queue refuses, and that refusal is swallowed here deliberately: there is no surface in a
+ * background switch to show it on. Never throws.
  */
 export async function dropWakeRowOrOwe(
   session: ConnectedSession, id: string, profiles: WakeDebtStore,
 ): Promise<WakeDrop> {
   /**
-   * ── THE DEBT IS WRITTEN BEFORE THE ATTEMPT, NOT AFTER IT ─────────────────────────────────
-   *
-   * Recording it afterwards made the durability conditional on the very thing that was failing.
-   * The callers discard the in-memory id the moment they call this, so a kill between the DELETE
-   * going out and the debt landing — or a keystore write that resolved without storing — left
-   * NOTHING holding the only id that can remove the row, and the launch found nothing to retry.
-   * That is the durability class's own rule, which this file was already meant to be following:
-   * persist the intent first, execute second.
-   *
-   * A debt that cannot be recorded is REFUSED rather than attempted, and the caller is told, for
-   * the same reason: a delete that might fail and might not be retryable must not be dressed as
-   * a completed one. Clearing happens only on a confirmed 2xx or 404.
+   * The debt is written before the attempt, not after. Recording it afterwards made the
+   * durability conditional on the very thing that was failing: the callers discard the
+   * in-memory id at dispatch, so a kill between the DELETE going out and the debt landing left
+   * nothing holding the only id that can remove the row. Persist the intent first, execute
+   * second. A debt that cannot be recorded is refused rather than attempted — a delete that
+   * might fail unretryably must not be dressed as completed. Cleared only on a confirmed 2xx
+   * or 404.
    */
   try {
     await profiles.markPendingWakeDrop(session.profile.id, id);
@@ -393,17 +292,13 @@ export async function dropWakeRowOrOwe(
 }
 
 /**
- * Take the registration down: server first, then the distributor.
- *
- * That order matters and is the opposite of the intuitive one. The server row is what causes
- * wakes, so it goes first — if the distributor call fails afterwards the worst case is a
- * distributor holding an endpoint nobody POSTs to. Unregistering the distributor first would leave
- * the row live for an endpoint that no longer exists, and the server would keep dialling it until
- * the distributor started answering 410.
- *
- * Neither half throws. A forget is something a person did on purpose; it must not fail in their
- * face because a server is unreachable, and the local state is cleared either way — but the
- * SERVER's verdict is returned, so the pane can stop claiming a removal it did not get.
+ * Take the registration down: server first, then the distributor — the opposite of the
+ * intuitive order. The server row is what causes wakes, so it goes first; if the distributor
+ * call fails afterwards the worst case is a distributor holding an endpoint nobody POSTs to.
+ * The other order leaves the row live for an endpoint that no longer exists, dialled until
+ * the distributor answers 410. Neither half throws: a forget is deliberate and must not fail
+ * in the user's face; local state clears either way, but the server's verdict is returned so
+ * the pane can stop claiming a removal it did not get.
  */
 export async function forgetWake(
   session: ConnectedSession, distributor: UnifiedPushDistributor, id: string | null,

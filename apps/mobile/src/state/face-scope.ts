@@ -1,47 +1,12 @@
 /**
- * THE ACCOUNT-LEVEL FACE, COORDINATED — "apply on all devices" against the consent read that
- * carries the answer back.
- *
- * The face has TWO scopes (OHMARCHY-PLAN.md §3a): a device pin, which is local and instant, and
- * the account's synced choice, which is one field on the consent row (`themeFace`). The pin needs
- * no coordination — nothing else writes it. The account value does, and it needs exactly the two
- * rules `folders-flag.ts` arrived at the hard way, for exactly the same reasons:
- *
- *  · **USER-WINS.** A session's `GET /consent` can resolve AFTER an "apply on all devices" press,
- *    and an unguarded apply would publish the PRE-write face — the account ohmarchy, the phone
- *    paper, for the rest of the session. {@link FaceScope.applyAll} bumps the epoch before it
- *    writes, so any read ISSUED earlier is discarded whatever it answers. That is why the read
- *    side is two-phase ({@link FaceScope.beginRead}): the stamp has to be taken when the request
- *    goes out, not when its answer arrives.
- *  · **NO READ MAY OVERLAP A WRITE AT ALL** (review-caught, and the epoch alone did not give
- *    this). A read that STARTS after the epoch bump but while the PATCH is still unsettled — a
- *    drain completing mid-write, which is routine — carries the new epoch and would be accepted,
- *    yet it may have observed the PRE-write row and can land after the echo. No client-side stamp
- *    can tell those apart, which is exactly why `foldersFlag` makes its reads WAIT for the write
- *    queue to empty. This coordinator cannot wait: the read is not its own — the face rides the
- *    folders machine's one `GET /consent`. So it REFUSES the overlapping answer instead, which
- *    costs nothing: the write's own echo already published the authoritative value, and the next
- *    completed drain re-reads on the machine's own cadence.
- *  · **FRESHEST *SUCCESSFUL* READ WINS.** Two reads overlap routinely here (the session's boot
- *    read still in the air when a drain-completed refresh fires) and can settle out of issue
- *    order. Each read takes a sequence number and applies only while no NEWER read has applied.
- *    A read that could not be made (`undefined`) is not an answer and supersedes nothing — the
- *    folders machine's round-3 rule, and the same defect it was written for: discarding a valid
- *    older answer because a newer request failed.
- *  · **THE PIN THIS PRESS WAS MADE UNDER, AND NO OTHER** (review-caught). The selector stays live
- *    while the PATCH flies, so somebody can press "apply on all devices" for ohmarchy and then
- *    pick paper before the answer lands. An unconditional release would erase that newer paper
- *    pin and hand the device back to the stored ohmarchy — the device-pin-first rule broken by
- *    its own scope change. So {@link FaceScopeDeps.clearPin} is told WHICH face was submitted and
- *    releases only a pin that still equals it, exactly as the webapp's `FaceRow` does.
- *
- * `null` and `undefined` are DIFFERENT and the distinction is the whole of the read contract:
- * `null` is the account saying "I have no face preference" (which clears this device's adopted
- * value — otherwise an account whose choice went away would keep re-skinning the phone from a
- * stale copy), and `undefined` is "could not ask" (which changes nothing).
- *
- * Pure and renderer-free (the `live.ts` charter), so `test/ohmarchy-face.test.ts` drives every
- * race with deferred promises instead of a device.
+ * The account-level face, coordinated — "apply on all devices" against the consent read that carries the
+ * answer back. The device pin needs no coordination; the account value needs the rules `folders-flag.ts`
+ * arrived at: user-wins ({@link FaceScope.applyAll} bumps the epoch before writing, so a read issued earlier
+ * is discarded — hence two-phase {@link FaceScope.beginRead}); no read may overlap a write (this coordinator
+ * cannot make the shared `GET /consent` wait, so it refuses the overlapping answer — the write's echo already
+ * published the value); freshest successful read wins (`undefined` supersedes nothing); and {@link
+ * FaceScopeDeps.clearPin} releases only a pin equal to the submitted face. `null` = "no preference" (clears
+ * the adopted value); `undefined` = "could not ask" (changes nothing).
  */
 import type { FaceName } from "../theme/face";
 

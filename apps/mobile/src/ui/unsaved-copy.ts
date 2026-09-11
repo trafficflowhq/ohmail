@@ -10,19 +10,13 @@ import type { AbandonedMutation } from "../state/live";
 import { Copy } from "../copy";
 
 /**
- * WHAT THE PERSON WAS DOING. A map keyed by a known verb, never a computed lookup — an unlisted
+ * What the person was doing. A map keyed by a known verb, never a computed lookup — an unlisted
  * kind takes the generic sentence rather than putting `folder_op_dismiss` in front of somebody
- * trying to understand why their mail did not send.
- *
- * Deliberately NOT exhaustive over `MutationKind`: making a new verb a compile error would put a
- * copy chore in the path of everyone who adds one, and the pressure then is to write filler. The
- * guard asserts the FALLBACK works instead of asserting the table is complete.
- *
- * IT HOLDS KEYS, NOT SENTENCES. A module-scope map of `Copy.x` reads is evaluated once, when this
- * module is first imported — so every value in it is frozen in whatever language was active at
- * that moment, and a later language change never reaches them. The deck's members are live
- * getters; the read has to happen when somebody asks. Same rule as everywhere else in this app:
- * carry the key, format at the point of use.
+ * trying to understand why their mail did not send. Deliberately not exhaustive over
+ * `MutationKind`: making a new verb a compile error would put a copy chore in the path of
+ * everyone who adds one, and the pressure then is filler; the guard asserts the fallback works
+ * instead. It holds keys, not sentences: a module-scope map of `Copy.x` reads would freeze every
+ * value in the language active at first import — carry the key, format at point of use.
  */
 const KINDS = new Map<string, keyof typeof Copy>(Object.entries({
   move: "unsavedKindMove",

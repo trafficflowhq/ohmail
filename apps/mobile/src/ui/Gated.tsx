@@ -1,13 +1,11 @@
 /**
- * THE GATE, RENDERED — the one component that turns `gateFor`'s verdict into a surface.
- *
- * Both mail groups wrap themselves in this: the tabs layout AND the pushed mail detail
- * routes (`app/(mail)/_layout.tsx`). The second wrap exists because a deep link —
- * `ohmail://message/<id>` on an unpaired phone, a route restored after the session ended —
- * mounts a detail route WITHOUT the tabs layout ever focusing, and a gate that lives only
- * on the tabs would leave that reader on an empty world with no way out. Connection-flow
- * routes (welcome, servers, scan, connect) stay ungated on purpose: they are where the
- * verdicts route TO.
+ * The gate, rendered — the one component that turns `gateFor`'s verdict into a surface. Both
+ * mail groups wrap themselves in this: the tabs layout AND the pushed mail detail routes
+ * (`app/(mail)/_layout.tsx`). The second wrap exists because a deep link on an unpaired phone
+ * mounts a detail route without the tabs layout ever focusing, and a gate living only on the
+ * tabs would leave that reader on an empty world with no way out. Connection-flow routes
+ * (welcome, servers, scan, connect) stay ungated on purpose: they are where the verdicts route
+ * to.
  */
 import { Redirect } from "expo-router";
 import type { ReactNode } from "react";

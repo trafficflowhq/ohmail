@@ -1,40 +1,12 @@
 /**
- * THE LIVE WORLD — what the mail screens render and dispatch when the connection is live.
- *
- * This is the one seam between the screens and the engine, and it holds both halves:
- *
- *  · **Reads** are the SHARED selectors, never re-derived: `ohboxView`, `readsPartition`,
- *    `receiptsByDay`, `screenerSegments`, `triagePiles`, `bodyOf`, `threadOf` — the exact
- *    functions the webapp and desktop shells render from — over the consent-cutline
- *    projection (`presentationReader` ∘ `consentPartition`), so the piles this phone shows
- *    are the piles a second client shows for the same mirror. The mapping here only reshapes
- *    their DTOs into the row shapes the screens render (the screens stay logic-free).
- *
- *  · **Writes** go through `engine.mutate({kind: …})` — the SAME contract every other client
- *    uses, with the optimistic overlay and the server-rejection rollback owned by the engine.
- *    Every dispatch is WATCHED: `rolled_back` (or a rejection) raises one plain sentence
- *    through the injected toast; `queued` is not a failure — the intent stands on the retry
- *    queue with its Idempotency-Key (the webapp's `moveAll` doctrine, verbatim).
- *
- * ── THE RELEASE FAMILY REWRITES THE HOLDING RULE — never bare moves ─────────────────────────
- *
- * "Allow" on a screened-out sender and "Not spam" both mirror the webapp's shape
- * (`screener-state.ts#release`): the rules that HOLD the sender in the
- * segment are retargeted (`rule_update`) beside `move`s that cover ONLY mail physically in the
- * segment's folder. A release made of bare moves fails twice — a move for mail already at the
- * destination is the engine's local 404 with nothing sent, and the moves that land are
- * re-presented straight back by the standing rule. `holdingRules`/`ruleMatchesSender` are
- * mirrored from `apps/webapp/app/shell/sender-screening.ts` / `sender-audit.ts` (the webapp
- * shell is not an importable package from RN); the webapp files remain the reference.
- *
- * ── MUTATIONS READ THE RAW MIRROR, READS RENDER THE PROJECTION ──────────────────────────────
- *
- * `presentationReader`'s own contract: a projected reader answers with a presentation, and a
- * move needs a location. Every action below reads `engine.read()` (raw); every selector call
- * a screen renders goes through {@link presentedOf}.
- *
- * No React, no I/O of its own, and NO network: the engine is handed in, which is what lets this
- * module be driven against a real loopback server without a renderer.
+ * The live world — what the mail screens render and dispatch when the connection is live; the
+ * one seam between screens and engine. Reads are the shared selectors, never re-derived
+ * (`ohboxView`, `readsPartition`, `receiptsByDay`, `screenerSegments`, `triagePiles`, `bodyOf`,
+ * `threadOf`) over the consent-cutline projection (`presentationReader` ∘ `consentPartition`),
+ * so this phone shows the piles any other client shows. Writes go through `engine.mutate`,
+ * watched: `rolled_back` raises one sentence, `queued` is not a failure (the webapp's `moveAll`
+ * doctrine); the release family rewrites the holding rule (`rule_update` beside physical
+ * `move`s). Mutations read the raw mirror ({@link presentedOf} is for renders); no React, no I/O, no network.
  */
 import {
   FOLDER_OF_VIEW,
@@ -149,18 +121,13 @@ export function readerZone(): string {
 }
 
 /**
- * The mirror with every message sitting where it is PRESENTED — the same projection the
- * webapp shell feeds its pile selectors (`AppShell` → `consentPartition` → `presentationReader`).
- *
- * THE CUTLINE TAKES THE ACCOUNT'S ANSWER, never this package's default: `screening` is
- * `GET /consent`'s three fields, `ownAddresses` is `GET /mailboxes`', and both used to stop here
- * — a 60-day window back from now against the server's own, six waiting senders listed and two
- * shown, and the reader queueing in their own Screener.
- *
- * `null` is NOT ANSWERED and files nobody into History: every undecided sender stays at the gate
- * until the account's answer lands, so a boot shows a superset rather than a drop. (Residual: an
- * undated message cannot make its sender active even under `all_time`, where the server says
- * `true` unconditionally. Unchanged here, and never a new drop.)
+ * The mirror with every message sitting where it is presented — the same projection the webapp
+ * shell feeds its pile selectors (`AppShell` → `consentPartition` → `presentationReader`). The
+ * cutline takes the account's answer, never this package's default: `screening` is
+ * `GET /consent`'s three fields, `ownAddresses` is `GET /mailboxes`'. `null` is not-answered
+ * and files nobody into History: every undecided sender stays at the gate until the account's
+ * answer lands, so a boot shows a superset rather than a drop. (Residual: an undated message
+ * cannot make its sender active even under `all_time`. Unchanged here, never a new drop.)
  */
 export interface PresentedWorld {
   /** The projection the pile selectors read — History's rows are absent from its `message` list. */
@@ -356,48 +323,23 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
 }
 
 /**
- * THE ANSWER BEFORE THE MAILBOX READ LANDS — recognise the reader nowhere.
- *
- * This used to be the phone's permanent posture: there was no mailbox read on this client at
- * all, and the honest thing for a surface with no facts is the one the webapp documents
- * (`message-chrome.tsx` `ownAddresses`). The read exists now (`src/net/mailboxes.ts`, fed
- * through {@link WorldView.ownAddresses}) and this is what remains: the FALLBACK for the render
- * before the first answer arrives, and for a server that could not be asked.
- *
- * It stays a named constant rather than an inline `[]` because that is what made the feed a
- * one-line change when it finally came, and the same is true of whatever needs it next.
+ * The answer before the mailbox read lands — recognise the reader nowhere. The read exists
+ * (`src/net/mailboxes.ts`, fed through {@link WorldView.ownAddresses}); this is the fallback
+ * for the render before the first answer arrives, and for a server that could not be asked —
+ * the posture the webapp documents (`message-chrome.tsx` `ownAddresses`). A named constant
+ * rather than an inline `[]`: that is what made the feed a one-line change.
  */
 const NO_OWN_ADDRESSES: readonly string[] = [];
 
 /**
- * WHO ORGANIZES THE MAILBOXES THIS PHONE IS SHOWING — the reader banner's one fact, or `null`
- * when there is nothing true to say.
- *
- * ── WHY A BANNER AT ALL, AND WHY IT WAS NEVER BUILT ───────────────────────────────────────
- *
- * A phone cannot be the organizer: there is no IMAP client here and no engine dialling a mail
- * server (`copy.ts`'s three-doors note). So every decision this phone takes is carried out
- * somewhere else, and the onboarding deck has carried `phoneBanner`/`phoneBannerWhy` from the
- * beginning to say so. They had no consumer because this client had no mailbox read: naming a
- * holder with no source would have been an invented claim, which is the one thing the whole
- * flow's copy is written against.
- *
- * ── THE THREE ANSWERS, AND ONLY ONE OF THEM IS A NAME ─────────────────────────────────────
- *
- *  · **A named holder, and only one.** The paired server reports somebody else organizes these
- *    mailboxes and names them. That is the banner.
- *  · **No named holder.** `organizedBy` is null on every row — which the DTO is explicit about
- *    meaning "the answering install organizes it", and also covers "nobody ever has". Nothing
- *    to name, and the account header directly above already says which server this is, so the
- *    banner is WITHHELD rather than filled with an origin URL nobody calls a machine name.
- *  · **Two different holders.** One mailbox organized by a laptop, another by Cloud. The copy
- *    has one `{name}` and naming either one is false about the other, so it is withheld too.
- *    Rare, and the rule is stated rather than left to whichever row sorted first.
- *
- * `stopped` rides along because the two states want opposite sentences everywhere else they
- * reach a person (`MailboxDTO.organizerState`), and a phone that says "organized by Andreas's
- * laptop" about an organizer that stopped renewing is telling somebody their decisions are
- * being carried out when they are not.
+ * Who organizes the mailboxes this phone is showing — the reader banner's one fact, or `null`
+ * when nothing true can be said. A phone cannot be the organizer (no IMAP client here), so the
+ * deck's `phoneBanner`/`phoneBannerWhy` say who does. Three answers, only one a name: a single
+ * named holder is the banner; no named holder (`organizedBy` null on every row — the DTO's
+ * "the answering install organizes it") withholds the banner rather than showing an origin URL;
+ * two different holders withholds too — the copy has one `{name}` and either would be false
+ * about the other. `stopped` rides along because a phone saying "organized by X's laptop" about
+ * an organizer that stopped renewing claims decisions are carried out when they are not.
  */
 export interface PhoneOrganizer {
   /** The holder's own machine name — never empty, or this is not a `PhoneOrganizer`. */
@@ -434,15 +376,13 @@ export interface ReplyAllRecipients {
 }
 
 /**
- * WHO A REPLY TO ALL IS ADDRESSED TO — or `null` when "all" is nobody beyond the plain reply.
- *
+ * Who a reply-to-all is addressed to — or `null` when "all" is nobody beyond the plain reply.
  * Mirrored from `apps/webapp/app/shell/compose-from.ts#replyAllRecipients` (the reference; the
- * webapp shell is not an importable package from React Native). The `null` is the visibility
- * rule as well as the degenerate case: the bar offers Reply all exactly when this returns an
- * envelope, and the send path asks the SAME call, so what the sheet promised and what leaves
- * the account are one decision. With no own addresses the self-filter has nothing to filter
- * with, so the envelope is offered from two listed people and withheld at one — a lone
- * recipient is almost always the reader. Counted across BOTH lines, folded, one person once.
+ * webapp shell is not importable from React Native). The `null` is the visibility rule as well
+ * as the degenerate case: the bar offers Reply all exactly when this returns an envelope, and
+ * the send path asks the same call, so promise and send are one decision. With no own addresses
+ * the envelope is offered from two listed people and withheld at one — a lone recipient is
+ * almost always the reader. Counted across both lines, folded, one person once.
  */
 export function replyAllRecipients(
   parent: { from: EmailAddress; to: readonly EmailAddress[]; cc?: readonly EmailAddress[] },
@@ -561,17 +501,13 @@ export interface WorldScheduled {
  */
 export function liveScheduled(reader: EntityReader, v: WorldView): WorldScheduled[] {
   /**
-   * A KEPT APPOINTMENT THAT COULD NOT BE SENT IS NO LONGER `scheduled` — and this surface is
-   * the only place on the phone that can say so.
-   *
-   * `runScheduledSendPass` closes a deterministically-refused (or day-late) appointment back to
-   * an ordinary `draft` carrying the server's sentence in `sendError`. The shared selector
-   * lists `scheduled` rows alone — correct for the webapp, where such a row simply falls into
-   * the Drafts list underneath with its refusal quoted. THIS APP HAS NO DRAFTS SCREEN: filtered
-   * the same way, a message the reader scheduled would vanish from the phone entirely, with
-   * nothing said, and "it disappeared" reads as "it was sent". So the failed rows are listed
-   * beside the standing ones, marked by `when: null` + a `failure` sentence, and they sort
-   * last (no appointment stands, so there is no time to order them by).
+   * A kept appointment that could not be sent is no longer `scheduled`, and this surface is the
+   * only place on the phone that can say so. `runScheduledSendPass` closes such a row back to a
+   * `draft` carrying the server's sentence in `sendError`; the shared selector lists `scheduled`
+   * rows alone — correct for the webapp, where the row falls into Drafts underneath. This app
+   * has no Drafts screen: filtered the same way the message would vanish entirely, and "it
+   * disappeared" reads as "it was sent". So failed rows are listed beside standing ones, marked
+   * by `when: null` + a `failure` sentence, and sort last (no appointment, no time to order by).
    */
   const failed = reader.list<EngineDraft>("draft")
     .filter((d) => d.status === "draft" && (d.sendError ?? "") !== "")
@@ -856,22 +792,13 @@ export interface WorldPile {
 }
 
 /**
- * The pile blurbs, READ FROM THE COPY DECK AT CALL TIME.
- *
- * This was `PILE_META`, a const holding its own copies of the three titles and notes, spread
- * into each pile row. The titles it held were the same English the deck held, so the two agreed
- * and nothing ever looked wrong — until a translated deck existed, at which point the More
- * screen (which reads `Copy`) followed it and the Piles screen (which read this) did not. Both
- * titles and notes stayed English on that one screen, and no test could see it, because in
- * English the two decks are indistinguishable.
- *
- * A FUNCTION, not a const, and that is the part that keeps it fixed: a module-level const would
- * capture whatever the deck said when this module was first imported, which is the same defect
- * again with a longer fuse. Reading inside the call means the row carries whatever the deck says
- * at the moment it is built, however the deck comes to be chosen.
- *
- * The `switch` is exhaustive over `PileKind`; a new pile that forgets its wording will not
- * compile rather than rendering a blank strip.
+ * The pile blurbs, read from the copy deck at call time. A const held its own copies of the
+ * titles and agreed with the deck in English — until a translated deck existed, at which point
+ * the More screen followed it and the Piles screen did not, with no test able to see it. A
+ * function, not a const: a module-level const would capture whatever the deck said at first
+ * import — the same defect with a longer fuse. Reading inside the call means the row carries
+ * what the deck says at the moment it is built. The `switch` is exhaustive over `PileKind`; a
+ * new pile that forgets its wording will not compile.
  */
 function pileCopy(kind: PileKind): { title: string; note: string } {
   switch (kind) {
@@ -1201,15 +1128,12 @@ export interface LiveDeps {
 }
 
 /**
- * THE ENGINE'S ABANDONED-VERB SHAPE, re-exported so the phone's SURFACES do not have to import the
- * engine package to name it.
- *
- * `privacy.test.ts#ENGINE_IMPORTERS` is an allow-list of the files permitted to reach into
- * `@ohmail/client-engine`, and it is short on purpose: the phone's licence to talk to a server is
- * meant to be auditable by reading two directories. The chrome needs this TYPE and nothing else, so
- * widening the allow-list for three more files would have traded a real boundary for a convenience.
- * This file is already inside the seam and already the phone's one door to the engine's vocabulary
- * (`WorldActions`, `WorldMail`, `WorldPile` all leave through here), so the type leaves the same way.
+ * The engine's abandoned-verb shape, re-exported so the phone's surfaces do not import the
+ * engine package to name it. `privacy.test.ts#ENGINE_IMPORTERS` is a deliberately short
+ * allow-list of files permitted to reach `@ohmail/client-engine` — the phone's licence to talk
+ * to a server should be auditable by reading two directories. The chrome needs this type and
+ * nothing else; this file is already the phone's one door to the engine's vocabulary
+ * (`WorldActions`, `WorldMail`, `WorldPile` leave through here), so the type leaves the same way.
  */
 export type { AbandonedMutation, MutationResult } from "@ohmail/client-engine";
 
@@ -1268,16 +1192,13 @@ export interface LiveWorldActions {
   deleteMessage(messageId: string): Promise<boolean>;
   /**
    * Reply (or reply all) — `mail_send` with `inReplyTo`; the engine derives the envelope.
-   * `sig` is the signature block's OWN derived text (`effectiveSignature`, computed once by
-   * the sheet for display and handed here verbatim — what is shown is what ships); `null`
-   * leaves the mutation byte-identical to one built before the block existed.
-   *
-   * `sendAt` (Send later, mail 0077) puts an APPOINTMENT on the message instead of sending it:
-   * the adapter reads the same field and posts `/drafts/:id/schedule`, so nothing dials SMTP
-   * now. ONE SEND MACHINE, deliberately — the webapp shell hands `sendAt` to its single send
-   * path for the same reason: a second dispatch arm would be a second place for the
-   * signature, the empty-body refusal and the Idempotency-Key rules to drift. What differs is
-   * the CONFIRMED sentence, which must never say "sent" over a message still on the account.
+   * `sig` is the signature block's own derived text (`effectiveSignature`, computed once by
+   * the sheet — what is shown is what ships); `null` leaves the mutation byte-identical to
+   * one built before the block existed. `sendAt` (Send later, mail 0077) puts an appointment
+   * on the message instead of sending: the adapter posts `/drafts/:id/schedule`, nothing
+   * dials SMTP now. One send machine, deliberately — a second dispatch arm would be a second
+   * place for the signature, empty-body refusal and Idempotency-Key rules to drift. Only the
+   * confirmed sentence differs, and it must never say "sent" over a message still on the account.
    */
   sendReply(
     messageId: string,
@@ -1308,17 +1229,14 @@ export interface LiveWorldActions {
    */
   screenSender(messageId: string, dest: Destination, scope: Scope): Promise<boolean>;
 
-  /* ── the folder verbs (FOLDERS-SPEC.md stage 2) — the webapp `useFolderVerbs` arms ────────
-   *
-   * USER-COMMANDED REAL IMAP OPERATIONS in the user's own mailbox, dispatched on the same
-   * engine mutations every client uses (`folder_create` / `folder_rename` / `folder_delete` /
-   * `folder_op_dismiss`). The optimism model is the family's: the mutation paints a PENDING
-   * MARKER (`FolderEntity.op`), the mailbox's `name` stays the truth until the worker lands
-   * the change, and the wake channel settles it in seconds. Success says NOTHING — the
-   * pending row itself is the feedback — and only `rolled_back` speaks, with the one failure
-   * sentence (`folder-verbs.ts`'s `speakIfRolledBack`, verbatim in intent). `queued` is not a
-   * failure: the command stands on the retry queue under its key, and the marker staying
-   * painted is truthful.
+  /* The folder verbs (FOLDERS-SPEC.md stage 2) — the webapp `useFolderVerbs` arms.
+   * User-commanded real IMAP operations in the user's own mailbox, on the same engine
+   * mutations every client uses (`folder_create` / `folder_rename` / `folder_delete` /
+   * `folder_op_dismiss`). The optimism model is the family's: the mutation paints a pending
+   * marker (`FolderEntity.op`), the mailbox's `name` stays the truth until the worker lands
+   * the change, the wake channel settles it. Success says nothing — the pending row is the
+   * feedback — and only `rolled_back` speaks (`folder-verbs.ts`'s `speakIfRolledBack`, in
+   * intent). `queued` is not a failure: the command stands on the retry queue under its key.
    */
 
   /** Create a folder — `name` is the FULL canonical path. Refused without a uuid source. */
@@ -1733,18 +1651,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /**
-   * A SEND'S THREE HONEST OUTCOMES — narrower than {@link watched}, deliberately.
-   *
-   * For triage and moves, `queued` leaving the optimistic view standing is truthful. For a
-   * SEND it is not: "Reply sent." on a queued send claims a delivery that has not happened.
-   * So `confirmed` alone says sent. `queued` first retries ONCE, right here (a transport
-   * blip is the common case, and `flushPending` re-dispatches under the SAME
-   * Idempotency-Key, so the retry cannot double-deliver); still queued after that, the
-   * caller keeps its composer OPEN in a locked queued state — the engine's queue is
-   * memory-only, so the text on screen and the queued intent live and die together (an app
-   * kill loses both halves at once: nothing sends that the reader was not shown), and the
-   * locked Send is what keeps a fresh-key duplicate impossible while the reconnect flush
-   * (`connection.tsx`'s drain) keeps retrying the original.
+   * A send's three honest outcomes — narrower than {@link watched}, deliberately. For triage
+   * and moves a standing `queued` view is truthful; for a send, "Reply sent." on a queued send
+   * claims a delivery that has not happened. So `confirmed` alone says sent. `queued` first
+   * retries once, right here (`flushPending` re-dispatches under the same Idempotency-Key, so
+   * the retry cannot double-deliver); still queued, the caller keeps its composer open in a
+   * locked queued state — the engine's queue is memory-only, so the text on screen and the
+   * queued intent die together (an app kill sends nothing the reader was not shown), and the
+   * locked Send keeps a fresh-key duplicate impossible while the reconnect flush retries.
    */
   const sent = async (p: Promise<MutationResult>, sentToast: RefusalArg): Promise<SendResult> => {
     const first = await p.then((r) => r, () => null);
@@ -1804,19 +1718,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /**
-   * CANCEL A SCHEDULED SEND — `draft_schedule_cancel`, and THREE outcomes, not two.
-   *
-   * ONLY `confirmed` IS A CANCELLATION (the webapp `AppShell`'s `cancelOutcomeToast`, verbatim
-   * in intent). `queued` means the wire refused retryably and the intent is parked — the
-   * appointment STILL EXISTS server-side and its clock is still running, so saying "cancelled"
-   * would be the phone promising something the server has not done, on the one surface whose
-   * whole content is a promise about time. `rolled_back` is the server's own refusal: the
-   * scheduled-send pass claimed the row first (409 "already being sent") and the mail is
-   * leaving, which the overlay rollback puts back on screen as still-scheduled.
-   *
-   * The optimistic overlay follows the same truth: a queued mutation KEEPS its effect, so the
-   * row reads un-scheduled while the sentence says the cancel has not landed — user-always-
-   * wins, with the doubt carried in words.
+   * Cancel a scheduled send — `draft_schedule_cancel`, three outcomes, not two. Only
+   * `confirmed` is a cancellation (the webapp `AppShell`'s `cancelOutcomeToast`, in intent).
+   * `queued` means the wire refused retryably: the appointment still exists server-side with
+   * its clock running, so saying "cancelled" would promise something the server has not done —
+   * on the one surface whose whole content is a promise about time. `rolled_back` is the
+   * server's own refusal: the scheduled-send pass claimed the row (409 "already being sent")
+   * and the mail is leaving; the overlay rollback puts it back as still-scheduled. A queued
+   * mutation keeps its effect — the row reads un-scheduled while the words carry the doubt.
    */
   const cancelSchedule = async (draftId: string): Promise<boolean> => {
     const r = await engine
@@ -1824,16 +1733,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       .then((res) => res, () => null);
     const status = r?.status ?? "rolled_back";
     /**
-     * AND THE TOO-LATE SENTENCE IS RESERVED FOR THE SERVER'S OWN CONFLICT — deliberately
-     * narrower than the webapp twin, which says it for every non-confirmed non-queued result.
-     *
-     * "This message is already being sent" is a claim about what the server is doing right
-     * now, on the one surface whose entire content is a promise about time. Three different
-     * outcomes reach this branch and only ONE of them supports the claim: the 409 from the
-     * scheduled-send pass ({@link ScheduleService}'s `conflict`). The other two are a local
-     * `not_found` — a concurrent drain already took the row, so the appointment is gone rather
-     * than in flight — and a non-retryable transport refusal, where nothing is known about the
-     * send at all. Both get the ordinary save-failed sentence, which is true of all three.
+     * The too-late sentence is reserved for the server's own conflict — narrower than the
+     * webapp twin. "This message is already being sent" is a claim about what the server is
+     * doing right now; three outcomes reach this branch and only the 409 from the
+     * scheduled-send pass ({@link ScheduleService}'s `conflict`) supports it. The other two —
+     * a local `not_found` (a concurrent drain already took the row, so the appointment is
+     * gone rather than in flight) and a non-retryable transport refusal (nothing known) —
+     * get the ordinary save-failed sentence, which is true of all three.
      */
     const conflict = r?.error?.code === "conflict" || r?.error?.status === 409;
     toast(
@@ -1886,22 +1792,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /**
-   * SCREENING FROM THE OPEN MESSAGE — the rule ladder, mirrored from
-   * `apps/webapp/app/shell/sender-screening.ts#planScreeningChange` (the reference):
-   *
-   *   1. a subject still WAITING at the gate is decided with `screener_decide` on its newest
-   *      held message — the server promotes the rule inside the decision's own transaction, so
-   *      no `rule_create` is written beside it;
-   *   2. past the gate, an enabled term-free rule of the SAME kind for exactly this subject that
-   *      already points at the destination means nothing to write;
-   *   3. one (or several — every one of them, never just the first) pointing somewhere else is
-   *      RETARGETED with `rule_update`, not duplicated;
-   *   4. otherwise one is written, with `applyRetro` so the server's pass files the whole bag.
-   *
-   * The moves are the optimistic half — the rows the reader can see move at once, capped at the
-   * webapp's `RETRO_VISIBLE_MOVES` (50); the server's pass does the rest. The rule is awaited and
-   * reported; the moves are not — they are `move`s, the verb every list uses, and each rolls its
-   * own row back. The mutations read the RAW mirror: rules and physical folders are locations.
+   * Screening from the open message — the rule ladder, mirrored from
+   * `apps/webapp/app/shell/sender-screening.ts#planScreeningChange`: (1) a subject still waiting
+   * at the gate is decided with `screener_decide` on its newest held message — the server
+   * promotes the rule in the decision's own transaction; (2) an enabled term-free rule of the
+   * same kind already at the destination writes nothing; (3) rules pointing elsewhere — every
+   * one, never just the first — are retargeted with `rule_update`; (4) otherwise one is written,
+   * with `applyRetro`. The moves are the optimistic half, capped at `RETRO_VISIBLE_MOVES` (50);
+   * the rule is awaited and reported, the moves roll their own rows back. Raw mirror reads.
    */
   const screenSender = async (messageId: string, dest: Destination, scope: Scope): Promise<boolean> => {
     const raw = engine.read();
@@ -2075,16 +1973,13 @@ export interface WorldActions {
 }
 
 /**
- * ONE actions object for the app's whole life, delegating to whichever backend is CURRENT
- * at call time.
- *
- * The world data is legitimately a new object on every mirror version — that is what makes
- * the screens re-render — but an `actions` object minted inside the same memo made every
- * effect that depends on an action re-fire per version: `useFocusEffect`'s cleanup ran
- * mid-visit (committing the waterline the visit semantics say must hold still) and the
- * message screen's open effect re-dispatched after its own mutation's version bump — a
- * rejected mark-read re-asked in a loop. Identity here is constant by
- * construction; only the delegate moves, and it moves per CALL, never per render.
+ * One actions object for the app's whole life, delegating to whichever backend is current at
+ * call time. World data is legitimately a new object per mirror version — that re-renders the
+ * screens — but an `actions` object minted in the same memo made every effect depending on an
+ * action re-fire per version: `useFocusEffect`'s cleanup ran mid-visit (committing the
+ * waterline the visit semantics say must hold still) and a rejected mark-read re-asked in a
+ * loop. Identity here is constant by construction; only the delegate moves, per call, never
+ * per render.
  */
 export function stableActions(current: () => WorldActions): WorldActions {
   return {
@@ -2162,15 +2057,12 @@ export function dayNine(from: Date, daysAhead: number): Date {
 }
 
 /*
- * ═══ SEND LATER'S HORIZONS ════════════════════════════════════════════════════════════════
- *
- * The resurface presets above are reused WHERE THE MEANING COINCIDES — "tomorrow morning" and
- * "Monday morning" ARE `tomorrowNine`/`nextWeekNine`, the product's one 09:00-where-the-reader-is
- * convention (the webapp's `format.ts` says the same sentence over the same two functions).
- * Sending adds exactly two things resurfacing never needed: an EVENING preset (nobody
- * resurfaces mail at dinner; plenty of people send it then), and a label that can name a day
- * further out than a week, because an appointment may be months away while a resurface label
- * never had to say more than "Fri 09:00".
+ * Send later's horizons. The resurface presets are reused where the meaning coincides —
+ * "tomorrow morning" and "Monday morning" are `tomorrowNine`/`nextWeekNine`, the product's one
+ * 09:00-where-the-reader-is convention (the webapp's `format.ts` says the same sentence over
+ * the same two functions). Sending adds exactly two things resurfacing never needed: an
+ * evening preset (nobody resurfaces mail at dinner; plenty send it then), and a label that can
+ * name a day further out than a week, because an appointment may be months away.
  */
 
 /**
@@ -2273,42 +2165,28 @@ export function whenLabel(iso: string, zone: string): string {
 }
 
 /**
- * HAS THIS MIRROR EVER COMPLETED A DRAIN — the boot-from-local question, answered from the
- * engine's own completion stamp ({@link LAST_DRAIN_AT_META}, written when a drain settles and
- * read back after the store hydrates). This is what separates the two states a zero-row list
- * can be in, which the sync interim-state rule says must never be conflated:
- *
- *  · **settled** — some session finished a drain over this mirror, so zero rows means the
- *    mailbox (or this pile of it) is genuinely empty: the empty state may speak;
- *  · **unsettled** — no drain has ever completed here (a first-ever launch, or a bootstrap
- *    killed before its final page), so zero rows means UNKNOWN: the screen owes the reader
- *    the shape of what is coming (`listSurface`), never "Nothing here".
- *
- * The stamp persists in the mirror, which is exactly why a warm relaunch renders content in
- * its first frame with the network still unasked — `boot-surface.test.ts` pins that the
- * reopened store still answers `true` with no adapter attached. Typed against the one method
- * it reads rather than the store class, so the suite can drive it without a store.
+ * Has this mirror ever completed a drain — the boot-from-local question, answered from the
+ * engine's own completion stamp ({@link LAST_DRAIN_AT_META}). It separates the two states a
+ * zero-row list can be in, which must never be conflated: settled — a drain finished, so zero
+ * rows is a genuinely empty mailbox and the empty state may speak; unsettled — no drain ever
+ * completed (first launch, or a bootstrap killed early), so zero rows is unknown and the
+ * screen owes the reader `listSurface`, never "Nothing here". The stamp persists in the
+ * mirror, so a warm relaunch renders in its first frame with the network unasked
+ * (`boot-surface.test.ts` pins it). Typed against the one method it reads, not the store class.
  */
 export function mirrorSettled(store: { getMeta<T>(key: string): T | undefined }): boolean {
   return store.getMeta<string>(LAST_DRAIN_AT_META) !== undefined;
 }
 
 /**
- * THE STALE LABEL'S TIME, or `null` when no label is owed — the Freshness Contract's middle
- * state (INSTANT-ARCH §6.6), on this surface.
- *
- * `mirrorSettled` above separates unknown from settled (the skeleton rule); this separates
- * settled-and-CURRENT from settled-and-STALE: a mirror whose last completed drain is older
- * than the engine's own threshold renders instantly — the local rows are renderable truth —
- * and the chrome says how old, quietly ("As of Fri 09:00 · catching up"), until a drain
- * settles and the engine's verdict flips back to current. The engine is the ONE derivation
- * (`engine.freshness()`, the same stamp and threshold `freshenStaleResume` reads), so this
- * surface can never disagree with the webapp's strip about what stale means.
- *
- * Formatted HERE, through {@link whenLabel} — the world layer hands the chrome a
- * sentence-ready time in the reader's own zone, never a raw instant to re-derive. Typed
- * against the one method it reads, `mirrorSettled`'s own rule, so the suite drives it with
- * no engine.
+ * The stale label's time, or `null` when no label is owed — the Freshness Contract's middle
+ * state (INSTANT-ARCH §6.6) on this surface. `mirrorSettled` separates unknown from settled;
+ * this separates settled-and-current from settled-and-stale: a mirror whose last drain is
+ * older than the engine's threshold renders instantly — local rows are renderable truth — and
+ * the chrome says how old ("As of Fri 09:00 · catching up") until a drain settles. The engine
+ * is the one derivation (`engine.freshness()`, the same stamp `freshenStaleResume` reads), so
+ * this surface cannot disagree with the webapp's strip about what stale means. Formatted here
+ * through {@link whenLabel} — the chrome gets a sentence-ready time in the reader's own zone.
  */
 export function staleAsOf(
   engine: { freshness(): { state: "unknown" | "stale" | "current"; asOf: string | null } },

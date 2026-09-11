@@ -1,34 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  WHAT THE CONNECTION LAYER HAS DECIDED — written before the paint, never by it
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * Every late answer in `net/connection.tsx` asks the same question before it acts: *is this still
- * the session I was working on?* The provider answered it from a ref assigned during RENDER
- * (`live.current = state`), and that is the defect this module exists to end.
- *
- * ── MEASURED ON A DEVICE, AND IT IS NOT A RACE ─────────────────────────────────────────────
- *
- * `setState` from an async body is scheduled by React — a task, not a microtask. On the STANDALONE
- * door the work that follows it settles in microtasks: `verifyIdentity()` returns
- * `{ kind: "unverified" }` immediately (there is no `/auth/session` on an engine in this process),
- * and the roster read is a call into `handle`. So the verdict callback and the consent press BOTH
- * ran before the render that would have set the ref, read `k: "connecting"`, and returned — the
- * verdict as `false`, which skips the first drain for ever, and the press with no sentence
- * anywhere. On a device: `entities 0` in the mirror beside two messages in the engine's own store,
- * and `organize_consented_at` NULL with the whole `ohmail/*` tree never created.
- *
- * It cannot happen on a PAIRED door, which is why every existing arm works: there the identity
- * probe is a real request, so the paint always lands first. And it cannot happen under the node
- * suite either — this workspace has no React Native renderer at all, so the one place React's
- * scheduling decides whether a mailbox syncs was reachable by nothing.
- *
- * ── SO THE DECIDED STATE IS A VALUE THIS LAYER OWNS ────────────────────────────────────────
- *
- * {@link decidedState} holds it and paints second. `now()` is what the layer has decided, which is
- * what a staleness check wants; what is on screen is React's business and no late answer needs it.
- * The order inside `enter` is the whole of the fix and the case that drives it asserts exactly
- * that: the value has moved before `paint` is called, not after.
+ * What the connection layer has decided — written before the paint, never by it. Every late answer
+ * in `net/connection.tsx` asks "is this still the session I was working on?", and a ref assigned
+ * during render answered it a paint too late. Measured on a device, and not a race: `setState` from
+ * an async body is a task, while the standalone door's follow-up settles in microtasks, so the
+ * identity verdict and the consent press both read `connecting` and returned — no first drain ever,
+ * no consent recorded (a paired door's probe is a real request, so its paint lands first). {@link
+ * decidedState} holds the value and paints second; `enter`'s internal order is the whole fix, and
+ * the driving test asserts the value has moved before `paint` is called.
  */
 
 /** The layer's own record of its state, and the one writer of it. */

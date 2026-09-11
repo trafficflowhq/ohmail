@@ -1,46 +1,12 @@
 /**
- * THE BEARER MANAGER, ON REACT NATIVE — this app's whole credential, in one small object.
- *
- * A port of `apps/desktop/src/host-client/bearer.ts` SEMANTICS — single-flight rotation,
- * 401/403-only judgment, generation-bound replay, refusal-only sign-out — with two platform
- * substitutions, each of which is a *narrowing*, not a loosening:
- *
- *  · **The refresh token persists in the device keystore, not localStorage.** The vault this
- *    manager writes through is expo-secure-store (`servers-native.ts`): iOS Keychain / Android
- *    Keystore-encrypted storage, readable only by this app. That is a strictly stronger posture
- *    than the browser client's — there, any script on the origin can read localStorage and the
- *    defense is the door's CSP; here the OS itself is the boundary and no other app's code runs
- *    in this process. The access token stays in memory only, exactly as on desktop.
- *
- *  · **`navigator.locks` is DROPPED, and nothing replaces it, because nothing needs to.** The
- *    browser manager serializes rotation across TABS — several JS runtimes sharing one storage
- *    key, any of which may present the family's one refresh token. React Native is ONE JS
- *    runtime with no siblings: this object's in-memory token IS the family's head, so the
- *    desktop's storage re-read before presenting (documented in its header) has no stale-copy
- *    case to collapse, and the plain in-memory single-flight promise below is the complete
- *    serialization. There is no bare window left open — there was never a second presenter.
- *
- * Everything else is the desktop file's contract, kept deliberately:
- *
- *  · **Only a 401/403 from `/auth/refresh` is an authentication judgment.** A network failure,
- *    a 503 admission bound, a proxy hiccup — none of those judged the token, so none of them
- *    clears it. Clearing on anything less signs a working phone out because a laptop was busy.
- *  · **Recovery is bound to the token GENERATION.** A 401 stamped in an era a rotation already
- *    replaced restamps and replays without rotating again — rotating on stale refusals burns
- *    the fresh refresh token and pulls the rug from under requests carrying the fresh access
- *    token.
- *  · **One rotation, one replay.** A second 401 on a token minted milliseconds ago is a
- *    revocation, and the rotation path has already decided what that means.
- *
- * ── THE RESIDUAL, RESTATED FOR THIS PLATFORM ─────────────────────────────────────────────────
- *
- * A rotation whose RESPONSE is lost, or an app killed between the server committing a rotation
- * and the vault write landing, leaves the keystore holding a token the server has already
- * rotated past. The next launch presents it, the server reads strict reuse — correctly — and
- * revokes the family. The recovery is the product's own and it is one gesture: the phone lands
- * on the server picker and a single fresh QR scan re-pairs it. Bounded, visible, never a
- * silently wrong session. (`rotate()` awaits the vault write before resolving, so the window is
- * a kill *during* the keystore write, not the whole life of a fire-and-forget promise.)
+ * The bearer manager, on React Native — this app's whole credential, in one small object. A
+ * port of `apps/desktop/src/host-client/bearer.ts` semantics — single-flight rotation,
+ * 401/403-only judgment, generation-bound replay, refusal-only sign-out — with two narrowing
+ * substitutions: the refresh token persists in the device keystore, and `navigator.locks` is
+ * dropped because RN is one JS runtime with no sibling presenters. Only a 401/403 from
+ * `/auth/refresh` judges the token; recovery is bound to the token generation; one rotation,
+ * one replay. Residual: a lost rotation response leaves the keystore one token behind, strict
+ * reuse revokes the family, and one fresh QR scan re-pairs (`rotate()` awaits the vault write).
  */
 
 /** The wire pair the redeem and the refresh both answer — the desktop manager's exact shape. */
@@ -227,36 +193,24 @@ export class BearerManagerRN {
 
   /**
    * Sign this device out on purpose: tell the door (best-effort — the local clear must not
-   * hang on an unreachable server), then clear. `/auth/logout` revokes the session server-side;
-   * `allDevices` stays step-up-gated there, so this can only ever end ITSELF.
-   *
-   * Routed through {@link fetch} — the manager's own recovery — NOT the raw transport:
-   * `/auth/logout` is an authenticated route, and a cold launch or an aged-out access
-   * token would send it bare, collect a silent 401, and clear the LOCAL half while the refresh
-   * family stayed live server-side. Under the recovery, the 401 buys a fresh access token with
-   * the stored refresh token and the replayed logout actually lands. If that recovery is itself
-   * refused, the manager has already died honestly — `die()`'s idempotence makes the final
-   * clear a no-op.
+   * hang on an unreachable server), then clear. `/auth/logout` revokes the session
+   * server-side; `allDevices` stays step-up-gated there, so this can only ever end itself.
+   * Routed through {@link fetch} — the manager's own recovery — not the raw transport:
+   * `/auth/logout` is authenticated, and a cold launch would send it bare, collect a silent
+   * 401, and clear the local half while the refresh family stayed live server-side. Under the
+   * recovery the replayed logout actually lands; if the recovery is itself refused, the
+   * manager has already died honestly — `die()`'s idempotence makes the final clear a no-op.
    */
   async logout(): Promise<boolean> {
-    // ANSWERS WHETHER THE SERVER WAS ACTUALLY TOLD, and that is the whole reason for the return.
-    // The local half happens either way — a device taking its own credential back must not be
-    // blocked by an unreachable server — but the SERVER half is what revokes the session and,
-    // on the hosted tier, takes this device's wake registration down with it. Reporting a forget
-    // over a logout that never landed leaves both alive with nothing left to retry them.
-    //
-    // ── 401 COUNTS AS TOLD ONLY WHEN THE FAMILY WAS ACTUALLY JUDGED ───────────────────────
-    //
-    // A bare 401 is not evidence on its own. `fetch` answers the ORIGINAL 401 when its one
-    // recovery could not run — a `/auth/refresh` that 500s, or a dead network — and the refresh
-    // token is then still live, the hosted session still open, its push row still dialling. So
-    // this read a transient refresh outage as a completed revocation and let a forget report
-    // both take-backs done.
-    //
-    // What separates them is what the manager DID: a refusal is an authentication judgment and
-    // clears the credential (`rotate` → `die`), while a transient failure clears nothing. So a
-    // 401 with no credential left is "already gone"; a 401 with the credential still held is a
-    // logout that did not land. Anything else — a 500, a 503, a dead network — did not land.
+    // Answers whether the server was actually told — the whole reason for the return. The
+    // local half happens either way, but the server half is what revokes the session and, on
+    // the hosted tier, takes this device's wake registration down; reporting a forget over a
+    // logout that never landed leaves both alive with nothing left to retry them. A bare 401
+    // is not evidence on its own: `fetch` answers the original 401 when its one recovery could
+    // not run (a `/auth/refresh` that 500s, a dead network), and the refresh token is then
+    // still live. What separates them is what the manager DID: a refusal clears the credential
+    // (`rotate` → `die`), a transient failure clears nothing — so a 401 with no credential
+    // left is "already gone", a 401 with the credential still held did not land.
     let told = true;
     if (this.access !== null || this.refresh !== null) {
       told = false;

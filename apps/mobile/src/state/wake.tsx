@@ -11,40 +11,14 @@ import {
 } from "../net/unified-push";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE WAKE LIFECYCLE — MOUNTED AT THE ROOT, because that is what the copy promises
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * One provider owning three things that are only meaningful together: which distributors this
- * phone has, which one is chosen, and what happened when we registered with the server. Splitting
- * them would let the screen render a chosen distributor beside a registration made against a
- * different one.
- *
- * ── WHY THIS IS A PROVIDER AND NOT A HOOK THE SETTINGS SCREEN CALLS ───────────────────────────
- *
- * It WAS a hook, and that was a real defect. The `onWake` subscription — the one
- * that turns a delivered wake into a `/sync` — lived inside it, so it existed only while the
- * pushed Settings screen was mounted. A launch that never opened Settings had no listener at all,
- * and pressing Back after enabling wakes tore down the one there was. The app's own copy says a
- * wake arrives "while ohmail is running — open or in the background", and that sentence was false
- * for every user who was not sitting on the Settings screen.
- *
- * So the lifetime of this is the APP's, mounted beside the connection provider in `_layout.tsx`.
- * Settings consumes it through {@link useWake} and renders; it no longer owns anything.
- *
- * ── WHAT IS DELIBERATELY NOT HERE ─────────────────────────────────────────────────────────────
- *
- * NO transport. Every request goes through `net/push.ts`, which is the file the privacy census
- * admits to the network seam and which holds no origin of its own; this module holds React state
- * and calls it. That is why it lives in `state/` — the census forbids a file outside the seam from
- * making a request, and this one does not.
- *
- * ── THE REGISTRATION IS RE-MADE ON EVERY ATTEMPT, NOT CACHED ──────────────────────────────────
- *
- * The connector's own guidance is to register on every app start, because that is also how it
- * confirms the distributor connection is alive. The server deduplicates: one endpoint is one row,
- * and a re-registration re-stamps the device and the keys rather than accumulating. So there is
- * nothing to be clever about — asking again is cheap and is what heals a stale registration.
+ * The wake lifecycle — mounted at the root, because that is what the copy promises. One
+ * provider owning three things only meaningful together: which distributors this phone has,
+ * which is chosen, and what happened when we registered. As a hook inside the Settings screen
+ * the `onWake` subscription existed only while that screen was mounted — a launch that never
+ * opened Settings had no listener, making "while ohmail is running" false; so its lifetime is
+ * the app's (`_layout.tsx`), and Settings consumes {@link useWake}. No transport here — every
+ * request goes through `net/push.ts`, the seam the privacy census admits. The registration is
+ * re-made on every attempt: the server deduplicates, and asking again heals a stale one.
  */
 
 export interface Wake {
@@ -93,19 +67,14 @@ export function WakeProvider({ children }: { children: ReactNode }) {
   const subscriptionId = useRef<string | null>(null);
 
   /**
-   * ── THE GENERATION, AND WHY MAKING THIS A PROVIDER CREATED THE NEED FOR IT ────────────────────
-   *
-   * While this lived in the Settings screen, leaving the screen unmounted everything, so a
-   * registration for profile A could not outlive a switch to profile B. Now that it survives every
-   * screen — which is the whole point — an in-flight registration CAN: the connector's `register`
-   * has a fifteen-second ceiling, and a profile switch inside that window used to let A's late
-   * result overwrite B's state and, worse, B's `subscriptionId`. Turning wakes off then sent A's
-   * subscription id to B's server (a 404) and left A's row live, sending wakes to a phone that had
-   * moved on. That is the cost of the fix above, and it is paid here.
-   *
-   * One counter, bumped every time the live session changes, plus the session object itself so a
-   * delivered wake can be checked against the session it was subscribed for. Refs rather than state
-   * because every reader is a callback, and a re-render would be a wasted one.
+   * The generation — the cost of being a provider, paid here. In the Settings screen, leaving
+   * unmounted everything, so a registration for profile A could not outlive a switch to B.
+   * Surviving every screen, an in-flight registration can: the connector's `register` has a
+   * fifteen-second ceiling, and a switch inside that window let A's late result overwrite B's
+   * state and B's `subscriptionId` — turning wakes off then sent A's id to B's server and left
+   * A's row live. One counter, bumped on every session change, plus the session object so a
+   * delivered wake is checked against the session it was subscribed for. Refs rather than
+   * state because every reader is a callback.
    */
   const generation = useRef(0);
   const liveSession = useRef<typeof session>(null);
@@ -122,28 +91,14 @@ export function WakeProvider({ children }: { children: ReactNode }) {
   );
 
   /**
-   * ══════════════════════════════════════════════════════════════════════════════════════════
-   *  EVERY WAKE MUTATION RUNS ALONE — one chain, no overlap
-   * ══════════════════════════════════════════════════════════════════════════════════════════
-   *
-   * The generation counter discards a STALE RESULT, and that is all it can do. It cannot undo a
-   * SIDE EFFECT that has already happened on the server or, worse, on the one app-wide connector
-   * registration this build shares between profiles. Two races followed from that, and both
-   * ended with the pane saying "on" over a phone that no wake could reach:
-   *
-   *  · **off, then immediately on.** `turnOff` fires its DELETE and returns; a new choice
-   *    re-registers the SAME endpoint, the server dedupes and answers the SAME id, the pane
-   *    lands on `on` — and then the earlier DELETE arrives and removes the row that was just
-   *    re-adopted. The verdict was fine at the moment it was read and false a moment later.
-   *  · **a superseded registration finishing LAST.** `distributor.register(key)` binds the whole
-   *    app to that server's VAPID key. A's call held for its fifteen-second ceiling, B's
-   *    completed and reported `on`, and then A's landed and rebound the connector to A's key —
-   *    so B's server signs wakes this phone will not render, silently, while Settings says on.
-   *    No generation check can reach back and undo a native side effect.
-   *
-   * So the operations queue instead. Serialization costs a switch the tail of the previous
-   * registration — up to that same ceiling — and buys the only ordering in which the last write
-   * to the connector and the last write to a server row belong to the profile on screen.
+   * Every wake mutation runs alone — one chain, no overlap. The generation counter discards a
+   * stale result; it cannot undo a side effect already landed on the server or the connector.
+   * Two races both ended with the pane saying "on" over a phone no wake could reach: off then
+   * immediately on (the earlier DELETE arrives last and removes the row just re-adopted), and
+   * a superseded registration finishing last (`register(key)` binds the whole app to that
+   * server's VAPID key — a late completion rebound the connector while the live server signs
+   * wakes this phone will not render). The queue buys the only ordering where the last writes
+   * to connector and server row belong to the profile on screen.
    */
   const chain = useRef<Promise<unknown>>(Promise.resolve());
   const serialize = useCallback((op: () => Promise<unknown>): Promise<unknown> => {
@@ -189,15 +144,12 @@ export function WakeProvider({ children }: { children: ReactNode }) {
          */
         if (next.k === "on") await owedDrop(session, next.id);
         /**
-         * ── AND THE CONNECTOR IS RE-BOUND TO WHOEVER IS LIVE NOW ──────────────────────────
-         *
-         * The row was this arm's original job. The other half is the DISTRIBUTOR: a successful
-         * `registerWake` has already bound the app's single connector registration to THIS
-         * server's VAPID key, and if a newer profile registered while we were in flight, the
-         * chain guarantees we ran first — but a completion that is superseded by a session
+         * And the connector is re-bound to whoever is live now. The row was this arm's
+         * original job; the other half is the distributor: a successful `registerWake` bound
+         * the connector to this server's VAPID key, and a completion superseded by a session
          * change with no new registration behind it (a switch to a profile with no distributor
-         * chosen yet, a disconnect and reconnect) would still leave the connector on the old
-         * key. Re-running for the live session is idempotent by the server's own dedupe.
+         * chosen, a disconnect and reconnect) would leave the connector on the old key.
+         * Re-running for the live session is idempotent by the server's own dedupe.
          */
         const live = liveSession.current;
         if (next.k === "on" && live !== null && live !== session && savedDistributor() !== null) {
@@ -242,20 +194,13 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     // and will discard its own result rather than writing it over this one's.
     generation.current += 1;
     /**
-     * ── THE PREVIOUS SERVER'S ROW GOES DOWN BEFORE THE NEXT ONE GOES UP ────────────────────
-     *
-     * Leaving profile A's row behind on a switch to B does not leave a dormant record — it leaves
-     * A's server POSTing wakes at this phone for ever. That was acute while ONE endpoint was
-     * shared by every pairing (the app answered each of A's wakes by syncing B); with an endpoint
-     * per profile it is A's server dialling an endpoint that has gone quiet, which is better and
-     * still not right: the row is live until that server collects enough refusals to prune it.
-     *
-     * The ROW and not the distributor, and the reason has changed. It used to be that
-     * unregistering the endpoint would take the next profile's wakes down with it; now A's
-     * instance could be dropped safely, and removing the row is still what discharges the
-     * invariant — no server holds a row for a pairing this phone is not using. Fire-and-forget on
-     * the OUTGOING session's own bearer, which is still usable — the connection layer's teardown
-     * closes the store, not the credential — and it must not hold the switch open.
+     * The previous server's row goes down before the next one goes up. Leaving profile A's row
+     * behind on a switch to B leaves A's server POSTing wakes at this phone until it collects
+     * enough refusals to prune. The row and not the distributor: with per-profile endpoints
+     * A's instance could be dropped safely, and removing the row is still what discharges the
+     * invariant — no server holds a row for a pairing this phone is not using.
+     * Fire-and-forget on the outgoing session's own bearer, which is still usable (teardown
+     * closes the store, not the credential) — it must not hold the switch open.
      */
     const previous = liveSession.current;
     const previousId = subscriptionId.current;
@@ -277,31 +222,24 @@ export function WakeProvider({ children }: { children: ReactNode }) {
   }, [session, attempt, readDevice, owedDrop, serialize]);
 
   /**
-   * ── NOTHING IS PAIRED ANY MORE, SO NOTHING MAY BE REGISTERED ──────────────────────────────
-   *
-   * Forgetting the last server takes its `push_subscriptions` row down server-side (the hosted
-   * `logout` prunes by device), but the DISTRIBUTOR registration is this phone's own and no
-   * server can reach it: without this the connector keeps holding an endpoint for an app that
-   * is paired with nothing, and the chosen-distributor preference keeps saying wakes are on.
-   *
-   * Gated on the LAST pairing precisely because the registration is shared — dropping it while
-   * another profile still exists would silently turn that profile's wakes off.
+   * Nothing is paired any more, so nothing may be registered. Forgetting the last server takes
+   * its `push_subscriptions` row down server-side, but the distributor registration is this
+   * phone's own and no server can reach it: without this the connector keeps holding an
+   * endpoint for an app paired with nothing, and the chosen-distributor preference keeps
+   * saying wakes are on. Gated on the last pairing precisely because the registration is
+   * shared — dropping it while another profile exists would silently turn its wakes off.
    */
   const nothingPaired = conn.profiles.length === 0;
   useEffect(() => {
     if (!nothingPaired) return;
     subscriptionId.current = null;
     /**
-     * `chooseDistributor(null)` IS THE SWEEP NOW, and it is the connector's own guarantee rather
-     * than an inference: clearing the saved distributor "will clear all instances registered with
-     * the distributor". Registrations are per PROFILE, so each forget has already dropped its own
-     * instance — this closes the case where one of those drops was refused, and it does so without
-     * naming an instance, which there is by definition none of left to name.
-     *
-     * The blanket `unregister()` that used to stand here was the shared endpoint's only off-switch
-     * and could not be used while another profile existed (it would have taken that profile's
-     * wakes down); the gate on the LAST pairing was that constraint. The gate stays because the
-     * distributor CHOICE is app-wide — forgetting one of two servers must not un-choose it.
+     * `chooseDistributor(null)` is the sweep now — the connector's own guarantee: clearing the
+     * saved distributor "will clear all instances registered with the distributor".
+     * Registrations are per profile, so each forget has already dropped its own instance; this
+     * closes the case where one of those drops was refused, without naming an instance (none
+     * is left to name). The gate on the last pairing stays because the distributor choice is
+     * app-wide — forgetting one of two servers must not un-choose it.
      */
     chooseDistributor(null);
     readDevice();
@@ -309,15 +247,12 @@ export function WakeProvider({ children }: { children: ReactNode }) {
   }, [nothingPaired, readDevice, serialize]);
 
   /**
-   * A DELIVERED WAKE MEANS ONE THING: PULL.
-   *
-   * This subscription is the reason the whole module is a root provider. It has to outlive every
-   * screen — a wake arriving while the user is reading their inbox must sync, and before this it
-   * only did if they happened to have Settings open.
-   *
-   * `conn.syncNow()` is the same call pull-to-refresh makes: the wake is a TRIGGER for the sync the
-   * app already knows how to do, never a source of data. That is what makes a closed fifteen-byte
-   * constant sufficient.
+   * A delivered wake means one thing: pull. This subscription is the reason the whole module
+   * is a root provider — it has to outlive every screen, since a wake arriving while the user
+   * reads their inbox must sync, and before this it only did with Settings open.
+   * `conn.syncNow()` is the same call pull-to-refresh makes: the wake is a trigger for the
+   * sync the app already knows how to do, never a source of data — which is what makes a
+   * closed fifteen-byte constant sufficient.
    */
   useEffect(() => {
     if (!session) return;

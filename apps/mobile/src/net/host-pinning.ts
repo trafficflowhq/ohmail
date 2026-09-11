@@ -1,59 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  PINNING A DESKTOP HOST'S KEY — the JS side of the trust the pairing ceremony carries
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * A desktop's same-network door serves TLS with a self-signed key of its own, because no
- * certificate authority issues for the address a router handed that machine. The pairing link
- * carries that key's fingerprint; this module is where the phone remembers it, and the native
- * half (`modules/host-pinning`) is what makes the TLS stack honour it.
- *
- * ── THE ORDER IS NOT NEGOTIABLE: PIN, THEN ASK ──────────────────────────────────────────────
- *
- * `pin()` must be called BEFORE the first request to that host — including the `/hello`
- * negotiation, which happens before anything is redeemed. A request that goes out first would
- * be judged by the platform trust store, fail, and produce a refusal sentence about the network
- * for a reason that is not the network. That is why this surface is synchronous.
- *
- * ── AND WHERE THE NATIVE HALF IS ABSENT, THIS SAYS SO ───────────────────────────────────────
- *
- * The registry arrives through {@link installPinning} and is `null` until it does — which is the
- * state on the two surfaces where the native module genuinely is not there: the node test suite,
- * and **iOS, whose half is not built** (see below). {@link canPin} is what the pairing seam
- * checks, and a `false` there REFUSES a pairing that would need a pin — it never falls through to
- * an unpinned connection. Refusing to pair is a sentence somebody can act on; pairing without the
- * pin would be the app quietly accepting any key on the local network.
- *
- * The default being "cannot pin" rather than "pin somehow" is deliberate: a composition that
- * forgets to install the registry refuses same-network pairing loudly, instead of pairing over
- * TLS nobody checked.
- *
- * ── THE iOS HALF, NAMED RATHER THAN GUESSED ────────────────────────────────────────────────
- *
- * The platform-parity rule says a mobile change lands on both platforms. This one has landed on
- * Android and is NAMED for iOS, because there is no Mac in the environment it was built in and
- * uncompiled Swift asserting a security property is worse than an honest gap.
- *
- * What the iOS half is, precisely, so it is a task and not a research project:
- *
- *  · React Native's iOS networking runs through `RCTHTTPRequestHandler`, whose `NSURLSession` is
- *    created with itself as delegate. The seam is
- *    `URLSession:didReceiveChallenge:completionHandler:` with
- *    `NSURLAuthenticationMethodServerTrust`: read `challenge.protectionSpace.serverTrust`, take
- *    the leaf via `SecTrustCopyCertificateChain`, `SecCertificateCopyKey` +
- *    `SecKeyCopyExternalRepresentation`, wrap that raw key in the SPKI DER header for its
- *    algorithm, SHA-256 it, and compare against the pin recorded for
- *    `challenge.protectionSpace.host` + `.port`. A match calls back with
- *    `.useCredential(URLCredential(trust:))`; an unpinned host calls back `.performDefaultHandling`.
- *  · The delegate cannot be replaced from a module, so the iOS half is an
- *    `NSURLProtocol`-free swizzle-free approach: register the module's own
- *    `RCTHTTPRequestHandler` subclass ahead of RN's via `RCT_EXPORT_MODULE` priority, or supply
- *    the session delegate through `RCTSetCustomNSURLSessionConfigurationProvider` and keep the
- *    trust decision in the app delegate. Which of the two is a real decision to make against the
- *    RN version in the lockfile, with a device to test on.
- *  · Until it exists, {@link canPin} is `false` on iOS and same-network pairing is refused there
- *    with the sentence below. Tailscale pairing is unaffected on both platforms — that origin is
- *    a real name with a real certificate.
+ * Pinning a desktop host's key — the JS side of the trust the pairing ceremony carries. The
+ * desktop's same-network door serves TLS with a self-signed key; the pairing link carries its
+ * fingerprint, this module remembers it, and the native half (`modules/host-pinning`) makes the
+ * TLS stack honour it. `pin()` runs before the first request (`/hello` included), or the
+ * platform trust store fails it with a network-shaped sentence — why this is synchronous. The
+ * registry ({@link installPinning}) is `null` where the native half is absent (the node suite,
+ * and iOS, not yet built): {@link canPin} false refuses a pairing that needs a pin, never
+ * unpinned. The iOS half is named precisely (`NSURLSession` server-trust seam, SPKI SHA-256); Tailscale is unaffected.
  */
 
 /**
@@ -150,17 +103,13 @@ export function pinnedCount(): number {
 }
 
 /**
- * THE SENTENCE FOR A HANDSHAKE THAT FAILED THE PIN — the honest half of "a changed key un-pairs".
- *
- * When the desktop's key changes (its data directory was moved, restored from a backup, or
- * genuinely re-keyed), every request to it fails at the handshake. The platform's own words for
- * that are unreadable (`javax.net.ssl.SSLHandshakeException: Chain validation failed`), and worse
- * they are indistinguishable from "the wifi is bad" to anybody reading them. So the transport
- * error is recognised and replaced.
- *
- * Recognised by SHAPE rather than by an exact string: the wording differs across Android
- * versions and providers, and a failed match here degrades to the generic "could not reach"
- * sentence — wrong, but not misleading, which is the right direction to be wrong in.
+ * The sentence for a handshake that failed the pin — the honest half of "a changed key
+ * un-pairs". When the desktop's key changes (data directory moved, restored, re-keyed), every
+ * request fails at the handshake, and the platform's own words are unreadable and
+ * indistinguishable from bad wifi. So the transport error is recognised and replaced —
+ * recognised by shape rather than exact string, since the wording differs across Android
+ * versions; a failed match degrades to the generic "could not reach" sentence — wrong, but
+ * not misleading, which is the right direction to be wrong in.
  */
 const HANDSHAKE = /SSLHandshake|CertPathValidator|Chain validation|Trust anchor|certificate|SSLPeerUnverified|hostname/i;
 
@@ -169,19 +118,14 @@ export function isPinFailure(error: unknown): boolean {
 }
 
 /**
- * AN ADDRESS THAT ANSWERS WITHOUT TLS — the failed dial {@link isPinFailure} does not recognise.
- *
- * A server serving plain http on the port somebody typed is the likeliest self-hosting mistake, and
- * its first bytes are not a TLS record at all: Android says `SSLException: Unable to parse TLS
- * packet header`, which no alternative in `HANDSHAKE` matches, so the raw exception reached a
- * screen. The two sets are disjoint, and `test/host-pinning.test.ts` asserts it rather than
- * trusting the reading.
- *
- * Android's wording names the cause; iOS's does not. `NSURLErrorSecureConnectionFailed` (-1200) is
- * "no encrypted connection could be established", which a cipher or version mismatch produces too,
- * and it is taken from the platform's documented constants rather than from a device — the same
- * honesty the iOS pinning half above is written with. So `Copy.notEncrypted` names the usual cause
- * without asserting it.
+ * An address that answers without TLS — the failed dial {@link isPinFailure} does not
+ * recognise. Plain http on the typed port is the likeliest self-hosting mistake, and its first
+ * bytes are not a TLS record: Android says `SSLException: Unable to parse TLS packet header`,
+ * which nothing in `HANDSHAKE` matches, so the raw exception reached a screen. The two sets
+ * are disjoint, and `test/host-pinning.test.ts` asserts it rather than trusting the reading.
+ * Android's wording names the cause; iOS's `NSURLErrorSecureConnectionFailed` (-1200) covers
+ * cipher and version mismatches too and is taken from documented constants, so
+ * `Copy.notEncrypted` names the usual cause without asserting it.
  */
 const NOT_TLS =
   /Unable to parse TLS packet|NSURLErrorSecureConnectionFailed|Code=-1200|An SSL error has occurred/i;
@@ -191,13 +135,10 @@ export function isNotTls(error: unknown): boolean {
 }
 
 /*
- * THE SENTENCE THAT USED TO STAND HERE IS NOW `Copy.pinChanged`.
- *
- * `PIN_CHANGED_SENTENCE` was the one piece of user-facing prose in this module, and prose is
- * translated. Leaving it beside {@link isPinFailure} would have made it the single refusal on the
- * phone that could not be German, so it moved into the copy deck and the two callers
- * (`net/pairing.ts` and the deck's own `connectSyncFailed`) read it from there.
- *
- * The REGEX stayed. It matches a platform's own error text — `javax.net.ssl.SSLHandshakeException`
- * and its neighbours — which has no language of ours in it and must not acquire one.
+ * The sentence that used to stand here is now `Copy.pinChanged`: prose is translated, and
+ * leaving it beside {@link isPinFailure} would have made it the single refusal on the phone
+ * that could not be German — the two callers (`net/pairing.ts` and the deck's own
+ * `connectSyncFailed`) read it from the deck. The regex stayed: it matches a platform's own
+ * error text (`javax.net.ssl.SSLHandshakeException` and neighbours), which has no language of
+ * ours in it and must not acquire one.
  */

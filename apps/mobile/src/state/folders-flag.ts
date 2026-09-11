@@ -1,17 +1,12 @@
 /**
- * THE "USE FOLDERS" FLAG'S ONE COORDINATOR — every read of the consent answer is
- * epoch-stamped, and a write invalidates the reads in flight.
- *
- * The measured race this exists for (codex round 1): a session's boot `GET /consent` can
- * resolve AFTER a `PATCH /consent/settings` the user just made, and an unguarded apply reset
- * the switch to the pre-write value for the rest of the session — the server on, the phone
- * off. User-always-wins: {@link set} bumps the epoch before it writes, so any read that
- * started earlier is discarded whatever it answers.
- *
- * Pure and renderer-free (the `live.ts` charter: screens and hooks stay logic-free), so the
- * node suite drives the race with deferred promises instead of a device. The world layer
- * builds ONE machine per session; its `apply`/`drain` close over that session and refuse a
- * superseded one, so a machine outliving its session writes nothing.
+ * The "use folders" flag's one coordinator — every read of the consent answer is
+ * epoch-stamped, and a write invalidates the reads in flight. The measured race: a session's
+ * boot `GET /consent` can resolve after a `PATCH /consent/settings` the user just made, and
+ * an unguarded apply reset the switch to the pre-write value for the rest of the session.
+ * User-always-wins: {@link set} bumps the epoch before it writes, so any earlier read is
+ * discarded whatever it answers. Pure and renderer-free (the `live.ts` charter), so the node
+ * suite drives the race with deferred promises. The world layer builds one machine per
+ * session; `apply`/`drain` close over that session, so a machine outliving it writes nothing.
  */
 
 export interface FoldersFlagDeps {
@@ -74,31 +69,25 @@ export function freshestRead<T>(
 export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
   let epoch = 0;
   /**
-   * READS ARE ORDERED BY ISSUE, AND A NEWER *VALID* ANSWER SUPERSEDES (codex rounds 2 and 3):
-   * two refreshes can overlap — the session's boot GET still in the air when a drain-completed
-   * refresh fires — and both capture the same epoch, so an older response arriving LAST would
-   * overwrite the fresher answer. Each read takes a sequence number and applies only while no
-   * newer read has APPLIED — issuance alone supersedes nothing, because a newer read that
-   * FAILS (`null` — any transport or non-200 outcome) is not an answer, and letting it
-   * invalidate the older request discarded the only valid response the session had: a boot
-   * GET answering "on" was thrown away because a post-drain GET timed out, and the folders
-   * stayed off until another drain.
+   * Reads are ordered by issue, and a newer VALID answer supersedes: two refreshes can overlap
+   * (the boot GET still in the air when a drain-completed refresh fires) and both capture the
+   * same epoch, so an older response arriving last would overwrite the fresher answer. Each
+   * read takes a sequence number and applies only while no newer read has APPLIED — issuance
+   * alone supersedes nothing, because a newer read that fails (`null`) is not an answer, and
+   * letting it invalidate the older request discarded the only valid response the session had
+   * (a boot GET answering "on" thrown away because a post-drain GET timed out).
    */
   let readSeq = 0;
   let appliedSeq = 0;
   /**
-   * WRITES SERIALIZE, AND READS RUN ONLY WHILE NO WRITE IS UNSETTLED (codex rounds 4–7, one
-   * mechanism). A read that runs while any write is on the wire is AMBIGUOUS — it can observe
-   * the pre-write value (round 4: resolving late, it undid the confirmed write) or a value
-   * some other client committed after ours (round 5: discarding it left the phone stale) —
-   * and no client-side stamp can tell those apart, so reads wait until the write queue is
-   * empty. Writes queue behind each other for the same reason (rounds 6–7): with overlap
-   * allowed, every per-case guard left another corner — an older write clearing a newer one's
-   * barrier, a superseded echo, a survivor discarded when its successor failed. Serialized,
-   * settle order IS issue order: each write's confirmed echo applies and drains as it lands,
-   * a rejected write changes nothing and re-asks, and there is no overlap left to arbitrate.
-   * Waiting is ordering, not blocking — every request settles, and the UI's pending flag
-   * keeps a second toggle from even being asked for while one is on the wire.
+   * Writes serialize, and reads run only while no write is unsettled. A read overlapping a
+   * write is ambiguous — it can observe the pre-write value (resolving late, it undid the
+   * confirmed write) or a value another client committed after ours — and no client-side
+   * stamp can tell those apart, so reads wait until the write queue is empty. Writes queue
+   * behind each other too: with overlap allowed, every per-case guard left another corner.
+   * Serialized, settle order IS issue order: each confirmed echo applies and drains as it
+   * lands, a rejected write changes nothing and re-asks. Waiting is ordering, not blocking —
+   * every request settles, and the UI's pending flag keeps a second toggle from being asked.
    */
   let unsettled = 0;
   let tail: Promise<void> = Promise.resolve();

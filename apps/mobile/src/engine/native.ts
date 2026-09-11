@@ -13,18 +13,12 @@ import { serialSqlExecutor, type ExclusiveTxnDatabase } from "./sql-queue";
 /**
  * expo-sqlite behind {@link SqlExecutor}. Every operation on one mirror file is serialised, and
  * `batch` drives its transaction on THIS handle — the one the migrator configured.
- *
- * It used to ride `withExclusiveTransactionAsync`, which opens a second connection to the same
- * file. That cost two things: two overlapping `batch` calls became two writers and the loser
- * aborted with `database is locked` — which is what made every message on the phone open
- * preview-only — and the second connection never received `PRAGMA foreign_keys = ON`, so the
- * schema's references went unenforced for every write the app made. The serialisation, the
- * evidence and the transaction now live in {@link serialSqlExecutor}; this function is the
- * binding to the real handle and nothing else.
- *
- * The adapter below is here rather than a cast: `getAllAsync` and `runAsync` are overloaded on
- * the expo side (variadic params as well as an array), and structural assignability across an
- * overload set is not something to leave to chance in a file the suite cannot load.
+ * `withExclusiveTransactionAsync`'s second connection cost two things: overlapping `batch` calls
+ * aborted with "database is locked" (every message opened preview-only), and the second connection
+ * never received `PRAGMA foreign_keys = ON`. The serialisation and the transaction live in {@link
+ * serialSqlExecutor}; this function is the binding to the real handle. The adapter below is not a
+ * cast: `getAllAsync`/`runAsync` are overloaded on the expo side, and structural assignability
+ * across an overload set is not left to chance in a file the suite cannot load.
  */
 export function expoSqlExecutor(db: SQLite.SQLiteDatabase): SqlExecutor {
   const shaped: ExclusiveTxnDatabase = {
@@ -43,14 +37,12 @@ export function nativeEngineDeps(): MobileEngineDeps {
     openExecutor: async (dbName) => expoSqlExecutor(await SQLite.openDatabaseAsync(dbFileName(dbName))),
     /**
      * The real deletion — the one call in this app that removes mail from the device.
-     *
-     * `deleteDatabaseAsync` REJECTS on a name that is not there ("Database ... not found"), and
-     * the seam's contract is that deleting an absent name resolves: `forgetMirror` deletes
-     * twice (the mail, then the empty file its read-back probe created) and a pending wipe is
-     * replayed at every launch, so "already gone" is the ordinary case, not a failure. Swallowed
-     * HERE rather than at the call site, so the caller's own read-back stays the only thing that
-     * decides whether the take-back landed — a deleter that silently did nothing is caught by
-     * the probe, not by this catch.
+     * `deleteDatabaseAsync` rejects on a name that is not there, and the seam's contract is
+     * that deleting an absent name resolves: `forgetMirror` deletes twice and a pending wipe
+     * replays at every launch, so "already gone" is the ordinary case. Swallowed here rather
+     * than at the call site, so the caller's own read-back stays the only thing that decides
+     * whether the take-back landed — a deleter that silently did nothing is caught by the
+     * probe, not by this catch.
      */
     deleteDatabase: async (dbName) => {
       try {

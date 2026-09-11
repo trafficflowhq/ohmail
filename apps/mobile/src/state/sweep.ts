@@ -1,22 +1,12 @@
 /**
- * SCROLL-SWEEP GEOMETRY for a GROUPED list — Receipts' day groups.
- *
- * React Native's `onLayout` answers coordinates relative to the view's DIRECT PARENT. The
- * receipts rows sit four levels under the scroll content (content → panel → day group →
- * items container → row), so a row's own `y` says where it sits INSIDE ITS DAY, not on the
- * screen: the first row of every day group is `y ≈ 0`. Measured against the scroll line
- * raw, that marked the first row of every day — including days entirely off-screen — as
- * "scrolled past" the moment the line cleared the topmost row, and on a live account that
- * persisted READ state onto mail nobody had seen.
- *
- * This ledger records each level's own offset as its `onLayout` fires and answers the sweep
- * in SCROLL-CONTENT coordinates: a row has passed the line only when
- * `panel + group + items + row.y + row.h <= line`. Rows whose chain is not fully measured
- * yet are never answered as passed — an unmeasured offset defaults to "not past", because
- * marking mail read is the irreversible half of a guess.
- *
- * Pure and renderer-free so the geometry — the off-screen-group case included — can be held
- * and checked without a device.
+ * Scroll-sweep geometry for a grouped list — Receipts' day groups. RN's `onLayout` answers
+ * coordinates relative to the view's direct parent, and the receipts rows sit four levels under
+ * the scroll content, so a row's own `y` says where it sits inside its day: the first row of
+ * every day group is `y ≈ 0`, and measured raw against the scroll line that marked mail in
+ * entirely off-screen days as read. This ledger records each level's own offset as its
+ * `onLayout` fires and answers in scroll-content coordinates: passed only when `panel + group +
+ * items + row.y + row.h <= line`. An unmeasured chain defaults to "not past" — marking mail read
+ * is the irreversible half of a guess. Pure and renderer-free.
  */
 export class GroupedSweepLedger {
   private panelY: number | null = null;

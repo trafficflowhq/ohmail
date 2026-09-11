@@ -1,32 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  WHERE THE ENGINE'S DIAGNOSTIC LINES GO ON A PHONE — `console.log`, and nothing else
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * The engine writes one JSON object per event. On the desktop those bytes go to stderr and to
- * `engine.log`; on a phone there is no stderr and no file this app may hand out, so they go to
- * the platform's own log — `console.log`, which React Native forwards to `__android_log_print`
- * under the tag `ReactNativeJS` at INFO. `adb logcat -s ReactNativeJS` is then the whole reader.
- *
- * ── THIS IS A SINK AND DELIBERATELY NOT A LOGGER ───────────────────────────────────────────
- *
- * A {@link EngineLogSink} takes a finished LINE. Everything that decides what may be in that
- * line — the field allowlist, the redaction keyed on field names, the value grammars, the string
- * bounds, `err` becoming a class and a code with the message discarded — lives in the engine's
- * own `createLogger`, inside the artifact. An app that assembled `detail` objects of its own
- * would be a second logger outside every one of those controls, which is the defect
- * `apps/sidecar/src/log.ts` was written to end. So this app supplies the destination and has no
- * say in the contents.
- *
- * ── AND IT CANNOT TAKE A DIAL DOWN ─────────────────────────────────────────────────────────
- *
- * The engine calls this from inside a dial, a drain and a gate. A sink that threw would turn a
- * diagnostic into a mail failure, so the write is guarded and a lost line is the correct outcome
- * — the same rule the desktop's stderr sink states for EPIPE.
- *
- * `console` is read at CALL time rather than captured, for `log.ts`'s reason: a module-scope read
- * would bind whatever `console` was at import, and this module is imported before the app
- * composes.
+ * Where the engine's diagnostic lines go on a phone — `console.log`, and nothing else. The engine writes one JSON
+ * object per event; a phone has no stderr and no file this app may hand out, so the lines go to the platform's log
+ * (React Native forwards to `__android_log_print` under `ReactNativeJS`; `adb logcat -s ReactNativeJS` is the
+ * reader). A sink, deliberately not a logger: everything that decides what may be in a line — the field allowlist,
+ * the redaction, the bounds, `err` becoming class + code — lives in the engine's own `createLogger`; an app
+ * assembling `detail` objects would be a second logger outside every control (`apps/sidecar/src/log.ts`'s lesson). It
+ * cannot take a dial down: the write is guarded and a lost line is the correct outcome. `console` is read at call
+ * time — a module-scope read would bind whatever `console` was at import.
  */
 
 /** What the engine is handed: one finished line, already redacted by its own logger. */

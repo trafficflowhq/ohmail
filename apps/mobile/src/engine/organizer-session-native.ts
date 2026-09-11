@@ -1,17 +1,12 @@
 /**
- * THE PLATFORM HALF OF THE ORGANIZER SESSION — `AppState`, the service, the headless task.
- *
- * The `background-native.ts` idiom and for its reason: `AppState` and `requireOptionalNativeModule`
- * come from packages the node suite's transform refuses, so everything that DECIDES lives in
- * `organizer-session.ts` and `background.ts` and this file supplies the four platform facts.
- * Nothing here has a branch of its own.
- *
- * THE HEADLESS TASK IS REGISTERED HERE, not at the app's entry, because this is where it becomes
- * needed: `OrganizerHeadlessService` starts a task under that name only when the foreground service
- * goes up, and the foreground service goes up only behind this session. A registration at module
- * scope in `app/_layout.tsx` would install it in every paired phone that can never start one.
- * `AppRegistry` replaces a task of the same name rather than stacking them, so a second session's
- * registration is not a second task.
+ * The platform half of the organizer session — `AppState`, the service, the headless task. The
+ * `background-native.ts` idiom, for its reason: `AppState` and `requireOptionalNativeModule` come from
+ * packages the node suite's transform refuses, so everything that decides lives in `organizer-session.ts` and
+ * `background.ts`, and this file supplies the four platform facts with no branch of its own. The headless
+ * task is registered here, not at the app's entry: it becomes needed only when the foreground service goes
+ * up, and that only behind this session — a module-scope registration in `app/_layout.tsx` would install it
+ * on every paired phone that can never start one. `AppRegistry` replaces a task of the same name rather than
+ * stacking, so a second session's registration is not a second task.
  */
 import { AppState, Platform } from "react-native";
 

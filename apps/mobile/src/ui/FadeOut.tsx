@@ -1,24 +1,12 @@
 /**
- * `gradient.scFade` — the single functional gradient in Blanc: a fade-out over
- * clamped content, so truncated text ends in light rather than in a hard cut.
- * Decorative gradients stay banned; both uses below are clamp indicators.
- *
- * TWO CALLERS, ONE GRADIENT.
- *
- *  1. The clamped stream card (`Reads`, `Receipts`) — the prototype's own
- *     `.sc-fade`, transparent → `--float` over 88px.
- *  2. The floating tab dock (`solidFrom`) — a phone-only case the deck never
- *     had. Blanc's dock floats *above* the canvas rather than sitting welded to
- *     an edge, so a scroller runs underneath it and, on a phone, keeps running
- *     into the home-indicator band below it. Left alone, a legible half-row
- *     strands itself under the capsule and reads as a clipping bug. The same
- *     fade resolves it: content dissolves into the canvas as it reaches the
- *     dock, which is the truth — there is more, and it is behind the dock.
- *     `solidFrom` holds the last stretch fully opaque so the band under the
- *     capsule is canvas, not a half-transparent smear of a row.
- *
- * Drawn with `react-native-svg` (already present for the icon set) rather than
- * pulling in a gradient package for one element.
+ * `gradient.scFade` — the single functional gradient in Blanc: a fade-out over clamped content, so
+ * truncated text ends in light rather than a hard cut. Decorative gradients stay banned; both uses
+ * are clamp indicators. Two callers, one gradient: the clamped stream card (`Reads`, `Receipts` —
+ * the prototype's own `.sc-fade`), and the floating tab dock (`solidFrom`) — a phone-only case
+ * where a scroller runs under the dock into the home-indicator band, and a stranded half-row reads
+ * as a clipping bug; the fade dissolves content into the canvas, which is the truth — there is
+ * more, behind the dock. `solidFrom` holds the last stretch opaque. Drawn with `react-native-svg`
+ * (already present) rather than a gradient package for one element.
  */
 import { useId } from "react";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";

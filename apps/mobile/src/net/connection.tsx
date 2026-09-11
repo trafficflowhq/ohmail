@@ -1,37 +1,12 @@
 /**
- * THE CONNECTION LAYER — one live session for the whole app, as a React context.
- *
- * This is the surface the real mail screens consume: `useConnection()` answers the current
- * state (idle, a connecting/live session, a refusal, or an ENDED session), and the
- * live state carries the engine + store the screens subscribe to. The connection screens (the
- * picker, the scanner, the manual fallback) drive the transitions; nothing else in the app
- * touches the network seam.
- *
- * Discipline carried from the first connect screen, because the hazards did not move:
- *
- *  · **teardown awaits the in-flight drain.** Closing a mirror under a live drain does not
- *    stop it — the engine's next flush would reopen the database through the store's own
- *    opener and keep issuing bearer-carrying pages after the app said it disconnected.
- *    Leaving the live state stops NEW drains; the await bounds the one already in the air.
- *  · **a refused boot is a refusal, not a degraded mode** — there is no engine behind the
- *    refused state and nothing pretending to be one (`boot.ts` owns that rule).
- *  · **a failed sync re-hydrates** so the torn-flush guard's refusal window closes before
- *    the retry this layer offers.
- *
- * Two further rules, both about the family's ONE refresh token:
- *
- *  · **every transition runs through the {@link TransitionGate}** — serialized, last-wins.
- *    Two overlapping taps would otherwise build two managers on one profile, each presenting
- *    the same refresh token, and strict reuse would revoke a valid pairing. A superseded
- *    transition's outcome is torn down (store closed, engine never started), never adopted.
- *  · **profiles cross this layer as IDS, never as held objects.** A row in React state goes
- *    stale the moment a rotation lands — its refreshToken is the CONSUMED one — so every
- *    connect re-reads the keystore row inside the gate (`connectProfileById`).
- *
- * The manager's dead signal — the server REFUSED the family's token (a desktop revoke, a
- * reuse judgment) — tears the session down and lands on `ended` with the one true remedy in
- * words: scan a fresh QR. A network failure never lands here; the manager clears nothing on
- * anything short of a judgment.
+ * The connection layer — one live session for the whole app, as a React context.
+ * `useConnection()` answers the state (idle, connecting/live, refused, ended); the live state
+ * carries the engine + store; only the connection screens drive transitions. Teardown awaits
+ * the in-flight drain (a closed mirror reopens under a live drain's next flush); a refused
+ * boot is a refusal, not a degraded mode; a failed sync re-hydrates. Every transition runs
+ * through the {@link TransitionGate}, serialized last-wins — two managers on one profile would
+ * present one refresh token twice, and strict reuse would revoke the pairing. Profiles cross
+ * as ids, re-read from the keystore inside the gate; the dead signal lands on `ended`.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Platform } from "react-native";
@@ -101,29 +76,22 @@ export interface Connection {
   /** The picker's /hello probe — negotiation lives in the seam, screens render the answer. */
   ask(origin: string): Promise<Negotiation>;
   /**
-   * WHERE THAT SERVER'S `/sync` FAMILY ANSWERS — the origin, or `<origin>/api`.
-   *
-   * Behind this seam for {@link ask}'s reason, and the privacy census is what makes it a rule
-   * rather than a preference: a screen that reached for `globalThis.fetch` to run this itself
-   * would put a transport in a UI file, which is exactly what that scan forbids. The door screen
-   * renders the answer and dials nothing.
-   *
-   * The PAIRING seam measures again for itself — that is where the value is stored, and where a
-   * QR-driven pairing that never opened this screen gets it too. This call is what lets the door
-   * NAME the answer before a single-use code is spent.
+   * Where that server's `/sync` family answers — the origin, or `<origin>/api`. Behind this
+   * seam for {@link ask}'s reason, made a rule by the privacy census: a screen reaching for
+   * `globalThis.fetch` would put a transport in a UI file, which that scan forbids — the door
+   * screen renders the answer and dials nothing. The pairing seam measures again for itself
+   * (that is where the value is stored, and where a QR-driven pairing gets it); this call is
+   * what lets the door name the answer before a single-use code is spent.
    */
   probeBase(origin: string): Promise<BaseVerdict>;
   /**
-   * ASK WHAT IS AT THIS ADDRESS, SPENDING NOTHING — step one of two.
-   *
-   * `pin` is the desktop door's key fingerprint out of the pairing link, for an address no
-   * certificate authority can vouch for. Absent for every origin the platform verifies on its
-   * own. It is a parameter rather than something the seam re-derives because it comes from the
-   * QR the person scanned — that is the whole trust path.
-   *
-   * The answer is what the confirmation screen renders. NOTHING is stored, no code is spent, and
-   * the token is not even passed: it stays with the screen that scanned it until somebody says
-   * yes. See `net/pairing.ts#PairAdmission`.
+   * Ask what is at this address, spending nothing — step one of two. `pin` is the desktop
+   * door's key fingerprint out of the pairing link, for an address no certificate authority
+   * can vouch for; absent for every origin the platform verifies on its own. A parameter
+   * rather than something the seam re-derives, because it comes from the QR the person scanned
+   * — that is the whole trust path. The answer is what the confirmation screen renders:
+   * nothing is stored, no code is spent, and the token is not even passed — it stays with the
+   * screen that scanned it. See `net/pairing.ts#PairAdmission`.
    */
   probePair(origin: string, pin?: string | null): Promise<ProbeOutcome>;
   /**
@@ -183,17 +151,13 @@ export function useConnection(): Connection {
 const SUPERSEDED = (): Refusal => refuse("connectSuperseded");
 
 /**
- * OPEN IT AGAIN, AND WIRE IT TO THE APP'S LIFECYCLE — the relaunch's twin of the door screen.
- *
- * `app/standalone.tsx` does two things in its success arm: it adopts the door and it starts the
- * organizer session. A relaunch is the same moment with no screen in front of it, and without this
- * the second half was simply absent — the app would organize while it was open, post no
- * notification, and hand nothing back when it left the foreground, which is the whole mechanism
- * `background.ts` exists for and exactly the state it renders as healthy.
- *
- * Native behind a dynamic import for `local-engine-native.ts`'s reason, `void` because a mailbox
- * that is open must not wait on a notification, and the catch RECORDS the restriction rather than
- * swallowing it — a build that cannot reach its own background half says so.
+ * Open it again, and wire it to the app's lifecycle — the relaunch's twin of the door screen.
+ * `app/standalone.tsx` adopts the door and starts the organizer session; a relaunch is the
+ * same moment with no screen in front of it, and without this the second half was absent — the
+ * app organized while open, posted no notification, and handed nothing back on leaving the
+ * foreground, the state `background.ts` exists to prevent. Native behind a dynamic import for
+ * `local-engine-native.ts`'s reason; `void` because an open mailbox must not wait on a
+ * notification; the catch records the restriction rather than swallowing it.
  */
 async function reopenWithBackground(
   deps: Parameters<typeof reopenStandaloneMailbox>[0],
@@ -273,16 +237,14 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState<RefusalArg | null>(null);
 
   /**
-   * ══ WHAT THIS LAYER HAS DECIDED THE CONNECTION IS — and every state change goes through it ══
-   *
-   * This was `live.current = state` in the body, so the ref moved when React PAINTED. Measured on
-   * a device: on the standalone door the work that follows `adopt` settles in microtasks while the
+   * What this layer has decided the connection is — every state change goes through it. As
+   * `live.current = state` in the body, the ref moved when React painted; measured on a
+   * device: on the standalone door the work after `adopt` settles in microtasks while the
    * paint is a task, so the identity verdict and the consent press both read `connecting` and
-   * returned — no first drain ever, and no consent — while every paired door was unaffected and
-   * the node suite could not reach the question at all. `net/decided.ts` carries the measurement.
-   *
-   * `enter` is the only writer — it records and then paints — and
-   * `test/connection-decided-state.test.ts` refuses a state change written any other way here.
+   * returned — no first drain, no consent — while every paired door was unaffected and the
+   * node suite could not reach the question (`net/decided.ts` carries the measurement).
+   * `enter` is the only writer — it records, then paints — and
+   * `test/connection-decided-state.test.ts` refuses a state change written any other way.
    */
   const decidedRef = useRef<DecidedState<ConnectionState> | null>(null);
   const live = (decidedRef.current ??= decidedState<ConnectionState>(state, setState));
@@ -334,16 +296,13 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   );
 
   /**
-   * RECORD THE CONSENT FOR THE MAILBOX THIS PHONE OPENED — the press, and the id it needs.
-   *
-   * The route is `POST /mailboxes/:id/organize` and the id is the ENGINE's, so the roster is read
-   * first through the same session. A roster that cannot be read is a refusal with its own
-   * sentence rather than a silent skip: the whole defect this closes is a phone that reads its own
-   * mailbox and organizes nothing while every surface says it is fine.
-   *
-   * Nothing here waits on anything. An `authorized` or `already` answer clears the sentence the
-   * previous attempt may have left, so a retry that succeeds does not leave a stale refusal under
-   * a session that is now organizing.
+   * Record the consent for the mailbox this phone opened — the press, and the id it needs.
+   * The route is `POST /mailboxes/:id/organize` and the id is the engine's, so the roster is
+   * read first through the same session. A roster that cannot be read is a refusal with its
+   * own sentence, never a silent skip: the defect this closes is a phone that reads its own
+   * mailbox and organizes nothing while every surface says it is fine. Nothing here waits on
+   * anything; an `authorized` or `already` answer clears the previous attempt's sentence, so
+   * a retry that succeeds leaves no stale refusal under a session that is now organizing.
    */
   const consentHere = useCallback(async (session: ConnectedSession): Promise<void> => {
     /**
@@ -375,18 +334,14 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * ── NO DRAIN BEFORE THE IDENTITY VERDICT (per-account isolation) ──────────────────────────
-   *
-   * Rendering the local mirror owes the wire nothing, but a DRAIN moves the mirror: a bearer
-   * belonging to another account could answer this mirror's cursor with a 410 (the engine's
-   * re-bootstrap WIPES the mirror before the drain-time guard could see one entity) or with
-   * an entity-less page (deletes and empty pages carry no `accountId` for the guard to
-   * refuse, yet advance the cursor). So every drain — the session's first, a pull, a wake, a
-   * folders-flip — waits for {@link ConnectedSession.verifyIdentity} to settle. `verified`
-   * and `unverified` both clear it (the desktop-host door has no session read, and a dead
-   * network must not brick sync — the entity-carrying pages stay guarded as before); only a
-   * positive `mismatch` refuses, and then no drain ever runs. The map holds the per-session
-   * clearance promise so a pull landing mid-probe CHAINS instead of racing it.
+   * No drain before the identity verdict (per-account isolation). Rendering the local mirror
+   * owes the wire nothing, but a drain moves the mirror: a foreign bearer could answer this
+   * mirror's cursor with a 410 (the re-bootstrap wipes the mirror before the drain-time guard
+   * sees one entity) or an entity-less page (deletes carry no `accountId`, yet advance the
+   * cursor). So every drain waits for {@link ConnectedSession.verifyIdentity} to settle.
+   * `verified` and `unverified` both clear it (the desktop-host door has no session read, and
+   * a dead network must not brick sync); only a positive `mismatch` refuses, and then no drain
+   * ever runs. The map holds the per-session clearance promise so a pull mid-probe chains.
    */
   const clearance = useRef(new WeakMap<ConnectedSession, Promise<boolean>>());
 
@@ -466,22 +421,14 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       }
       adopt(outcome.session);
       /**
-       * ── AND THE CONSENT THE DOOR ALREADY TOOK IS MADE INTO THE REQUEST THAT RECORDS IT ──────
-       *
-       * A mailbox nobody consented to organizing is READ and nothing else — no claim in
-       * `ohmail/_meta`, no `ohmail/*` tree, an Ohbox that never fills. Every other door records
-       * that consent from a client somewhere; the standalone door's client is the one this arm
-       * just built, so this is where the press belongs. See `net/mailboxes.ts#organizeHere` for
-       * why the limitations screen's confirm IS the consent and why the body is empty.
-       *
-       * HERE rather than on the door screen, because launch, switch and door press all arrive
-       * through this one body and a mailbox organized only on the launch somebody pressed through
-       * is worse than one never organized. Idempotent by the route: a relaunch answers
-       * `already_organizing` and writes nothing.
-       *
-       * `void`, because an open mailbox must not wait on a stamp, and its refusal lands in
-       * `syncError` — the one surface that is live on all three paths and already renders a
-       * sentence beside the session's numbers.
+       * The consent the door already took is made into the request that records it. A mailbox
+       * nobody consented to organizing is read and nothing else — no claim in `ohmail/_meta`,
+       * an Ohbox that never fills. The standalone door's client is the one this arm just
+       * built, so the press belongs here (`net/mailboxes.ts#organizeHere` says why the
+       * limitations screen's confirm IS the consent). Here rather than on the door screen:
+       * launch, switch and door press all arrive through this one body. Idempotent by the
+       * route (`already_organizing` writes nothing); `void`, with a refusal landing in
+       * `syncError` — the one surface live on all three paths.
        */
       if (organizesHere(outcome.session.profile)) void consentHere(outcome.session);
       return { ok: true };
@@ -530,19 +477,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           if (stillCurrent()) enter({ k: "refused", reason: refuse("serversPurgeRefused", install.reason) });
           return;
         }
-        //    AND `unknown` STOPS THE LAUNCH TOO, without deleting anything.
-        //
-        //    These are two different acts and this arm does only the second. It does NOT purge:
-        //    reading a transient storage failure as a fresh install would delete every pairing
-        //    on the phone for a reason unrelated to the person holding it. But it may not CONNECT
-        //    either — on iOS the keychain outlives an uninstall, so an unverified marker is
-        //    exactly the state in which a stranger's reinstall would open somebody's mailbox, and
-        //    the app's own copy promises the pairing is discarded before use. Refusing keeps both
-        //    halves of that promise: nothing is used, and nothing is destroyed.
-        //
-        //    In practice this is not a hair trigger. The marker rides the same SQLite host every
-        //    mirror does, so a launch that cannot open it is a launch that could not have read
-        //    any mail either.
+        //    And `unknown` stops the launch too, without deleting anything. Two different
+        //    acts, and this arm does only the second: it does not purge — reading a transient
+        //    storage failure as a fresh install would delete every pairing for a reason
+        //    unrelated to the person holding the phone — but it may not connect either. On iOS
+        //    the keychain outlives an uninstall, so an unverified marker is exactly the state
+        //    in which a stranger's reinstall would open somebody's mailbox, and the copy
+        //    promises the pairing is discarded before use. Refusing keeps both halves. Not a
+        //    hair trigger: the marker rides the same SQLite host every mirror does, so a
+        //    launch that cannot open it could not have read any mail either.
         if (install.kind === "unknown") {
           if (stillCurrent()) enter({ k: "refused", reason: refuse("serversInstallUnknown", install.reason) });
           return;
@@ -709,21 +652,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         return gate.then((ok) => {
           const atDrain = live.now();
           if (!ok || atDrain.k !== "live" || atDrain.session !== session) return;
-          // ── RING THE WORKER'S DOORBELL, THEN DRAIN ────────────────────────────────────────
-          //
-          // The drain below answers "what does the worker already have"; the person pulling was
-          // usually just told "I sent it", which is about mail the worker has NOT looked at yet.
-          // `requestPull` stamps `sync_requested_at` so the worker scans those mailboxes now
-          // (seconds) instead of at its poll rotation's leisure. It never throws — an absent or
-          // refused doorbell degrades to exactly the pull-to-refresh this always was.
-          //
-          // THE RACE, AND THE BOUNDED FOLLOW-UPS. The first drain almost always finishes before
-          // the worker's scan commits anything (the kick scan runs every ~3 s and the IMAP visit
-          // takes a few more), so a pull that stopped at one round would settle its spinner on a
-          // mirror the doorbell had not yet filled. Two quiet follow-up rounds — no spinner, the
-          // runner coalesces them onto anything already in flight — pick up what the scan wrote.
-          // Bounded at two per gesture, guarded on the session still being the live one, so a
-          // held-down refresh cannot stack unbounded rounds.
+          // Ring the worker's doorbell, then drain. The drain answers "what does the worker
+          // already have"; the person pulling was usually just told "I sent it", which is mail
+          // the worker has not looked at yet. `requestPull` stamps `sync_requested_at` so the
+          // worker scans now (seconds) instead of at its poll rotation's leisure; it never
+          // throws — an absent doorbell degrades to plain pull-to-refresh. The first drain
+          // almost always finishes before the worker's scan commits anything, so two quiet
+          // follow-up rounds (no spinner, coalesced onto anything in flight) pick up what the
+          // scan wrote — bounded at two per gesture, guarded on the session still being live,
+          // so a held-down refresh cannot stack unbounded rounds.
           const rang = session.engine.requestPull();
           const round = runner.request(session.engine);
           void rang.then((r) => {

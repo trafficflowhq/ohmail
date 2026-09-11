@@ -1,23 +1,12 @@
 /**
- * WHAT A LIST SCREEN MAY SHOW WHILE THE MIRROR IS STILL ANSWERING — the unknown≠empty rule,
- * as one pure function every message-list surface renders through.
- *
- * The app boots from its own local mirror (`engine/boot.ts`), so the first frame is content
- * whenever the phone has ever synced. The rule below exists for the frames where it has not:
- *
- *  · **content** — rows exist. They render, even mid-bootstrap: real mail beats a silhouette,
- *    and the engine's rules-first ordering already bounds what a partial replay can misfile.
- *  · **skeleton** — zero rows AND the mirror has never completed a drain. The list is not
- *    empty, it is UNKNOWN, and the screen shows the shape of what is coming
- *    (`ui/Skeleton.tsx`) — never the empty state's "Nothing here", which would be a claim
- *    about mail the app has simply not read yet. This is the same line the webapp's
- *    `SyncState` draws, and the same one the sync interim-state fix established: unknown is
- *    not empty, and unknown is not undecided.
- *  · **empty** — zero rows and the mirror has settled. Now, and only now, emptiness is a
- *    fact and the honest empty state speaks.
- *
- * A meta line is held to the same rule through {@link metaWhen}: "0 unread of 0" over a
- * skeleton would be an invented count — the exact thing the skeleton exists not to be.
+ * What a list screen may show while the mirror is still answering — the unknown≠empty rule as one
+ * pure function every message-list surface renders through. content: rows exist and render, even
+ * mid-bootstrap — real mail beats a silhouette. skeleton: zero rows AND the mirror has never
+ * completed a drain — the list is unknown, not empty, so the screen shows the shape of what is
+ * coming (`ui/Skeleton.tsx`), never "Nothing here", which would be a claim about mail the app has
+ * not read yet (the webapp's `SyncState` line). empty: zero rows and the mirror has settled — now
+ * emptiness is a fact and the honest empty state speaks. A meta line is held to the same rule
+ * through {@link metaWhen}: "0 unread of 0" over a skeleton would be an invented count.
  */
 
 export type ListSurface = "content" | "skeleton" | "empty";

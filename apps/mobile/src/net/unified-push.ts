@@ -2,63 +2,14 @@ import { Platform } from "react-native";
 import type { UnifiedPushDistributor, WakeRegistration } from "./push";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE DISTRIBUTOR CONNECTOR — the one file that talks to the native UnifiedPush module
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * `push.ts` owns the SERVER half of the wake handshake and knows nothing about how an endpoint is
- * obtained. This is the other half: it asks the device for one. The split is deliberate and it is
- * what keeps `push.ts` testable without a native module — every test there hands it a
- * {@link UnifiedPushDistributor} double, and this is the real implementation of that port.
- *
- * ── ANDROID ONLY, AND SAID OUT LOUD RATHER THAN CRASHED ───────────────────────────────────────
- *
- * UnifiedPush is an Android ecosystem: it works by one app (the distributor) holding a connection
- * and handing messages to others, which iOS does not permit. `expo-unified-push` declares
- * `"platforms": ["android"]`, and its entry point calls `requireNativeModule("ExpoUnifiedPush")` at
- * MODULE SCOPE — so on iOS merely importing the package throws.
- *
- * Hence the lazy `require` in {@link native} rather than a top-level import: on iOS this module
- * loads, answers "no distributor", and the app shows the sentence it already had for a phone without
- * one. A top-level import would take the whole Settings screen down on every iPhone.
- *
- * THE TRY/CATCH IS NOT THE PLATFORM CHECK, and believing it was cost every iOS launch. Metro's
- * `require` catches a module-init throw itself and hands it to `ErrorUtils.reportFatalError`
- * instead of re-throwing, so the `catch` below never runs and the app dies at the red screen with
- * `Cannot find native module 'ExpoUnifiedPush'`. The platform test therefore comes BEFORE the
- * require, in {@link native} — the one point every function below reaches the module through.
- *
- * ── WHAT THE CONNECTOR'S API ACTUALLY LOOKS LIKE, BECAUSE IT IS NOT THE OBVIOUS SHAPE ─────────
- *
- * `registerDevice(vapid)` does NOT return the endpoint. It returns `Promise<void>` and the endpoint
- * arrives LATER, on an event: `subscribeDistributorMessages` fires with
- * `{ action: "registered", data: { url, pubKey, auth } }` once the distributor has minted one. So
- * this adapter bridges an event to a promise, with a timeout, because `registerWake` needs a value
- * it can send to a server.
- *
- * Two more things that are easy to get wrong and are handled here:
- *
- *  · `registerDevice` REJECTS unless `saveDistributor` was called first. Choosing a distributor is a
- *    user decision (there may be several installed), so {@link listDistributors} and
- *    {@link chooseDistributor} exist and Settings drives them. `available()` answers whether one has
- *    been chosen AND is installed — not whether any exist.
- *  · `registerDevice` REJECTS on an emulator, by design. Nothing to work around; it means a wake
- *    cannot be smoke-tested without a physical device, which is why the acceptance for this is a
- *    phone and is named as such.
- *
- * ── THE MESSAGE ARM IS WHERE THE WAKE BECOMES A SYNC ──────────────────────────────────────────
- *
- * A delivered wake surfaces as `{ action: "message", data: { message, decrypted } }`. The payload is
- * the fifteen-byte constant, so there is nothing to read out of it — {@link onWake} does not even
- * parse it beyond confirming it is the constant, and calls back so the caller can do the one thing a
- * wake means: pull from `/sync`. Deliberately NOT a notification: the payload carries no `id`, which
- * is what makes the connector's own renderer draw nothing, so a wake is silent by construction
- * rather than by us suppressing something.
- *
- * **This only runs while the app's process is alive.** The connector's service drops the event when
- * the JS bridge is not bound, so a wake to an app the user swiped away does nothing at all. That is
- * a real limitation, it is why the copy says "while ohmail is running", and closing it needs native
- * code that is not in this slice.
+ * The distributor connector — the one file that talks to the native UnifiedPush module;
+ * `push.ts` owns the server half and its tests use a {@link UnifiedPushDistributor} double.
+ * Android only, said rather than crashed: `expo-unified-push` calls `requireNativeModule` at
+ * module scope, so importing it on iOS throws — and the try/catch is NOT the platform check
+ * (Metro's `require` hands a module-init throw to `ErrorUtils.reportFatalError` without
+ * re-throwing), so the platform test comes before the require, in {@link native}.
+ * `registerDevice(vapid)` returns void; the endpoint arrives later on an event, bridged here
+ * to a promise with a timeout. The payload is the fifteen-byte constant; wakes arrive only while the process is alive.
  */
 
 /** The shape of the native module this file uses. Declared locally so nothing else imports it. */
@@ -133,21 +84,14 @@ export interface DistributorChoice {
 }
 
 /**
- * The distributors installed on this device, minus any INTERNAL one.
- *
- * ── THE FILTER IS NOT COSMETIC ────────────────────────────────────────────────────────────────
- *
- * `getDistributors()` includes an "internal" entry when the app itself embeds one — which for
- * `expo-unified-push` means its Firebase Cloud Messaging fallback. This build EXCLUDES that
- * artifact from the APK at the Gradle level (`plugins/without-embedded-fcm.js`), so there should be
- * no internal entry to filter. The filter is here anyway, and the reason is worth stating rather
- * than leaving as belt-and-braces: if the exclusion ever stops applying — a template change, a
- * dependency bump — the honest failure is "no distributor available", not "silently registered with
- * Google". One of those is a sentence the user reads; the other is the product's central claim
- * quietly becoming false.
- *
- * The build-level check is still the real guard; this is the runtime half that refuses to USE what
- * should not be there.
+ * The distributors installed on this device, minus any internal one. `getDistributors()`
+ * includes an "internal" entry when the app embeds one — for `expo-unified-push`, its
+ * Firebase Cloud Messaging fallback. This build excludes that artifact at the Gradle level
+ * (`plugins/without-embedded-fcm.js`), so there should be none to filter; the filter stays
+ * because if the exclusion ever stops applying, the honest failure is "no distributor
+ * available", not "silently registered with Google" — one is a sentence the user reads, the
+ * other is the product's central claim quietly becoming false. The build-level check is the
+ * real guard; this is the runtime half that refuses to use what should not be there.
  */
 export function listDistributors(): DistributorChoice[] {
   const api = native();
@@ -190,15 +134,11 @@ export function chooseDistributor(id: string | null): void {
 const REGISTER_TIMEOUT_MS = 15_000;
 
 /**
- * The real {@link UnifiedPushDistributor}.
- *
- * A factory rather than a module-level constant so that nothing is constructed at import time on a
- * platform where the native module cannot load — the `native()` call inside each method is what
- * decides, and it caches.
- *
- * The VAPID key is NOT held here; it arrives as an argument to `register`. See the port's own
- * docblock: the key belongs to whichever server profile is active, and a distributor object holding
- * one could outlive a switch to another.
+ * The real {@link UnifiedPushDistributor}. A factory rather than a module-level constant so
+ * nothing is constructed at import time on a platform where the native module cannot load —
+ * the `native()` call inside each method decides, and caches. The VAPID key is not held here;
+ * it arrives as an argument to `register`: the key belongs to whichever server profile is
+ * active, and a distributor object holding one could outlive a switch to another.
  */
 export function unifiedPushDistributor(): UnifiedPushDistributor {
   return {
@@ -290,26 +230,13 @@ export function unifiedPushDistributor(): UnifiedPushDistributor {
 
 /**
  * Call `onWakeReceived` whenever a wake for `instance` arrives while this process is alive.
- *
- * The payload is checked against the constant and then DISCARDED — there is nothing in it. The
- * check is not defensive parsing, it is a refusal to treat the body as data: if a future server
- * ever sent something else, this would ignore it rather than start acting on push-delivered
- * content, which is a property worth having on the client side of a channel that runs through a
- * third party.
- *
- * ── THE WAKE IS SCOPED, AND IT USED NOT TO BE ─────────────────────────────────────────────────
- *
- * `MessagePayload` carries the instance the wake was delivered for, and this ignored it — there
- * was only one registration, so every wake meant the same thing: sync whatever is live. With one
- * endpoint per pairing a wake NAMES a pairing, and a wake for the profile that is not on screen
- * must not start a drain on the one that is. The caller passes the live profile's id; a wake for
- * any other instance is dropped here rather than turned into somebody else's sync.
- *
- * A payload with NO instance is still honoured: an install upgrading from the shared-endpoint
- * build can have a wake in flight for the legacy default registration, and dropping those would
- * lose a real wake on the one launch where it matters least and confuses most.
- *
- * Returns an unsubscribe. Does nothing at all on a platform with no native module.
+ * The payload is checked against the constant and discarded — not defensive parsing, a
+ * refusal to treat the body as data: if a server ever sent something else, this ignores it
+ * rather than acting on push-delivered content. The wake is scoped: with one endpoint per
+ * pairing a wake names a pairing, and a wake for the profile not on screen must not start a
+ * drain on the one that is — any other instance is dropped here. A payload with no instance
+ * is still honoured: an install upgrading from the shared-endpoint build can have a legacy
+ * wake in flight. Returns an unsubscribe; does nothing with no native module.
  */
 export function onWake(instance: string, onWakeReceived: () => void): () => void {
   const api = native();
@@ -332,21 +259,14 @@ export function onWake(instance: string, onWakeReceived: () => void): () => void
 }
 
 /**
- * ── THE UPGRADE THIS CHANGE OWES: DROP THE SHARED REGISTRATION, ONCE ──────────────────────────
- *
- * A phone running the previous build holds a registration under the connector's DEFAULT instance,
- * and every server it paired with stores a `push_subscriptions` row against that one endpoint.
- * Registering per profile mints NEW endpoints and new rows, and leaves the old ones — pointing at
- * an endpoint this phone still answers, so the servers never get the 404/410 they prune on. Those
- * rows and their traffic would be permanent, and nothing left on the phone can name them: the
- * subscription ids lived in one provider's ref and are gone with the process that held them.
- *
- * So the default instance is unregistered once, the first time this build registers anything. The
- * phone stops answering the old endpoint, and every server prunes its stale row on the first
- * delivery attempt — which is the documented prune path rather than a cleanup of our own.
- *
- * Once per PROCESS is enough and needs no persisted flag: `unregisterDevice()` on an instance that
- * does not exist is a no-op, so a launch that never had one pays nothing.
+ * The upgrade this change owes: drop the shared registration, once. A phone on the previous
+ * build holds a registration under the connector's default instance, and every paired server
+ * stores a row against that one endpoint; per-profile registration mints new endpoints and
+ * would leave the old rows pointing at an endpoint this phone still answers — permanent, and
+ * nothing left on the phone can name them. So the default instance is unregistered the first
+ * time this build registers anything: the phone stops answering the old endpoint and every
+ * server prunes its stale row on the first delivery attempt (the documented prune path). Once
+ * per process, no persisted flag: `unregisterDevice()` on a missing instance is a no-op.
  */
 let legacyDropped = false;
 function dropLegacyDefaultRegistration(api: NativeApi): void {
@@ -365,17 +285,13 @@ export function resetLegacyDropForTests(): void {
 }
 
 /**
- * Ask the OS for the notification permission the KILLED-APP wake notice needs.
- *
- * On Android 13+ `POST_NOTIFICATIONS` starts denied, and the native renderer's `notify` is dropped
- * without it — so a wake to a closed app would render nothing until the user granted it by hand.
- * This requests it at the moment the user opts into wakes (choosing a distributor), which is the one
- * place there is an Activity in the foreground to show the prompt.
- *
- * Best-effort and swallowing by contract: a denial is a real, supported outcome (the copy says the
- * closed-app notice needs the permission and that mail still syncs on open without it), so this
- * never throws and never surfaces a result. It does nothing on a platform with no native module,
- * and the connector answers `"denied"` on an emulator by design.
+ * Ask the OS for the notification permission the killed-app wake notice needs. On Android 13+
+ * `POST_NOTIFICATIONS` starts denied and the native renderer's `notify` is dropped without
+ * it, so a wake to a closed app would render nothing. Requested at the moment the user opts
+ * into wakes (choosing a distributor) — the one place an Activity is in the foreground to
+ * show the prompt. Best-effort and swallowing by contract: a denial is a supported outcome
+ * (the copy says so, and mail still syncs on open), so this never throws and never surfaces a
+ * result; it does nothing with no native module, and answers "denied" on an emulator by design.
  */
 export async function requestNotificationPermission(): Promise<void> {
   const api = native();

@@ -1,17 +1,12 @@
 /**
- * App-local preferences — the one piece of client state that is not the mirror.
- *
- * Today that is the two APPEARANCE choices, and only those: the light/dark preference and the
- * face pin (paper / ohmarchy, "only this device" — OHMARCHY-PLAN.md §3a). Both are held in
- * memory: a relaunch returns the scheme to "system" and drops the face pin, after which the
- * ACCOUNT's face governs again (it arrives on every boot's `GET /consent`, so the durable scope
- * really is durable). Persisting either is a later, deliberate change, not a side effect of some
- * other store existing — **and it has to be BOTH.** The two are one class of decision, this
- * app's only two, and persisting one of them while the other resets is an incoherence somebody
- * would report as a bug. A phone also has no pre-paint stamp to protect (the browser client
- * mirrors the account's answer to storage precisely so its boot script can stamp before first
- * paint; React Native has no paint before JS), so a store here would buy nothing but a second
- * copy of an answer the server already gives.
+ * App-local preferences — the one piece of client state that is not the mirror: the light/dark
+ * preference and the face pin (paper / ohmarchy, "only this device"). Both are held in memory: a
+ * relaunch returns the scheme to "system" and drops the pin, after which the account's face
+ * governs again (it arrives on every boot's `GET /consent`). Persisting either is a later,
+ * deliberate change — and it must be both, since persisting one while the other resets is an
+ * incoherence somebody would report. A phone also has no pre-paint stamp to protect (React
+ * Native has no paint before JS), so a store here would buy nothing but a second copy of an
+ * answer the server already gives.
  */
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import type { FaceName } from "../theme/face";

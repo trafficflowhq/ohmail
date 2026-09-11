@@ -1,19 +1,12 @@
 /**
- * PULL-TO-REFRESH → A REAL SYNC — the screen-side half of the doorbell.
- *
- * The gesture rings `connection.syncNow()`, which is the SAME ask a delivered wake makes and
- * the Servers screen's "Sync now" button presses: the pull is a trigger for the sync the app
- * already knows how to do, never a source of data. The spinner is honest by construction —
- * it renders on the promise `syncNow` answers, which settles when the engine's own round
- * completes (`net/drain.ts`, the honest-settle contract), so it ends with the sync, not on a
- * timer. A refused round settles the same way, quietly: the failure keeps its one existing
- * sentence (`connection.syncError`, the Servers screen's vocabulary) and the pull adds no
- * toast on top of it.
- *
- * `refreshing` is LOCAL to the pulling screen rather than mirrored from `connection.syncing`
- * on purpose: the background poll and the wake channel run the very same rounds, and a
- * spinner that appeared uninvited on every one of those would turn a quiet background fact
- * into foreground noise. Only a pull shows a pull spinner.
+ * Pull-to-refresh → a real sync — the screen-side half of the doorbell. The gesture rings
+ * `connection.syncNow()`, the same ask a delivered wake makes: the pull is a trigger for the sync the app
+ * already knows how to do, never a source of data. The spinner is honest by construction — it renders on the
+ * promise `syncNow` answers, which settles when the engine's own round completes (`net/drain.ts`), so it ends
+ * with the sync, not on a timer; a refused round settles the same way, keeping its one existing sentence
+ * (`connection.syncError`). `refreshing` is local to the pulling screen on purpose: the background poll and
+ * the wake channel run the very same rounds, and an uninvited spinner on every one would turn a quiet
+ * background fact into foreground noise. Only a pull shows a pull spinner.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnection } from "../net/connection";

@@ -1,21 +1,10 @@
 /**
- * The Blanc list language, as React Native primitives.
- *
- * Everything a screen paints comes from here, and everything here reads its
- * values from `useTheme()`. There are no colour literals below the theme
- * module — `test/theme.test.ts` greps for them.
- *
- * The vocabulary is the prototype's, one to one:
- *   Screen    the off-white canvas          (`body`)
- *   Panel     a white surface on the canvas (`.list-col`, radius 20, lift-1)
- *   ViewHead  h1 + meta                     (`.vhead`)
- *   Section   the group label               (`.grouplabel`)
- *   Badge     a small tint capsule          (`.badge`)
- *   TagChip   a tag capsule in its hue      (`.tagchip`)
- *   Chip      a message chip                (`.chip`)
- *   Button    a capsule held up by light    (`.btn`)
- *   Tail      the completeness note         (`.tail-row`)
- *   Waterline the seen/unseen boundary      (`.waterline`)
+ * The Blanc list language, as React Native primitives. Everything a screen paints comes from
+ * here, and everything here reads `useTheme()` — no colour literals below the theme module
+ * (`test/theme.test.ts` greps for them). The vocabulary is the prototype's, one to one:
+ *   Screen (`body`) · Panel (`.list-col`, radius 20, lift-1) · ViewHead (`.vhead`) ·
+ *   Section (`.grouplabel`) · Badge (`.badge`) · TagChip (`.tagchip`) · Chip (`.chip`) ·
+ *   Button (`.btn`) · Tail (`.tail-row`) · Waterline (`.waterline`)
  */
 import { useCallback, useState, type ReactNode } from "react";
 import {
@@ -118,15 +107,13 @@ export function Panel({
 }
 
 /**
- * The scroller every list screen uses. Owns the side gutter and the clearance
- * under the tab bar so a panel's full shadow falloff is never clipped.
- *
- * `refresh` is the standard pull gesture, themed once here so every list that
- * refreshes speaks the same voice: the spinner in the quiet ink (iOS half —
- * `tintColor` on UIRefreshControl), the accent on the material indicator over a
- * floating panel (Android half — `colors`/`progressBackgroundColor` on
- * SwipeRefreshLayout). The screens hand in `usePullToSync()`, whose spinner
- * settles when the sync round actually completes — see `state/pull.ts`.
+ * The scroller every list screen uses. Owns the side gutter and the clearance under the tab
+ * bar so a panel's full shadow falloff is never clipped. `refresh` is the standard pull
+ * gesture, themed once here so every refreshing list speaks the same voice: the spinner in
+ * the quiet ink (iOS — `tintColor` on UIRefreshControl), the accent on the material indicator
+ * (Android — `colors`/`progressBackgroundColor` on SwipeRefreshLayout). Screens hand in
+ * `usePullToSync()`, whose spinner settles when the sync round actually completes
+ * (`state/pull.ts`).
  */
 export function Scroller({
   children,
@@ -373,16 +360,13 @@ export function Button({
 }
 
 /**
- * The one Pressable in the app, and the reason every press target really
- * reaches Material's 48dp and HIG's 44pt.
- *
- * The slop is MEASURED, not assumed. A flat `hitSlop={6}` used to stand here
- * under a comment that claimed 48, and it was false wherever the control was
- * shorter than 36: a segmented control (34pt) reached 46 and a chip (29pt)
- * reached 41. So the layout height is read back from `onLayout` and
- * `hitSlopFor` turns it into the slop that closes the gap. Nothing moves
- * visually — `hitSlop` grows the touch rectangle, never the box — and a caller
- * that passes its own `hitSlop` still wins.
+ * The one Pressable in the app, and the reason every press target really reaches Material's
+ * 48dp and HIG's 44pt. The slop is measured, not assumed: a flat `hitSlop={6}` stood here
+ * under a comment claiming 48, false wherever the control was shorter than 36 (a segmented
+ * control reached 46, a chip 41). So the layout height is read back from `onLayout` and
+ * `hitSlopFor` turns it into the slop that closes the gap. Nothing moves visually —
+ * `hitSlop` grows the touch rectangle, never the box — and a caller passing its own
+ * `hitSlop` still wins.
  */
 export function Tap({ style, children, hitSlop, onLayout, ...rest }: PressableProps) {
   const [height, setHeight] = useState(0);

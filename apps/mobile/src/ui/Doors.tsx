@@ -1,55 +1,12 @@
 /**
- * ═══ THE FOUR DOORS, ON A PHONE ════════════════════════════════════════════════════════════════
- *
- * One component, rendered by the first-run screen and by the Servers screen's "Add a server"
- * panel, because they are the same question asked at two moments. It was two implementations —
- * a welcome screen offering "scan" and "other ways", and a picker offering three cards with
- * different words — and the two had drifted into different vocabularies for one decision.
- *
- * ── WHAT A PHONE'S DOORS ARE ───────────────────────────────────────────────────────────────────
- *
- * The desktop asks which machine does the organizing and offers three answers, one of which is
- * ITSELF. The phone now has that door too: an engine runs inside this app over its own SQLite file
- * and dials the person's IMAP server, for as long as the app is open (and, on Android, behind a
- * notification). Three doors name somebody else's machine and end the same way — this phone keeps
- * a copy — and the fourth names the phone in the reader's hand and says what it costs.
- *
- * THE FOURTH DOOR IS OFFERED ONLY WHERE AN ENGINE IS REGISTERED (`standaloneAvailable`), which is
- * a fact about the build rather than a flag: carrying the artifact is what makes the door real, so
- * a build without it shows three doors instead of a fourth one that refuses.
- *
- * The other three:
- *
- *  1. **ohmail Cloud** — the hosted service. Real today: its `/hello` announces
- *     `features.pairing` and its redeem is mounted, and the code comes from the Devices pane the
- *     web client shows on exactly that condition. Nothing here trusts that comment: the door
- *     negotiates, and a server that says it does not pair produces a sentence instead of a step.
- *  2. **Your own server** — a self-hosted stack. The address step, and it is a step of its own
- *     for the desktop door's reason: everything that goes wrong with a self-hosted address goes
- *     wrong here — a typo, a machine that is not running ohmail, a certificate nothing outside
- *     that network vouches for — and every one of those becomes a sentence about the address
- *     rather than a sentence about pairing.
- *  3. **Your own computer** — the desktop-host door. Its whole trust story is the pairing
- *     ceremony's (`net/host-pinning.ts`), the phone's half of it ships on Android and is named
- *     for iOS, and NOTHING in this file rebuilds any of it. The door routes to the scanner and
- *     the scanner's own seam decides what it will accept; the copy says what the code carries and
- *     does not promise the platform half that is not there.
- *
- * ── AND THE LAN HALF IS NOT PROMISED EARLY — WHICH TOOK TWO GOES TO GET RIGHT ──────────────────
- *
- * `admitOrigin` refuses a same-network pairing where `canPin()` is false and says which platform
- * half is missing. The first version of this screen therefore said nothing at all about "on your
- * own network", on the argument that a door tile is the wrong place for a conditional.
- *
- * That argument is right about the TILE and was wrong as a whole answer, and review showed why: the
- * tile says "open Settings → Devices there and scan its code", which is true on both platforms and
- * still walks an iPhone user into the refusal, because a computer's SAME-NETWORK code is the one
- * that needs the pin. Saying nothing did not stop the dead end; it just moved the discovery to
- * after the camera.
- *
- * So the tile stays unconditional and TRUE, and one extra line renders only where `canPin()` is
- * false, naming the address on that same pane which does work. A conditional nobody in the
- * condition has to read, and nobody outside it ever sees.
+ * The four doors, on a phone — one component rendered by the first-run screen and the Servers
+ * screen's "Add a server" panel: the same question at two moments. The desktop asks which
+ * machine does the organizing; the phone now has its own door — an engine inside this app
+ * dialling the person's IMAP server. The fourth door is offered only where an engine is
+ * registered (`standaloneAvailable`) — a build fact, not a flag. The other three: ohmail
+ * Cloud (negotiates `/hello`; a non-pairing server gets a sentence), your own server (the
+ * address step, so address faults become address sentences), your own computer (trust is
+ * `net/host-pinning.ts`'s ceremony). One extra LAN line renders only where `canPin()` is false.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { refuse, sayRefusal, type Refusal } from "../refusal";
@@ -112,54 +69,27 @@ export function Doors({
   const [address, setAddress] = useState("");
   const [probe, setProbe] = useState<Probe>({ k: "idle" });
   /**
-   * WHICH CHECK IS THE NEWEST — the request-identity guard, and it closes a real state bleed.
-   *
-   * `check` awaits two round trips, and NOTHING stopped an older one from landing on top of a newer
-   * state. Review's sequence: tap **ohmail Cloud**, then open **Your own server** before `/hello`
-   * answers. The Cloud check resolves, sets `probed` with the HOSTED origin, and that result renders
-   * inside the self-hosted arm — locking the address field and offering to pair with a server the
-   * person never typed. Two taps on the self-hosted door resolving out of order does the same.
-   *
-   * The connection layer solves this with `TransitionGate`'s `stillCurrent()`; this is the same
-   * discipline at the screen: every check takes a ticket, and only the holder of the newest ticket
-   * may write state. A superseded check writes nothing at all — not even its failure, because a
-   * failure belonging to an abandoned question is noise on the question that replaced it.
-   *
-   * It also covers unmount, which is the other half review named: a check in flight when the screen
-   * routes to the scanner is superseded by nothing, so `latest` simply never matches again after
-   * the component is gone... which is NOT true of a ref, so the effect below marks it.
+   * Which check is the newest — the request-identity guard, and it closes a real state bleed.
+   * `check` awaits two round trips and nothing stopped an older one from landing on top of a
+   * newer state: tap ohmail Cloud, open Your own server before `/hello` answers, and the Cloud
+   * check resolves into the self-hosted arm — locking the address field and offering to pair
+   * with a server the person never typed. Same discipline as `TransitionGate.stillCurrent()`,
+   * at the screen: every check takes a ticket, and only the newest ticket's holder may write
+   * state. A superseded check writes nothing — not even its failure, which would be noise on
+   * the question that replaced it. Unmount marks the ref so `latest` never matches again.
    */
   const latest = useRef(0);
   useEffect(() => () => { latest.current = -1; }, []);
 
   /**
-   * NEGOTIATE, THEN MEASURE — and both before anything says "next".
-   *
-   * `/hello` says whether this is an ohmail server and whether it pairs; the base probe says
-   * WHERE its mail API is, which on a one-origin self-host stack is not the address that was
-   * typed. The second half is the reason this door exists at all: a pairing that skipped it
-   * succeeded and then mirrored nothing for ever. The pairing seam measures again for itself —
-   * that is where the value is stored and where a QR-driven pairing gets it too — and this call
-   * is what lets the SCREEN name the answer before a code is spent.
-   *
-   * Both go through the connection layer (`ask`, `probeBase`), so this file opens no socket and
-   * names no address of its own — which is a rule the privacy census holds, not a preference.
-   *
-   * ── AND THE BASE PROBE IS FOR A TYPED ADDRESS ONLY, WHICH IS NOT A SPECIAL CASE ─────────────
-   *
-   * `measureBase` is false for the Cloud card, and it started out true there — a regression this
-   * would have shipped on the door that already works. The hosted service's address is a CONSTANT
-   * in this app (`MANAGED_ORIGIN`), so there is nothing about it to discover: the probe could only
-   * ever return the origin it was given, while adding a round trip that can FAIL. A network blip
-   * on it would have shown "ohmail could not find its mail API" in place of the pair step, for the
-   * one door whose API location has never been in question.
-   *
-   * The value the probe has is entirely about a TYPED address: it turns "this stack is proxied in a
-   * way ohmail cannot reach" into a sentence before the person spends a single-use code. That
-   * value does not exist where the address came from this app's own source.
-   *
-   * Nothing is skipped in the ceremony either way — `pairWithServer` measures for itself, for
-   * every origin, including one that arrived by camera and never met this screen.
+   * Negotiate, then measure — both before anything says "next". `/hello` says whether this is
+   * an ohmail server and whether it pairs; the base probe says where its mail API is, which on
+   * a one-origin self-host stack is not the address that was typed — a pairing that skipped it
+   * mirrored nothing for ever. Both go through the connection layer (`ask`, `probeBase`), so
+   * this file opens no socket and names no address (a census rule). `measureBase` is false for
+   * the Cloud card: the hosted address is a constant (`MANAGED_ORIGIN`), so the probe could
+   * only return what it was given while adding a round trip that can fail. Nothing is skipped
+   * either way — `pairWithServer` measures for itself, for every origin.
    */
   const check = useCallback(
     async (typed: string, measureBase: boolean) => {
@@ -396,18 +326,13 @@ function Door({
       onPress={onPress}
       accessibilityRole="button"
       /**
-       * THE NAME *AND* THE SENTENCE — because an explicit label REPLACES the one React Native would
-       * derive from the child text, and the sentence is not decoration here.
-       *
-       * This carried only the NAME, inherited from the picker row it replaced, and on that row it
-       * was nearly harmless: the note was a short category. On a door the second line is
-       * the whole answer — WHICH MACHINE does the organizing, and what to do next — so a screen
-       * reader announced "Your own computer, button" and dropped "open Settings → Devices there and
-       * scan its code". The desktop door would then take somebody straight to a camera without ever
-       * having said what to point it at.
-       *
-       * One label with both, rather than a `hint`: a hint is spoken after a pause and can be turned
-       * off entirely, and this sentence is not supplementary to the choice — it IS the choice.
+       * The name AND the sentence — an explicit label replaces the one React Native would
+       * derive from the child text, and the sentence is not decoration here. Carrying only the
+       * name, a screen reader announced "Your own computer, button" and dropped "open Settings
+       * → Devices there and scan its code" — the whole answer of which machine organizes and
+       * what to do next. One label with both, rather than a `hint`: a hint is spoken after a
+       * pause and can be turned off entirely, and this sentence is not supplementary to the
+       * choice — it IS the choice.
        */
       accessibilityLabel={Copy.ariaNameThenSentence(name, need === undefined ? say : `${say} ${need}`)}
       style={{ marginHorizontal: 8, paddingHorizontal: 12, paddingVertical: 12, gap: 3 }}

@@ -1,42 +1,12 @@
 /**
- * THE MODULES THAT ARE NOT THERE — `fs`, `fs/promises`, `os`, `path`, `http`, `https`,
- * `child_process`.
- *
- * Reached only by dependencies that carry code paths this app does not use: the mail sender's
- * attachment-from-disk helpers, the MIME splitter's temporary files, and a proxy dialler. Nothing
- * on the phone's own path touches any of them, which is what makes a refusal the right answer
- * rather than an implementation.
- *
- * ── IT THROWS WHEN CALLED, NOT WHEN READ, AND THAT IS DELIBERATE ──────────────────────────
- *
- * Libraries read properties off these modules at module scope — `const join = path.join` at the top
- * of a file that may never call it. A stub that threw on property ACCESS would therefore fail while
- * the bundle was still initialising, before anything had asked for a file, and the stack would name
- * the import rather than the caller. Answering a function for every property moves the failure to
- * the line that actually needed a filesystem, and names both the module and the member.
- *
- * The one property that must NOT throw is `default`: bundler interop reads it while wiring a
- * CommonJS module into an ES import, and throwing there would break the graph at load.
- *
- * ── AND ANSWERING ON READ IS NOT ENOUGH, BECAUSE THE BUNDLER COPIES RATHER THAN READS ─────
- *
- * That was the whole of this file, and it did not work for the import form almost every consumer
- * writes. esbuild wires an ES import of a CommonJS module by walking the module's OWN PROPERTY
- * NAMES and defining one accessor per name on a fresh namespace object. A Proxy over an empty
- * target has no own property names, so the namespace came out EMPTY: `import { join } from
- * "node:path"` was `undefined`, and the call failed as `(0, import_node_path.join) is not a
- * function` — naming neither the module nor the member, which is the exact failure the paragraph
- * above claims to prevent. It was true only of `import path from "node:path"`, the form the
- * engine's own code mostly does not use.
- *
- * So the stub declares what it would have exported. `ownKeys` lists the real module's member
- * names and `getOwnPropertyDescriptor` answers a configurable, enumerable descriptor for each, so
- * the copy finds them and every copied member is a refusal that names itself. The names are a
- * MEASUREMENT of the real module rather than a list somebody curated — see
- * `node-absent-members.js`, and the interop test that recomputes it.
- *
- * The Proxy invariants this rests on: the target stays extensible and every descriptor handed back
- * is `configurable`, which is what makes it legal to report a property the target does not have.
+ * The modules that are not there — `fs`, `fs/promises`, `os`, `path`, `http`, `https`, `child_process`. Reached only
+ * by dependency code paths this app does not use (attachments from disk, temp files, a proxy dialler), so a refusal
+ * is the right answer. It throws when CALLED, not when read: libraries do `const join = path.join` at module scope,
+ * and throwing on access would fail while the bundle initialises, naming the import rather than the caller (`default`
+ * must not throw either — interop reads it). Answering on read is not enough, because the bundler copies rather than
+ * reads: esbuild walks the module's own property names, and a Proxy over an empty target has none, so the namespace
+ * came out empty. So the stub declares what it would have exported: `ownKeys` lists the real module's members
+ * (measured — see `node-absent-members.js`) and every copied member is a refusal that names itself.
  */
 "use strict";
 

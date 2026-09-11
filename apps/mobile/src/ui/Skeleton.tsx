@@ -1,31 +1,12 @@
 /**
- * THE SHAPE OF THE LIST THAT IS COMING — and nothing whatsoever about what will be on it.
- *
- * The mobile port of the webapp shell's `BootSkeleton`, speaking the same loading language
- * so the two surfaces read as one product:
- *
- *  · **Bars, never words.** Zero text nodes, hidden from the screen reader, widths from a
- *    fixed table that is derived from nothing — a bar as long as a real subject line would
- *    be a claim about that subject, and a random one would make two paints of one wait
- *    differ. The rule the webapp's `OhboxView` states — a placeholder that could be mistaken
- *    for the reader's own mail is this product's unforgivable failure — is held here by
- *    construction: there is nothing in the silhouette to mistake.
- *  · **A breath, not a shimmer.** One slow opacity pulse (the webapp's `boot-sk-breathe`,
- *    2 s, the design system's swift curve), because a travelling highlight draws the eye to
- *    a surface with nothing on it. Reduced motion drops the breath and keeps the shape —
- *    the affordance is the thing, the motion is only how it is drawn.
- *  · **The two quietest fills.** `tint2` for the name/subject bars, `tint` for the preview
- *    line — both alpha washes over the panel, so the silhouette reads correctly in light and
- *    dark from the one palette, never as a grey rectangle on a dark canvas.
- *  · **A grace before the shape.** Below {@link SKELETON_GRACE_MS} nothing is drawn, so the
- *    warm boot — which renders real content in its first live frame — never strobes a
- *    skeleton on its way there. The constant is exported for the suite's fake timers, the
- *    webapp's own reason.
- *
- * Unlike the webapp's deliberately-approximate silhouette, the row geometry here mirrors the
- * REAL list rows (`MailRow`, the Screener's `WaitingRow`, the Reads stream card): the same
- * paddings, the same line rhythm, the same avatar circle where the real row draws one — so
- * when content replaces the skeleton, nothing jumps.
+ * The shape of the list that is coming — and nothing about what will be on it; the mobile port of the webapp's
+ * `BootSkeleton`. Bars, never words: zero text nodes, hidden from the screen reader, widths from a fixed table
+ * derived from nothing — a placeholder that could be mistaken for the reader's own mail is this product's
+ * unforgivable failure, held here by construction. A breath, not a shimmer: one slow opacity pulse
+ * (`boot-sk-breathe`, 2 s); reduced motion drops the breath and keeps the shape. The two quietest fills (`tint2`,
+ * `tint`), alpha washes that read in light and dark. Below {@link SKELETON_GRACE_MS} nothing is drawn, so a warm boot
+ * never strobes a skeleton (the constant is exported for fake timers). Unlike the webapp's approximate silhouette,
+ * the row geometry mirrors the real rows, so when content replaces the skeleton, nothing jumps.
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Animated, Easing, View, type ViewStyle } from "react-native";

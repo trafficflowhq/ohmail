@@ -1,15 +1,12 @@
 /**
- * THE REAL BACKGROUND SERVICE — the one module in this app that asks for the organizer service.
- *
- * The `host-pinning-native.ts` idiom, for the reason that file states as a fact: importing `expo`
- * pulls the whole Expo runtime, which needs `__DEV__` and is not present under vitest, so the
- * node-side suite drives every rule in `background.ts` through its seam and never loads this file.
- *
- * `requireOptionalNativeModule` answers `null` rather than throwing where the native half is
- * absent — **iOS, which has no half here and needs none**: iOS does not let a suspended app hold
- * an organizer claim honestly, so the iPhone answer is to give the mailbox back rather than to
- * find a way to keep it. `null` is therefore the CORRECT iOS value, not a gap, and the arms in
- * `background.ts` read it as "organizes only while open".
+ * The real background service — the one module in this app that asks for the organizer service.
+ * The `host-pinning-native.ts` idiom: importing `expo` pulls the whole Expo runtime, which needs
+ * `__DEV__` and is absent under vitest, so the node suite drives every rule in `background.ts`
+ * through its seam and never loads this file. `requireOptionalNativeModule` answers `null` where
+ * the native half is absent — iOS, which has no half here and needs none: iOS does not let a
+ * suspended app hold an organizer claim honestly, so the iPhone answer is to give the mailbox
+ * back. `null` is the correct iOS value, not a gap, and the arms in `background.ts` read it as
+ * "organizes only while open".
  */
 import { requireOptionalNativeModule } from "expo";
 

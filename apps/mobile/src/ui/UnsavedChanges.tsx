@@ -1,18 +1,11 @@
 /**
- * CHANGES THE SERVER WOULD NOT TAKE — the phone's half of the browser's "could not be saved" strip.
- *
- * ── PARITY IS THE RULE, NOT A NICETY ───────────────────────────────────────────────────────
- *
- * The engine gives up on a verb after a bounded number of server-answered failures and moves it out
- * of the replay set. That bound is shared code, so it applies here whether or not this file exists
- * — and without this file the phone would drop a person's work SILENTLY while the browser explained
- * it. The engine owns the rule; each platform owes the sentence.
- *
- * ── WHY IT LIVES IN THE CHROME ─────────────────────────────────────────────────────────────
- *
- * `TopBar` renders it, for the reason that bar's own comment already gives about the freshness
- * label: a view can only speak about itself, and the next tab added must get the sentence for free.
- * A change abandoned while the reader is in Triage is not a Triage fact.
+ * Changes the server would not take — the phone's half of the browser's "could not be saved"
+ * strip. Parity is the rule: the engine gives up on a verb after a bounded number of
+ * server-answered failures and moves it out of the replay set — shared code, so it applies
+ * whether or not this file exists, and without it the phone would drop a person's work silently
+ * while the browser explained it. The engine owns the rule; each platform owes the sentence. It
+ * lives in the chrome (`TopBar` renders it) for the freshness label's reason: a view can only
+ * speak about itself, and the next tab must get the sentence for free.
  */
 import { useState } from "react";
 import { ScrollView, View, useWindowDimensions } from "react-native";

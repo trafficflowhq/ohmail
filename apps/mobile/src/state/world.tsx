@@ -1,29 +1,12 @@
 /**
- * THE WORLD LAYER — one hook the mail screens render from.
- *
- * `useWorld()` answers the connected session's mirror through the shared client-engine
- * selectors (`src/state/live.ts`): reads over the consent projection, `engine.mutate`
- * behind every action, watched, with rejections surfacing as one plain toast sentence
- * ({@link useWorldToast}).
- *
- * WITHOUT A LIVE SESSION THE WORLD IS EMPTY — empty lists, no account, no-op actions.
- * The navigation gate keeps the mail screens off-screen while nothing is connected (the
- * app opens into the connect flow instead), so the empty world exists for the moments the
- * gate cannot cover: a deep link restored mid-boot, one render between a teardown and the
- * redirect. It is honestly nothing, never sample data standing in for an account.
- *
- * Computed ONCE per change here (the engine's own version signal) and shared through
- * context, rather than per screen — six consumers re-deriving five piles per render would
- * scan the mirror thirty times per drain tick.
- *
- * ── `world.actions` IS ONE OBJECT FOR THE APP'S WHOLE LIFE ────────────────────────────────
- *
- * The data half is a fresh object per change (that is what re-renders the screens); the
- * ACTIONS half is `stableActions` over a ref — constant identity, delegating to the current
- * backend per CALL. Screens hang effects off actions (`useFocusEffect` leave-commits, the
- * message screen's open), and an actions object minted per version made those effects
- * re-fire on every mirror change: the waterline committed mid-visit, and a rejected
- * mark-read re-dispatched off its own rollback's version bump.
+ * The world layer — one hook the mail screens render from. `useWorld()` answers the connected
+ * session's mirror through the shared client-engine selectors (`src/state/live.ts`): reads over
+ * the consent projection, `engine.mutate` behind every action, watched ({@link useWorldToast}).
+ * Without a live session the world is empty — no account, no-op actions; honestly nothing,
+ * never sample data (the navigation gate keeps mail screens off-screen; the empty world covers
+ * a deep link restored mid-boot). Computed once per change (the engine's version signal) and
+ * shared through context — six consumers re-deriving five piles per render would scan the
+ * mirror thirty times per drain tick. `world.actions` is one object for the app's life.
  */
 import {
   createContext,
@@ -122,15 +105,12 @@ export interface World {
     staleAsOf: string | null;
   };
   /**
-   * CHANGES THE SERVER WOULD NOT TAKE — the phone's half of the web's "could not be saved" strip.
-   *
-   * PARITY, and it is a rule rather than a nicety: the engine gives up on a verb after a bounded
-   * number of server-answered failures and moves it out of the replay set, so a phone that did not
-   * render this list would drop the user's work silently while the browser explained it. The engine
-   * is shared; only the surface is per-platform, so the surface has to exist on both.
-   *
-   * Read per derivation from the engine's value-cached `abandoned()`, so it is correct on the
-   * first render after a boot — when nothing has been dispatched and the only evidence is on disk.
+   * Changes the server would not take — the phone's half of the web's "could not be saved"
+   * strip. Parity is a rule, not a nicety: the engine gives up on a verb after a bounded number
+   * of server-answered failures and moves it out of the replay set, so a phone that did not
+   * render this list would drop the user's work silently while the browser explained it. Read
+   * per derivation from the engine's value-cached `abandoned()`, so it is correct on the first
+   * render after a boot — when nothing has been dispatched and the only evidence is on disk.
    */
   abandoned: readonly AbandonedMutation[];
   /**
@@ -144,31 +124,22 @@ export interface World {
   /** The header identity: the paired server + account id; empty while nothing is live. */
   account: { name: string; email: string };
   /**
-   * IS THIS SESSION THE ENGINE IN THIS APP — the standalone door, rather than a server on a wire.
-   *
-   * `ConnectedSession.standalone`, carried through unchanged. The connection layer derives it from
-   * the session's ORIGIN — the one thing `bootEngine` refuses a local engine off — and it is
-   * derived THERE so no screen or state module reaches into `engine/` (`privacy.test.ts`).
-   * `false` while nothing is live, which is the same answer as a paired session and the right
-   * one — every surface that reads this withholds something.
-   *
-   * What it decides today: send-later appointments. This install organizes only while ohmail is
-   * running on it, so it keeps none (`sendLaterOffered`, and the engine's own 409).
+   * Is this session the engine in this app — the standalone door, rather than a server on a
+   * wire. `ConnectedSession.standalone`, carried through unchanged: the connection layer
+   * derives it from the session's origin — the one thing `bootEngine` refuses a local engine
+   * off — and derives it there so no screen or state module reaches into `engine/`
+   * (`privacy.test.ts`). `false` while nothing is live, the same answer as a paired session.
+   * What it decides today: send-later appointments — this install organizes only while ohmail
+   * is running on it, so it keeps none (`sendLaterOffered`, and the engine's own 409).
    */
   standalone: boolean;
   /**
-   * THE MAILBOX FACTS — `GET /mailboxes` over the paired server (`src/net/mailboxes.ts`), on the
-   * folders flag's own cadence (boot + after every completed drain).
-   *
-   * This client had NO mailbox read at all until now, and two surfaces said so in their own
-   * comments (`live.ts`): the reader could not be told apart from the other recipients, and the
-   * onboarding deck's `phoneBanner` had no consumer because naming a holder with no source
-   * would be an invented claim.
-   *
-   * `known` is what separates "the account has no mailboxes" from "nobody has asked yet", and
-   * it is the gate the banner is drawn behind — a phone that has not read yet must say nothing
-   * about who organizes anything. It goes true on the first SUCCESSFUL read and stays true for
-   * the session; a later failure keeps the last known answer rather than blanking a banner on a
+   * The mailbox facts — `GET /mailboxes` over the paired server (`src/net/mailboxes.ts`), on
+   * the folders flag's cadence (boot + after every completed drain). `known` separates "the
+   * account has no mailboxes" from "nobody has asked yet", and it is the gate the reader
+   * banner is drawn behind — a phone that has not read yet must say nothing about who
+   * organizes anything. It goes true on the first successful read and stays true for the
+   * session; a later failure keeps the last known answer rather than blanking a banner on a
    * flaky request (`readMailboxes` returns `null` for "could not ask", never an empty list).
    */
   mailboxes: {
@@ -219,16 +190,13 @@ export interface World {
   };
   screener: { waiting: ScreenerRow[]; screened: ScreenerRow[]; spam: ScreenerRow[]; meta: string };
   /**
-   * HISTORY — mail from senders nobody ever decided about, who then went quiet.
-   *
-   * The OTHER ARM of the partition that fills `screener.waiting`, derived from the same
-   * `presentedWorld` call so a sender is in exactly one of the two. Before this existed the
-   * phone's projection deleted these rows and the phone had no surface to find them in — the
-   * retired half of a mailbox was in no list at all.
-   *
-   * `meta` is the browser's own count line. No badge and no unread number anywhere: History is
-   * all read by construction (an unread message makes its sender active, so it queues in the
-   * Screener instead), which is why the nav entry beside it carries no count.
+   * History — mail from senders nobody ever decided about, who then went quiet. The other arm
+   * of the partition that fills `screener.waiting`, derived from the same `presentedWorld`
+   * call so a sender is in exactly one of the two; before this existed the retired half of a
+   * mailbox was in no list at all. `meta` is the browser's own count line. No badge and no
+   * unread number anywhere: History is all read by construction (an unread message makes its
+   * sender active, so it queues in the Screener instead), which is why the nav entry beside
+   * it carries no count.
    */
   history: WorldHistory & { meta: string };
   piles: WorldPile[];
@@ -296,18 +264,14 @@ export interface World {
   face: {
     account: FaceName | null;
     /**
-     * HAS THE ACCOUNT'S FACE BEEN READ AT ALL this session? (review-caught, and the whole reason
-     * `account` alone is not enough.) `account: null` means two different things until this is
-     * true — "the account has no preference" and "nobody has asked yet" — and the account-wide
-     * WRITE must not fire on the second: with no device pin the control shows paper, and pressing
-     * "apply on all devices" would PATCH paper over an ohmarchy the account really holds while its
-     * read was slow or failing. The webapp carries the same fact as `themeFaceKnown` and
-     * `AppShell` gates the affordance on it.
-     *
-     * True once an answer has been ADOPTED — a successful read, or a write's own echo. A read the
-     * coordinator refused (one that overlapped a write) does not count, which is the conservative
-     * direction: the thing being gated is precisely the act that must not run on a value nobody
-     * trusts.
+     * Has the account's face been read at all this session? `account: null` means two things
+     * until this is true — "no preference" and "nobody asked yet" — and the account-wide write
+     * must not fire on the second: with no device pin the control shows paper, and pressing
+     * "apply on all devices" would PATCH paper over an ohmarchy the account really holds while
+     * its read was slow or failing. The webapp carries the same fact as `themeFaceKnown`.
+     * True once an answer has been adopted — a successful read, or a write's own echo. A read
+     * the coordinator refused does not count: the conservative direction, since the gated act
+     * is precisely the one that must not run on a value nobody trusts.
      */
     known: boolean;
     /** An account write is on the wire — the control disables rather than double-writing. */
@@ -527,15 +491,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const [screening, setScreening] = useState<ScreeningAnswer | null>(null);
   /**
-   * THE ACCOUNT'S MAILBOXES, or `null` until a read SUCCEEDS this session (which is what
+   * The account's mailboxes, or `null` until a read succeeds this session (what
    * {@link World.mailboxes.known} publishes). Nothing on this phone ever writes a mailbox, so
-   * freshest-successful-read-wins is the whole rule — the signatures' exact situation, and it
-   * uses the same `freshestRead` wrapper for the same race: two overlapping reads settling out
-   * of issue order, the boot GET still in the air when a drain-completed refresh fires.
-   *
-   * A session swap resets it to `null` below, beside the signatures and the face: account A's
-   * mailbox addresses must never make account B's reader recognisable, which is the same rule
-   * one field up and the reason this is state rather than a ref.
+   * freshest-successful-read-wins is the whole rule — the signatures' exact situation, using
+   * the same `freshestRead` wrapper for the same race: two overlapping reads settling out of
+   * issue order. A session swap resets it to `null` below, beside the signatures and the face:
+   * account A's mailbox addresses must never make account B's reader recognisable, which is
+   * why this is state rather than a ref.
    */
   const [mailboxes, setMailboxes] = useState<readonly PhoneMailbox[] | null>(null);
   /**
@@ -581,30 +543,24 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const drainOwed = useRef(false);
   /**
-   * ONE {@link foldersFlag} MACHINE PER SESSION — closes over `session` at construction, so a
-   * machine from a superseded session cannot write (`writeFoldersEnabled`/`readFoldersEnabled`
-   * take the session they were built with, not a ref that could have moved on). Rebuilt only
-   * when the session identity changes; `useMemo` rather than a ref because the machine's own
-   * epoch must reset to "no write yet" for a fresh session, exactly like `foldersOn` below.
-   *
-   * `apply` is gated on IDENTITY, not merely on the machine's own epoch: a session swap builds
-   * a NEW machine and this effect resets `foldersOn` to false, but the OLD machine's in-flight
-   * read or write can still resolve afterwards — its own epoch says nothing about a session it
-   * has no idea replaced it. `current` always names the live machine, so a stale settle applies
-   * nothing to a session it does not belong to (the same discipline the outcome ledger and the
-   * reconnect flush already carry for exactly this shape).
+   * One {@link foldersFlag} machine per session — closes over `session` at construction, so a
+   * machine from a superseded session cannot write. Rebuilt only when the session identity
+   * changes; `useMemo` rather than a ref because the machine's epoch must reset to "no write
+   * yet" for a fresh session. `apply` is gated on identity, not merely the machine's own
+   * epoch: a session swap builds a new machine, but the old machine's in-flight read or write
+   * can still resolve afterwards — its own epoch says nothing about a session that replaced
+   * it. `current` always names the live machine, so a stale settle applies nothing (the same
+   * discipline the outcome ledger and the reconnect flush carry).
    */
   const current = useRef<ReturnType<typeof foldersFlag> | null>(null);
   /**
-   * ONE {@link faceScope} PER SESSION, beside the folders machine and built with it — it closes
-   * over the same `session`, so a superseded machine cannot write to a server the app has left,
-   * and its epoch resets to "no write yet" for a fresh session exactly like `accountFace` does.
-   *
-   * It rides the folders machine's `GET /consent` rather than issuing one of its own: the read
-   * already happens at boot and after every drain, and a second request for a field the first
-   * one carries would be a new mechanism for nothing. What the face needs on top is the ISSUE
-   * stamp, which is why `beginRead()` is taken before the fetch and its applier called after —
-   * see `face-scope.ts` for the race that shape exists for.
+   * One {@link faceScope} per session, beside the folders machine and built with it — it
+   * closes over the same `session`, so a superseded machine cannot write to a server the app
+   * has left, and its epoch resets for a fresh session exactly like `accountFace`. It rides
+   * the folders machine's `GET /consent` rather than issuing its own: the read already happens
+   * at boot and after every drain, and a second request for a field the first carries would be
+   * a new mechanism for nothing. What the face needs on top is the issue stamp — `beginRead()`
+   * before the fetch, its applier after; `face-scope.ts` has the race that shape exists for.
    */
   const faceCurrent = useRef<ReturnType<typeof faceScope> | null>(null);
   const machine = useMemo(() => {
@@ -783,16 +739,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   );
 
   /*
-   * ── THE RECONNECT FLUSH ─────────────────────────────────────────────────────────────────
-   *
-   * A retryable rejection parks its mutation on the engine's queue under its
-   * Idempotency-Key, and `flushPending` had NO caller in this app — a queued intent (a send,
-   * a triage press taken offline) stood forever while its toast said "still trying". The
-   * proof the server is reachable again is a drain completing (`conn.syncing` falling with
-   * no error), so the queue flushes HERE, with the same keys — which is what makes the retry
-   * unable to double-deliver. It lives in the world layer, not the connection, because the
-   * two things a terminal outcome owes are both here: the TOAST (an intent that will never
-   * send must say so out loud) and the LEDGER a locked composer settles from.
+   * The reconnect flush. A retryable rejection parks its mutation on the engine's queue under
+   * its Idempotency-Key, and `flushPending` had no caller in this app — a queued intent stood
+   * forever while its toast said "still trying". The proof the server is reachable again is a
+   * drain completing (`conn.syncing` falling with no error), so the queue flushes here, with
+   * the same keys — which is what makes the retry unable to double-deliver. It lives in the
+   * world layer, not the connection, because the two things a terminal outcome owes are both
+   * here: the toast, and the ledger a locked composer settles from.
    */
   const outcomes = useRef(new Map<string, "confirmed" | "rolled_back" | "unverified">());
   const [outcomeSeq, setOutcomeSeq] = useState(0);
@@ -965,40 +918,27 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       boot: {
         settled: mirrorSettled(session.store),
         syncFailure: conn.syncError,
-        // Re-read per derivation, like `settled`: a drain's settle flips `conn.syncing`, which is
-        // in this memo's deps, so the label CLEARS in the same pass the mirror becomes current.
-        //
-        // THIS USED TO REST ON TWO TRIGGERS AND NOW RESTS ON ONE. The completion stamp is written
-        // through `setMeta`, and that used to bump the mirror `version` — also in these deps — so
-        // either one would have re-run this memo. `setMeta` no longer touches the version
-        // (`packages/client-engine/src/store.ts`; an idle client was rebuilding its whole view once
-        // per poll to record a timestamp), which leaves `conn.syncing` carrying it.
-        //
-        // NOT "silently stop", which is what this comment claimed for a few hours and a review
-        // corrected: `freshBeat` below ticks this memo on its own minute cadence, so removing
-        // `conn.syncing` from the dependency array would DELAY the label clearing to the next tick,
-        // not prevent it. Late rather than never — worth keeping accurate, because a reader who
-        // believed "never" would rank the dependency differently from one who knows the fallback.
-        //
-        // The APPEARING direction is time's alone — a phone sitting open crosses the threshold with
-        // no store write anywhere — so `freshBeat` below ticks the memo when the verdict changes by
-        // clock.
+        // Re-read per derivation, like `settled`: a drain's settle flips `conn.syncing`, which
+        // is in this memo's deps, so the label clears in the same pass the mirror becomes
+        // current. The completion stamp no longer bumps the mirror `version` (`setMeta`,
+        // `packages/client-engine/src/store.ts` — an idle client was rebuilding its whole view
+        // once per poll to record a timestamp), so `conn.syncing` carries the clearing. Not
+        // "silently stop": `freshBeat` below ticks this memo on its own minute cadence, so
+        // removing `conn.syncing` from the deps would delay the clear to the next tick, not
+        // prevent it. The appearing direction is time's alone — a phone sitting open crosses
+        // the threshold with no store write — so `freshBeat` ticks when the verdict changes.
         staleAsOf: staleAsOf(engine, zone),
       },
       abandoned: engine.abandoned(),
       worldKey: session.ownerKey,
       /**
-       * ── WHOSE MAIL THIS IS, AND THE STANDALONE DOOR HAS NO ADDRESS TO NAME ────────────────
-       *
-       * On every paired door these two fields are a server address and the account it opens, which
-       * is what the More header is for. On the standalone door the origin is `LOCAL_ENGINE_ORIGIN`
-       * — a name nothing dials — and the id is opaque, so the header read as a URL and a UUID to a
-       * person whose mailbox is on the phone in their hand. Measured on a device.
-       *
-       * The same two facts in the words this door has: the phone's own claim name, and the mailbox
-       * the engine says it serves. The address comes from the ROW rather than from the profile,
-       * because the profile has never held one; an unread roster leaves it empty rather than
-       * guessing.
+       * Whose mail this is — and the standalone door has no address to name. On every paired
+       * door these two fields are a server address and the account it opens. On the standalone
+       * door the origin is `LOCAL_ENGINE_ORIGIN` — a name nothing dials — and the id is opaque,
+       * so the header read as a URL and a UUID to a person whose mailbox is on the phone in
+       * their hand (measured on a device). The same two facts in this door's words: the phone's
+       * own claim name, and the mailbox the engine says it serves. The address comes from the
+       * row, because the profile has never held one; an unread roster leaves it empty.
        */
       account: organizesHere(session.profile)
         ? { name: PHONE_CLAIM_NAME, email: mailboxes?.[0]?.address ?? "" }
@@ -1101,30 +1041,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     conn.syncError, accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
 
   /**
-   * THE FRESHNESS WATCHER — the clock's other half, AFTER the memo because its sentinel IS the
+   * The freshness watcher — the clock's other half, after the memo because its sentinel IS the
    * memo's own output. It compares what the engine would say now against what the world
-   * rendered (`boot.staleAsOf`), at arm time and then each minute, and bumps `freshBeat` only
-   * on a difference. Three defects shaped this exact form:
-   *
-   *  · round 2 — no formatted-label ambiguity is possible: both sides of the comparison come
-   *    from the same derivation, so "a different stamp that happens to format identically"
-   *    cannot make a real transition invisible. (The parenthetical here used to add "a stamp
-   *    change requires a drain, which re-derives through `version` anyway", and that is no longer
-   *    true: writing the completion stamp does not bump the mirror version —
-   *    `packages/client-engine/src/store.ts`. The argument never needed it. Both sides still come
-   *    from one derivation, and the minute tick below is what re-reads; the removed clause only
-   *    ever said the re-read would also happen sooner.)
-   *  · round 3 — a healthy drain's stamp churn re-arms and re-renders NOTHING: while current,
-   *    the rendered label is null across every drain, the dep does not move, and the check
-   *    compares null with null;
-   *  · round 4 — a transition can never be swallowed UNRENDERED: a ref seeded from the live
-   *    verdict could adopt a current→stale flip that happened between render and effect and
-   *    then never announce it; comparing against the RENDERED value makes that impossible by
-   *    construction — the check at arm time closes the same race.
-   *
-   * RN pauses timers in the background; on return, the next tick or the foreground drain
-   * re-derives, whichever lands first. A bump re-derives the memo, the dep follows, the
-   * re-armed check finds both sides equal, and the loop terminates in one step.
+   * rendered (`boot.staleAsOf`), at arm time and then each minute, bumping `freshBeat` only on
+   * a difference. Three held properties: both sides come from one derivation, so a stamp that
+   * formats identically cannot hide a transition; a healthy drain's stamp churn re-renders
+   * nothing (while current the rendered label is null); a current→stale flip between render
+   * and effect cannot be swallowed — the comparison is against the rendered value, never a
+   * ref seeded from the live verdict. RN pauses background timers; the next tick re-derives.
    */
   const renderedStale = world.boot.staleAsOf;
   useEffect(() => {

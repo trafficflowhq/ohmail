@@ -1,31 +1,12 @@
 /**
- * ═══ THE STANDALONE DOOR'S DECISIONS, AWAY FROM ITS MARKUP ═════════════════════════════════════
- *
- * Every question the three screens answer lives here: which platform sentence the limitations
- * screen shows, whether Connect is offered, what the server fields hold for a typed address, which
- * label the claim chip wears, and where focus goes. The screens render these answers and decide
- * nothing themselves.
- *
- * That split is not a preference. This workspace has NO React Native renderer — `react-test-renderer`
- * and `@testing-library/react-native` are absent from the store, which `test/unsaved-changes.test.ts`
- * and `test/locale.test.ts` both record — so a decision written inside a component is a decision no
- * test can drive. The app already answers this by keeping its rules in plain modules; this is the
- * same move for the fourth door.
- *
- * ── AND IT IMPORTS NO `react-native`, WHICH IS WHAT MAKES IT LOADABLE AT ALL ───────────────────
- *
- * The expo and react-native packages ship Flow-typed JavaScript, and the node-side suite's
- * transform refuses it with `Expected 'from', got 'typeOf'` — a parse error naming neither the
- * package nor the import that reached it. So the platform is a PARAMETER here and the screens pass
- * it in, which is the same split `servers-native.ts` and `local-engine.ts` already make. It is also
- * the better shape: the platform is a fact about the runtime, and a function that read it for
- * itself could not be asked what it would say on the other one.
- *
- * ── AND NOTHING HERE HOLDS A PASSWORD BEYOND THE FORM'S OWN STATE ──────────────────────────────
- *
- * {@link StandaloneFields} carries the password because the form does, and it goes to the engine
- * once. It is never logged, never stamped into a refusal, and never stored by this module — the
- * only thing that may keep it is the platform's secure store, under the engine's key ring.
+ * The standalone door's decisions, away from its markup. Every question the three screens
+ * answer lives here: the platform sentence, whether Connect is offered, the server fields for
+ * a typed address, the claim chip's label, where focus goes — the screens render answers and
+ * decide nothing. Not a preference: this workspace has no React Native renderer, so a decision
+ * inside a component is one no test can drive. It imports no `react-native` (expo and RN ship
+ * Flow-typed JS the node transform refuses), so the platform is a parameter the screens pass
+ * in. Nothing here holds a password beyond the form's own state: {@link StandaloneFields}
+ * carries it to the engine once — never logged, stamped into a refusal, or stored.
  */
 import { portMeansImplicitTls, serverGuessFor } from "@ohmail/client-engine";
 import { Copy } from "../copy";
@@ -156,17 +137,13 @@ export function mayConnect(fields: StandaloneFields): boolean {
 }
 
 /**
- * WHICH REFUSALS THE IMAP HOST FIELD MAY WEAR — and it is a short list on purpose.
- *
- * The form attaches a refusal to the incoming-server field as that field's own error while the
- * server disclosure is open. That is right for the two refusals that NAME it, and it became a
- * false statement the moment the door gained refusals about the password and about encryption: a
- * sign-in the server rejected, pinned under "Incoming server (IMAP)", tells somebody the one
- * thing that is not wrong. Everything not on this list is shown beside the verb instead, where the
- * closed-disclosure case already shows it.
- *
- * The list is by KEY rather than by a flag on the refusal: `RefusalKey` is derived from the deck,
- * so a key that stops existing stops compiling here.
+ * Which refusals the IMAP host field may wear — a short list on purpose. The form attaches a
+ * refusal to the incoming-server field while the server disclosure is open; right for the two
+ * refusals that name it, false the moment the door gained refusals about the password and
+ * encryption — a rejected sign-in pinned under "Incoming server (IMAP)" tells somebody the one
+ * thing that is not wrong. Everything not on this list shows beside the verb instead. By key
+ * rather than a flag: `RefusalKey` is derived from the deck, so a key that stops existing
+ * stops compiling here.
  */
 const SERVER_FIELD_REFUSALS: ReadonlySet<RefusalKey> = new Set<RefusalKey>([
   "standaloneNoHost",
@@ -212,15 +189,11 @@ export function holderKind(said: string | null | undefined): HolderKind {
 }
 
 /**
- * ═══ THE CLAIM CHIP IN SETTINGS ════════════════════════════════════════════════════════════════
- *
- * The five states are the desktop's, with the desktop's own keys and values. They are derived from
- * what the runtime reports and never from a stored flag, which is the reason the desktop's row is
- * trustworthy: a flag can disagree with the mailbox, and the mailbox is the master.
- *
- * `unknown` is its own arm rather than a null, because "not read yet" and "read, and nothing holds
- * it" are different facts and a chip that showed one for the other would be stating a claim nobody
- * measured.
+ * The claim chip in Settings. The five states are the desktop's, with the desktop's own keys
+ * and values, derived from what the runtime reports and never from a stored flag — a flag can
+ * disagree with the mailbox, and the mailbox is the master. `unknown` is its own arm rather
+ * than a null, because "not read yet" and "read, and nothing holds it" are different facts,
+ * and a chip that showed one for the other would state a claim nobody measured.
  */
 export type PhoneClaim =
   /** Nothing has been read yet. */
@@ -262,35 +235,26 @@ export function mayStopHere(claim: PhoneClaim): boolean {
 }
 
 /**
- * ═══ IS SEND LATER OFFERED AT ALL — the composer's one predicate for the affordance ════════════
- *
- * Two reasons to withhold it, and the file that used to test only the first now holds both in one
- * place, because they are one question: may this message be given an appointment?
- *
- *  · a FORWARD cannot wear one — a draft row stores no forward reference;
- *  · the STANDALONE door keeps no appointments. This phone organizes the mailbox only while
- *    ohmail is running on it, so an appointment it accepted is a promise about a moment nothing
- *    will be awake for. The engine refuses the verb (409, `composition-passes.ts`), and a control
- *    that fails after the pick is exactly what the forward arm is already shaped to avoid.
- *
- * A PAIRED session keeps the offer, and that is the half worth stating: there the appointment is
- * kept by the install the phone is paired to — a computer, a self-host box, ohmail Cloud — and
- * that install stays on, so the promise is true and narrowing it would remove a working feature.
+ * Is Send later offered at all — the composer's one predicate for the affordance. Two reasons
+ * to withhold, held in one place because they are one question (may this message be given an
+ * appointment?): a forward cannot wear one — a draft row stores no forward reference; and the
+ * standalone door keeps no appointments — this phone organizes only while ohmail is running,
+ * so an accepted appointment is a promise about a moment nothing will be awake for (the
+ * engine refuses the verb: 409, `composition-passes.ts`). A paired session keeps the offer:
+ * there the appointment is kept by the install the phone is paired to, which stays on.
  */
 export function sendLaterOffered(o: { standalone: boolean; forward: boolean }): boolean {
   return !o.standalone && !o.forward;
 }
 
 /**
- * THE CHIP'S STATE, DERIVED FROM THE MAILBOXES READ AND NOTHING ELSE.
- *
- * The standalone engine answers the same `/mailboxes` contract every other door answers, so the app
- * already holds this fact: `world.mailboxes` gives `known` and `phoneOrganizer(...)`'s holder. This
- * adds one question that only a standalone install can ask — is the holder US — and it is answered
- * by NAME, because the name in the claim is the one this install wrote (`PhoneEngineDeps.machineName`).
- *
- * No column name appears in this app and no second store is consulted. Both are rules the phone's
- * censuses hold, and both are the same rule: one source of truth for who organizes a mailbox.
+ * The chip's state, derived from the mailboxes read and nothing else. The standalone engine
+ * answers the same `/mailboxes` contract every other door answers, so the app already holds
+ * this fact: `world.mailboxes` gives `known` and `phoneOrganizer(...)`'s holder. This adds one
+ * question only a standalone install can ask — is the holder us — answered by name, the one
+ * this install wrote (`PhoneEngineDeps.machineName`). No column name appears in this app and
+ * no second store is consulted; both are the phone's census rules, and both are one rule: one
+ * source of truth for who organizes a mailbox.
  */
 export function claimFrom(
   read: {

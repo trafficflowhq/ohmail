@@ -1,13 +1,10 @@
 /**
- * NAME RESOLUTION, REFUSED — reached only by a proxy dialler this app never configures.
- *
- * The mail client imports a SOCKS proxy connector at module scope, and that connector resolves
- * names itself. It is only CALLED when a proxy URL is configured, which this app has no way to set.
+ * Name resolution, refused — reached only by a proxy dialler this app never configures. The mail
+ * client imports a SOCKS proxy connector at module scope, and that connector resolves names
+ * itself; it is only called when a proxy URL is configured, which this app has no way to set.
  * The engine's own dial is by hostname and the platform's TCP module resolves it natively.
- *
- * Throwing rather than answering is what keeps a silent behaviour change visible: if a proxy ever
- * did get configured, a stub that resolved nothing would look like an unreachable server, and a
- * person would go looking at their network.
+ * Throwing rather than answering keeps a silent behaviour change visible: a stub that resolved
+ * nothing would look like an unreachable server.
  */
 "use strict";
 

@@ -1,46 +1,12 @@
 /**
- * WHAT EACH ABSENT MODULE WOULD HAVE EXPORTED — the member names, and nothing else.
- *
- * ── WHY A LIST EXISTS AT ALL, WHEN THE STUB ANSWERS EVERY NAME ────────────────────────────
- *
- * The stub in `node-absent.js` answers a refusing function for ANY property read, so a list of
- * names looks redundant. It is not, and the reason is the bundler. An ES import of a CommonJS
- * module is wired up by copying the module's OWN PROPERTY NAMES into a namespace object; a Proxy
- * over an empty target has none, so `import { join } from "node:path"` produced `undefined` and
- * the call failed as `(0, import_node_path.join) is not a function` — naming neither the module
- * nor the member, which is exactly what the stub was written to prevent. The names have to be
- * enumerable for the refusal to survive that copy.
- *
- * ── IT IS A MEASUREMENT, NOT A CURATED SET ────────────────────────────────────────────────
- *
- * Every list here is `Object.keys()` of the real module under the Node this repository runs.
- * Curating it would make the stub answer for the members somebody thought of, and `undefined` for
- * the rest — the same silent failure in a smaller place. `absent-shim-survives-interop.test.ts`
- * recomputes these lists from the running Node and fails when they differ, so a version that adds
- * or removes an export is a red rather than a guess.
- *
- * REGENERATE by running that test and reading what it reports; the shape below is the whole file.
- *
- * `fs` covers BOTH spellings the alias table routes to it (`fs` and `fs/promises` resolve to the
- * same stub), so its list is the union. A member of one that is missing from the other would
- * otherwise read as `undefined` on the half nobody enumerated.
- *
- * ── `omitted` IS A COUNT, NOT A LIST, AND IT IS THE ONE CONCESSION IN THIS FILE ──────────
- *
- * This file ships inside the phone app, whose privacy scan forbids the NAMES of browser transports
- * anywhere in shipped source. That rule is right: an app naming a transport outside its single
- * engine seam is how a second transport gets added, and a scan that tried to tell a mention from a
- * use by reading is a scan with an inline suppression bolted onto it within a week. One member of
- * `http` is such a name.
- *
- * So it is COUNTED here rather than written. The interop test is not shipped and may name them: it
- * recomputes the real export list, subtracts the tokens that rule forbids, and asserts what is left
- * is exactly what is below — so the omission is checked rather than trusted, and any drift in
- * either direction is red.
- *
- * THE COST, STATED PLAINLY: a named import of an omitted member would read as `undefined` rather
- * than refusing by name — the very defect this table exists to fix, for those members alone. The
- * interop test asserts the artifact contains no such import, which is what holds the cost at zero.
+ * What each absent module would have exported — the member names, and nothing else. The stub
+ * answers any property read, but the bundler wires an ES import of CommonJS by copying the
+ * module's OWN property names — a Proxy over an empty target has none, so
+ * `import { join } from "node:path"` produced `undefined`, naming neither module nor member.
+ * A measurement, not a curated set: every list is `Object.keys()` of the real module, and
+ * `absent-shim-survives-interop.test.ts` recomputes them and fails on drift; `fs` is the union of both spellings. `omitted` is a count, not a list: the privacy scan forbids browser
+ * transport names in shipped source, so the one such member of `http` is counted here and
+ * named only in the unshipped interop test, which asserts the artifact never imports it.
  */
 "use strict";
 

@@ -1,33 +1,12 @@
 /**
- * THE LANGUAGE, WIRED — the boot read, the Settings control, and the hook that makes a switch
- * appear on screen.
- *
- * ── WHY A SCREEN HAS TO ASK, AND WHY THAT IS NOT A DEFECT ─────────────────────────────────────
- *
- * `Copy` is a table of getters over the active deck (`src/copy.ts`), so every one of the ~300 call
- * sites already reads the current language. Nothing about that tells React to render again: a
- * screen that drew "Settings" holds an element tree React has no reason to rebuild, and a screen's
- * children arrive as props from a parent that did not re-render either — which is why subscribing
- * inside a shared wrapper (`Screen`, `Gated`, `ThemeProvider`) would not reach them.
- *
- * So each SCREEN calls {@link useLocale}. It is one line per screen, it re-renders that screen and
- * everything it builds, and it keeps the navigation stack exactly where it was — which the other
- * candidate, remounting the tree under a changing `key`, does not: switching language from Settings
- * would have thrown the reader back to the Ohbox.
- *
- * ── THE PROVIDER OWNS THE ANSWER; THE REGISTER PUBLISHES IT ───────────────────────────────────
- *
- * Two pieces of state that must not disagree: the stored override (durable, async, in the
- * keystore) and the module register the getters read (synchronous, and read before any provider
- * mounts). The provider is the only writer of both — it reads the store once on mount, resolves it
- * against the device, and points the register. Everything else reads.
- *
- * The FIRST FRAME is the device's language, not English: {@link deviceLocale} is synchronous, so
- * the register is pointed at it during the module's own evaluation, before React renders anything.
- * The stored override lands a tick later and re-points the register if it differs, which repaints
- * through the same subscription a Settings press uses. A phone whose override matches its device
- * language — the common case — therefore never flickers, because `setActiveLocale` is a no-op when
- * nothing changed.
+ * The language, wired — the boot read, the Settings control, and the hook that makes a switch appear on screen.
+ * `Copy` is a table of getters, so every call site already reads the current language; nothing about that tells React
+ * to render again, and subscribing inside a shared wrapper would not reach children that arrive as props. So each
+ * screen calls {@link useLocale}: one line per screen, re-rendering that screen and keeping the navigation stack
+ * where it was (remounting under a changing `key` would throw the reader back to the Ohbox). The provider is the only
+ * writer of the stored override and the module register; everything else reads. The first frame is the device's
+ * language, not English: {@link deviceLocale} is synchronous, the stored override lands a tick later, and
+ * `setActiveLocale` is a no-op when nothing changed — the common case never flickers.
  */
 
 import {
@@ -112,16 +91,13 @@ export function LocaleProvider(
   kvRef.current = kv;
 
   /**
-   * THE THREE ORDERINGS LIVE IN `sequencer.ts`, NOT HERE.
-   *
-   * A boot read that resolves after a choice, two presses in one render, and a foreground wake
-   * that must see the current choice — each has been wrong once, and each used to be tested by a
-   * model written inside the test file and tied to this one by regexes over the source. That model
-   * could stay green while this code changed, which is what review found. The rules are shipped
-   * code now and the tests drive them; this component is the wiring.
-   *
-   * Built once per mount. `deps` closes over the state setters, which are stable, and reads `kv`
-   * through the ref so a caller passing a fresh object each render does not rebuild it.
+   * The three orderings live in `sequencer.ts`, not here: a boot read that resolves after a
+   * choice, two presses in one render, and a foreground wake that must see the current choice
+   * — each has been wrong once, and each used to be tested by a model tied to this file by
+   * regexes that could stay green while the code changed. The rules are shipped code now and
+   * the tests drive them; this component is the wiring. Built once per mount: `deps` closes
+   * over the state setters (stable) and reads `kv` through the ref, so a caller passing a
+   * fresh object each render does not rebuild it.
    */
   const seq = useMemo(
     () => localeSequencer(keystoreDeps(() => kvRef.current, setChosen, setBusy)),

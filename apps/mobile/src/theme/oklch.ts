@@ -1,21 +1,12 @@
 /**
- * OKLCH → sRGB — the same conversion the retired native macOS client performed,
- * kept as this port's reference twin.
- *
- * Every Blanc token is authored in OKLCH (`packages/tokens/src/tokens.ts`).
- * React Native's style engine has no `oklch()` colour function, so the values
- * have to land as sRGB somewhere. They land *here*, once, with the authored
- * L/C/H kept verbatim — never re-typed as a hand-picked hex — so the phone and
- * the web client paint the same pixels from the same numbers.
- *
- * Conversion is Björn Ottosson's reference OKLab⇄linear-sRGB matrix followed by
- * the sRGB transfer function; out-of-gamut channels clamp to [0,1] (every Blanc
- * token is low-chroma enough that clamping is a no-op or a sub-LSB nudge).
- *
- * `test/theme.test.ts` asserts this module reproduces, to the byte, the hexes
- * recorded beside every token in `palette.ts` — hexes two independent ports
- * arrived at separately, which is the fidelity gate; a drifting one fails the
- * suite.
+ * OKLCH → sRGB — the same conversion the retired native macOS client performed, kept as this
+ * port's reference twin. Every Blanc token is authored in OKLCH; RN has no `oklch()` colour
+ * function, so the values land as sRGB here, once, with the authored L/C/H kept verbatim — never
+ * re-typed as a hand-picked hex — so the phone and the web client paint the same pixels from the
+ * same numbers. Björn Ottosson's reference OKLab⇄linear-sRGB matrix plus the sRGB transfer
+ * function; out-of-gamut channels clamp to [0,1] (a no-op or sub-LSB nudge for Blanc tokens).
+ * `test/theme.test.ts` asserts this reproduces, to the byte, the hexes recorded beside every
+ * token in `palette.ts` — hexes two independent ports arrived at separately.
  */
 
 /** An authored token colour: perceptual lightness, chroma, hue°, alpha. */
