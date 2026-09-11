@@ -2027,10 +2027,9 @@ function WaitingPreview({
           stated BEFORE the press (the released build let the press happen, said "Ohbox —
           filed", and took it back forty-five seconds later with no reason). The keys refuse too
           (`keys`, below), and the state refuses under both (`screener-state.ts` → `role`).
-          `pending` is the opposite case, which is why this is not a boolean: a reader whose
-          organizer accepts decisions KEEPS the bar — withholding it would be the same defect
-          with its sign flipped — and gets a standing line saying where the decision goes and
-          how long it takes, above the bar rather than in place of it. */}
+          `pending` is the opposite case, why this is not a boolean: a reader whose organizer
+          accepts decisions KEEPS the bar — withholding it would be the same defect, sign
+          flipped — plus a standing line saying where the decision goes, above the bar. */}
       {role.mode === "blocked" ? (
         /* The bar's own chrome, minus its verbs — the sticky panel and the narrow-width Back,
            which is the only way out of a full-screen preview on a phone and has nothing to do
