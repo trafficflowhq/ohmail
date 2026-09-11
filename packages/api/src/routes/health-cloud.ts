@@ -7,20 +7,14 @@ import {
 import { registerSchemaCensus } from "./health-census.js";
 
 /**
- * THE HOSTED HALF OF THE SCHEMA-MARKER CENSUS — separated from `health.ts` because of what it
- * IS, not because of what it weighs.
- *
- * The entries below are Cloud table and column names. `health.ts` is mounted by the LOCAL route
- * table, which is bundled into the desktop engine and shipped, so while these lived there the
- * artifact a stranger downloads carried `staff_users.password_hash` and
- * `staff_sessions.token_hash` as live data. That is the same
- * disclosure the `@trafficflow/db` barrel split closed on the import side, arriving through a
- * route module instead.
- *
- * Nothing local imports this file. The hosted composition passes {@link CLOUD_TIER_MARKERS} and
- * {@link EXPECTED_MARKERS} through `HealthConfig`, the same channel that already carries
- * `schemaTier`, and a host that declares the full tier without them is a configuration fault
- * rather than a host that quietly probes less.
+ * The hosted half of the schema-marker census — separated from `health.ts` because of what it is,
+ * not what it weighs. The entries are Cloud table and column names, and `health.ts` is mounted by
+ * the local route table bundled into the shipped desktop engine, so while these lived there the
+ * artifact a stranger downloads carried `staff_users.password_hash` as live data — the same
+ * disclosure the `@trafficflow/db` barrel split closed on the import side. Nothing local imports
+ * this file: the hosted composition passes {@link CLOUD_TIER_MARKERS} and {@link
+ * EXPECTED_MARKERS} through `HealthConfig`, and a host that declares the full tier without them
+ * is a configuration fault, never a quieter probe.
  */
 /**
  * The cloud half — every marker whose column is created by `packages/db/drizzle-cloud`.
@@ -44,47 +38,28 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // so a database with this column has also taken `users_email_unique_idx`, and a database that
   // has not taken it at all fails here rather than at the first invite an operator revokes.
   ["invites", "revoked_at"],
-  // cloud 0007_staff_users — TWO markers, because the migration created two independent
-  // tables and a database missing either one fails differently. Without `staff_users` there is
-  // nobody to sign in as; without `staff_sessions` the sign-in succeeds and then every
-  // subsequent request is anonymous again, which presents as a console that will not stay
-  // signed in rather than as a missing migration.
-  //
-  // The columns are the ones a QUERY actually reads, which is the rule `invites.code_hash`
-  // established. `password_hash` is read by every sign-in;
-  // `token_hash` is the column `resolveStaffSession` looks a presented cookie up by. Neither
-  // is `id`, for the reason the mail markers give: a primary key exists the moment the table
-  // does, so it cannot distinguish a fully-migrated table from a half-applied one.
+  // cloud 0007_staff_users — two markers: the migration created two independent tables that fail
+  // differently. Without `staff_users` there is nobody to sign in as; without `staff_sessions`
+  // the sign-in succeeds and every later request is anonymous again — a console that will not
+  // stay signed in rather than a missing migration. The columns are the ones a query reads
+  // (`password_hash` by every sign-in, `token_hash` by `resolveStaffSession`), never `id`: a
+  // primary key exists the moment the table does.
   ["staff_users", "password_hash"],
   ["staff_sessions", "token_hash"],
-  // cloud 0009_mailbox_oauth — TWO markers, because the migration creates two INDEPENDENT tables and
-  // a database missing either one fails differently, which is the rule 0004 and 0007 set.
-  //
-  //  · without `mailbox_oauth_ceremonies`, `POST …/oauth/microsoft/start` 42P01s on the insert — the
-  //    consent screen never opens and nothing is stored;
-  //  · without `oauth_provider_config`, the RESOLVER's first read 42P01s, so the flow reports "not
-  //    configured" on a deployment whose environment carries a perfectly good registration. That is
-  //    the more dangerous of the two, because it presents as a configuration mistake rather than as
-  //    a missing migration.
-  //
-  // The columns are the ones a QUERY touches, not the primary keys. `consumed_at` is the column the
-  // single-use consume predicates on (`WHERE state = $1 AND consumed_at IS NULL`) — the PK `state`
-  // exists the moment the table does and so cannot distinguish a complete table from a half-applied
-  // one. `client_secret_enc` is what the resolver reads and decrypts; `provider` is the PK and is
-  // excluded for the same reason.
+  // cloud 0009_mailbox_oauth — two markers, two independent tables that fail differently: without
+  // `mailbox_oauth_ceremonies` the start route 42P01s on the insert; without
+  // `oauth_provider_config` the resolver's first read 42P01s and the flow reports "not
+  // configured" on a deployment whose environment carries a good registration — the more
+  // dangerous one, since it presents as a configuration mistake. The columns are the ones a query
+  // touches: `consumed_at` is what the single-use consume predicates on, `client_secret_enc` is
+  // what the resolver decrypts.
   ["mailbox_oauth_ceremonies", "consumed_at"],
   ["oauth_provider_config", "client_secret_enc"],
-  // cloud 0027_oauth_device_ceremonies — ONE marker, for the device-code door's own table.
-  //
-  // Without it, `POST …/oauth/microsoft/device/start` 42P01s on the insert AFTER it has already
-  // asked Microsoft for a grant — so the person is never shown the code for a ceremony that now
-  // exists at Microsoft's end and will sit there until it expires. The failure is a 500 on a route
-  // whose availability read said the door was armed, which is precisely the "too-early code"
-  // shape these markers exist to turn into a `/health` answer instead.
-  //
-  // `poll_interval_ms` and not the PK: `state` exists the moment the table does, so it cannot tell
-  // a complete table from a half-applied one. The interval is what the poll lease's predicate
-  // reads, which is the rule every marker above follows — pick the column a QUERY touches.
+  // cloud 0027_oauth_device_ceremonies — one marker for the device-code door's table. Without it
+  // the start route 42P01s on the insert after it has already asked Microsoft for a grant, so the
+  // person is never shown the code for a ceremony that now exists at Microsoft's end.
+  // `poll_interval_ms` and not the PK: `state` exists the moment the table does; the interval is
+  // what the poll lease's predicate reads — pick the column a query touches.
   ["mailbox_oauth_device_ceremonies", "poll_interval_ms"],
   // cloud 0010_desktop_link_pkce — ONE marker, because the migration adds ONE column. It is the
   // column the desktop handoff CLAIM predicates on, which is the rule every marker above follows:
@@ -104,16 +79,10 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // version of that.
   ["attachment_staging", "expires_at"],
   // cloud 0017_oauth_code_twofa_provenance — the authorizing session's real `last_twofa_at`,
-  // carried across the native PKCE hop. One added column, so the ordinary class
-  // sees it, and there is no choice of probe to argue: the migration IS this column.
-  //
-  // The absence is SILENT, and that is the reason it needs a marker rather than a note. A missing
-  // column here does not 42703 the way `login_tokens.challenge_hash` does, because the failure is
-  // on the WRITE and it is `INSERT`-shaped: drizzle emits the column, Postgres rejects the
-  // statement, and `GET /oauth/authorize` answers a 500 through the raw pipeline's plain error —
-  // on a route the shipped clients do not call, so nobody would see it. Meanwhile the property
-  // the column exists to hold would simply be absent. A 503 at the deploy gate is how that
-  // becomes visible before it is deployed rather than never.
+  // carried across the native PKCE hop; the migration IS this column. The absence is silent: the
+  // failure is INSERT-shaped on a route the shipped clients do not call, so `GET
+  // /oauth/authorize` would 500 unseen while the property the column holds was simply absent. A
+  // 503 at the deploy gate is how that becomes visible before deployment rather than never.
   ["oauth_auth_codes", "twofa_at"],
   // cloud 0018_invites_confers_verified — does redeeming this invite prove address control?
   // One added column, `NOT NULL DEFAULT true`, and the default is what makes the marker
@@ -137,58 +106,32 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // migration is an `alert_pass_failed` loop from both drivers. Deploy order: migration →
   // API + worker.
   ["alert_state", "claimed_until"],
-  // cloud 0030_heartbeat_signals_alert_runs — FIVE markers, on 0028's rule again: the migration
-  // makes six independent changes and a database can hold some without the others, so each
-  // marker below names one of them. `worker_heartbeats.ai_circuit_open_since` needs none of its
-  // own: it is a heartbeat column added BEFORE one that IS marked, and statements inside a
-  // migration apply in order.
-  //
-  // `alert_state.cls` is the loud one, and its loudness is a particular kind. Every observation
-  // the alert pass records INSERTS this column, so an API deployed ahead of the migration 42703s
-  // inside `runAlertPass` — and that is the one pass whose failure is structurally silent,
-  // because being the thing that notices is its entire job. Without this marker the deploy that
-  // breaks the pager is also the deploy the pager cannot report.
-  //
-  // `alert_pass_runs` is quiet in the mirror-image way: the pass's own bookkeeping write is
-  // best-effort and swallows its errors by contract (a pass must outlive its bookkeeping), so a
-  // missing table costs nothing visible until the OTHER driver reports this one dark — a false
-  // page, hours later, naming the wrong fault.
-  //
-  // `platform_signals` is quiet in the third way, and it is the one the ruling names as a risk:
-  // without the table the 5xx poller's write 42P01s, no row is ever written, and an empty
-  // population is exactly what an UNCONFIGURED token also produces. The board would read "not
-  // measured" — which is true, and true for a reason nobody would look for.
+  // cloud 0030_heartbeat_signals_alert_runs — five markers for six independent changes.
+  // `alert_state.cls` is the loud one: every observation the alert pass records inserts it, so an
+  // API ahead of the migration 42703s inside `runAlertPass` — the one pass whose failure is
+  // structurally silent, because noticing is its job. `alert_pass_runs` is quiet the mirror-image
+  // way: the bookkeeping write is best-effort by contract, so a missing table costs nothing
+  // visible until the other driver reports this one dark. `platform_signals` is quiet the third
+  // way: no row ever written reads exactly like an unconfigured token — "not measured", true for
+  // a reason nobody would look for.
   ["alert_state", "cls"],
   ["alert_pass_runs", "ran_at"],
   ["platform_signals", "errors_5xx"],
-  // `worker_heartbeats.degraded_since` — the FOURTH. It WAS the last statement of the migration
-  // when it was added, and that is no longer true: 0030 has grown twice since, so this entry now
-  // carries only its own rule and the "implies everything above it" property belongs to the last
-  // entry in this list. The sentence claiming otherwise stood here while two statements sat
-  // below it — a comment that had quietly become the opposite of the code, in the one file whose
-  // whole job is to notice that kind of drift.
-  //
-  // It is kept because it still covers the two heartbeat columns that carry no marker of their
-  // own (`ai_circuit_open_since` is the other).
-  //
-  // Its own rule is the ordinary one: `worker_degraded` READS this column on every pass, and the
-  // API arm runs that pass. Without the marker an API deployed ahead of the migration 42703s
-  // inside `runAlertPass` — silently, because that pass swallows nothing and reports nowhere,
-  // and its whole job is to be the thing that notices. With it, the deploy answers
-  // `503 schema_incomplete` and names the reason.
+  // `worker_heartbeats.degraded_since` — the fourth marker. It was the migration's last statement
+  // when added; 0030 has since grown twice, so the "implies everything above it" property belongs
+  // to the last entry in this list. Kept because it still covers the two heartbeat columns with
+  // no marker of their own (`ai_circuit_open_since` is the other). Its own rule is the ordinary
+  // one: `worker_degraded` reads this column on every pass, so an API ahead of the migration
+  // 42703s inside `runAlertPass`; with the marker, the deploy answers `503 schema_incomplete` and
+  // names the reason.
   ["worker_heartbeats", "degraded_since"],
-  // `platform_signals.sample_cause` — the migration's LAST statement, which is the whole point:
-  // the last column of the last statement is the only one whose presence implies every object
-  // above it. It moved here from `alert_pass_runs.sinks_configured` when 0030 grew two more
-  // statements; `alerts.ts`'s SCHEMA_BEHIND_MARKER moved with it, in the same commit, because a
-  // marker naming anything earlier reports ready for a migration that stopped halfway.
-  //
-  // The fourth marker above was chosen because it was last, and then a statement was APPENDED
-  // after it. That quietly voided the only property the choice rested on, so this list has to
-  // move whenever 0030 grows — the same obligation `SCHEMA_BEHIND_MARKER` in `alerts.ts` carries,
-  // and for the same reason. Both are kept in step deliberately rather than one deriving from
-  // the other, because the alert preflight must not import an API route to answer a question
-  // about the database.
+  // `platform_signals.sample_cause` — the migration's last statement, which is the point: the
+  // last column of the last statement is the only one whose presence implies every object above
+  // it. It moved here when 0030 grew two more statements; `alerts.ts`'s SCHEMA_BEHIND_MARKER
+  // moved with it, in the same commit — a marker naming anything earlier reports ready for a
+  // migration that stopped halfway. This list has to move whenever 0030 grows; the two are kept
+  // in step deliberately rather than one deriving from the other, because the alert preflight
+  // must not import an API route.
   ["platform_signals", "sample_cause"],
   // cloud 0033_api_faults — `arm` is the table's LAST column, on the rule the `sample_cause`
   // entry above states: only the last column's presence implies every object above it. A
@@ -284,61 +227,16 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * Asserted by `health.test.ts` against the journal itself, so a cloud migration that adds a
  * probeable column and no marker fails there rather than in production.
  */
-/* WHAT EACH CLOUD MIGRATION IS PROBED BY, and the ones no class can see.
- *
- * `0015_attachment_staging` and every ordinary migration after it are the easy case: a real
- * table with real columns, so a column marker above is the whole probe.
- *
- * `0017_oauth_code_twofa_provenance` is the easy case too — one added column on an existing
- * table, `oauth_auth_codes.twofa_at`. Its own sentence is about how it FAILS: unlike the entries
- * above, a database missing it breaks a WRITE rather than a read, on a route no shipped client
- * calls, so the deployment would look entirely healthy while the property the column carries —
- * the real second-factor time inherited across the native handoff — was silently absent.
- *
- * `0018_invites_confers_verified` is the easy case — one added column on an existing table,
- * `invites.confers_verified`. Its sentence is about which FAILURE the marker forestalls: the
- * column's `NOT NULL DEFAULT true` means a database missing it does not corrupt data, it 42703s
- * the register and pairing-redeem paths — and the cheap repair someone reaches for on a
- * half-migrated host (drop the column from the writes) is precisely the verification forgery
- * the column closes. The deploy-gate 503 is what makes that repair never look attractive.
- *
- * `0020_replan_2026_08_21` is the FIRST data-only cloud migration: three UPDATEs, no DDL, so
- * none of the five marker classes can see it. That is accepted rather than worked around, and
- * the journal accounting (`drizzle_cloud.__drizzle_migrations`) remains its record of
- * application.
- *
- * `0024_auth_events_reuse_index` is one partial index and nothing else, so its INDEX marker in
- * {@link CLOUD_INDEX_MARKERS} is its whole probe — a shape worth naming, because an index's
- * absence is the silent kind.
- *
- * `0025_alert_renotify_signature` and `0026_alert_claim_lease` are the easy case — one added
- * nullable column on `alert_state` each — and take ordinary column markers above; their
- * entries carry the loudness argument (the alert pass's claim names both columns, so
- * too-early code is an `alert_pass_failed` loop — the pager breaking).
- *
- * `0030_heartbeat_signals_alert_runs` takes THREE column markers and nothing else, which is the
- * ordinary case, and the entry is worth a sentence for what it is NOT. It adds three CHECKs, and
- * none of them is a REPLACEMENT under an existing name — all three are new constraints on new
- * columns or new tables — so no CHECK-DEFINITION marker is owed. It adds one index, and that
- * index is not silent when absent: `platform_signals_window_idx` serves a read over a table the
- * same migration creates, so the table's own column marker already catches every database that
- * lacks it.
- *
- * `0032_retire_billing_tables` DROPS tables and takes NO marker of any class, which is the one
- * entry in this list whose absence of a probe is a positive statement rather than a gap: a
- * marker asserts a database HAS something, and there is no name whose presence means "sixteen
- * tables are gone". A database that has not taken it carries tables nothing reads, which costs
- * disk and nothing else — so the deploy gate has nothing to refuse, deliberately.
- *
- * `0033_api_faults` creates a table with real columns, so it is the easy case and takes one
- * ordinary column marker on `arm`, its last. It adds two indexes and three CHECKs and none of
- * them is owed a marker: the CHECKs are all new constraints on a new table, so the `0011`/`0029`
- * replacement problem cannot arise, and both indexes serve reads over the table the same
- * migration creates — the column marker already catches every database that lacks either.
- *
- * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
- * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
- * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
+/**
+ * What each cloud migration is probed by, and the ones no class can see. Ordinary migrations take
+ * a column marker. 0017 and 0018 are one added column each, their failures write-shaped. 0020 is
+ * the first data-only cloud migration — no DDL, nothing to probe; the journal accounting is its
+ * record. 0024 is one partial index, probed by its INDEX marker alone. 0030 takes three column
+ * markers, no CHECK-definition marker (all three CHECKs are new constraints on new objects) and
+ * no index marker. 0032 drops tables and takes no marker of any class: no name's presence means
+ * "sixteen tables are gone", and an untaken drop costs disk only. The tag asserts reconciliation
+ * against the newest entry.
+ */
 export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0033_api_faults";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
