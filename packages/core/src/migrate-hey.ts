@@ -1,33 +1,24 @@
 import type { Destination } from "./types.js";
-/* THE PORT LIVES IN `ports.ts`, NOT HERE, and the direction of that import is the point.
- *
- * `FolderScanner` is two read-only methods over any mailbox — list the folders, sample a folder's
- * senders — and `ImapAdapter` implements it beside `MailboxAdapter` and `AdapterPort`, which are
- * both declared there. It was declared HERE, in the migration that happens to be its first
- * consumer, and the consequence was that the IMAP adapter — mail-half code, and part of what a
- * local install is built from — named this module in an import on every build, purely to say what
- * shape it satisfies. That is a type-only edge, invisible in the emitted JavaScript and perfectly
- * visible in the source, which is where it mattered: it made a private migration a declared
- * dependency of the adapter.
- *
- * A port belongs with the other ports; the algorithm that consumes it belongs here. Nothing is
- * re-exported from this file, because `index.ts` re-exports both modules with `export *` and one
- * name arriving from two of them is an ambiguity rather than a convenience. */
+/**
+ * The port lives in `ports.ts`, not here, and the direction of that import is the point.
+ * `FolderScanner` is two read-only methods over any mailbox, and `ImapAdapter` implements it
+ * beside the other ports declared there. Declared HERE — in the migration that happens to be its
+ * first consumer — the IMAP adapter, mail-half code, named this module in an import on every
+ * build purely to say what shape it satisfies: a type-only edge, invisible in the emitted
+ * JavaScript and perfectly visible in the source, making a private migration a declared
+ * dependency of the adapter. Nothing is re-exported from this file: `index.ts` re-exports both
+ * modules with `export *`, and one name arriving from two of them is an ambiguity.
+ */
 import type { FolderScanner } from "./ports.js";
 
 /**
- * HEY-migration folder-scan (spec §16, sub-plan 1e).
- *
- * Seeds the deterministic ruleset from an EXISTING mailbox's own placement:
- * enumerate the server's folders, sample each folder's senders, and map every
- * real server folder to one of our canonical {@link Destination}s. Each sampled
- * sender becomes a `{ senderOrDomain, kind, destination }` observation that
- * `HeyMigrationService.migrateFromObservations` turns into a `provenance:'migrated'`
- * rule.
- *
- * The scan is expressed against the narrow {@link FolderScanner} port so it is
- * testable both against a real IMAP server (the `ImapAdapter` implements it) and
- * a deterministic in-test mock. A HEY-data-export parser can plug into the same
+ * HEY-migration folder-scan (spec §16). Seeds the deterministic ruleset from an EXISTING
+ * mailbox's own placement: enumerate the server's folders, sample each folder's senders, and map
+ * every real server folder to one of our canonical {@link Destination}s. Each sampled sender
+ * becomes a `{ senderOrDomain, kind, destination }` observation that
+ * `HeyMigrationService.migrateFromObservations` turns into a `provenance:'migrated'` rule.
+ * Expressed against the narrow {@link FolderScanner} port so it is testable against a real IMAP
+ * server and a deterministic mock alike; a HEY-data-export parser can plug into the same
  * `MigrationObservation[]` shape later — this is that seam.
  */
 
@@ -55,17 +46,13 @@ const domainOf = (addr: string): string => {
 };
 
 /**
- * Default folder → Destination mapping.
- *
- * - `INBOX` → `INBOX` (the Imbox — senders already filed here are approved).
- * - Our own **`ohmail/*` management folders are SKIPPED** (`null`): re-deriving
- *   rules from the folders WE placed mail into would be circular, and Screener /
- *   Quarantine are transient holding areas, not user intent.
- * - Common HEY / user folder names map by keyword to Reads / Receipts / Screened.
- * - Mail-plumbing folders (Sent/Drafts/Trash/Archive/…) are skipped — they carry no
- *   classification intent.
- * - Anything unrecognized is skipped (`null`) so migration never invents a rule from
- *   a folder whose meaning we cannot infer.
+ * Default folder → Destination mapping. `INBOX` → `INBOX` (senders already filed here are
+ * approved). Our own `ohmail/*` management folders are SKIPPED: re-deriving rules from the
+ * folders WE placed mail into would be circular, and Screener/Quarantine are transient holding
+ * areas, not user intent. Common HEY and user folder names map by keyword to
+ * Reads/Receipts/Screened. Mail-plumbing folders (Sent/Drafts/Trash/Archive) are skipped — they
+ * carry no classification intent. Anything unrecognized is skipped, so migration never invents a
+ * rule from a folder whose meaning we cannot infer.
  */
 export function defaultFolderMapper(serverFolder: string): Destination | null {
   const f = serverFolder.trim();
