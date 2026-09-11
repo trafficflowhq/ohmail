@@ -4,31 +4,14 @@ import type { Dialect } from "./dialect/index.js";
 import type { Tx } from "./change-log.js";
 
 /**
- * PER-ACCOUNT STORED-BODY ACCOUNTING — the mail-schema half of the managed storage cap.
- * The CLOUD half — what the cap IS for an account, and who is at it — lives in
- * `storage-cloud.ts` on the `/cloud` entry point, because it reads `billing_subscriptions`;
- * THIS module touches only `account_storage` (mail 0062) and is inside the desktop engine's
- * import closure, where `DrizzleRepo` calls it.
- *
- * ## What one byte is
- *
- * {@link bodyBytesOf} is the ONE definition of what counts: `octet_length(text) +
- * octet_length(html)` — UTF-8 octets of exactly the two columns a body row stores content in.
- * Headers never count (they are still written at cap — the organizing passes read stored
- * headers, so a count of undeclinable bytes would grow with no user remedy), and neither do
- * snippets, attachment metadata (attachment BYTES are never stored server-side), the transient
- * outbound staging (its own quota), or the derived `body_tsv`. `Buffer.byteLength` is UTF-8
- * byte length, which is `octet_length` for a UTF-8 database — the 0062 backfill computes the
- * same sum in SQL, and `storage-reserve.pg.test.ts` holds the two definitions together.
- *
- * ## The transaction discipline
- *
- * Every writer moves the counter IN THE SAME TRANSACTION as the body write it accounts for —
- * the reserve inside `DrizzleRepo.insertMessageBody`, the clamped deltas inside the repair
- * passes' per-message transactions — so the number can never describe a state `message_bodies`
- * is not in. LOCK ORDER: the `account_storage` row is written BEFORE the first
- * `recordChange`/`allocateSeq` of its transaction, everywhere, so two writers can never hold
- * the two locks in opposite orders.
+ * Per-account stored-body accounting — the mail-schema half of the storage cap. The CLOUD half
+ * lives in `storage-cloud.ts` (it reads `billing_subscriptions`); THIS module touches only
+ * `account_storage` (mail 0062) and sits inside the desktop engine's closure. {@link bodyBytesOf}
+ * is the ONE definition of what counts: `octet_length(text) + octet_length(html)`. Headers never
+ * count (still written at cap); neither do snippets, attachment metadata or staging.
+ * `Buffer.byteLength` is UTF-8 octets — the number the 0062 backfill aggregates in SQL; a pg test
+ * holds the two together. Every writer moves the counter IN THE SAME TRANSACTION as the body
+ * write; LOCK ORDER: the `account_storage` row before the first `recordChange`, everywhere.
  */
 
 /**
@@ -48,31 +31,14 @@ export async function storageUsageOf(tx: Tx, accountId: string): Promise<number>
 }
 
 /**
- * RESERVE `bytes` against the account's cap, atomically, in the caller's transaction.
- *
- * `true` ⇒ the counter moved and the caller stores the body. `false` ⇒ the account is AT CAP
- * (counted bytes already ≥ `capBytes`) and the caller writes the withheld row instead.
- *
- * ── The mechanism, and why it needs no advisory lock ─────────────────────────────────────────
- *
- * Two statements: an `INSERT … ON CONFLICT DO NOTHING` that makes the row exist, then ONE
- * conditional `UPDATE … SET bytes = bytes + $n WHERE account_id = $1 AND bytes < $cap
- * RETURNING`. The UPDATE takes the row lock, so concurrent ingests for one account serialize
- * on it exactly as credit debits serialize on `credit_balances`; a racer that finds
- * `bytes >= cap` matches no row and is the decline. There is no read-then-write to race.
- *
- * ── At-cap means "decline once ≥ cap", NOT a hard byte ceiling ───────────────────────────────
- *
- * The predicate is `bytes < cap` BEFORE adding `n`, so the message that CROSSES the cap stores
- * in full — conservative toward the user, bounded by one message (64 MiB raw ceiling upstream,
- * 256 KiB stored html) — and the first message after that is the first decline. Deleting the
- * WHERE arm makes over-cap ingest store forever; the pg test mutates exactly that and watches
- * the decline assertion go red.
- *
- * `capBytes: null` is UNMETERED — the caller has already declared it (the required
- * `storageCap` on `CommitDeps`; never inferred from absent config) — and the counter still
- * moves, unconditionally: accounting is not billing, and a number that is only right where a
- * cap is wired is a number nobody may trust.
+ * Reserve `bytes` against the account's cap, atomically, in the caller's transaction. `true`:
+ * store the body; `false`: at cap — write the withheld row. No advisory lock: an `INSERT … ON
+ * CONFLICT DO NOTHING` makes the row exist, then ONE conditional `UPDATE … SET bytes = bytes + $n
+ * WHERE bytes < $cap RETURNING` — the UPDATE takes the row lock, and a racer that finds `bytes >=
+ * cap` matches no row, which IS the decline. The predicate tests BEFORE adding, so the message
+ * that CROSSES the cap stores in full; the pg test mutates the WHERE arm and watches the decline
+ * go red. `capBytes: null` is UNMETERED — declared by the caller, never inferred — and the
+ * counter still moves: a number only right where a cap is wired is a number nobody may trust.
  */
 export async function reserveBodyBytes(
   tx: Tx, d: Dialect, accountId: string, bytes: number, capBytes: number | null,
@@ -241,18 +207,14 @@ export interface EvictionResult {
 }
 
 /**
- * Husk the account's OLDEST stored bodies until its counter is at or under `targetBytes`,
- * bounded by `maxBodies`, in the caller's transaction.
- *
- * "Oldest" is the message's own date (`coalesce(messages.date, messages.created_at)`) — the
- * order a person would recognise as their mail's age — with the id as the total-order
- * tiebreak. Victims are rows that actually hold content (`withheld_reason IS NULL` and a
- * non-empty text or a non-null html); husks and already-withheld rows are never re-processed.
- *
- * The counter row is locked FIRST and the aggregate of what was freed is decremented under
- * that same lock, clamped like every compensation here — so the counter can never describe a
- * state `message_bodies` is not in, and concurrent reserves serialize behind the trim exactly
- * as they serialize behind each other.
+ * Husk the account's OLDEST stored bodies until its counter is at or under `targetBytes`, bounded
+ * by `maxBodies`, in the caller's transaction. "Oldest" is the message's own date
+ * (`coalesce(messages.date, messages.created_at)`) — the order a person recognises as their
+ * mail's age — with the id as the total-order tiebreak. Victims are rows that actually hold
+ * content; husks and already-withheld rows are never re-processed. The counter row is locked
+ * FIRST and the freed aggregate is decremented under that same lock, clamped like every
+ * compensation here — so the counter can never describe a state `message_bodies` is not in, and
+ * concurrent reserves serialize behind the trim exactly as they serialize behind each other.
  */
 export async function evictOldestBodies(
   tx: Tx, d: Dialect, accountId: string, opts: { targetBytes: number; maxBodies: number },
@@ -316,11 +278,9 @@ export async function evictOldestBodies(
  * more than {@link EVICT_INLINE_MAX_BODIES} — and try once more. Still `false` (the body is
  * withheld, the pre-ruling behaviour) only when even that bound cannot make room, which takes a
  * single body larger than everything {@link EVICT_INLINE_MAX_BODIES} messages hold: the
- * pathological ceiling, kept so one giant message cannot turn ingest into an unbounded sweep.
- *
- * The target leaves the incoming body's own bytes free UNDER the cap (`cap − bytes`), because
- * the reserve's predicate is `bytes < cap` before adding — freeing exactly to the cap would
- * still refuse.
+ * pathological ceiling, kept so one giant message cannot turn ingest into an unbounded sweep. The
+ * target leaves the incoming body's own bytes free UNDER the cap (`cap − bytes`): the reserve's
+ * predicate is `bytes < cap` before adding, so freeing exactly to the cap would still refuse.
  */
 export async function reserveBodyBytesEvicting(
   tx: Tx, d: Dialect, accountId: string, bytes: number, capBytes: number | null,
