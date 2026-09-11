@@ -1905,34 +1905,14 @@ export const accountSettings = sqliteTable("account_settings", {
    */
   foldersEnabledAt: integer("folders_enabled_at", { mode: "timestamp_ms" }),
   /**
-   * WHEN THIS ACCOUNT FINISHED SCREENING ITS BACKLOG  — the instant the dormancy
-   * window is measured back from, instead of from `now()`.
-   *
-   * The cutline reads `(screeningBaselineAt ?? now()) - dormancyDays`. With a baseline the cutoff
-   * STOPS SLIDING, which buys two properties the sliding window could not express:
-   *
-   *   · mail older than the cutoff can never make an undecided sender active — **not even
-   *     unread**. That is the churn this column exists for: old unread mail arrives in the mirror
-   *     constantly (a backfill reaching further back, a folder read for the first time, a `\Seen`
-   *     flag adopted late), and under the sliding window every such arrival resurrected a sender
-   *     the account had already worked past, then dropped them again when the read-state synced;
-   *   · a stranger who wrote AFTER the baseline never goes dormant — their mail is newer than the
-   *     cutoff for ever — so they wait until somebody decides instead of ageing quietly out of
-   *     the queue unanswered.
-   *
-   * **NULL is exactly the pre-0056 behaviour at every layer**, and this is the one property to
-   * preserve when editing any reader: cutoff = `now() - dormancyDays`, unread outranks age, and
-   * the router holds any unruled sender's mail at the gate whatever its date. The narrowing is
-   * gated on the baseline being PRESENT, never applied unconditionally through a `?? now()`
-   * default — those are different programs, and the second one empties a live account's Screener
-   * queue on deploy.
-   *
-   * Unlike every other timestamp on this row it is read as an INSTANT and not as `IS NOT NULL`:
-   * the value is what the arithmetic uses. Written once, by the account's first screener decide,
-   * in that decide's own transaction and only while still NULL — so two decides racing produce
-   * one baseline. Never recomputed, and deliberately NOT derived from `min(rules.created_at)`,
-   * because rules are deletable and a baseline that can travel backwards would re-open the queue
-   * every time somebody tidies their rules.
+   * When this account FINISHED screening its backlog — the instant the dormancy window is
+   * measured back from, instead of from `now()`. With a baseline the cutoff STOPS SLIDING: mail
+   * older than the cutoff can never make an undecided sender active, not even unread; a stranger
+   * who wrote AFTER the baseline never goes dormant. NULL is exactly the pre-0056 behaviour; the
+   * narrowing is gated on the baseline being PRESENT, never a `?? now()` default — the second
+   * program empties a live Screener queue on deploy. Read as an INSTANT. Written once, by the
+   * first screener decide, only while NULL; never derived from `min(rules.created_at)` — rules
+   * are deletable, and a baseline travelling backwards would re-open the queue.
    */
   screeningBaselineAt: integer("screening_baseline_at", { mode: "timestamp_ms" }),
   /**
@@ -1958,28 +1938,14 @@ export const accountSettings = sqliteTable("account_settings", {
    */
   loadTrackingPixelsAt: integer("load_tracking_pixels_at", { mode: "timestamp_ms" }),
   /**
-   * AUTO-UNSUBSCRIBE ON SCREEN-OUT — the OPT-OUT, and the second column on this row spelled that
-   * way (mail 0054).
-   *
-   * NULL (and no row) = the product default: screening a waiting sender out, or the Screener's
-   * spam verb, hands the mail that decision re-routed to the RFC 8058 one-click path — one request
-   * per list per mailbox, only where the sender published `List-Unsubscribe-Post`, never
-   * `mailto:`, sent server-side. NOT NULL = this account asked it to stop, and the instant is when.
-   *
-   * The opt-out spelling is not a style choice here the way it is arguable for
-   * {@link blockRemoteImagesAt}: the behaviour is ALREADY ON for every account that exists, so an
-   * opt-in column would have turned it off for all of them on deploy.
-   *
-   * **The reader is `UnsubscribeService.onScreenOut` — the AUTOMATIC entry point — and nothing
-   * else.** The manual button on one open message is a person pressing unsubscribe on mail in
-   * front of them, and gating that on a switch named "auto" would make a control mean something
-   * its label does not say.
-   *
-   * A failed CLIENT read resolves to ON, which is the opposite direction from
-   * {@link blockRemoteImagesAt} and is deliberate: what the client does with this value is decide
-   * whether to DISCLOSE an irreversible outbound request the server is going to make anyway, so
-   * "I do not know" must not silently drop the disclosure. The server has no unknown — it reads
-   * this column in the same request that would send.
+   * Auto-unsubscribe on screen-out — the OPT-OUT (mail 0054). NULL (and no row) = the default:
+   * screening a sender out hands the re-routed mail to the RFC 8058 one-click path — one request
+   * per list per mailbox, `List-Unsubscribe-Post` only, sent server-side. NOT NULL = this account
+   * asked it to stop. Opt-out because the behaviour is ALREADY ON everywhere — an opt-in column
+   * would have turned it off for everyone on deploy. The reader is
+   * `UnsubscribeService.onScreenOut`, the AUTOMATIC entry point, nothing else: the manual button
+   * is a person pressing unsubscribe on mail in front of them. A failed CLIENT read resolves to
+   * ON: the client's use is deciding whether to DISCLOSE a request the server will make anyway.
    */
   blockAutoUnsubscribeAt: integer("block_auto_unsubscribe_at", { mode: "timestamp_ms" }),
   /**
