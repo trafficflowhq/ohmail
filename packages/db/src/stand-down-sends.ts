@@ -175,69 +175,16 @@ export async function closeStoodDownAppointments(
   const reason: MailboxDisabledReason =
     isMailboxDisabledReason(input.reason) ? input.reason : "organized_elsewhere:unknown";
   return db.transaction(async (tx) => {
-    // ── THE ROW MUST ACTUALLY BE STOOD DOWN, READ INSIDE THIS TRANSACTION ──────────────────
-    //
-    // Every caller has just decided to stand down, so this looks redundant — and it is not. The
-    // DECISION is process-local; the durable stand-down is a row, and the two can disagree in
-    // exactly one direction that matters. On Cloud, `markMailboxStoodDown` is FENCED: an
-    // instance that read a stand-down verdict and then lost the shard has its lifecycle write
-    // refused, and its close must be refused with it — otherwise a deposed leader cancels an
-    // appointment the successor legitimately accepted after re-organizing the mailbox. Reading
-    // the row is how this write inherits the fence's answer without taking the fence, which it
-    // must not: `lifecycleWhere` also refuses a mailbox that is ALREADY disabled, so a close
-    // gated on the fenced write's own return value would never run for the population this
-    // whole function exists for — an install stood down long before this code existed.
-    //
-    // `FOR UPDATE`, AND THE MAILBOX ROW IS TAKEN BEFORE ANY DRAFT — the order this codebase
-    // already keeps, and the reason it keeps it is written out beside the other pass that locks
-    // this row ("Recorded here so the next reader does not 'fix' the order back").
-    //
-    // The lock is what makes this check MEAN anything. A plain read stood here for one round and
-    // was wrong: it and the UPDATE below take separate snapshots under READ COMMITTED, so a
-    // lifecycle transition committing `connected` between them left the UPDATE running with a
-    // predicate that no longer looked at the mailbox at all — and it would then cancel an
-    // appointment a successor had legitimately accepted. Holding the row instead totally orders
-    // this against every writer of `mailboxes` (the stand-down, the takeover, the re-enable),
-    // which is the whole set of transitions that could make this close wrong.
-    //
-    // It cannot deadlock with scheduling, and that was checked rather than assumed:
-    // `ScheduleService.schedule` locks the DRAFT and only READS the mailbox — it takes no lock on
-    // this row, so there is no cycle to close. (A deadlock argument against this lock stood here
-    // for one round and rested on that premise being false.)
-    //
-    // WHAT THE LOCK DOES NOT EXCLUDE, and why that is acceptable rather than merely accepted.
-    // The residual is one interleaving: a schedule that read the mailbox as connected, has not
-    // yet taken its draft lock when this UPDATE scans past the row, and commits `'scheduled'`
-    // afterwards. (The other order is already safe — this UPDATE blocks on the draft lock the
-    // scheduler holds, then re-evaluates against the committed row and closes it.) Two standing
-    // properties bound it:
-    //
-    //  · on a DESKTOP install the window does not exist. That store serves the engine and the
-    //    app's own requests over a SINGLE connection, so two transactions on it cannot interleave
-    //    at all — and it is the door on which this orphan was observed.
-    //  · on a hosted account the scheduled-send pass is the standing backstop: it claims the due
-    //    row, `SendService.reserve` refuses a mailbox whose row is `disabled`, and the
-    //    appointment is closed with a sentence then.
-    //
-    // So the residual is an appointment reported as failed WHEN IT COMES DUE rather than at the
-    // stand-down — a later honest failure, not the silent one this function exists for. Both
-    // properties are held by tests beside their own code rather than by this comment.
-    //
-    // ── THE PREDICATE IS `organizer_role = 'reader'` (mail 0083), NOT `disabled` + A REASON ──
-    //
-    // It used to read `status='disabled' AND disabled_reason IS NOT NULL`, because that pair WAS
-    // the stand-down: the loser stopped entirely. A loser is now a READER — connected, syncing,
-    // on the roster — so the old predicate matches nothing a stand-down writes any more, and
-    // leaving it would have made this function silently close zero appointments for ever: the
-    // exact orphan it exists to prevent, restored, with the tests still green because they set
-    // up the row the old way.
-    //
-    // The discriminator against a REMOVAL survives the change intact and gets sharper. A removal
-    // is `status='disabled'` with no reason and keeps `organizer_role='organizer'` — nothing
-    // demoted it, the row is simply a tombstone — so the two preconditions are now disjoint on a
-    // column each, rather than on two readings of one. That matters because the sentences differ
-    // in the only thing they must get right: "schedule it again where the mailbox is organized
-    // now" is true of a handover and false about a mailbox nobody organizes.
+    // The row must actually BE stood down, read inside THIS transaction. The decision is
+    // process-local; the durable stand-down is a row, and they can disagree where it matters: on
+    // Cloud the lifecycle write is FENCED — a deposed instance's close must be refused with it,
+    // or it cancels an appointment the successor accepted; reading the row inherits the fence's
+    // answer. `FOR UPDATE`, mailbox before any draft: a plain read stood here one round and was
+    // wrong — separate snapshots under READ COMMITTED. No deadlock with scheduling: the scheduler
+    // locks the DRAFT and only reads the mailbox. The residual — a schedule committing after this
+    // UPDATE — is bounded: a desktop store is one serialized connection, and the hosted pass
+    // refuses a `disabled` mailbox at due time. The predicate is `organizer_role = 'reader'`
+    // (mail 0083): the loser is now a READER; the old predicate would close nothing forever.
     /* THE ROW LOCK THROUGH THE SEAM. On the device store it is the identity, and that is not a
        weakening: the store is reached through ONE serialized connection, so there is no second
        writer for a lock to exclude — a second connection to the same file does not contend, it
