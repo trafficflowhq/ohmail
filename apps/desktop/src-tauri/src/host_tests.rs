@@ -105,13 +105,45 @@ fn a_spawn() -> HostSpawn {
 }
 
 #[test]
-fn a_disarmed_plan_is_byte_identical_whatever_the_door() {
-    // The contract is EQUALITY, not "no host variables": a disarmed launch is the launch a build
-    // without host mode composes, and any drift — an extra variable, a reordered one — fails here.
-    for mode in [None, Some(config::Mode::Local), Some(config::Mode::Cloud)] {
-        let plan = Plan::Spawn(a_launch());
-        assert_eq!(extend_plan(plan.clone(), mode, None), plan);
+fn a_disarmed_spawn_on_a_stored_door_CLEARS_the_inherited_host_environment() {
+    // ── WHAT THIS REPLACED, AND WHY THE OLD CONTRACT WAS HALF THE RULE ────────────────────
+    //
+    // This asserted byte-IDENTITY for every door, on the premise that "disarmed is today's
+    // launch". `Launch.env` overlays the desktop's OWN inherited environment, so a disarmed
+    // plan that adds nothing and clears nothing hands the engine whatever the shell was
+    // launched with: an install started from an environment carrying OHMAIL_HOST_MODE=1 and
+    // OHMAIL_LAN_BIND=<addr> kept BOTH across a disarm — `stand_down` stops arming the spawn
+    // and respawns — so the engine bound the network door the pane had just turned off and
+    // reported off. The armed test below already named exactly this failure for the variables
+    // an ARMED spawn omits; the disarmed side of the same `if` was the other half of it.
+    //
+    // The new consumer: a disarm (and a door switch) must leave an engine that cannot serve.
+    for mode in [config::Mode::Local, config::Mode::Cloud] {
+        let extended = extend_plan(Plan::Spawn(a_launch()), Some(mode), None);
+        let Plan::Spawn(launch) = extended else { panic!("the plan stopped spawning") };
+        for var in HOST_ENV_VARS {
+            assert!(
+                launch.unset.iter().any(|k| k == var),
+                "{var} must be cleared from a disarmed spawn on the {mode:?} door"
+            );
+        }
+        // CLEARED, AND NOTHING ADDED — the positive control on the ordinary case. A disarmed
+        // plan that grew a host pair would be an arming by another name.
+        assert_eq!(launch.env, a_launch().env, "a disarmed spawn adds no host pair");
+        assert_eq!(launch.program, a_launch().program);
+        assert_eq!(launch.args, a_launch().args);
     }
+}
+
+#[test]
+fn with_no_stored_door_the_plan_is_still_byte_identical() {
+    // The development env fallback: on a checkout with no configured door the engine reads the
+    // host variables directly, so clearing them here would take that path away. Arming cannot
+    // reach this state — host mode refuses every door but LOCAL, so a disarm is always
+    // Some(Local) and is covered above. Equality, so any drift fails here.
+    let plan = Plan::Spawn(a_launch());
+    assert_eq!(extend_plan(plan.clone(), None, None), plan);
+    assert_eq!(extend_plan(plan.clone(), None, Some(&a_spawn())), plan);
 }
 
 #[test]
@@ -131,12 +163,16 @@ fn an_armed_plan_grows_the_three_variables_on_the_local_door_only() {
 #[test]
 fn the_cloud_door_never_gets_a_host_door_even_armed() {
     // The cloud door mirrors a hosted account; an armed setting left over from the local door
-    // must not follow the user through a door switch. Equality again: byte-identical.
+    // must not follow the user through a door switch — and it DID follow, through the inherited
+    // environment, which is why this now asserts cleared-and-nothing-added rather than
+    // byte-identity. No host pair is composed for it under any spawn.
     let spawn = a_spawn();
-    let plan = Plan::Spawn(a_launch());
-    assert_eq!(extend_plan(plan.clone(), Some(config::Mode::Cloud), Some(&spawn)), plan);
-    // No stored door at all — the development env-fallback path — is also never extended.
-    assert_eq!(extend_plan(plan.clone(), None, Some(&spawn)), plan);
+    let extended = extend_plan(Plan::Spawn(a_launch()), Some(config::Mode::Cloud), Some(&spawn));
+    let Plan::Spawn(launch) = extended else { panic!("the plan stopped spawning") };
+    assert_eq!(launch.env, a_launch().env, "the cloud door composes no host pair");
+    for var in HOST_ENV_VARS {
+        assert!(launch.unset.iter().any(|k| k == var), "{var} must be cleared on the cloud door");
+    }
 }
 
 #[test]

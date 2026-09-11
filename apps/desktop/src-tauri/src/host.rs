@@ -142,26 +142,38 @@ pub fn packaged_host_client(resources: Option<&Path>) -> Option<PathBuf> {
 pub const HOST_ENV_VARS: [&str; 5] =
     [HOST_MODE_VAR, HOST_PORT_VAR, HOST_ORIGIN_VAR, HOST_LAN_VAR, HOST_ASSETS_VAR];
 
-/// Add the host variables to a plan that is about to spawn — or leave it BYTE-IDENTICAL.
+/// Compose a spawning plan's host environment: CLEAR the contract's variables, then add the
+/// armed spawn's own pairs.
 ///
-/// The dangerous branch requires all three of: a plan that spawns, the LOCAL door, and an armed
-/// spawn in hand. Anything else returns the plan exactly as it arrived — asserted by equality in
-/// the tests, because "disarmed is today's launch" is a contract, not a tendency. The cloud door
-/// is excluded by name: it mirrors a hosted account, has no host door, and an armed setting left
-/// over from the local door must not follow the user through a door switch.
+/// `Launch.env` merely OVERLAYS the shell's inherited environment, and `Launch.unset` runs first
+/// at the spawn (remove-first-then-set). So a variable the shell's decision does not define is
+/// filled by whatever the desktop process itself inherited — and for these five that is a LAN
+/// listener bound and serving while the window reports host mode off.
 ///
-/// The armed branch clears ALL host variables before adding the spawn's own pairs
-/// (`Launch.unset` runs first at the spawn — remove-first-then-set), because `Launch.env` merely
-/// OVERLAYS the shell's inherited environment: since the origin and the LAN pairs became
-/// optional, a pair the spawn OMITS is a decision, and a stale `OHMAIL_LAN_BIND` or
-/// `OHMAIL_HOST_ORIGIN` sitting in the desktop's own environment must not fill it — that would
-/// be a LAN listener the window reports as off. The armed engine's host environment is EXACTLY
-/// the spawn's pairs, by construction.
+/// The armed branch cleared them; the DISARMED one did not, and that is the same defect on the
+/// other side of the same `if`: an install launched from an environment carrying
+/// `OHMAIL_HOST_MODE=1` and `OHMAIL_LAN_BIND=<addr>` kept both across a disarm, because
+/// `stand_down` stops arming the spawn and then respawns — so the engine re-read the inherited
+/// pair and bound the network door the pane had just turned off. Once an install HAS a stored
+/// door, the host contract is the shell's to state and the inherited environment is never
+/// consulted.
+///
+/// Two cases still return the plan exactly as it arrived, and each is a decision:
+///  · **no plan to spawn** — an inert plan has no environment.
+///  · **no stored door** — the development env fallback (`main.ts` reads these variables
+///    directly on a checkout with no configured door). Arming cannot reach that state: host mode
+///    refuses every door but LOCAL, so a disarm is always `Some(Local)`.
+///
+/// The CLOUD door clears them and adds nothing: it mirrors a hosted account, has no host door,
+/// and an armed setting left over from the local door must not follow the user through a door
+/// switch — which it did, through the environment, for the same reason the disarm did.
 pub fn extend_plan(mut plan: Plan, mode: Option<config::Mode>, spawn: Option<&HostSpawn>) -> Plan {
-    if let (Plan::Spawn(launch), Some(config::Mode::Local), Some(spawn)) = (&mut plan, mode, spawn)
-    {
+    let Some(mode) = mode else { return plan };
+    if let Plan::Spawn(launch) = &mut plan {
         launch.unset.extend(HOST_ENV_VARS.iter().map(OsString::from));
-        launch.env.extend(env_for(spawn));
+        if let (config::Mode::Local, Some(spawn)) = (mode, spawn) {
+            launch.env.extend(env_for(spawn));
+        }
     }
     plan
 }
