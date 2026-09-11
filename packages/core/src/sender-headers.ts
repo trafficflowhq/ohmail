@@ -1,14 +1,11 @@
 /**
- * WHO WROTE THE HEADER — the one rule for reading a sender's own words as identity or as rank.
- *
+ * Who wrote the header — the one rule for reading a sender's own words as identity or as rank.
  * Identity is `(account, mailbox, uidvalidity, uid)` or the content fingerprint. A header the
- * SENDER writes — Message-ID, In-Reply-To, References, To, Cc — may GROUP or RANK only when
+ * SENDER writes — Message-ID, In-Reply-To, References, To, Cc — may group or rank only when
  * something the sender does not control corroborates it: our own sent record, the person's own
- * reply, or the server's locator. Without that rule a stranger names a colleague in Cc and reads
- * as that colleague's correspondent, or reuses a Message-ID and reads as a message we hold.
- *
- * A spoofed `From` is NOT covered: no authentication result reaches this seam, so an address that
- * wrote to us is corroborated by the delivery and by nothing stronger.
+ * reply, or the server's locator. Otherwise a stranger naming a colleague in Cc reads as that
+ * colleague's correspondent. A spoofed `From` is NOT covered: no authentication result reaches
+ * this seam, so an address that wrote to us is corroborated by the delivery and nothing stronger.
  */
 
 /** How an address came to be on a conversation. `sender_named` is a claim, never evidence. */

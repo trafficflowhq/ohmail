@@ -8,20 +8,14 @@ import type { NativeLocator } from "./ports.js";
 export type { OutboundMessage } from "./adapters/imap-types.js";
 
 /**
- * The crash-safe send seam. SMTP is NOT transactional: a
- * process crash between "SMTP accepted the message" and "we recorded that fact"
- * is indistinguishable, at the DB, from "SMTP never ran". The #1 risk is a
- * double-send to a recipient across such a crash. The defence is to mint the
- * Message-ID (RFC 5322) UP FRONT and make it the correlation key:
- *
- *   1. mint `<uuid@domain>` on the `pending` reservation row (before any network);
- *   2. pass that EXACT id to SMTP as `OutboundMessage.messageId` (the ImapAdapter
- *      honours a supplied id and appends it to Sent), so the delivered mail carries
- *      an id we chose, not one the transport invented;
- *   3. on a same-key retry that finds a stale `pending` row, VERIFY by searching
- *      the Sent folder for that id — FOUND ⇒ it was delivered, reconcile to `sent`
- *      with NO resend; NOT FOUND ⇒ ambiguous, move to `unverified` and surface to
- *      the user. A silent auto-resend on ambiguity is PROHIBITED.
+ * The crash-safe send seam. SMTP is not transactional: a crash between "SMTP accepted" and "we
+ * recorded that" is indistinguishable, at the DB, from "SMTP never ran", and the #1 risk is a
+ * double-send across it. The defence is to mint the Message-ID (RFC 5322) up front as the
+ * correlation key: (1) mint `<uuid@domain>` on the `pending` reservation row before any network;
+ * (2) pass that exact id to SMTP as `OutboundMessage.messageId`, so the delivered mail carries an
+ * id we chose; (3) a same-key retry finding a stale `pending` row VERIFIES by searching Sent for
+ * that id — found means reconcile to `sent` with no resend, not found means `unverified`,
+ * surfaced to the user. A silent auto-resend on ambiguity is prohibited.
  */
 
 /** The lifecycle of an `outbound_sends` reservation row. */
@@ -40,22 +34,14 @@ export function mintMessageId(sentDomain = "trafficflow.ch"): string {
 }
 
 /**
- * THE APPEND THE SEND PATH ALREADY MADE TO THE MASTER — a locator and the bytes that are at it.
- *
- * `ImapAdapter.send` does not merely deliver: it `APPEND`s the compiled message into the mailbox's
- * own Sent folder, under `\Seen`, and the server answers with a UID. Both facts used to die at this
- * seam (`{ providerMessageId }` was the whole return), so the copy the server was already holding
- * was rediscovered a poll interval later by the sync worker, from scratch.
- *
- * Carrying them out is what makes RECORD-AT-SEND possible, and it is worth being precise about what
- * it is not: it is **not** a second source of truth. The write to the mailbox has already happened
- * — this is the projection of a write already made to the master, so the IMAP mailbox stays the
- * master by construction and the Sent-folder watch remains the backstop that heals anything this
- * projection gets wrong or never gets to do.
- *
- * The two fields travel together in one object, and that is the type saying "both or neither": a
- * locator without the bytes cannot be fingerprinted (see {@link SendResult.raw}), and the bytes
- * without the locator name no place in the mailbox.
+ * The append the send path already made to the master — a locator and the bytes at it.
+ * `ImapAdapter.send` APPENDs the compiled message into the mailbox's own Sent folder and the
+ * server answers with a UID; both facts used to die at this seam, so the server's own copy was
+ * rediscovered a poll interval later. Carrying them out enables record-at-send, and it is NOT a
+ * second source of truth: the write to the mailbox already happened, this is its projection, and
+ * the Sent-folder watch remains the backstop. One object means both or neither: a locator without
+ * bytes cannot be fingerprinted ({@link SendResult.raw}), and bytes without a locator name no
+ * place.
  */
 export interface AppendedSent {
   /** Where the append landed. `ref` is `${uidvalidity}:${uid}`; `0:0` when the server gave no APPENDUID. */
@@ -65,17 +51,13 @@ export interface AppendedSent {
 }
 
 /**
- * The minimal send seam SendService drives, INJECTED per-request (prod =
- * `makeSendAdapter` over decrypted mailbox creds; tests = a fake/GreenMail spy).
- * `send` performs SMTP + Sent-append and returns the delivered id; `messageInSent`
- * is the verify-by-Sent probe used for crash recovery; `close` tears the
- * connection down. Mirrors the attachments `AttachmentAdapter` seam.
- *
- * `appended` is OPTIONAL on purpose, and the optionality is a statement about the CALLER rather
- * than about the adapter: every wrapper of a real `ImapAdapter` can supply it (the adapter returns
- * both halves), and a spy or a transport that files sent mail some other way cannot. A consumer
- * must therefore treat its absence as "nothing to project" and never as an error — the
- * Sent-folder watch is the path that always exists.
+ * The minimal send seam SendService drives, injected per-request (prod = `makeSendAdapter` over
+ * decrypted mailbox creds; tests = a fake/GreenMail spy). `send` performs SMTP + Sent-append and
+ * returns the delivered id; `messageInSent` is the verify-by-Sent probe for crash recovery;
+ * `close` tears the connection down. `appended` is optional as a statement about the CALLER:
+ * every wrapper of a real `ImapAdapter` can supply it, a spy cannot — a consumer treats absence
+ * as "nothing to project", never as an error; the Sent-folder watch is the path that always
+ * exists.
  */
 export interface SendAdapter {
   send(msg: OutboundMessage): Promise<{ providerMessageId: string; appended?: AppendedSent }>;
@@ -83,17 +65,11 @@ export interface SendAdapter {
   messageInSent(messageId: string): Promise<boolean>;
   close(): Promise<void>;
   /**
-   * TEAR THE CONNECTION DOWN NOW, for a caller that has ABANDONED a timed-out operation — and
-   * the reason this is on the seam rather than left to `close` is written out at
-   * `ImapAdapter.forceClose`: imapflow serialises commands, so a graceful LOGOUT queues BEHIND
-   * whatever command is hung, and a caller that abandoned a probe and then awaited `close` waits
-   * exactly as long as the hang it was escaping. Destroying the socket is also the only thing
-   * that actually ends the hung command.
-   *
-   * OPTIONAL, and the optionality is about the CALLER's knowledge rather than the adapter's:
-   * every wrapper of a real `ImapAdapter` can supply it, a spy has nothing to destroy. A consumer
-   * must fall back to `close` when it is absent — and should bound that call, because the fallback
-   * is the very thing this exists to avoid.
+   * Tear the connection down NOW, for a caller that has abandoned a timed-out operation. imapflow
+   * serialises commands, so a graceful LOGOUT queues behind whatever is hung — awaiting `close`
+   * waits exactly as long as the hang being escaped, and destroying the socket is the only thing
+   * that ends the hung command (see `ImapAdapter.forceClose`). Optional because a spy has nothing
+   * to destroy: a consumer falls back to `close` when it is absent, and should bound that call.
    */
   forceClose?(): void;
 }
