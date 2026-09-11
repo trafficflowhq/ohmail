@@ -1,4 +1,4 @@
-import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
+import { createHmac, hkdfSync, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
 } from "@trafficflow/db";
@@ -3791,7 +3791,7 @@ export interface LeaseGateInput {
    * with nothing failing anywhere.
    */
   capabilities: readonly string[];
-  /** Injected for tests; production uses `crypto.randomUUID()`. */
+  /** Injected for tests; production uses `randomUUID` from `node:crypto`. */
   newNonce?: () => string;
   log?: (event: string, detail: Record<string, unknown>) => void;
 }
@@ -3851,7 +3851,11 @@ interface GateRead {
 export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResult> {
   const { io, self, now } = input;
   const log = input.log ?? ((): void => undefined);
-  const newNonce = input.newNonce ?? ((): string => crypto.randomUUID());
+  /* `randomUUID` from the MODULE, never the global `crypto`. The phone runs this file out of a
+     bundle on Hermes, which has no global `crypto` at all, and the nonce is the clone defence —
+     so reading a global meant a phone that could not claim its own mailbox, measured on a device.
+     The import is substituted for the platform's crypto module in that bundle and is Node's here. */
+  const newNonce = input.newNonce ?? ((): string => randomUUID());
 
   // ── ONE OPERATION PER TRY, AND THAT IS THE RULE RATHER THAN A STYLE ────────────────────────
   //

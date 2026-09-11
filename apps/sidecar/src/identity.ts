@@ -1,3 +1,7 @@
+/* `randomUUID` from the module rather than the global `crypto`: this file is bundled for the phone,
+   where Hermes has no such global, and the read was a launch-time failure there. `organizer-lease.ts`
+   carries the same correction and the measurement behind it. */
+import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   accounts, mailboxes, sessions, users,
@@ -623,7 +627,7 @@ export async function mintLaunchSession(
     .values({
       accountId: world.accountId,
       userId: world.userId,
-      familyId: crypto.randomUUID(),
+      familyId: randomUUID(),
       accessTokenHash: hashToken(token),
       accessExpiresAt: new Date(now.getTime() + ttlMs),
       refreshExpiresAt: new Date(now.getTime() + ttlMs),

@@ -1,6 +1,11 @@
 /**
  * THE GLOBALS THE BUNDLER BINDS AT BUILD TIME — `Buffer` and a `process` stand-in.
  *
+ * A THIRD global was considered and rejected. `crypto.randomUUID()` was read as a free global by
+ * two modules and Hermes has no such global, so a phone died on it; the answer was to stop reading
+ * a global, not to bind one. Injecting it here would have meant importing a native package into
+ * the one shim the node-side suite loads directly, which its transform cannot parse.
+ *
  * Injected rather than imported, and the distinction is the whole file. Aliasing the `buffer`
  * MODULE serves code that imports it; mail parsing is full of `Buffer.from` and `Buffer.concat`
  * written against the GLOBAL, which no alias reaches. The runtime then answers

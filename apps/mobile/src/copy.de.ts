@@ -61,7 +61,7 @@ export const DE: Deck = {
 
   /* ------------------------------------------------------------------ doors */
 
-  doorsLead: "Eine Frage, drei Antworten — welcher Rechner organisiert?",
+  doorsLead: "Eine Frage — welcher Rechner organisiert?",
 
   doorCloud: "ohmail Cloud",
   doorCloudSay:

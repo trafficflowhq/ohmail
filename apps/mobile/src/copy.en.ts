@@ -57,14 +57,23 @@ const TABLE = {
   /* ------------------------------------------------------------------ doors */
 
   /*
-   * ═══ THE THREE DOORS, IN THE PHONE'S IDIOM ═══════════════════════════════════════════════
+   * ═══ THE DOORS, IN THE PHONE'S IDIOM ═════════════════════════════════════════════════════
    *
-   * The desktop chooser asks one question with three answers — this computer, a server you run,
-   * or ours — and each names a DIFFERENT MACHINE as the thing that does the organizing. The
-   * phone asks the same question and its answers are NOT the same three, because a phone cannot
-   * be the organizer: there is no IMAP client here, no engine dialling a mail server, no
-   * "on this phone" door to offer. Every door below names somebody else's machine, and the
-   * phone's own half of each sentence is the same — it keeps a copy.
+   * The desktop chooser asks one question — this computer, a server you run, or ours — and each
+   * answer names a DIFFERENT MACHINE as the thing that does the organizing. The phone asks the
+   * same question, and since the standalone engine landed one of its answers is the phone in the
+   * reader's hand. Three doors name somebody else's machine and the phone's own half of each of
+   * those sentences is the same — it keeps a copy; the fourth names this phone and says what it
+   * costs ({@link doorPhone}).
+   *
+   * ── AND THE LEAD SENTENCE COUNTS NOTHING, WHICH IS NOT A STYLE CHOICE ───────────────────
+   *
+   * It read "One question, three answers" while the chooser rendered three doors, and it was
+   * true. The fourth door is offered on the build's own answer (`standaloneAvailable`) rather
+   * than on a flag, so there are now two states a shipped app can be in and a number in this
+   * sentence is false in one of them — it was measured false on a device the day the engine
+   * started shipping inside the app. A count in prose beside a data-driven list is a claim that
+   * goes stale without anybody editing it; `test/doors.test.ts` holds this one to naming none.
    *
    * ── THE ORDER IS DIFFERENT FROM THE DESKTOP'S, AND DELIBERATELY SO ──────────────────────
    *
@@ -92,7 +101,7 @@ const TABLE = {
    *    false wherever the pinning module's native half is absent, which today is iOS, and the
    *    seam REFUSES rather than connecting unpinned. The Tailscale address works on both.
    */
-  doorsLead: "One question, three answers — which machine does the organizing?",
+  doorsLead: "One question — which machine does the organizing?",
 
   doorCloud: "ohmail Cloud",
   doorCloudSay:
