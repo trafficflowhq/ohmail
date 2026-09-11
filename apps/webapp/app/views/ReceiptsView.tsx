@@ -184,7 +184,7 @@ export function ReceiptsView({
   const wlMeta = waterline?.meta ?? (wlStamp ? tr("waterlineMeta", { stamp: wlStamp }) : undefined);
   /**
    * THE LIST IS A WINDOW, not the whole pile. Receipts is a working set on most accounts, but a
-   * standalone desktop client's mirror is the whole mailbox, and `all.map(row)` mounted every
+   * mirror window still holds thousands of rows, and `all.map(row)` mounted every
    * row of it — the same unbounded cost History was windowed for. The reading stream to its
    * right mounts an opening run that grows toward the reader (`stream-window.ts`, which carries
    * the whole argument): mounting a card per message before first paint was the dominant cost

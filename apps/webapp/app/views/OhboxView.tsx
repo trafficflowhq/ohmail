@@ -509,8 +509,8 @@ export function OhboxView({
   const hasOwnSent = displayPrev.some(isOwnSent);
 
   /**
-   * The list is a window over `[New for you, Earlier]`: a standalone desktop mirror is the
-   * whole mailbox, and grouped `.map(row)` mounted every accepted row — the unbounded cost
+   * The list is a window over `[New for you, Earlier]`: a mirror window still holds thousands
+   * of rows, and grouped `.map(row)` mounted every accepted row — the unbounded cost
    * History was windowed for. The two groups keep their own `role="listbox"` containers, each
    * rendering its share of the window with reserved height above and below; the Older tail is
    * server-paged and stays whole. The Ohbox writes no `\Seen` on scroll (read-state is the
@@ -2117,10 +2117,11 @@ export function OhboxView({
           </>
         ) : null}
         {/* The tail says three true things by client. The demo keeps its own sentence (no
-            server behind Mila's fixtures); the whole-mailbox desktop gets nothing — its list
-            ends where its mail ends (`older.available === false`, read from the engine); a
-            windowed client gets the control and a sentence once shipped unconditionally when it
-            was FALSE (the mirror held every message), true now of this client. Every message is
+            server behind Mila's fixtures); a client whose list ends where its mail ends gets
+            nothing (`older.available === false`, read from the ENGINE, never guessed from the
+            mode — which is why the desktop needed no change here when its mirror became a
+            window); a windowed client gets the control and a sentence once shipped
+            unconditionally when it was FALSE. Every message is
             a real row — never an "N more" count. `settled` gates the windowed arm: "this device
             keeps your recent mail" has no referent before the first drain (reported on first
             open, for up to a minute), and `olderAction` was a wrong INSTRUCTION, pointing

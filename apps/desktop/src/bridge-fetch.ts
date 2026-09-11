@@ -20,6 +20,7 @@
  */
 
 import { HttpAdapter, OhmailEngine, retryingRead } from "@ohmail/client-engine";
+import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
 
 /**
  * The shape `HttpAdapterOptions.fetch` is satisfied by.
@@ -418,24 +419,52 @@ export function createEngineAdapter(): HttpAdapter {
 }
 
 /**
- * THE CLIENT ENGINE THIS WINDOW RUNS ON — the same `OhmailEngine` the hosted client builds,
- * over the bridge instead of a socket. Deliberately NOT passed: no `storePolicy` — the absent
- * branch is `full`, the only correct answer on a tier whose promise is that the mail is on
- * the machine (the browser's ninety-day window exists because a browser mirror is a cache in
- * front of a server that still holds everything). And no `store` — the mirror is in memory,
- * rebuilt each launch: the disk already holds exactly one copy of this mailbox, the engine's,
- * and refilling over local IPC costs seconds, not a bootstrap over somebody's connection.
- */
-
-/*
- * THE BOOTSTRAP IS THE SNAPSHOT: `OhmailEngine` takes `GET /sync/snapshot` — newest first —
- * instead of replaying the change log when the mirror is cold. This window used to withhold
- * that method, and cold starts painted the OLDEST mail first. The withholding was not
- * arbitrary: a snapshot's `asOfSeq` becomes the `/sync` cursor, and the hosted door once
- * relayed the route onward, returning a cursor from the hosted account's sequence while the
- * next `/sync` answered from the mirror's own — a mailbox that bootstraps once and never
- * receives another change. Both doors now answer the route from the database the deltas come
- * from (`cloud-engine.ts` serves it out of the mirror), so the capability is passed through.
+ * THE CLIENT ENGINE THIS WINDOW RUNS ON — the same `OhmailEngine` the hosted client builds, over
+ * the bridge instead of over a socket.
+ *
+ * ── WHAT IS DELIBERATELY NOT PASSED ─────────────────────────────────────────────────────────
+ *
+ * **A `storePolicy`, and it used to be absent.** The absent branch is `full` — the renderer kept
+ * every message and every hydrated body for the life of the window, and `pruneToPolicy` evicts
+ * nothing in that mode. The argument for it conflated two different places: this tier's promise is
+ * that the mail is on the MACHINE, and it is — the engine's own store on this disk holds all of it
+ * — but that was read as a reason for the WEBVIEW's heap to hold it too. Measured on a large
+ * mailbox, that cost one core for minutes after the first sync and 1.5 GB of resident memory,
+ * and on an 8 GB laptop the kernel started killing other applications.
+ *
+ * So the renderer's projection is bounded and the store is not. Nothing about the product moves:
+ * the mail past the window is reachable through `OhmailEngine.listOlder`, search runs on the local
+ * `/search` route, and both are served by THIS machine's store — the same route table the hosted
+ * door serves, asserted by the sidecar's own route-coverage test. This is the shape
+ * `DesktopGate`'s reach-past wire already describes: a bounded in-memory mirror over a store that
+ * holds the whole mailbox.
+ *
+ * **No `store`.** The mirror is in memory and is rebuilt on each launch. There is already exactly
+ * one copy of this mailbox on the disk — the engine's — and writing a second one into the
+ * webview's storage would double it for no benefit: the drain that fills this mirror is a pipe to
+ * a process on the same machine, not a network round trip, so re-reading it costs a few seconds of
+ * local IPC rather than a bootstrap over somebody's connection.
+ *
+ * ── AND THE BOOTSTRAP IS THE SNAPSHOT, WHICH IT DID NOT USED TO BE ──────────────────────────
+ *
+ * `OhmailEngine` reaches for an optional `snapshot` method on the adapter it is given and takes
+ * `GET /sync/snapshot` — the account's current state, newest first — instead of replaying the
+ * change log from the beginning whenever the mirror is cold. This window used to withhold that
+ * method, and the cost was visible on every cold start: the mail arrived OLDEST first, a page at a
+ * time, so the first thing painted was the least interesting mail in the mailbox and the message
+ * somebody opened the app to read appeared last.
+ *
+ * The withholding was not arbitrary. A snapshot's answer carries `asOfSeq`, the point it was read
+ * at, which the client commits as its `/sync` cursor — and the hosted door had no local handler
+ * for the route, so it relayed the request onward and returned a cursor counted in the hosted
+ * account's sequence, while the very next `/sync` was answered from the local mirror's own. A
+ * cursor from the wrong sequence is a mailbox that bootstraps once, looks complete, and then never
+ * receives another change. Withholding the method was the correct response to that, and the wrong
+ * layer to fix it at.
+ *
+ * Both doors now answer the route from the database the deltas come from — the standalone engine
+ * always did, and `cloud-engine.ts` serves it out of the mirror rather than forwarding it — so
+ * there is one sequence per door and the capability is simply passed through.
  */
 export function createLocalEngine(): OhmailEngine {
   /**
@@ -445,7 +474,11 @@ export function createLocalEngine(): OhmailEngine {
    * is already in the window's in-memory mirror before anyone opens it — the same "open is
    * instant" the hosted client gets, without even a loopback round trip at the moment of intent.
    */
-  return new OhmailEngine({ adapter: createEngineAdapter(), eagerBodies: true });
+  return new OhmailEngine({
+    adapter: createEngineAdapter(),
+    storePolicy: DESKTOP_WINDOW,
+    eagerBodies: true,
+  });
 }
 
 /**

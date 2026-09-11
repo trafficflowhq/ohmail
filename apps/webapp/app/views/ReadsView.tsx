@@ -202,8 +202,8 @@ export function ReadsView({
     });
   }, []);
   /**
-   * THE LIST IS A WINDOW over `[fresh, seen]`. A desktop client's mirror is the whole mailbox,
-   * so `partition.fresh`/`seen` can be tens of thousands of rows, and mapping every one of them
+   * THE LIST IS A WINDOW over `[fresh, seen]`. A mirror window still holds thousands of rows,
+   * so `partition.fresh`/`seen` can far exceed a viewport, and mapping every one of them
    * mounted the whole pile on each visit — the cost History was windowed for. The reading
    * stream is bounded its own way — an opening run that grows toward the reader, `stream`
    * below — because its cards are variable-height and `useListWindow`'s fixed-row arithmetic

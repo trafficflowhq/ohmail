@@ -102,21 +102,12 @@ export class EngineUnarmedError extends Error {
 }
 
 /**
- * How much of the mailbox the browser keeps on disk — the ninety-day window, plus a floor. The browser's mirror is a
- * CACHE in front of a server that holds everything; the desktop tier's mirror is the mail itself. `StorePolicy`
- * defaults to `full` so a host configuring nothing keeps every message (pruning by omission would be a data-loss
- * default), so this line is the ONLY thing between a browser and a mirror that grows without bound. `minRows` is not
- * a rounding of `days` but the floor keeping them independent: a mailbox quiet for four months would otherwise evict
- * itself to nothing and render an empty app. Whichever keeps MORE mail wins. Nothing is lost by pruning —
- * `MirrorStore.prune` deletes rather than tombstones, so an evicted row is one `/sync` change away, and older mail is
- * reachable through `OhmailEngine.listOlder`.
+ * THE TWO MIRROR WINDOWS moved to `store-windows.ts` — a leaf the desktop's door can import
+ * without conveying this module's sync-scheduler import into the paired-device bundle. Re-exported
+ * here because this is where every consumer and its pin already look for it.
  */
-
-/**
- * A named constant so the test pinning it to the live path can name it too: dropping the option leaves a working app
- * whose only symptom is a mirror that quietly regrows to the whole mailbox, months later, on somebody else's machine.
- */
-export const BROWSER_WINDOW = { mode: "windowed", days: 90, minRows: 5000 } as const satisfies StorePolicy;
+import { BROWSER_WINDOW } from "./store-windows";
+export { BROWSER_WINDOW, DESKTOP_WINDOW } from "./store-windows";
 
 /**
  * Build the engine for a resolved mode. `demo` WINS over everything: checked first, and no

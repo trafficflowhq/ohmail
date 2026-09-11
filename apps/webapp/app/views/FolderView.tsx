@@ -8,10 +8,10 @@
  */
 
 /**
- * The list is windowed for History's measured reason (`useListWindow`): a folder has no upper bound, and on the
- * standalone desktop the mirror is the whole mailbox. The two group labels render with the first row of their group,
- * so they unmount when scrolled past — a bounded spacer drift, taken over per-row offset bookkeeping. Read-only in
- * the foundation stage: no move verb, no rules door, no menu.
+ * The list is windowed for History's measured reason (`useListWindow`): a folder has no upper bound, and a mirror
+ * window still holds thousands of rows with more a page away. The two group labels render with the first row of
+ * their group, so they unmount when scrolled past — a bounded spacer drift, taken over per-row offset bookkeeping.
+ * Read-only in the foundation stage: no move verb, no rules door, no menu.
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";

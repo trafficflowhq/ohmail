@@ -2,9 +2,10 @@
 
 /**
  * A window over a long list — render the rows somebody can see, reserve the height of the rest.
- * History is the one pile with no upper bound, and on a standalone desktop the mirror is the whole
- * mailbox: measured under jsdom at 20 000 rows, mount 4 050 ms → 44 ms, DOM nodes 242 904 → 423, a
- * click 1 409 ms → 6 ms (the derivation was measured separately at ~30 ms and is not the problem).
+ * History is the one pile with no upper bound, and a 5 000-row mirror window still holds far more
+ * rows than a viewport: measured under jsdom at 20 000 rows, mount 4 050 ms → 44 ms, DOM nodes
+ * 242 904 → 423, a click 1 409 ms → 6 ms (the derivation was measured separately at ~30 ms and is
+ * not the problem).
  */
 
 /**
