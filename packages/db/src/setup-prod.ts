@@ -16,49 +16,14 @@ import {
 } from "./supabase-lockdown-core.js";
 
 /**
- * The ONE idempotent production database setup.
- *
- * `runMigrations` replays the two journals only. `pg_trgm` and the two trigram
- * GIN indexes come from {@link ensureSearchExtensions}, which is DELIBERATELY outside
- * the migrator because `makeTestDb()` replays the journal into PGlite and PGlite has no
- * `pg_trgm` (see `search-setup.ts`). The consequence: provision a real
- * database with the migrator alone and the FUZZY arm of hybrid search is dead in
- * production while every single test stays green. Nothing in the migrator can catch
- * that, so the two steps are welded together here and the result is VERIFIED rather
- * than assumed:
- *
- *   1. every journal entry of BOTH journals applied (entry-by-entry, per journal, addressed
- *      by pinned migrations table — never by count and never by name; see the pinning note below),
- *   2. `pg_trgm` installed,
- *   3. both trigram GIN indexes present,
- *   4. a real fuzzy computation answers (typo → high similarity), so the operator the
- *      search service uses is provably live and not merely "the extension row exists",
- *   5. the `change_log (account_id, seq)` composite index exists — `events.ts` runs
- *      `max(seq) WHERE account_id` every `pollMs` on every open client.
- *
- * Both halves are idempotent (`migrate` skips applied entries, `ensureSearchExtensions`
- * is `IF NOT EXISTS` throughout), so re-running is a no-op that re-verifies.
- *
- * ── WHY THE MIGRATIONS TABLES ARE PINNED AND NOT DISCOVERED ──
- *
- * This file used to resolve `__drizzle_migrations` by NAME —
- * `order by (table_schema = 'drizzle') desc limit 1` — because the table has lived in `public`
- * in older versions. After the stage-3 journal split that resolver made the whole verification
- * VACUOUSLY TRUE, in both directions:
- *
- *  · Every split entry keeps its ORIGINAL `when`, so the legacy table's 24 rows are a
- *    **superset of both new journals' whens**. The name resolver preferred schema `drizzle`,
- *    found the legacy table, and `missing = journal.filter(e => !applied.has(e.when))` came
- *    back empty **whether or not either new pass had run**. `pnpm db:setup:prod` would report
- *    `OK` against a database where NEITHER new migrations table existed.
- *  · On a FRESH database the same helper picked one of the two new schemas arbitrarily and
- *    reported a false failure for the other.
- *
- * "Green but dead" is the exact shape this file exists to prevent, so the verification path now
- * addresses `drizzle_mail.__drizzle_migrations` and `drizzle_cloud.__drizzle_migrations` by
- * PINNED identifier ({@link JournalSpec.migrationsSchema}) and reports **per journal**.
- * Name-based discovery survives in exactly one place — `findLegacyMigrationsTable` in
- * `baseline.ts` — where finding the legacy table in an unexpected schema is the entire point.
+ * The ONE idempotent production database setup. `runMigrations` replays the two journals only;
+ * `pg_trgm` and the trigram indexes come from {@link ensureSearchExtensions}, outside the
+ * migrator (PGlite has no `pg_trgm`) — provision with the migrator alone and the FUZZY arm of
+ * search is dead in production while every test stays green. So the two steps are welded together
+ * and VERIFIED: every journal entry applied (per journal, by pinned migrations table), `pg_trgm`
+ * installed, both trigram indexes present, a real fuzzy computation answers. The migrations
+ * tables are PINNED, not discovered: a name-based resolver found the legacy table — a superset of
+ * both new journals' whens — and reported OK whether or not either new pass had run.
  */
 
 /** The trigram GIN indexes {@link ensureSearchExtensions} creates — verified by name. */
@@ -457,49 +422,16 @@ export async function setupProdDatabase(
     log("ensuring hot-path indexes (audit_log lookup, message eviction order)");
     await ensureHotPathIndexes(db, { log: (m) => log(m) });
 
-    // ── THE ROLE-LEVEL SERVER DEADLINES, APPLIED AND VERIFIED FAIL-CLOSED ─────────────────
-    //
-    // `client.ts#ROLE_DEFAULT_TIMEOUTS`' whole docblock is the "why": a client-side
-    // `connection: {…}` startup parameter is measured INERT through this deployment's
-    // transaction-mode pooler, so the mechanism that actually reaches a pooled backend is a
-    // Postgres ROLE default — read by Postgres itself at backend session start, with zero
-    // pooler cooperation required.
-    //
-    // `current_user`/`current_database()` rather than a caller-supplied name: this step must
-    // configure exactly the identity and database THIS connection is already authenticated as,
-    // never a name a caller could get wrong and silently configure nothing. `ALTER ROLE` takes
-    // no bind parameters (the same trap `migrate.ts` already documents for `SET`), and a role or
-    // database name can never be a bind parameter in any case — Postgres identifiers are not
-    // literals. Both are read back from the server a moment before use and quoted with `sql.raw`
-    // for the READ value, not interpolated from caller input.
-    //
-    // READBACK, NOT TRUST. `ALTER ROLE` reports success even when nothing changed underneath — a
-    // typo'd GUC name is silently ignored by some Postgres builds, and there is no reason to
-    // believe the write landed just because the statement did not throw. `pg_db_role_setting` is
-    // the catalog Postgres itself reads at session start, so reading it back — and pushing a
-    // MISMATCH onto `problems` rather than merely logging one — is the fail-closed shape every
-    // other verification in this function already takes.
-    //
-    // ── ROLE-ONLY (`setdatabase = 0`), NOT `IN DATABASE …` — MEASURED, AND IT WAS THE BUG ─────
-    //
-    // The first version of this step scoped the ALTER to `IN DATABASE <current_database()>`,
-    // proved it against a real backend, and it was STILL inert through the production
-    // transaction-mode pooler: a bare probe with no client options came back at the pooler's own
-    // baseline, not the configured value, even though `pg_db_role_setting` correctly held the
-    // (role, database)-scoped row. Diagnosed by reading the FULL catalog on the live database:
-    // every one of Supabase's OWN hardened defaults — `anon` (`statement_timeout=3s`),
-    // `authenticated` (`8s`), `authenticator` (`8s`/`lock_timeout=8s`) — is `setdatabase = 0`,
-    // ROLE-ONLY, with not one database-scoped row anywhere in the catalog. Matching that exact
-    // shape (dropping `IN DATABASE …` from the ALTER) reached the backend on the first try,
-    // verified live on both the transaction-mode and session pooler ports.
-    //
-    // The cost is a WIDER blast radius than originally designed: a role-only default applies to
-    // EVERY database this role ever connects to, not only the one this run targets — which is
-    // why `migrate.ts` and this function's own `pre`/`client` connections neutralize it
-    // immediately on connect (see the comment beside `postgres(url, …)` above), and why
-    // `provision-staff-role.ts`/`mailbox-dedup-cli.ts` do the same. It is not a new risk this
-    // deployment did not already carry: it is the identical shape Supabase's own roles already
-    // use for the identical reason.
+    // The role-level server deadlines, applied and verified FAIL-CLOSED. Client-side startup
+    // parameters are measured inert through a transaction-mode pooler, so what reaches a pooled
+    // backend is a Postgres ROLE default. `current_user`/`current_database()`, never a
+    // caller-supplied name: this step must configure exactly the identity this connection is
+    // authenticated as. READBACK, NOT TRUST: `ALTER ROLE` reports success even when nothing
+    // changed, so `pg_db_role_setting` is read back and a mismatch joins `problems`. ROLE-ONLY
+    // (`setdatabase = 0`), measured: the database-scoped ALTER was correct in the catalog and
+    // STILL inert through the pooler; the host's own hardened role defaults are all role-only,
+    // and matching that shape reached the backend. The cost is blast radius, so the migrator and
+    // the provisioning connections neutralize it on connect.
     const roleIdent = await rows<{ role: string }>(db, sql`select current_user as role`);
     const roleName = roleIdent[0]?.role ?? "";
     let roleDefaults: ProdSetupReport["roleDefaults"] = null;
