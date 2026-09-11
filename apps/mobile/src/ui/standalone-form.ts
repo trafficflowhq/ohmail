@@ -29,6 +29,7 @@
  */
 import { portMeansImplicitTls, serverGuessFor } from "@ohmail/client-engine";
 import { Copy } from "../copy";
+import type { Refusal, RefusalKey } from "../refusal";
 
 /** The two steps. The limitations screen comes first and cannot be skipped. */
 export type StandaloneStep = "limits" | "credentials";
@@ -152,6 +153,29 @@ export function setImapTls(fields: StandaloneFields, on: boolean): StandaloneFie
  */
 export function mayConnect(fields: StandaloneFields): boolean {
   return fields.address.trim().length > 0 && fields.password.length > 0;
+}
+
+/**
+ * WHICH REFUSALS THE IMAP HOST FIELD MAY WEAR — and it is a short list on purpose.
+ *
+ * The form attaches a refusal to the incoming-server field as that field's own error while the
+ * server disclosure is open. That is right for the two refusals that NAME it, and it became a
+ * false statement the moment the door gained refusals about the password and about encryption: a
+ * sign-in the server rejected, pinned under "Incoming server (IMAP)", tells somebody the one
+ * thing that is not wrong. Everything not on this list is shown beside the verb instead, where the
+ * closed-disclosure case already shows it.
+ *
+ * The list is by KEY rather than by a flag on the refusal: `RefusalKey` is derived from the deck,
+ * so a key that stops existing stops compiling here.
+ */
+const SERVER_FIELD_REFUSALS: ReadonlySet<RefusalKey> = new Set<RefusalKey>([
+  "standaloneNoHost",
+  "standaloneNoPort",
+]);
+
+/** Does this refusal name the server fields? See {@link SERVER_FIELD_REFUSALS}. */
+export function refusalNamesServerFields(r: Refusal): boolean {
+  return SERVER_FIELD_REFUSALS.has(r.say);
 }
 
 /**

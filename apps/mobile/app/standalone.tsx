@@ -28,6 +28,7 @@ import {
   focusTargetFor,
   limitationLines,
   mayConnect,
+  refusalNamesServerFields,
   setImapTls,
   setImapPort,
   setTyped,
@@ -230,7 +231,9 @@ function Credentials() {
               value={fields.imapHost}
               onChange={(v) => setFields((cur) => setTyped(cur, "imapHost", v))}
               label={Copy.phoneStandaloneImapHost}
-              {...(phase.k === "failed" ? { error: sayRefusal(phase.reason) } : {})}
+              {...(phase.k === "failed" && refusalNamesServerFields(phase.reason)
+                ? { error: sayRefusal(phase.reason) }
+                : {})}
               input={{ keyboardType: "url" }}
             />
             <Field
@@ -270,9 +273,10 @@ function Credentials() {
           </View>
         ) : null}
 
-        {/* The refusal sits beside the verb whether or not the disclosure is open — a sentence
-            hidden behind a closed disclosure is a refusal nobody reads. */}
-        {phase.k === "failed" && !advanced ? (
+        {/* The refusal sits beside the verb unless the OPEN disclosure is already wearing it on the
+            field it names — a sentence hidden behind a closed disclosure is a refusal nobody reads,
+            and a sentence about a password attached to the host field names the wrong thing. */}
+        {phase.k === "failed" && !(advanced && refusalNamesServerFields(phase.reason)) ? (
           <Txt
             variant="caption"
             tone="ink2"
