@@ -399,28 +399,19 @@ function targetsOf(m: EngineMutation): string[] {
 }
 
 /**
- * ── WHEN A NEWER VERB RETIRES AN ABANDONED ONE, AND THE TWO REASONS IT MAY ────────────────────
- *
- * SAME KIND, SHARED TARGET. An absolute-valued verb replaces its own earlier value: the newer
- * triage, move, rename or destination IS the whole intent, so the older one has nothing left to
- * say. This is the ordinary case and it is deliberately narrow — sharing a target is NOT enough on
- * its own. A queued tag assignment and a later triage of the same message are independent
- * intentions, and retiring one because the other happened to name the same message silently
- * throws away work nobody asked to discard.
- *
- * THE DESTRUCTIVE ASYMMETRIES, named one at a time because each is a judgement rather than a rule,
- * and each has the OLDER record as the destructive one — these are records whose replay does
- * something that cannot be taken back, so a newer intent on the same target outranks them:
- *  · a `draft_discard` is retired by a later `draft_save` of that draft — the person came back to
- *    it, so the discard is not what they want any more;
- *  · a `message_delete`, `folder_delete` or `tag_delete` is retired by ANYTHING later on that
- *    target — a newer intent on a thing the record wants to destroy says plainly that it should
- *    still exist;
- *  · a `mail_send` naming a draft is retired by a later verb on that draft, because a record that
- *    would re-send a body the person has since changed is the worst kind of stale.
- *
- * Everything else is left alone. The cost of retiring too eagerly is invisible — an intent
- * disappears and nobody is told — while the cost of retiring too little is a stale record the
+ * When a newer verb retires an abandoned one, and the two reasons it may. SAME KIND, SHARED TARGET: an
+ * absolute-valued verb replaces its own earlier value — deliberately narrow, because sharing a target is NOT enough
+ * on its own: a queued tag assignment and a later triage of the same message are independent intentions, and retiring
+ * one for the other silently throws away work.
+ */
+
+/**
+ * THE DESTRUCTIVE ASYMMETRIES, each a judgement with the OLDER record as the destructive one: a `draft_discard` is
+ * retired by a later `draft_save` of that draft (the person came back to it); a `message_delete`, `folder_delete` or
+ * `tag_delete` is retired by ANYTHING later on that target (a newer intent on a thing the record wants to destroy
+ * says it should still exist); a `mail_send` naming a draft is retired by a later verb on that draft (a record that
+ * would re-send a body the person has since changed is the worst kind of stale). Everything else is left alone:
+ * retiring too eagerly is invisible — an intent disappears and nobody is told — while a stale record is something the
  * person can see and discard themselves.
  */
 const DESTRUCTIVE_KINDS = new Set(["message_delete", "folder_delete", "tag_delete"]);
@@ -784,27 +775,20 @@ export const BODIES_IDS_MAX = 20;
 export type SnapshotFn = (params: { cursor?: string; limit?: number }) => Promise<SyncSnapshotPage>;
 
 /**
- * The adapter capability the cold-start path reaches for.
- *
- * Declared STRUCTURALLY here, exactly as {@link ServerSearchCapableAdapter} is, and for the same
- * reason: absence is a real answer, not a broken adapter. The FixturesAdapter has no server and a
- * `?demo=1` tab must issue zero requests; an older HttpAdapter, or a Cloud that has
- * not deployed the route, simply has no `snapshot` — and the engine falls back to `since=0`, which
- * is the path every client used before this existed and still converges to the same mirror.
- *
- * ── THE WIRING RISK THIS SHAPE CARRIES ────────────────────────────────────────────────────
- *
- * Because it is structural rather than a member of `EngineAdapter`, an adapter WRAPPER that
- * rebuilds the surface as an object literal will silently drop it and still satisfy
- * `EngineAdapter`. `apps/webapp/app/shell/sync-scheduler.ts` has exactly such a wrapper (`guard`),
- * and `fetchBody`, `searchServer` and the three attachment methods each shipped unforwarded on the
- * LIVE path at some point for precisely this reason — the demo is unwrapped, so every test stayed
- * green. A wrapper must spread it the way it spreads the others:
- *
- *     ...(adapter.snapshot ? { snapshot: adapter.snapshot.bind(adapter) } : {})
- *
- * conditionally, never unconditionally: defining it always would make a fixtures adapter behind a
- * gate claim a snapshot endpoint it has no server for.
+ * The adapter capability the cold-start path reaches for. Declared STRUCTURALLY, exactly as {@link
+ * ServerSearchCapableAdapter} is: absence is a real answer, not a broken adapter — the FixturesAdapter has no server
+ * and a `?demo=1` tab must issue zero requests, and an older HttpAdapter simply has no `snapshot`, so the engine
+ * falls back to `since=0`, which converges to the same mirror. The wiring risk this shape carries: an adapter WRAPPER
+ * that rebuilds the surface as an object literal silently drops it and still satisfies `EngineAdapter` —
+ * `sync-scheduler.ts`'s `guard` is exactly such a wrapper, and `fetchBody`, `searchServer` and the three attachment
+ * methods each shipped unforwarded on the LIVE path for precisely this reason (the demo is unwrapped, so every test
+ * stayed green).
+ */
+
+/**
+ * A wrapper must spread it conditionally (`...(adapter.snapshot ? { snapshot: adapter.snapshot.bind(adapter) } :
+ * {})`), never unconditionally — defining it always would make a gated fixtures adapter claim a snapshot endpoint it
+ * has no server for.
  */
 interface SnapshotCapableAdapter {
   snapshot?: SnapshotFn;
@@ -1098,27 +1082,19 @@ export type AttachmentsOutcome =
   | { state: "loading"; retrying?: boolean }
   | { state: "ready"; items: AttachmentItem[] }
   /**
-   * `code` and `retryable` are the SERVER'S OWN CLASSIFICATION, carried through rather than
-   * re-derived from the sentence. Before that, only `error` survived the catch and the surface
-   * had no way to tell "you are offline" from "that message is not yours".
-   *
-   * WHAT CAN ACTUALLY LAND HERE, because copy written for the wrong failure is a lie:
-   * `GET /messages/:id/attachments` is `cost: "read"` and `AttachmentsService.listForMessage`
-   * opens no IMAP adapter, so this call NEVER touches the user's mail server. The 429
-   * `mailbox_busy` refusal therefore cannot reach it — that one belongs to the two
-   * `cost: "connection"` byte routes. What reaches it is `code: "network"`
-   * (the fetch itself rejected — `HttpAdapter.request`), a 5xx from ohmail's own API, or a
-   * definite 4xx refusal (401 after a session ends, 404 for a message this account cannot see).
-   *
-   * `retryable` is TRUE for anything the client could not classify: an unclassified throw means
-   * we never established that the server refused, and re-asking costs one indexed row.
-   *
-   * `code: "timeout"` is the THIRD thing that lands here, and it exists only because the list read
-   * was eventually given a deadline:
-   * a request the server accepted and never answered used to produce no outcome at all, because
-   * `fetch` has no deadline and neither did anything on this path. It now arrives bounded and
-   * aborted from `HttpAdapter.withDeadline`, retryable for the strongest version of the reason
-   * above — nothing refused us, nothing even spoke.
+   * `code` and `retryable` are the SERVER'S own classification, carried through rather than re-derived from the
+   * sentence — before that, only `error` survived the catch and the surface could not tell "you are offline" from
+   * "that message is not yours". What can actually land here, because copy written for the wrong failure is a lie:
+   * this route is `cost: "read"` and opens no IMAP adapter, so the 429 `mailbox_busy` refusal cannot reach it — what
+   * does is `code: "network"` (the fetch itself rejected), a 5xx from ohmail's own API, or a definite 4xx (401 after
+   * a session ends, 404 for a message this account cannot see). `retryable` is TRUE for anything the client could not
+   * classify: an unclassified throw never established that the server refused, and re-asking costs one indexed row.
+   */
+
+  /**
+   * `code: "timeout"` is the third arrival — a request the server accepted and never answered used to produce no
+   * outcome at all; it now arrives bounded and aborted from `HttpAdapter.withDeadline`, retryable for the strongest
+   * version of the reason above: nothing refused us, nothing even spoke.
    */
   | { state: "failed"; error: string; code: string | null; retryable: boolean };
 
@@ -1432,55 +1408,36 @@ const MODELLED_WAIT_CODES = new Set([
 ]);
 
 /**
- * ── THE GIVE-UP CEILING, AND WHY A DURABLE OUTBOX NEEDS ONE ──────────────────────────────────
- *
- * A retryable rejection used to re-queue with no counter, no delay and no end: `queue.push(p)`,
- * re-persist, and the next drive tries again. That is right for the case it was written for — a
- * laptop with no network — and wrong for the case nobody had seen yet, which is a verb the server
- * will refuse identically for ever. `HttpAdapter` classifies any unhandled 500 as retryable by
- * default (`retryable ?? (status >= 500 || status === 429)`), so a single mis-shaped request could
- * become a permanent background loop that survives restarts, holding the user's overlay open the
- * whole time and telling them nothing.
- *
- * So: {@link OUTBOX_MAX_SERVER_FAILURES} SERVER-ANSWERED failures and the verb is abandoned —
- * visibly, into {@link OUTBOX_ABANDONED_TYPE}, where a person can retry or discard it.
- *
- * ── ONLY A SERVER-ANSWERED FAILURE COUNTS, AND THAT DISTINCTION IS THE WHOLE DESIGN ──────────
- *
- * `code: "network"` and `code: "timeout"` never count. An offline laptop must retry for ever, as it
- * always has: the verb is fine, the wire is not, and a ceiling there would throw away work for the
- * exact reason the durable outbox exists. Nor does a refusal that names its own interval — a
- * `503 db_busy` carrying `Retry-After` is a server declining work it KNOWS it cannot do yet, so it
- * waits that long and spends none of the queue's patience. Without that carve-out a twenty-minute
- * connection-pool outage would abandon every legitimate verb in flight, which is a far worse defect
- * than the one this ceiling closes.
- *
- * The counter is therefore not "attempts" in the ordinary sense. It counts only the evidence that
- * the SERVER looked at this verb and failed in a way nobody modelled.
+ * The give-up ceiling, and why a durable outbox needs one. A retryable rejection used to re-queue with no counter and
+ * no end — right for the offline laptop, wrong for a verb the server refuses identically for ever: `HttpAdapter`
+ * classifies any unhandled 500 as retryable, so one mis-shaped request could become a permanent background loop
+ * surviving restarts, holding the overlay open and telling nobody. So: {@link OUTBOX_MAX_SERVER_FAILURES}
+ * SERVER-ANSWERED failures and the verb is abandoned — visibly, into {@link OUTBOX_ABANDONED_TYPE}, where a person
+ * retries or discards. Only a server-answered failure counts, and that distinction is the design: `code: "network"`
+ * and `"timeout"` never count — an offline laptop must retry for ever; the verb is fine, the wire is not.
+ */
+
+/**
+ * Nor does a refusal naming its own interval — a `503 db_busy` with `Retry-After` is a server declining work it KNOWS
+ * it cannot do yet, and without that carve-out a twenty-minute pool outage would abandon every legitimate verb in
+ * flight. The counter counts only evidence that the server looked at this verb and failed in a way nobody modelled.
  */
 export const OUTBOX_MAX_SERVER_FAILURES = 8;
 
 /**
- * The first backoff after a server-answered failure, doubling to {@link OUTBOX_BACKOFF_CAP_MS}.
- *
- * 30 s rather than something brisk because the retry buys nothing on its own: the verb already has
- * its Idempotency-Key, so there is no race to win, and a poisoned verb retried quickly is just a
- * faster loop.
- *
- * ── THE WINDOW IS ~63 MINUTES, AND THIS COMMENT SAID FOUR HOURS ────────────────────────────
- *
- * Eight failures means SEVEN waits: 30 s, 1, 2, 4, 8, 16 and 32 minutes — 3 810 s, a little over an
- * hour. The cap is therefore never reached by a countable failure; it binds only a `Retry-After` a
- * server names. The earlier claim of "a little over four hours" was arithmetic nobody did, and it
- * is the kind of number a reader takes on trust because it sounds like it was measured.
- *
- * An hour is still the right span for what this is for — long enough that a brief server-side
- * incident is repaired inside the window and the verb lands on its own, short enough that somebody
- * returning after lunch is told rather than left with a spinner. If it should be longer, the
- * ceiling is the knob — and doubling it adds EIGHT hours, not four: failures 8 through 15 each
- * wait the full one-hour cap. (The first seven are the only ones the doubling is still climbing
- * through.) Stated because the last version of this sentence was arithmetic nobody had done,
- * and a number that sounds measured is taken on trust.
+ * The first backoff after a server-answered failure, doubling to {@link OUTBOX_BACKOFF_CAP_MS}. 30 s rather than
+ * brisk because the retry buys nothing on its own: the verb already has its Idempotency-Key, so there is no race to
+ * win, and a poisoned verb retried quickly is just a faster loop. The window is ~63 MINUTES, and this comment once
+ * said four hours: eight failures means seven waits (30 s, 1, 2, 4, 8, 16, 32 minutes = 3 810 s), so the cap is never
+ * reached by a countable failure and binds only a server-named `Retry-After`. An hour is the right span — a brief
+ * incident repairs inside the window, and somebody returning after lunch is told rather than left with a spinner. If
+ * it should be longer, the ceiling is the knob — and doubling it adds EIGHT hours, not four: failures 8 through 15
+ * each wait the full cap.
+ */
+
+/**
+ * Stated because the last version was arithmetic nobody had done, and a number that sounds measured is taken on
+ * trust.
  */
 export const OUTBOX_BACKOFF_BASE_MS = 30_000;
 
@@ -1831,25 +1788,19 @@ export class OhmailEngine {
    */
   private readonly attachmentLists = new Map<string, AttachmentsOutcome>();
   /**
-   * THE SENT-COPY SEEDS — which entries in {@link attachmentLists} were written by
-   * {@link OhmailEngine.materializeSentOverlay} from the send's own bytes, keyed by the optimistic
-   * Sent copy's message id, with the same expiry as its {@link optimisticSent} entry.
-   *
-   * The copy's id exists on no server, so a metadata read against it can only 404 — which is what
-   * used to happen: a reader opening the message they had just sent watched its attachment vanish
-   * until the real Sent row (a different id) was opened instead. The seed is the answer the engine
-   * already holds, and this map is its LIFECYCLE: while `live`, {@link
-   * OhmailEngine.releaseAttachments} declines to drop the seed (a pane unmount must not turn a
-   * re-open of the still-standing copy back into the 404), and {@link reconcileOptimisticSent}
-   * clears `live` when the copy retires — after which the pane's ordinary release frees the bytes,
-   * with the TTL sweep as the backstop for a send nobody opened.
-   *
-   * `forwardOf` marks the copy of a FORWARD, whose delivered message carries parts this client
-   * never held: the server streams the original's attachments onto the outgoing mail
-   * (`SendService.streamForwardParts`). A seed for one is composed from `composeItems` PLUS the
-   * parent's own metadata list — see {@link OhmailEngine.recomposeForwardSeed} — and the copy's
-   * metadata reads delegate to the parent's REAL id, which is the one id on this subject a server
-   * can answer for.
+   * The sent-copy seeds — which {@link attachmentLists} entries were written by {@link
+   * OhmailEngine.materializeSentOverlay} from the send's own bytes, keyed by the optimistic copy's message id,
+   * expiring with its {@link optimisticSent} entry. The copy's id exists on no server, so a metadata read against it
+   * can only 404 — a reader opening the message they just sent watched its attachment vanish until the real Sent row
+   * was opened. The seed is the answer the engine already holds; this map is its LIFECYCLE: while `live`, {@link
+   * OhmailEngine.releaseAttachments} declines to drop it (a pane unmount must not turn a re-open back into the 404),
+   * `reconcileOptimisticSent` clears `live` when the copy retires, and the TTL sweep is the backstop.
+   */
+
+  /**
+   * `forwardOf` marks a FORWARD's copy, whose delivered message carries parts this client never held: its seed
+   * composes `composeItems` plus the parent's own metadata ({@link OhmailEngine.recomposeForwardSeed}), and its
+   * metadata reads delegate to the parent's REAL id — the one id a server can answer for.
    */
   private readonly sentAttachmentSeeds = new Map<string, {
     live: boolean;
@@ -1933,40 +1884,24 @@ export class OhmailEngine {
   // ── lifecycle ────────────────────────────────────────────────────────────
 
   /**
-   * READ THE DEVICE'S COPY OF THE MAILBOX INTO MEMORY — **and say so.**
-   *
-   * ── THE DEFECT THIS METHOD EXISTS FOR ───────────────────────────────────
-   *
-   * `store.load()` reads the whole persisted mirror and bumps the store's version. It notifies
-   * NOBODY: the listener set lives here, not in the store, and {@link OhmailEngine.notify} was
-   * reachable only from `drain()` and the mutation paths. So a returning user's entire mailbox
-   * was hydrated out of IndexedDB into memory and the UI was never told — `useSyncExternalStore`
-   * holds the snapshot it last read, and the rows appeared only when the FIRST `/sync` page
-   * landed. On a slow connection that is the second of two serial round trips, and the screen
-   * says "Nothing in your Ohbox." for the whole of it, over mail that is already on the device.
-   *
-   * Measured: seed a store, close it, open a new engine over the same database, `load()` →
-   * two messages readable, store version 0 → 1000003, **listeners fired: 0**.
-   *
-   * That the mail sometimes appeared earlier was luck, not design — any unrelated re-render
-   * re-reads the snapshot, and the mailbox probe landing was usually the one that did it.
-   *
-   * ── SINGLE-FLIGHT, AND CLEARED IN `finally` ─────────────────────────────
-   *
-   * `syncOnce()`'s exact pattern, for the first of its reasons and one of its own. Concurrent
-   * callers coalesce onto one read; and the promise is CLEARED when it settles, including when
-   * it REJECTS, so a hydration that failed (IndexedDB blocked, storage refused) can be tried
-   * again on the next wake. A memoized-forever "idempotent" version would turn one transient
-   * storage error into a mirror that can never be read for the lifetime of the tab.
-   *
-   * `notify()` fires only on success. A failed read changed nothing, so there is nothing to
-   * publish — and the scheduler counts the rejection as a failed tick, which is what makes the
-   * retry happen.
-   *
-   * Re-hydrating mid-session (a second call after a drain has applied pages) is not reachable
-   * today: the scheduler latches after the first success and `start()` runs this before its
-   * only drain. It is noted rather than guarded, because a guard nothing can trigger is a claim
-   * no test can put under load.
+   * Read the device's copy of the mailbox into memory — and SAY SO. `store.load()` reads the whole
+   * persisted mirror and notifies nobody (the listener set lives here, not in the store), so a
+   * returning user's mailbox was hydrated into memory and the UI was never told —
+   * `useSyncExternalStore` holds its last snapshot, and the rows appeared only when the first
+   * `/sync` page landed: on a slow connection the screen said "Nothing in your Ohbox." over mail
+   * already on the device. Measured: two messages readable, store version 0 → 1000003, listeners
+   * fired: 0 — mail sometimes appearing earlier was luck (any unrelated re-render re-reads).
+   */
+
+  /**
+   * Single-flight, cleared in `finally` — `syncOnce()`'s pattern: concurrent callers coalesce, and
+   * the promise is cleared even on REJECTION, so a failed hydration (IndexedDB blocked) can be
+   * tried on the next wake — a memoized-forever version turns one transient storage error into a
+   * mirror that can never be read for the life of the tab. `notify()` fires only on success: a
+   * failed read changed nothing, and the scheduler counts the rejection as a failed tick, which is
+   * what makes the retry happen. Re-hydrating mid-session is not reachable today (the scheduler
+   * latches; `start()` runs this before its only drain) — noted rather than guarded, because a
+   * guard nothing can trigger is a claim no test can put under load.
    */
   async hydrate(): Promise<void> {
     if (this.hydrating) return this.hydrating;
@@ -2185,33 +2120,20 @@ export class OhmailEngine {
       // the whole reason the deferred mode exists, and it is why `owed` is ignored here alone.
       const { timedOut, held, result } = await this.dispatchOnLane(p);
       /**
-       * ── THE REPLAY'S ANSWER IS KEPT, EXACTLY AS A LATE ANSWER IS ─────────────────────────────
-       *
-       * This loop read `{ timedOut, held }` and threw the RESULT away, and for a restored entry
-       * that result is the only thing anyone will ever know about the verb: its owner died with
-       * the previous session, so no `mutate()` promise is waiting for it and nothing else in the
-       * engine records it.
-       *
-       * For a send that is a second delivery. Press Send before the first autosave (the mutation
-       * carries no row, so the ADAPTER makes one), lose the response, reload: this loop delivers
-       * it and drops the `sent` answer AND the `entityId` of the row it was delivered from. The
-       * composer still holds the text, the queue is now empty so the create gate opens, and the
-       * next pause writes a second row. Edit that text — nobody has been told it went out — and
-       * the fingerprint no longer matches the durable record, so the stored key is dropped as a
-       * mismatch and Send goes out under a fresh one. Two copies at the recipient.
-       *
-       * `lateResults` is where an answer with no waiting caller already belongs — see the timeout
-       * path, which writes exactly this — and `flushPending()` is its single, destructive reader.
-       * The two writers are mutually exclusive per call: a timed-out dispatch returns a `null`
-       * result here and writes from its own continuation, so nothing is recorded twice.
-       *
-       * ONLY A SETTLED ANSWER, and this is not a refinement — a `queued` result is the ABSENCE of
-       * an answer. The entry went back on the outbox and is still pending; keeping that as a late
-       * result poisons the map's one reader, because `flushPending()` returns what it drained
-       * BEFORE what it dispatches. Measured: "a 410 mid-drive does not take the persisted verbs
-       * with it" read the stale `queued` as the flush's verdict for a verb the network had since
-       * accepted. One level out it is worse — the compose adoption pass would settle a message on
-       * a send that has not settled, which is the false "Sent." this seam exists to prevent.
+       * The replay's answer is kept, exactly as a late answer is. This loop used to throw the RESULT away, and for a
+       * restored entry that result is the only thing anyone will ever know: its owner died with the previous session.
+       * For a send that is a second delivery — press Send before the first autosave, lose the response, reload: the
+       * replay delivers it, drops the `sent` answer and the `entityId`, the create gate opens, the next pause writes
+       * a second row, and an edit un-matches the fingerprint so Send goes out under a fresh key. `lateResults` is
+       * where an answer with no waiting caller belongs (the timeout path writes exactly this) and `flushPending()` is
+       * its single destructive reader; the two writers are mutually exclusive per call.
+       */
+
+      /**
+       * ONLY a settled answer: a `queued` result is the ABSENCE of an answer — the entry went back on the outbox —
+       * and keeping it poisons the reader (measured: a 410 mid-drive test read the stale `queued` as the flush's
+       * verdict; one level out, the compose adoption would settle a message on a send that has not settled — the
+       * false "Sent." this seam prevents).
        */
       if (result !== null && result.status !== "queued") {
         this.lateResults.set(p.id, result);
@@ -2239,27 +2161,19 @@ export class OhmailEngine {
   }
 
   /**
-   * RE-ARM THE DURABLE OUTBOX FROM THE MIRROR STORE — the restart half of the contract.
-   *
-   * Reads every persisted {@link PersistedOutboxEntry}, restores the queue in `(at, n)` order,
-   * and re-applies each verb's optimistic overlay so the BOOT RENDER already carries the
-   * user's un-sent intents — never a flash of the pre-verb state (INSTANT-ARCH §8 stage 1's
-   * proof obligation). Synchronous on purpose: everything it reads is in memory once the
-   * store has loaded, so the platforms can run it before their first paint.
-   *
-   * Idempotent via a latch, and called from three places so every construction order is
-   * covered: {@link OhmailEngine.hydrate} (after `store.load()` — the webapp scheduler's
-   * path), {@link OhmailEngine.drive} (an engine driven without ever hydrating), and directly
-   * by a host that loaded the store BEFORE constructing the engine (the mobile boot). A drive
-   * on a store that has not loaded yet latches over an empty record set — the entries are not
-   * lost (they are on disk and replay next boot), but the honest contract is: load the store,
-   * then construct/hydrate, then drive.
-   *
-   * An entry whose shape this build does not recognise ({@link isPersistedOutboxEntry}) is
-   * left in place and not replayed — a verb written by a newer build waits for a build that
-   * understands it. An entry whose overlay cannot be recomputed (its target pruned from a
-   * windowed mirror) still REPLAYS — the server-side target usually exists; only the local
-   * paint is skipped.
+   * Re-arm the durable outbox from the mirror store — the restart half of the contract. Reads every persisted {@link
+   * PersistedOutboxEntry}, restores the queue in `(at, n)` order, and re-applies each verb's overlay so the BOOT
+   * RENDER already carries the user's un-sent intents (INSTANT-ARCH §8 stage 1). Synchronous on purpose: everything
+   * it reads is in memory once the store has loaded. Idempotent via a latch, called from three places so every
+   * construction order is covered: `hydrate` (the webapp path), `drive` (an engine never hydrated), and directly by a
+   * host that loaded the store first (the mobile boot) — a drive on an unloaded store latches over an empty set; the
+   * entries replay next boot.
+   */
+
+  /**
+   * An entry whose shape this build does not recognise is left in place, not replayed — it waits for a build that
+   * understands it; an entry whose overlay cannot be recomputed (target pruned from a windowed mirror) still REPLAYS
+   * — only the local paint is skipped.
    */
   restoreOutbox(): void {
     // Calling this IS the statement that the store was loaded first, so it also arms the drive's
@@ -2424,37 +2338,19 @@ export class OhmailEngine {
 
       if (this.store.getCursor() === "0" && this.snapshotFn) await this.runSnapshot();
 
-      // RULES BEFORE MAIL, on the degraded bootstrap. The snapshot path already delivers the
-      // account's whole rule set in page 1 (`sync-service.ts` — "a partial rule set is worse than
-      // none"), so a render mid-bootstrap never sees a message whose sender's decision is missing.
-      // The `since=0` replay has no such property: it interleaves by seq, and a sender decided
-      // AFTER their mail arrived replays as mail-first — the consent cutline then reads the absent
-      // rule as "undecided" and presents an already-screened sender in the Screener until the
-      // replay reaches the rule. Unknown is not undecided, so the fallback earns the same ordering
-      // the snapshot has: drain the rule type to its horizon first, rows only (the cursor stays
-      // put; the main replay re-delivers every rule change and the per-entity seq guard absorbs
-      // the repeat).
-      //
-      // TWO ways in:
-      //  · a COLD mirror whose snapshot failed page 1 (`snapshotUnavailable`) — the live way onto
-      //    the `since=0` path, which must not misclassify senders while it streams;
-      //  · a RESUMED incomplete bootstrap (`resumedIncomplete`) — the pages an earlier session
-      //    committed may hold mail whose sender's rule sits beyond the interruption point, and
-      //    the resumed replay would serve that mail's stretch first. With a HEALTHY snapshot
-      //    route `freshenStaleResume()` has already applied page 1 (the whole rule set) before
-      //    this loop; this arm is the degraded completion of that heal, plus the belt for a
-      //    freshen that failed and swallowed. A post-snapshot catch-up that never stamped pays
-      //    one redundant rules page here, which is the cheap direction.
-      //
-      // Deliberately NOT before `hydrate()`: hydration is the offline-first paint of last
-      // session's persisted state — the same one-round-trip staleness the consent boot-cache
-      // documents — and holding it on a network drain would trade a bounded interim state for a
-      // blank screen on a dead network. The prefetch bounds the misclassification to the first
-      // drain's opening request instead of the whole resumed replay.
-      //
-      // Gated on a snapshot route EXISTING, not on every snapshot-less adapter: the adapters
-      // with no route at all are the FixturesAdapter — the demo, which `AppShell` never
-      // partitions — and servers older than the route, which no longer exist.
+      // Rules before mail, on the degraded bootstrap. The snapshot path delivers the whole rule set in page 1 ("a
+      // partial rule set is worse than none"), so a mid-bootstrap render never sees a message whose sender's decision
+      // is missing; the `since=0` replay interleaves by seq, so a sender decided AFTER their mail arrived replays
+      // mail-first and the consent cutline reads the absent rule as "undecided" — an already-screened sender in the
+      // Screener until the replay catches up. Unknown is not undecided, so the fallback drains the rule type to its
+      // horizon first, rows only (the cursor stays put; the per-entity seq guard absorbs the repeat).
+
+      // Two ways in: a cold mirror whose snapshot failed page 1, and a resumed incomplete bootstrap, where the
+      // committed pages may hold mail whose rule sits beyond the interruption (with a healthy route
+      // `freshenStaleResume()` already applied page 1; this arm is the degraded completion plus the belt for a
+      // freshen that failed). Deliberately NOT before `hydrate()`: holding the offline-first paint on a network drain
+      // trades a bounded interim state for a blank screen on a dead network. Gated on a snapshot route EXISTING: the
+      // route-less adapters are the demo (never partitioned) and servers that no longer exist.
       let resp;
       try {
         // INSIDE the try, deliberately: a later prefetch page can 410 exactly as the delta can
