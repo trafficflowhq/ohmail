@@ -22,6 +22,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { localStorageDoor } from "@ohmail/client-engine/durable";
 
 import "../../../webapp/app/app.css";
 // After app.css, the standalone entry's reason: this window stamps data-layout pre-paint
@@ -66,6 +67,15 @@ try {
    is that browser's own, which is the right scope for a fact about a screen. */
 stampColumns();
 
+/**
+ * THE THEME'S WRITE DOOR — one per window, at module scope so it is not rebuilt per frame.
+ *
+ * `packages/ui` declares the shape and implements none of it, so the provider that stamps
+ * `<html data-theme>` reports a refused write through the SAME window event the shared shell's
+ * notice already listens for.
+ */
+const THEME_DOOR = localStorageDoor("theme");
+
 const root = document.getElementById("root");
 if (!root) throw new Error("ohmail host client: #root is missing from index.html");
 
@@ -75,7 +85,7 @@ const bearer = new BearerManager();
 createRoot(root).render(
   <StrictMode>
     <DesktopLocale>
-      <ThemeProvider storageKey="ohmail.theme" faces>
+      <ThemeProvider storageKey="ohmail.theme" faces storage={THEME_DOOR}>
         <ToastHost>
           <HostGate bearer={bearer} />
         </ToastHost>

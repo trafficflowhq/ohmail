@@ -19,6 +19,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { localStorageDoor } from "@ohmail/client-engine/durable";
 
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
@@ -168,6 +169,15 @@ try {
    `createRoot`, so the first frame is already the right shape. */
 stampColumns();
 
+/**
+ * THE THEME'S WRITE DOOR — one per window, at module scope so it is not rebuilt per frame.
+ *
+ * `packages/ui` declares the shape and implements none of it, so the provider that stamps
+ * `<html data-theme>` reports a refused write through the SAME window event the shared shell's
+ * notice already listens for.
+ */
+const THEME_DOOR = localStorageDoor("theme");
+
 const root = document.getElementById("root");
 if (!root) throw new Error("ohmail Desktop: #root is missing from index.html");
 
@@ -196,7 +206,7 @@ const paint = (bootFailure: unknown): void =>
           standalone install has no account — and it is read before the first paint, so a
           German window opens in German rather than flipping. */}
       <DesktopLocale>
-        <ThemeProvider storageKey="ohmail.theme" faces>
+        <ThemeProvider storageKey="ohmail.theme" faces storage={THEME_DOOR}>
           <ToastHost>
             {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
                 own render, and the throw this exists for comes from `DesktopGate` building the

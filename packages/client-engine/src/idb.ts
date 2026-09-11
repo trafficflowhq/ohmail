@@ -1,6 +1,19 @@
 import type { MirrorRecord } from "./apply.js";
+import {
+  durableIdbCommit,
+  durableProbe,
+  durableSet,
+  type DurableWrite,
+} from "./durable.js";
 import { BaseMirrorStore, MirrorGenerationChanged } from "./store.js";
 import type { Cursor } from "./types.js";
+
+/**
+ * WHICH STORE LOST A WRITE, for the notice's log line. The mirror's stable label and not the
+ * database NAME: the name carries the account id, and a `window` event anything on the page can
+ * hear is the wrong place to spell one when two accounts' mirrors fail for the same reasons.
+ */
+const MIRROR_STORE = "idb:ohmail-mirror";
 
 const ENTITIES = "entities";
 const META = "meta";
@@ -73,12 +86,27 @@ function requestDone<T>(req: IDBRequest<T>): Promise<T> {
   });
 }
 
+/** Settle a READ transaction. Reads are out of the door's scope — a refused read already answers. */
 function txDone(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onabort = () => reject(tx.error ?? new Error("IndexedDB transaction aborted"));
     tx.onerror = () => reject(tx.error ?? new Error("IndexedDB transaction failed"));
   });
+}
+
+/**
+ * SETTLE A WRITE TRANSACTION THROUGH THE DOOR, AND STILL FAIL LOUDLY.
+ *
+ * The door raises the once-per-session notice for a commit that did not land — a quota refusal,
+ * a closing connection, an explicit `abort()` — which is what this file had no way to say before.
+ * It then throws, exactly as `txDone` did, because the recovery above (`BaseMirrorStore`'s
+ * re-persist, the engine's queue) is what keeps the records; a verdict swallowed here would be
+ * the same silence one layer down.
+ */
+async function commitWrite(tx: IDBTransaction): Promise<void> {
+  if (await durableIdbCommit(tx, MIRROR_STORE) === "stored") return;
+  throw tx.error ?? new Error("IndexedDB transaction aborted");
 }
 
 export interface IndexedDbMirrorStoreOptions {
@@ -225,13 +253,12 @@ function readEpoch(): string {
   }
 }
 
-function bumpEpoch(): void {
-  try {
-    const now = Number.parseInt(readEpoch(), 10);
-    globalThis.localStorage?.setItem(WIPE_EPOCH, String((Number.isFinite(now) ? now : 0) + 1));
-  } catch {
-    /* storage blocked: no origin-wide fence, and the verdict already says `partial` there */
-  }
+function bumpEpoch(): DurableWrite {
+  const now = Number.parseInt(readEpoch(), 10);
+  // Through the door, so a blocked jar is SAID rather than swallowed: there is no origin-wide
+  // fence in that case, the wipe's own verdict already reports `partial`, and the reader now also
+  // learns that this browser is keeping nothing.
+  return durableSet(WIPE_EPOCH, String((Number.isFinite(now) ? now : 0) + 1), MIRROR_STORE);
 }
 
 /**
@@ -267,15 +294,10 @@ export const MIRROR_FENCED =
  * is admitted as partial and the caller must not claim a clean browser.
  */
 function registryReadable(): boolean {
-  try {
-    const probe = `${MIRROR_REGISTRY_PREFIX}__probe`;
-    globalThis.localStorage?.setItem(probe, "1");
-    const ok = globalThis.localStorage?.getItem(probe) === "1";
-    globalThis.localStorage?.removeItem(probe);
-    return ok;
-  } catch {
-    return false;
-  }
+  // `durableProbe` and not `durableSet`: a probe's refusal IS the answer asked for, so it raises
+  // no notice — the false it returns becomes `inventory: "partial"`, which is stricter than the
+  // door's sentence. The round trip happens in the door, so this file touches no jar.
+  return durableProbe(`${MIRROR_REGISTRY_PREFIX}__probe`);
 }
 
 /**
@@ -326,27 +348,37 @@ async function anchorRegistry(factory: IDBFactory, mine: string): Promise<void> 
       .map((i) => i.name)
       .filter((n): n is string => !!n && n !== mine)
       .filter((n) => n === LEGACY_MIRROR_DB || n.startsWith(MIRROR_DB_PREFIX));
-    if (present.length === 0) globalThis.localStorage?.setItem(REGISTRY_SINCE, "1");
+    if (present.length === 0) durableSet(REGISTRY_SINCE, "1", MIRROR_STORE);
   } catch {
-    /* unanswerable: no anchor, and therefore no claim of completeness */
+    /* `databases()` unanswerable: no anchor, and therefore no claim of completeness */
   }
 }
 
-/** Record a mirror name so a browser without `databases()` can still be told to forget it. */
-export function rememberMirror(name: string): void {
-  try {
-    globalThis.localStorage?.setItem(`${MIRROR_REGISTRY_PREFIX}${name}`, "1");
-  } catch {
-    /* storage blocked — the registry is a best-effort widening of the delete set, never a lock */
-  }
+/**
+ * Record a mirror name so a browser without `databases()` can still be told to forget it, and
+ * SAY whether the record landed — a refused write leaves this database unnamed, which is what
+ * `registryReadable()` turns into a `partial` verdict at the next wipe.
+ */
+export function rememberMirror(name: string): DurableWrite {
+  return durableSet(`${MIRROR_REGISTRY_PREFIX}${name}`, "1", MIRROR_STORE);
 }
 
+/**
+ * DROP THE REGISTRY RECORDS OF DATABASES THAT ARE GONE — the one storage write here that does
+ * NOT go through the door, and the reason is the same one the web app's sign-out sweep gives.
+ *
+ * The caller has just deleted these databases and already reports their survival in
+ * `WipeVerdict.remaining`: a record whose removal is refused names a database that is gone, and
+ * costs the next wipe one delete of nothing. So a refusal loses no decision — and the door's
+ * sentence ("this browser is not keeping your decisions between reloads") describes neither what
+ * somebody signing out did nor what they lost.
+ */
 function forgetMirrorNames(gone: readonly string[]): void {
   for (const name of gone) {
     try {
       globalThis.localStorage?.removeItem(`${MIRROR_REGISTRY_PREFIX}${name}`);
     } catch {
-      /* see `rememberMirror` */
+      /* see the header: the database is already gone and `remaining` already reports it */
     }
   }
 }
@@ -631,7 +663,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
       meta.put(gen, GEN_KEY);
     }
     meta.put(this.owner, OWNER_KEY);
-    await txDone(tx);
+    await commitWrite(tx);
   }
 
   /** The database's current generation, 0 when it has never been stamped. */
@@ -724,7 +756,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     }
     if (cursor !== null) meta.put(cursor, CURSOR_KEY);
     for (const [k, v] of metaEntries) meta.put(v, k);
-    await txDone(tx);
+    await commitWrite(tx);
   }
 
   /**
@@ -741,7 +773,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     const tx = db.transaction([ENTITIES], "readwrite");
     const entities = tx.objectStore(ENTITIES);
     for (const key of keys) entities.delete(key);
-    await txDone(tx);
+    await commitWrite(tx);
   }
 
   /**
@@ -772,7 +804,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     }
     for (const rec of puts) entities.put(rec, `${rec.type}:${rec.id}`);
     for (const key of deletes) entities.delete(key);
-    await txDone(tx);
+    await commitWrite(tx);
   }
 
   /**
@@ -806,7 +838,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     // is not refused for the wipe it just performed.
     const next = gen + 1;
     meta.put(next, GEN_KEY);
-    await txDone(tx);
+    await commitWrite(tx);
     this.generation = next;
   }
 

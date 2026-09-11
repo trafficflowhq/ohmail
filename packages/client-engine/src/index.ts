@@ -12,6 +12,15 @@
 export const ENGINE_VERSION = "0.1.0";
 
 /**
+ * THE DURABLE WRITE DOOR — the one place a browser jar is touched, for every root that has one.
+ *
+ * Also reachable as `@ohmail/client-engine/durable`, and a host with no engine (the admin
+ * console, the landing bundle) must use that leaf: `durable.ts` imports nothing, so the leaf
+ * costs one file where the barrel costs the whole engine.
+ */
+export * from "./durable.js";
+
+/**
  * The nameless-attachment naming pair, re-exported from core so every client names a
  * nameless calendar part the same way (`toAttachmentItem` here already does; the mobile
  * app's fixture tiles need the same rule and reach core only through this package).

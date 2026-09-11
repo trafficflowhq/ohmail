@@ -52,6 +52,7 @@ import type {
   FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeOutcome, FirstRunProbeOk,
 } from "../../webapp/app/shell/first-run-host";
 import type { OnboardingAi } from "../../webapp/app/shell/onboarding";
+import { durableSet, type DurableWrite } from "@ohmail/client-engine/durable";
 import { bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
 import { CONSENT_SETTINGS_PATH } from "./local-consent.js";
 import type { LocalAiStatus } from "./local-ai.js";
@@ -172,14 +173,11 @@ function readAiAnswer(): boolean | null {
   }
 }
 
-function writeAiAnswer(answer: boolean): void {
-  try {
-    globalThis.localStorage?.setItem(AI_ANSWER_KEY, answer ? "yes" : "no");
-  } catch {
-    /* Storage refused. The run in front of us still walks correctly — the state below is React's
-       and does not depend on the write — and only a LATER resume re-asks. Same trade the Cloud
-       door makes permanently. */
-  }
+function writeAiAnswer(answer: boolean): DurableWrite {
+  // Through the door, so a window with storage denied SAYS so: the run in front of us still
+  // walks correctly — the state below is React's and does not depend on the write — and only a
+  // LATER resume re-asks, which is the trade the notice now names instead of swallowing.
+  return durableSet(AI_ANSWER_KEY, answer ? "yes" : "no", "first-run.ai");
 }
 
 /**

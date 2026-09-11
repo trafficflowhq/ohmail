@@ -56,6 +56,14 @@
       "@tiptap/pm/model": ["./node_modules/@tiptap/pm/model"],
       "@ohmail/tokens": ["../../packages/tokens/src/index.ts"],
       "@ohmail/fixtures": ["../../packages/fixtures/src/index.ts"],
+      /* The durable-write door as a LEAF, and it must be listed BEFORE nothing in particular
+         here (TypeScript matches the longest pattern) but it MUST be listed: the published
+         mirror has no node_modules beside `apps/webapp/app/shell/durable.ts`, which re-exports
+         this specifier, so this map and `vite.config.ts`'s alias table are its only resolvers.
+         Three earlier slices each paid a release CI that died at `tsc --noEmit` on all three
+         platforms for exactly this omission; `test/durable-write-census.test.ts` holds both
+         entries to each other so there is no fourth. */
+      "@ohmail/client-engine/durable": ["../../packages/client-engine/src/durable.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
       /* The calendar reader — one of the two `@trafficflow/*` specifiers the desktop program

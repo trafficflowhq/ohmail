@@ -720,6 +720,12 @@ export default defineConfig({
       /* `@ohmail/fixtures` needs no entry: its one importer was the real fixtures adapter, which
          the stub alias above takes out of the graph — so the corpus is unresolvable here by
          construction, not merely unimported. */
+      /* The durable-write door, BEFORE the bare package name: `find` matches as a path prefix,
+         so the barrel entry below would swallow this subpath if it came first. It is a real
+         edge in this program — `apps/webapp/app/shell/durable.ts` re-exports it and the desktop
+         compiles that file — and the leaf keeps the engine barrel out of the marketing bundle
+         over in the web app. `tsconfig.json`'s `paths` carries the same pair. */
+      { find: "@ohmail/client-engine/durable", replacement: r("../../packages/client-engine/src/durable.ts") },
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
 

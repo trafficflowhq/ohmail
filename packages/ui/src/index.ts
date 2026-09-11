@@ -29,6 +29,11 @@ export type {
   LayoutName,
   ThemeContextValue,
   ThemeProviderProps,
+  /* The storage door this package DECLARES and does not implement — the host hands one in, so
+     nothing here reaches the client engine. `@ohmail/client-engine/durable` returns this shape. */
+  StorageDoor,
+  StorageVerdict,
+  ThemePersistence,
 } from "./theme/ThemeProvider.js";
 
 /* icons */

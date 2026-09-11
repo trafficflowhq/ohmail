@@ -55,6 +55,8 @@
  * it. Bounded, visible, and honest — never a silently wrong session.
  */
 
+import { storageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
+
 /** The wire pair the redeem and the refresh both answer. */
 export interface BearerTokens {
   accessToken: string;
@@ -123,7 +125,14 @@ function defaultStorage(): Storage | null {
 export class BearerManager {
   private access: string | null = null;
   private refresh: string | null = null;
-  private readonly storage: Storage | null;
+  /**
+   * THE DOOR OVER THIS PAGE'S JAR — the jar stays injectable (the tests hand one in), the ANSWER
+   * does not. A refused write to the pairing's refresh token or scope used to be swallowed here;
+   * it now raises the same once-per-session notice the shared shell already renders, because a
+   * host client that cannot keep its credential re-pairs on the next load and the person should
+   * be told before it happens rather than after.
+   */
+  private readonly door: StorageDoor;
   private readonly fetchImpl: FetchLike;
   /** The single flight — one rotation at a time, because a duplicate presentation reads as theft. */
   private rotating: Promise<boolean> | null = null;
@@ -136,15 +145,14 @@ export class BearerManager {
   private readonly deadListeners = new Set<() => void>();
 
   constructor(opts: { storage?: Storage | null; fetchImpl?: FetchLike } = {}) {
-    this.storage = opts.storage !== undefined ? opts.storage : defaultStorage();
+    this.door = storageDoor(
+      opts.storage !== undefined ? opts.storage : defaultStorage(),
+      "host-pair",
+    );
     // BIND THE GLOBAL — the same illegal-invocation trap http-adapter.ts documents: a browser's
     // native fetch refuses any receiver that is not its own global.
     this.fetchImpl = opts.fetchImpl ?? (globalThis.fetch.bind(globalThis) as FetchLike);
-    try {
-      this.refresh = this.storage?.getItem(REFRESH_STORAGE_KEY) ?? null;
-    } catch {
-      this.refresh = null;
-    }
+    this.refresh = this.door.get(REFRESH_STORAGE_KEY);
     /**
      * A PAIRING THAT EXISTS MUST HAVE A SCOPE BEFORE THE FIRST RENDER, NOT AT ITS FIRST ADOPT.
      *
@@ -176,22 +184,16 @@ export class BearerManager {
   private scopeAtStart: string | null;
 
   private readScope(): string | null {
-    try {
-      return this.storage?.getItem(PAIR_SCOPE_STORAGE_KEY) ?? null;
-    } catch {
-      return null;
-    }
+    return this.door.get(PAIR_SCOPE_STORAGE_KEY);
   }
 
   /** Give the held pairing a scope if it has none. No pairing, no scope — and never a re-mint. */
   private ensureScope(): void {
     if (this.refresh === null) return;
-    try {
-      if (this.storage?.getItem(PAIR_SCOPE_STORAGE_KEY) == null) {
-        this.storage?.setItem(PAIR_SCOPE_STORAGE_KEY, mintPairScope());
-      }
-    } catch {
-      /* storage refused: `pairScope()` answers null and the shell partitions as un-owned */
+    // A refused write leaves `pairScope()` answering null and the shell partitioning as un-owned,
+    // exactly as before — and now the door has said so.
+    if (this.door.get(PAIR_SCOPE_STORAGE_KEY) == null) {
+      this.door.set(PAIR_SCOPE_STORAGE_KEY, mintPairScope());
     }
   }
 
@@ -213,24 +215,22 @@ export class BearerManager {
     this.access = tokens.accessToken;
     this.refresh = tokens.refreshToken;
     this.generation++;
-    try {
-      this.storage?.setItem(REFRESH_STORAGE_KEY, tokens.refreshToken);
-      // A REDEEM re-mints; a rotation does not. The upgrade case is NOT handled here — it is
-      // handled in the constructor, because by the time `adopt` runs the shell has already
-      // mounted and read a partition. See `ensureScope`.
-      if (opts.fresh === true) {
-        this.storage?.setItem(PAIR_SCOPE_STORAGE_KEY, mintPairScope());
-      } else {
-        this.ensureScope();
-      }
-      // THIS manager now belongs to whatever scope is stored — it either minted it or confirmed
-      // it. Without this line the check in `rotate` would fire on the manager's own first adopt
-      // (constructed before any pairing existed, so it started with none) and end a session that
-      // nothing was wrong with.
-      this.scopeAtStart = this.readScope();
-    } catch {
-      /* Storage refused: the session lives for this page load and the next one re-pairs. */
+    // Storage refused answers "lost" from the door and raises the notice; the session then lives
+    // for this page load and the next one re-pairs, which is what the door exists to say out loud.
+    this.door.set(REFRESH_STORAGE_KEY, tokens.refreshToken);
+    // A REDEEM re-mints; a rotation does not. The upgrade case is NOT handled here — it is
+    // handled in the constructor, because by the time `adopt` runs the shell has already
+    // mounted and read a partition. See `ensureScope`.
+    if (opts.fresh === true) {
+      this.door.set(PAIR_SCOPE_STORAGE_KEY, mintPairScope());
+    } else {
+      this.ensureScope();
     }
+    // THIS manager now belongs to whatever scope is stored — it either minted it or confirmed
+    // it. Without this line the check in `rotate` would fire on the manager's own first adopt
+    // (constructed before any pairing existed, so it started with none) and end a session that
+    // nothing was wrong with.
+    this.scopeAtStart = this.readScope();
   }
 
   /**
@@ -242,11 +242,7 @@ export class BearerManager {
    */
   pairScope(): string | null {
     if (this.refresh === null) return null;
-    try {
-      return this.storage?.getItem(PAIR_SCOPE_STORAGE_KEY) ?? null;
-    } catch {
-      return null;
-    }
+    return this.door.get(PAIR_SCOPE_STORAGE_KEY);
   }
 
   /** The extra-headers seam's value — `HttpAdapterOptions.headers` calls this per request. */
@@ -258,16 +254,12 @@ export class BearerManager {
   private die(): void {
     this.access = null;
     this.refresh = null;
-    try {
-      this.storage?.removeItem(REFRESH_STORAGE_KEY);
-      // The scratch space this pairing owned goes with it. The next pairing on this origin mints
-      // a new scope and therefore cannot read what this one left — which is the whole point of
-      // the key. The VALUES under the old scope are unreachable rather than deleted; the shared
-      // shell's own sign-out sweep is what clears them by prefix.
-      this.storage?.removeItem(PAIR_SCOPE_STORAGE_KEY);
-    } catch {
-      /* already gone */
-    }
+    this.door.remove(REFRESH_STORAGE_KEY);
+    // The scratch space this pairing owned goes with it. The next pairing on this origin mints
+    // a new scope and therefore cannot read what this one left — which is the whole point of
+    // the key. The VALUES under the old scope are unreachable rather than deleted; the shared
+    // shell's own sign-out sweep is what clears them by prefix.
+    this.door.remove(PAIR_SCOPE_STORAGE_KEY);
     for (const cb of [...this.deadListeners]) cb();
   }
 
@@ -317,12 +309,9 @@ export class BearerManager {
         this.standDown();
         return false;
       }
-      try {
-        const stored = this.storage?.getItem(REFRESH_STORAGE_KEY) ?? null;
-        if (stored !== null && stored !== this.refresh) this.refresh = stored;
-      } catch {
-        /* storage refused — the in-memory copy is all there is */
-      }
+      // A refused read answers null from the door — the in-memory copy is all there is.
+      const stored = this.door.get(REFRESH_STORAGE_KEY);
+      if (stored !== null && stored !== this.refresh) this.refresh = stored;
       const presented = this.refresh;
       if (presented === null) return false;
       let res: Response;

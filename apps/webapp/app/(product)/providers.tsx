@@ -2,7 +2,12 @@
 
 import type { ReactNode } from "react";
 import { ThemeProvider, ToastHost, themeInitScript } from "@ohmail/ui";
+import { localStorageDoor } from "../shell/durable";
 import { columnsBootScript } from "../shell/column-store";
+
+/* One door per host, at module scope: the provider reads it through a ref, and a door rebuilt
+   every render would be a new object on every frame for no reason. */
+const THEME_DOOR = localStorageDoor("theme");
 
 export function Providers({ children, nonce }: { children: ReactNode; nonce?: string }) {
   return (
@@ -29,7 +34,7 @@ export function Providers({ children, nonce }: { children: ReactNode; nonce?: st
       {/* `faces` — the paper/ohmarchy axis is ACTIVE on the product door only: this is the
           host that wired the face controls (Settings → Look, the Option B offer). The
           landing and the admin mount the same provider and deliberately do not pass it. */}
-      <ThemeProvider storageKey="ohmail.theme" faces>
+      <ThemeProvider storageKey="ohmail.theme" faces storage={THEME_DOOR}>
         <ToastHost>{children}</ToastHost>
       </ThemeProvider>
     </>

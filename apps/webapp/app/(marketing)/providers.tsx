@@ -2,7 +2,11 @@
 
 import type { ReactNode } from "react";
 import { ThemeProvider } from "@ohmail/ui";
+import { localStorageDoor } from "../shell/durable";
 import { SignupProvider } from "./components/Signup";
+
+/* The same door the product door mounts — one origin, one coherent device (see below). */
+const THEME_DOOR = localStorageDoor("theme");
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
@@ -12,7 +16,7 @@ export function Providers({ children }: { children: ReactNode }) {
        storage keys are the provider defaults — the SAME `ohmail.face` device pin the
        product door reads, one origin, one coherent device. The pre-paint stamp is the
        marketing root's inline boot script. */
-    <ThemeProvider storageKey="ohmail.theme" faces>
+    <ThemeProvider storageKey="ohmail.theme" faces storage={THEME_DOOR}>
       <SignupProvider>{children}</SignupProvider>
     </ThemeProvider>
   );

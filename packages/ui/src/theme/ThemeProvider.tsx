@@ -46,9 +46,42 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+
+/** Did the value reach the jar — the answer `@ohmail/client-engine`'s door already returns. */
+export type StorageVerdict = "stored" | "lost";
+
+/**
+ * THE STORAGE DOOR — A SHAPE THIS PACKAGE DECLARES AND DELIBERATELY DOES NOT IMPLEMENT.
+ *
+ * The provider used to write `localStorage` itself, inside a swallowing `try`: a private window
+ * turned "your theme is remembered" into a lie with nothing anywhere saying so. The door that
+ * answers lives in `@ohmail/client-engine`, and this package may not import it — a UI package
+ * that reaches into the client engine points the dependency graph upward and would drag the
+ * engine into every host that mounts a button. So the direction is inverted: the host hands the
+ * door in, and this file imports nothing.
+ *
+ * THERE IS NO `null` DOOR. Absence is the only way to say "this host wired none", so "not
+ * supplied" and "supplied as nothing" cannot be confused — see {@link ThemePersistence}.
+ */
+export interface StorageDoor {
+  get(key: string): string | null;
+  set(key: string, value: string): StorageVerdict;
+  remove(key: string): StorageVerdict;
+}
+
+/**
+ * WHERE THIS PROVIDER IS KEEPING THE APPEARANCE, as a state a host and a test can READ.
+ *
+ * `unpersisted` is a first-class answer, not a fallback: with no door (or with `storageKey`
+ * null, the explicit opt-out the showcases use) the choice holds for the session and NOTHING is
+ * written — never a silent direct write behind the door's back. Two causes reach one state
+ * because nothing downstream cares which: either way a reload starts from the default.
+ */
+export type ThemePersistence = "door" | "unpersisted";
 
 export type ThemePreference = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
@@ -96,6 +129,12 @@ export interface ThemeContextValue {
    * stamp. Null means "the account has no preference" and clears the mirror.
    */
   adoptAccountFace: (face: FaceName | null) => void;
+  /**
+   * Where this provider is keeping the appearance — `unpersisted` when the host wired no
+   * {@link StorageDoor} (or turned `storageKey` off), and then nothing is written at all. A state
+   * a host can render and a test can read, rather than a silence to be inferred.
+   */
+  persistence: ThemePersistence;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -134,13 +173,9 @@ function systemTheme(): ResolvedTheme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function readStored(storageKey: string): ThemePreference | null {
-  try {
-    const stored = window.localStorage?.getItem(storageKey);
-    return isPreference(stored) ? stored : null;
-  } catch {
-    return null; // storage blocked (private mode etc.) — fall back to default
-  }
+function readStored(door: StorageDoor, storageKey: string): ThemePreference | null {
+  const stored = door.get(storageKey);
+  return isPreference(stored) ? stored : null;
 }
 
 /**
@@ -210,7 +245,27 @@ export interface ThemeProviderProps {
    * untouched.
    */
   faces?: boolean;
+  /**
+   * THE DOOR EVERY WRITE GOES THROUGH, handed in by the host — see {@link StorageDoor}.
+   *
+   * Omit it and this provider persists nothing ({@link ThemePersistence} `unpersisted`): the
+   * choice holds for the session, no jar is touched, and the host has not accidentally promised
+   * a memory. There is no `null` door, so "no host wired one" cannot be confused with "one was
+   * supplied and is empty".
+   *
+   * Hoist it out of the render — `const DOOR = localStorageDoor("theme")` at module scope. A door
+   * built inline is a new object every render; the provider reads it through a ref so that costs
+   * nothing, but the intent is one door per host, not one per frame.
+   */
+  storage?: StorageDoor;
 }
+
+/** The door that writes nothing, for a host that wired none. Reads answer "no stored value". */
+const NO_DOOR: StorageDoor = {
+  get: () => null,
+  set: () => "lost",
+  remove: () => "lost",
+};
 
 export function ThemeProvider({
   children,
@@ -220,7 +275,24 @@ export function ThemeProvider({
   accountFaceStorageKey = "ohmail.face.account",
   layoutStorageKey = "ohmail.layout",
   faces = false,
+  storage,
 }: ThemeProviderProps) {
+  /**
+   * PERSISTENCE IS DECIDED ONCE, HERE. `storage` absent = the host wired no door;
+   * `storageKey === null` = the host turned persistence off (showcases, tests). Two causes, one
+   * state, because nothing below cares which: either way no jar is touched and a reload starts
+   * from the default.
+   */
+  const persistence: ThemePersistence =
+    storage !== undefined && storageKey !== null ? "door" : "unpersisted";
+  /**
+   * The door through a ref, so which door a MOUNTED provider uses is not a dependency that can
+   * change under it: a door is a capability, not data, and swapping one mid-session is not a
+   * supported act. This also keeps every effect's dependency list exactly what it was before the
+   * door existed.
+   */
+  const doorRef = useRef<StorageDoor>(NO_DOOR);
+  doorRef.current = persistence === "door" && storage ? storage : NO_DOOR;
   // null = not yet hydrated: render with the deterministic default and do
   // NOT touch <html> — the themeInitScript stamp stays in charge until the
   // stored preference has been adopted post-mount.
@@ -241,7 +313,7 @@ export function ThemeProvider({
   useEffect(() => {
     setStored((current) => {
       if (current !== null) return current; // a click beat us to it — user wins
-      return (storageKey ? readStored(storageKey) : null) ?? defaultPreference;
+      return (storageKey ? readStored(doorRef.current, storageKey) : null) ?? defaultPreference;
     });
     setSystem(systemTheme());
   }, [storageKey, defaultPreference]);
@@ -254,32 +326,20 @@ export function ThemeProvider({
     setDevicePin((current) => {
       if (current !== undefined) return current; // a click beat us to it — user wins
       if (storageKey === null) return null; // persistence disabled (tests, showcases)
-      try {
-        const raw = window.localStorage?.getItem(faceStorageKey);
-        return isFace(raw) ? raw : null;
-      } catch {
-        return null;
-      }
+      const raw = doorRef.current.get(faceStorageKey);
+      return isFace(raw) ? raw : null;
     });
     setAccountFaceState((current) => {
       if (current !== null) return current; // a live adoption beat the mirror — it wins
       if (storageKey === null) return null;
-      try {
-        const raw = window.localStorage?.getItem(accountFaceStorageKey);
-        return isFace(raw) ? raw : null;
-      } catch {
-        return null;
-      }
+      const raw = doorRef.current.get(accountFaceStorageKey);
+      return isFace(raw) ? raw : null;
     });
     setLayoutPin((current) => {
       if (current !== undefined) return current; // a click beat us to it — user wins
       if (storageKey === null) return null;
-      try {
-        const raw = window.localStorage?.getItem(layoutStorageKey);
-        return isLayout(raw) ? raw : null;
-      } catch {
-        return null;
-      }
+      const raw = doorRef.current.get(layoutStorageKey);
+      return isLayout(raw) ? raw : null;
     });
     setLinux(linuxDesktopDevice());
   }, [faces, storageKey, faceStorageKey, accountFaceStorageKey, layoutStorageKey]);
@@ -291,13 +351,9 @@ export function ThemeProvider({
     const root = document.documentElement;
     if (stored === "system") delete root.dataset.theme;
     else root.dataset.theme = stored;
-    if (storageKey) {
-      try {
-        window.localStorage?.setItem(storageKey, stored);
-      } catch {
-        /* storage blocked — the in-memory preference still applies */
-      }
-    }
+    // The door answers "lost" for a blocked jar and raises the host's own notice; the in-memory
+    // preference still applies, which is what makes the degradation honest rather than silent.
+    if (storageKey) doorRef.current.set(storageKey, stored);
   }, [stored, storageKey]);
 
   // Track the OS preference while in system mode.
@@ -345,12 +401,9 @@ export function ThemeProvider({
     (next: FaceName | null) => {
       setDevicePin(next);
       if (storageKey === null) return;
-      try {
-        if (next === null) window.localStorage?.removeItem(faceStorageKey);
-        else window.localStorage?.setItem(faceStorageKey, next);
-      } catch {
-        /* storage blocked — the in-memory choice still applies this session */
-      }
+      // The in-memory choice applies either way; "lost" is what the host's notice is for.
+      if (next === null) doorRef.current.remove(faceStorageKey);
+      else doorRef.current.set(faceStorageKey, next);
     },
     [storageKey, faceStorageKey],
   );
@@ -359,12 +412,8 @@ export function ThemeProvider({
     (next: LayoutName | null) => {
       setLayoutPin(next);
       if (storageKey === null) return;
-      try {
-        if (next === null) window.localStorage?.removeItem(layoutStorageKey);
-        else window.localStorage?.setItem(layoutStorageKey, next);
-      } catch {
-        /* storage blocked — the in-memory choice still applies this session */
-      }
+      if (next === null) doorRef.current.remove(layoutStorageKey);
+      else doorRef.current.set(layoutStorageKey, next);
     },
     [storageKey, layoutStorageKey],
   );
@@ -373,12 +422,10 @@ export function ThemeProvider({
     (next: FaceName | null) => {
       setAccountFaceState(next);
       if (storageKey === null) return;
-      try {
-        if (next === null) window.localStorage?.removeItem(accountFaceStorageKey);
-        else window.localStorage?.setItem(accountFaceStorageKey, next);
-      } catch {
-        /* storage blocked — the mirror simply does not survive this session */
-      }
+      // A lost mirror write means the NEXT boot's init script cannot stamp the account's face
+      // pre-paint; the account answer itself lives on the server and is re-adopted then.
+      if (next === null) doorRef.current.remove(accountFaceStorageKey);
+      else doorRef.current.set(accountFaceStorageKey, next);
     },
     [storageKey, accountFaceStorageKey],
   );
@@ -398,8 +445,9 @@ export function ThemeProvider({
       setLayout,
       teach,
       adoptAccountFace,
+      persistence,
     }),
-    [preference, resolved, setTheme, toggle, face, devicePin, accountFace, linux, setFace, layout, setLayout, teach, adoptAccountFace],
+    [preference, resolved, setTheme, toggle, face, devicePin, accountFace, linux, setFace, layout, setLayout, teach, adoptAccountFace, persistence],
   );
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
