@@ -2071,8 +2071,9 @@ export class OhmailEngine {
     if (this.queue.length === 0) return;
     // THE GATE, around the whole batch. The body re-reads the hold at release — see the gate's
     // own note: a dispatch this batch queued behind may have timed out and armed one, and
-    // replaying behind a request still in the air is the reordering the barrier exists to stop. Order within the batch is user order and the batch must
-    // not be interleaved with a `mutate` or a `flushPending` — a fresh verb landing between two
+    // replaying behind a request still in the air is the reordering the barrier exists to stop.
+    // Order within the batch is user order and the batch must not be interleaved with a
+    // `mutate` or a `flushPending` — a fresh verb landing between two
     // replayed ones can commit first and be overwritten when the older one lands, which is
     // user-always-wins violated in exactly the window nobody watches. This road was the last one
     // outside the gate; `replayActive` was its private stand-in, and a private stand-in only
