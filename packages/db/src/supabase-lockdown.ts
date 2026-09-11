@@ -1,43 +1,12 @@
 /**
- * Close the Supabase Data API on an ohmail-hosted database — grants first, endpoint second,
- * then prove it from OUTSIDE with the same public key an attacker would use.
- *
- * Rationale, measurements and the reason RLS is the wrong tool live in the header of
- * `scripts/supabase-lockdown.sql`. This file is the runner, and it lives in `packages/db` for
- * the same reason `provision-staff-role.ts` does: it must import `transactionPoolerReason`
- * rather than re-implement it (twice already, a copied predicate rotted alone).
- *
- * ── WHY THE EXTERNAL RE-PROBE IS THE POINT ──────────────────────────────────────────────
- *
- * The in-database postcondition proves the ACLs are gone. It does NOT prove the product is
- * safe, and treating it as though it did is exactly the mistake that let this ship: the
- * staff-role pre-flight and the `staff-grants.ts` boot attestation both stayed green through all 443
- * privileges, because one tests `grantee = 0` and the other measures `ohmail_admin`. Neither
- * can see a named role called `anon`.
- *
- * So the verdict here is a live HTTP request to `https://<ref>.supabase.co/rest/v1/<table>`
- * carrying the anon key. That is the actual threat model — a public key, an internet-facing
- * endpoint, no VPN, no session. **A 200 with `[]` is a FAILURE, not a pass**: an empty array
- * means the SELECT succeeded against an empty table, and the tables are empty only until
- * cutover.
- *
- * A refusal is only evidence when it came from PostgREST — a key the gateway rejects answers
- * 401 for an exposed table and a closed one alike. That classification, the request itself and
- * the endpoint half all live in `supabase-lockdown-core.ts` now, because the provisioning path
- * runs them too and a second copy of a security predicate is how the first one rots.
- *
- * ── --prove ─────────────────────────────────────────────────────────────────────────────
- *
- * A guard nobody has watched fail is not evidence. After a lockdown the census
- * reads zero, and a census that reads zero because it is broken looks identical. `--prove`
- * creates a scratch table, grants it to `anon`, re-runs the census, and requires it to go RED —
- * then drops the table and requires it to go clean again. It runs against the real database
- * because a mutation proven somewhere else proves nothing here.
- *
- * Usage (all three envs required for the API half; the SQL half needs only the URL):
- *   SUPABASE_DB_URL=... pnpm --filter @trafficflow/db supabase:lockdown
- *   SUPABASE_DB_URL=... SUPABASE_ACCESS_TOKEN=... SUPABASE_PROJECT_REF=... \
- *     pnpm --filter @trafficflow/db supabase:lockdown -- --apply --close-api --prove
+ * Close the Supabase Data API on an ohmail-hosted database — grants first, endpoint second, then
+ * prove it from OUTSIDE with the same public key an attacker would use. Rationale lives in
+ * `scripts/supabase-lockdown.sql`; this is the runner. The external re-probe is the point: the
+ * in-database postcondition proves the ACLs are gone, not that the product is safe — two internal
+ * checks stayed green through the whole exposure; neither can see a role called `anon`. A 200
+ * with `[]` is a FAILURE. A refusal is only evidence when it came from PostgREST. `--prove`: a
+ * broken census reads zero identically — so it grants a scratch table to `anon`, requires the
+ * census to go RED, drops it, and requires clean again, against the real database.
  */
 import { argv, env } from "node:process";
 import postgres from "postgres";

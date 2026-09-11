@@ -1,36 +1,12 @@
 /**
- * The Supabase Data API lockdown — the LIBRARY half, importable with no side effects.
- *
- * ── WHY THIS FILE EXISTS, SEPARATE FROM `supabase-lockdown.ts` ─────────────────────────────
- *
- * The lockdown used to live only in the CLI runner, which is a module that EXECUTES on import
- * (`void main()` at the bottom) — the exact hazard `setup-prod-cli.ts`'s header documents. That
- * left `setupProdDatabase` unable to reuse it, and so the lockdown was never wired into the one
- * idempotent provisioning path: a stock-Supabase rebuild, or a self-hoster pointing at Supabase,
- * would have shipped with the host's default `anon`/`authenticated`/`service_role` grants live
- * on every table (`messages`, `message_bodies`, `mailbox_credentials`, `users`, …), reachable
- * over PostgREST by the anon key — which is public by design. This module is the shared
- * implementation both callers import: the GRANT half (the REVOKE batch and the census) and, at
- * the bottom of the file, the DATA API half (the Management-API endpoint close, and the external
- * anon-key probe that is the only real verdict). `setup-prod.ts` runs both on every provisioning
- * pass and refuses to report success while either is red; the CLI keeps what only an operator
- * ceremony can do — the before/after narration and `--prove`.
- *
- * ── WHY THE SQL IS AN EMBEDDED CONSTANT AND NOT `readFileSync` ─────────────────────────────
- *
- * The CLI used to read `scripts/supabase-lockdown.sql` off disk, three directories up. That is
- * fine for a repo-checkout CLI and wrong for this module's other callers: `setup-prod.ts` is
- * re-exported through `@trafficflow/db/admin`, which the desktop engine BUNDLES (a bundle has no
- * `../../../scripts`) and which `apps/server` runs at every boot from whatever filesystem its
- * image carries. A lockdown that cannot find its own SQL would fail open or fail the boot for a
- * missing asset — so the statements live here, in the code that runs them.
- * `scripts/supabase-lockdown.sql` remains the annotated operator reference (it is published, and
- * other files cite its sections); `supabase-lockdown-sql-sync.test.ts` pins the two byte-for-byte
- * modulo comments, because this repository has twice paid for a copied predicate rotting alone.
- *
- * The full rationale for the statements — why REVOKE and not RLS, why both grantors' default
- * privileges, why the postconditions are scoped to reachable grantors — is in that file's
- * header and section comments and is deliberately not repeated here.
+ * The Supabase Data API lockdown — the LIBRARY half, importable with no side effects. It lived
+ * only in the CLI runner, which EXECUTES on import, so `setupProdDatabase` could not reuse it — a
+ * stock-Supabase rebuild would have shipped the host's default grants live on every table,
+ * reachable over PostgREST by the public anon key. Both callers import this: the GRANT half (the
+ * REVOKE batch and the census) and the DATA API half (the endpoint close and the external probe).
+ * The SQL is an embedded constant, not `readFileSync`: `setup-prod.ts` is re-exported through
+ * `/admin`, which the desktop engine BUNDLES, and a lockdown that cannot find its own SQL fails
+ * open. The annotated reference stays in `scripts/`; a sync test pins the two.
  */
 import type postgresFn from "postgres";
 
