@@ -2930,6 +2930,141 @@ describe("the pane says it cannot check, rather than that the mailbox is up to d
     const odd = await readMailboxReachVia(() => { throw "just a string"; });
     expect(odd.detail).toContain("just a string");
   });
+  /**
+   * ═══ THE THREE ANSWERS, ON ONE ROW, IN ORDER ══════════════════════════════════════════════
+   *
+   * Every case above mounts the pane already in one state. This one drives a SINGLE mount through
+   * the ladder a person sees, because the transitions are where the row went wrong: a healthy
+   * answer, the engine's own dial failing with the age beside it climbing, the link coming back,
+   * and then the window's question to its engine going unanswered.
+   *
+   * THE LAST STATE IS NOT REACHABLE BY CUTTING A NETWORK, and that is why it is asserted here.
+   * "Can't reach the mail server" is the ENGINE answering that it cannot reach the provider — cut
+   * the link and the engine says so within a cycle, dates it, and the row is right. "Can't check
+   * the mail server right now" answers a different fault: the window asked the engine in its own
+   * process and nothing came back, over a pipe no network carries. Driving one fault produces the
+   * other sentence, so the two are separated by the shape of the silence and not by a cut.
+   *
+   * HOW TO WATCH IT FAIL: delete the age test on a landed verdict (`if (r && reachStale(reach,
+   * now))`) and leg (d) reads "Up to date" past the bound; drop the `transport-threw` half of
+   * `reachUnknownForRow`'s `silent` arm and leg (e) reads "Up to date" over a request that was
+   * refused before it was sent.
+   */
+  it("one row, three answers: healthy, an outage it dates, and a question nothing answered", async () => {
+    const { REACH_POLL_MS, REACH_STALE_MS } = await import("../src/DesktopMailboxes.js");
+    /* THE FIGURES, from the source: the cadence the engine's own poll sets, and the age past
+       which an answer nothing has refreshed stops being an answer. The legs below are timed in
+       cadences, so the wall-clock bound is pinned here rather than left to arithmetic. */
+    expect(REACH_POLL_MS, "the reach cadence moved").toBe(15_000);
+    expect(REACH_STALE_MS, "the bound on an unrefreshed answer moved").toBe(45_000);
+
+    /* THE SENTENCES, FROM THE CATALOGUE AND NOT FROM MEMORY. A literal here would go on passing
+       after the copy changed, which is the one thing a copy assertion is for. The age inside the
+       clause is `Intl.RelativeTimeFormat`'s and not the catalogue's, so it is derived from the
+       same formatter the stamp uses — what this case asserts about it is that it CLIMBS. */
+    const justNow =
+      (messages as unknown as { relativeTime: { justNow: string } }).relativeTime.justNow;
+    const lastAnswered = (when: string): string =>
+      copy.desktopStateLastAnswered!.replace("{when}", when);
+    const minutesAgo = (n: number): string =>
+      new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-n, "minute");
+    const lastCheckedClause = copy.desktopLastChecked!.split("{when}")[0]!;
+
+    FACTS = [FILED];
+    let answer: () => Response | Promise<Response> =
+      () => roster([{ mailboxId: "mbx-1", reachable: true, unreachableSince: null }]);
+    bridgeReply = () => answer();
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const el = await render("local");
+      const said = (): string => el.textContent ?? "";
+
+      /* ── (a) THE ENGINE ANSWERS ───────────────────────────────────────────────────────────
+         "Last checked" is the shared facts poller's clause and it is on the row in every state
+         below, which is why it cannot carry an outage by itself: it froze at the death second
+         while the cell beside it went on reading "Up to date". The cell is the half under test. */
+      expect(said(), "a healthy roster did not produce the healthy sentence")
+        .toContain(copy.desktopStateUpToDate!);
+      expect(said(), "the row lost its own last-checked clause").toContain(lastCheckedClause);
+      expect(said()).not.toContain(copy.desktopStateUnknown!);
+      expect(said()).not.toContain(copy.desktopStateUnreachable!);
+
+      /* ── (b) THE ENGINE'S DIAL FAILS ──────────────────────────────────────────────────────
+         What a dead connection to the mail server looks like from here: the engine reports it
+         once and the row states the fact and dates it from the engine's first observation. */
+      const died = Date.now();
+      answer = () => roster([{
+        mailboxId: "mbx-1",
+        reachable: false,
+        unreachableSince: new Date(died).toISOString(),
+      }]);
+      /* THE ASYNC TIMER FORM WHERE THE POLL MUST LAND — and the plain one in (d), where it must
+         not: the async form drains the microtasks a read settles on, so a read that never
+         resolves would be settled by the helper instead of staying pending in the product. */
+      await act(async () => { await vi.advanceTimersByTimeAsync(REACH_POLL_MS); });
+      expect(said(), "an outage the engine reported was not on the row")
+        .toContain(copy.desktopStateUnreachable!);
+      expect(said(), "the row claimed health over a connection the engine had given up on")
+        .not.toContain(copy.desktopStateUpToDate!);
+      expect(said(), "an answered outage was reported as a question nothing answered")
+        .not.toContain(copy.desktopStateUnknown!);
+      expect(said(), "the outage carried no age at all").toContain(lastAnswered(justNow));
+
+      /* AND THE AGE CLIMBS, on the poll's own cadence and with nothing else moving. Sampled a
+         cadence clear of each rounding edge: the render's clock advances on the interval and
+         nowhere else, so a sample pinned to the edge would be measuring elapsed test time. */
+      await act(async () => { await vi.advanceTimersByTimeAsync(4 * REACH_POLL_MS); });
+      expect(said(), "the age beside the outage stopped counting")
+        .toContain(lastAnswered(minutesAgo(1)));
+      await act(async () => { await vi.advanceTimersByTimeAsync(4 * REACH_POLL_MS); });
+      expect(said(), "the age froze after its first minute")
+        .toContain(lastAnswered(minutesAgo(2)));
+      expect(minutesAgo(1), "the two samples are the same clause, so nothing was measured")
+        .not.toBe(minutesAgo(2));
+
+      /* ── (c) THE LINK COMES BACK ──────────────────────────────────────────────────────────
+         The engine answers a reachable roster and the row clears within one poll. This is also
+         the state leg (d) has to start from: an outage the engine REPORTED keeps its own
+         sentence however old it gets, which is the control two cases above. */
+      answer = () => roster([{ mailboxId: "mbx-1", reachable: true, unreachableSince: null }]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(REACH_POLL_MS); });
+      expect(said(), "the outage sentence outlived the answer that cleared it")
+        .not.toContain(copy.desktopStateUnreachable!);
+      expect(said()).toContain(copy.desktopStateUpToDate!);
+
+      /* ── (d) THE QUESTION STOPS COMING BACK ───────────────────────────────────────────────
+         With the last thing the engine said being that everything is fine. A read that never
+         resolves writes no slice, so nothing re-renders on it and the answer on screen is the
+         only thing left: past the bound it is not an answer any more. */
+      answer = () => new Promise<Response>(() => { /* never settles */ });
+      await act(async () => { vi.advanceTimersByTime(2 * REACH_POLL_MS); });
+      expect(said(), "two cadences of silence withdrew an answer that is still current")
+        .toContain(copy.desktopStateUpToDate!);
+      await act(async () => { vi.advanceTimersByTime(2 * REACH_POLL_MS); });
+      expect(said(), "the row claimed health past the bound, on an answer nothing refreshed")
+        .not.toContain(copy.desktopStateUpToDate!);
+      expect(said()).toContain(copy.desktopStateUnknown!);
+      /* AND IT IS NOT AN OUTAGE: nothing here has learned anything about the mail server. */
+      expect(said(), "an unanswered question was reported as the provider being down")
+        .not.toContain(copy.desktopStateUnreachable!);
+
+      /* ── (e) THE SILENCE THE PIPE ACTUALLY PRODUCES ───────────────────────────────────────
+         The request is refused before it is sent, so the engine never sees the question and
+         writes nothing about it either. News at the first poll rather than at the bound — this
+         answer is FRESH, so the age test cannot be what puts the sentence on the row, and the
+         only thing that can is the refusal itself. */
+      answer = throwing("32 requests are already waiting on the engine; this one was not sent");
+      await act(async () => { await vi.advanceTimersByTimeAsync(REACH_POLL_MS); });
+      expect(said(), "a request the pipe refused left the row saying it could check")
+        .toContain(copy.desktopStateUnknown!);
+      expect(said(), "a refused request read as a healthy mailbox")
+        .not.toContain(copy.desktopStateUpToDate!);
+      expect(said()).not.toContain(copy.desktopStateUnreachable!);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 /**
