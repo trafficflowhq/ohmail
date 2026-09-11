@@ -69,6 +69,9 @@ import { credentialIsForeign, credentialIsForeignSmtp, sealedHost, sealedSmtpHos
 // `organize-here` CLI runs. See its header for why status, reason and the one-shot stamp move
 // together, and this file's `handle` for why the desktop door needs a route onto it.
 import { requestOrganizerTakeover } from "./organize-here.js";
+// WHICH OUTBOUND PASSES THIS COMPOSITION RUNS — one table read by the pass and by the door, so
+// "a phone keeps no appointments" cannot be true in one of the two places. See its header.
+import { AppointmentsRefused, runsPass } from "./composition-passes.js";
 import { hostPairRoutes } from "./host-pair-routes.js";
 // The static half of the host door — the built browser client the QR sends a phone to, served
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
@@ -954,6 +957,13 @@ function localServices(
   installId: string,
   openSendAdapter: OpenSendAdapter,
   unsubscribe: UnsubscribeService,
+  /**
+   * WHAT THIS COMPOSITION CLAIMS AS — and here it decides one thing only: whether the send-later
+   * verbs may MINT an appointment. The kind rather than a boolean, so this function reads
+   * `composition-passes.ts` itself and there is one answer to "does this install keep
+   * appointments" rather than a derived flag a caller could compute the other way.
+   */
+  organizerKind: OrganizerKind,
   ai?: LocalAi,
 ): ApiServices {
   const classifier = ai?.classifier();
@@ -1072,10 +1082,15 @@ function localServices(
     kb: kbService,
     tags: tagsService,
     drafts: draftsService,
-    // Send later's two verbs (mail 0077). This process runs its own scheduled-send pass in the
-    // local sync loop (the standalone install has no Cloud worker), so an appointment made on
-    // this door is kept by this door.
-    schedules: scheduleService,
+    /* Send later's two verbs (mail 0077). This process runs its own scheduled-send pass in the
+       local sync loop (the standalone install has no Cloud worker), so an appointment made on this
+       door is kept by this door — WHERE THE PASS IS COMPOSED. Where it is not, the door may not
+       accept the promise either: `AppointmentsRefused` refuses the mint with the sentence and
+       inherits cancel, so a standing appointment can still be taken off. Two independently
+       measured conditions on purpose — the door stops the promise, the pass stops the delivery. */
+    schedules: runsPass(organizerKind, "scheduled-send")
+      ? scheduleService
+      : new AppointmentsRefused(),
     workflows: workflowsService,
   };
 }
@@ -1501,6 +1516,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const log = config.log ?? ((): void => undefined);
   const now = config.now ?? ((): Date => new Date());
   const address = config.address ?? config.imap.auth.user;
+  /* WHAT THIS COMPOSITION CLAIMS AS, resolved ONCE. Hoisted to this scope because two readers now
+     need it and `?? "local"` written twice is the "absent config selects the dangerous branch"
+     shape duplicated: the lease writes it into the claim, and `composition-passes.ts` decides from
+     it which outbound passes are composed at all. */
+  const organizerKind: OrganizerKind = config.organizerKind ?? "local";
   /* Before any door is mounted: an unreadable heartbeat window is a refusal to start, not a
      value to fall back from — unlike the host knobs below, which degrade. */
   const heartbeatTimeoutMs = resolveHeartbeatTimeoutMs(config);
@@ -1901,7 +1921,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // Rebuilt per request so the AI slots reflect what this install can do NOW — see
       // `localServices`. `openLocalSend` (below) is the send transport, resolving the sealed
       // credential fresh per send.
-      services: localServices(authConfig, keyProvider, world.accountId, openLocalSend, unsubscribe, ai),
+      services: localServices(
+        authConfig, keyProvider, world.accountId, openLocalSend, unsubscribe, organizerKind, ai,
+      ),
       // BEARER ONLY. There is no browser here, so there is no ambient cookie to abuse — and with
       // `via` structurally unable to be "cookie", `withCsrf` becomes a no-op by construction
       // rather than by a check. Same posture as `api.ohmail.app`.
@@ -2079,7 +2101,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           "process has no machine name of its own to fall back to",
       );
     }
-    const organizerKind: OrganizerKind = config.organizerKind ?? "local";
     const machineName = config.machineName ?? hostname();
     /** Every mailbox this install runs, oldest first. See `roster.ts`. */
     const runtimes = new LocalRoster();
@@ -2493,7 +2514,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       ...depsFor(),
       authConfig: hostAuthConfig,
       services: {
-        ...localServices(hostAuthConfig, keyProvider, world.accountId, openLocalSend, unsubscribe, ai),
+        ...localServices(
+          hostAuthConfig, keyProvider, world.accountId, openLocalSend, unsubscribe, organizerKind,
+          ai,
+        ),
         sendSurfaceMaxTotalBytes: HOST_SEND_MAX_TOTAL_BYTES,
       },
       hello: {
@@ -4963,6 +4987,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         return false;
       };
 
+      /** Has this runtime already said it composes no scheduled-send pass? See `sendScheduled`. */
+      let noAppointmentsLogged = false;
+
       /**
        * KEEP THE SEND-LATER APPOINTMENTS THIS INSTALL MADE (mail 0077) — the standalone door's
        * copy of the clock the hosted deployment runs on the API host every minute.
@@ -4988,6 +5015,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        *   this install's to make, and the closure's binding is exactly the thing that moves.
        */
       const sendScheduled = async (gen: number, conn: MailboxAdapter): Promise<void> => {
+        /* ── AND NOT ON A COMPOSITION THAT KEEPS NO APPOINTMENTS ──────────────────────────────
+         *
+         * `composition-passes.ts` decides; a phone is the composition it excludes. The refusal is
+         * HERE rather than at the drain's call site because `reader-drain.test.ts` reads that line
+         * literally (`if (organizer.organizing) await sendScheduled(...)`) to prove the pass stays
+         * organizer-only, and a second conjunct there would retire that guard silently.
+         *
+         * Once per runtime, not once per drain: a line on every poll would bury the one that says
+         * something happened. `runScheduledSendPass` is never entered, so nothing is claimed. */
+        if (!runsPass(organizerKind, "scheduled-send")) {
+          if (!noAppointmentsLogged) {
+            noAppointmentsLogged = true;
+            log("scheduled_send_pass_not_composed", {
+              kind: organizerKind,
+              reason: "this install keeps no send-later appointments, so no due appointment was "
+                + "claimed or sent on this drain and none will be; the schedule verb refuses to "
+                + "make one here, and mail keeps arriving",
+            });
+          }
+          return;
+        }
         try {
           const r = await runScheduledSendPass(db as never, {
             /* ── THE PASS STOPS IF THIS MAILBOX STOPS BEING OURS WHILE IT RUNS ─────────────
