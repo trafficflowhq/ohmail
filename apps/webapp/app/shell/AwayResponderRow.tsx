@@ -146,6 +146,12 @@ export const AWAY_COPY = {
    * end, arriving one layer above the write.
    */
   asked: "Not saved here — the machine that organizes this mailbox applies it on its next pass.",
+  /**
+   * AND THE ANSWER TO IT. The pane keeps re-reading the row while `asked` stands; when the other
+   * install has taken the edit the controls already show what it stored, so the sentence has to
+   * stop saying the request is waiting. An away request that has landed is not still pending.
+   */
+  applied: "The machine that organizes this mailbox has applied it.",
   failed: "That did not save. Nothing changed.",
   incomplete: "Add a message before turning this on.",
   unreachable: "Your away settings could not be read just now. Nothing here has changed.",
