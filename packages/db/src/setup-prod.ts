@@ -135,15 +135,13 @@ export interface ProdSetupReport {
     effective: number;
   } | null;
   /**
-   * The verdict from OUTSIDE: what the host's Data API answered to the PUBLIC anon key, after
-   * the grant half ran. `null` when the host is not Supabase-shaped (nothing to serve), or when
-   * the caller supplied no {@link ProdSetupOptions.dataApi} policy at all — the second case is
-   * announced in the log, because a database-only pass is not a verdict about a hosted endpoint.
-   *
-   * On a Supabase-shaped host with a policy this is fail-closed twice over: a relation that
-   * ANSWERS joins `problems`, and so does one whose answer proves nothing (an unreachable
-   * endpoint, a rate limit, or a key the gateway rejected before any table was consulted). See
-   * `classifyDataApiResponse` for why the second case cannot be counted as a refusal.
+   * The verdict from OUTSIDE: what the host's Data API answered to the PUBLIC anon key, after the
+   * grant half ran. `null` when the host is not Supabase-shaped, or when the caller supplied no
+   * {@link ProdSetupOptions.dataApi} policy — the second case is announced in the log, because a
+   * database-only pass is not a verdict about a hosted endpoint. On a Supabase-shaped host with a
+   * policy this is fail-closed twice over: a relation that ANSWERS joins `problems`, and so does
+   * an answer that proves nothing (an unreachable endpoint, a rate limit, a key the gateway
+   * rejected before any table was consulted). See `classifyDataApiResponse`.
    */
   supabaseDataApi: {
     /** The base URL probed. */
@@ -226,19 +224,14 @@ export function assertSessionUrl(url: string | undefined): string {
 export const PROD_DB_HOST_ENV = "TF_PROD_DB_HOST";
 
 /**
- * Refuse to touch a database that is not the one the operator MEANT.
- *
- * `assertSessionUrl` only rules out the pooler: every other direct Postgres URL was
- * accepted and then MIGRATED — schema DDL and `CREATE EXTENSION` — before the report ever
- * said which server had been reached. A stale `DATABASE_URL_SESSION` in a shell, a copied
- * staging string, or a `.env` from another project were all one command away from silently
- * provisioning the wrong database, and the identity was only visible AFTER the writes.
- *
- * So the CLI requires {@link PROD_DB_HOST_ENV} and compares it to the URL's hostname
- * (case-folded, exact — not a substring, so `db.example.com` cannot satisfy
- * `evil-db.example.com`). A mismatch throws BEFORE any connection is opened. The
- * programmatic entry point takes it as an option so tests and throwaway databases are
- * unaffected.
+ * Refuse to touch a database that is not the one the operator MEANT. `assertSessionUrl` only
+ * rules out the pooler: every other direct Postgres URL was accepted and then MIGRATED before the
+ * report said which server had been reached — a stale `DATABASE_URL_SESSION`, a copied staging
+ * string, or another project's `.env` were one command from silently provisioning the wrong
+ * database. So the CLI requires {@link PROD_DB_HOST_ENV} and compares it to the URL's hostname —
+ * case-folded, exact, not a substring, so `db.example.com` cannot satisfy `evil-db.example.com`.
+ * A mismatch throws BEFORE any connection is opened. The programmatic entry point takes it as an
+ * option, so tests are unaffected.
  */
 export function assertExpectedHost(url: string, expectedHost: string | undefined): string {
   if (!expectedHost || expectedHost.trim() === "") return url;
@@ -374,18 +367,15 @@ export async function setupProdDatabase(
   let before: AppliedWhens;
   let hostRoles: string[];
   try {
-    // NEUTRALIZE THE ROLE'S SERVER-SIDE DEFAULTS BEFORE ANY WORK ON THIS SESSION. Once
-    // `ROLE_DEFAULT_TIMEOUTS` is applied below, EVERY future connection under this role —
-    // including this one, and every one after it — starts with a 55 s statement ceiling, a 30 s
-    // LOCK-WAIT ceiling, and a 60 s idle-in-transaction ceiling. `ensureWithheldProvenanceIndex`
-    // a few lines down runs a `CREATE INDEX CONCURRENTLY` over the schema's largest table
-    // specifically because a migration-time index build must not hold a write lock — it is
-    // exactly the kind of multi-minute statement a request-scoped default is sized to kill, and
-    // under real production contention the wait to even START that build could exceed 30 s on
-    // its own (found by review: the first version of this neutralization reset only the
-    // statement/idle ceilings and left `lock_timeout` inherited). This session (and the
-    // provisioning session below) must run under NO ceiling on any of the three, forever, not
-    // only on the run that first sets the role default.
+    // Neutralize the role's server-side defaults before any work on this session. Once
+    // `ROLE_DEFAULT_TIMEOUTS` is applied below, EVERY future connection under this role starts
+    // with a 55 s statement ceiling, a 30 s lock-wait ceiling and a 60 s idle-in-transaction
+    // ceiling. `ensureWithheldProvenanceIndex` a few lines down runs a `CREATE INDEX
+    // CONCURRENTLY` over the schema's largest table — exactly the multi-minute statement a
+    // request-scoped default is sized to kill, and under real contention the wait to even START
+    // could exceed 30 s (the first version reset only two of the three and left `lock_timeout`
+    // inherited). This session and the provisioning session below must run under NO ceiling on
+    // any of the three, forever, not only on the run that first sets the default.
     await pre.unsafe(`set statement_timeout = 0`);
     await pre.unsafe(`set lock_timeout = 0`);
     await pre.unsafe(`set idle_in_transaction_session_timeout = 0`);
@@ -407,19 +397,15 @@ export async function setupProdDatabase(
     );
     before = await readAppliedWhens(preDb);
 
-    // ── THE FIRST LOCKDOWN PASS RUNS BEFORE THE FIRST MIGRATION STATEMENT ──────────────────
-    //
-    // Migrations commit PER JOURNAL: the mail journal can land and the cloud pass throw, and a
-    // lockdown that only ran after both would then never run — this invocation would exit with
-    // committed public tables granted to anon behind the host's independently-running
-    // PostgREST, exposed until the operator's retry. So on a Supabase-shaped host the batch is
-    // applied HERE first (it revokes what exists and drops the default-privilege rules, so
-    // nothing this run creates is granted away at CREATE time), and applied again after the
-    // migrations, where the census is taken and the fail-closed verdict is made.
-    //
-    // The skip on a plain Postgres is safe BY CONSTRUCTION, not by assumption: the exposure is
-    // a privilege granted TO one of the host roles, and Postgres cannot record a grant to a
-    // role that does not exist. See `supabaseHostRoles`.
+    // The first lockdown pass runs BEFORE the first migration statement. Migrations commit PER
+    // JOURNAL: the mail journal can land and the cloud pass throw, and a lockdown that only ran
+    // after both would then never run — this invocation would exit with committed public tables
+    // granted to anon behind the host's independently-running PostgREST, exposed until the
+    // operator's retry. So on a Supabase-shaped host the batch is applied HERE first (it revokes
+    // what exists and drops the default-privilege rules, so nothing this run creates is granted
+    // away at CREATE time), and applied again after the migrations, where the census is taken.
+    // The skip on plain Postgres is safe BY CONSTRUCTION: the exposure is a privilege granted TO
+    // a host role, and Postgres cannot record a grant to a role that does not exist.
     hostRoles = await supabaseHostRoles(pre);
     if (hostRoles.length === 0) {
       log("supabase lockdown skipped: no anon/authenticated/service_role roles on this host (plain Postgres — no Data API to close)");
@@ -432,17 +418,14 @@ export async function setupProdDatabase(
       await applySupabaseLockdown(pre, hostRoles);
     }
 
-    // ── MAIL 0071's INDEX, BUILT CONCURRENTLY BEFORE THE MIGRATOR CAN BUILD IT BLOCKING ────
-    //
-    // The standing rule (0047_read_order's, restated when the away responder's candidate index
-    // was deferred for exactly this reason): a plain CREATE INDEX
-    // over the schema's largest table never runs as a journal statement — it blocks writes for
-    // the length of the build, and CONCURRENTLY cannot run inside the migrator's transaction.
-    // Mail 0071 carries the statement with IF NOT EXISTS, so building it HERE first — on this
-    // autocommit session connection, without a write lock — turns the journal statement into a
-    // no-op for exactly the population at risk: an existing install with a large mailbox
-    // upgrading past 0071. See `ensureWithheldProvenanceIndex` for the three populations and
-    // the invalid-leftover cleanup.
+    // Mail 0071's index, built CONCURRENTLY before the migrator can build it blocking. The
+    // standing rule: a plain CREATE INDEX over the schema's largest table never runs as a journal
+    // statement — it blocks writes for the length of the build, and CONCURRENTLY cannot run
+    // inside the migrator's transaction. Mail 0071 carries the statement with IF NOT EXISTS, so
+    // building it HERE first — on this autocommit session, without a write lock — turns the
+    // journal statement into a no-op for exactly the population at risk: an existing install with
+    // a large mailbox upgrading past 0071. See `ensureWithheldProvenanceIndex` for the three
+    // populations and the invalid-leftover cleanup.
     log("ensuring the withheld-provenance index (concurrently, ahead of the migrator)");
     await ensureWithheldProvenanceIndex(preDb, { log: (m) => log(m) });
   } finally {
@@ -546,20 +529,15 @@ export async function setupProdDatabase(
       };
     }
 
-    // ── THE SUPABASE DATA API LOCKDOWN'S SECOND PASS, AND THE CENSUS THAT IS THE VERDICT ──
-    //
-    // A stock Supabase project grants every table in `public` to `anon`/`authenticated`/
-    // `service_role` at CREATE time and serves them over PostgREST to the anon key — a PUBLIC
-    // key. The lockdown that closes that lived only in a hand-run CLI
-    // (`supabase-lockdown.ts`), so this function could provision a database that every test
-    // called green while the whole schema was world-readable. Same shape as the fuzzy arm:
-    // nothing inside the migrator can see it, so it is welded in and VERIFIED rather than
-    // assumed — the first pass ran BEFORE the migrations (see the pre block for the failure
-    // window that ordering closes); this one runs after them, so the census covers every
-    // table this very invocation created. Both passes are idempotent (a REVOKE of a privilege
-    // nobody holds is a no-op — the managed database, locked down by hand at cutover,
-    // re-verifies here), and the census joins `problems`, so an open grant refuses the whole
-    // setup instead of riding out under an OK report.
+    // The Supabase Data API lockdown's second pass, and the census that is the verdict. A stock
+    // project grants every table in `public` to the host roles at CREATE time and serves them
+    // over PostgREST to the anon key — a PUBLIC key. The lockdown lived only in a hand-run CLI,
+    // so this function could provision a database every test called green while the whole schema
+    // was world-readable. Same shape as the fuzzy arm: nothing inside the migrator can see it, so
+    // it is welded in and VERIFIED — the first pass ran BEFORE the migrations; this one runs
+    // after, so the census covers every table this invocation created. Both passes are
+    // idempotent, and the census joins `problems`, so an open grant refuses the whole setup
+    // instead of riding out under an OK report.
     let supabaseLockdown: ProdSetupReport["supabaseLockdown"] = null;
     let lockdownVerdict: Awaited<ReturnType<typeof lockdownCensus>> | null = null;
     if (hostRoles.length > 0) {
@@ -580,18 +558,15 @@ export async function setupProdDatabase(
       );
     }
 
-    // ── AND THE HALF THE CENSUS CANNOT SEE: the endpoint, probed from outside ──────────────
-    //
-    // The census proves the ACLs are gone. It does NOT prove the product is safe: the whole
-    // reason this exposure shipped once is that two internal checks read clean while a public
-    // key was reading every table over the host's Data API. So on a Supabase-shaped host the
-    // provisioning path now closes the endpoint (when it holds Management-API credentials) and
-    // then asks the endpoint itself, with the same public key an attacker would use. A 2xx is
-    // a failure; so is an answer that proves nothing. Both join `problems`.
-    //
-    // The probe runs LAST, after the census: every table this invocation created exists by
-    // now, and the grants that would have made them readable are already revoked, so a 2xx
-    // here is a live exposure and not a race with our own migration.
+    // And the half the census cannot see: the endpoint, probed from OUTSIDE. The census proves
+    // the ACLs are gone; it does not prove the product is safe — this exposure shipped once while
+    // two internal checks read clean and a public key was reading every table over the Data API.
+    // So on a Supabase-shaped host the provisioning path closes the endpoint (when it holds
+    // Management-API credentials) and then asks the endpoint itself, with the same public key an
+    // attacker would use. A 2xx is a failure; so is an answer that proves nothing. Both join
+    // `problems`. The probe runs LAST, after the census: every table this invocation created
+    // exists by now and its grants are already revoked, so a 2xx is a live exposure, not a race
+    // with our own migration.
     const dataApiProblemLines: string[] = [];
     let supabaseDataApi: ProdSetupReport["supabaseDataApi"] = null;
     if (hostRoles.length > 0) {

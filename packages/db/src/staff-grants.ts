@@ -47,35 +47,14 @@
 export const STAFF_ROLE = "ohmail_admin";
 
 /**
- * IS THE COLUMN-RESTRICTED ROLE LIVE IN PRODUCTION? — and the copy this word makes false the
- * day it flips.
- *
- * `scripts/harden-staff-role.sql` is a hand-run script; nothing provisions `ohmail_admin`
- * automatically, so today the database does NOT refuse mail columns to staff tooling — the
- * isolation is an APPLICATION property, and the FAQ and the privacy policy say exactly that,
- * in the honest direction. Two published claims rest on it:
- *
- *  · `apps/webapp/messages/en.json` q5 (a5): *"built and tested but not yet live"*, *"the
- *    database itself does not yet refuse those columns"*.
- *  · the product privacy policy, §5: *"not yet provisioned on our production
- *    database"*, *"an enforced property of the application, not of the database"*.
- *
- * The DAY `ohmail_admin` is provisioned in production BOTH become false-by-understatement — the
- * protection is now database-enforced and the copy still disclaims it. Claims are contracts:
- * a statement a shipping change makes false is fixed in the SAME change.
- *
- * So this flag is the provisioning DECLARATION, and flipping it to `true` is coupled to the
- * copy edit by two mechanisms, neither of them manual discipline:
- *
- *  1. `test/staff-role-copy-gate.test.ts` FAILS the build unless the flag and the
- *     two copy sites agree — false ⇒ the copy must still disclaim; true ⇒ the disclaimers must
- *     be gone. It is bidirectional, so neither the flag nor the copy can move without the other.
- *  2. `packages/db/src/provision-staff-role.ts` REFUSES `--apply` while this is `false`, so the
- *     production provisioning run itself cannot happen until the flag (and therefore the copy)
- *     has been updated in the same commit.
- *
- * Leave it `false` until the deploy that actually provisions the role, and flip it in that
- * deploy's commit alongside the two copy edits — never ahead of them, never after.
+ * Is the column-restricted role LIVE in production? — and the copy this word makes false the day
+ * it flips. The harden script is hand-run; nothing provisions `ohmail_admin` automatically, so
+ * today the isolation is an APPLICATION property, and the FAQ and privacy policy say exactly
+ * that. The day the role is provisioned, both become false-by-understatement. Claims are
+ * contracts: a statement a shipping change makes false is fixed in the SAME change. Two
+ * mechanisms couple the flag to the copy: `test/staff-role-copy-gate.test.ts` fails unless the
+ * flag and the two copy sites agree, and `provision-staff-role.ts` refuses `--apply` while this
+ * is `false`. Flip it in the deploy that provisions the role — never ahead, never after.
  */
 export const STAFF_ROLE_LIVE_IN_PRODUCTION = false;
 
@@ -88,80 +67,51 @@ export const STAFF_ROLE_LIVE_IN_PRODUCTION = false;
 export const STAFF_SCHEMAS = ["public", "admin"] as const;
 
 /**
- * EVERY relation schema `admin` may contain — the provisioning script's §12b census, widened
- * from one view to exactly two.
- *
- * `admin` is the schema `scripts/harden-staff-role.sql` creates, and it is FIRST on the staff
- * role's `search_path`. A review finding is why the census exists at all: a view reads its base
- * tables with the VIEW OWNER's privileges, so an `admin.mail_preview` over
- * `messages(subject, from_address)` answers with mail while every column grant in the script
- * stays exactly as narrow as it reads. Anything in this schema that nobody reviewed is a
- * content path around the whole slice, and it also SHADOWS the `public` relation of the same
- * name for this role.
- *
- * So the rule is an equality, not a subset: schema `admin` holds these relations and no
- * others. Three consumers, one list — the script's own §12b (which cannot import TypeScript
- * and therefore states it a second time, deliberately), the pre-flight in
- * `provision-staff-role.ts`, and the pg guard.
- *
- *  · `audit_log`     — `WHERE action LIKE 'admin.%'`, four named scalars, no jsonb bag.
+ * Every relation schema `admin` may contain — the provisioning script's §12b census. `admin` is
+ * the schema the harden script creates, FIRST on the staff role's `search_path`. The census
+ * exists because a view reads its base tables with the VIEW OWNER's privileges: an
+ * `admin.mail_preview` over message columns answers with mail while every column grant stays as
+ * narrow as it reads — anything here nobody reviewed is a content path around the whole boundary,
+ * and it SHADOWS the `public` relation of the same name. The rule is an EQUALITY: schema `admin`
+ * holds these relations and no others. Three consumers, one list: the script's own §12b (which
+ * cannot import TypeScript and states it again, deliberately), the pre-flight, and the pg guard.
  */
 export const STAFF_ADMIN_VIEWS = ["audit_log"] as const;
 
 /**
- * Every column `ohmail_admin` may SELECT, keyed `schema.relation`.
- *
- * This is the SECOND independent statement of what `scripts/harden-staff-role.sql` grants —
- * deliberately spelled out rather than derived from the script, so that a diff in either one
- * is visible. Adding a column here without adding it to the script fails the pg guard's
- * strict-equality census; adding it to the script without adding it here fails the guard AND
- * refuses to boot. Both failures name the column.
- *
- * The rationale for each omission lives in the script, beside the GRANT it omits it from. Two
- * things are worth repeating here because they are the ones a future reader will want to "just
- * add": `messages.subject_tsv` reconstructs `subject` and `from_address` out of its lexemes,
- * and — since the row-existence finding below — the whole of `messages`, `change_log`, `folder_state` and `flag_state`,
- * whose absence is a ROW-EXISTENCE finding rather than a column one and therefore cannot be
- * partially conceded. See the block above `public.accounts`.
+ * Every column `ohmail_admin` may SELECT, keyed `schema.relation`. The SECOND independent
+ * statement of what the harden script grants — spelled out rather than derived, so a diff in
+ * either is visible: a column added here without the script fails the pg guard's strict-equality
+ * census; the script without here fails the guard AND refuses to boot. The rationale for each
+ * omission lives in the script. Two worth repeating: `messages.subject_tsv` reconstructs
+ * `subject` and `from_address` out of its lexemes, and the whole of `messages`, `change_log`,
+ * `folder_state` and `flag_state` are absent as a ROW-EXISTENCE finding, which cannot be
+ * partially conceded — see the block above `public.accounts`.
  */
 export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = {
-  // ── `public.messages` IS ABSENT, AND THE ABSENCE IS THE POINT (a row-existence oracle) ───
-  //
-  // It used to read `"public.messages": ["id", "mailbox_id"]` — a primary key and a foreign
-  // key, the narrowest grant in the file, recorded during provisioning as a POSITIVE result.
-  // The security review read the same line as the vulnerability and was right:
-  //
-  //   > … reads the current `messages.id` set (or just `count(*)`) for that `mailbox_id`. It
-  //   > sends the chosen probe carrying the candidate RFC822 Message-ID, polls the same query,
-  //   > and observes a new message row in that mailbox.
-  //
-  // The information is in the ROW'S EXISTENCE, not in a column, and `count(*)` names no column
-  // — so no narrower column list closes it and only the absence of the relation does. The same
-  // sentence retires `public.change_log`, `public.folder_state` and `public.flag_state`:
-  // each is one row per message or per mutation, carrying a joinable id and an event time.
-  //
-  // Do not re-add any of the four to serve a console field. The three fields they served
-  // (`MailboxHealth.pendingMoves`, `.oldestPendingMoveSeconds`, `AccountSummary.lastActivityAt`)
-  // are now the honest nothing, and `packages/services/src/admin-service.ts` carries the whole
-  // argument for why a bucketed replacement view cannot be built above a population of one
-  // account and where the real replacement belongs.
+  // `public.messages` is ABSENT, and the absence is the point — a row-existence oracle. It used
+  // to read `["id", "mailbox_id"]`, the narrowest grant in the file, and that exact line was the
+  // vulnerability: read the row set (or `count(*)`) for a mailbox, send a probe carrying a
+  // candidate Message-ID, poll, and observe a new row — delivery confirmed to a named mailbox.
+  // The information is in the ROW'S EXISTENCE, not a column, and `count(*)` names no column, so
+  // no narrower list closes it; only the absence of the relation does. The same sentence retires
+  // `public.change_log`, `public.folder_state` and `public.flag_state`: each is one row per
+  // message or mutation with a joinable id and an event time. Do not re-add any of the four to
+  // serve a console field — the fields they served are now the honest nothing, and
+  // `admin-service.ts` carries the argument for where the real replacement belongs.
   "public.accounts": ["id", "name", "ai_enabled", "created_at"],
   "public.users": [
     "id", "account_id", "email", "display_name", "email_verified_at", "created_at",
   ],
-  // `sync_blocked_reason` / `sync_blocked_since` (mail 0029) are the only thing that can explain a
-  // `connected` mailbox with a growing `sync_lag` — a state an operator otherwise stares at with
-  // no explanation — so the console projects them as a bucket distinct from `lastError`, and this
-  // census has to name them or `assertContentBlind` refuses the very grant the console needs.
-  //
-  // They are the SAFEST columns on this list to hand staff: a CLOSED set of three
-  // (`MAILBOX_SYNC_BLOCK_REASONS`) behind a CHECK constraint, so unlike `error_detail` — whose
-  // safety rests on an allowlist applied at the write site — no value a mail server chose can reach
-  // this column at all.
-  //
-  // `disabled_reason` and `takeover_authorized_at` (mail 0027) are deliberately still ABSENT:
-  // `admin-service.ts` does not project them, and this list is what the console reads, not what the
-  // table holds. Add them in the diff that adds the projection.
+  // `sync_blocked_reason` / `sync_blocked_since` (mail 0029) are the only thing that can explain
+  // a `connected` mailbox with a growing `sync_lag` — a state an operator otherwise stares at
+  // with no explanation — so the console projects them as a bucket distinct from `lastError`, and
+  // this census must name them or `assertContentBlind` refuses the very grant the console needs.
+  // The SAFEST columns on this list: a CLOSED set behind a CHECK constraint, so unlike
+  // `error_detail` — whose safety rests on a write-site allowlist — no value a mail server chose
+  // can reach the column at all. `disabled_reason` and `takeover_authorized_at` are deliberately
+  // still ABSENT: `admin-service.ts` does not project them, and this list is what the console
+  // reads, not what the table holds. Add them in the diff that adds the projection.
   "public.mailboxes": [
     "id", "account_id", "provider", "address", "created_at", "display_name", "status",
     "last_sync_at", "auth_kind", "error_code", "error_detail", "failed_at", "retry_count",
@@ -197,22 +147,16 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // timestamp — nothing derived from what any message says. Granted because the alert pass
   // runs on this role and its `storage_at_cap` rule counts this table.
   "public.account_storage": ["account_id", "bytes", "updated_at"],
-  // ── FUNNEL TOP — invite/waitlist DATES ONLY, so the admin console can see the signup funnel
-  //    on an invite-only beta (task: admin funnel). Both tables were fully un-granted before,
-  //    and the ONLY reason they are named now is that their whole point — how many invites are
-  //    outstanding, how many people are waiting — is invisible without a count.
-  //
-  //    THE HARD BOUNDARY: these are COUNTS AND DATES, and no PII column is granted, not now and
-  //    not "just the domain", ever. `invites.email` is the binding address of someone who is not
-  //    a customer yet; `invites.code_hash` is a live invite secret; `waitlist.email` is a
-  //    prospect's address; `waitlist.tier`/`source`/`note`/`issued_by`/`revoked_by`/`revoked_reason`
-  //    are all either free text or identity and none is projected by the funnel. Every one of
-  //    them is ABSENT here, and `staff-role.pg.test.ts` proves `invites.email` and `waitlist.email`
-  //    still raise 42501 — the guard that keeps a later hand from widening this to PII.
-  //
-  //    `consumed_at` is the "accepted" date (an invite is accepted when it is consumed). The
-  //    funnel reads issued/consumed/revoked as counts to show outstanding invites; it never
-  //    joins these rows to an account or a person.
+  // Funnel top — invite/waitlist DATES ONLY, so the console can see the signup funnel on an
+  // invite-only beta. Both tables were fully un-granted; the only reason they are named now is
+  // that their whole point — how many invites outstanding, how many waiting — is invisible
+  // without a count. THE HARD BOUNDARY: counts and dates, and no PII column is granted, not now
+  // and not "just the domain", ever. `invites.email` is the binding address of someone who is not
+  // a customer yet; `invites.code_hash` is a live invite secret; `waitlist.email` is a prospect's
+  // address; the free-text and identity columns are all absent, and `staff-role.pg.test.ts`
+  // proves the two email columns still raise 42501 — the guard that keeps a later hand from
+  // widening this to PII. `consumed_at` is the "accepted" date; the funnel reads counts and never
+  // joins these rows to a person.
   "public.invites": ["created_at", "consumed_at", "revoked_at"],
   "public.waitlist": ["created_at", "invited_at"],
   "public.worker_heartbeats": [
@@ -251,38 +195,25 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     // nothing but "a page for this key is in flight until then". Same three-place decision,
     // same reason: the claim's SELECT and UPDATE both name it.
     "claimed_until",
-    // ── THE INCIDENT/SIGNAL SPLIT (cloud 0030) ───────────────────────────────────────────
-    //
-    // `cls` decides DELIVERY, so the blind role must read AND write it for the same reason
-    // `notified_signature` is here: the API driver runs the whole pass over exactly this role,
-    // and a grant list without the column is 42501 on every external pass — the pager's second
-    // arm dying the moment the column ships.
-    //
-    // `affected_accounts` is a COUNT and `fix_href` is an internal console path this repository
-    // composes (`/worker`, `/accounts/<uuid>`). Neither is derived from what any message says:
-    // the count comes from the same grouped queries the rules already run, and the path is a
-    // literal with an id interpolated into it. The console renders both, so both are granted.
-    // `title` and `count` (cloud 0030) are what the RULE said — a sentence this repository
-    // composes from counts and ages in `alerts.ts`, and an integer. Granted because the console
-    // renders both, and persisted because two rules are driver-keyed and one role-keyed, so a
-    // blind read can only ever get them from the row. Neither is derived from anything a message
-    // carried; the table's own header rules mail content out of every field.
+    // The incident/signal split (cloud 0030). `cls` decides DELIVERY, so the blind role must read
+    // AND write it, for `notified_signature`'s reason: the API driver runs the whole pass over
+    // exactly this role, and a grant list without the column is 42501 on every external pass —
+    // the pager's second arm dying the moment the column ships. `affected_accounts` is a COUNT
+    // and `fix_href` is an internal console path this repository composes; neither derives from
+    // what any message says. `title` and `count` are what the RULE said — a sentence composed
+    // from counts and ages in `alerts.ts`, and an integer — granted because the console renders
+    // both, persisted because two rules are driver-keyed and one role-keyed, so a blind read can
+    // only get them from the row.
     "cls", "affected_accounts", "fix_href", "title", "count",
   ],
-  // ── THE ALERTING'S OWN PULSE (cloud 0030) ─────────────────────────────────────────────────
-  //
-  // Granted WHOLE, and there is nothing on the table that could not be: a driver word from a
-  // two-value CHECK, a timestamp and four counts. No `account_id` and no possibility of one —
-  // the row is a fact about a PROCESS.
-  //
-  // The blind role writes this table as well as reading it, on `alert_state`'s exact argument:
-  // the API host's driver runs its pass over this role, and its pass is one of the two whose
-  // absence the paired rule exists to notice. A read-only grant would mean the arm that is
-  // hardest to observe is the one that never records itself.
-  //
-  // `failed_sinks` is a COUNT, deliberately not the names: a sink name is a vendor endpoint's
-  // identity, it belongs in the log line where a drain gates it, and no operator screen needs it
-  // to learn that the pager is being refused.
+  // The alerting's own pulse (cloud 0030). Granted WHOLE, and there is nothing on the table that
+  // could not be: a driver word from a two-value CHECK, a timestamp and four counts — no
+  // `account_id` and no possibility of one; the row is a fact about a PROCESS. The blind role
+  // writes this table as well as reading it, on `alert_state`'s exact argument: the API host's
+  // driver runs its pass over this role, and its pass is one of the two whose absence the paired
+  // rule exists to notice — a read-only grant would mean the arm hardest to observe is the one
+  // that never records itself. `failed_sinks` is a COUNT, deliberately not the names: a sink name
+  // is a vendor endpoint's identity and belongs in the log line where a drain gates it.
   "public.alert_pass_runs": [
     // `sinks_configured` is a COUNT of arms, never their names — a sink name is a vendor
     // endpoint's identity and belongs in the log line where a drain gates it. Zero is the
@@ -290,17 +221,13 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     "driver", "ran_at", "firing", "delivered", "failed_sinks", "sink_failure_streak",
     "sinks_configured",
   ],
-  // ── WHAT THE PLATFORM SERVED (cloud 0030) ─────────────────────────────────────────────────
-  //
-  // Granted whole for `platform_costs`'s reason one table over: this is what a VENDOR did, not
-  // what a customer did. `project` is a deployment name this repository chooses (`ohmail-api`);
-  // `requests` and `errors_5xx` are counts of HTTP requests to that deployment, with no path, no
-  // query string, no address and no request id — the poller's projection drops every one of
-  // those at the adapter, and none of them reaches a column here.
-  //
-  // No `account_id`, and there cannot be one: an HTTP request to the API host is not attributable
-  // to an account at the platform's log store, and this table would be the wrong place to make it
-  // so if it were.
+  // What the platform served (cloud 0030). Granted whole for `platform_costs`'s reason one table
+  // over: this is what a VENDOR did, not what a customer did. `project` is a deployment name this
+  // repository chooses; `requests` and `errors_5xx` are counts of HTTP requests with no path, no
+  // query string, no address and no request id — the poller's projection drops every one of those
+  // at the adapter. No `account_id`, and there cannot be one: an HTTP request to the API host is
+  // not attributable to an account at the platform's log store, and this table would be the wrong
+  // place to make it so.
   "public.platform_signals": [
     "provider", "project", "window_start", "requests", "errors_5xx", "truncated", "fetched_at",
     // WHICH cause made a bucket a sample (cloud 0030). A closed vocabulary of six words this
@@ -331,47 +258,26 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
 };
 
 /**
- * Every TABLE-level privilege `ohmail_admin` may hold, keyed `schema.relation`.
- *
- * `has_table_privilege` deliberately ignores column-level grants (verified on PG 16), so a
- * `SELECT` row in the census means somebody wrote `GRANT SELECT ON <table>` without a column
- * list — the exact "for support" incident the script exists to undo, and the one that would
- * silently extend to whatever column the next migration adds. It is allowed on precisely the
- * two VIEWS in {@link STAFF_ADMIN_VIEWS}, whose column lists are fixed by their own
- * definitions and cannot grow when a migration adds a column to a base table.
- *
- * `alert_state` is the one table this role writes, and `DELETE` is the ONLY table-level verb it
- * may hold on it. THE VERB'S USER CHANGED AND THIS PARAGRAPH DID NOT, so it is worth being exact:
- * resolution no longer deletes — it marks `resolved_at`, which is an UPDATE — and the single
- * remaining user of DELETE is the TOMBSTONE PRUNE, which drops resolved rows once they are older
- * than any live pass could need and outside the newest few. Without `DELETE` that prune raises
- * 42501 and the table grows without limit; Postgres has no column-scoped DELETE, so the verb has
- * nowhere narrower to go.
- *
- * INSERT and UPDATE moved to {@link STAFF_SELECT_GRANTS}'s eight columns and are therefore
- * ABSENT here on purpose. The table-level pair granted nothing extra today (the SELECT list
- * already names every column the table has) and everything tomorrow: the next migration to add a
- * column would make it writable by this blind role automatically while leaving it unreadable.
- * Because this census is an equality in both directions, a re-widened `GRANT INSERT ON
- * public.alert_state` now FAILS rather than being silently permitted.
+ * Every TABLE-level privilege `ohmail_admin` may hold. `has_table_privilege` deliberately ignores
+ * column-level grants, so a `SELECT` row in the census means somebody wrote `GRANT SELECT ON
+ * <table>` without a column list — the exact "for support" incident the script exists to undo,
+ * and one that silently extends to whatever column the next migration adds. Allowed on precisely
+ * the views in {@link STAFF_ADMIN_VIEWS}, whose column lists are fixed by their definitions.
+ * INSERT and UPDATE moved to {@link STAFF_SELECT_GRANTS}' columns: the table-level pair granted
+ * nothing extra today and everything tomorrow. The census is an equality in both directions, so a
+ * re-widened `GRANT INSERT` now FAILS rather than being silently permitted.
  */
 export const STAFF_TABLE_GRANTS: Readonly<Record<string, readonly string[]>> = {
-  // ── NOTHING. `alert_state` HELD `DELETE` AND NO LONGER DOES ──────────────────────────
-  //
-  // The verb was granted for one caller — resolution, when resolution deleted the row — and then
-  // for the tombstone prune that replaced it. There is no prune any more: the row a delayed pass
-  // fences against is never removed, so nothing in this bundle deletes from this table.
-  //
-  // REVOKING IT IS NOT TIDYING. It is the only thing that stops a PRE-0030 DRIVER, which
-  // migration 0030 explicitly permits to keep running through a rolling deploy, from executing
-  // its old DELETE resolution path over this same role: that delete removes the row a delayed
-  // new-build observation fences on, the observation takes the unfenced INSERT branch, and the
-  // resolved incident pages again. A capability nobody uses is still a capability an old bundle
-  // — or a compromised session — can use.
-  //
-  // The cost is stated plainly: an old driver's resolution now raises 42501 and its pass fails
-  // loudly at that step. That is the safe direction. A pass that fails while being replaced is
-  // visible; a fence quietly deleted underneath a running deploy is not.
+  // NOTHING. `alert_state` held `DELETE` and no longer does. The verb was granted for resolution,
+  // when resolution deleted the row, then for the tombstone prune that replaced it. There is no
+  // prune any more: the row a delayed pass fences against is never removed, so nothing in this
+  // bundle deletes from this table. Revoking it is NOT tidying: it is the only thing that stops a
+  // PRE-0030 driver — which the migration explicitly permits to keep running through a rolling
+  // deploy — from executing its old DELETE resolution path over this same role: that delete
+  // removes the row a delayed observation fences on, and the resolved incident pages again. The
+  // cost, stated: an old driver's resolution now raises 42501 and its pass fails loudly at that
+  // step — the safe direction. A pass that fails while being replaced is visible; a fence quietly
+  // deleted underneath a running deploy is not.
   "admin.audit_log": ["SELECT"],
 };
 
@@ -382,22 +288,14 @@ export const STAFF_SCHEMA_GRANTS: Readonly<Record<string, readonly string[]>> = 
 };
 
 /**
- * One row of the census. `kind` says which question was asked; `subject` and `detail` are
- * catalog identifiers only.
- *
- *  · `column`    — `subject` is `schema.relation`, `detail` a column with effective SELECT
- *  · `table`     — `subject` is `schema.relation`, `detail` a table-level privilege verb
- *  · `sequence`  — a sequence privilege. There is no legitimate one.
- *  · `schema`    — `subject` is a schema, `detail` `USAGE` or `CREATE`
- *  · `role`      — `subject` is a role this role is a MEMBER of. There is no legitimate one.
- *  · `attribute` — `subject` is a role attribute that is set and must not be
- *  · `owns`      — `subject` is an application relation this role OWNS
- *  · `secdef`    — `subject` is an executable SECURITY DEFINER routine, which runs as its
- *                  owner and is therefore a hole straight through every grant above
- *  · `session`   — `subject` is `session_user`, `detail` is `current_user`, emitted only when
- *                  they DIFFER. There is no legitimate one: the staff connection logs
- *                  in as `ohmail_admin` directly, and any wrapper arrangement means an
- *                  unprivileged `SET ROLE NONE` recovers the session role's own capabilities
+ * One row of the census. `kind` says which question was asked; `subject` and `detail` are catalog
+ * identifiers only. `column` — effective SELECT; `table` — a table-level verb; `sequence` — a
+ * sequence privilege (no legitimate one); `schema` — `USAGE` or `CREATE`; `role` — membership (no
+ * legitimate one); `attribute` — a role attribute set that must not be; `owns` — an application
+ * relation this role OWNS; `secdef` — an executable SECURITY DEFINER routine, which runs as its
+ * owner and is a hole through every grant above; `session` — `session_user` differing from
+ * `current_user`, emitted only on a mismatch: a wrapper arrangement means an unprivileged `SET
+ * ROLE NONE` recovers the session role's own capabilities.
  */
 export interface StaffCapability {
   readonly kind: string;

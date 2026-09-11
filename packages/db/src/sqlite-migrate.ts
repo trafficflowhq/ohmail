@@ -1,17 +1,12 @@
 /**
- * THE MIGRATOR FOR THE STORE A DEVICE CARRIES — small on purpose, and it reads no files.
- *
- * The server's migrator opens a directory and replays what it finds. That cannot work where this
- * one runs: the bundler that builds the application resolves imports and not directory listings,
- * so a journal read from disk is empty on a device and complete in every test — a difference that
- * only appears on the one machine nobody can attach a debugger to. The journal arrives here as a
- * MODULE instead, and a test holds that module to the directory it was generated from.
- *
- * Each entry is applied inside one transaction, and the row recording it is written in the SAME
- * transaction. A migrator that commits the schema change and then records it can be interrupted
- * between the two, and what it leaves behind is a store that will replay a migration it has
- * already applied — which for a `CREATE TABLE` is a loud failure and for an `INSERT` is silent
- * duplication.
+ * The migrator for the store a device carries — small on purpose, and it reads no files. The
+ * server's migrator replays a directory; that cannot work here: the bundler resolves imports, not
+ * directory listings, so a journal read from disk is empty on a device and complete in every
+ * test. The journal arrives as a MODULE, and a test holds that module to the directory it was
+ * generated from. Each entry is applied inside one transaction, with the row recording it written
+ * in the SAME transaction: committing the schema change and then recording it can be interrupted
+ * between the two, leaving a store that will replay a migration it already applied — loud for a
+ * `CREATE TABLE`, silent duplication for an `INSERT`.
  */
 import { sql } from "drizzle-orm";
 /* THE JOURNAL'S OWN ENTRANCE, not the package barrel. The barrel computes two migration
@@ -41,24 +36,14 @@ export interface SqliteMigrationTarget {
 export const SQLITE_MIGRATIONS_TABLE = "ohmail_sqlite_migrations";
 
 /**
- * Apply every journal entry this store has not seen, oldest first. Returns the ones applied.
- *
- * THE CAPABILITY CHECK LIVES HERE, and not beside each place a store is opened, because this is
- * the one function every opener must call before the store is of any use. Put it in a factory and
- * the next factory does not have it; put it here and a build of SQLite that cannot run this schema
- * is refused before a single statement of it is applied — rather than at the first search, which
- * is where a missing full-text index otherwise surfaces.
- *
- * Foreign keys are enforced from here for the same reason: the schema declares them, and this
- * store ignores them unless the connection asks.
- *
- * ── AND THE PRAGMA IS PER-CONNECTION, WHICH IS A REQUIREMENT ON THE TARGET ────────────────
- *
- * Setting it here covers the connection this migrator runs on and NOTHING ELSE. A target whose
- * `batch` opens a second connection gets a connection with foreign keys OFF, and an
- * orphaned write there commits. This function cannot reach that connection and must not pretend
- * to: {@link SqliteMigrationTarget} states the requirement, and a target that opens connections
- * lazily owes the same initialisation on every one of them.
+ * Apply every journal entry this store has not seen, oldest first; returns the ones applied. The
+ * capability check lives HERE, not beside each opener: this is the one function every opener must
+ * call, so a build of SQLite that cannot run this schema is refused before a single statement —
+ * rather than at the first search, where a missing full-text index otherwise surfaces. Foreign
+ * keys are enforced from here for the same reason: the schema declares them and this store
+ * ignores them unless the connection asks. The pragma is PER-CONNECTION, a requirement on the
+ * target: a target whose `batch` opens a second connection gets foreign keys OFF there, and this
+ * function cannot reach that connection — {@link SqliteMigrationTarget} states the requirement.
  */
 export async function migrateSqlite(
   target: SqliteMigrationTarget,
