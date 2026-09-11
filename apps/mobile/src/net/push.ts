@@ -84,7 +84,7 @@ export interface UnifiedPushDistributor {
   /** Is there a distributor on this device we could register with — chosen AND installed? */
   available(): boolean;
   /**
-   * Ask the distributor for an endpoint, registering with `vapidPublicKey`.
+   * Ask the distributor for an endpoint of `instance`'s own, registering with `vapidPublicKey`.
    *
    * The key is a PARAMETER rather than something the implementation holds, and that is the shape
    * that makes "registered against the wrong server's key" hard to write: the key comes from
@@ -92,11 +92,34 @@ export interface UnifiedPushDistributor {
    * had been constructed with one key could outlive a switch to another. Passing it per call means
    * the key and the server it is sent to are read in the same breath.
    *
+   * ── THE INSTANCE IS WHAT MAKES A REGISTRATION BELONG TO ONE PAIRING ────────────────────────
+   *
+   * This app registered with NO instance, so the connector minted ONE endpoint for the whole
+   * process and every paired server stored its own `push_subscriptions` row against that single
+   * URL. Three consequences, all of them shipped:
+   *
+   *  · a forget told the distributor to unregister — which took the SURVIVING pairings' wakes
+   *    down with it, because there was only ever one registration to unregister;
+   *  · a profile switch had to race the outgoing server's row down, or that server kept POSTing
+   *    wakes to a phone now syncing somebody else (`dropWakeRowOrOwe` exists for this);
+   *  · a delivered wake named no pairing, so it could only ever mean "sync whatever is live".
+   *
+   * The connector is built for this and says so: the `instance` parameter exists "if the app has
+   * an account switcher feature". One instance per PROFILE — `ServerProfile.id`, a locally minted
+   * opaque id and deliberately NOT the account id, because this value is handed to a third-party
+   * distributor app and an account identifier is not ours to give it. Each instance mints its own
+   * endpoint, so each server's row points somewhere different and an unpairing revokes exactly
+   * its own.
+   *
    * `null` means the distributor declined, timed out, or there is none.
    */
-  register(vapidPublicKey: string): Promise<WakeRegistration | null>;
-  /** Tell the distributor to forget this app. Best-effort; a failure is not an error to show. */
-  unregister(): Promise<void>;
+  register(vapidPublicKey: string, instance: string): Promise<WakeRegistration | null>;
+  /**
+   * Drop `instance`'s registration and nothing else. Best-effort; a failure is not an error to
+   * show. REQUIRED, with no default: an unregister that named nothing is how one pairing's forget
+   * silently turned another pairing's wakes off.
+   */
+  unregister(instance: string): Promise<void>;
 }
 
 /**
@@ -110,7 +133,7 @@ export interface UnifiedPushDistributor {
 export const NO_DISTRIBUTOR: UnifiedPushDistributor = {
   available: () => false,
   register: async () => null,
-  unregister: async () => { /* nothing was ever registered */ },
+  unregister: async () => { /* nothing was ever registered, for any instance */ },
 };
 
 /** What the Settings pane needs to know, and the only thing it renders from. */
@@ -195,7 +218,9 @@ export async function registerWake(
 
   let reg: WakeRegistration | null;
   try {
-    reg = await distributor.register(vapidKey);
+    // THE INSTANCE IS THIS PROFILE'S, so the endpoint minted here belongs to this pairing and to
+    // no other. See the port's docblock for the three failures the shared endpoint caused.
+    reg = await distributor.register(vapidKey, session.profile.id);
   } catch {
     return { k: "off", reason: "distributor_refused" };
   }
@@ -283,12 +308,18 @@ export type WakeDrop = { ok: true } | { ok: false; reason: string };
  * TAKE ONE SERVER ROW DOWN, and leave the distributor alone.
  *
  * Split out of {@link forgetWake} for the case that has no other answer: SWITCHING PROFILES.
- * This build holds ONE UnifiedPush registration for the whole app (the connector's default
- * instance), so the endpoint the phone is reachable at is shared by every paired server — and
- * each server stores its own `push_subscriptions` row against it. Leaving profile A's row live
- * while the phone moves to profile B means A's server keeps POSTing wakes to a phone that no
- * longer syncs A, for ever; unregistering the DISTRIBUTOR to stop it would take B's wakes down
- * with it. So the row goes and the endpoint stays.
+ *
+ * THE PREMISE THIS WAS WRITTEN UNDER HAS CHANGED, and the function is still right. It read: one
+ * UnifiedPush registration for the whole app, so unregistering it to stop A's wakes would take
+ * B's down with it — hence "the row goes and the endpoint stays". Registrations are per PROFILE
+ * now, so A's endpoint could be dropped without touching B's.
+ *
+ * It is kept, unchanged, because the ROW is a separate fact from the endpoint and it is the row
+ * that causes traffic. A switch that only unregistered A's instance would leave A's server
+ * holding a live row, dialling an endpoint that has stopped answering, until it collects enough
+ * 404/410s to prune — which is a server we do not control doing cleanup we asked for implicitly.
+ * Removing the row says it outright. The invariant is "no server holds a row for a pairing this
+ * phone is not using", and it is this call that discharges it.
  *
  * Never throws: a take-back the user asked for must not fail in their face because a server is
  * unreachable, and a row whose endpoint has gone quiet is pruned server-side on the first 404/410.
@@ -386,7 +417,10 @@ export async function forgetWake(
 ): Promise<WakeDrop> {
   const dropped = id === null ? { ok: true } as WakeDrop : await dropWakeRowOrOwe(session, id, profiles);
   try {
-    await distributor.unregister();
+    // THIS PROFILE'S INSTANCE, and that is the whole of what changed here: an unregister with no
+    // instance dropped the app's single shared registration, so forgetting one server turned
+    // every other pairing's wakes off on the way past.
+    await distributor.unregister(session.profile.id);
   } catch {
     /* best-effort by contract: the endpoint is this phone's own, and a server that keeps
        POSTing to an unregistered one prunes on the first 404/410 it gets back */

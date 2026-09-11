@@ -244,17 +244,18 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     /**
      * ── THE PREVIOUS SERVER'S ROW GOES DOWN BEFORE THE NEXT ONE GOES UP ────────────────────
      *
-     * This build holds ONE UnifiedPush registration for the whole app, and every paired server
-     * stores its own `push_subscriptions` row against that one endpoint. So leaving profile A's
-     * row behind on a switch to B does not leave a dormant record — it leaves A's server POSTing
-     * wakes to a phone that no longer syncs A, indefinitely, while the app answers each one by
-     * syncing B. The file's own header already named this failure for the state-overwrite half
-     * ("left A's row live, sending wakes to a phone that had moved on") and fixed only that half.
+     * Leaving profile A's row behind on a switch to B does not leave a dormant record — it leaves
+     * A's server POSTing wakes at this phone for ever. That was acute while ONE endpoint was
+     * shared by every pairing (the app answered each of A's wakes by syncing B); with an endpoint
+     * per profile it is A's server dialling an endpoint that has gone quiet, which is better and
+     * still not right: the row is live until that server collects enough refusals to prune it.
      *
-     * The ROW and not the distributor: unregistering the endpoint would take the next profile's
-     * wakes down with it (see `dropWakeRow`). Fire-and-forget on the OUTGOING session's own
-     * bearer, which is still usable — the connection layer's teardown closes the store, not the
-     * credential — and it must not hold the switch open.
+     * The ROW and not the distributor, and the reason has changed. It used to be that
+     * unregistering the endpoint would take the next profile's wakes down with it; now A's
+     * instance could be dropped safely, and removing the row is still what discharges the
+     * invariant — no server holds a row for a pairing this phone is not using. Fire-and-forget on
+     * the OUTGOING session's own bearer, which is still usable — the connection layer's teardown
+     * closes the store, not the credential — and it must not hold the switch open.
      */
     const previous = liveSession.current;
     const previousId = subscriptionId.current;
@@ -290,9 +291,18 @@ export function WakeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!nothingPaired) return;
     subscriptionId.current = null;
-    // Queued too — the endpoint is the app's single shared registration, so unregistering it
-    // must not overtake a row deletion still in flight against a server that is being forgotten.
-    void serialize(() => unifiedPushDistributor().unregister().catch(() => undefined));
+    /**
+     * `chooseDistributor(null)` IS THE SWEEP NOW, and it is the connector's own guarantee rather
+     * than an inference: clearing the saved distributor "will clear all instances registered with
+     * the distributor". Registrations are per PROFILE, so each forget has already dropped its own
+     * instance — this closes the case where one of those drops was refused, and it does so without
+     * naming an instance, which there is by definition none of left to name.
+     *
+     * The blanket `unregister()` that used to stand here was the shared endpoint's only off-switch
+     * and could not be used while another profile existed (it would have taken that profile's
+     * wakes down); the gate on the LAST pairing was that constraint. The gate stays because the
+     * distributor CHOICE is app-wide — forgetting one of two servers must not un-choose it.
+     */
     chooseDistributor(null);
     readDevice();
     setState({ k: "no_distributor" });
@@ -312,7 +322,10 @@ export function WakeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!session) return;
     const subscribedFor = session;
-    return onWake(() => {
+    /* SCOPED TO THIS PROFILE'S INSTANCE. A wake now names the pairing it was delivered for, and
+       one for a profile that is not on screen must not start a drain on the one that is — the
+       session check below is this module's half of the switch window, and this is the other. */
+    return onWake(subscribedFor.profile.id, () => {
       /**
        * THE SESSION THIS WAKE WAS SUBSCRIBED FOR MUST STILL BE THE LIVE ONE.
        *
@@ -374,7 +387,10 @@ export function WakeProvider({ children }: { children: ReactNode }) {
         if (!dropped.ok && liveSession.current === session) setState({ k: "off", reason: "row_remains" });
       });
     } else {
-      void serialize(() => NO_DISTRIBUTOR.unregister());
+      /* NO LIVE SESSION MEANS NO INSTANCE TO NAME. `NO_DISTRIBUTOR` answers for both halves and
+         has always been the honest no-op here; the argument is the empty string for the same
+         reason — there is no pairing this press could be about. */
+      void serialize(() => NO_DISTRIBUTOR.unregister(""));
     }
     chooseDistributor(null);
     readDevice();

@@ -213,11 +213,12 @@ export function unifiedPushDistributor(): UnifiedPushDistributor {
       return listDistributors().some((d) => d.id === saved);
     },
 
-    async register(vapidPublicKey: string): Promise<WakeRegistration | null> {
+    async register(vapidPublicKey: string, instance: string): Promise<WakeRegistration | null> {
       const api = native();
       // An empty key would be handed to `registerDevice`, which rejects — answering `null` here
       // makes it the caller's "no registration" branch instead of an exception in a promise.
-      if (!api || vapidPublicKey === "") return null;
+      if (!api || vapidPublicKey === "" || instance === "") return null;
+      dropLegacyDefaultRegistration(api);
 
       /**
        * EVENT TO PROMISE. The subscription goes on BEFORE `registerDevice` is called — the
@@ -240,6 +241,17 @@ export function unifiedPushDistributor(): UnifiedPushDistributor {
 
         try {
           unsubscribe = api.subscribe((e) => {
+            /**
+             * ── EVERY EVENT NAMES ITS INSTANCE, AND THIS PROMISE ANSWERS FOR ONE ─────────────
+             *
+             * The subscription is process-wide: it sees the events of every instance this app has
+             * registered. Without this line a second profile's `registered` — or its FAILURE —
+             * would settle this promise, and the endpoint that reached the server would be the
+             * wrong pairing's. That is not hypothetical: `wake.tsx` serializes its mutations
+             * precisely because two registrations can be in the air across a profile switch.
+             */
+            const named = (e.data as { instance?: unknown }).instance;
+            if (typeof named === "string" && named !== instance) return;
             if (e.action === "registered") {
               const d = e.data as { url?: unknown; pubKey?: unknown; auth?: unknown };
               if (typeof d.url !== "string" || d.url === "") return finish(null);
@@ -260,15 +272,15 @@ export function unifiedPushDistributor(): UnifiedPushDistributor {
 
         // `registerDevice` rejects on an emulator and when no distributor is saved. Both are
         // "no registration", not errors to surface — the caller turns `null` into a sentence.
-        api.module.registerDevice(vapidPublicKey).catch(() => { finish(null); });
+        api.module.registerDevice(vapidPublicKey, instance).catch(() => { finish(null); });
       });
     },
 
-    async unregister(): Promise<void> {
+    async unregister(instance: string): Promise<void> {
       const api = native();
-      if (!api) return;
+      if (!api || instance === "") return;
       try {
-        api.module.unregisterDevice();
+        api.module.unregisterDevice(instance);
       } catch {
         /* best-effort by contract — see `forgetWake` */
       }
@@ -277,7 +289,7 @@ export function unifiedPushDistributor(): UnifiedPushDistributor {
 }
 
 /**
- * Call `onWake` whenever a wake arrives while this process is alive.
+ * Call `onWakeReceived` whenever a wake for `instance` arrives while this process is alive.
  *
  * The payload is checked against the constant and then DISCARDED — there is nothing in it. The
  * check is not defensive parsing, it is a refusal to treat the body as data: if a future server
@@ -285,15 +297,28 @@ export function unifiedPushDistributor(): UnifiedPushDistributor {
  * content, which is a property worth having on the client side of a channel that runs through a
  * third party.
  *
+ * ── THE WAKE IS SCOPED, AND IT USED NOT TO BE ─────────────────────────────────────────────────
+ *
+ * `MessagePayload` carries the instance the wake was delivered for, and this ignored it — there
+ * was only one registration, so every wake meant the same thing: sync whatever is live. With one
+ * endpoint per pairing a wake NAMES a pairing, and a wake for the profile that is not on screen
+ * must not start a drain on the one that is. The caller passes the live profile's id; a wake for
+ * any other instance is dropped here rather than turned into somebody else's sync.
+ *
+ * A payload with NO instance is still honoured: an install upgrading from the shared-endpoint
+ * build can have a wake in flight for the legacy default registration, and dropping those would
+ * lose a real wake on the one launch where it matters least and confuses most.
+ *
  * Returns an unsubscribe. Does nothing at all on a platform with no native module.
  */
-export function onWake(onWakeReceived: () => void): () => void {
+export function onWake(instance: string, onWakeReceived: () => void): () => void {
   const api = native();
   if (!api) return () => { /* nothing was subscribed */ };
   try {
     return api.subscribe((e) => {
       if (e.action !== "message") return;
-      const d = e.data as { message?: unknown; decrypted?: unknown };
+      const d = e.data as { message?: unknown; decrypted?: unknown; instance?: unknown };
+      if (typeof d.instance === "string" && d.instance !== "" && d.instance !== instance) return;
       // An UNDECRYPTED message means the server sent something this device's keys cannot open —
       // most likely a server with no VAPID keypair talking to a connector that requires one. There
       // is nothing to act on and nothing to show; a sync would be guessing.
@@ -304,6 +329,39 @@ export function onWake(onWakeReceived: () => void): () => void {
   } catch {
     return () => { /* nothing was subscribed */ };
   }
+}
+
+/**
+ * ── THE UPGRADE THIS CHANGE OWES: DROP THE SHARED REGISTRATION, ONCE ──────────────────────────
+ *
+ * A phone running the previous build holds a registration under the connector's DEFAULT instance,
+ * and every server it paired with stores a `push_subscriptions` row against that one endpoint.
+ * Registering per profile mints NEW endpoints and new rows, and leaves the old ones — pointing at
+ * an endpoint this phone still answers, so the servers never get the 404/410 they prune on. Those
+ * rows and their traffic would be permanent, and nothing left on the phone can name them: the
+ * subscription ids lived in one provider's ref and are gone with the process that held them.
+ *
+ * So the default instance is unregistered once, the first time this build registers anything. The
+ * phone stops answering the old endpoint, and every server prunes its stale row on the first
+ * delivery attempt — which is the documented prune path rather than a cleanup of our own.
+ *
+ * Once per PROCESS is enough and needs no persisted flag: `unregisterDevice()` on an instance that
+ * does not exist is a no-op, so a launch that never had one pays nothing.
+ */
+let legacyDropped = false;
+function dropLegacyDefaultRegistration(api: NativeApi): void {
+  if (legacyDropped) return;
+  legacyDropped = true;
+  try {
+    api.module.unregisterDevice();
+  } catch {
+    /* best-effort: a connector that refuses leaves the stale rows to age out server-side */
+  }
+}
+
+/** Tests only — the once-per-process latch above is module state. */
+export function resetLegacyDropForTests(): void {
+  legacyDropped = false;
 }
 
 /**
