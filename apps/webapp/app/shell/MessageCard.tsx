@@ -1,32 +1,14 @@
 "use client";
 
 /**
- * THE PER-MESSAGE PANEL, AND THE HEADER EVERY MESSAGE WEARS.
- *
- * ── PANELS OVER LOADED BODIES ───────────────────────────────────────────────────────────────
- *
- * A conversation renders one panel PER MESSAGE, and every one of those messages has its body
- * already in the mirror: `MessagePane` hydrates the whole thread on open (`hydrateThread`), so
- * nothing here is withheld, gated behind a fetch, or replaced by a "N older" placeholder. The
- * peek-row fold this file used to carry is gone with the viewer redesign: every message on the
- * thread shows its body, full width, and the wrapper is the one scroller — a thread is a column
- * of letters again, but each on its OWN panel, separated by the canvas, so the stack reads as a
- * conversation rather than as one unbroken scroll.
- *
- * ── TWO SHARED PIECES ───────────────────────────────────────────────────────────────────────
- *
- *  · {@link MessageHeader} — one grammar for every panel: avatar and sender NAMES-FIRST (the
- *    bold name with the small address beside it, and a no-name sender prints the bare address
- *    ONCE — `senderName`/`rowAddress`, `format.ts`), the ⋯ actions menu LEFT of the stamp with
- *    the date on the right, the message's own quiet subject line under the sender (SUBJECT-D —
- *    the RAW `m.subject`, reply prefixes included), and the recipients — {@link
- *    MessageRecipients}, the block a Reads card now wears too, which is why it lives in its own
- *    file rather than here. Worn by the focused message (composed by `MessagePane`) and by a
- *    sibling panel alike, so a message reads the same wherever it is.
- *
- *  · {@link MessageCard} — a conversation SIBLING's panel: the header and the body through the
- *    very same {@link MessageBody} the focused message uses. One `<article class="pm">` per
- *    message — the panel treatment every message on the thread wears, the focused one included.
+ * The per-message panel, and the header every message wears. A conversation renders one panel per
+ * message, every body already in the mirror (`MessagePane` hydrates the whole thread on open), so
+ * nothing is withheld or behind a "N older" placeholder; the peek-row fold is gone — a thread is a
+ * column of letters, each on its own panel. Two shared pieces: {@link MessageHeader} — one grammar
+ * for every panel (names-first sender, ⋯ menu left of the stamp, the quiet SUBJECT-D line, and
+ * {@link MessageRecipients}, which a Reads card wears too), worn by the focused message and a
+ * sibling alike; and {@link MessageCard} — a sibling's panel, the header and the body through the
+ * same {@link MessageBody} the focused message uses. One `<article class="pm">` per message.
  */
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -54,27 +36,14 @@ import { MessageRecipients } from "./MessageRecipients";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 
 /**
- * THE HEADER — who it is from, what it is called, when, and who else it went to.
- *
- * Reads `ownAddresses` and `openSenderMenu` off the chrome rather than as props, for the reason
- * the whole chrome exists: the pane is mounted twice and holds no engine hook, and the header is
- * rendered inside both mounts. `onEnterReader` and `notice` are the two things a CALLER varies —
- * the reader affordance on the split-column focused message, and what the body the caller mounts
- * had refused — so they come as props. (`onCollapse` left with the peek rows: there is no fold to
- * operate any more.)
- *
- * ── THE ⋯ MENU — the message's verbs, per panel, LEFT of the stamp ─────────────────────────
- *
- * Reply / Reply all / Forward live in a disclosure menu in the header's right cluster, on every
- * panel — the focused message and its siblings wear the same one, so answering an older message
- * on the thread never requires first making it the focused one. The `.hm-foot` text-verb footer
- * this replaces is deleted, not moved. Each item dispatches THIS header's `message.id`; Reply
- * all is offered only where {@link replyAllRecipients} returns an envelope for THIS message —
- * the predicate the pill and the send path resolve, so a 1:1 message offers it nowhere. Items
- * degrade by OMISSION where the chrome is inert (the desktop shell, a bare test): no verbs, no
- * trigger — never a menu of dead controls. The menu itself is the pill's own {@link MoreMenu} —
- * same roving focus, same key claims — anchored to drop DOWN from the header (`.msg-menu`,
- * `app.css`) rather than up from the bar.
+ * The header — who it is from, what it is called, when, and who else it went to. Reads `ownAddresses` and
+ * `openSenderMenu` off the chrome rather than as props (the pane is mounted twice and holds no engine hook);
+ * `onEnterReader` and `notice` are the two things a caller varies, so they come as props. The ⋯ menu carries
+ * the message's verbs per panel, left of the stamp: Reply / Reply all / Forward on every panel, so answering an
+ * older message never requires focusing it first. Each item dispatches THIS header's `message.id`; Reply all is
+ * offered only where {@link replyAllRecipients} returns an envelope for this message. Items degrade by omission
+ * where the chrome is inert (the desktop shell, a bare test) — never a menu of dead controls. The menu is the
+ * pill's own {@link MoreMenu}, anchored to drop down from the header (`.msg-menu`, `app.css`).
  */
 export function MessageHeader({
   message,
@@ -143,23 +112,14 @@ export function MessageHeader({
     }
   }
   /**
-   * FORWARD, UNDER THE SAME TWO PREDICATES THE PILL APPLIES (`MessagePane.ActionBar#canForward`).
-   *
-   * These used to be `chrome.forward` alone, and while this menu was Forward's ONLY door that was
-   * merely permissive. It is not the only door any more — the verb stands in the action bar — and
-   * two surfaces offering the same verb under DIFFERENT conditions is worse than either rule on
-   * its own: on a `no_forward` message the bar withholds Forward while this menu still offers it,
-   * so the reader is told "no" by one control and "yes, then a refusal toast" by the other, on the
-   * same message, at the same moment.
-   *
-   *   · `no_forward` — the send path answers 403 (the sensitive-leak gate: an OTP or a reset link
-   *     must not leave the account inside a quote block).
-   *   · off-mirror — `AppShell.openForward` reads the row out of the engine and returns silently
-   *     when it is absent, so the item would be a no-op with no reason given.
-   *
-   * Both are the house rule for a verb whose path must reject it — Delete's own `mirrorHolds`
-   * gate is the precedent — and degrading by OMISSION is what this menu already does for every
-   * other unwired verb.
+   * Forward, under the same two predicates the pill applies (`MessagePane.ActionBar#canForward`).
+   * `chrome.forward` alone was merely permissive while this menu was Forward's only door; the verb
+   * now also stands in the action bar, and two surfaces offering it under DIFFERENT conditions is
+   * worse than either rule: on a `no_forward` message the bar withholds Forward while the menu
+   * offers it, then a refusal toast. `no_forward` — the send path answers 403 (an OTP or a reset
+   * link must not leave the account inside a quote block); off-mirror — `AppShell.openForward`
+   * returns silently when the row is absent, so the item would be a no-op with no reason given.
+   * Degrading by omission is what this menu already does for every other unwired verb.
    */
   if (
     chrome.forward &&
@@ -174,15 +134,13 @@ export function MessageHeader({
   }
 
   /**
-   * SUBJECT-D — the message's own quiet subject line, under the sender, on EVERY panel.
-   *
-   * The RAW `m.subject`, reply prefixes included: "AW: …" is what this message is called, and
-   * printing it is what lets a thread's panels tell each other apart now that the one large
-   * heading is deleted (`MessagePane`'s `<h2>` and the thread lede both — see
-   * `test/conversation.test.ts`). No normalization, no suppression against a thread heading that no
-   * longer exists. The line is the subject-rule entry where the shell provides the sheet
-   * (`chrome.openSubjectRule`, dispatching THIS message's id) and plain text where it does not
-   * — never a dead control. An empty subject renders no line rather than an empty one.
+   * SUBJECT-D — the message's own quiet subject line, under the sender, on every panel. The RAW
+   * `m.subject`, reply prefixes included: "AW: …" is what this message is called, and printing it
+   * lets a thread's panels tell each other apart now that the one large heading is deleted
+   * (`MessagePane`'s `<h2>` and the thread lede both — see `test/conversation.test.ts`). No
+   * normalization. The line is the subject-rule entry where the shell provides the sheet
+   * (`chrome.openSubjectRule`, dispatching THIS message's id) and plain text where it does not —
+   * never a dead control. An empty subject renders no line rather than an empty one.
    */
   const subjectLine = message.subject.trim() ? (
     <p className="msg-subject">

@@ -1,68 +1,23 @@
 /**
- * THE SINGLE-ORIGIN DECISION: what does `https://ohmail.app/` serve?
- *
- * One hostname, two experiences. A stranger gets the marketing page; a signed-in
- * browser gets the mail client, at the SAME URL, with no redirect and no flash. This
- * module is that decision and nothing else — a pure function of (cookie, query,
- * armed-or-not, a `fetch`), so every branch below is testable without a browser, a
- * network or a Next runtime. `middleware.ts` is the only caller and does nothing but
- * turn the answer into a rewrite.
- *
- * ## Why a network call, and why it is not optional
- *
- * `tf_session` is an OPAQUE access token: it is a random string looked up in the
- * `sessions` table, not a signed claim, so nothing at the edge can read it. That
- * leaves exactly two designs:
- *
- *  - **presence check.** Free, and WRONG. A cookie that is present but expired,
- *    revoked by `POST /auth/logout --allDevices`, or killed by refresh-token reuse
- *    detection would render the app shell — which would then 401 on every request and
- *    show a signed-in-looking chrome around nothing. "Renders a broken app instead of
- *    the landing" is precisely the failure this gate exists to prevent.
- *  - **ask the API.** One `GET /auth/session` (two indexed reads behind
- *    `withSession`), only ever on a request that ALREADY carries a session cookie.
- *
- * So: the anonymous path — every stranger, every crawler, every OG unfurl — reads a
- * cookie that is not there and returns immediately. Nothing is fetched, and `/` stays
- * a cacheable marketing page. The cost lands only on requests that claim a session.
- *
- * ## Every non-`full` answer means MARKETING — except where the RESUME MARKER says otherwise
- *
- * The app shell is only ever correct for a live full session; there is no failure mode
- * in which guessing "app" is the safer guess. But "not the app" has two honest renderings,
- * and `tf_resume` (a Lax, credential-free marker) is what picks between them:
- *
- *  - **No marker ⇒ the landing.** A stranger, a crawler, a sprayed cookie-shaped value,
- *    an unarmed deployment, a malformed body, an enrollment-scoped session: the landing
- *    is the state that is never wrong for a browser with no standing.
- *  - **Marker + the API REFUSED the token (401) ⇒ resume.** The central lapsed-session
- *    case: dead access token, live refresh token.
- *  - **Marker + the API could not ANSWER (timeout, network failure, 5xx) ⇒ resume.**
- *    The gate's {@link SESSION_TIMEOUT_MS} budget loses to a serverless cold start —
- *    the first request after every API deploy — and answering "marketing" there is how
- *    a signed-in customer opening ohmail.app got the pitch until a manual reload hit
- *    the instance their first attempt had warmed. Observed live, not supposed. The splash
- *    retries with the browser's own budget and cannot loop (see the catch below).
- *  - **Marker + a clean non-401 refusal (403, 404…) or a non-`full` 200 ⇒ the landing.**
- *    The API answered; what it said is not something a refresh fixes.
- *
- * ## The enrollment scope is a THIRD state, not a weak session
- *
- * Registration issues an `enrollment`-scoped session on the password factor alone, so a user
- * who registered but never finished 2FA holds a real `tf_session` cookie. It
- * authenticates the enrollment surface (`/auth/2fa/*`) and nothing else. Treating it
- * as a session here would hand a password-only credential the whole mail client, which
- * is the exact escalation the scope exists to prevent — so `scope` is compared to the
- * literal `"full"` and everything else, including a missing field, falls through to
- * the landing.
- *
- * ## `?demo=1` never reaches any of this
- *
- * The demo is a promise of zero network, and it is answered BEFORE
- * the cookie is read: no session lookup, no `fetch`, for a signed-in visitor exactly
- * as for a stranger. `app/demo-mode.ts` owns the parsing (every repeated `demo` value
- * is inspected, and the answer may only ever fail TOWARD the demo); this file only
- * decides that the answer wins.
+ * The single-origin decision: what does `https://ohmail.app/` serve? A stranger gets the marketing
+ * page; a signed-in browser gets the mail client, same URL, no redirect, no flash. A pure function
+ * of (cookie, query, armed-or-not, a `fetch`); `middleware.ts` is the only caller and just turns
+ * the answer into a rewrite. The network call is not optional: `tf_session` is an OPAQUE token —
+ * nothing at the edge can read it — and a presence check would render the app shell for an expired
+ * or revoked cookie, a signed-in-looking chrome around nothing. The anonymous path reads a cookie
+ * that is not there and returns immediately, so `/` stays a cacheable marketing page; the cost
+ * lands only on requests that claim a session.
+ */
+
+/**
+ * Every non-`full` answer means MARKETING — except where the resume marker (`tf_resume`, Lax,
+ * credential-free) says otherwise. No marker ⇒ the landing. Marker + a 401 ⇒ resume (dead access
+ * token, live refresh token). Marker + no answer (timeout, network, 5xx) ⇒ resume: the
+ * {@link SESSION_TIMEOUT_MS} budget loses to a serverless cold start, and "marketing" there showed
+ * a signed-in customer the pitch (observed live); the splash retries on the browser's own budget.
+ * Marker + a clean non-401 refusal or non-`full` 200 ⇒ the landing: not something a refresh fixes.
+ * The enrollment scope is a third state — `scope` is compared to the literal `"full"`, so a
+ * password-only credential never gets the mail client. `?demo=1` is answered BEFORE the cookie is read.
  */
 import { isDemoBuild, isDemoRequested } from "./demo-mode";
 
@@ -88,28 +43,14 @@ export const APP_ROUTE = "/mailbox";
 export const RESUME_ROUTE = "/resume";
 
 /**
- * THE SELF-HOST FRONT DOOR — where `/` sends a visitor this gate answered `"marketing"` for
- * when the build is the self-host flavor.
- *
- * On `ohmail.app` "not signed in and nothing to resume" means a stranger, and the landing is
- * the right greeting. On an operator's own domain there are no strangers: everyone who reaches
- * that origin is one of their users, and our pitch — our prices, our imprint — has no business
- * being served from an address we do not own. Measured live before this existed: a self-hosted
- * `https://ohmail.test/` answered 200 with the full landing, pricing section included.
- *
- * Unlike {@link APP_ROUTE} and {@link RESUME_ROUTE} this is a REAL public address, not an
- * internal rewrite target, so middleware sends a visitor to it with a redirect rather than
- * rewriting `/` onto it. Two reasons, and the second is the load-bearing one:
- *
- *  · the sign-in screen already gets the credential-page treatment (nonce CSP, `no-referrer`,
- *    `no-store`) on its own path — a rewrite would have to re-apply all three by hand;
- *  · `LoginScreen` finishes with `router.push("/")`. Rewritten, the browser is ALREADY at `/`
- *    and that push is a navigation to the URL it is on — which is how a successful sign-in
- *    leaves the user staring at the form they just submitted.
- *
- * The redirect is 307 and must never become 308: `/` on a self-host box is the mail client for
- * a signed-in browser, and a permanent redirect cached by the browser would send that browser
- * to the sign-in screen for ever.
+ * The self-host front door — where `/` sends a visitor this gate answered `"marketing"` for, on the self-host
+ * build. On an operator's own domain there are no strangers, and our pitch — prices, imprint — has no business
+ * on an address we do not own (measured live: a self-hosted `/` served the full landing, pricing included). A
+ * REAL public address, so middleware REDIRECTS rather than rewrites: the sign-in screen already gets the
+ * credential-page treatment on its own path, and `LoginScreen` finishes with `router.push("/")` — rewritten,
+ * the browser is already at `/` and a successful sign-in would leave the user staring at the form they just
+ * submitted. 307 and never 308: `/` on a self-host box is the mail client for a signed-in browser, and a
+ * permanent redirect cached by the browser would send it to the sign-in screen for ever.
  */
 export const DOOR_ROUTE = "/login";
 
@@ -120,42 +61,24 @@ export const RESUME_COOKIE = "tf_resume";
 export const SESSION_ENDPOINT = "/auth/session";
 
 /**
- * How long the edge waits for the API before giving up.
- *
- * Short on purpose. This runs in front of the FIRST PAINT of the product's front door,
- * so the budget is what a human will tolerate before deciding the site is broken — not
- * what the API might eventually manage. It is deliberately SHORTER than a serverless
- * cold start can be: blowing the budget is not a dead end any more, because a browser
- * holding the resume marker is routed to the splash, whose refresh runs on the
- * browser's own clock and can outwait the cold start the edge would not. Raising this
+ * How long the edge waits for the API before giving up. Short on purpose: this runs in front of the
+ * first paint of the product's front door, so the budget is what a human tolerates before deciding
+ * the site is broken. Deliberately SHORTER than a serverless cold start can be — blowing the budget
+ * is no longer a dead end, because a browser holding the resume marker is routed to the splash,
+ * whose refresh runs on the browser's own clock and can outwait the cold start. Raising this
  * instead would hold every signed-in first paint hostage to the slowest case.
  */
 export const SESSION_TIMEOUT_MS = 1_500;
 
 /**
- * THE SHAPE A `tf_session` VALUE CAN POSSIBLY HAVE — the free half of the amplifier fix.
- *
- * The single-origin merge turned the product's public front door into something that spends
- * a cross-host `fetch`, an API invocation and two indexed reads on ANY request that presents a cookie.
- * The cookie is attacker-supplied and needs no validity: the cost is paid before anything
- * can reject it. Before the merge `/` was a static page on a separate deployment that
- * touched no backend, so this is a cost the collapse introduced.
- *
- * Every value the API ever writes into this cookie comes from `generateToken()` in
- * `packages/services/src/auth/crypto.ts` — `randomBytes(n).toString("base64url")` — for
- * both the access token and the enrollment-scoped token. So a value carrying a character
- * outside the base64url alphabet, or a wildly wrong length, is one no session has ever
- * had, and asking the API about it can only ever produce a 401.
- *
- * The bounds are deliberately LOOSE around today's 43 characters (32 bytes). This check
- * fails a signed-in user onto the marketing page if it is ever wrong, which is the failure
- * the whole gate exists to prevent — so it is written to survive `generateToken` being
- * called with a different size, and the gate's guard derives the alphabet and a live
- * sample length from `crypto.ts` rather than trusting this comment.
- *
- * What this is NOT: a rate limit. An attacker who sends 43 random base64url characters
- * still gets a fetch. It removes the trivial loop, not the determined one — see
- * `middleware.ts` for the per-IP burst cap that covers the rest.
+ * The shape a `tf_session` value can possibly have — the free half of the amplifier fix. The merge
+ * made the front door spend a cross-host `fetch` and two indexed reads on ANY request presenting a
+ * cookie, paid before anything can reject it. Every value the API writes comes from
+ * `generateToken()` (`randomBytes(n).toString("base64url")`), so a value outside the base64url
+ * alphabet or wildly wrong in length has never been a session. The bounds are deliberately LOOSE
+ * around today's 43 characters: failing a signed-in user onto the marketing page is the failure the
+ * gate exists to prevent, and the gate's guard derives the alphabet and a live sample length from
+ * `crypto.ts` rather than trusting this comment. Not a rate limit — `middleware.ts` has the burst cap.
  */
 const TOKEN_SHAPE = /^[A-Za-z0-9_-]{20,256}$/;
 
