@@ -520,61 +520,48 @@ export function sendVerb(
 /* ── the one rule ─────────────────────────────────────────────────────────────────────── */
 
 /**
- * MAY THIS BE SENT RIGHT NOW? — ONE predicate, every consumer.
- *
- * The button's `disabled` and the state machine's own refusal used to be two copies of the
- * same rule, and a mutation test proved what that costs: deleting the guard inside
- * `useMailSend.send` left every assertion green, because they all went through the button.
- * A rule with two implementations has one that nothing watches.
- *
- * It judges the MUTATION and not the form, which is what lets the compose surface express
- * "one of these addresses is a typo" as `to: []` (see `composePlan`) instead of as a second
- * predicate that only the button would consult.
- *
- *   · `sending`/`queued` are locked because a second press mints a second Idempotency-Key,
- *     which is a second reservation, which is a second delivery to a real person.
- *   · an empty body is locked because the server accepts a blank one
- *     (`drafts-service.ts:167-171`) and would post it — EXCEPT ON A FORWARD, see below.
- *   · `failed` is NOT locked: it is terminal on the server for that draft, so the only way
- *     forward is a fresh send the user deliberately chooses. `unverified` IS locked, and only
- *     for the messages an unresolved send names — see the two arms in the body, which correct
- *     what this line used to claim about it.
- *   · `duplicate` is NOT locked either, and the reason is read from the other side: the server
- *     has refused THIS message as a copy of one it already holds, so the deliberate choice open
- *     to the reader is usually an EDIT — a changed message is admitted — and locking the button
- *     would leave no way to make that change and send it. (An earlier version of this line said
- *     `unverified` was free too; that was true of the code it was written against and is not true
- *     here. See the two arms in the body.)
- *   · a COMPOSE additionally needs a recipient and a mailbox to send from. Both are refused
- *     here rather than on the wire, where `POST /drafts` would already have written a row
- *     before `POST /drafts/:id/send` answered 400.
- *
- * A reply needs neither check when its envelope is DERIVED: `Engine.enrich` fills both from
- * the parent, and a parent the mirror does not know produces no effects and is rejected by
- * the engine with nothing sent. A reply whose recipients were EDITED carries them — and then
- * an empty or unparseable set is `to: []` (`replyEnvelopePlan`, the same emptying rule as
- * `composePlan`) and is refused here, at the one predicate every caller consults. Present-
- * but-empty and absent are different statements on purpose: absent means "enrich decides",
- * empty means "the user removed or mistyped every recipient", and only the second may block.
- *
- * ── A FORWARD IS EXEMPT FROM THE EMPTY-BODY REFUSAL, AND ONLY FROM THAT ONE ────────────────
- *
- * Reported from real use: *"forwarding a mail enforces a message, a fwd mail must also be able to
- * be sent without a message."* The refusal above was written for the two shapes where `body` is
- * the whole message — a reply and a compose — and on a forward it is not: the FORWARDED MESSAGE
- * is the content (the server quotes it and streams its attachments from `forwardOf`, which is why
- * the client sends only an id), and the note above it is the optional part. "Pass this along, no
- * comment" is the ordinary case, and it was the one case the lock made unreachable.
- *
- * The discriminator is `forwardOf` itself — a NON-EMPTY string, so the `forwardOf: null` the wire
- * type admits (`types.ts`: the field is `string | null`, exclusive with `inReplyTo`) still means
- * "not a forward" and keeps the refusal. Reading the field rather than taking a flag is what keeps
- * this one predicate: the mutation already carries the fact, and a caller-supplied "this is a
- * forward" boolean would be a second place for the lock and the wire to disagree.
- *
- * Nothing else is relaxed. An empty forward with no recipient, or with no sending mailbox, or on a
- * send already in flight is refused by the three checks below exactly as a written one is —
- * `forward-send.test.ts` walks all three.
+ * May this be sent right now? — ONE predicate, every consumer. The button's `disabled` and the
+ * state machine's refusal used to be two copies of one rule, and a mutation test proved the
+ * cost: deleting the guard inside `useMailSend.send` left every assertion green, because they
+ * all went through the button. It judges the MUTATION and not the form, which lets the compose
+ * surface express "one of these addresses is a typo" as `to: []` (see `composePlan`) instead of
+ * a second predicate only the button would consult.
+ */
+
+/**
+ * The arms: `sending`/`queued` are locked — a second press mints a second Idempotency-Key, a second reservation, a
+ * second delivery. An empty body is locked because the server accepts a blank one (`drafts-service.ts:167-171`) and
+ * would post it — except on a forward, below. `failed` is NOT locked: terminal on the server for that draft, so the
+ * only way forward is a fresh deliberate send. `unverified` IS locked, only for the messages an unresolved send
+ * names. `duplicate` is NOT locked: the server refused THIS message as a copy of one it holds, so the deliberate
+ * choice open to the reader is usually an EDIT — a changed message is admitted — and locking would leave no way to
+ * make that change. A COMPOSE additionally needs a recipient and a mailbox, refused here rather than on the wire
+ * where `POST /drafts` would already have written a row before the send answered 400.
+ */
+
+/**
+ * A reply needs neither check when its envelope is DERIVED: `Engine.enrich` fills both from the
+ * parent, and a parent the mirror does not know produces no effects. A reply whose recipients
+ * were EDITED carries them — an empty or unparseable set is `to: []` (`replyEnvelopePlan`, the
+ * same emptying rule as `composePlan`) and is refused here. Present-but-empty and absent are
+ * different statements on purpose: absent means "enrich decides", empty means "the user removed
+ * or mistyped every recipient", and only the second may block.
+ */
+
+/**
+ * A forward is exempt from the empty-body refusal, and only from that one. Reported from real use: "a fwd mail must
+ * also be able to be sent without a message." The refusal was written for the shapes where `body` is the whole
+ * message — a reply and a compose — and on a forward the FORWARDED MESSAGE is the content (the server quotes it and
+ * streams its attachments from `forwardOf`, which is why the client sends only an id); "pass this along, no comment"
+ * is the ordinary case and was the one the lock made unreachable. The discriminator is `forwardOf` itself — a
+ * NON-EMPTY string, so the `forwardOf: null` the wire type admits still means "not a forward" and keeps the refusal;
+ * reading the field rather than taking a flag keeps this one predicate, since a caller-supplied boolean would be a
+ * second place for the lock and the wire to disagree.
+ */
+
+/**
+ * Nothing else is relaxed: an empty forward with no recipient, no sending mailbox, or on a send in flight is refused
+ * exactly as a written one — `forward-send.test.ts` walks all three.
  */
 /**
  * DOES THIS STATE'S UNRESOLVED LIST NAME *THIS* MESSAGE? — one answer, both readers. {@link canSend} decides whether
@@ -651,29 +638,23 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
   let legacyFp0141: string | null = null;
   const legacyFp0141Of = (): string => (legacyFp0141 ??= legacySendFingerprint_0_14_1(m));
   /**
-   * ── A SESSION MATCH IS FINAL. NEITHER THE ROW NOR THE FINGERPRINT OVERRIDES IT ─────────────
-   *
-   * A rule used to stand here: where BOTH sides named a draft row and the rows differed, they
-   * were two messages and the row decided. It was written for one compose surface reopening one
-   * draft after another under a SINGLE session — under which a record naming `draft:30` really
-   * would have parked a message naming `draft:40`. The premise is what has been fixed instead:
-   * every door that replaces the compose form re-mints the session (`clearComposeDraft` before
-   * the seed, in `openDraft`, `writeTo` and the mailto seam), so one session names exactly one
-   * message-in-progress and two messages cannot share one.
-   *
-   * With the premise gone the rule was a hole, in two shapes, both of them a second delivery:
-   *
-   *  · THE ROW MOVES UNDER ONE MESSAGE. A send from saved draft `d1` comes back unverified; the
-   *    reload restores the same message but the composer's autosave had forgotten `d1` and made
-   *    `d2`. Two rows, one message, one session — and the row rule read that as two messages and
-   *    unlocked Send for a message that may already be in somebody's inbox. (`d1` is now adopted
-   *    on mount, `compose-autosave.ts`, so the row does not move at all; this is the other half.)
-   *  · THE CONTENT MOVES. Any rule that lets a fingerprint difference unlock is the escape the
-   *    park exists to close: type one character into a message whose outcome nobody knows, and
-   *    the press mints a fresh key at `crypto.randomUUID()` below.
-   *
-   * So the intersection is the whole answer. The one weaker comparison is a record that names
-   * NOTHING — see the fingerprint arm's own note above; it is what that record can answer.
+   * A session match is final; neither the row nor the fingerprint overrides it. A rule used to
+   * stand here: where both sides named a draft row and the rows differed, the row decided. It
+   * was written for one compose surface reopening drafts under a SINGLE session; the premise is
+   * what has been fixed instead — every door that replaces the compose form re-mints the session
+   * (`clearComposeDraft` before the seed, in `openDraft`, `writeTo` and the mailto seam), so one
+   * session names exactly one message-in-progress.
+   */
+
+  /**
+   * With the premise gone the rule was a hole in two shapes, both a second delivery. The row moves under one message:
+   * a send from saved draft `d1` comes back unverified, the reload restores the same message but autosave had
+   * forgotten `d1` and made `d2` — two rows, one message, one session, and the row rule read that as two messages and
+   * unlocked Send for a message that may already be in somebody's inbox (`d1` is now adopted on mount,
+   * `compose-autosave.ts`; this is the other half). And the content moves: any rule letting a fingerprint difference
+   * unlock is the escape the park exists to close — type one character into a message whose outcome nobody knows, and
+   * the press mints a fresh key at `crypto.randomUUID()` below. So the intersection is the whole answer; the one
+   * weaker comparison is a record that names NOTHING (see the fingerprint arm's note above).
    */
   return state.unresolved.some((i) => {
     if (i.subjects.length === 0) {
@@ -884,27 +865,20 @@ export function clearsTriage(state: string | undefined): boolean {
 const BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 
 /**
- * LET THE ACKNOWLEDGEMENT REACH THE SCREEN BEFORE THE WORK STARTS.
- *
- * `setPhase(key, {phase:"sending"})` is a React state update inside a click handler, so React
- * commits it when the handler RETURNS. `engine.mutate` was called before that — and its prologue
- * is not free: it enriches the mutation, writes the durable outbox entry, and on a send with files
- * base64s the attachment bytes. All of that ran in the same task the commit was waiting to finish,
- * so on the sends that are slowest to start the button was still saying "Send" while the work was
- * already under way. That is the "nothing seems to be happening" of the report, and it happens
- * before a single byte reaches the network.
- *
- * A TASK BOUNDARY, not a frame. `setTimeout(…, 0)` puts the mutation's prologue in a LATER task
- * than the one the handler and React's commit share, which is the whole ordering guarantee this
- * needs — the paint follows the commit on the browser's own schedule, and nothing here has to
- * know when. `requestAnimationFrame` was tried and is deliberately not used: it would make the
- * press depend on a frame clock, which a hidden tab throttles to nothing and a non-visual host
- * does not have at all, so the one gesture in the app that must never stall would be waiting on
- * the least reliable timer in the platform.
- *
- * A MICROTASK would not do: microtasks drain before the task ends, so the prologue would still be
- * in front of the commit. Anything that awaits a press therefore has to cross a task boundary —
- * which is why the suites' drain helpers flush timers rather than only `Promise.resolve()`.
+ * Let the acknowledgement reach the screen before the work starts.
+ * `setPhase(key, {phase:"sending"})` is a React state update inside a click handler, committed
+ * when the handler RETURNS — and `engine.mutate` was called before that, with a prologue that is
+ * not free: enrich, the durable outbox write, and on a send with files base64ing the attachment
+ * bytes, all in the same task the commit was waiting on. On the slowest-starting sends the
+ * button still said "Send" while the work was under way — the "nothing seems to be happening"
+ * of the report, before a single byte reached the network. A TASK boundary, not a frame:
+ * `setTimeout(…, 0)` puts the prologue in a later task than the handler and React's commit
+ * share, which is the whole ordering guarantee needed. `requestAnimationFrame` was tried and is
+ * deliberately not used — a hidden tab throttles the frame clock to nothing and a non-visual
+ * host has none, so the one gesture that must never stall would wait on the least reliable
+ * timer in the platform. A microtask would not do: microtasks drain before the task ends, so
+ * the prologue would still be in front of the commit — which is why the suites' drain helpers
+ * flush timers rather than only `Promise.resolve()`.
  */
 function afterPaint(): Promise<void> {
   return new Promise<void>((resolve) => { setTimeout(resolve, 0); });
@@ -1143,32 +1117,28 @@ export function useMailSend(
         // with it. Cleared beside the lock because the two have the same lifetime.
         accepted.current.delete(key);
         /**
-         * TERMINAL — and `unverified` is NOT one of the terminals that spends the key.
-         *
-         * For `confirmed`, `failed` and `duplicate` the key is spent: whatever it named on the
-         * server is that key's permanent answer, and the next press is a genuinely new send.
-         * Resuming a spent key would replay the old outcome for ever — a wedged Send button rather
-         * than a duplicate.
-         *
-         * `duplicate` joins them because nothing is pending under it: the server refused the
-         * request and rolled its own reservation back, so this key names nothing and the way
-         * forward is an edit, which is a different message and therefore a different send.
-         *
-         * `unverified` means nobody knows whether it delivered. The lock is what carries the key
-         * across a reload, so releasing it is exactly how the next press gets a FRESH key for a
-         * message that may already be gone. This branch used to release it, on the reasoning that
-         * "the server refuses every further send of that draft" — which stopped being true the
-         * moment the compose shed the draft id before re-sending. The key is kept, so any retry
-         * reuses it and the server can recognise the reservation; the send parks as needing a
-         * check instead of quietly going twice.
-         *
-         * THE SERVER-SIDE CONTENT CLAIM DOES NOT CHANGE THIS, and it is worth saying so here
-         * because it is the obvious thing to conclude. An identical second send is now refused for
-         * an hour whatever key it carries, so a released key would no longer mean a duplicate — but
-         * "no longer a duplicate" is not the same as "the right answer". Keeping the key still
-         * gives the better one: within the hour the server REPLAYS the original outcome instead of
-         * refusing, and past the hour the key is the only thing that still resumes. The two guards
-         * are belt and braces and the braces stay.
+         * Terminal — and `unverified` is NOT one of the terminals that spends the key. For
+         * `confirmed`, `failed` and `duplicate` the key is spent: whatever it named on the
+         * server is its permanent answer, and the next press is a genuinely new send — resuming
+         * a spent key would replay the old outcome for ever, a wedged Send button rather than a
+         * duplicate. `duplicate` joins them because nothing is pending under it: the server
+         * refused and rolled its own reservation back, so the key names nothing and the way
+         * forward is an edit — a different message, a different send.
+         */
+
+        /**
+         * `unverified` means nobody knows whether it delivered. The lock carries the key across a reload, so
+         * releasing it is exactly how the next press gets a FRESH key for a message that may already be gone. This
+         * branch used to release it ("the server refuses every further send of that draft") — which stopped being
+         * true when the compose shed the draft id before re-sending. The key is kept, so a retry reuses it and the
+         * server can recognise the reservation; the send parks as needing a check instead of quietly going twice.
+         */
+
+        /**
+         * The server-side content claim does not change this: an identical second send is refused for an hour
+         * whatever key it carries, but "no longer a duplicate" is not "the right answer" — within the hour the kept
+         * key REPLAYS the original outcome instead of refusing, and past the hour it is the only thing that still
+         * resumes. Belt and braces, and the braces stay.
          */
         // NAMED BY MESSAGE, not by lane. A lane can hold an unresolved record beside this one,
         // and releasing the lane would delete the record saying an earlier message may already
@@ -1216,32 +1186,24 @@ export function useMailSend(
       else setPhase(key, next);
 
       /**
-       * ── AN ACCEPTED-PENDING SEND DOES NOT CLOSE THE SURFACE, AND THE FIRST VERSION DID ──────
-       *
-       * It ran `settledRef.current(key, m)` on the beat, reasoning that the server holds a
-       * committed reservation so the editor has nothing left to hold. Both halves were wrong and
-       * a review caught them.
-       *
-       * FIRST, that callback is not "close the surface". `AppShell.onSendSettled` says in three
-       * places that it fires on a CONFIRMATION and on nothing else, and its body acts on it: it
-       * marks the answered message READ and spends its resurfaced pin, steps the Reply Run past
-       * the item, drops a drafted alternative as moot, and discards the stranded row a recovery
-       * compose was seeded from. Every one of those states "this was answered" about a message
-       * that may never have left. The comment that used to stand here claimed the triage debt was
-       * not discharged; that was true of `settle`'s own discharge and false of the shell's, which
-       * is the whole defect — reasoning about the function I wrote instead of the one I called.
-       *
-       * SECOND, the premise "the draft row carries it from here" does not hold for an INTERACTIVE
-       * send. Nothing server-side picks that row up: `claimDue` requires `send_at` AND `send_key`
-       * to be non-null and a manual send has neither, so no pass ever looks at it — and the
-       * recovery arm that does claim a row runs verify-by-Sent, which never re-submits. The only
-       * thing that resolves an interactive accepted-pending send is the retry driver in THIS
-       * hook, which lives exactly as long as this surface's session. Closing the surface would
-       * hand the message to a resolver that does not exist.
-       *
-       * So both queued flavours keep their surface, and the difference between them stays where
-       * it belongs: in the sentence. The lane stays locked and its durable key stays claimed,
-       * because the intent is out there under it and a second press would be a second delivery.
+       * An accepted-pending send does not close the surface, and the first version did. It ran
+       * `settledRef.current(key, m)` on the beat, reasoning the server holds a committed
+       * reservation so the editor has nothing left to hold. Both halves wrong, caught by review.
+       * First, that callback is not "close the surface": `AppShell.onSendSettled` fires on a
+       * CONFIRMATION and on nothing else — it marks the answered message READ, spends its
+       * resurfaced pin, steps the Reply Run past the item, drops a drafted alternative, and
+       * discards the stranded row a recovery compose was seeded from; every one of those states
+       * "this was answered" about a message that may never have left.
+       */
+
+      /**
+       * Second, "the draft row carries it from here" does not hold for an INTERACTIVE send: nothing server-side picks
+       * that row up — `claimDue` requires `send_at` AND `send_key` non-null and a manual send has neither, and the
+       * recovery arm that does claim a row runs verify-by-Sent, which never re-submits. The only resolver of an
+       * interactive accepted-pending send is the retry driver in THIS hook, which lives as long as this surface's
+       * session; closing the surface would hand the message to a resolver that does not exist. So both queued
+       * flavours keep their surface, and the difference stays in the sentence — the lane locked and its durable key
+       * claimed, because the intent is out there under it and a second press would be a second delivery.
        */
     },
     [settle, setPhase, sessionOf],
@@ -1305,26 +1267,20 @@ export function useMailSend(
   };
 
   /**
-   * ── THE ADOPTION PASS AT MOUNT, AND WHY IT EXISTS NOW WHEN IT DID NOT BEFORE ────────────────
-   *
-   * This file's header used to say there is deliberately no adoption pass at mount, because "a
-   * mount that adopted the lane as `queued` would lock a button whose settlement can never arrive
-   * through `flushPending`". That was true and it was a statement about the ENGINE, not about
-   * adoption: a restored entry's result was discarded by the replay, so nothing could ever arrive.
-   * The engine keeps it now (`replayOutboxInner` writes it to `lateResults`, where the timeout
-   * path already wrote), so the objection is gone and the settlement is exactly what has to be
-   * collected — because without it a send that completed on this boot leaves its message sitting
-   * in the composer, and an edit there is a second delivery.
-   *
-   * ONE CONSUMER, UNCHANGED. `flushPending()` is destructive and `useMailSend` owns it; this is
-   * that same owner, pulling on the one occasion its own maps are empty. `flush` cannot do it —
-   * it returns early when nothing is queued IN THIS MOUNT, and it skips a result whose key it does
-   * not recognise, which is every restored one.
-   *
-   * THE KEY IS TURNED BACK INTO A MESSAGE BY THE RECORD, not by guesswork: the press wrote the
-   * lane and the names down synchronously, before the verb, which is the whole reason that record
-   * exists. A result whose key names no record is left alone — it belongs to a surface this build
-   * cannot speak for, and inventing a lane for it would settle the wrong message.
+   * The adoption pass at mount, and why it exists now when it did not before. This file's header used to say there is
+   * deliberately no adoption pass, because "a mount that adopted the lane as `queued` would lock a button whose
+   * settlement can never arrive through `flushPending`" — true then, and a statement about the ENGINE: a restored
+   * entry's result was discarded by the replay. The engine keeps it now (`replayOutboxInner` writes it to
+   * `lateResults`), so the objection is gone and the settlement is exactly what must be collected — without it a send
+   * that completed on this boot leaves its message sitting in the composer, and an edit there is a second delivery.
+   */
+
+  /**
+   * One consumer, unchanged: `flushPending()` is destructive and `useMailSend` owns it; `flush` cannot do this — it
+   * returns early when nothing is queued in this mount and skips keys it does not recognise, which is every restored
+   * one. The key is turned back into a message by the RECORD, not guesswork: the press wrote the lane and names down
+   * synchronously, before the verb. A result whose key names no record is left alone — it belongs to a surface this
+   * build cannot speak for, and inventing a lane would settle the wrong message.
    */
   useEffect(() => {
     let cancelled = false;
@@ -1449,33 +1405,29 @@ export function useMailSend(
             attachSendLockDraft(record.lane, names, res.entityId, owner.current);
           }
         } else if (res.status !== "queued") {
-          /* ── EVERYTHING ELSE RELEASES AND REPORTS ──────────────────────────────────────────
-             A settled late result ends the record it names exactly as the live press ending does:
-             `confirmed` settles, `unverified` parks, everything else releases and reports.
+          /**
+           * Everything else releases and reports. A settled late result ends the record it names as the live press
+           * ending does: `confirmed` settles, `unverified` parks, everything else releases and reports. The key is
+           * spent and nothing was delivered: a replayed `mail_send` refused non-retryably (`send_failed`, or a typed
+           * 409 such as `mailbox_disabled`) is abandoned by the engine and handed back `rolled_back` — an answer that
+           * MIGHT have delivered is `send_unverified`, the arm above. So nothing is left for this record to protect,
+           * and leaving it standing was the whole defect: `restoredPending` reads it for seven days, and the shell
+           * renders every field, Send AND Cancel inert under "still being sent from your last session" — for a send
+           * that is over and did not go.
+           */
 
-             THE KEY IS SPENT AND NOTHING WAS DELIVERED. A replayed `mail_send` refused
-             non-retryably — `send_failed`, or a typed 409 such as `mailbox_disabled` — is
-             abandoned by the engine and handed back `rolled_back`; by the adapter's contract an
-             answer that MIGHT have delivered is `send_unverified`, which is the arm above and is
-             the one outcome the record must outlive. So there is nothing left for this record to
-             protect, and leaving it standing was the whole defect: `restoredPending` reads it for
-             the record's seven days, and the shell renders that as every field, Send AND Cancel
-             inert under "still being sent from your last session" — for a send that is over and
-             did not go. Nobody could edit the message, send it again, or discard it.
+          /**
+           * `releaseSendLock` filters by `(lane, fp)`, so an unresolved record for a DIFFERENT message on the same
+           * lane is untouched.
+           */
 
-             `releaseSendLock` filters by `(lane, fp)`, so an unresolved record for a DIFFERENT
-             message on the same lane is untouched.
-
-             AND `queued` IS NOT ONE OF THESE, for the reason the live path branches on it first:
-             a queued result is the ABSENCE of an answer, in the engine's own words at the
-             late-result writer. The verb is back on the outbox and the hold is still true. Such a
-             result reaches this loop only through the timed-out dispatch's own recorder, and
-             releasing on it would free a key a request still on the wire is carrying — a second
-             key for a message that may yet be delivered, which is the duplicate this whole file
-             exists to prevent.
-
-             NOTHING BEYOND THE RELEASE AND THE SENTENCE. Settling is the `confirmed` ending, and
-             the row the adapter made for a press that carried none is not adopted here. */
+          /* `queued` is NOT one of these, for the reason the live path branches on it first: a
+             queued result is the ABSENCE of an answer — the verb is back on the outbox and the
+             hold is still true. Such a result reaches this loop only through the timed-out
+             dispatch's own recorder, and releasing on it would free a key a request still on the
+             wire is carrying — a second key for a message that may yet be delivered. Nothing
+             beyond the release and the sentence: settling is the `confirmed` ending, and the row
+             the adapter made for a press that carried none is not adopted here. */
           releaseSendLock(record.lane, record.fp, owner.current);
           /* The live path's own failure sentence, on the surface this answer is about: without it
              the composer comes back editable saying nothing, which is a message the person
@@ -1567,25 +1519,19 @@ export function useMailSend(
   const ownKeys = useRef(new Set<string>());
 
   /**
-   * ── THE LATCH: WHICH MESSAGE THIS COMPOSE WAS HOLDING WHEN THE SESSION BEGAN ─────────────────
-   *
-   * Taken when a compose session first becomes visible to this hook, and NOT re-derived while that
-   * session lasts. That is the whole mechanism rather than an optimisation: at that moment the
-   * buffer holds exactly what was pressed Send on, and every later read is of a buffer somebody
-   * may have edited — the thing being guarded against. A hold that re-derived its own subject from
-   * the edited text would unlock itself the instant it was needed, which was the first shape of
-   * this and it was measured: the trace still delivered twice with the guard "working".
-   *
-   * PER SESSION, NOT PER SHELL MOUNT, and that correction cost a Send button that did nothing.
-   * Latched once for the life of the mount, a hold taken for a restored message followed the
-   * composer onto whatever came next — start a new message during the replay and it stayed held
-   * after the drain, with no exit but a reload. The compose SESSION is the unit: an edit keeps it
-   * (so the hold survives, as it must), while a contact's Write, a mail link or another draft
-   * re-mints it (so the hold is re-derived for what is actually on screen).
-   *
-   * Read during render rather than in an effect, because an effect runs AFTER the first render and
-   * the first render is where the compose decides whether it is editable. A hold that arrives one
-   * paint late is a hold somebody can type past.
+   * The latch: which message this compose was holding when the session began. Taken when a compose session first
+   * becomes visible to this hook and NOT re-derived while it lasts — the whole mechanism, not an optimisation: at
+   * that moment the buffer holds exactly what was pressed Send on, and every later read is of a buffer somebody may
+   * have edited. A hold that re-derived its subject from the edited text would unlock itself the instant it was
+   * needed — the first shape of this, measured: the trace still delivered twice with the guard "working". Per
+   * SESSION, not per shell mount — latched for the life of the mount, a hold taken for a restored message followed
+   * the composer onto whatever came next, with no exit but a reload. An edit keeps the session (the hold survives, as
+   * it must); a contact's Write, a mail link or another draft re-mints it.
+   */
+
+  /**
+   * Read during render rather than in an effect: an effect runs AFTER the first render, where the compose decides
+   * whether it is editable, and a hold arriving one paint late is a hold somebody can type past.
    */
   const latch = useRef<{ fp: string | null; session: string | null } | null>(null);
   {
