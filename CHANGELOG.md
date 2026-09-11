@@ -26,6 +26,22 @@ again, however long the mailbox has been in use.
 The pass that clears automated mail out of the Ohbox could file a message you had just moved back
 into it, if your move and the pass landed at the same moment. It now checks a second time, right
 before it files anything, whether you have moved the message — so your placement wins.
+### The Screener asks only about senders still worth a decision
+
+The Screener holds mail from people you have never agreed to hear from. How far back it asks about
+is measured from a fixed point — the window in Settings. The count in the sidebar respected that
+window; the list itself did not, so it read the folder instead of the question, and on a mailbox
+with years of history those are different by an order of magnitude. The queue offered senders whose
+newest mail was years old, beside a much smaller count.
+
+The list now asks the same question the count does, through the same code. Nothing moves on your
+mail server and nothing is deleted: the mail stays in the folder it is in, and those senders are in
+History, where old mail from people you never answered has always been. Set the window to all time
+and every one of them is back in the list.
+
+Deciding still works for a sender the queue no longer shows — reach them from History or from
+search, press a pile, and all of their held mail follows.
+
 ### Connecting a mailbox sets the point the Screener counts from
 
 Connecting a mailbox without choosing a history window left the Screener with no cutoff, so every
