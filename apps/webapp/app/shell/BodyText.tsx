@@ -1,94 +1,34 @@
 "use client";
 
 /**
- * THE MESSAGE BODY AS PROSE — paragraphs, quoted reply chains, and real links.
- *
- * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
- *
- * Reading a message looked like reading a plain-text code editor: URLs rendered as a wall of
- * raw query string, the text overflowed the panel, and there was no paragraph rhythm. All three
- * symptoms came out of ONE expression, `<p className="msg-body">{body.text}</p>`: mailparser's
- * `htmlToText` output, dropped into a single `<p>` with no break rule and no block structure.
- *
- * ── AND A REPLY CHAIN WAS AN UNDIFFERENTIATED WALL ──────────────────────────────────────
- *
- * The paragraph fix was not enough for a thread. A native-rendered plain-text reply chain — the
- * `>`-quoted history under a fresh reply, the "On <date>, X wrote:" and "Von: … Betreff: …"
- * lines that say who wrote what — arrived with its `>` markers rendered as literal characters and
- * every level of quoting flattened into the same tone, so it was impossible to tell the writer's
- * new words from the four replies underneath them. {@link classifyLine} reads the quote depth off
- * each line, {@link toBlocks} groups the lines a depth at a time, {@link toTree} folds the blocks
- * into one container per quoted run with deeper runs nested inside, and each level is drawn with
- * a single quiet left rule and a more muted tone, with the attribution lines set apart as
- * separators. The sender's own line breaks INSIDE a block still survive, under
- * `white-space: pre-line` — the same paragraph-rhythm rule as before, unchanged.
- *
- * ── AND THEN THE BARS FRAGMENTED THE THREAD THEY WERE DRAWN TO JOIN ─────────────────────
- *
- * The first cut of the quote rendering wrapped EVERY BLOCK in its own `.msg-quote`. A quoted
- * message is many blocks — a `>`-blank line between two quoted paragraphs ends one block and
- * starts the next — so a coherent quoted mail rendered as a picket fence: one short bar per
- * paragraph with a gap between each, and a depth change opened yet another sibling bar at
- * another indent. An Exchange reply chain three hops deep read as dozens of disconnected
- * bar-marked chunks — the reported defect, verbatim.
- *
- * So blocks are folded into a TREE before they are rendered: contiguous quoted material shares
- * one `.msg-quote` per level, a deeper run nests inside the shallower one, and only depth-0
- * prose — an inline reply — closes the containers. One rule per level, running unbroken down
- * everything quoted at that level, is how every native mail client draws a chain. The nesting
- * is real DOM nesting now, which is why {@link MAX_QUOTE_DEPTH} exists: a pathological
- * `">".repeat(50000)` line must clamp to a handful of wrappers, not build fifty thousand.
- *
- * ── WHY THIS IS A RENDER-TIME COMPONENT AND NOT AN INGEST STEP ────────────────────────────
- *
- * The stored `text` of a message body is the sensitivity-redacted source for the server's
- * full-text search column, and the dedup key is a hash of that same text. Rewriting the text on
- * the way in would change dedup keys and the search corpus and force a backfill, to buy
- * presentation. The stored shape does not move;
- * the DTO already ships `text`, and turning text into a reading surface is the client's job.
- *
- * ── REACT ELEMENTS ONLY ───────────────────────────────────────────────────────────────────
- *
- * No `dangerouslySetInnerHTML`, no HTML string anywhere in this file — not as an intermediate
- * value, not "just for the links". `security-headers.ts` states the invariant this file is half
- * of: no untrusted markup STRING reaches a DOM sink; sender bytes enter the app document only
- * as React text nodes and as attributes this code constructed. The CSP rationale is written on
- * top of that sentence; claims are contracts here, so the sentence constrains this file rather
- * than the other way round. On the plain-text path the constructed attribute is an `href` built
- * from a parsed `URL`; on the rich path (below) it is that plus the handful of numbers and
- * class names the renderer stamps on elements IT created.
- *
- * ── AND THE RICH PATH, WHICH RENDERS STRUCTURE WITHOUT EVER RENDERING MARKUP ──────────────
- *
- * A prose-classified html mail (see `MessageBody`'s `isRigidLayout`) no longer flattens to its
- * `text/plain` part. `MessageBody`'s walker re-reads the SANITIZED document through a second,
- * narrower allow-list and emits the {@link BodyNode} superset below — paragraphs, headings,
- * lists, tables, code (inline and as {@link PreNode} blocks), inline emphasis, gated links, and
- * `blockquote` as the same {@link QuoteNode} the plain-text path builds, so the trailing-history
- * fold applies to both. This file renders those nodes the only way it renders anything:
- * `createElement`, text nodes, constructed attributes. There is no serialized form anywhere between the sanitized DOM and the screen,
- * which is what keeps the sink invariant true while tables and lists render natively. No
- * sender `style`, `class`, `width` or `id` survives — the viewer's own type is the point.
- *
- * Deliberately a plain `<a>` and never `next/link`: `next/link` prefetches, and a message body
- * that fetches anything on render is the tracker-pixel behaviour the product exists to stop.
- *
- * ── AND THE TRAILING HISTORY IS FOLDED, BECAUSE THE READER HAS READ IT ────────────────────
- *
- * A reply carries the whole chain under it, and the chain is usually what the reader just came
- * from. So the TRAILING top-level quote run — plus the attribution paragraph(s) that introduce
- * it — is collapsed behind a quiet chip and rendered only when asked for
- * ({@link splitTrailingHistory} decides; the component holds the state). Three deliberate limits:
- *
- *   · ONLY the trailing run. A quote the writer answered inline — prose after it — is part of
- *     the letter, and folding it would hide the words the reply is about.
- *   · NEVER on a body that is nothing but quote (a fully-quoted forward): collapsing the only
- *     content would empty the pane behind a chip.
- *   · Collapsed means NOT IN THE DOM, not hidden by style — a folded tracking URL must not
- *     become an anchor until the reader asks for the history it sits in.
- *
- * This is the NATIVE path only. The framed HTML path (`MessageBody`'s iframe) shows the sender's
- * own markup, where the quoted history is the sender's document and stays as sent.
+ * The message body as prose — paragraphs, quoted reply chains, and real links. The one expression
+ * `<p className="msg-body">{body.text}</p>` rendered mail as a wall of raw text. {@link classifyLine}
+ * reads the quote depth per line, {@link toBlocks} groups by depth, {@link toTree} folds contiguous
+ * quoted material into one `.msg-quote` per level (per-block wrappers drew a picket fence — one bar
+ * per paragraph); the sender's own line breaks inside a block survive under `white-space: pre-line`.
+ * The nesting is real DOM nesting, which is why {@link MAX_QUOTE_DEPTH} exists: a pathological
+ * `">".repeat(50000)` line must clamp to a handful of wrappers. Render-time, not ingest: the stored
+ * text is the search corpus and the dedup key's input — rewriting it would force a backfill.
+ */
+
+/**
+ * React elements only — no `dangerouslySetInnerHTML`, no HTML string anywhere in this file, not as
+ * an intermediate value: `security-headers.ts` states the invariant this file is half of — no
+ * untrusted markup string reaches a DOM sink; sender bytes enter the document only as React text
+ * nodes and constructed attributes (an `href` built from a parsed `URL`). The rich path renders
+ * structure without markup: `MessageBody`'s walker re-reads the SANITIZED document through a second,
+ * narrower allow-list and emits the {@link BodyNode} superset — no sender `style`, `class`, `width`
+ * or `id` survives. A plain `<a>` and never `next/link`: `next/link` prefetches, and a body that
+ * fetches anything on render is the tracker-pixel behaviour the product exists to stop.
+ */
+
+/**
+ * The trailing history is folded, because the reader has read it: the trailing top-level quote run —
+ * plus its attribution lines — collapses behind a quiet chip ({@link splitTrailingHistory} decides).
+ * Three limits: only the trailing run (a quote answered inline is part of the letter); never on a
+ * body that is nothing but quote (collapsing the only content empties the pane); and collapsed means
+ * NOT IN THE DOM, not hidden by style — a folded tracking URL must not become an anchor until asked
+ * for. Native path only: the framed HTML path shows the sender's own document, as sent.
  */
 import { useState, type ReactNode } from "react";
 import { liveCopy } from "./locale";
@@ -101,17 +41,13 @@ import { liveCopy } from "./locale";
 const QUOTE_PREFIX = /^[ \t]{0,3}((?:>[ \t]?)+)/;
 
 /**
- * ATTRIBUTION LINES — the sentence that says who wrote the block below, in the forms real mail
- * actually uses. Rendered as a quiet separator rather than as prose, so each quoted block's author
- * stays legible instead of dissolving into the wall.
- *
- *   · "On <date>, Alice <a@x> wrote:"          (en)   · "Am <date> schrieb Alice:"     (de)
- *   · "Le <date>, Alice a écrit :"             (fr)   · "El <date>, Alice escribió:"    (es)
- *   · the forwarded-header block — Von/From, Gesendet/Sent, An/To, Betreff/Subject, Datum/Date…
- *   · a "-----Original Message-----" / "Ursprüngliche Nachricht" separator line.
- *
- * Deliberately anchored and bounded: a match needs the whole short line to be the attribution
- * shape, so an ordinary sentence that merely contains "wrote" or a colon is left as prose.
+ * Attribution lines — the sentence saying who wrote the block below, in the forms real mail uses:
+ * "On <date>, Alice <a@x> wrote:", "Am <date> schrieb Alice:", "Le <date>, Alice a écrit :", the
+ * forwarded-header block (Von/From, Gesendet/Sent, An/To, Betreff/Subject) and the
+ * "-----Original Message-----" / "Ursprüngliche Nachricht" separator. Rendered as a quiet
+ * separator rather than prose, so each quoted block's author stays legible. Anchored and bounded: a
+ * match needs the whole short line to be the attribution shape, so an ordinary sentence that merely
+ * contains "wrote" or a colon is left as prose.
  */
 const ATTRIBUTION: RegExp[] = [
   /^on\b.*\bwrote:$/i,
@@ -190,30 +126,14 @@ function toBlocks(lines: ClassifiedLine[]): Block[] {
 export const MAX_QUOTE_DEPTH = 6;
 
 /**
- * ── A BLOCK WHOSE LINES ARE COLUMNS IS PREFORMATTED, NOT PROSE ──────────────────────────
- *
- * Plain-text receipts and notices line their values up with runs of spaces, and the
- * alignment IS the content — "Pro plan      15.00" and "Pro plan 15.00" are different
- * documents. The paragraph path renders under `white-space: pre-line`, which collapses
- * intra-line runs by definition, so a column-shaped block must leave that path entirely.
- * It becomes the same {@link PreNode} a code block arrives as: monospace so the columns
- * actually meet, literal whitespace so the runs survive, and `.msg-pre-wrap`'s own scroll
- * container so a wide receipt scrolls inside the letter (`test/message-body-code.test.ts` holds
- * that construction; `test/body-text-columns.test.ts` holds this classification).
- *
- * A COLUMN GAP IS THREE-PLUS SPACES OR A TAB, INTERIOR. Three and not two, deliberately:
- * two spaces after a period is a typing habit older than email, and reading it as a column
- * would re-render half of ordinary correspondence in monospace. Interior (`\S` on both
- * sides) so trailing whitespace — which pre-line hides and senders cannot see — never votes.
- *
- * AND THE BLOCK DECIDES, NOT THE LINE. At least two gap-carrying lines, and at least half
- * of the block: one stray run inside a paragraph is an accident of typing, and the cost of
- * a false positive is somebody's words set in a code block's type. The cost of a false
- * negative is the status quo this exists to fix — collapsed columns — so the thresholds
- * lean conservative. What is deliberately NOT here is any attempt to detect alignment
- * ACROSS lines (equal offsets, shared boundaries): senders pad by eye, proportional
- * previews lie to them, and a cross-line rule would reject exactly the hand-padded receipts
- * this is for.
+ * A block whose lines are columns is preformatted, not prose. Plain-text receipts line values up
+ * with space runs and the alignment IS the content — "Pro plan      15.00" and "Pro plan 15.00"
+ * are different documents; `white-space: pre-line` collapses intra-line runs, so a column-shaped
+ * block becomes the same {@link PreNode} a code block arrives as (`test/message-body-code.test.ts`
+ * holds that construction; `test/body-text-columns.test.ts` this classification). A column gap is
+ * three-plus spaces or a tab, interior — two spaces after a period is a typing habit, and `\S` on
+ * both sides keeps invisible trailing whitespace from voting. The BLOCK decides, not the line: two
+ * gap-carrying lines and half the block, leaning conservative; no cross-line alignment detection.
  */
 const COLUMN_GAP = /\S(?: {3,}|\t)(?=\S)/;
 
@@ -277,15 +197,12 @@ export interface RichParagraphNode { kind: "rich"; attribution: boolean; childre
 export interface HeadingNode { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; children: InlineNode[] }
 export interface RuleNode { kind: "rule" }
 /**
- * A PREFORMATTED BLOCK — `pre`, which is how a code block, a header dump or a stack trace
- * arrives (usually as `pre > code`).
- *
- * TEXT, not children, and that carries the whole meaning of the kind: a `pre`'s content is its
- * LITERAL CHARACTERS — the indentation is the structure — so the walker flattens the subtree to
- * the string the reader is meant to see and this file puts that string on screen as ONE React
- * text node. Inline emphasis inside a code block is the sender's typesetting of somebody else's
- * source; dropping it costs a reader of that source nothing, and keeping it would mean deciding
- * how a bold run interacts with preserved whitespace.
+ * A preformatted block — `pre`, how a code block, header dump or stack trace arrives (usually
+ * `pre > code`). TEXT, not children, and that carries the kind's whole meaning: a `pre`'s content is
+ * its literal characters — the indentation is the structure — so the walker flattens the subtree to
+ * the string the reader is meant to see, rendered as one React text node. Inline emphasis inside a
+ * code block is dropped: it costs a reader of source nothing, and keeping it would mean deciding how
+ * a bold run interacts with preserved whitespace.
  */
 export interface PreNode { kind: "pre"; text: string }
 /** `ul`/`ol`; each item is its own block list, so nested lists nest. */
@@ -305,15 +222,12 @@ export type BodyNode =
   | PreNode
   | TableNode;
 /**
- * Fold the flat block list into the tree the reader actually means.
- *
- * A stack of open containers tracks the current quote depth. Each block either continues the
- * container at its depth (a second quoted paragraph joins the FIRST one's container — this is
- * the merge that ends the one-bar-per-paragraph fragmentation), opens deeper containers (a
- * reply hop nests inside the history it quotes), or closes containers (the depth dropped, or
- * depth-0 prose — an inline reply — ended the quoted run altogether). Blank lines never reach
- * this function; they end BLOCKS in `toBlocks`, and deliberately not containers, because a
- * blank quoted line separates a quoted message's paragraphs, not the message.
+ * Fold the flat block list into the tree the reader means. A stack of open containers tracks the
+ * current quote depth; each block continues the container at its depth (the merge that ends
+ * one-bar-per-paragraph fragmentation), opens deeper containers, or closes them (depth dropped, or
+ * depth-0 prose ended the quoted run). Blank lines never reach this function: they end BLOCKS in
+ * `toBlocks`, deliberately not containers — a blank quoted line separates a quoted message's
+ * paragraphs, not the message.
  */
 function toTree(blocks: Block[]): BodyNode[] {
   const top: BodyNode[] = [];
@@ -336,15 +250,12 @@ function toTree(blocks: Block[]): BodyNode[] {
 }
 
 /**
- * The toggle's two labels, and a link's hover title. `liveCopy` and not `useTranslations`, for
- * the same reason as `MessageBody.COPY`: this component renders bare — no intl provider — in a
- * dozen unit tests, and the hook throws without one. `test/locale-shim-parity.test.ts` holds
- * this table and the `bodyText` catalogue namespace to the same key set and the same English
- * sentences.
- *
- * `linkTitle` is the sentence a reader gets when they hover a link whose text is not its
- * destination — the one place the body says where a press will take you. It was a template
- * literal in the markup, so it said it in English wherever the reader was.
+ * The toggle's two labels and a link's hover title. `liveCopy`, not `useTranslations`, for the same
+ * reason as `MessageBody.COPY`: this component renders bare — no intl provider — in a dozen unit
+ * tests, and the hook throws without one. `test/locale-shim-parity.test.ts` holds this table and the
+ * `bodyText` catalogue namespace to the same key set and English sentences. `linkTitle` is the hover
+ * sentence for a link whose text is not its destination — the one place the body says where a press
+ * will take you; it was a template literal, so it spoke English wherever the reader was.
  */
 const EN = {
   show: "Show history",

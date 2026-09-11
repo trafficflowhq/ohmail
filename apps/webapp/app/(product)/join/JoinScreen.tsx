@@ -1,61 +1,24 @@
 "use client";
 
 /**
- * ONBOARDING, end to end, over HTTP only.
- *
- * invite code → register → an enrollment session → a passkey (TOTP as the fallback) →
- * recovery codes → choose a plan (Stripe Checkout) → connect a mailbox.
- *
- * ── THE STEP ORDER IS THE SERVER'S, NOT THIS FILE'S ─────────────────────────────────────
- *
- * Most transitions here are ones the API would have enforced anyway:
- *
- *  · `register` mints an ENROLLMENT-scoped session. It can do exactly seven things,
- *    and `/mailboxes` is not one of them — an enrollment session gets 403
- *    `enrollment_incomplete` on it. So "passkey before mailbox" is not a wizard rule this
- *    component could get wrong.
- *  · recovery codes carry BOTH `enrollmentOk` and `stepUp`, independently, so
- *    "codes after the factor" is likewise structural: an enrollment session cannot satisfy
- *    step-up, and the first factor is what exchanges it for a full session that can.
- *  · `POST /mailboxes` is step-up gated and runs the allowance gate inside its own
- *    transaction, so the mailbox step can be refused for four different true reasons and
- *    every one of them arrives as a sentence written by `mailbox-allowance.ts`.
- *
- * **PLAN BEFORE MAILBOX, and this one IS a rule this file has to get right.** It shipped the
- * other way round, and the two steps were a closed loop that nobody could get out of:
- * `POST /mailboxes` runs the allowance gate, which answers 402 `payment_required` for an account with
- * no `billing_subscriptions` row, while the plan step — the only place `billing.checkout` is
- * ever called — was reachable only AFTER a mailbox existed. Subscribing required a mailbox
- * and a mailbox required subscribing. Every invited user would have hit it on their first
- * attempt, `bootstrap()` re-pinned them to the mailbox step on every reload, and the webapp
- * has no other billing surface to escape to. The API-level test that should have caught it
- * seeded the subscription row the wizard had no way to create — which is why
- * `onboarding-flow.test.ts` now walks THIS order and carries a case that fails if the two
- * are swapped back.
- *
- * WHETHER A MAILBOX MAY BE CONNECTED is a verdict this server asks for and does not keep, so
- * the wizard renders what the SERVER answered rather than a rule written into copy. An install
- * with nobody to ask is unmetered: the mailbox step is simply the first thing a signed-up
- * person does.
- *
- * This component's job is otherwise to ASK for the right thing at the right moment and to
- * display what came back. It never re-derives a refusal (see `api-client.ts`).
- *
- * ── RESUMABILITY ────────────────────────────────────────────────────────────────────────
- *
- * The enrollment session lives ~5 minutes and dies with no way to extend it. A person who
- * walks away mid-onboarding must not be locked out, and they are not: `POST /auth/login`
- * with the same password re-mints an enrollment session for a user with zero factors
- * (the re-entry path). So a stale-session failure routes to sign-in rather than to a
- * dead end, and `bootstrap()` asks `GET /auth/session` on mount so a reload lands on the
- * step the SERVER thinks you are on.
- *
- * `bootstrap()` derives EVERY step from server state, including the codes step:
- * `user.twofaEnrolled.recoveryCodes` is "this user holds at least one unused recovery code",
- * which is the only durable record that the step happened. Without that branch a reload right
- * after the passkey ceremony — the most likely moment to reload, because the platform passkey
- * sheet reads like a navigation — skipped the codes step silently and forever, and the user
- * ended up with one factor and no way back to /join to get a recovery path.
+ * Onboarding, end to end, over HTTP only: invite code → register → an enrollment session → a passkey
+ * (TOTP fallback) → recovery codes → choose a plan (Stripe Checkout) → connect a mailbox. Most
+ * transitions are the server's own: an enrollment session gets 403 `enrollment_incomplete` on
+ * `/mailboxes`, recovery codes carry both `enrollmentOk` and `stepUp`, and `POST /mailboxes` is
+ * step-up gated. PLAN BEFORE MAILBOX is the rule this file must get right: shipped the other way the
+ * two steps were a closed loop — `POST /mailboxes` answers 402 with no `billing_subscriptions` row
+ * while the plan step was reachable only after a mailbox existed — and `onboarding-flow.test.ts`
+ * walks THIS order and fails if they are swapped back. The wizard never re-derives a refusal.
+ */
+
+/**
+ * Resumability: the enrollment session lives ~5 minutes with no way to extend it, and a person who
+ * walks away must not be locked out — `POST /auth/login` with the same password re-mints an
+ * enrollment session for a user with zero factors (the re-entry path), so a stale-session failure
+ * routes to sign-in, and `bootstrap()` asks `GET /auth/session` on mount so a reload lands on the
+ * step the server thinks you are on. Every step derives from server state, including codes:
+ * `user.twofaEnrolled.recoveryCodes` is the only durable record the step happened — without that
+ * branch a reload right after the passkey ceremony skipped the codes step silently and for ever.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -75,47 +38,26 @@ import { SELF_HOST_BUILD } from "../../hello";
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
 
 /**
- * The step order, for the progress rail AND for the wizard. `done` is not a step you stand
- * on; it is what the rail shows as complete.
- *
- * `plan` precedes `mailbox` — see the header. Reordering these two re-creates the deadlock.
- *
- * `invite` drops out of the rail when this deployment does not gate on one. It is not
- * "hidden while still counted" — a five-step rail that reads "step 2 of 6" for the first
- * thing a stranger is asked to do would be describing a journey they are not on.
- *
- * `verify` sits between `codes` and `plan`, which is where `withVerifiedEmail` actually
- * refuses — `POST /billing/checkout` and `POST /mailboxes` are the two gated routes, and both
- * are downstream of here. `sent` and `done` are NOT in the rail: neither is a step somebody
- * stands on and works through. `sent` is a terminal "go and read your mail" screen for the
- * public path, and the journey resumes on a different page (`/verify-email`) in whatever tab
- * the mail was opened in.
- *
- * Most people never see `verify` at all. Anyone who arrived through the public path came in
- * via the verification link, so their address was already proven before they had a session;
- * the step exists for the two populations that can hold a session with an unproven address —
- * somebody whose verification mail failed to send and who signed in with the re-entry path,
- * and an account opened with an operator bootstrap code.
+ * The step order, for the progress rail AND the wizard; `done` is what the rail shows complete, not
+ * a step. `plan` precedes `mailbox` — see the header; reordering the two re-creates the deadlock.
+ * `invite` drops out of the rail when the deployment does not gate on one — not hidden-but-counted,
+ * because "step 2 of 6" for a stranger's first act describes a journey they are not on. `verify`
+ * sits between `codes` and `plan`, where `withVerifiedEmail` actually refuses (billing checkout and
+ * `POST /mailboxes`, both downstream). `sent` and `done` are not in the rail; `sent` is a terminal
+ * screen and the journey resumes on `/verify-email` in another tab. Most people never see `verify`:
+ * it exists for a failed verification mail re-entered by sign-in, and for an operator bootstrap.
  */
 const RAIL: Step[] = ["invite", "account", "factor", "codes", "verify", "plan", "mailbox"];
 
 /**
- * The SELF-HOST journey has neither `verify` nor `plan`, because the server it runs against has
- * neither surface — and both absences are the composition's, not this file's guess:
- *
- *  · no `plan` — the self-host route table carries no billing at all ("not refused: not built",
- *    `routes/self-host.ts`), and the mailbox allowance is composed unmetered, so a plan step
- *    would poll `GET /billing/subscription` into a 404 forever — the exact
- *    discovered-absent-by-404-mid-ceremony failure `/hello` negotiation exists to prevent.
- *  · no `verify` — the operator's account arrives VERIFIED (the ownerless setup token confers
- *    it; box control proved the address's owner), and family accounts legitimately arrive
- *    unverified on a box that may have no mailer, which is why the composition switches the
- *    verified-address product gate OFF (`requireVerifiedForProduct: false`, obligation 4).
- *    A step whose copy is "we need to know this address reaches you before you connect a
- *    mailbox" would be false there: nothing on the server refuses either next step.
- *
- * `SELF_HOST_BUILD` is compile-time (see `app/hello.ts`), so the managed bundle carries the
- * managed rail untouched.
+ * The self-host journey has neither `verify` nor `plan`, and both absences are the composition's,
+ * not this file's guess: no `plan` because the self-host route table carries no billing ("not
+ * refused: not built", `routes/self-host.ts`) and the allowance is composed unmetered — a plan step
+ * would poll `GET /billing/subscription` into a 404 for ever, the failure `/hello` negotiation
+ * exists to prevent; no `verify` because the operator's account arrives verified (the setup token
+ * confers it) and family accounts legitimately arrive unverified on a box with no mailer
+ * (`requireVerifiedForProduct: false`, obligation 4) — nothing on the server refuses either next
+ * step. `SELF_HOST_BUILD` is compile-time (`app/hello.ts`), so the managed bundle is untouched.
  */
 const RAIL_SELF_HOST: Step[] = RAIL.filter((s) => s !== "verify" && s !== "plan");
 const RAIL_BASE: Step[] = SELF_HOST_BUILD ? RAIL_SELF_HOST : RAIL;
@@ -184,22 +126,14 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   const [totpCode, setTotpCode] = useState("");
   const [recovery, setRecovery] = useState<string[] | null>(null);
   /**
-   * WHICH ACCOUNT THIS WIZARD IS FOR — learned once and NEVER REWRITTEN.
-   *
-   * A ref rather than state, and first-write-only rather than assignable, because the sentence
-   * above used to be a comment and not a rule. `bootstrap()` assigned it unconditionally, and
-   * `bootstrap()` is not only the mount path — the verification step's "I have confirmed it"
-   * button calls it again. So a wizard that began as A, left open while another tab signed in as
-   * B, re-anchored itself to B on that press: from then on every comparison below compared B
-   * with B and passed. `bootstrap()` then routes from the SERVER's state, and B lacking recovery
-   * codes lands on the codes step, whose mount effect generates without another press — B's
-   * codes, minted and rendered in A's window, with B's previous set destroyed.
-   *
-   * So the first read wins and every later one is CHECKED against it. See {@link sameAccount}
-   * for what it is compared against and why it cannot be a cookie: an enrolment session sets no
-   * readable owner marker (`enrollmentCookies` writes none), so this screen is outside the reach
-   * of the marker-based boundary that protects the rest of the signed-in product. The only thing
-   * that knows is the server, asked again.
+   * Which account this wizard is for — learned once and NEVER rewritten. A ref, first-write-only:
+   * `bootstrap()` used to assign it unconditionally, and it is not only the mount path — the verify
+   * step's "I have confirmed it" button calls it again. A wizard that began as A, left open while
+   * another tab signed in as B, re-anchored to B on that press; B lacking recovery codes landed on
+   * the codes step, whose mount effect generates without another press — B's codes minted in A's
+   * window, B's previous set destroyed. The first read wins and every later one is CHECKED against
+   * it ({@link sameAccount}). It cannot be a cookie: an enrolment session sets no readable owner
+   * marker (`enrollmentCookies` writes none) — only the server knows, asked again.
    */
   const wizardOwner = useRef<string | null>(null);
   const [codesSaved, setCodesSaved] = useState(false);
@@ -221,18 +155,13 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   useEffect(() => { passkeyPossible.current = webauthnAvailable(); }, []);
 
   /**
-   * SCRUB THE INVITE CODE OUT OF THE URL, once it is in component state.
-   *
-   * `/join?code=…` is how the invite mail links here, so the live beta credential arrives in
-   * the address bar — and stays there: in the visible URL for the whole session, in browser
-   * history permanently, in the platform access log for the page request, and in the
-   * `Referer` of any same-origin navigation off this page (the /login and / links below).
-   * `replaceState` costs nothing and removes all of that except the access-log line, which is
-   * already written by the time this runs.
-   *
-   * The exposure is bounded — the code is single-use and worthless after registration — but
-   * "bounded" is not "zero", and a code still sitting in the bar of an abandoned tab on a
-   * shared machine is exactly the case where it is not yet spent.
+   * Scrub the invite code out of the URL once it is in component state. `/join?code=…` is how the
+   * invite mail links here, so the live beta credential arrives in the address bar — and stays: in
+   * the visible URL, in browser history permanently, in the platform access log, and in the
+   * `Referer` of any same-origin navigation off this page. `replaceState` removes all of that
+   * except the access-log line, already written. The exposure is bounded — single-use, worthless
+   * after registration — but a code still in the bar of an abandoned tab on a shared machine is
+   * exactly the case where it is not yet spent.
    */
   useEffect(() => {
     if (typeof window === "undefined" || !initialCode) return;
@@ -1022,26 +951,16 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
             <p className="join-hint">{t("mailboxConnected", { address: displayAddress(connected.address) })}</p>
           )}
           <div className="join-actions">
-            {/* ── INTO THE FIRST-RUN FLOW, NOT INTO A COLD MAIL CLIENT ────────────────────────
-             *
-             * The funnel proves an address, takes a plan and connects a mailbox. It does not say
-             * what ohmail is about to DO to that mailbox, how far back it will screen, or whether
-             * a model should help — and until this link those three questions had no screen at
-             * all on this door: the person landed in the Ohbox and the organizing began.
-             *
-             * `#/first-run` is where they are asked. It opens on the consent statement when a
-             * mailbox was connected here (which is the ordinary path) and on the mailbox step when
-             * one was not, because the flow reads what is actually stored rather than what this
-             * screen thinks happened.
-             *
-             * NEVER EARLIER THAN THIS SCREEN, on this door. The flow's first real act is
-             * connecting or consenting to a mailbox, and both routes behind it are refused for an
-             * unverified address — so opening it before the address is proven would be a
-             * ceremony whose every button answers 403. Reaching `done` means verification is
-             * behind us.
-             *
-             * The FRAGMENT survives the rewrite of `/` to the mail client: it never leaves the
-             * browser, which is the same mechanism `/login#/settings` already relies on. */}
+            {/* Into the first-run flow, not into a cold mail client. The funnel proves an address,
+             * takes a plan and connects a mailbox; what ohmail is about to DO to that mailbox, how
+             * far back it screens, and whether a model should help are asked at `#/first-run` — it
+             * opens on the consent statement when a mailbox was connected here and on the mailbox
+             * step when not, reading what is stored rather than what this screen thinks happened.
+             * Never earlier than this screen on this door: both routes behind the flow's first real
+             * act are refused for an unverified address, so opening it earlier is a ceremony whose
+             * every button answers 403; reaching `done` means verification is behind us. The
+             * FRAGMENT survives the rewrite of `/` to the mail client — it never leaves the
+             * browser, the mechanism `/login#/settings` already relies on. */}
             <Link className="btn primary" href="/#/first-run">{t("openOhmail")}</Link>
           </div>
         </>

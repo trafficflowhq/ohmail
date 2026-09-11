@@ -1,91 +1,43 @@
 "use client";
 
 /**
- * COMPOSE ATTACHMENTS — pick files, hold their bytes in memory, send them with the message.
- *
- * ── NOTHING IS FILED AGAINST THE ACCOUNT — AND ONE EXACT QUALIFICATION ───────────────────
- *
- * The bytes a user picks here are stored against nothing that outlives the send: not the account's
- * `drafts` row, not `attachments`, not this browser's `localStorage` (the compose scratch buffer
- * strips them; see `compose.ts`). This control keeps the decoded files in React state handed up
- * through `ComposeFields.attachments`, and a reload starts with none.
- *
- * THE QUALIFICATION IS THE TRANSPORT, and it is stated here because the sentence above used to
- * read "ride the SEND request and are stored nowhere", which stopped being the whole truth. On the
- * hosted browser client a send whose files exceed what one request body can carry uploads them to
- * private object storage first and sends REFERENCES; the bytes sit there, unreadable without a
- * service credential, until the send reads them, and a retention sweep removes them within 24
- * hours whether the send happened or not. Still nothing on the account, still no row that names
- * them after the window closes — but "nowhere" would be a claim the product cannot keep, so the
- * privacy page says this too.
- *
- * ── THE CAP IS A UX PRE-CHECK; THE SERVER IS AUTHORITATIVE ───────────────────────────────
- *
- * The server refuses a total over its own ceiling; this control states that number up front and
- * refuses to ADD a file that would cross it, so a user learns at pick time instead of at a failed
- * send. **The number is a PROP, not a constant** — see {@link composeAttachCap} for what goes into
- * it and why this component no longer knows.
- *
- * ── PICTURES ARE SHRUNK FIRST, AND THE ORDER IS THE POINT ────────────────────────────────
- *
- * Every picked file goes through {@link compressImage} BEFORE the cap above is applied to it, and the
- * cap is then applied to the SHRUNK size. Written the other way round the feature would be nearly
- * pointless: the common attachment is a phone photo of six megabytes, the cap is three, and a
- * compressor that only runs on files which already fit never runs on the file that needed it. So
- * the sequence is decode → re-encode → measure → admit or refuse, and a photo that fits only
- * because it was shrunk attaches.
- *
- * The transform is in `./image-quality`, which is where the level table, the format rules and the
- * keep-the-original guard are documented. This file's only job is to run it in the right place and
- * to say what happened.
- *
- * ── THE DIAL, IN THE ROW IT ACTS ON — ONE VALUE PER ACCOUNT ──────────────────────────────
- *
- * The quality level is offered beside the attach button because the moment the level matters is
- * the pick: a person about to send a photo at full size should not have to know that a dial
- * lives two views away.
- *
- * IT EDITS THE ACCOUNT'S OWN PREFERENCE, DELIBERATELY AND SCOPED. Moving it here is remembered
- * — the next compose on this account opens at the level chosen — and it is the SAME value the
- * Settings → General row edits, through the same two functions, so the two surfaces cannot
- * disagree. What changed from the first shipping of this dial is the KEY: the value is stored
- * per account (`imageQualityKeyFor`; the id is `storageOwner`'s, the one the mail mirror is named
- * for), because the old account-less key meant a control that looks personal silently rewrote
- * the preference for EVERYONE who signs in on the machine. A surface with no account — the
- * standalone desktop, the demo — uses the account-less key, where every pre-scoping choice
- * already lives.
- *
- * AND A MOVE RE-ENCODES THE PICTURES ALREADY ATTACHED — owner ruling, replacing the old
- * "new picks only" scope. The pristine SOURCE bytes of every admitted file are retained (in
- * memory, per attachment, for as long as the list holds it — {@link ATTACHMENT_SOURCES}),
- * and a dial move re-runs the compression over each already-attached compressible picture FROM
- * THAT SOURCE, never from the previous encode: re-compressing an encode is generational quality
- * loss, and a move back to Original must recover the exact original bytes. Non-image and
- * incompressible files are untouched, byte for byte and object for object. The pass is async and
- * the composer stays responsive; its commit is ONE atomic list replacement, so a send that lands
- * mid-pass sends the settled pre-move encodes and a send after it sends the settled new ones —
- * never a torn mix. The visible note states this scope (it used to state the opposite).
- *
- * The options run Low → Medium → High → Original, ascending, with the default in the middle and
- * "Original" at the end anchoring what the scale is FOR (everything below it trades fidelity for
- * bytes). The Settings segment renders the SAME array in the SAME order — one table, one catalog
- * entry for the labels — so neither surface can grow a level or a word the other lacks.
- *
- * ── PASTED AND DROPPED FILES ARE PICKS TOO ───────────────────────────────────────────────
- *
- * The message body takes no images (no-images is the product's rule), so pasting a picture into
- * the editor used to do NOTHING — no attachment, no notice — and a file dropped on the surface
- * was left to the browser, which navigates away to the file. Both now land HERE, through the
- * same admit pipeline as the picker (shrink → cap → duplicate check → notes): the caller hands
- * this component the surface to listen on (`dropZone`), because the files belong to the send
- * exactly as a picked file does.
- *
- * ── COPY ─────────────────────────────────────────────────────────────────────────────────
- *
- * The two strings that state the cap are catalog keys (`compose.attach*`) taking the rendered size
- * as a parameter, so the sentence on screen and the number the send will enforce come from one
- * value. They were inline literals holding a hard-coded "3 MB" — which was exactly the drift this
- * slice removes, in the one place a user reads a promise.
+ * Compose attachments — pick files, hold their bytes in memory, send them with the message. Nothing
+ * is filed against the account: not `drafts`, not `attachments`, not `localStorage` (the scratch
+ * buffer strips them; see `compose.ts`) — a reload starts with none. The qualification is the
+ * transport: on the hosted browser client a send whose files exceed one request body uploads them to
+ * private object storage first and sends references; the bytes sit there unreadable without a
+ * service credential and a retention sweep removes them within 24 hours whether the send happened or
+ * not — "nowhere" would be a claim the product cannot keep, and the privacy page says this too.
+ */
+
+/**
+ * The cap is a UX pre-check; the server is authoritative. This control states the number up front
+ * and refuses to ADD a file that would cross it, so a person learns at pick time, not at a failed
+ * send; the number is a PROP, not a constant ({@link composeAttachCap}). Pictures are shrunk FIRST
+ * and the cap applies to the shrunk size — the common attachment is a six-megabyte phone photo
+ * against a three-megabyte cap, and a compressor that runs only on files that already fit never
+ * runs on the one that needed it. Decode → re-encode → measure → admit or refuse; the transform, the
+ * level table and the keep-the-original guard live in `./image-quality`.
+ */
+
+/**
+ * The dial, in the row it acts on — one value per account. It edits the account's own preference,
+ * the SAME value Settings → General edits through the same two functions; the key is per account
+ * (`imageQualityKeyFor`, `storageOwner`'s id) because the old account-less key silently rewrote the
+ * preference for everyone who signs in on the machine. A move re-encodes the pictures already
+ * attached — owner ruling — from the pristine SOURCE bytes ({@link ATTACHMENT_SOURCES}), never from
+ * the previous encode: re-compressing an encode is generational loss, and a move back to Original
+ * must recover the exact bytes. The pass is async; its commit is ONE atomic list replacement, so a
+ * send mid-pass never sends a torn mix. Low → Medium → High → Original; Settings renders the same.
+ */
+
+/**
+ * Pasted and dropped files are picks too: the body takes no images (the product's rule), so a pasted
+ * picture used to do nothing and a dropped file navigated the browser away. Both land here through
+ * the same admit pipeline (shrink → cap → duplicate check → notes); the caller hands this component
+ * the surface to listen on (`dropZone`). The two strings that state the cap are catalogue keys
+ * (`compose.attach*`) taking the rendered size as a parameter — they were inline literals holding a
+ * hard-coded "3 MB", the exact drift this removes in the one place a user reads a promise.
  */
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -113,49 +65,34 @@ import { storageOwner } from "../shell/storage-owner";
 const LEVEL_CHOICES: readonly ImageQualityLevel[] = IMAGE_QUALITY_LEVELS;
 
 /**
- * THE INLINE TRANSPORT'S OWN CEILING on total attachment bytes — the mirror of the constant the
- * hosted send handler enforces, kept as a literal rather than imported so this bundle pulls in no
- * server module.
- *
- * It is a fact about the REQUEST PIPELINE and not about mail: attachment bytes travelling base64 on
- * one JSON request have to clear the hosted API's serverless body limit (~4.5 MB) with room for the
- * envelope and the ~1.33× base64 inflation. 3 MB of raw bytes encodes to about 4 MB.
- *
- * IT IS NO LONGER WHAT THE HOSTED FORM PROMISES, and that is the point of the paragraph above:
- * a window whose client can stage declares an uncapped SURFACE, so this number stops being the
- * binding term and the mailbox's own announcement governs. It remains the strict fallback for
- * every caller that has not declared a surface, and the client-engine's own
- * `SEND_INLINE_MAX_TOTAL_BYTES` is the same value deciding the same boundary from the transport
- * side — all three are pinned together by the repository's `compose-attach-cap-parity` suite.
+ * The inline transport's own ceiling on total attachment bytes — a mirror of the constant the
+ * hosted send handler enforces, kept as a literal so this bundle pulls in no server module. A fact
+ * about the request pipeline, not mail: base64 attachment bytes on one JSON request must clear the
+ * hosted API's serverless body limit (~4.5 MB) with room for the envelope and the ~1.33× inflation
+ * — 3 MB raw encodes to about 4 MB. No longer what the hosted form promises: a window whose client
+ * can stage declares an uncapped surface and the mailbox's own announcement governs; this remains
+ * the strict fallback for callers with no declared surface, and the client-engine's
+ * `SEND_INLINE_MAX_TOTAL_BYTES` is the same value — pinned by `compose-attach-cap-parity`.
  */
 export const COMPOSE_ATTACH_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
 
 /**
- * THE ENVELOPE ALLOWANCE and THE ENCODING EXPANSION — the mirror of the send's, kept as literals
- * for the same reason the constant above is.
- *
- * A server's announced `SIZE` bounds the ENCODED MESSAGE: headers, MIME boundaries, the body, and
- * every attachment base64-encoded at four characters per three bytes, wrapped at 76 characters
- * with a CRLF. The expansion is therefore (4/3)·(78/76) and its inverse is exactly 19/26, so 25 MB
- * of files is about 34 MB of message.
- *
- * Stating the face value would be a promise the sending server breaks: somebody attaches 25 MB to
- * a provider that announced 25 MB, waits for the send, and has it bounced. Pinned value for value
- * against `attachmentBudgetFor` in the services package by the repository's parity suite.
+ * The envelope allowance and the encoding expansion — mirrors of the send's, kept as literals for
+ * the same reason as the constant above. A server's announced `SIZE` bounds the ENCODED message:
+ * headers, MIME boundaries, and every attachment base64-encoded at four characters per three bytes,
+ * wrapped at 76 with a CRLF — the expansion is (4/3)·(78/76), inverse exactly 19/26, so 25 MB of
+ * files is about 34 MB of message. Stating the face value would be a promise the sending server
+ * breaks. Pinned value for value against `attachmentBudgetFor` in the services package.
  */
 export const COMPOSE_ATTACH_MIME_ENVELOPE_BYTES = 64 * 1024;
 
 /**
- * WHAT THE HOSTED WINDOW'S TRANSPORT CAN CARRY — the staging bucket's per-object ceiling.
- *
- * Uploading straight to object storage removes the request-body limit; it does not remove every
- * limit. An object over the bucket's configured size is refused by the browser's own PUT, after
- * the upload grant was minted and after the person waited, and there is nothing useful the client
- * can say about it. So the window declares this as its surface instead of `null`, and the mint
- * applies the same bound server-side.
- *
- * A per-OBJECT limit used as a per-TOTAL bound, deliberately: it is always correct in the safe
- * direction, because if the total fits then every individual file fits.
+ * What the hosted window's transport can carry — the staging bucket's per-object ceiling. Uploading
+ * straight to object storage removes the request-body limit, not every limit: an object over the
+ * bucket's size is refused by the browser's own PUT, after the grant was minted and the person
+ * waited, with nothing useful to say. So the window declares this as its surface instead of `null`,
+ * and the mint applies the same bound server-side. A per-object limit used as a per-total bound,
+ * deliberately: always correct in the safe direction — if the total fits, every file fits.
  */
 export const COMPOSE_ATTACH_STAGED_SURFACE_BYTES = 40 * 1024 * 1024;
 
@@ -167,41 +104,14 @@ export function composeAttachBudgetFor(announcedMessageBytes: number): number {
 }
 
 /**
- * THE CEILING THIS FORM MAY PROMISE — the smaller of what the sending surface can carry and what
- * the sending mailbox's own server said it will accept.
- *
- * It is a MIRROR of the rule the send itself applies — `effectiveAttachmentCap` in the services
- * package's send-service — and it has to be: a number stated here that the send
- * would refuse is a claim the product cannot keep, and a refusal below the promise wastes a
- * message somebody composed. A mirror rather than an import because this bundle may pull in no
- * server module (the same rule the constant above states); the two implementations are pinned to
- * each other VALUE FOR VALUE by the repository's parity suite (`compose-attach-cap-parity`).
- *
- * `mailboxMax` is the submission server's own RFC 1870 `SIZE` announcement, forwarded from
- * `GET /mailboxes` through the resolved From. The interesting case is the STINGY provider, not the
- * generous one: a server that caps at 2 MB binds this form to 2 MB even though the request pipeline
- * would have carried 3 — without the `min` the user picks a file, waits for a send, and has it
- * bounced by their own provider.
- *
- * `surfaceMax` is the HOST's declaration about the pipeline a send from this window rides — the
- * form-side twin of the `sendSurfaceMaxTotalBytes` the send handler's service bag declares, with
- * the same three states:
- *
- *  · ABSENT (`undefined` — every one-argument call): the surface has not declared itself, and it
- *    resolves to the strict constant rather than to "unbounded". A caller that has not been
- *    taught the surface dimension must not acquire a bigger allowance by not passing it.
- *  · `null`: EXPLICITLY UNCAPPED — the desktop's standalone door, where this form, the send
- *    handler and the SMTP dial are one process and no request body exists between them (the
- *    mail engine's service bag makes the same declaration to `SendService`). The mailbox's
- *    own announcement then governs; while none has been measured the answer is again the
- *    constant, because an unknown limit read as no limit costs the user a composed message.
- *  · a number: that surface's own ceiling, bounded exactly as the constant is.
- *
- * The parameter order is the reverse of `effectiveAttachmentCap`'s, deliberately: every caller
- * here has a mailbox in hand, and only a HOST declares a surface, so the surface rides the
- * optional seat. `0` and anything non-finite never become a ceiling on either side — a server
- * advertising `SIZE 0` means "no fixed maximum" (RFC 1870 §6), so reading it as a ceiling of
- * nothing would refuse every file.
+ * The ceiling this form may promise — the smaller of what the sending surface can carry and what
+ * the sending mailbox's server said it will accept; a mirror of `effectiveAttachmentCap` in the
+ * services package (no server module may enter this bundle), pinned by `compose-attach-cap-parity`.
+ * `mailboxMax` is the submission server's RFC 1870 `SIZE` from `GET /mailboxes` — without the `min`
+ * a 2 MB provider bounces a send this form allowed. `surfaceMax`: ABSENT resolves to the strict
+ * constant (an untaught caller gains no allowance by not passing it); `null` is explicitly uncapped
+ * (the desktop's one-process door), the mailbox's announcement governing, the constant while
+ * unmeasured; a number is that surface's ceiling. `SIZE 0` and non-finite never become a ceiling.
  */
 export function composeAttachCap(
   mailboxMax: number | null | undefined,
@@ -223,22 +133,14 @@ export function composeAttachCap(
 }
 
 /**
- * THE PRISTINE SOURCE of every admitted attachment, keyed by the attachment object itself —
- * AT MODULE SCOPE, deliberately.
- *
- * A dial move re-encodes the pictures already attached, and it must do so FROM THE PICKED BYTES:
- * re-encoding the previous encode compounds the loss (each pass throws away fidelity the next
- * pass cannot get back), and a move to Original must recover the exact file. The map lives
- * outside the component because the LIST does: `AppShell` owns `fields.attachments` precisely so
- * the compose survives navigating away, and a map held in component state died with the unmount —
- * after visiting another view and coming back, every source lookup missed and the dial silently
- * did nothing while the note claimed otherwise (review finding). Keyed weakly on the attachment's
- * identity, so a removed row, a discarded form, or a closed compose releases its bytes with no
- * bookkeeping; a list restored WITHOUT bytes (a reload — the scratch buffer strips them) simply
- * has no entries and is left untouched by a move, which is the honest answer.
- *
- * `originalBase64` is the source's own encoding, computed at most once — a move to Original and
- * every "this file cannot shrink" outcome reuse it instead of re-reading megabytes.
+ * The pristine source of every admitted attachment, keyed by the attachment object itself — at
+ * MODULE scope, deliberately. A dial move re-encodes from the PICKED bytes (re-encoding the previous
+ * encode compounds loss, and a move to Original must recover the exact file), and the map lives
+ * outside the component because the list does: `AppShell` owns `fields.attachments` so the compose
+ * survives navigation, and a map in component state died with the unmount — every lookup missed and
+ * the dial silently did nothing while the note claimed otherwise (review finding). Keyed weakly, so
+ * a removed row or closed compose releases its bytes; a list restored without bytes (a reload) has
+ * no entries and is left untouched. `originalBase64` is computed at most once and reused.
  */
 const ATTACHMENT_SOURCES = new WeakMap<ComposeAttachment, {
   blob: Blob;
