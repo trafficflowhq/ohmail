@@ -94,27 +94,44 @@ class NativeSocketBridge extends Duplex {
     try { this.native.resume(); } catch { /* gone */ }
   }
 
+  /** The connection is closed as far as this bridge or its platform socket can tell. */
+  get _closedForWriting() {
+    return this._connectionGone || this.destroyed || this.native.destroyed === true;
+  }
+
   /**
-   * REFUSED AT THIS DOOR WHEN THE CONNECTION IS GONE — never handed to the platform.
+   * THE ONE DOOR EVERY REFUSED WRITE PASSES, so the refusal is never silent.
    *
-   * The mail client's own queue writes in a microtask (`trySend` → `send`, which awaits its
-   * compiler twice), so a connection can die between a command being dequeued and its bytes
-   * being written. Handing that chunk on threw into the process from both platforms: the phone's
-   * socket throws `Socket is closed.` synchronously, Node's answers `ERR_STREAM_DESTROYED`, and
-   * either way the stream layer then emitted `error` at a socket with no listener left. The
-   * refusal reports through the pending write's callback instead, and destroys FIRST so that
-   * report cannot become a second unlistened emit.
+   * The mail client's queue writes in a microtask (`trySend` → `send`, which awaits its compiler
+   * twice), so a connection can die between a command being dequeued and its bytes being
+   * written. The stream layer's own refusal is what keeps that from throwing, and it does not
+   * come back here to say it happened — so the LINE is written here, above it, and the refusal
+   * itself is still the layer's. A dropped command with no record is the shape a person meets as
+   * a mailbox that silently stopped.
+   */
+  write(chunk, encoding, callback) {
+    if (this._closedForWriting) {
+      socketLog("socket_write_after_close", {
+        bytes: typeof chunk === "string" ? chunk.length : (chunk?.length ?? 0),
+        reason: "a command was written to a connection that had already closed; the bytes were " +
+          "refused and the write's caller told, rather than the platform's own error reaching " +
+          "the top of a runtime that has no handler for one",
+      });
+    }
+    return super.write(chunk, encoding, callback);
+  }
+
+  /**
+   * AND THE SAME REFUSAL WHERE THE LAYER ABOVE CANNOT MAKE IT — the native is gone and no `close`
+   * event said so, which is the shape the packaged artifact met. Destroyed FIRST so the report
+   * cannot become an `error` emitted at a socket whose last listener was a spent `once`; the
+   * pending write's callback is then the one thing told. No line here: `write` above already
+   * wrote it for this chunk.
    */
   _write(chunk, encoding, callback) {
     if (this._connectionGone || this.native.destroyed === true) {
       const err = new Error("the mail server connection was closed before these bytes were written");
       err.code = "ERR_STREAM_DESTROYED";
-      socketLog("socket_write_after_close", {
-        bytes: chunk.length,
-        reason: "a command was written to a connection that had already closed; the bytes were " +
-          "refused at the socket bridge and the write's caller told, rather than the platform's " +
-          "own error reaching the top of a runtime that has no handler for one",
-      });
       if (!this.destroyed) this.destroy();
       callback(err);
       return;

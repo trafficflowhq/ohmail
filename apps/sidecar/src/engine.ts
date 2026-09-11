@@ -2502,9 +2502,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            late-bound: by the time the queue reached it a re-dial could have installed a new
            adapter, and the close then retired the healthy replacement. Closing the object that
            reported its own death is correct whatever has happened since. */
+        /* AND DESTROYED, NOT LOGGED OUT — the same correction as the re-dial's teardown, on the
+           path beside it. A reported death does not mean the driver has closed: an `ETIMEOUT`
+           from the socket deadline reaches here from a client that still believes it is usable,
+           so `close()` issues a LOGOUT that queues behind the command already hung and never
+           settles — holding THIS QUEUE with it, which `drainPass` and `detach()` both take. The
+           re-dial runs outside the queue, so what that cost was not the dial: the mailbox
+           re-connected, logged `mailbox_reconnected`, and then never served another cycle or
+           finished a `stop()`. Destroying the socket is also what ends the hung command. */
         const dying = who;
         if (dying !== null) {
           void serialize(async () => {
+            if (dying.forceClose !== undefined) {
+              try { dying.forceClose(); } catch { /* the socket is going away regardless */ }
+              return;
+            }
             try { await dying.close(); } catch { /* the connection is already broken */ }
           }).catch(() => { /* `serialize` never rejects for the caller's sake; belt and braces */ });
         }
@@ -5002,7 +5014,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * person's press alike — was held for the life of the process. Measured on a device:
            * one `mailbox_reconnect_failed`, then no dial ever again and zero bytes on the wire
            * with the route restored, while the drain went on failing every fifteen seconds.
-           * Destroying the socket is also the only thing that ends the hung command. */
+           * Destroying the socket is also the only thing that ends the hung command.
+           *
+           * THIS AND THE DETECTOR'S TEARDOWN ARE ONE MECHANISM, not a fix and a belt. Measured
+           * by mutating both: with either one destroying, the dial happens — because destroying
+           * the socket is what ends the OTHER one's hung LOGOUT. With both polite there is no
+           * dial at all, which is the device's reading. So neither may be relaxed on the grounds
+           * that the other covers it. */
           if (old.forceClose !== undefined) {
             try { old.forceClose(); } catch { /* the socket is going away regardless */ }
           } else {
