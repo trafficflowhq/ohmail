@@ -1,68 +1,12 @@
 /**
- * WHICH ADDRESS IS ANSWERING — one rule, four surfaces.
- *
- * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
- *
- * A fresh compose resolved its sender through `sendingMailboxId` (`selectors.ts`), which
- * returns the mailbox of the account's NEWEST MESSAGE. On an account with two connected
- * addresses that is a coin toss re-flipped every time mail arrives: the From line moved
- * whenever the other address received something, and the compose surface rendered no From at
- * all, so nothing on screen said which one had won. A stranger could not tell what address
- * they were writing from even with a single mailbox connected.
- *
- * ── THE RULE ────────────────────────────────────────────────────────────────────────────
- *
- *  · A fresh compose defaults to the OLDEST CONNECTED mailbox — `createdAt` ascending. It is
- *    DERIVED, every time, and nothing stores it: most-recently-used drifts under the user,
- *    newest-message is the roulette this replaces, and "primary mailbox" is not a concept this
- *    product has. What IS remembered is the user's explicit pick, and only for the draft they
- *    picked it on (`ComposeFields.fromMailboxId`).
- *  · A fresh compose ADDRESSED TO A DOMAIN THE ACCOUNT ITSELF SENDS FROM takes that address
- *    instead, and says on screen that it did (`domainMatchedFrom`). Still derived, still nothing
- *    stored, still overridable by the selector beside it — it changes which default applies, not
- *    what a default is. It declines wherever a second reading exists.
- *  · A RECIPIENT THAT IS ONE OF THE ACCOUNT'S OWN ADDRESSES IS NOT EVIDENCE OF AN IDENTITY, so
- *    the rule above reads past it. Writing to yourself — a note, a reminder, a forward into your
- *    own second mailbox — leaves the sender exactly where it was, and a set holding both your own
- *    addresses and strangers' is decided by the strangers alone.
- *  · A reply keeps the mailbox the message arrived in (`Engine.enrich` → `parent.mailboxId`)
- *    and now SAYS so. If that mailbox can no longer send, the default is substituted and the
- *    substitution is stated on screen — never silently, and never by refusing the reply. Nothing
- *    about a reply's recipients moves its sender: that rule is the compose surface's alone.
- *  · A FORWARD is a REPLY for this purpose. It used to be a compose — it seeded the ordinary form
- *    with `EMPTY_COMPOSE` — but Forward is the thread's inline dock now (`AppShell.openForward`,
- *    `replyMode: "forward"`), so it resolves through {@link resolveReplyFrom} beside the reply it
- *    shares an editor with and keeps the mailbox the original arrived in. Its recipients are the
- *    user's own, and they move nothing: forwarding a message to your own second address answers
- *    from the mailbox that received it, which is what a forward's sender has always been.
- *  · A DRAFT reopened from the drafts list is a pick: `openDraft` seeds `fromMailboxId` from the
- *    row, so nothing is re-derived over it. The contact popover's Write is the other way round —
- *    `writeTo` seeds `EMPTY_COMPOSE` with a recipient and no pick, so it is an ordinary addressed
- *    compose and the rule above reads it as one.
- *  · The value is a mailbox **id**, never an address. Aliases are a later slice and the day one
- *    mailbox carries three addresses an address-keyed selector has no answer; an id keeps its
- *    meaning through that change.
- *
- * ── SENDABLE IS `!== "disabled"`, NOT `=== "connected"` ─────────────────────────────────
- *
- * This mirrors the server exactly, and the server's reasoning is load-bearing: when the server
- * reserves a send it refuses ONLY
- * `'disabled'`, because `'error'` is the sync worker's verdict about IMAP and SMTP is a
- * different transport — a mailbox that cannot be READ may still be able to SEND, and an
- * `error` the user cannot clear would strand their outbox on a transient fault they did not
- * cause. `sync_blocked_reason` is excluded for the same reason: it is a note about our own
- * infrastructure, written without touching `status` at all. A UI that offered fewer mailboxes
- * than the server accepts would be inventing a refusal nobody wrote.
- *
- * The DEFAULT still prefers `connected` (ruling 2 says so), and falls back to merely sendable
- * only when nothing is connected — otherwise an account whose one healthy mailbox is in
- * `error` would have no default at all.
- *
- * ── PURE, AND THAT IS THE POINT ─────────────────────────────────────────────────────────
- *
- * The screen and the wire have to agree. `ComposeView` renders from these functions and
- * `AppShell` builds the mutation from them, so there is no second implementation for one of
- * them to drift into — the same discipline as `canSend` in `mail-send.ts`.
+ * Which address is answering — one rule, four surfaces (the old default was the newest message's mailbox: a
+ * coin toss re-flipped on every arrival, with no From line on screen). A fresh compose defaults to the OLDEST
+ * CONNECTED mailbox, derived every time, nothing stored (the explicit pick is remembered per draft). A compose
+ * addressed to a domain the account sends from takes that address and says so; own addresses are read past. A
+ * reply keeps the arrival mailbox and says so; a substitution is stated, never refused. A forward is a reply
+ * here; a reopened draft is a pick. The value is a mailbox id, never an address. Sendable is `!== "disabled"`
+ * (mirrors the server: `error` is an IMAP verdict, SMTP is a different transport); the default still prefers
+ * `connected`. Pure: the view renders from these functions and `AppShell` builds the mutation from them.
  */
 
 import type { EmailAddress } from "@ohmail/client-engine";
@@ -130,21 +74,13 @@ interface MirrorShape {
 }
 
 /**
- * The MIRROR's `"mailbox"` entities → the options, in mirror order.
- *
- * This is the demo and the Desktop. `"mailbox"` is not one of the change log's entity types, so
- * `/sync` never emits one and only the FixturesAdapter seeds these rows — which is why the Cloud
- * path above exists at all.
- *
- * **`status` IS DELIBERATELY NOT READ HERE.** The fixture shape carries a capitalised display
- * label (`"Connected"`, `packages/fixtures/src/data.ts:34`), not the three-member lifecycle
- * union the server uses, so filtering on it would drop every demo mailbox and leave the demo
- * with no From line — the exact silence this gap is about. A seeded mailbox is one somebody put
- * there on purpose; there is no disabled one to hide.
- *
- * Mirror order rather than `createdAt` because these rows have no such field. The fixture order
- * is stable and authored, so "the first one" is a decision somebody made rather than a scan
- * artefact.
+ * The mirror's `"mailbox"` entities → the options, in mirror order — the demo and the Desktop
+ * (`/sync` never emits a mailbox entity; only the FixturesAdapter seeds these rows). `status` is
+ * deliberately not read: the fixture shape carries a capitalised display label, not the lifecycle
+ * union, so filtering on it would drop every demo mailbox and leave the demo with no From line —
+ * the exact silence this gap is about; a seeded mailbox is one somebody put there on purpose.
+ * Mirror order rather than `createdAt` because these rows have no such field; the fixture order is
+ * authored, so "the first one" is a decision, not a scan artefact.
  */
 export function optionsFromMirror(entities: readonly MirrorShape[]): FromOption[] {
   return entities
@@ -193,15 +129,14 @@ export interface ResolvedFrom {
    */
   maxMessageBytes: number | null;
   /**
-   * True when the sender was MOVED OFF the derived default because a recipient stands on this
-   * mailbox's own domain — see {@link domainMatchedFrom}. The surface must say so.
-   *
-   * It is a change that happened while the user was looking at another field, which is the only
-   * reason it needs a line at all: false whenever the resolution is what it would have been
-   * anyway, including when the matched mailbox IS the default. A notice about a switch nobody
-   * made is the same untruth as a switch nobody was told about.
-   *
-   * Always false on a reply — {@link resolveReplyFrom} has no recipients to read.
+   * True when the sender was MOVED OFF the derived default because a
+   * recipient stands on this mailbox's own domain
+   * ({@link domainMatchedFrom}); the surface must say so. It is a change
+   * that happened while the user was looking at another field — the only
+   * reason it needs a line: false whenever the resolution is what it would
+   * have been anyway, including when the matched mailbox IS the default (a
+   * notice about a switch nobody made is the same untruth as a switch
+   * nobody was told about). Always false on a reply.
    */
   domainMatched: boolean;
 }
@@ -229,49 +164,27 @@ function resting(options: readonly FromOption[], chosen: FromOption | null): Res
 }
 
 /**
- * An address folded to the one form this module compares addresses in: trimmed and lowercased,
- * whole.
- *
- * The same normalisation the server's own "is this us?" rule applies (`awayNormalizeAddress`),
- * written out again rather than imported because `app/shell/**` depends on no server package and
- * acquiring one for a `toLowerCase` would be the wrong trade. It is a single function here for
- * the reason it is a single function there: three places in this file ask whether an address
- * belongs to the account, and three inline folds are three chances for one of them to drift.
- *
- * Folding the LOCAL PART as well as the domain departs from the RFC, which permits a provider to
- * tell `Dana@` from `dana@`. The two readings cost different things: folding too much can only
- * decline an auto-switch that would have been made, while folding too little moves the sender of
- * a message the user addressed to themselves — which is the case this rule exists to leave alone.
+ * An address folded to the one form this module compares in: trimmed and lowercased, whole. The
+ * same normalisation as the server's `awayNormalizeAddress`, written out rather than imported
+ * (`app/shell/**` depends on no server package); one function because three places ask whether an
+ * address belongs to the account, and three inline folds drift. Folding the LOCAL PART departs from
+ * the RFC, which lets a provider tell `Dana@` from `dana@` — the costs differ: folding too much
+ * only declines an auto-switch; folding too little moves the sender of a message the user addressed
+ * to themselves, the case this rule exists to leave alone.
  */
 function foldAddress(address: string): string {
   return address.trim().toLowerCase();
 }
 
 /**
- * THE SAME ADDRESS WITH ITS `+`-TAG REMOVED — the key the OWN-ADDRESS question is asked with.
- *
- * `me+notes@acme.example` is `me@acme.example` wearing a filing label, and filing a note to
- * yourself under one is a common enough convention that the whole-address comparison left the
- * reported defect standing verbatim for it: the tagged form is not literally an address the
- * account holds, so the recipient rule read it as a stranger on the account's own domain and
- * moved the sender onto the mailbox the note was addressed to.
- *
- * ── WHY THIS IS SAFE HERE AND NOT EVERYWHERE ────────────────────────────────────────────
- *
- * A `+` in a local part is a convention, not a guarantee: the RFC lets a provider treat it as an
- * ordinary character, and a few do. So this is a GUESS, and it is only made where a wrong guess
- * is cheap. It changes an answer in exactly one case — a recipient whose base address IS one of
- * the account's own — and there the cost of guessing wrong is a declined auto-switch onto a
- * mailbox on that same domain. A stranger's tagged address (`dana+work@acme.example`) has a base
- * the account does not hold, so it still matches and still decides, unchanged.
- *
- * {@link foldAddress} deliberately does NOT do this, and the two reply helpers keep using it.
- * They filter recipients OUT of an envelope, where a wrong guess drops somebody from a reply and
- * the message never reaches them — the expensive direction. Declining a sender switch and losing
- * a recipient are not the same kind of mistake, so they are not decided by the same rule.
- *
- * A local part that BEGINS with `+` is left whole: there is no base in front of the tag, and an
- * empty local part is not an address anybody holds.
+ * The same address with its `+`-tag removed — the key the own-address question is asked with.
+ * `me+notes@acme.example` is `me@` wearing a filing label, and the whole-address comparison read it
+ * as a stranger on the account's own domain and moved the sender. A `+` tag is a convention, not a
+ * guarantee, so this is a GUESS made only where a wrong guess is cheap: it changes exactly one case
+ * — a recipient whose base IS one of the account's own — and the cost of wrong is a declined
+ * auto-switch. {@link foldAddress} deliberately does NOT do this: the reply helpers filter
+ * recipients out of an envelope, where a wrong guess drops somebody from a reply — the expensive
+ * direction. A local part beginning with `+` is left whole: no base in front of the tag.
  */
 function ownAddressKey(address: string): string {
   const folded = foldAddress(address);
@@ -282,18 +195,13 @@ function ownAddressKey(address: string): string {
 }
 
 /**
- * EVERY ADDRESS THE ACCOUNT ITSELF HOLDS, folded — including the ones it cannot send from.
- *
- * The options ARE the account's mailboxes. `optionsFromFacts` maps `GET /mailboxes` whole and a
- * disabled mailbox arrives carrying `sendable: false` rather than being dropped, so `sendable` is
- * deliberately not consulted: an address you can no longer send from is still yours, and a
- * message to it is still a message to yourself. That is the same set, and the same reason, as the
- * away responder's own-address suppression, which counts disabled and errored mailboxes too.
- *
- * There are no aliases in it because the product has none — a mailbox holds one address today.
- * When it holds several, this is the one place they join and nothing else in the rule moves.
- *
- * Keyed by {@link ownAddressKey}, so the membership test has to be asked with the same key.
+ * Every address the account itself holds, folded — including the ones it cannot send from. The
+ * options ARE the account's mailboxes; `optionsFromFacts` maps `GET /mailboxes` whole and a
+ * disabled mailbox arrives carrying `sendable: false` rather than being dropped: an address you can
+ * no longer send from is still yours, and a message to it is still a message to yourself — the same
+ * set, and reason, as the away responder's own-address suppression. No aliases because the product
+ * has none; when a mailbox holds several this is the one place they join. Keyed by {@link
+ * ownAddressKey}, so the membership test uses the same key.
  */
 function ownAddressSet(options: readonly FromOption[]): Set<string> {
   return new Set(options.map((o) => ownAddressKey(o.address)));
@@ -314,67 +222,14 @@ function domainOf(address: string): string | null {
 }
 
 /**
- * THE ADDRESS THE RECIPIENT'S DOMAIN NAMES — or `null`, which is most of the time.
- *
- * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
- *
- * An account holding two businesses' addresses has ONE fresh-compose default (the oldest
- * connected mailbox, see the header), so every message to a customer of the other business left
- * from the wrong company until somebody noticed the From line. The recipient is the evidence that
- * was on screen the whole time: a message to `dana@acme.example` from an account that can send as
- * `me@acme.example` is almost never meant to leave from the other identity.
- *
- * ── ONE ANSWER OR NONE ──────────────────────────────────────────────────────────────────
- *
- * The whole recipient set must point at exactly ONE of the account's sendable mailboxes. Two
- * recipients naming two different own domains is a message that belongs to neither identity more
- * than the other, and two of the account's own mailboxes on one domain is a question this rule
- * cannot answer — both leave the default alone. Reading the To line left to right and taking the
- * first hit would be a coin toss with an explanation attached, which is the defect being fixed
- * wearing a new hat.
- *
- * So "the first recipient wins" is true only in the sense that survives that rule: the earliest
- * matching recipient's mailbox is the answer, and it is the answer only because no later one
- * named a different mailbox. Several recipients on the SAME own domain are one answer reached
- * twice, not a tie.
- *
- * ── SENDABLE, AND NOTHING ELSE ──────────────────────────────────────────────────────────
- *
- * `sendable` is the same `!== "disabled"` the rest of this module uses, so a mailbox in `error`
- * can still be matched (an IMAP verdict is not an SMTP one) and a disabled one is never proposed
- * — the server would refuse it, and a match that has to be undone is worse than none. When the
- * disabled mailbox was the account's ONLY address on that domain nothing matches at all and the
- * derived default stands: a domain the account cannot currently send from is not an invitation to
- * nominate a different identity.
- *
- * ── AND IT COMPARES WIRE FORMS ──────────────────────────────────────────────────────────
- *
- * Both sides are punycode already: mailbox addresses are stored in their A-label form, and the
- * compose recipient field is one of the two surfaces `idn.ts` deliberately leaves undecoded
- * because its content IS the wire value. `displayAddress` is never called here — decoding is
- * presentation, and its documented fallback (a label that refuses to decode is shown raw) would
- * make two identical domains stop matching each other.
- *
- * ── AND YOUR OWN ADDRESSES ARE NOT RECIPIENTS FOR THIS PURPOSE ──────────────────────────
- *
- * A recipient that IS one of the account's own addresses is read past entirely. The rule above
- * reads the To line as evidence of which identity the message belongs to, and mail you send to
- * yourself carries no such evidence: writing a note to your own second address named your own
- * domain, so the sender moved to the address you were writing TO — a switch made on the strength
- * of the user's own mailbox, announced as though a correspondent had asked for it.
- *
- * The filter is per RECIPIENT rather than a gate over the whole line, and that is what makes the
- * mixed set behave: your own address beside a stranger's leaves exactly the stranger to decide,
- * which is the same answer the line would have given without you on it. A line holding nothing
- * but your own addresses leaves no recipient at all, and no recipients has always meant no match
- * — so the self-addressed case needs no clause of its own here, and an empty To line and a To
- * line addressed only to yourself resolve through one path.
- *
- * The set is every mailbox on the account, DISABLED ONES INCLUDED ({@link ownAddressSet}) —
- * unlike the match below, which may only propose a mailbox the server would accept — and it is
- * asked with {@link ownAddressKey}, so a `+`-tagged form of one of your addresses counts as yours.
- *
- * @param recipients the addresses typed on the To line, in order, already parsed.
+ * The address the recipient's domain names — or `null`, most of the time (two businesses' addresses
+ * share one fresh-compose default, so mail to the other business left from the wrong company). One
+ * answer or none: the whole recipient set must point at exactly ONE sendable own mailbox — two own
+ * domains, or two own mailboxes on one domain, leave the default alone. Sendable is `!==
+ * "disabled"`; a match that has to be undone is worse than none. Wire forms compared (both sides
+ * punycode). Your own addresses are not recipients here — read past per RECIPIENT, so a mixed set
+ * is decided by the strangers alone; the own set includes disabled mailboxes ({@link
+ * ownAddressSet}) and is asked with {@link ownAddressKey}.
  */
 export function domainMatchedFrom(
   options: readonly FromOption[],
@@ -396,56 +251,14 @@ export function domainMatchedFrom(
 }
 
 /**
- * FRESH COMPOSE — the user's pick if it is still a real choice, else the derived default.
- *
- * A stored pick is REVALIDATED rather than trusted. The scratch buffer survives days, a tab and
- * a reload; the mailbox it names can be disconnected in the meantime, and replaying it would
- * put a stale id on the wire and collect a 409 the user cannot act on. Falling back to the
- * default is silent ON PURPOSE here and not in {@link resolveReplyFrom}: a compose has no
- * mailbox it was supposed to answer from, so there is no promise to break — the From line
- * simply shows what it will send from, which is the whole point of rendering it.
- *
- * ── THE RECIPIENT GETS A VOTE, AND ONLY WHILE NOBODY HAS PICKED ─────────────────────────
- *
- * `recipientLine` is the To field verbatim. Addressed to a domain the account itself sends from,
- * the default is replaced by that address and `domainMatched` says so
- * ({@link domainMatchedFrom} holds the whole rule, including every case where it declines — the
- * account's OWN addresses among them, so a compose addressed to yourself alone keeps the sender
- * the From line was already showing and says nothing).
- *
- * The gate is `picked === null` — the FIELD's state, not whether the id it holds still resolves.
- * A user who chose an address has already taken the decision this would take for them, and a pick
- * that has gone stale falls back to the plain derivation exactly as it did before this existed.
- * Nothing downstream of this gate revisits it: a pick made before the recipients were typed and a
- * pick made after them are the same field, so once the field is SET no later edit to the To line
- * moves the sender again.
- *
- * "Set" and "chosen" are not the same thing, and the difference has one consequence worth naming.
- * A REOPENED DRAFT arrives with the field set from its row (`openDraft` ← the row's `mailboxId`,
- * which `useComposeAutosave` wrote from whatever the resolution was at the time), so the rule is
- * off for it whether or not a human ever touched the selector. That is the intended reading — a
- * draft's sender is a decision already taken and re-deriving over it would move the sender of a
- * message somebody left half-written — but it also means a draft SAVED BEFORE the own-address
- * rule existed carries the sender the old rule matched, and reopening it keeps that sender rather
- * than correcting it. Bounded to the drafts autosaved between the recipient rule landing and this
- * one, and DELIBERATELY not corrected — not merely unreachable from here. A repair is expressible:
- * `openDraft` could decline to seed `fromMailboxId` when the row's mailbox is one whose address
- * stands on that row's own To line, which is the old rule's signature. It is not done because the
- * row records WHICH mailbox and never whether anybody chose it, so that repair would equally throw
- * away the pick of a user who chose that address on purpose. Leaving a stale sender on an old
- * draft is the smaller of the two, and the only one the user can see and change.
- *
- * ── IT IS A DERIVED DEFAULT AND NOTHING ELSE ────────────────────────────────────────────
- *
- * Nothing here writes `ComposeFields.fromMailboxId`. The match is re-derived on every render from
- * the recipients on screen, so deleting the recipient un-switches the sender, and the id reaches
- * the wire down the SAME path the oldest-connected default takes (`AppShell` → `composeMailbox` →
- * `composePlan`). Storing it would make one derived guess sticky for every later recipient in the
- * draft, and would be indistinguishable — to this function, on the next render — from a choice the
- * user made.
- *
- * The To line only. A Cc is a copy, and letting a bystander's domain decide which identity is
- * writing is a switch the user has more reason to be surprised by than helped by.
+ * Fresh compose — the user's pick if it is still a real choice, else the derived default. A stored
+ * pick is REVALIDATED, not trusted: the mailbox it names can be disconnected, and replaying it
+ * collects a 409. The fallback is silent on purpose (a compose has no promised sender). The
+ * recipient gets a vote only while nobody has picked: the gate is `picked === null` — the FIELD's
+ * state — so once set, no later To edit moves the sender; a reopened draft arrives set from its
+ * row, deliberately not re-derived (a pre-rule draft keeps its stale sender — the smaller, visible
+ * error). Nothing here writes `fromMailboxId`: the match is re-derived per render, so deleting the
+ * recipient un-switches. To line only — a bystander's Cc domain must not decide who is writing.
  */
 export function resolveComposeFrom(
   options: readonly FromOption[],
@@ -466,39 +279,14 @@ export function resolveComposeFrom(
 }
 
 /**
- * REPLY / FORWARD — the mailbox the message arrived in, and the substitution said out loud.
- *
- * `inherited` is `parent.mailboxId`, which is what `Engine.enrich` already puts on the wire
- * (`engine.ts:671`). This slice does not change that default; it makes it visible, and it
- * handles the one case where the default is not available.
- *
- * ── WHY A SUBSTITUTION IS ANNOUNCED AND A COMPOSE FALLBACK IS NOT ───────────────────────
- *
- * A reply has a right answer — the address the sender wrote to — and sending from a different
- * one changes who the recipient sees answering. Doing that without saying so is the class of
- * defect this whole gap is about, one layer deeper: the roulette at least never claimed
- * anything. So `substituted` is true whenever the answer is not the inherited mailbox, and the
- * surface must say so.
- *
- * ── AND IT NEVER BLOCKS ─────────────────────────────────────────────────────────────────
- *
- * A disabled parent mailbox with a sendable default still sends. Refusing would be a reply the
- * user cannot make about a decision they did not take; the server's 409 is the backstop for the
- * case where there is genuinely nothing to substitute.
- *
- * A mailbox ABSENT from the options counts as substituted too: with the options in hand, an id
- * that is not among them is a mailbox that has been removed from the account, not one we simply
- * have not heard about. The caller must pass `[]` — never a partial list — when it cannot see.
- *
- * ── AN EXPLICIT PICK IS A STATEMENT, NOT A SUBSTITUTION ─────────────────────────────────────
- *
- * `override` is the sender the user chose ON THIS REPLY, or `null` while none is chosen. When it
- * names a mailbox that can send it stands as the answer and `substituted` is FALSE: the selector
- * value IS the From line, so there is nothing to announce — a pick and a substitution are
- * different acts and only the second, which the user did not make, gets a notice. A pick that no
- * longer names a sendable option (its address was disabled or removed since) is DROPPED, and the
- * inherited-mailbox derivation below runs verbatim — which is what re-announces a substitution if
- * the mailbox the message arrived in is the one that went away.
+ * Reply / forward — the mailbox the message arrived in, and the substitution said out loud. `inherited` is
+ * `parent.mailboxId`, what `Engine.enrich` already puts on the wire; this makes it visible and handles the one
+ * case where it is unavailable. A reply has a right answer — the address the sender wrote to — so sending from
+ * a different one is announced (`substituted`), unlike the compose fallback. It never blocks: a disabled parent
+ * mailbox with a sendable default still sends (the server's 409 is the backstop). A mailbox absent from the
+ * options counts as substituted — the caller must pass `[]`, never a partial list, when it cannot see. An
+ * explicit pick is a statement, not a substitution: it stands with `substituted` FALSE; a pick that no longer
+ * names a sendable option is dropped and the inherited derivation runs verbatim.
  */
 export function resolveReplyFrom(
   options: readonly FromOption[],
@@ -532,26 +320,14 @@ export function resolveReplyFrom(
 }
 
 /**
- * WHO A REPLY IS ADDRESSED TO — the sender, UNLESS you were the sender.
- *
- * `Engine.enrich` defaults a reply's recipient to `[parent.from]` (`engine.ts`, the `mail_send`
- * branch), which is right for the ordinary case: you answer the person who wrote to you. On a
- * message YOU sent — a self-authored message, which a thread shows inline the moment either side
- * has answered — `parent.from` is your OWN address, so that default addresses the reply straight
- * back to your own mailbox and the correspondent never hears it.
- *
- * The signal is the account's own addresses — `ownAddresses`, the same `GET /mailboxes` facts the
- * From line reads (`optionsFromFacts(...).map(o => o.address)`). When `parent.from` is one of
- * them, the reply is addressed to whom the message was addressed TO — the correspondents — with
- * any of your own addresses filtered out so a self-copy never rides along. A message you sent to
- * yourself alone leaves nothing after that filter, and there `[parent.from]` is restored rather
- * than shipping a reply with no recipient.
- *
- * Returns `null` for the ordinary (not-self-authored) case, so the caller omits `to` and lets
- * `enrich` keep owning that path — this speaks up only for the self-authored one. It also returns
- * `null` when `ownAddresses` is empty, which is exactly the surface with no `GET /mailboxes` to
- * read (the demo, the Desktop, a pane mounted with no provider): there is no way to know the
- * parent is self-authored, so the default stands rather than a guess.
+ * Who a reply is addressed to — the sender, UNLESS you were the sender. `Engine.enrich` defaults a
+ * reply's recipient to `[parent.from]` — right ordinarily; on a message YOU sent, that addresses
+ * the reply back to your own mailbox and the correspondent never hears it. When `parent.from` is
+ * one of `ownAddresses`, the reply goes to whom the message was addressed TO, with your own
+ * addresses filtered out; a message to yourself alone leaves nothing, and there `[parent.from]` is
+ * restored rather than a reply with no recipient. Returns `null` for the ordinary case (enrich
+ * keeps owning it) and when `ownAddresses` is empty — the demo, the Desktop, a provider-less pane:
+ * no way to know the parent is self-authored, so the default stands rather than a guess.
  */
 export function replyRecipients(
   parent: { from: EmailAddress; to: readonly EmailAddress[] },
@@ -571,41 +347,14 @@ export interface ReplyAllRecipients {
 }
 
 /**
- * WHO A REPLY TO ALL IS ADDRESSED TO — or `null` when "all" is nobody beyond the plain reply.
- *
- * The `null` is the visibility rule as well as the degenerate case: a surface offers Reply all
- * exactly when this returns an envelope, so the control cannot appear on a 1:1 message, where
- * "all" and "reply" are the same person and a second button would be noise. The send path asks
- * the SAME call, so what the button promised and what leaves the account are one decision —
- * the discipline this module's header states.
- *
- * ── THE ENVELOPE ─────────────────────────────────────────────────────────────────────────
- *
- * Ordinary case: the sender leads the To line, followed by every other To recipient who is not
- * the reader; the parent's Cc keeps its line, minus the reader. Nobody appears twice (a sender
- * who also stands in To/Cc is dropped there) and the reader is never their own recipient — the
- * same self-filter {@link replyRecipients} applies, case-folded the same way.
- *
- * Self-authored parent (`parent.from` is one of `ownAddresses`): a plain reply already goes to
- * every OTHER To recipient (see {@link replyRecipients}), so reply-all differs only by carrying
- * the Cc line — it is offered only when that line is non-empty after the self-filter.
- *
- * ── WHEN THE READER CANNOT BE TOLD APART ─────────────────────────────────────────────────
- *
- * With no `ownAddresses` (the demo, the desktop shell, a pane with no facts) the self-filter
- * has nothing to filter with. Two listed recipients still prove somebody besides the reader is
- * on the thread — the reader is at most one of them — so the envelope is offered from two and
- * withheld at one, where a lone recipient is almost always the reader and a Reply all on a 1:1
- * mail is exactly the noise the `null` exists to prevent. The reader may then appear among the
- * recipients (there is no way to know which one they are); that is the standard degradation,
- * not a defect, and it disappears the moment the facts are readable.
- *
- * TWO DISTINCT PEOPLE, NOT TWO HEADER SLOTS. The count used to be `to.length + cc.length`, and
- * one address standing on BOTH lines — a mail sent to a list with the sender copied in, the most
- * ordinary shape there is — filled the quota by itself: two slots, one person. Reply all was
- * offered on a message that is 1:1 to this reader, and the envelope it built was the sender plus
- * that single other name, which is what plain Reply already sends. So the gate counts the folded
- * set across both lines, the same fold the envelope applies.
+ * Who a reply to all is addressed to — or `null` when "all" is nobody beyond the plain reply. The
+ * `null` is the visibility rule: a surface offers Reply all exactly when this returns an envelope,
+ * and the send path asks the SAME call. Envelope: the sender leads To, then every other To
+ * recipient minus the reader; the parent's Cc keeps its line minus the reader; nobody twice.
+ * Self-authored parent: offered only when the Cc line survives the self-filter. No `ownAddresses`:
+ * offered from two DISTINCT recipients, withheld at one. Distinct people, not header slots: `to +
+ * cc` once counted one address on both lines as two, offering Reply all on a 1:1 message — the gate
+ * counts the folded set across both lines.
  */
 export function replyAllRecipients(
   parent: { from: EmailAddress; to: readonly EmailAddress[]; cc?: readonly EmailAddress[] },
@@ -673,27 +422,14 @@ export interface ReplyEnvelopePlan {
 }
 
 /**
- * ONE envelope for a reply — the computed audience, or the user's edit of it.
- *
- * The same discipline as `composePlan` and for the same reason: `InlineReply` judges the lock
- * with this and `AppShell.sendReply` builds the wire from it, so the head, the button and the
- * envelope cannot be three opinions.
- *
- * ── UNTOUCHED (`edit === null`) ──────────────────────────────────────────────────────────
- *
- * Exactly the derivation `sendReply` has always made: `replyAllRecipients` for a reply-all,
- * `replyRecipients` for the self-authored plain case, `null` otherwise so `Engine.enrich`
- * keeps deriving `[parent.from]`. **`bcc` is NEVER derived** — no reply of any kind
- * blind-copies anybody (`types.ts`), whatever the parent's recipient lists held. A blind
- * recipient exists only when somebody typed one.
- *
- * ── EDITED ───────────────────────────────────────────────────────────────────────────────
- *
- * The strings are parsed with the compose form's own parser and the compose form's own rule:
- * a typo in ANY row empties the whole envelope rather than sending the valid subset. The
- * emptied `to` is what `canSend` refuses — an edited reply always CARRIES its recipient set,
- * so "recipients present but empty" is expressible and refused, unlike the untouched path
- * where an absent `to` means "enrich decides".
+ * One envelope for a reply — the computed audience, or the user's edit of it. `composePlan`'s
+ * discipline: `InlineReply` judges the lock with this and `AppShell.sendReply` builds the wire from
+ * it, so the head, the button and the envelope cannot be three opinions. Untouched (`edit ===
+ * null`): exactly the derivation `sendReply` always made — `replyAllRecipients`, `replyRecipients`
+ * for the self-authored plain case, else `null` so `Engine.enrich` keeps deriving `[parent.from]`;
+ * `bcc` is NEVER derived — a blind recipient exists only when somebody typed one. Edited: parsed
+ * with the compose form's own parser and rule — a typo in any row empties the whole envelope, and
+ * the emptied `to` is what `canSend` refuses.
  */
 export function replyEnvelopePlan(
   parent: { from: EmailAddress; to: readonly EmailAddress[]; cc?: readonly EmailAddress[] } | null,
@@ -735,17 +471,13 @@ export function replyEnvelopeOnWire(
 }
 
 /**
- * Addresses → the one wire string the chip field edits — the PREFILL when a reply head opens.
- *
- * A display name rides along only when `parseRecipients` can read it back: the split is blind
- * to quoting, so a name containing a separator or an angle bracket ("Doe, John") would come
- * back as two broken entries. Such a name is dropped and the bare address kept — the envelope
- * is the address; the name is sugar the parent's headers still hold.
- *
- * The SAME rule and the same character class as `formatRecipient` (`@ohmail/client-engine`),
- * which is what accepting an address-book suggestion writes. That copy did not have the guard
- * until a suggestion named "Lindt, Nora" was found to disable Send; the two are kept
- * separate only because they take different inputs.
+ * Addresses → the one wire string the chip field edits — the prefill when a reply head opens. A
+ * display name rides along only when `parseRecipients` can read it back: the split is blind to
+ * quoting, so a name containing a separator or angle bracket ("Doe, John") would come back as two
+ * broken entries — such a name is dropped and the bare address kept; the envelope is the address,
+ * the name is sugar the parent's headers still hold. The same rule and character class as
+ * `formatRecipient` (`@ohmail/client-engine`), kept separate only because they take different
+ * inputs.
  */
 export function formatRecipientLine(list: readonly EmailAddress[]): string {
   return list
