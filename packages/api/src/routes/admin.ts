@@ -20,140 +20,14 @@ import type { ApiDeps } from "../deps.js";
 import type { Handler, Route, RouteParams } from "../router.js";
 
 /**
- * `GET /admin/*` — the eight READS behind the staff console.
- *
- * The console rendered real screens driven entirely by fixtures before these endpoints
- * existed. Every number on it was invented. These eight endpoints are what make it
- * show production instead, and they are the whole read surface: there is no write route here,
- * on purpose. See `packages/services/src/admin-service.ts` for the queries and for what they
- * may never select.
- *
- * ══ 1. AUTHORIZATION: THE SHARED SECRET **AND** A LIVE STAFF SESSION ═══════════════════════
- *
- * Every route is `{ public: true, anonymous: true, raw: true }`. `anonymous` is the load-bearing
- * one: it selects `ANONYMOUS_PIPELINE` in `app.ts`, which is `[withRequestId, withRequestGuard]`
- * and **does not include `withSession`**. No CUSTOMER credential a caller presents is ever
- * resolved against `sessions`, so:
- *
- *   **an ordinary logged-in customer gets a byte-identical answer to an anonymous stranger.**
- *
- * That is a property of the PIPELINE, not of a branch somebody has to remember to write — the
- * handler has no customer session to check because none was ever fetched. A customer's bearer
- * token simply fails the constant-time compare against the staff secret, exactly as a random
- * string would. `test/admin-routes.test.ts` seeds a real session, presents it as
- * both a cookie and a bearer, and compares the response bytes to the anonymous one.
- *
- * Two credentials, in series, both required — the same pair every admin WRITE has demanded
- * since the first one shipped:
- *
- *  1. `Authorization: Bearer <TF_ADMIN_SECRET>`, the same shape and the same constant-time
- *     compare `POST /internal/alerts` uses (`../secret-auth.js`). Its holder is the admin
- *     console's server-side proxy, which is the only thing that ever presents it; the browser
- *     never sees it.
- *  2. A live STAFF SESSION, resolved against `staff_sessions` from the token the proxy forwards
- *     in {@link STAFF_SESSION_HEADER}. A GET has no body, so the token rides in a header where
- *     the writes put it in the body; the proxy reads it out of the operator's HttpOnly
- *     `__Host-ohmail_admin_session` cookie server-side, exactly as `account-actions.ts` does
- *     for the writes. Every `staff_sessions` row is minted past the TOTP wall
- *     (`admin-staff.ts`), so the second factor is structural, not re-checked here.
- *
- * **The reads were secret-only at first, and closing that is the point of the second
- * credential:** the gate secret is a shared, non-revocable bearer — a former
- * operator, a screenshot, a synced browser profile all keep it — and these eight responses carry
- * customer PII (login emails, billing emails, account names, mailbox addresses). Requiring the
- * per-person second factor on reads bounds who can pull the roster to people who can pass TOTP
- * today, and makes a read attributable to a person rather than to a shared secret.
- *
- * **404 when `deps.admin` is absent, 401 when the secret is wrong, 401 `staff_session_required`
- * when the secret is right and no live staff session accompanies it.** A deployment that
- * configured no secret has no admin surface, and advertising an endpoint it cannot
- * authenticate is strictly worse than not having one. Missing header and wrong secret are the
- * same 401 with the same body: on an anonymous route those are the same fact.
- *
- * ══ 2. THE CEILING, WRITTEN DOWN ══════════════════════════════════════════════════════════
- *
- * One secret. No per-person revocation, no read audit, no rate limit on the compare. Rotating it
- * means changing an environment variable on TWO deployments and redeploying both. Anyone
- * with dashboard access to either can read it. What bounds the damage is that the
- * secret ALONE now buys **nothing at all**: every read here and every write in
- * `admin-actions.ts` / `admin-oauth.ts` also requires a live
- * `staff_sessions` row — a person, minted past the TOTP wall, revocable one row at a time.
- *
- * This paragraph has tightened twice, in the honest direction each time. It first said "no
- * write route exists to be reached with it"; suspend/resume shipped and it became "the secret
- * alone buys read-only cross-account metadata"; the staff-session requirement on reads retired
- * that too, because metadata here means the customer roster and its addresses.
- *
- * `admin-oauth.ts` records its actor ON THE ROW (`oauth_provider_config.updated_by`) instead of
- * in `audit_log`, because `audit_log.account_id` is NOT NULL and a change to this deployment's
- * own Entra registration belongs to no account; forcing one in would be a lie in the column the
- * audit trail is keyed by.
- *
- * The reads in THIS file remain read-only on the blind role (`deps.adminDb`), which the
- * pipeline (`anonymous`, no `withSession`) and the boot attestation enforce structurally.
- *
- * ══ 3. WHAT THESE ENDPOINTS MAY NEVER RETURN, AND WHY IT IS NO LONGER A PROMISE ═══════════
- *
- * No message content — not a subject, snippet, sender, recipient or body; no credential blob,
- * no Stripe payload, no password or token hash. That is published to users
- * (`apps/webapp/messages/en.json`, q5). Three independent mechanisms stand behind it, and each
- * is stated below WITH what it does not cover — two of the three were overstated in this
- * comment before, and a confident sentence here is what made the published claim false:
- *
- *  1. **The DATABASE refuses.** Every read below runs on `deps.adminDb`, a second connection in
- *     this process authenticated as `ohmail_admin`, whose grants answer 42501 to every
- *     mail-content column — and, after a later hardening, to the `messages` relation ENTIRELY,
- *     along with `change_log`, `folder_state` and `flag_state`. That last part is a correction
- *     an external security review forced: a `messages(id, mailbox_id)` grant reads as minimal
- *     and is still a receipt oracle, because `count(*)` names no column and a row's existence
- *     around a delivery the tester chose is exactly the fact a content-blind role must not
- *     disclose. `assertContentBlind` now bites on
- *     `select count(*) from messages` for exactly that reason.
- *
- *     **What this does not cover:** the provisioning script's effective-privilege postcondition
- *     closed a family of review findings — a `SECURITY DEFINER` routine reachable through
- *     `PUBLIC`, a leftover view in
- *     schema `admin`, and privileges inherited from role membership, ownership or `PUBLIC` — but
- *     it closed them by ABORTING rather than by repairing, so a database in one of those states
- *     is a failed provisioning run an operator has to resolve, not a state this file survives.
- *  2. **THE CALLBACK HAS NO RUNTIME HANDLE TO REACH FOR.** The brand is the
- *     small half of this and the earlier wording rested on it: `adminAccounts` and its five
- *     siblings take a branded `AdminDb`, so handing one of THEM a bare `Db` does not typecheck
- *     — but brands are erased at runtime and `as unknown as AdminDb` forges one in a single
- *     edit. What actually holds is VALUE-SCOPING: a read receives {@link StaffContext} and
- *     nothing else — the blind handle, a clock, the environment string, this route's logger,
- *     and `apiHealth()`. **There is no `Db` in scope to select from, and none to cast FROM
- *     either**, because a double assertion needs a runtime-capable value on its left. Closure
- *     capture, a laundering helper and a defaulted parameter all fail for the same one reason:
- *     `ApiDeps` never enters the callback.
- *
- *     **What that does NOT cover, stated rather than implied:** nothing in this process stops a
- *     callback from writing `import { makePooledDb }` and reading the pooled URL out of the
- *     environment for itself. That is somebody deliberately opening a second connection — not
- *     the "next endpoint someone forgot to keep narrow" path the content-blind rule is about,
- *     which is the
- *     one this contract closes. The escalation for the other one is a separate admin deployment
- *     whose environment simply has no runtime URL to read; that is recorded future work, and it
- *     is deliberately not built yet.
- *  3. The DTOs in `packages/services/src/admin-dto.ts` cannot NAME such a field, and
- *     `test/admin-routes.test.ts` seeds real mail with distinctive markers and fails if one appears
- *     in any of the eight responses. This is the half that still depends on review: a new DTO
- *     field is one edit away, and only the marker scan would catch it.
- *
- * `ctx.apiHealth()` is the ONE deliberate exception, and it is a CAPABILITY rather than a
- * value: {@link adminRoute} closes over `deps` and hands the callback a function it can only
- * CALL, whose return type is {@link ApiHealth} — a fixed record of host, version, latency and
- * marker counts, which cannot express an application row. The probe behind it reads
- * `information_schema` and `pg_catalog` on the RUNTIME connection, because the console's claim
- * is that it renders what a probe of the user-serving host would see. It is a function and not
- * a pre-computed field because most of the reads never look at it, and pre-computing would
- * run a database round trip on all of them.
- *
- * ══ 4. NO ERROR ENVELOPE ABOVE THIS FILE ══════════════════════════════════════════════════
- *
- * `raw` means `withErrorEnvelope` does not run, so an unhandled rejection here becomes the
- * platform's own HTML 500 — an ops console whose failure mode is unreadable. Every handler is
- * therefore wrapped by {@link adminRoute}, which is the only place a throw can be caught.
+ * `GET /admin/*` — the eight reads behind the staff console; no write route here (queries:
+ * `admin-service.ts`). Authorization: the shared secret AND a live staff session ({@link
+ * STAFF_SESSION_HEADER}). Every route is `{ public, anonymous, raw }`; `anonymous` runs the
+ * pipeline with no `withSession`, so a logged-in customer gets a byte-identical answer to a
+ * stranger (`test/admin-routes.test.ts` compares bytes). 404 unarmed, 401 otherwise. No message
+ * content, credential blob, Stripe payload or token hash may return: the blind role answers 42501
+ * to `messages` entirely, a read receives {@link StaffContext} only, and the DTOs cannot name
+ * such a field, marker-tested. Handlers are wrapped by {@link adminRoute}.
  */
 
 /**
@@ -179,19 +53,13 @@ async function apiHealthFor(req: Request, deps: ApiDeps): Promise<ApiHealth> {
   })();
   const checkedAt = deps.now().toISOString();
 
-  // THE SAME probe `/health` runs, from the same module — not a second implementation of it.
-  // The console's claim is that it renders what a probe would see, and two copies of this
-  // query would drift on the first schema marker anybody adds, silently, with both endpoints
-  // still answering 200.
-  // EXPLICIT, because `probeDatabase`'s default narrowed to the MAIL half when the Cloud marker
-  // list left `health.ts` (that module ships in the desktop engine). The admin console is a
-  // hosted surface and must keep measuring against both journals.
-  // The CHECK-DEFINITION, CLOUD-INDEX and CLOUD-FUNCTION halves are passed for the same reason
-  // the column list is: a hosted surface must measure against both journals — cloud 0011 is
-  // invisible to every probe that reads only names, cloud 0013's index name cannot live in
-  // `health.ts`, and cloud 0014 is a replaced function BODY that only the fifth class can see.
-  // The definition list is BOTH halves (`CHECK_DEFINITION_MARKERS`): mail 0100 widens a mail
-  // CHECK, and the console publishes the same `ApiHealth` `/health` does.
+  // The same probe `/health` runs, from the same module — two copies would drift on the first
+  // schema marker added, silently, both endpoints still 200. Explicit marker lists, because
+  // `probeDatabase`'s default narrowed to the mail half when the Cloud marker list left
+  // `health.ts` (that module ships in the desktop engine); the console is a hosted surface and
+  // must measure against both journals — cloud 0011 is invisible to name-only probes, cloud
+  // 0013's index name cannot live in `health.ts`, cloud 0014 is a replaced function body, and the
+  // definition list is both halves (`CHECK_DEFINITION_MARKERS`; mail 0100 widens a mail CHECK).
   const probe = await probeDatabase(
     deps.db, CLOUD_TIER_MARKERS, CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS,
     CLOUD_FUNCTION_MARKERS,
@@ -242,16 +110,13 @@ async function apiHealthFor(req: Request, deps: ApiDeps): Promise<ApiHealth> {
 }
 
 /**
- * EVERYTHING A STAFF READ IS GIVEN. There is no extra field and no `deps`.
- *
- * The point is not that the shape is small — it is that `ApiDeps` is ABSENT, so the runtime
- * `Db` a staff route must never issue SQL on is not a value the callback can name, capture,
- * launder through a helper, default a parameter to, or cast from. `as unknown as AdminDb` is
- * the forge the review named, and it needs something runtime-capable on its left; there is nothing.
- *
- * `keyof` this interface is pinned by `test/contract/staff-callback.fixture.ts`,
- * so widening it is a decision somebody has to make on purpose and defend in a diff, rather
- * than a field that arrives because it was convenient once.
+ * Everything a staff read is given. The point is not that the shape is small — it is that
+ * `ApiDeps` is absent, so the runtime `Db` a staff route must never issue SQL on is not a value
+ * the callback can name, capture, launder through a helper, default a parameter to, or cast from
+ * (`as unknown as AdminDb` needs something runtime-capable on its left; there is nothing).
+ * `keyof` this interface is pinned by `test/contract/staff-callback.fixture.ts`, so widening it
+ * is a decision defended in a diff rather than a field that arrives because it was convenient
+ * once.
  */
 export interface StaffContext {
   /** The blind handle, already awaited — `ohmail_admin`, attested at construction. */
@@ -279,47 +144,25 @@ export type StaffRead =
 
 async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
   const now = ctx.now();
-  // SEQUENTIAL on purpose — this was `Promise.all`, and it DEADLOCKED, every time, in every
-  // environment (both hosted-Postgres providers alike; "admin never worked" was this line). The
-  // blind pool
-  // is `max: 1`, and one of these reads opens a transaction: with a sibling query queued on
-  // the pool's only connection, an inner query inside the transaction queues BEHIND the
-  // sibling, which waits for the transaction — a circular wait, killed only by the platform's
-  // 60s timeout. The same class as nesting a pooled query inside an open transaction. Reproduced
-  // and bisected:
-  // each read alone is fine, the parallel pair hangs. Do not "optimise" this back.
-  //
-  // `ctx.apiHealth()` and not `ctx.db`: the health block reports the RUNTIME connection, on
-  // purpose — see §3. Everything else on this page reads through the blind one.
+  // Sequential on purpose — this was `Promise.all`, and it deadlocked every time: the blind pool
+  // is `max: 1`, and one of these reads opens a transaction; with a sibling query queued on the
+  // pool's only connection, an inner query inside the transaction queues behind the sibling,
+  // which waits for the transaction — a circular wait killed only by the platform's 60 s timeout.
+  // Each read alone is fine; the parallel pair hangs. Do not "optimise" this back.
+  // `ctx.apiHealth()` and not `ctx.db`: the health block reports the runtime connection on
+  // purpose; everything else reads through the blind one.
   const api = await ctx.apiHealth();
   const instances = await adminWorkerInstances(ctx.db, now);
 
-  // ── THE SCHEMA-SKEW READS ARE GATED, BECAUSE THIS PAGE IS THE ONE THAT DIAGNOSES IT ──
-  //
-  // `apiHealth()` has already answered whether this host's expected schema is present. When it
-  // is NOT — an API deployed ahead of its migration, which is exactly what the Reliability page
-  // exists to show — every read below touches something that migration adds: `adminAlerts`
-  // selects the new heartbeat columns, and the two after it query tables that do not exist yet.
-  // The first of them raised 42703 or 42P01 and the whole route answered a generic 503, so the
-  // page that would have NAMED the fault was the page the fault took down, and an operator saw
-  // an outage with no explanation on the surface built to explain it.
-  //
-  // Gated rather than try/caught: a catch would still have run the queries and would swallow a
-  // real fault as if it were skew. The health probe is the authority and it has already spoken.
-  // ── TWO QUESTIONS, AND `apiHealth()` ONLY ANSWERS ONE ────────────────────────────────
-  //
-  // `apiHealth()` probes the RUNTIME connection, so it says whether the migration landed. It
-  // says nothing about whether `harden-staff-role.sql` was re-run — and that is the ruling's
-  // first ranked risk, not a hypothetical: grants widened in code and the script not re-run in
-  // production leaves the migration applied, `schemaOk: true`, and the BLIND role still unable
-  // to read the new columns and tables. `adminAlerts` then raised 42501 and this route answered
-  // a generic 503, which is the same outage the schema gate above was added to remove, reached
-  // through a grant instead of through a migration.
-  //
-  // So the readiness question is asked OF THE BLIND HANDLE, with the same marker the alert
-  // preflight uses. `information_schema` shows a role only the objects it has privileges on, so
-  // one probe answers both halves: a missing column and an ungranted column are equally
-  // invisible to it, and both mean these reads must not run.
+  // The schema-skew reads are gated, because this page is the one that diagnoses skew. When the
+  // expected schema is absent (an API deployed ahead of its migration), every read below touches
+  // something that migration adds — the first raised 42703/42P01 and the whole route answered a
+  // generic 503, taking down the page built to explain the fault. Gated rather than try/caught: a
+  // catch would still run the queries and would swallow a real fault as skew. And `apiHealth()`
+  // only answers half — it probes the runtime connection, saying nothing about whether
+  // `harden-staff-role.sql` was re-run — so the readiness question is asked of the blind handle
+  // itself, with the same marker the alert preflight uses: a missing column and an ungranted
+  // column are equally invisible to `information_schema`, and both mean these reads must not run.
   const schemaReady = api.schemaOk && await alertSchemaReadable(ctx.db);
   const alerts = schemaReady ? await adminAlerts(ctx.db, now) : [];
   // SEQUENTIAL, on the deadlock note above — these are two more reads on the same `max: 1` blind
@@ -365,31 +208,13 @@ function accountQueryOf(req: Request): AccountQuery {
 }
 
 /**
- * PER-INSTANCE SERIALIZATION OF ADMIN READS — the production 504 fix.
- *
- * The blind handle is a module-cached `max: 1` pool (`makePooledDb` in `@trafficflow/db`), so
- * every request a WARM instance serves shares ONE connection to the pooler. The Today dashboard
- * fires `overview()`, `billing()` and `worker()` concurrently (a client `Promise.allSettled`);
- * when two of them land on the same warm instance they contend for that single connection, and
- * because a read holds it across an `await` while the next query queues, the wait is CIRCULAR and
- * rides to the platform's 60 s limit as a 504. Measured in production: each read alone returns in
- * well under a second, so nothing here is slow — the fault is
- * purely the interleaving.
- *
- * This is the SAME `max: 1` hazard `overview()` and `adminWorker()` already defend against WITHIN
- * a single handler (their comments: "do not `Promise.all` them"). Serializing here closes the
- * ACROSS-handler case the client's concurrent fan-out opened, and it costs nothing because the
- * reads are sub-second: three serialized reads still finish far under the function limit.
- *
- * The chain advances only when the previous read SETTLES — so the pool is free before the next
- * read acquires it — and a rejection is swallowed on the CHAIN so one read's failure cannot wedge
- * the chain for the next request (the caller still sees the rejection through the returned promise).
- *
- * KEYED BY THE `staff` FACTORY, not a bare module variable. That factory is memoised per warm
- * instance (`apps/api-vercel/src/deps.ts`: `adminDbFor` is held module-level), so one instance = one
- * key = one chain = the pool's own lifetime, which is exactly the scope that must be serialized. A
- * WeakMap rather than a module global also means each test's freshly-built factory gets its own
- * chain, so a deliberately-hung read in one test cannot serialize the next.
+ * Per-instance serialization of admin reads. The blind handle is a module-cached `max: 1` pool,
+ * and the Today dashboard fires three reads concurrently: two on the same warm instance contend
+ * for the single connection, a read holds it across an `await` while the next queues, and the
+ * circular wait rides to the platform limit as a 504 — each read alone is sub-second. Serializing
+ * closes the across-handler case the client's fan-out opened. The chain advances only when the
+ * previous read settles, a rejection is swallowed on the chain (the caller still sees it), and it
+ * is keyed by the `staff` factory in a WeakMap — one warm instance, one chain.
  */
 const adminReadChains = new WeakMap<object, Promise<unknown>>();
 function serializeAdminRead<T>(key: object, work: () => Promise<T>): Promise<T> {
@@ -418,48 +243,24 @@ function withAdminTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
- * WHERE THE STAFF SESSION TOKEN RIDES ON A READ.
- *
- * The writes carry it in the JSON body (`admin-actions.ts`); a GET has no body, so the reads
- * carry it here. The value is the raw `staff_sessions` token the console's proxy pulls out of
- * the operator's HttpOnly `__Host-ohmail_admin_session` cookie server-side — the browser never
- * sends this header itself, and the proxy forwards nothing else from the inbound request.
- *
- * The console's server-side proxy spells the same name; it cannot import this constant (the
- * console deliberately depends on no server package), so a suite reads that file's source and
- * asserts the two spellings agree — the same guard the console applies to its own cookie-name
- * duplication in its middleware.
+ * Where the staff session token rides on a read. The writes carry it in the JSON body; a GET has
+ * no body, so the reads carry it here. The value is the raw `staff_sessions` token the console's
+ * proxy pulls out of the operator's HttpOnly `__Host-ohmail_admin_session` cookie server-side —
+ * the browser never sends this header, and the proxy forwards nothing else. The console's proxy
+ * spells the same name and cannot import this constant (it deliberately depends on no server
+ * package), so a suite reads that file's source and asserts the two spellings agree.
  */
 export const STAFF_SESSION_HEADER = "x-staff-session";
 
 /**
- * The gate, the STAFF SESSION, the BLIND HANDLE, the try/catch and the `no-store` JSON,
- * applied identically to all eight.
- *
- * Writing it once is what makes "every admin read is authorized the same way, on the same
- * connection" checkable by reading one function instead of eight handlers — and what stops the
- * next endpoint somebody adds from being the one that forgot.
- *
- * ── THE TWO REFUSALS, WHICH ARE NOT THE SAME FACT ─────────────────────────────────────────
- *
- * **404 when the surface is unarmed** — no secret, or no `DATABASE_URL_ADMIN`. This host has
- * no admin surface at all, and advertising an endpoint it cannot authenticate (or cannot serve
- * blind) is strictly worse than not having one. `/health` names which half is missing.
- *
- * **503 when the handle REFUSES TO EXIST** — the factory's boot attestation either watched the
- * connection ANSWER a mail-content read (the runtime credentials are in the admin variable) or
- * found it holding a capability outside `STAFF_SELECT_GRANTS` — a column, a table privilege, a
- * role membership, ownership, or an executable `SECURITY DEFINER` routine.
- * The log line names which. The console goes down and stays down until somebody fixes the
- * database or the environment. That is the whole design: every misconfiguration of this seam
- * has to become a downed console, never exposure.
- *
- * ── AND THE THIRD THING IT OWNS: THE ONLY `ApiDeps` IN THE STAFF PATH ──────────────────────
- *
- * This function is where `deps` stops. It reads what a staff route legitimately needs out of
- * it, builds a {@link StaffContext}, and passes THAT — so "no admin read issues route-local
- * SQL on the runtime connection" is a property of one wrapper's scope instead of eight handlers'
- * discipline. The health capability is a closure over `deps` built here for the same reason.
+ * The gate, the staff session, the blind handle, the try/catch and the `no-store` JSON, applied
+ * identically to all eight — written once so "every admin read is authorized the same way, on the
+ * same connection" is checkable by reading one function. Two refusals, not the same fact: 404
+ * when the surface is unarmed (no secret or no `DATABASE_URL_ADMIN`; `/health` names which half),
+ * and 503 when the handle refuses to exist — the boot attestation watched the connection answer a
+ * mail-content read or found a capability outside `STAFF_SELECT_GRANTS`; the console stays down
+ * until the database or environment is fixed. This function is also where `deps` stops: it builds
+ * a {@link StaffContext} and passes that.
  */
 function adminRoute(name: string, read: StaffRead): Handler {
   return async (req, deps, params) => {
@@ -476,17 +277,14 @@ function adminRoute(name: string, read: StaffRead): Handler {
       log.warn("admin_unauthorized", {});
       return json(401, { error: { code: "unauthorized" } });
     }
-    // THE SECOND CREDENTIAL. Resolved against `staff_sessions` on
-    // every request, never cached, on the RUNTIME connection — the blind role holds no grant on
-    // `staff_users` by design ("the role that serves the console cannot read the credentials
-    // that protect it", admin-staff.ts); the writes make the identical runtime read. A caller
-    // with only the shared secret has no token to put in the header, so this is where a
-    // leaked/retained gate credential stops. Mutation-watched: `test/admin-routes.test.ts` presents
-    // the correct secret WITHOUT a session and requires the 401.
-    //
-    // Its own try/catch, because `raw` means nothing above this file catches: a database fault
-    // DURING resolution must become the same readable 503 a fault inside the read becomes —
-    // and never a 401, which would tell an operator their session died when the database did.
+    // The second credential: resolved against `staff_sessions` on every request, never cached, on
+    // the runtime connection — the blind role holds no grant on `staff_users` ("the role that
+    // serves the console cannot read the credentials that protect it"). A caller with only the
+    // shared secret has no token to put in the header, so this is where a leaked gate credential
+    // stops; `test/admin-routes.test.ts` presents the correct secret without a session and
+    // requires the 401. Its own try/catch, because `raw` means nothing above this file catches: a
+    // database fault during resolution must become the same readable 503 a fault inside the read
+    // becomes — never a 401 telling an operator their session died when the database did.
     let staffWho;
     try {
       staffWho = await resolveStaffSession(

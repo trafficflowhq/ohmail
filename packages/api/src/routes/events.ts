@@ -52,57 +52,14 @@ export function sseLiveCounts(): { total: number; byAccount: Record<string, numb
 }
 
 /**
- * §4.1 / §5 — bounded SSE (RAW route). Emits a `: ping` heartbeat, and a
- * content-free `event: sync` wake whenever this account's change_log max seq advances (the
- * client then pulls `GET /sync?since=cursor` — SSE is lossy by design, so a frame need not
- * carry entities). Server-closes after a bounded lifetime; `EventSource` reconnects on the
- * `retry:` hint. All durations are injectable via `deps.sse` (DEFAULT_SSE in prod; tiny
- * values in tests).
- *
- * ## Two wake sources, one stream
- *
- * **PUSH — `deps.changeWake`, when the host has one.** `recordChanges` NOTIFYs
- * `ohmail_change_log` at commit from every writer (worker ingest, record-at-send, screener,
- * triage), the host's per-instance LISTEN connection receives it, and the hub fans it out to
- * this instance's streams by account. A wake whose seq is ahead of `lastSeq` emits the same
- * `event: sync` frame the poll would — within milliseconds of the commit instead of within
- * `pollMs`. The hub cannot exist on the request connection: a hosted deployment reaches its
- * database through a TRANSACTION-mode pooler, which multiplexes statements across backends, so
- * a LISTEN there lands on a backend the next statement has already left. The host holds ONE
- * session-mode connection per instance for it, fanned out in process to that instance's streams.
- *
- * **POLL — always.** The serialized loop below is the reliability floor, not a fallback mode:
- * it runs with and without the hub, so a dead LISTEN degrades latency to `pollMs` and changes
- * nothing else. Push is a hint; it is never load-bearing.
- *
- * ## Three cost/robustness properties
- *
- * **1. It is OFF unless the SERVER says otherwise.** `sse.enabled === false` ⇒ 503
- * `sse_disabled`. SSE is behind a flag, but a flag in the CLIENT bundle is not a
- * control: anyone can open `/events` directly, and every open stream is a function running
- * for its whole lifetime and reconnecting forever. The switch has to be server-side to mean
- * anything. 503 rather than 404 because `EventSource` treats a non-200 as terminal and stops
- * reconnecting, so a client built with the flag on backs off instead of hammering.
- *
- * **2. Bounded concurrency.** `maxPerAccount` (429) and `maxPerInstance` (503) refuse to open
- * stream N+1. Without them one authenticated account could hold an unbounded number of
- * 30-second invocations — denial of WALLET, which no auth check catches because every request
- * is perfectly legitimate.
- *
- * **3. ONE serialized, caught poll loop — not `setInterval`.** `setInterval` fires on a
- * schedule regardless of whether the previous poll finished: when DB latency exceeds `pollMs`
- * (a pooler under load — exactly when this matters) the polls OVERLAP and one slow account
- * multiplies its own query rate. And the interval callback's promise carried no `catch`, so a
- * rejected poll became an unhandled rejection. The loop below awaits its own query, THEN waits
- * `pollMs`, so there is never more than one poll in flight; a failed poll emits `sync_failed`
- * and closes, and the client reconnects — a closed stream that reconnects is honest, a
- * silently dead stream is not.
- *
- * **And a fourth, for the push path: a slow client is DROPPED, never waited on.** `enqueue`
- * on a Web stream never blocks — it buffers — so a client that stops reading turns a pushed
- * stream into unbounded server-side memory. When the buffer is {@link SSE_MAX_BUFFERED_FRAMES}
- * frames behind, the stream closes; `EventSource` reconnects and starts clean. The lifetime
- * already bounded the poll-only worst case; wakes can burst, so the bound is explicit now.
+ * Bounded SSE (raw): a `: ping` heartbeat and a content-free `event: sync` wake when the
+ * account's max seq advances — the client pulls `GET /sync?since=cursor`; SSE is lossy by design.
+ * Server-closes after a bounded lifetime. Push — `deps.changeWake`, one session-mode LISTEN per
+ * instance (a transaction-mode pooler lands a LISTEN on a backend the next statement has left);
+ * poll — always, the floor: a dead LISTEN degrades latency to `pollMs`, nothing else.
+ * `sse.enabled === false` ⇒ 503 `sse_disabled` (a client-bundle flag is not a control).
+ * `maxPerAccount` 429, `maxPerInstance` 503. One serialized, caught poll loop — `setInterval`
+ * overlaps under load. A slow client is dropped at {@link SSE_MAX_BUFFERED_FRAMES} frames behind.
  */
 
 /**

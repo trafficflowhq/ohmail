@@ -6,16 +6,13 @@ import type { Route } from "../router.js";
 import { attachments, readBody } from "./shared.js";
 
 /**
- * §5.14 — attachments & files. Metadata lives server-side; the BLOB bytes do NOT —
- * `GET /attachments/:id` and the two `download-all` routes fetch bytes ON-DEMAND
- * from IMAP and stream them straight back (never persisted, §13.2/§14).
- *
- * The byte/zip routes are RAW (reduced pipeline — still session-gated): they return
- * `application/octet-stream` / `application/zip`, not the JSON envelope, so they map
- * their own ServiceErrors to the error envelope (`GET /img` in `privacy.ts` is raw
- * for the same reason and does the same). `download-all` is
- * implemented SYNCHRONOUSLY (the zip is assembled from IMAP and returned in the
- * response) rather than the async job model, so `GET /downloads/:jobId` is omitted.
+ * Attachments & files. Metadata lives server-side; the blob bytes do not — `GET /attachments/:id`
+ * and the two `download-all` routes fetch bytes on demand from IMAP and stream them straight
+ * back, never persisted. The byte/zip routes are raw (reduced pipeline — still session-gated):
+ * they return `application/octet-stream` / `application/zip`, not the JSON envelope, so they map
+ * their own ServiceErrors (`GET /img` in `privacy.ts` does the same). `download-all` is
+ * synchronous — the zip is assembled from IMAP and returned in the response — so `GET
+ * /downloads/:jobId` is omitted.
  */
 
 /** Copy a view's bytes into a standalone ArrayBuffer so the body is a plain BodyInit. */
@@ -84,21 +81,14 @@ export const attachmentRoutes: Route[] = [
       } catch (err) {
         if (err instanceof ServiceError) return errorResponse(err.code, err.httpStatus, err.message, err.details);
         /**
-         * ── "UPSTREAM" IS A CLAIM ABOUT THE USER'S MAIL SERVER, AND THIS ARM CANNOT KNOW IT ───
-         *
-         * A non-`ServiceError` reaching here is not evidence of anything upstream. It is an
-         * unclassified throw, and the most likely author of one is this process. Until 2026-09-04
-         * the commonest cause was a malformed `:id`: the segment reached a `uuid` column, Postgres
-         * answered 22P02, and this line reported it as `502 upstream_unavailable` — telling the
-         * operator that somebody's IMAP server was unreachable when the truth was an unvalidated
-         * path parameter. `createApp.handle` now refuses that shape with a 400 before the route
-         * runs, so the 22P02 case is gone; the MISLABEL is not, and it will name the next
-         * programming fault the same wrong way.
-         *
-         * Deliberately left as-is in this slice rather than fixed in passing: separating a genuine
-         * IMAP failure from an internal fault means classifying what the open path can throw, which
-         * is its own change with its own tests. Recorded as a gap so the wording does not read as
-         * settled. The comment is the correction until then.
+         * "Upstream" is a claim about the user's mail server, and this arm cannot know it: a
+         * non-`ServiceError` here is an unclassified throw, most likely authored by this process
+         * — a malformed `:id` reaching a uuid column was once reported as `502
+         * upstream_unavailable`. `createApp.handle` now refuses that shape with a 400; the
+         * mislabel remains and will name the next programming fault the same wrong way. Left
+         * as-is deliberately: separating a genuine IMAP failure from an internal fault means
+         * classifying the open path's throws — its own change with its own tests. Recorded as a
+         * gap; this comment is the correction until then.
          */
         return errorResponse("upstream_unavailable", 502, "attachment fetch failed");
       }

@@ -20,37 +20,14 @@ import { readBody } from "./shared.js";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * HOW MANY MAILBOXES ONE `PATCH /consent/settings` MAY NAME.
- *
- * Both per-mailbox maps (`folderMailboxes`, `signatures`) are iterated inside ONE transaction,
- * one write per entry, and each entry that names a foreign or absent id is a 404 that only
- * happens after its own query. So an unbounded map is an unbounded number of statements in one
- * transaction, chosen by the caller — and every one of them can be a miss, which makes the
- * refusal itself the expensive part.
- *
- * **A BATCH SIZE, NOT A PLAN LIMIT — and that distinction is a correction.** It was briefly
- * derived from the hosted pricing (`PLAN_LIMITS.pro.mailboxes` + `MAX_ADDON_QUANTITY` = 20, the
- * most mailboxes a paying account can hold). That is wrong here for a structural reason:
- * `consentRoutes` is mounted by `selfHostRoutes`, and a self-host deployment has NO mailbox count
- * limit at all (`SELF_HOST_MAILBOX_ALLOWANCE`). An operator with 21 mailboxes would have been
- * refused by a number that describes somebody else's price list.
- *
- * So it is 25: comfortably past the largest hosted account, and an operational ceiling on how
- * much per-mailbox settings ONE request carries. A client with more mailboxes sends two requests,
- * and nothing is lost by that — this route is a partial update, so two requests are two
- * independent writes of two disjoint maps.
- *
- * **The upper end is set by the request door, not by taste, and it is TIGHT.** `signatures`
- * values are capped at `MAILBOX_SIGNATURE_MAX_CHARS` (10 000) EACH, so this count MULTIPLIES into
- * the request body — and the multiplier is SIX bytes per character, not four, because
- * `JSON.stringify` escapes a control character as `\u00xx` and nothing here refuses one. At 25 the worst
- * legal body is ~1.5 MB and at 40 it is ~2.4 MB, both inside today's `JSON_BODY_MAX_BYTES` (3
- * MiB) — the door rose after this number was set, so 25 is now headroom rather than the edge, and
- * saying otherwise would be a rationale that stopped being true. What keeps them related is not
- * this comment: `input-bounds-census.test.ts` recomputes the product at six bytes per character
- * against the door and fails if a future bump to either makes them collide.
- *
- * One number for both maps, because they are the same shape reaching the same loop.
+ * How many mailboxes one `PATCH /consent/settings` may name. Both per-mailbox maps are iterated
+ * inside one transaction, one write per entry, every entry possibly a 404 with its own query — an
+ * unbounded map is an unbounded number of caller-chosen statements. A batch size, not a plan
+ * limit: it was briefly derived from the hosted pricing, and `consentRoutes` is mounted by
+ * `selfHostRoutes`, which has no mailbox limit — 21 mailboxes would have been refused by somebody
+ * else's price list. So 25; a client with more sends two requests — two independent writes of
+ * disjoint maps. `signatures` values multiply into the body at six bytes per character;
+ * `input-bounds-census.test.ts` recomputes the product against the door.
  */
 export const SETTINGS_MAX_MAILBOX_ENTRIES = 25;
 
@@ -65,33 +42,16 @@ export const SETTINGS_MAX_MAILBOX_ENTRIES = 25;
  * one length read on the way in, and the same 413 either way.
  */
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   ONBOARDING CONSENT — the five endpoints the seed, the cutline and the reset are reached by.
-
-   The services behind these landed first and were, until this file, unreachable outside their
-   own tests. Everything about the model is in the service files themselves; what this file
-   owes is the wire contract and the gates.
-
-   ── WHY THERE IS NO `ConsentService` ──────────────────────────────────────────────────────
-
-   The consent functions take a `ServiceContext` and nothing else — no adapter, no key
-   provider, no injected clock beyond the context's. There is no construction to do, so there
-   is nothing for `ApiDeps.services` to hold, and adding an entry would mean every host that
-   builds a deps bag has to remember to wire a capability it cannot decline. `DELETE /account`
-   imports `deleteAccount` the same way and for the same reason.
-
-   ── THE ORDER A CLIENT USES THEM IN ───────────────────────────────────────────────────────
-
-     GET  /consent          where is this account in the flow, and how much work is waiting
-     GET  /consent/seed     the review list — shown BEFORE anything acts on it
-     POST /consent/seed     the confirmation. THIS is the consent event
-     GET  /consent/reset    what a reset would leave physically moved, per pile
-     POST /consent/reset    the reset itself
-
-   The two GETs that precede a POST are not conveniences. Both of these actions state what
-   they will do before they do it, and a screen can only make that statement from a number the
-   server gave it.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * Onboarding consent — the five endpoints the seed, the cutline and the reset are reached by;
+ * this file owes the wire contract and the gates. No `ConsentService`: the consent functions take
+ * a `ServiceContext` and nothing else — nothing to construct, so nothing for `ApiDeps.services`
+ * to hold (`DELETE /account` imports `deleteAccount` the same way). The order a client uses them:
+ * `GET /consent` (where in the flow), `GET /consent/seed` (the review list, shown before anything
+ * acts), `POST /consent/seed` (the consent event), `GET /consent/reset` (what a reset would leave
+ * moved), `POST /consent/reset`. The GETs are not conveniences: both actions state what they will
+ * do before doing it, from a number the server gave.
+ */
 
 /** `POST /consent/seed` — the addresses the user left checked. */
 interface SeedConfirmBody {
@@ -99,31 +59,22 @@ interface SeedConfirmBody {
 }
 
 /**
- * The confirmation's address list, validated HERE because the service takes `readonly string[]`.
- *
- * An absent or non-array body is refused rather than treated as "confirm nothing": a client
- * that sends the wrong shape would otherwise get a cheerful 200 saying zero rules were created
- * and every candidate declined, and `confirmSeed` records that decline count in
- * `account_settings`. Silence must not be recorded as a decision.
- *
- * An EMPTY array is accepted, and that is the difference: unchecking everybody is a real answer
- * a person can give on the review screen.
+ * The confirmation's address list, validated here because the service takes `readonly string[]`.
+ * An absent or non-array body is refused rather than treated as "confirm nothing": the wrong
+ * shape would otherwise get a cheerful 200 saying zero rules were created and every candidate
+ * declined, and `confirmSeed` records that decline count in `account_settings` — silence must not
+ * be recorded as a decision. An empty array is accepted, and that is the difference: unchecking
+ * everybody is a real answer a person can give on the review screen.
  */
 /**
- * `PATCH /consent/settings` — the account-settings write surface. Three independent knobs, and the
- * body carries whichever the caller means to change.
- *
- *   autoSuggest        boolean — arm/disarm the metered Screener suggestions.
- *   dormancyDays       number | null — the cutline dial (1–365), or `null` for the default.
- *   blockRemoteImages  boolean — keep the per-message "Show images" flow (true), or let a
- *                      message's remote images load through the proxy (false, the default).
- *   blockTrackingPixels boolean — keep refusing beacons the proxy (true, the default), or let
- *                      them load along with the pictures (false). Mail 0072.
- *   locale             'en' | 'de' | null — the interface language, or `null` for the default
- *                      (which is also what `'en'` stores; see {@link setLocale}).
- *   themeFace          'paper' | 'ohmarchy' | null — the account-wide appearance face, or `null`
- *                      to drop the account-wide choice (unlike locale, 'paper' IS stored — see
- *                      {@link setThemeFace}).
+ * `PATCH /consent/settings` — the account-settings write surface; the body carries whichever
+ * knobs the caller means to change: `autoSuggest` (boolean — arm/disarm the metered Screener
+ * suggestions), `dormancyDays` (number | null — the cutline dial, 1–365, `null` for the default),
+ * `blockRemoteImages` (boolean — per-message "Show images" flow, default true),
+ * `blockTrackingPixels` (boolean — refuse beacons at the proxy, default true; mail 0072),
+ * `locale` ('en' | 'de' | null — `null` for the default, which is also what `'en'` stores; see
+ * {@link setLocale}), `themeFace` ('paper' | 'ohmarchy' | null — unlike locale, 'paper' is
+ * stored; see {@link setThemeFace}).
  */
 interface ConsentSettingsBody {
   autoSuggest?: unknown;
@@ -174,31 +125,13 @@ interface ConsentSettingsBody {
 }
 
 /**
- * Validate and apply the settings write. FIELD PRESENT ⇒ ACTED ON, ABSENT ⇒ UNTOUCHED, AT LEAST
- * ONE REQUIRED — the `"x" in body` shape `setScreeningPreference` uses, replacing the old
- * refuse-if-`autoSuggest`-absent form now that a second knob shares the route.
- *
- * An EMPTY body is a 400 rather than a cheerful no-op: a PATCH that changes nothing but reports
- * success is a control that lies about having acted, the same reasoning `seedAddresses` applies to
- * an absent address list. Each present field is validated on its own terms and NOTHING coerces —
- * `autoSuggest` accepts only the two booleans (a malformed body must never arm a spender), and
- * `dormancyDays` accepts a number or `null` at the wire and lets {@link setDormancyDays} enforce the
- * integer 1–365 band (the `RangeError` the ceiling prevents is a read-time throw, so the refusal
- * belongs where the value is stored).
- *
- * ── BOTH WRITES ARE ATOMIC, SO A 400 PERSISTS NOTHING ──────────────────────────────────────
- *
- * `setAutoSuggest` COMMITS its column, and `setDormancyDays` only then enforces the 1–365 band with a
- * read-time 400. Run in sequence that left a valid `autoSuggest` persisted under a 400 response when
- * the accompanying `dormancyDays` was out of band — a partial write. The two column-scoped upserts now
- * share ONE transaction: a refusal of EITHER field rolls the other back, so the response and the row
- * never disagree. The wire-shape checks (a boolean / a number-or-null) run up front, before the
- * transaction opens, so the only refusal reachable mid-transaction is the band, whose rollback is the
- * whole point. The transaction adds atomicity only — each upsert still touches a single column plus
- * `updated_at`, so a concurrent seed confirmation is not clobbered.
- *
- * The echo carries only the fields that were acted on — `{ autoSuggestAt }`, `{ dormancyDays }`, or
- * both — so each client reads back exactly the knob it wrote.
+ * Validate and apply the settings write. Field present ⇒ acted on, absent ⇒ untouched, at least
+ * one required; an empty body is a 400, not a no-op that lies about having acted. Nothing
+ * coerces: `autoSuggest` accepts only the two booleans (a malformed body must never arm a
+ * spender); `dormancyDays` accepts number-or-null at the wire, {@link setDormancyDays} enforcing
+ * the 1–365 band where the value is stored. Both writes share one transaction, so a 400 persists
+ * nothing — run in sequence, a valid `autoSuggest` was once persisted under a 400. Shape checks
+ * run before the transaction opens; the echo carries only the fields acted on.
  */
 async function applyConsentSettings(
   ctx: ReturnType<typeof serviceContext>, body: ConsentSettingsBody,
@@ -413,21 +346,14 @@ async function applyConsentSettings(
     signatures = entries as Array<[string, string | null]>;
   }
   /**
-   * THE SIGNATURE MARKUP MAP (mail 0098) — `signatures`' shape rule value for value, and then
-   * TWO rules that only exist because there are now two maps for one value.
-   *
-   * ONE VALUE, ONE DOOR. A mailbox named in both maps is a 400 before anything writes. The
-   * service refuses the same shape at its own door (a call carrying both halves), and this is
-   * that refusal at the wire so a BATCH naming twenty mailboxes cannot persist nineteen of them
-   * before reaching the contradictory one. Reconciling instead of refusing would store a
-   * signature whose html and text say different things to different recipients.
-   *
-   * ONE CEILING, SHARED. A mailbox costs one write inside one transaction whichever map names
-   * it, so the ceiling is over the DISTINCT MAILBOXES the request names rather than per map.
-   * That is also what keeps the door's own arithmetic true: `body-ceiling.ts` derives the worst
-   * legal body from `SETTINGS_MAX_MAILBOX_ENTRIES` × `MAILBOX_SIGNATURE_MAX_CHARS` and states
-   * that `POST /drafts` is the largest — two independently-capped maps would have doubled the
-   * product and made that sentence false, and a comment stating a bound is a claim under test.
+   * The signature markup map (mail 0098) — `signatures`' shape rule value for value, plus two
+   * rules that exist because there are two maps for one value. One value, one door: a mailbox
+   * named in both maps is a 400 before anything writes — the wire-level twin of the service's own
+   * refusal, so a batch naming twenty mailboxes cannot persist nineteen before reaching the
+   * contradiction; reconciling would store a signature whose html and text say different things.
+   * One ceiling, shared: a mailbox costs one write whichever map names it, so the ceiling is over
+   * distinct mailboxes — which keeps `body-ceiling.ts`'s arithmetic true: two
+   * independently-capped maps would have doubled the worst legal body.
    */
   let signaturesHtml: Array<[string, string | null]> | undefined;
   if (hasSignaturesHtml) {
@@ -479,20 +405,14 @@ async function applyConsentSettings(
     }
   }
   /**
-   * THE CLOSED SET AT THE WIRE, and `null` is a legal MEMBER of the request rather than an absence.
-   *
-   * "absent" and "null" mean different things on this route and this is the field where the
-   * difference is a user-visible feature: absent leaves the stored language alone (field-present ⇒
-   * acted-on, like every knob here), while an explicit `null` is "put me back on the default", which
-   * is how an account STOPS overriding the language its devices remembered. Collapsing them would
-   * make that state unreachable except by never having chosen.
-   *
-   * NOTHING COERCES, on `autoSuggest`'s rule with the sign that matters here: a number, an object or
-   * the string `"EN"` is refused rather than normalised, because the value goes into a column whose
-   * CHECK is the only closed set in the system and a writer that guesses is how an unsupported
-   * locale gets stored. The set itself is `SUPPORTED_LOCALES` — the service's constant, held to the
-   * catalogue files on disk by its own test — so this route has no second opinion about which
-   * languages exist.
+   * The closed set at the wire, and `null` is a legal member of the request rather than an
+   * absence: absent leaves the stored language alone (field-present ⇒ acted-on), while an
+   * explicit `null` is "put me back on the default" — how an account stops overriding the
+   * language its devices remembered. Collapsing them would make that state unreachable except by
+   * never having chosen. Nothing coerces: a number, an object or `"EN"` is refused rather than
+   * normalised, because the value goes into a column whose CHECK is the only closed set in the
+   * system. The set is `SUPPORTED_LOCALES` — the service's constant, held to the catalogue files
+   * by its own test — so this route has no second opinion.
    */
   let locale: string | null | undefined;
   if (hasLocale) {
@@ -656,18 +576,14 @@ function seedAddresses(body: SeedConfirmBody): string[] {
 export const consentRoutes: Route[] = [
   {
     /**
-     * WHERE IS THIS ACCOUNT IN THE FLOW — one round trip, because the onboarding screens are a
-     * state machine and a client that had to ask three questions to place itself would render
-     * the wrong step first on every slow connection.
-     *
-     * `dormancyDays` is here for a second reason, and it is the one that makes this route
-     * load-bearing rather than convenient: the client engine partitions the mirror with its own
-     * `DEFAULT_DORMANCY_DAYS`, and the server counts with the account's. Two windows, one
-     * account, and the client had no way to learn the server's. It is served REST-side rather
-     * than as a new sync entity — the `kb_entries`/`tracker` precedent in
-     * `packages/db/src/schema.ts`: a
-     * per-account scalar with no delete semantics and no history is a value a client refetches,
-     * not a stream it replays.
+     * Where is this account in the flow — one round trip, because the onboarding screens are a
+     * state machine and a client that asked three questions would render the wrong step first on
+     * every slow connection. `dormancyDays` is here for the load-bearing reason: the client
+     * engine partitions the mirror with its own `DEFAULT_DORMANCY_DAYS` while the server counts
+     * with the account's — two windows, one account, and the client had no way to learn the
+     * server's. Served REST-side rather than as a sync entity (the `kb_entries`/`tracker`
+     * precedent): a per-account scalar with no delete semantics and no history is a value a
+     * client refetches, not a stream it replays.
      */
     method: "GET",
     pattern: "/consent",
@@ -692,18 +608,14 @@ export const consentRoutes: Route[] = [
         // Always a number, never null: the client needs a window to partition with, and
         // "the account has not overridden it" is not something a partition can act on.
         dormancyDays,
-        // THE BASELINE — the instant the window is measured back from, or `null` for "this
-        // account has never decided anything, measure from now" (mail 0056).
-        //
-        // It rides THIS response and not a second endpoint because it is half of the same
-        // arithmetic `dormancyDays` is the other half of: a client holding one without the other
-        // partitions its mirror differently from the server that just counted for it, and the
-        // disagreement is a Screener queue whose length does not match its contents. It is sent
-        // as `null` rather than omitted so a client can tell "this server read the row and found
-        // no baseline" from "this server predates mail 0056" — both resolve to the same
-        // pre-baseline partitioning, and the distinction is kept for the same reason
-        // `blockRemoteImagesAt`'s is: the day one of them needs to act on it, the wire already
-        // carries the difference.
+        // The baseline — the instant the window is measured back from, or `null` for "this
+        // account has never decided anything, measure from now" (mail 0056). It rides this
+        // response because it is half of the same arithmetic `dormancyDays` is the other half of:
+        // a client holding one without the other partitions its mirror differently from the
+        // server that just counted, and the disagreement is a Screener queue whose length does
+        // not match its contents. Sent as `null` rather than omitted so a client can tell "read
+        // the row, found no baseline" from "this server predates mail 0056" — the wire already
+        // carries the difference for the day one of them acts on it.
         screeningBaselineAt: settings.screeningBaselineAt,
         // AUTO-SUGGEST, as the INSTANT it was turned on or `null` for off. Deliberately not
         // normalised to a boolean the way `dormancyDays` is normalised to a number: a window is
@@ -792,44 +704,13 @@ export const consentRoutes: Route[] = [
   },
   {
     /**
-     * THE ACCOUNT-SETTINGS WRITE — auto-suggest, the dormancy dial, the remote-images opt-out,
-     * the auto-unsubscribe opt-out and/or the interface language, whichever the body names.
-     *
-     * `PATCH` rather than `POST` because it changes fields of a resource `GET /consent` already
-     * serves. Field-present ⇒ acted-on, so a client moving one knob leaves the other untouched;
-     * an empty body is a 400, not a silent no-op (see {@link applyConsentSettings}).
-     *
-     * ── `cost: "work"`, AND THE REASON IS THE AUTO-SUGGEST HALF ───────────────────────────
-     *
-     * A settings upsert is cheap. What earns `work` is that ONE of the two knobs — auto-suggest —
-     * AUTHORISES METERED SPEND: with the flag on, the Screener buys classifier suggestions without
-     * a per-batch click. `cost` asks what a handler CAN cause, and this one can cause future paid
-     * AI actions, so it belongs on the side of the census an unverified account cannot reach —
-     * an unverified account must not generate meaningful cost, one indirection
-     * later than the gate usually looks. The dormancy dial rides the same route and is pure
-     * visibility (it moves no mail, spends nothing), but `work` is an upper bound and an unverified
-     * account has no dormancy state worth setting, so nothing is lost by gating it alongside. The
-     * remote-images opt-out is the same case as the dial: it spends nothing and moves nothing, and
-     * an unverified account has no reading preference worth storing. The auto-unsubscribe opt-out
-     * is the same case again — it can only ever make the product do LESS, so gating it costs an
-     * unverified account nothing it could have wanted.
-     *
-     * No new route, so the frozen route census in `test/spend-gate.test.ts` does not
-     * move — the dial reuses the class the spender already justified.
-     *
-     * ── THE DIAL MUST NOT TRAVEL THROUGH A TIDY-ARMING WRITER ─────────────────────────────
-     *
-     * The dormancy window is deliberately here and NOT on `PATCH /account/screening`. That route's
-     * writer (`setScreeningPreference`) stamps `ohbox_tidy_requested_at` on the transition into
-     * `people_only`, which arms the worker's backlog re-route. The dial changes only what the
-     * Screener SHOWS and must never arm a pass that MOVES mail, so it stays on this route, whose
-     * writers touch one column each and move nothing.
-     *
-     * ── NOT IDEMPOTENT-KEYED, ON PURPOSE ────────────────────────────────────────────────────
-     *
-     * `options: { idempotent: true }` exists for mutations whose REPLAY would double an effect. Both
-     * knobs here are set-to-a-value writes, so a replay reproduces the same state; the only thing it
-     * moves is a timestamp, which is not a wrong answer to "when did this change".
+     * The account-settings write — auto-suggest, the dormancy dial, the remote-images and
+     * auto-unsubscribe opt-outs, the language. `PATCH`; field-present ⇒ acted-on; empty body 400.
+     * `cost: "work"` because of auto-suggest: with the flag on, the Screener buys classifier
+     * suggestions without a per-batch click — future paid AI actions; the other knobs spend
+     * nothing. The dial must not travel through a tidy-arming writer: `setScreeningPreference`
+     * stamps `ohbox_tidy_requested_at`, arming a pass that moves mail, so the dial stays here.
+     * Not idempotent-keyed: set-to-a-value writes replay to the same state.
      */
     method: "PATCH",
     pattern: "/consent/settings",
@@ -863,22 +744,13 @@ export const consentRoutes: Route[] = [
   },
   {
     /**
-     * THE CONSENT EVENT. `work` because it writes rules.
-     *
-     * ── AND DELIBERATELY NOT `idempotent` ─────────────────────────────────────────────────
-     *
-     * It used to be, and the flag was load-bearing while a second confirm was a 409: the
-     * `Idempotency-Key` replay was the only thing separating "the user clicked twice" from "a
-     * retry of a first click whose 200 never arrived". `confirmSeed` no longer refuses the
-     * second — it takes the account's settings row, re-reads who already has a rule from
-     * inside that lock, and writes only what is missing — so pressing this twice, or twice at
-     * once, produces one rule per person and two honest answers either way.
-     *
-     * The flag comes off rather than staying as decoration because `withIdempotency` gives
-     * nothing on its own: the store is the HANDLER's job, inside its own transaction, and this
-     * one never claimed the key. A route advertising replay that stores no response is a
-     * promise the table makes and the code does not keep. If a reason to store one appears,
-     * the flag and the in-transaction `recordIdempotent` go back together, not separately.
+     * The consent event. `work` because it writes rules. Deliberately not `idempotent`: the flag
+     * was load-bearing while a second confirm was a 409 — `confirmSeed` no longer refuses the
+     * second: it takes the settings row, re-reads who already has a rule inside that lock, and
+     * writes only what is missing, so pressing twice, or twice at once, produces one rule per
+     * person and two honest answers. The flag comes off rather than staying as decoration: the
+     * store is the handler's job, inside its transaction, and this one never claimed the key. If
+     * a reason to store a response appears, the flag and `recordIdempotent` go back together.
      */
     method: "POST",
     pattern: "/consent/seed",
@@ -910,27 +782,14 @@ export const consentRoutes: Route[] = [
   },
   {
     /**
-     * THE RESET. `stepUp: true`, and that gate is the whole of the "dev/admin-grade" the brief
-     * asked for.
-     *
-     * The alternatives were considered and are both wrong here. A shared secret
-     * (`routes/internal.ts`, `routes/admin.ts`) authorises an OPERATOR, and this operation is
-     * scoped to one account's own screening decisions — an operator-only reset would mean the
-     * person who owns a mailbox cannot re-run their own onboarding without somebody with a
-     * deployment secret doing it for them, which is the wrong shape for a self-serve product. A
-     * bare session is not enough either: this deletes every rule the account has, which is the
-     * record of every screening decision anybody ever made, and a stolen session must not be
-     * able to erase it.
-     *
-     * So it carries the gate `DELETE /account` carries and for a smaller version of the same
-     * reason. It is strictly less destructive than erasure — no message is deleted, no
-     * credential is touched, and the mirror is kept — which is why it is `work` rather than
-     * `ceremony`: unlike erasure it is not a right anybody is exercising on the way out, and an
-     * unverified account has no screening history worth resetting.
-     *
-     * NOT `idempotent`. `resetScreeningState` is idempotent by construction — the second call
-     * deletes nothing and reports zeroes — so an idempotency record would store a response for
-     * an operation that cannot be replayed harmfully. Same reasoning as `DELETE /account`.
+     * The reset. `stepUp: true` is the gate. A shared secret authorises an operator, and this
+     * operation is scoped to one account's own screening decisions — an operator-only reset is
+     * the wrong shape for a self-serve product. A bare session is not enough either: this deletes
+     * every rule the account has, the record of every screening decision, and a stolen session
+     * must not erase it. So it carries the gate `DELETE /account` carries, for a smaller version
+     * of the same reason. `work` rather than `ceremony`: unlike erasure it is not a right
+     * exercised on the way out, and an unverified account has no screening history worth
+     * resetting. Not `idempotent`: the second call deletes nothing and reports zeroes.
      */
     method: "POST",
     pattern: "/consent/reset",

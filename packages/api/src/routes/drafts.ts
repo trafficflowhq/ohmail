@@ -11,46 +11,14 @@ import type { Route } from "../router.js";
 import { drafts, schedules, sends, readBody } from "./shared.js";
 
 /**
- * THE SEND REQUEST'S BODY — everything the delivery needs beyond the stored draft, and nothing
- * that is kept.
- *
- * ── TWO ACCEPTED SHAPES FOR ATTACHMENTS, AND BOTH ARE LIVE ────────────────────────────────
- *
- * `attachments` carries file bytes as base64 on this request. It is the original transport and it
- * is the LIVE one — not a compatibility shim awaiting a sunset, and the difference is worth
- * stating because the compatibility reading is the easy one to reach and it is wrong.
- *
- * EVERY CLIENT THAT SHIPS TODAY EMITS THIS SHAPE:
- *  · the browser app stages only ABOVE the inline ceiling (`SEND_INLINE_MAX_TOTAL_BYTES`, the same
- *    3 MB this handler caps at), so every send at or under it — which is nearly all of them — is
- *    exactly this request;
- *  · the desktop app never stages on EITHER door. The wire client's staging option defaults off
- *    and that app's source does not contain its name, so its Cloud door forwards this shape at any
- *    size, and its standalone door has no hosted storage behind it to stage into.
- *
- * So the reason to keep accepting it is NOT "installed copies have not updated yet". Update uptake
- * is not the question and cannot settle it: the current release emits this shape too, and no
- * client-version signal reaches this API in any case. Removing the inline form would first require
- * the desktop's Cloud door to stage and the browser client to stage unconditionally, and until
- * both of those are true this paragraph is the answer to "can we drop it yet".
- *
- * A request in this shape produces byte-identical behaviour to the day it was the only shape.
- *
- * `stagedAttachmentIds` names upload tickets whose bytes are already in object storage, put
- * there by the browser on a signed URL from `POST /attachments/staging`. This is the
- * transport that lifts the ~4.5 MB serverless body limit off the feature and lets the compose form
- * promise what the sending mailbox actually announced.
- *
- * A send may carry either or both. The service concatenates them (inline first) and applies one
- * cap to the total — and the cap's SURFACE term depends on which shapes are present, because a
- * request-body limit is not a statement about bytes that never rode the request body. See
- * `sendSurfaceFor` in the send service.
- *
- * Neither shape is persisted. Both reach the one `OutboundMessage` and no table; the staged bytes
- * additionally existed in a bucket for a bounded window on the way here, which is the fact the
- * privacy copy states.
- *
- * An ordinary send sends no body at all — `readBody` returns `{}`.
+ * The send request's body — everything the delivery needs beyond the stored draft, nothing kept.
+ * Two attachment shapes, both live: `attachments` carries bytes as base64 — the browser stages
+ * only above the inline ceiling and the desktop app never stages, so nearly every send is this
+ * shape; removing it would first require both clients to stage unconditionally.
+ * `stagedAttachmentIds` names upload tickets already in object storage — the transport that lifts
+ * the serverless body limit. Either or both; the service concatenates (inline first) and applies
+ * one cap whose surface term depends on the shapes present (`sendSurfaceFor`). Neither is
+ * persisted. An ordinary send sends no body at all.
  */
 interface SendAttachmentWire { filename?: string; contentType?: string; contentBase64?: string }
 interface SendRequestBody {
@@ -62,25 +30,13 @@ interface SendRequestBody {
 }
 
 /**
- * WHY BOTH LISTS ARE COUNTED HERE, AT THE DOOR.
- *
- * The byte ceiling the send enforces bounds neither list's LENGTH, and reading it as if it did is
- * what left both of them open. A staged reference weighs whatever its ticket DECLARED — the mint's
- * floor is one byte — and an inline entry that carries no `contentBase64` decodes to zero bytes and
- * so weighs nothing at all. Either way a caller can name arbitrarily many parts and stay under
- * every byte cap in the path; the only thing that was bounding them was how many fit in a request
- * body, which is not a product rule.
- *
- * So the length is refused here rather than deeper in: it is a fact about the REQUEST, knowable
- * before a transaction is opened or an object is fetched, and an answer carrying both numbers is
- * one a client can act on. See {@link SEND_MAX_ATTACHMENT_PARTS} for where 100 comes from.
- *
- * `payload_too_large`/413 rather than a 400, and the RAW list length rather than the deduplicated
- * one, because `MarkSeenBody`'s cap on `PATCH /messages` (`MARK_SEEN_MAX_IDS`) already decided both
- * for the same shape of request — a client-supplied id array on one write — and answers 413 on the
- * array it was handed, then deduplicates what is left. Two id lists on one API disagreeing about
- * which status a length refusal carries, or about whether repeats count toward it, would be a
- * distinction a client has to learn per route.
+ * Why both lists are counted here, at the door: the byte ceiling bounds neither list's length — a
+ * staged reference weighs whatever its ticket declared (the floor is one byte), an inline entry
+ * with no `contentBase64` weighs nothing — so a caller can name arbitrarily many parts under
+ * every byte cap. Length is a fact about the request, knowable before a transaction or a fetch.
+ * See {@link SEND_MAX_ATTACHMENT_PARTS}. 413 on the raw list length, not the deduplicated one,
+ * because `MARK_SEEN_MAX_IDS` already decided both for the same shape — two id lists disagreeing
+ * about a length refusal is a distinction a client learns per route.
  */
 function refuseOverLongList(kind: "attachments" | "staged attachments", n: number): void {
   if (n > SEND_MAX_ATTACHMENT_PARTS) {
@@ -92,27 +48,14 @@ function refuseOverLongList(kind: "attachments" | "staged attachments", n: numbe
 }
 
 /**
- * The staged reference list, validated to strings and DEDUPLICATED. Absent/empty ⇒ `undefined`, so
- * an inline-only send builds the exact `SendInput` it always did.
- *
- * ── THE SAME TICKET TWICE IS COLLAPSED, NOT REFUSED ─────────────────────────────────────────
- *
- * A staged id names an OBJECT, so naming it twice names one file — and before this, each naming
- * was a separate `storage.download` of the same bytes plus a second copy of the file on the
- * message the recipient got. One authenticated request bought as many round trips as it had room
- * for ids.
- *
- * A skip rather than a 400, because that is the ruling the product already made one surface up:
- * `ComposeAttach` collapses a re-picked file with *"THE SAME FILE TWICE IS A SKIP, NOT A SECOND
- * ROW"* and says so in the muted register, because nothing went wrong. Refusing here would
- * contradict the form the user is actually looking at, and would spend a composed message on what
- * is at worst a client bug. `dedupeStagedIds` is the send service's own function rather than a
- * second copy of the rule — the service dedupes at its own boundary too, and the two must not be
- * able to disagree about what a duplicate is.
- *
- * The count is checked on the list AS SENT, before the dedupe — see {@link refuseOverLongList} for
- * why that order rather than the other. The two rules do not fight: the ceiling bounds how many
- * references one request may name, and the dedupe decides how many files those references are.
+ * The staged reference list, validated to strings and deduplicated. Absent/empty ⇒ `undefined`,
+ * so an inline-only send builds the exact `SendInput` it always did. The same ticket twice is
+ * collapsed, not refused: a staged id names an object, and each naming used to be a separate
+ * `storage.download` plus a second copy on the message. A skip rather than a 400 because the
+ * product already ruled it one surface up — `ComposeAttach` collapses a re-picked file, and
+ * refusing here would contradict the form the user is looking at. `dedupeStagedIds` is the send
+ * service's own function — the two must not disagree. The count is checked before the dedupe
+ * ({@link refuseOverLongList}).
  */
 function readStagedIds(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined;
@@ -248,21 +191,14 @@ export const draftsRoutes: Route[] = [
   },
   {
     /**
-     * A PERSON ANSWERS FOR A SEND WE COULD NOT CONFIRM — `{ outcome: 'arrived' | 'not_arrived' }`.
-     *
-     * The one exit from the held state. `unverified` means this server genuinely does not know
-     * whether the mail went out, and the reader is the only party who can look in the folder that
-     * settles it — so this route carries their answer and nothing else. `arrived` records the
-     * delivery and takes the row out of Drafts; `not_arrived` returns it to an ordinary draft that
-     * can be edited, sent again under a fresh key, or discarded.
-     *
-     * `cost: "work"` and NOT `connection`: no socket is opened. This is a state transition on two
-     * rows, and the reader's own eyes are the network call.
-     *
-     * Deliberately NOT idempotent-marked, on `/schedule`'s terms — the service's compare-and-swap
-     * on `unverified` makes a repeat converge by itself (the second call is the asked-for state,
-     * answered 200 with the row as it stands), so the generic verbatim cache would be storing a
-     * response for a verb that is already idempotent in the database.
+     * A person answers for a send we could not confirm — `{ outcome: 'arrived' | 'not_arrived'
+     * }`. The one exit from the held state: `unverified` means this server genuinely does not
+     * know whether the mail went out, and the reader is the only party who can look in the folder
+     * that settles it. `arrived` records the delivery and takes the row out of Drafts;
+     * `not_arrived` returns it to an ordinary draft. `cost: "work"`, not `connection`: no socket
+     * — a state transition on two rows, and the reader's own eyes are the network call. Not
+     * idempotent-marked: the service's compare-and-swap on `unverified` makes a repeat converge
+     * by itself.
      */
     method: "POST",
     pattern: "/drafts/:id/resolve",

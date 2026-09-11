@@ -6,27 +6,14 @@ import type { Route } from "../router.js";
 import { readBody } from "./shared.js";
 
 /**
- * `GET/PATCH /account/ai`: **the off switch**, honoured server-side.
- *
- * The site promises "you can switch the AI off entirely without losing a single feature that
- * files your mail." These two endpoints are what makes that a property of the account rather
- * than of a checkbox: the flag lives on `accounts.ai_enabled` and is read by the ONE seam every
- * AI call site in the product passes through before it spends anything. So
- * turning it off here means — for the very next message — no model call, no credit debit, and
- * routing by the deterministic rules alone.
- *
- * ## Its own file, on purpose
- *
- * `account.ts` would have been the natural home. This is a separate module because another
- * workstream is editing `packages/api/src/routes` concurrently, and a new file reduces the
- * shared surface to a single import line in `routes/index.ts`.
- *
- * ## Why no step-up
- *
- * `DELETE /account` carries `stepUp: true` because it is irreversible. This is the opposite:
- * reversible by the same request with the opposite boolean, destroys nothing, and moves no
- * money. Requiring re-authentication to turn OFF a feature would also be backwards — the safe
- * direction must never be the harder one.
+ * `GET/PATCH /account/ai`: the off switch, honoured server-side. The site promises the AI can be
+ * switched off entirely without losing a feature that files mail; these endpoints make that a
+ * property of the account: the flag lives on `accounts.ai_enabled` and is read by the one seam
+ * every AI call site passes before it spends — off means, for the very next message, no model
+ * call, no credit debit, routing by the deterministic rules alone. Its own file so concurrent
+ * route work shares only an import line. No step-up: reversible by the same request with the
+ * opposite boolean, destroys nothing, moves no money — and the safe direction must never be the
+ * harder one.
  */
 export const aiSettingsRoutes: Route[] = [
   {

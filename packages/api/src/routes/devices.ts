@@ -51,28 +51,13 @@ export const deviceRoutes: Route[] = [
 ];
 
 /**
- * The BULK web-session take-back — "sign out all other web sessions", one verb over the whole
- * device-less remainder (`revokeWebSessions`: device_id IS NULL, scope 'full', never the
- * caller's own session or family, never a named device).
- *
- * A SEPARATE array from {@link deviceRoutes}, and the separation is load-bearing:
- * `routes/desktop-host.ts` spreads `deviceRoutes` whole, and on that door the device-less
- * non-current session IS the host's LAUNCH session — a remote viewer holding this verb could
- * kill the very engine serving it. So this array is spread into `authRoutes` only (the hosted
- * and self-host tables), and `desktop-host.test.ts` censuses its absence from that door.
- *
- * `stepUp: true` for `logout {allDevices}`'s exact reason: mass sign-out is device revocation
- * in effect. `ceremony` because it is identity lifecycle that can only reduce risk.
- *
- * The body carries ONE optional field, `olderThanDays` — an age cutoff on `last_seen_at`, so
- * an account carrying hundreds of stale rows can be thinned without signing out the sessions
- * in use today. OMITTED means the scope is exactly what it was, which is what the pane's one
- * press has to keep meaning; `null` is refused rather than read as absent.
- *
- * The value is handed to the verb UNCHECKED here, deliberately: `assertWebSessionAge` owns the
- * bound, inside `revokeWebSessions`, where every caller meets it — the stdio door included. A
- * second copy of the range at this door would answer the same 400 for the same inputs and could
- * therefore never be watched fail through the route, which is the definition of decoration.
+ * The bulk web-session take-back — "sign out all other web sessions", one verb over the
+ * device-less remainder (`revokeWebSessions`: device_id IS NULL, scope 'full', never the caller's
+ * own session or a named device). A separate array from {@link deviceRoutes}, and the separation
+ * is load-bearing: `desktop-host.ts` spreads `deviceRoutes` whole, and on that door the
+ * device-less non-current session IS the host's launch session — a remote viewer holding this
+ * verb could kill the engine serving it. Spread into `authRoutes` only; `desktop-host.test.ts`
+ * censuses its absence. `stepUp: true`: mass sign-out is device revocation in effect.
  */
 export const webSessionRevokeRoutes: Route[] = [
   {
