@@ -781,57 +781,44 @@ function heldOf(
 }
 
 /**
- * THE SCREENER, DERIVED FROM THE MESSAGE MIRROR.
- *
- * `screener_sender` is a client-local entity: `/sync`'s vocabulary never carried it
- * (`change-log.ts`), so before this the Screener was structurally empty on every Cloud
- * account while its mail sat in `ohmail/Screener`. It is not promoted onto the wire,
- * because the server's own queue is ALREADY a derivation — "DERIVED (no separate
- * table)", `screener-service.ts:88-92`: one entry per distinct sender, the latest
- * message representing it. Grouping the mirror the same way reproduces that queue with
- * no new wire entity to keep in lockstep with every folder move.
- *
- * The row `id` is therefore the REPRESENTATIVE MESSAGE id, which is precisely what
- * `POST /screener/:id` resolves (`screener-service.ts:144` — `rows.find(r =>
- * r.messageId === id)`). A derived row speaks the existing protocol unchanged.
- *
- * FIXTURE PRECEDENCE: `screener_sender` rows win per sender key. A Cloud account has
- * none, so it sees pure derivation; the demo world keeps its richer DTOs (AI
- * suggestions, full bodies, spam detection metadata) exactly as before.
- *
- * NO-COLLAPSE: `held` enumerates EVERY message the sender has in that
- * folder — there is no count standing in for mail nobody can open.
- *
- * ── A WAITING ROW'S REPRESENTATIVE, AND THE FLAG THAT SAYS WHERE IT REALLY IS ─────────────
- *
- * When this runs over a PROJECTED reader (`presentationReader`), the waiting bucket also holds
- * mail that is physically in the INBOX: `consentPartition` presents an active undecided sender's
- * INBOX mail in the Screener, because a decision about that sender is genuinely wanted. Grouping
- * is right to include it, and the ROW MUST STILL BE MINTED — but where its id comes from decides
- * how the decision is carried out.
- *
- * The id is the message `POST /screener/:id` resolves, and both ends of that call require the
- * message to be physically at the gate. `heldRowById` inherits `desired_folder = 'ohmail/Screener'`,
- * so an INBOX message id is a 404 on the wire; and `derivedScreenerEffects` refuses locally for
- * the same reason (`mutations.ts` — `rep.folder !== FOLDER_OF_VIEW.screener` ⇒ no effects). So the
- * rep is the newest GATE-PHYSICAL message when the sender has any; otherwise `newestFirst[0]`, an
- * INBOX message, and the row is marked `gatePhysical:false`.
- *
- * That flag is what keeps the row from "renders every control and performs none": the commit path
- * (`screener-state.ts`) reads it — actually, re-reads the raw mirror — and routes a `gatePhysical:false`
- * decision PAST THE GATE as a `rule_create` (destination INBOX for a screen-in) with `applyRetro`,
- * so once the rule lands the sender's whole bag presents in the Ohbox with zero server moves. This
- * is why the earlier gap — "a sender whose mail is ONLY in the INBOX is reachable only by search" —
- * is now closed on the client, with no change to the gate's `desired_folder` predicate at the server.
- *
- * `held` still carries the sender's whole bag including their INBOX mail — those ids feed
- * `mark_seen` and `move`, which resolve against the engine's own store by id and never read a
- * folder off this reader.
- *
- * Inert over a raw mirror, which is why `screener-derived.test.ts` is untouched: without a
- * projection every waiting-bucket message already has `folder === 'ohmail/Screener'` and
- * `physicalFolder` is unset, so the gate-physical rep IS `newestFirst[0]` and `gatePhysical` is
- * true — the rep does not move and no past-the-gate branch is reached.
+ * The Screener, derived from the message mirror. `screener_sender` is a client-local entity: `/sync`'s vocabulary
+ * never carried it (`change-log.ts`), so before this the Screener was structurally empty on every Cloud account while
+ * its mail sat in `ohmail/Screener`. It is not promoted onto the wire because the server's own queue is ALREADY a
+ * derivation ("DERIVED (no separate table)", `screener-service.ts:88-92`): one entry per distinct sender, the latest
+ * message representing it. The row `id` is the REPRESENTATIVE MESSAGE id — precisely what `POST /screener/:id`
+ * resolves (`screener-service.ts:144`), so a derived row speaks the existing protocol unchanged. Fixture precedence:
+ * `screener_sender` rows win per sender key — a Cloud account has none and sees pure derivation; the demo keeps its
+ * richer DTOs.
+ */
+
+/**
+ * And no-collapse: `held` enumerates EVERY message the sender has in that folder — no count standing in for mail
+ * nobody can open.
+ */
+
+/**
+ * A waiting row's representative, and the flag that says where it really is. Over a PROJECTED reader
+ * (`presentationReader`) the waiting bucket also holds mail physically in the INBOX — `consentPartition` presents an
+ * active undecided sender's INBOX mail in the Screener. The row must still be minted, but both ends of `POST
+ * /screener/:id` require the message to be at the gate: `heldRowById` inherits `desired_folder = 'ohmail/Screener'`
+ * (an INBOX id is a 404), and `derivedScreenerEffects` refuses locally for the same reason (`mutations.ts` —
+ * `rep.folder !== FOLDER_OF_VIEW.screener` ⇒ no effects). So the rep is the newest GATE-PHYSICAL message when the
+ * sender has any; otherwise `newestFirst[0]`, an INBOX message, and the row is marked `gatePhysical:false`.
+ */
+
+/**
+ * That flag keeps the row from rendering every control and performing none: the commit path (`screener-state.ts`)
+ * re-reads the raw mirror and routes a `gatePhysical:false` decision PAST THE GATE as a `rule_create` (destination
+ * INBOX for a screen-in) with `applyRetro`, so once the rule lands the sender's whole bag presents in the Ohbox with
+ * zero server moves — closing the old gap where a sender whose mail is only in the INBOX was reachable only by
+ * search, with no change to the gate's `desired_folder` predicate. `held` still carries the whole bag including INBOX
+ * mail: those ids feed `mark_seen` and `move`, which resolve against the engine's own store by id.
+ */
+
+/**
+ * Inert over a raw mirror, which is why `screener-derived.test.ts` is untouched: without a projection every
+ * waiting-bucket message already has `folder === 'ohmail/Screener'` and `physicalFolder` unset, so the gate-physical
+ * rep IS `newestFirst[0]` and no past-the-gate branch is reached.
  */
 export function screenerSegments(
   reader: EntityReader, now: Date = new Date(),
@@ -1027,51 +1014,33 @@ export function tagsCrossView(reader: EntityReader): TagGroup[] {
 // ── Rules: the consent gate's memory ───────────────────────────────────────
 
 /**
- * EVERY ROUTING RULE THIS ACCOUNT HAS, NEWEST FIRST.
- *
- * The Screener writes a `rules` row on every decision — `POST /screener/:id` creates one
- * per yes/no (`screener-service.ts:364`), and the DecisionBar, "apply to all", "mark all
- * spam" and the sender menu all reach that endpoint — so a product whose thesis is a
- * consent gate accumulates these faster than any other entity the user did not ask for.
- * Until this selector existed nothing in any client read them: `rule` has been an entity type
- * in the change log since the first release and a
- * `SyncEntityType` here, the mirror has been storing them all along, and `/rules` had zero
- * references across the whole web app.
- *
- * ── WHY THE MIRROR AND NOT `GET /rules` ────────────────────────────────────────────────
- *
- * The same argument `sendingMailboxId` makes about mailboxes, with the opposite outcome,
- * and the difference is worth stating because it is the reason this one is a selector at
- * all. A mailbox is NOT an entity type in the change log, so `/sync` can never send one and
- * a Cloud surface has to reach the Cloud client's API layer — which the shared shell may not
- * import, because that layer is not part of the Desktop bundle. A rule IS one. The server
- * replays it from `change_log` like any other entity, the webapp passes no
- * `types` filter so the drain carries every type, and nothing prunes `change_log` —
- * `minRetainedSeq` only READS the minimum — so a bootstrap re-materializes rules created
- * long before this client existed. Reading the mirror therefore costs no request, works
- * offline, and shows the optimistic overlay: a rule the user has just revoked is gone from
- * this list before the wire has answered.
- *
- * ── NEWEST FIRST, AND WHY THAT IS THE ORDER ────────────────────────────────────────────
- *
- * `RulesService.list` orders by `id` — a random uuid, i.e. no order at all to a reader.
- * The rule a user wants to inspect or undo is overwhelmingly the one they just caused, and
- * on this surface every row was caused by an act they may not have realised was a rule. So
- * recency, with the id as a deterministic tie-break for rules minted inside the same
- * `createdAt` resolution (a bulk "apply to all" mints several at once).
- *
- * ── WHAT IS DELIBERATELY NOT COMPUTED HERE ─────────────────────────────────────────────
- *
- * "How many messages has this rule filed?" `RuleDTO.stats` carries `hits`, `lastHitAt` and
- * `demotions`, and NOTHING ANYWHERE EVER WRITES THEM — the columns exist, the server
- * faithfully reports them, and every one of them is still the `default(0)` / `null` it was
- * inserted with. Surfacing that as a count would put "0 messages" beside a rule that has
- * silently filed three thousand. The surface says the count is not recorded instead; see
- * `RulesView`.
- *
- * A count of mirror messages CURRENTLY sitting in the rule's destination would be
- * computable and is also refused, for a second reason: it reads as "these will move back",
- * which is exactly the false promise revocation must not make.
+ * Every routing rule this account has, newest first. The Screener writes a `rules` row on every
+ * decision (`POST /screener/:id` creates one per yes/no, `screener-service.ts:364`), so a
+ * consent-gate product accumulates these faster than any other entity the user did not ask
+ * for — and until this selector existed nothing in any client read them: `rule` has been in the
+ * change log since the first release, the mirror stored them all along, and `/rules` had zero
+ * references across the web app.
+ */
+
+/**
+ * Why the mirror and not `GET /rules`: the `sendingMailboxId` argument with the opposite outcome. A mailbox is NOT a
+ * change-log entity type, so a Cloud surface must reach the Cloud client's API layer, which the shared shell may not
+ * import. A rule IS one: the server replays it from `change_log`, the webapp passes no `types` filter, and nothing
+ * prunes `change_log` (`minRetainedSeq` only reads the minimum), so a bootstrap re-materializes rules created long
+ * before this client existed. The mirror costs no request, works offline, and shows the optimistic overlay — a rule
+ * just revoked is gone from this list before the wire answers. Newest first because `RulesService.list` orders by
+ * `id`, a random uuid — no order to a reader — and the rule a user wants to undo is overwhelmingly the one they just
+ * caused; the id tie-breaks rules minted inside one `createdAt` resolution (a bulk "apply to all").
+ */
+
+/**
+ * Deliberately not computed here: "how many messages has this rule filed?" `RuleDTO.stats`
+ * carries `hits`, `lastHitAt` and `demotions`, and nothing anywhere writes them — every value
+ * is still its inserted `default(0)` / `null` — so a count would put "0 messages" beside a rule
+ * that has silently filed three thousand; the surface says the count is not recorded instead
+ * (see `RulesView`). A count of mirror messages currently in the rule's destination is also
+ * refused: it reads as "these will move back", exactly the false promise revocation must not
+ * make.
  */
 export function rulesList(reader: EntityReader): RuleDTO[] {
   return reader.list<RuleDTO>("rule").sort((a, b) => {
@@ -1093,35 +1062,25 @@ export function rulesList(reader: EntityReader): RuleDTO[] {
 export const SENDING_STALE_AFTER_MS = 10 * 60 * 1000;
 
 /**
- * EVERY DRAFT THE USER CAN STILL ACT ON, newest first — the Drafts list.
- *
- * ── WHICH STATUSES, AND WHY EACH ─────────────────────────────────────────────────────────
- *
- * `drafts` rows do not disappear when they are sent: `SendService` moves the row to `sent`, and
- * `sending` / `unverified` are the two states in between. All four are the same entity in the
- * mirror.
- *
- *  · `draft` — the ordinary case: a message being written.
- *  · `unverified` — SMTP threw AND the Sent probe found nothing: the mail may never have been
- *    delivered, and the row holds THE ONLY COPY of its text. This used to be filtered out, on
- *    the reasoning that listing it invites a second delivery of a mail that may have gone —
- *    which is right about a plain re-send and wrong about the listing: hiding the row made an
- *    undelivered message invisible on every surface, and the user, told to "check your Sent
- *    folder", found nothing anywhere and concluded the mail was lost (it was — measured on a
- *    real account). The row is listed; what the surface OFFERS on it is the surface's rule
- *    (recover into a fresh compose, or discard — never a blind re-send of the same row).
- *  · `sending`, once STALE — see {@link SENDING_STALE_AFTER_MS}: past every possible invocation
- *    lifetime this is a send that died without a verdict, stranded exactly like `unverified`
- *    except the server never got to write the word. Fresh `sending` rows are not listed.
- *  · `sent` — never listed: that message left, and a list whose rows invite editing must not
- *    hold it.
- *
- * `accepted` is not filtered on. It is a client-local flag meaning "the user took an AI draft
- * into the editor", and a draft somebody has started editing is exactly a draft.
- *
- * Sorted by `updatedAt` and not `createdAt`, because the question a Drafts list answers is "what
- * was I last writing" — a reply started a week ago and touched this morning belongs at the top.
- * The id breaks ties so the order is stable across renders rather than dependent on insertion.
+ * Every draft the user can still act on, newest first — the Drafts list. `drafts` rows do not disappear when sent:
+ * `SendService` moves the row to `sent`, with `sending` / `unverified` in between, all four the same entity in the
+ * mirror. Listed: `draft` (a message being written); `unverified` (SMTP threw AND the Sent probe found nothing — the
+ * row holds the ONLY copy of its text; it used to be filtered out to avoid inviting a second delivery, which made an
+ * undelivered message invisible on every surface and the mail lost, measured in live use; what the surface
+ * OFFERS is its own rule — recover into a fresh compose or discard, never a blind re-send); and `sending` once STALE
+ * ({@link SENDING_STALE_AFTER_MS}) — past every possible invocation lifetime the send died without a verdict,
+ * stranded like `unverified` except the server never wrote the word.
+ */
+
+/**
+ * Fresh `sending` rows and `sent` are never listed.
+ */
+
+/**
+ * `accepted` is not filtered on — a client-local flag meaning "the user took an AI draft into
+ * the editor", and a draft being edited is exactly a draft. Sorted by `updatedAt`, not
+ * `createdAt`: the question a Drafts list answers is "what was I last writing", so a week-old
+ * reply touched this morning belongs at the top; the id breaks ties for a stable order.
  *
  * @param now injected for the staleness cut, defaulting to the wall clock. A memoized caller
  * re-evaluates on its ordinary version bumps, so a row crossing the ten-minute line surfaces on
