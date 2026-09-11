@@ -71,8 +71,9 @@ import {
  *       "startsAt": "<ISO 8601 or null>",
  *       "endsAt": "<ISO 8601 or null>",
  *       "audience": "screened_in" | "everyone",
- *       "throttle": "per_day" | …      // absent in a document written before 0087
- *     },
+ *       "throttle": "per_day" | …,     // absent in a document written before 0087
+ *       "piles": ["INBOX", …]          // WHICH piles it answers. OPTIONAL: absent is UNSTATED —
+ *     },                               // a reader keeps its own scope — and `[]` answers nobody.
  *     "tagNames": ["<tag name>", …],   // the names of this mailbox's tags
  *     "signature": "<string or null>"  // absent in a document written before mail 0094
  *   }
