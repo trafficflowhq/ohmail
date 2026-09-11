@@ -74,77 +74,14 @@ import type { ServiceContext } from "./context.js";
 import { rowsAffected } from "./rows-affected.js";
 
 /**
- * Account deletion — Art. 17 erasure, implemented as ANONYMISATION.
- *
- * The decision is pinned by
- * `migration-0018.roundtrip.test.ts` › "an account with ledger history CANNOT be
- * deleted": the `credit_ledger` FK is `ON DELETE no action` and the ledger is
- * append-only, so a paying account cannot be `DELETE`d — and should not be.
- * Financial records carry a statutory retention obligation that GDPR Art. 17(3)(b)
- * explicitly preserves, and a money trail that can be erased on request is not a
- * money trail.
- *
- * So erasure means: **every user, mailbox, message, body, credential and note row
- * is deleted, and `accounts` survives as a pseudonymous billing subject** — a
- * random uuid and a blank name, which is not personal data. The one piece of
- * personal data inside the billing tables, `billing_customers.email`, is redacted
- * in place because the row itself is the link to the Stripe customer and has to
- * live as long as the invoices do.
- *
- * WHAT THIS DOES NOT TOUCH. The customer's mail. It is on their own IMAP server,
- * in the `ohmail/…` folders ohmail created there, and deleting our copy of the
- * mirror leaves their mailbox exactly as organised as it was. That is the whole
- * "leave anytime" promise, and it is why this function can be this blunt.
- *
- * ORDER MATTERS. Every statement below is a hard `DELETE` against real foreign
- * keys, so the sequence is children-before-parents and is asserted by
- * `account-deletion.pg.test.ts` against a fully populated account.
- *
- * ── HOW THIS FUNCTION WAS WRONG, AND WHAT NOW STOPS IT RECURRING ─────────────
- *
- * The paragraph above used to end "…a new table with an `account_id` will fail
- * that test rather than silently survive erasure", and BOTH halves of that were
- * false. `account-deletion.pg.test.ts` did not exist — it had never been added on
- * any branch — and the PGlite catalog sweep that did exist can only report a table
- * it finds ROWS in, so a table `seedFullAccount` never populated passed it
- * vacuously, for ever.
- *
- * That is not a documentation slip, because the sweep's blind spot is exactly the
- * shape of the bug it was meant to catch. Eight tables had accumulated behind it:
- *
- *   message_instances  FK → mailboxes AND messages, `ON DELETE no action`
- *   message_failures   FK → mailboxes,              `ON DELETE no action`
- *   flag_state         FK → messages,               `ON DELETE no action`
- *
- * — and those three are written by ORDINARY SYNC, so erasing any account that had
- * ever fetched mail raised `23503` and the whole transaction rolled back. Erasure
- * did not retain data quietly; it FAILED, on every real account, and the three
- * remaining self-serve callers got a 500. The other five (`account_settings`,
- * `account_suspensions`, `mailbox_oauth_ceremonies`, `ai_attempt_claims`,
- * `attachment_staging`) do not break the transaction — `accounts` survives
- * erasure, so an FK pointed at it is never violated — and so they were the silent
- * half: personal data that outlived an Art. 17 request with nothing failing.
- *
- * The guard is now structural rather than by-example. `account-deletion.pg.test.ts`
- * walks `information_schema` for every table FK-reachable from `accounts` plus
- * every table carrying an `account_id`, and requires each one to be either NAMED
- * IN {@link DeleteAccountResult.deleted} (which this function reports at runtime,
- * so the oracle cannot drift from the code) or on that file's written exemption
- * list. A table added next month fails the suite until somebody rules on it, which
- * is what the old comment claimed and did not do.
- *
- * ── ONE TABLE IS EXPIRED RATHER THAN DELETED, AND IT IS NOT AN OVERSIGHT ─────
- *
- * `attachment_staging` rows are the only rows here that name bytes living OUTSIDE
- * this database — an object in the staging bucket. The row is the delete key: the
- * worker's sweep removes the row and its object as a pair, and it finds rows by
- * `expires_at <= now()`. So a `DELETE` here would remove the only record of where
- * the attachment content is and ORPHAN THOSE BYTES IN THE BUCKET PERMANENTLY —
- * an Art. 17 erasure that leaves the actual attachment behind and unreachable.
- * Setting `expires_at` to the erasure instant instead makes every ticket due on
- * the next maintenance pass, and the bytes go with the row, which is the outcome
- * the request is actually about. The residue in the meantime is a filename and an
- * object path for one sweep interval, against permanent retention of the file.
+ * Account deletion — Art. 17 erasure, as ANONYMISATION. A ledger-carrying account cannot be
+ * `DELETE`d (`migration-0018.roundtrip.test.ts`; Art. 17(3)(b) preserves statutory retention).
+ * Every user, mailbox, message, body, credential and note row is deleted; `accounts` survives as
+ * a pseudonymous billing subject, `billing_customers.email` redacted in place. Mail on the
+ * customer's own IMAP server is untouched. `account-deletion.pg.test.ts` walks
+ * `information_schema` for every table FK-reachable from `accounts` or carrying `account_id`:
+ * each must be NAMED in {@link DeleteAccountResult.deleted} or exempted. `attachment_staging` is
+ * EXPIRED, not deleted — its row is the delete key for bucket bytes.
  */
 export interface DeleteAccountResult {
   accountId: string;
@@ -181,64 +118,39 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     };
 
     /**
-     * ── THE ERASURE FENCE'S STAMP — the FIRST statement, before even the settings delete ────
-     *
-     * `accounts` survives erasure (the pseudonymous billing subject), so nothing structural
-     * refuses a LATE settings writer: a consent PATCH in flight across this transaction could
-     * recreate `account_settings` and doorbell rows a millisecond after the catalog sweep
-     * counted zero (ERASE-WRITE-RACE). The stamp is durable evidence AND the interlock: it
-     * takes the account row's exclusive lock at the top of this transaction, and every settings
-     * writer opens ITS transaction by reading the same row `FOR SHARE` and refusing on a stamp
-     * (`erasure-fence.ts` — the two-sided argument lives there). Whichever side wins the row,
-     * zero rows survive: a writer that got its share lock first holds this whole transaction at
-     * this line until it commits, and the deletes below then take its rows with everything else.
-     *
-     * `coalesce` is the idempotency: a retried erasure keeps the FIRST stamp — the instant the
-     * data actually went — rather than quietly re-dating the erasure to the retry.
-     *
-     * The instant travels as ISO text, not a Date: a Date inside a raw `sql` fragment reaches
-     * postgres-js as an untyped parameter it refuses (`ERR_INVALID_ARG_TYPE`), while PGlite
-     * accepts it — exactly the driver split the pg suite exists to catch, and it did.
+     * The erasure fence's stamp — the FIRST statement. `accounts` survives erasure, so nothing
+     * structural refuses a LATE settings writer: a consent PATCH in flight could recreate rows a
+     * millisecond after the catalog sweep counted zero. The stamp is the interlock: it takes the
+     * account row's exclusive lock at the top of this transaction; every settings writer opens by
+     * reading the row `FOR SHARE` and refuses on a stamp (`erasure-fence.ts`). Whichever side
+     * wins, zero rows survive. `coalesce` keeps a retried erasure on the FIRST stamp. The instant
+     * travels as ISO text: a Date in a raw `sql` fragment is refused by postgres-js while PGlite
+     * accepts it — the driver split the pg suite exists to catch.
      */
     await tx.update(accounts)
       .set({ erasedAt: sql`coalesce(${accounts.erasedAt}, ${ctx.now().toISOString()}::timestamptz)` })
       .where(eq(accounts.id, accountId));
 
     /**
-     * THE GLOBAL LOCK ORDER — `account_settings` FIRST, the change-log sequence row second
-     * (`recordSettingsChange`, consent-seed.ts, states the rule and its two reproduced 40P01s).
-     * This transaction used to delete `change_log` and `account_sync_state` in section 6 and
-     * only then delete `account_settings` — the reverse order, which deadlocks against any
-     * consent settings PATCH racing the erasure: the PATCH holds the settings row and waits on
-     * the sequence row this transaction already holds, Postgres kills one, and the killed one
-     * can be the Art. 17 erasure itself. So the settings delete RUNS FIRST — a delete takes the
-     * row lock exactly as an update would, creates nothing (a retried erasure stays a zero-row
-     * no-op, which the idempotency pin counts), and a knob write inserting the row afresh
-     * queues on this delete while holding nothing, so no cycle can form from either side. The
-     * row's own reasoning (why consent is erased at all) stays with its old neighbours in
-     * section 6.
-     *
-     * (Since the erasure fence above, "first" means first AFTER the accounts stamp — the fence
-     * put `accounts` at the head of the same chain for writers and erasure alike, so the
-     * relative order this comment argues for is unchanged: settings before the sequence row.)
+     * The global lock order: `account_settings` FIRST, the change-log sequence row second
+     * (`recordSettingsChange` in consent-seed.ts states it). This transaction once deleted
+     * `change_log`/`account_sync_state` before `account_settings` — the reverse order, which
+     * deadlocks against a consent PATCH racing the erasure: the PATCH holds the settings row and
+     * waits on the sequence row this transaction holds, and Postgres can kill the erasure itself.
+     * The settings delete runs first — a delete takes the row lock as an update would, creates
+     * nothing, and a knob write inserting afresh queues on it while holding nothing, so no cycle
+     * forms.
      */
     await drop("account_settings", tx.delete(accountSettings).where(eq(accountSettings.accountId, accountId)));
 
     /**
-     * THE USER- AND MAILBOX-KEYED PREDICATES ARE SUBQUERIES, NOT MATERIALIZED ID LISTS.
-     *
-     * Several tables below key off the USER or the MAILBOX rather than the account, and both
-     * parents are deleted at the END of this transaction — so these read rows that are still
-     * present at every line that uses them, exactly as the message subquery does.
-     *
-     * They are `select`s and not arrays for the reason written out at the message-keyed deletes
-     * below: an id list is one bind parameter per row against a collection with no product
-     * ceiling. A handful of users is not where that bites, but
-     * "it is small today" is not a bound, and the subquery form costs nothing to prefer.
-     *
-     * `userRows` is still READ, for two things an `IN` predicate cannot give: the erasure
-     * receipt's `usersErased` count, and nothing else — the addresses it used to carry are now
-     * derived inside PostgreSQL by the `auth_throttle` predicate.
+     * The user- and mailbox-keyed predicates are SUBQUERIES, not materialized id lists. Both
+     * parents are deleted at the END of this transaction, so the subqueries read rows still
+     * present at every line that uses them. `select`s and not arrays for the reason at the
+     * message-keyed deletes below: an id list is one bind parameter per row against a collection
+     * with no ceiling — "it is small today" is not a bound, and the subquery form costs nothing.
+     * `userRows` is still READ for one thing an `IN` predicate cannot give: the erasure receipt's
+     * `usersErased` count.
      */
     const userRows = await tx.select({ id: users.id })
       .from(users).where(eq(users.accountId, accountId));
@@ -282,23 +194,15 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("outbound_sends", tx.delete(outboundSends).where(eq(outboundSends.accountId, accountId)));
     await drop("drafts", tx.delete(drafts).where(eq(drafts.accountId, accountId)));
 
-    // ── 2. Everything hanging off a message ─────────────────────────────────────
-    // TAGS FIRST, AND BEFORE `messages`. `message_tags` FKs BOTH `messages` and `tags` with
-    // `ON DELETE no action`, so deleting either parent while an assignment row survives aborts
-    // the whole erasure transaction — an Art. 17 request that fails on a foreign key. The child
-    // goes before both its parents, and `tags` before `messages` only because it must go
-    // somewhere; the ordering that is load-bearing is child-before-parent.
-    //
-    // This is also the moment the product's claim about tags becomes true. Tags are OURS, not
-    // IMAP: a disconnect keeps them (it is a reversible soft delete), but erasing the account
-    // takes them, and these two lines are the whole of "takes them". The folders survive because
-    // they are real folders in someone else's mailbox; the tags do not, because they were only
-    // ever rows here.
-    // BEFORE `messages` and `mailboxes`: this table carries FKs to both, so a missed
-    // line here fails erasure LOUDLY rather than retaining a list of what somebody
-    // unsubscribed from. That profile is exactly the kind of residue Art. 17 is about, and
-    // the catalog sweep in account-deletion.test.ts would NOT have caught it — that check
-    // only visits tables `seedFullAccount` populates.
+    // 2. Everything hanging off a message. TAGS FIRST, before `messages`: `message_tags` FKs both
+    // `messages` and `tags` with `ON DELETE no action`, so deleting either parent while an
+    // assignment survives aborts the whole erasure — an Art. 17 request failing on a foreign key.
+    // Child before parent is the load-bearing order. This is also where the product's tags claim
+    // becomes true: tags are OURS, not IMAP — a disconnect keeps them, erasure takes them, and
+    // these two lines are the whole of "takes them"; folders survive because they are real
+    // folders in someone else's mailbox. `unsubscribe_records` goes before `messages` and
+    // `mailboxes` too: it FKs both, so a missed line fails erasure LOUDLY rather than retaining a
+    // list of what somebody unsubscribed from.
     await drop("unsubscribe_records", tx.delete(unsubscribeRecords).where(eq(unsubscribeRecords.accountId, accountId)));
     await drop("message_tags", tx.delete(messageTags).where(eq(messageTags.accountId, accountId)));
     await drop("tags", tx.delete(tags).where(eq(tags.accountId, accountId)));
@@ -316,27 +220,14 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // BEFORE `mailboxes`, which it FKs `ON DELETE no action`. Content-free by design — a
     // coordinate and a code — but a coordinate into somebody's mailbox is still theirs.
     await drop("message_failures", tx.delete(messageFailures).where(eq(messageFailures.accountId, accountId)));
-    // ── message_bodies, folder_state and flag_state key off the MESSAGE, not the account ──
-    //
-    // A SUBQUERY, and this used to be a materialized id list — the most damaging instance of
-    // "a stored collection with no cardinality ceiling reaching a statement with no page".
-    //
-    // `select messages.id where account_id = $1` into a JS array, then that array bound into
-    // three `IN` predicates, means one bind parameter PER MESSAGE, three times over. PostgreSQL
-    // refuses a statement carrying more than 65 535 parameters, so once an account holds enough
-    // mail for three id lists to exceed that,
-    // the statement is rejected and the whole erasure transaction aborts: **self-serve erasure
-    // stopped working exactly for the largest real accounts**, and it is an Art. 17 obligation,
-    // so the failure grew into the product rather than out of it. Nothing warned — a small
-    // mailbox erases fine and every test account is small.
-    //
-    // The ids now never leave PostgreSQL. There is no array, no parameter list and no
-    // cardinality to bound, so the statement is one statement whatever the account holds. It is
-    // also strictly less work: the planner joins rather than matching against a literal list.
-    //
-    // The `messages` delete itself is still by `account_id` and still runs AFTER these three
-    // (line order is FK order, children before parents), so the subquery resolves against rows
-    // that are still present.
+    // `message_bodies`, `folder_state` and `flag_state` key off the MESSAGE, not the account. A
+    // SUBQUERY — this used to be a materialized id list: one bind parameter PER MESSAGE, three
+    // times over, and PostgreSQL refuses a statement with more than 65 535 parameters, so
+    // self-serve erasure stopped working exactly for the largest real accounts. Nothing warned —
+    // a small mailbox erases fine and every test account is small. The ids now never leave
+    // PostgreSQL: no array, no parameter list, no cardinality to bound, and the planner joins
+    // instead of matching a literal list. The `messages` delete is still by `account_id` and runs
+    // AFTER these three (FK order), so the subquery resolves against rows still present.
     const ownMessageIds = tx.select({ id: messages.id })
       .from(messages).where(eq(messages.accountId, accountId));
     await drop("message_bodies", tx.delete(messageBodies).where(inArray(messageBodies.messageId, ownMessageIds)));
@@ -443,18 +334,14 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // may be never.
     await drop("mailbox_oauth_device_ceremonies",
       tx.delete(mailboxOauthDeviceCeremonies).where(eq(mailboxOauthDeviceCeremonies.accountId, accountId)));
-    // WHAT AN ENTITLEMENTS PROGRAM HOLDS IS ERASED BY THAT PROGRAM, not from here. The rows this
-    // erasure used to delete — attempt claims, the setup pools, the suspension note, the customer
-    // email — belong to whoever operates metering, and the request reaches them through the
-    // port's `releaseAccount`, which this service already calls. A deployment that meters nothing
-    // has none of those rows to erase.
-    // NOT a delete — see the header. The row is the only key to bytes in the staging bucket, and
-    // the sweep removes row and object together, keyed on `expires_at <= now()`. Bringing the
-    // expiry forward hands both to the next maintenance pass; deleting the row would strand the
-    // attachment in object storage for the life of the deployment.
-    //
-    // `gt(expires_at, now)` is what keeps this IDEMPOTENT: a second erasure finds the tickets
-    // already expired, matches nothing, and reports zero.
+    // What an entitlements program holds is erased by THAT program: attempt claims, setup pools,
+    // the suspension note and the customer email belong to whoever operates metering, reached
+    // through the port's `releaseAccount`, which this service calls. NOT a delete — the staging
+    // row is the only key to bytes in the staging bucket, and the sweep removes row and object
+    // together, keyed on `expires_at <= now()`; bringing the expiry forward hands both to the
+    // next maintenance pass, while deleting the row would strand the attachment for the life of
+    // the deployment. `gt(expires_at, now)` keeps this IDEMPOTENT: a second erasure matches
+    // nothing and reports zero.
     const stagingTicketsExpired = n(await tx.update(attachmentStaging)
       .set({ expiresAt: ctx.now() })
       .where(and(eq(attachmentStaging.accountId, accountId), gt(attachmentStaging.expiresAt, ctx.now()))));

@@ -1,39 +1,12 @@
 /**
- * THE ADMIN WIRE CONTRACT — the server's half; the staff console declares its own copy.
- *
- * The console declares the shape it renders; this declares the shape the API answers with.
- * They are the same shape, and they are written twice because a workspace PACKAGE may not
- * import from an APP — `packages/services` is consumed by the worker and by two hosts, and
- * reaching into the console app would make it a build dependency of the product's
- * backend.
- *
- * ── THE COPY IS MECHANICALLY POLICED ──────────────────────────────────────────────────────
- * A parity test parses BOTH files, and for every interface
- * declared in both it asserts the field-name sets are identical. A field added on one side and
- * not the other fails the suite on the day it is added, rather than at 3am when the console
- * renders `undefined` next to a number an operator is about to act on. The interfaces that
- * must exist on both sides are enumerated there, so deleting one is a failure too.
- *
- * ── AND THE SHAPE IS THE PRIVACY GATE ─────────────────────────────────────────────────────
- * The console's file says this and it is doubly true here, where the database is one join away:
- * there is no `subject`, no `snippet`, no `fromAddress`, no `body*`, no `payload`, no
- * `secretEnc` and no `*Hash` anywhere in this file, so no admin endpoint can express one.
- * A projection that cannot name a column cannot leak it. An api-level test
- * seeds real mail with distinctive markers and asserts none of it reaches any response.
- *
- * ── A SHAPE IS NOT ENOUGH FOR THE THREE OPEN BAGS ─────────────────────────────────────────
- * `LedgerEntry.meta` and `AuditEntry.payload`/`inverse` are `Record<string, string>` over
- * `jsonb` columns, so their FIELD NAMES bound nothing at all — the value is whatever a
- * producer wrote. A review found a real leak there (a raw RFC822 Message-ID on every
- * `debit_classify` row); it was closed in `admin-service.ts:staffMeta`, a default-deny gate on
- * both the key and the value. `StaleSend` lost `idempotencyKey` in the same change.
- *
- * ── AND THIS IS THE RENDER PATH ONLY ──────────────────────────────────────────────────────
- * "Staff never see an account's mail" demands STRUCTURAL enforcement. A projection with an
- * automated rememberer in front
- * of it is not that: the database would still answer `SELECT subject FROM messages` if this
- * process asked. The column-granted Postgres role is what makes it refuse — see
- * `admin-service.ts`. Do not read this file as the whole of the invariant.
+ * The admin wire contract — the server's half; the staff console declares its own copy (a
+ * workspace package may not import from an app). A parity test parses BOTH files and asserts
+ * identical field-name sets for every shared interface. The shape is the privacy gate: no
+ * `subject`, `snippet`, `fromAddress`, `body*`, `payload`, `secretEnc` or `*Hash` anywhere here,
+ * so no admin endpoint can express one; an api-level test seeds marked mail and asserts none
+ * reaches any response. The `jsonb` bags (`LedgerEntry.meta`, `AuditEntry.payload`/`inverse`)
+ * bound nothing — a real leak there is closed by `admin-service.ts` `staffMeta`, a default-deny
+ * gate. Render path only: the column-granted Postgres role makes the database itself refuse.
  */
 
 /* ── shared vocabulary ─────────────────────────────────────────────────────────────────── */
@@ -67,23 +40,14 @@ export type AdminAlertKind =
 export type AdminAlertClass = "incident" | "signal";
 export type AdminMailboxStatus = "connected" | "error" | "disabled";
 /**
- * HOW OLD A PANEL'S NUMBERS ARE, AND HOW OLD THEY ARE ALLOWED TO BE.
- *
- * The console already stamps every page with the API's `now`, which answers "when was this read
- * served". It cannot answer "when was this number COMPUTED", and for a panel backed by a
- * scheduled aggregate those are different questions with different answers: a page served this
- * second can be rendering a roll-up from three hours ago, and every existing freshness signal
- * reports it as fresh, correctly, because the READ was.
- *
- * So an aggregate-backed panel carries its own pair. `computedAt` is the producer's clock;
- * `expectedEverySeconds` is the cadence that producer runs at, which is what turns an age into a
- * verdict — three hours old is healthy for a nightly figure and an incident for an hourly one,
- * and no threshold that does not know the cadence can tell those apart.
- *
- * `computedAt: null` means the aggregate has NEVER been computed. That is a distinct state from
- * "computed a long time ago" and the console must be able to say so: on a freshly migrated
- * deployment it is the true and expected answer for one cadence, and a zero rendered in its place
- * would be a number nobody measured.
+ * How old a panel's numbers are, and how old they are allowed to be. The API's `now` answers
+ * "when was this read served", not "when was this number COMPUTED" — a page served this second
+ * can render a roll-up from three hours ago and every freshness signal reports it fresh,
+ * correctly. So an aggregate-backed panel carries its own pair: `computedAt` is the producer's
+ * clock; `expectedEverySeconds` is that producer's cadence, which turns an age into a verdict —
+ * three hours is healthy for a nightly figure and an incident for an hourly one. `computedAt:
+ * null` means NEVER computed, distinct from "computed long ago": on a freshly migrated deployment
+ * it is the true answer, and a zero in its place would be a number nobody measured.
  */
 export interface PanelFreshness {
   computedAt: string | null;
@@ -183,16 +147,12 @@ export interface AdminAlertDriver {
   failedSinks: number;
   sinkFailureStreak: number;
   /**
-   * How many sinks this arm had, or NULL if it has never run.
-   *
-   * ZERO means it cannot page anybody — the worst state this subsystem has, and the one that
-   * read greenest, because an arm that never attempts a delivery never fails one and its failure
-   * streak stays at zero.
-   *
-   * NULL is a DIFFERENT diagnosis and used to be flattened into that zero: a driver with no pass
-   * on record had this reported as 0, so the panel said "no sinks" — go and configure one — about
-   * an arm whose scheduler had simply never fired, where the repair is the cron and not the sink
-   * list. Zero is now reserved for a pass that ran and counted none; unknown says unknown.
+   * How many sinks this arm had, or NULL if it has never run. ZERO means it cannot page anybody —
+   * the worst state this subsystem has, and the one that read greenest: an arm that never
+   * attempts a delivery never fails one. NULL is a DIFFERENT diagnosis and used to be flattened
+   * into that zero: a driver with no pass on record reported 0, so the panel said "no sinks" —
+   * configure one — about an arm whose scheduler had never fired, where the repair is the cron.
+   * Zero is reserved for a pass that ran and counted none; unknown says unknown.
    */
   sinksConfigured: number | null;
 }
@@ -214,17 +174,13 @@ export interface AdminPlatformSignal {
   /** The counts are a lower bound over the window's newest slice — the panel says "sampled". */
   truncated: boolean;
   /**
-   * How much of the advertised window these figures actually cover, and why the row exists at
-   * all rather than being filtered away.
-   *
-   * The rule refuses to divide a partial population, and for a while this projection expressed
-   * that by DROPPING such a project — which handed the console an empty list, the same answer it
-   * gets from a deployment with no platform token at all. A failed poll and an unconfigured one
-   * became indistinguishable, and the panel's own "sampled" rendering was made unreachable,
-   * since every row that survived was by construction complete.
-   *
-   * So the row is emitted with its coverage and the panel says what was measured. Silence is
-   * reserved for the one thing it should mean: nothing has ever been read.
+   * How much of the advertised window these figures actually cover, and why the row exists rather
+   * than being filtered away. The rule refuses to divide a partial population, and for a while
+   * this projection expressed that by DROPPING such a project — handing the console an empty
+   * list, the same answer as a deployment with no platform token at all: a failed poll and an
+   * unconfigured one became indistinguishable, and the panel's "sampled" rendering was
+   * unreachable. So the row is emitted with its coverage and the panel says what was measured;
+   * silence is reserved for "nothing has ever been read".
    */
   completeBuckets: number;
   sampledBuckets: number;
@@ -255,20 +211,13 @@ export interface OverviewSnapshot {
   platformSignals: AdminPlatformSignal[];
   /**
    * TRUE when the three alert reads above were SKIPPED rather than answered, so the console
-   * must render "not queried" instead of their empty states.
-   *
-   * ── WHY THIS IS NOT `api.schemaOk` ────────────────────────────────────────────────────
-   *
-   * `api.schemaOk` probes the RUNTIME connection and answers one question: did the migration
-   * land. There is a second, independent way these reads cannot run — the migration landed and
-   * `harden-staff-role.sql` was not re-run, so the content-blind handle the console reads
-   * through still has no grant on the new columns and tables. That is the deployment ruling's
-   * first ranked risk, and in that state `schemaOk` is TRUE.
-   *
-   * Collapsing it into empty arrays is what made the page draw "Nothing is wrong", "No signals"
-   * and "0 drivers" over reads nobody performed — the false-health rendering this whole lane
-   * kept meeting. An empty list and an unanswered question are different facts and the wire has
-   * to carry both, so the console is never left inferring one from the other.
+   * renders "not queried" instead of their empty states. Not `api.schemaOk`: that probes the
+   * runtime connection and answers "did the migration land". There is a second, independent way
+   * these reads cannot run — the migration landed and `harden-staff-role.sql` was not re-run, so
+   * the content-blind handle still has no grant on the new columns; in that state `schemaOk` is
+   * TRUE. Collapsing it into empty arrays drew "Nothing is wrong" and "0 drivers" over reads
+   * nobody performed. An empty list and an unanswered question are different facts, and the wire
+   * carries both.
    */
   alertsUnavailable: boolean;
 }
@@ -282,17 +231,13 @@ export interface AccountSummary {
   mailboxCount: number;
   mailboxesInError: number;
   /**
-   * Mailboxes OUR infrastructure declined to serve — `sync_blocked_reason is not null`.
-   *
-   * Its own count, never folded into `mailboxesInError`, for the same reason
-   * {@link MailboxHealth.syncBlockedReason} is its own bucket: one is the provider refusing the
-   * customer's mailbox and the other is us not serving it, and only the second is ours to fix.
-   * Disjoint from `mailboxesInError` by construction — every writer that moves `status` clears
-   * both block columns in the same statement.
-   *
-   * A COUNT, not a boolean and not a worst-reason string. A boolean loses the roster cell's
-   * number; a string would put a closed-set token on the account wire, double the narrowing
-   * surface and re-open the membership-narrowing defect one level up.
+   * Mailboxes OUR infrastructure declined to serve — `sync_blocked_reason is not null`. Its own
+   * count, never folded into `mailboxesInError`: one is the provider refusing the customer's
+   * mailbox, the other is us not serving it, and only the second is ours to fix. Disjoint from
+   * `mailboxesInError` by construction — every writer that moves `status` clears both block
+   * columns in one statement. A COUNT, not a boolean and not a worst-reason string: a boolean
+   * loses the roster cell's number; a string would put a closed-set token on the account wire and
+   * re-open the membership-narrowing defect one level up.
    */
   mailboxesBlocked: number;
   syncLagSeconds: number | null;
@@ -329,44 +274,25 @@ export interface MailboxHealth {
   lastError: string | null;
   lastErrorAt: string | null;
   /**
-   * WHY A `connected` MAILBOX IS NOT BEING SYNCED — a bucket DISTINCT from `lastError` (mail 0029).
-   *
-   * Distinct because the two answer different questions and an operator triaging a dead mailbox has
-   * to be able to tell them apart. `lastError` is "the worker tried to reach this mailbox and the
-   * provider refused" — the customer's problem, `status='error'`, on a retry backoff.
-   * `syncBlockedReason` is "OUR infrastructure declined to serve it" — an unreadable organizer
-   * lease, credentials not yet provisioned, this deployment's own mailbox cap — with `status` still
-   * `connected`, no error recorded and no backoff earned. Folding it into `lastError` would file
-   * our fault under the customer's — the same misattribution an earlier disk-full incident
-   * taught, in a new place.
-   *
-   * A closed set of three (`MAILBOX_SYNC_BLOCK_REASONS`) with a CHECK behind it, so — unlike the
-   * `errorDetail` half of `lastError` — no value a mail server chose can ever reach an operator's
-   * screen through this field.
-   *
-   * **COPY ONLY. IT IS NOT THE BLOCK PREDICATE — {@link MailboxHealth.syncBlockedSince} IS.**
-   * `admin-service.ts:647` narrows this column to the closed set on read, so a member the API's own
-   * build does not know maps to `null` here while the timestamp beside it is forwarded verbatim.
-   * A consumer that asks "is this mailbox blocked?" of THIS field answers "no" for exactly the
-   * mailbox nobody is organizing.
+   * Why a `connected` mailbox is not being synced — a bucket DISTINCT from `lastError` (mail
+   * 0029). `lastError` is "the provider refused" — the customer's problem, `status='error'`, on
+   * backoff. `syncBlockedReason` is "OUR infrastructure declined", with `status` still
+   * `connected`. Folding them would file our fault under the customer's. A closed set of three
+   * (`MAILBOX_SYNC_BLOCK_REASONS`) with a CHECK behind it, so no value a mail server chose
+   * reaches an operator's screen here. COPY ONLY — the block predicate is {@link
+   * MailboxHealth.syncBlockedSince}: the service narrows this column on read, so a member this
+   * build does not know maps to `null` while the timestamp is forwarded verbatim.
    */
   syncBlockedReason: string | null;
   /**
-   * When the current block began — **and the authoritative "this mailbox is blocked" signal.**
-   *
-   * THIS COMMENT USED TO SAY *"`null` whenever `syncBlockedReason` is null"*, WHICH WAS FALSE ON
-   * THE WIRE. It was true of the DATABASE ROW, and the narrowing one line above it in
-   * `admin-service.ts` is what breaks the implication: `{syncBlockedReason: null, syncBlockedSince:
-   * <ts>}` is a legal and meaningful DTO meaning *"blocked, for a reason this API build cannot
-   * name"*. The console renders it with console-authored copy of its own.
-   *
-   * The reverse implication is the one that holds, and it is held by CODE rather than by a
-   * constraint: all five writers set and clear both columns in one statement
-   * (`apps/worker/src/mailboxes.ts:743,768,826,896,919` and `mailbox-service.ts:360-362`);
-   * `0029_mailbox_sync_block.sql:113` constrains membership only. **Do not "restore the symmetry"
-   * by narrowing this field too** — that reinstates the defect the narrowing fix removed, and
-   * this paragraph is the only thing
-   * standing between the fix and its own reversal.
+   * When the current block began — and the authoritative "this mailbox is blocked" signal. NOT
+   * "`null` whenever `syncBlockedReason` is null": that is true of the database row and false on
+   * the wire — `{syncBlockedReason: null, syncBlockedSince: <ts>}` is a legal DTO meaning
+   * "blocked, for a reason this API build cannot name", rendered with console-authored copy. The
+   * reverse implication holds, by CODE: all five writers set and clear both columns in one
+   * statement (`apps/worker/src/mailboxes.ts`, `mailbox-service.ts`); the migration constrains
+   * membership only. Do not "restore the symmetry" by narrowing this field too — that reinstates
+   * the defect the narrowing fix removed.
    */
   syncBlockedSince: string | null;
   retryBackoffSeconds: number | null;
@@ -399,14 +325,10 @@ export interface SecurityEvent {
 }
 
 /**
- * THE SIGNUP FUNNEL — the one thing "nobody knows" on an invite-only beta, made into counts.
- *
- * Every figure is a COUNT, never a person. The top (invites, waitlist) reads the DATE columns
- * granted in `staff-grants.ts` §funnel — issued/consumed/revoked dates and joined/invited dates,
- * no address ever. The stages read columns the role already held: `accounts`, `users.
- * email_verified_at`, `mailboxes`, `billing_subscriptions.status`.
- *
- * The stages are MONOTONIC SUBSETS of the accounts set — signed up ⊇ verified ⊇ connected ⊇
+ * The signup funnel — the one thing "nobody knows" on an invite-only beta, made into counts.
+ * Every figure is a COUNT, never a person: the top (invites, waitlist) reads only the DATE
+ * columns granted in `staff-grants.ts`, no address ever; the stages read columns the role already
+ * held. The stages are MONOTONIC SUBSETS of the accounts set — signed up ⊇ verified ⊇ connected ⊇
  * subscribed — so the drop-off between two is an honest conversion, not a comparison of unlike
  * populations.
  */
@@ -470,20 +392,14 @@ export interface WorkerSnapshot {
    */
   roster: Array<MailboxHealth & { accountName: string }>;
   /**
-   * THE MAILBOX POPULATION, from `count(*) filter (…)` — not from {@link WorkerSnapshot.roster}.
-   *
-   * The console's customer-facing verdict counted mailboxes in error and mailboxes blocked by
-   * filtering the roster array. That array is capped at 200, so on a deployment with 201
-   * mailboxes the 201st cannot contribute to a fault count however broken it is — a verdict that
-   * gets QUIETER as the deployment grows, which is the exact opposite of what it is for. The
-   * counts come from SQL and cover every row; the roster stays capped and says so.
-   *
-   * `blocked` counts mailboxes that are CONNECTED and carry a `syncBlockedSince` — our
-   * infrastructure declining to sync a mailbox the provider is perfectly happy with. It gates on
-   * the TIMESTAMP and never on `syncBlockedReason`, because the service narrows that reason to
-   * this build's closed set and a block this build cannot name would otherwise count as healthy.
-   * `inError` counts every mailbox whose status is not `connected`. The two are disjoint by
-   * construction, and neither is a subset of the other.
+   * The mailbox population, from `count(*) filter (…)` — not from {@link WorkerSnapshot.roster}.
+   * The verdict once counted faults by filtering the roster array, which is capped at 200, so on
+   * a deployment with 201 mailboxes the 201st could not contribute however broken — a verdict
+   * that gets QUIETER as the deployment grows. The counts come from SQL and cover every row; the
+   * roster stays capped and says so. `blocked` counts CONNECTED mailboxes carrying
+   * `syncBlockedSince` — gated on the TIMESTAMP, never the narrowed reason, so a block this build
+   * cannot name still counts. `inError` counts every mailbox not `connected`; the two are
+   * disjoint, neither a subset.
    */
   rosterCounts: { total: number; inError: number; blocked: number };
   crons: CronPass[];
