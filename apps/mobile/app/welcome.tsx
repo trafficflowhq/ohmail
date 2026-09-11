@@ -43,17 +43,18 @@ export default function WelcomeScreen() {
         <View style={{ paddingHorizontal: 16, paddingTop: 28, paddingBottom: 14, gap: 12 }}>
           <Wordmark color={t.c.ink} dot={t.c.accent} size={30} />
           <Txt variant="h2">{Copy.welcomeTitle}</Txt>
+          {/* ONE LEAD, NOT TWO. `welcomeHow` said "No password is ever typed here" — true while
+              every door scanned a code, false behind the standalone one. The lead states the
+              mechanism instead: whatever organizes has to be running. */}
           <Txt variant="note" tone="ink2">
             {Copy.welcomeLead}
-          </Txt>
-          <Txt variant="hint" tone="ink3">
-            {Copy.welcomeHow}
           </Txt>
         </View>
         <Doors
           lead
           onScan={() => router.push("/scan")}
           onTypeToken={() => router.push("/connect")}
+          onStandalone={() => router.push("/standalone")}
         />
       </Scroller>
     </Screen>

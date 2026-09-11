@@ -6,15 +6,19 @@
  * a welcome screen offering "scan" and "other ways", and a picker offering three cards with
  * different words — and the two had drifted into different vocabularies for one decision.
  *
- * ── WHAT A PHONE'S DOORS ARE, WHICH IS NOT WHAT THE DESKTOP'S ARE ──────────────────────────────
+ * ── WHAT A PHONE'S DOORS ARE ───────────────────────────────────────────────────────────────────
  *
  * The desktop asks which machine does the organizing and offers three answers, one of which is
- * ITSELF: "on this computer" runs an engine that dials the person's IMAP server directly. A phone
- * has no such door and cannot be given one — there is no IMAP client in this app, no engine
- * talking to a mail server, nothing that could hold a mailbox. So all three doors here name
- * somebody else's machine, and each sentence ends the same way: this phone keeps a copy.
+ * ITSELF. The phone now has that door too: an engine runs inside this app over its own SQLite file
+ * and dials the person's IMAP server, for as long as the app is open (and, on Android, behind a
+ * notification). Three doors name somebody else's machine and end the same way — this phone keeps
+ * a copy — and the fourth names the phone in the reader's hand and says what it costs.
  *
- * The three:
+ * THE FOURTH DOOR IS OFFERED ONLY WHERE AN ENGINE IS REGISTERED (`standaloneAvailable`), which is
+ * a fact about the build rather than a flag: carrying the artifact is what makes the door real, so
+ * a build without it shows three doors instead of a fourth one that refuses.
+ *
+ * The other three:
  *
  *  1. **ohmail Cloud** — the hosted service. Real today: its `/hello` announces
  *     `features.pairing` and its redeem is mounted, and the code comes from the Devices pane the
@@ -49,8 +53,10 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { refuse, sayRefusal, type Refusal } from "../refusal";
-import { TextInput, View } from "react-native";
+import { Platform, TextInput, View } from "react-native";
 import { Copy } from "../copy";
+import { phoneEngineStart } from "../engine/engine-artifact";
+import { standaloneAvailable } from "../engine/standalone-door";
 import { useConnection } from "../net/connection";
 import type { Negotiation, PickerStep } from "../net/pairing";
 import { MANAGED_ORIGIN, nextStep, stashPairOrigin } from "../net/pairing";
@@ -91,11 +97,14 @@ export function Doors({
   onScan,
   /** The manual token screen, opened with the address this app has just negotiated. */
   onTypeToken,
+  /** The standalone door's limitations screen. Absent ⇒ the fourth row is not rendered at all. */
+  onStandalone,
   /** `true` on the first-run screen, which is the one place the lead sentence is worth its room. */
   lead = false,
 }: {
   onScan: () => void;
   onTypeToken: () => void;
+  onStandalone?: () => void;
   lead?: boolean;
 }) {
   const conn = useConnection();
@@ -294,18 +303,29 @@ export function Doors({
           </View>
         ) : null}
 
-        {/* WHERE A PERSON LOOKS FOR THE FOURTH DOOR — under the third one, and unconditional.
-            Three tiles that all name somebody else's machine leave one question behind, and until
-            this line the screen answered it by omission. It is not inside the `lead` block: the
-            "Add a server" panel asks the same question of somebody who has already connected one
-            server, which is if anything the likelier place to go looking for a door that is not
-            there. `no-host-census.test.ts` holds it and the absent door together — the sentence
-            is only true while nothing in this app offers to organize. */}
-        <View style={{ paddingHorizontal: 20, paddingTop: 14 }}>
-          <Txt variant="hint" tone="ink2">
-            {Copy.doorsNoFourthDoor}
-          </Txt>
-        </View>
+        {/* ── THE FOURTH DOOR, UNDER THE THIRD ──────────────────────────────────────────────
+            Same anatomy as the other three, no accent and no badge: position is the loudest signal
+            on a list and this row must not read as the recommended one. What sets it apart is its
+            THIRD line, which is a condition where the others' are instructions — the door's cost,
+            read before the tap.
+
+            Rendered only where a route was handed in AND an engine is registered. Both halves
+            matter: the first is the caller's (the Servers screen and first run both pass one), the
+            second is the build's, and a row offered without the second would be a control that
+            cannot do what it says. */}
+        {onStandalone !== undefined && standaloneAvailable({ startEngine: phoneEngineStart() }) ? (
+          <>
+            <Rule inset={20} />
+            <Door
+              name={Copy.doorPhone}
+              say={Copy.doorPhoneSay}
+              need={
+                Platform.OS === "android" ? Copy.doorPhoneNeedAndroid : Copy.doorPhoneNeedIos
+              }
+              onPress={onStandalone}
+            />
+          </>
+        ) : null}
 
         <View style={{ paddingHorizontal: 20, paddingTop: 10 }}>
           <Txt variant="hint" tone="ink3">
@@ -359,7 +379,18 @@ function Result({
   );
 }
 
-function Door({ name, say, onPress }: { name: string; say: string; onPress: () => void }) {
+function Door({
+  name,
+  say,
+  need,
+  onPress,
+}: {
+  name: string;
+  say: string;
+  /** The third line — what the door asks for next, or (door four) the condition it comes with. */
+  need?: string;
+  onPress: () => void;
+}) {
   return (
     <TapRow
       onPress={onPress}
@@ -378,11 +409,15 @@ function Door({ name, say, onPress }: { name: string; say: string; onPress: () =
        * One label with both, rather than a `hint`: a hint is spoken after a pause and can be turned
        * off entirely, and this sentence is not supplementary to the choice — it IS the choice.
        */
-      accessibilityLabel={Copy.ariaNameThenSentence(name, say)}
+      accessibilityLabel={Copy.ariaNameThenSentence(name, need === undefined ? say : `${say} ${need}`)}
       style={{ marginHorizontal: 8, paddingHorizontal: 12, paddingVertical: 12, gap: 3 }}
     >
       <Txt variant="navLabel">{name}</Txt>
       <Txt variant="hint" tone="ink3">{say}</Txt>
+      {/* THE THIRD LINE IS IN THE LABEL TOO, for the reason the second one is: on door four it is
+          the decision-bearing sentence, and a reader who heard "Standalone on this phone" and not
+          "only while the app is open" has been told the wrong thing. */}
+      {need !== undefined ? <Txt variant="hint" tone="ink3">{need}</Txt> : null}
     </TapRow>
   );
 }

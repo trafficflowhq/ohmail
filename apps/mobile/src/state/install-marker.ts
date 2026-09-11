@@ -186,3 +186,26 @@ export async function settleInstallGeneration(
     await db.close?.();
   }
 }
+
+/**
+ * THE STAMPED GENERATION, READ BACK — this install's durable id, and the only one.
+ *
+ * `settleInstallGeneration` writes this row at launch and then discards the value, so anything
+ * needing the id later had nowhere to ask. The standalone door needs it: the organizer claim is
+ * written against an install id, and a claim stamped with a SECOND id is how one install reads its
+ * own claim as somebody else's.
+ *
+ * So this reads the same row that function writes — not a second source, and never a fresh uuid.
+ * `null` means the marker has not been settled (or could not be read), which is a refusal for the
+ * caller to make rather than a value to invent.
+ */
+export async function installGeneration(deps: InstallMarkerHost): Promise<string | null> {
+  try {
+    const db = await deps.openExecutor(INSTALL_MARKER_DB);
+    const rows = await db.all("SELECT value FROM install WHERE key = ?", [GENERATION_KEY]);
+    const held = rows[0]?.value;
+    return typeof held === "string" && held !== "" ? held : null;
+  } catch {
+    return null;
+  }
+}

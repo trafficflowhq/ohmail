@@ -166,6 +166,16 @@ export const DE: Deck = {
   settingsStopHereConfirm: "Postfach zurückgeben",
   settingsStopHereCancel: "Weiter organisieren",
 
+  /* Die Absagen der eigenständigen Tür. Keine davon trägt je das Passwort. */
+  standaloneNoEngine:
+    "Dieser Build kann auf diesem Telefon kein Postfach organisieren. Verbinde es stattdessen mit einem Computer, einem Server oder ohmail Cloud.",
+  standaloneNoHost:
+    "ohmail braucht deinen Posteingangsserver (IMAP). Öffne die Servereinstellungen und gib seine Adresse an.",
+  standaloneNoPort:
+    "Diesen IMAP-Port kann ohmail nicht wählen. Öffne die Servereinstellungen und prüfe ihn.",
+  standaloneRefused: (detail: string) =>
+    `Das Öffnen des Postfachs wurde abgebrochen: ${detail}`,
+
   /* --------------------------------------------------- servers & pairing */
 
   serversTitle: "Server",

@@ -87,7 +87,11 @@ export default function ServersScreen() {
         )}
 
         <View style={{ marginTop: 14 }}>
-          <Doors onScan={() => router.push("/scan")} onTypeToken={() => router.push("/connect")} />
+          <Doors
+            onScan={() => router.push("/scan")}
+            onTypeToken={() => router.push("/connect")}
+            onStandalone={() => router.push("/standalone")}
+          />
         </View>
       </Scroller>
     </Screen>

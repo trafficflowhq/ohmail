@@ -1,0 +1,44 @@
+/**
+ * WHERE THE PHONE'S ENGINE ARTIFACT IS REGISTERED — one module, so there is one answer.
+ *
+ * The phone engine is built as a single file with every specifier resolved and every Node builtin
+ * substituted, and it is loaded, booted and watched dialling before a release. How the RELEASED
+ * app carries it — a Metro asset,
+ * a native resource, a resolver alias — is a packaging decision and is deliberately not taken here
+ * or in `local-engine.ts`.
+ *
+ * ── SO THE ARTIFACT REGISTERS ITSELF, AND THE DOOR FOLLOWS THE REGISTRATION ────────────────────
+ *
+ * A build that carries the engine calls {@link registerPhoneEngine} once at startup; a build that
+ * does not calls nothing. `standaloneAvailable` reads the answer, so the fourth door is OFFERED
+ * exactly where an engine can actually run, and a build without one shows three doors rather than a
+ * fourth that refuses. That is the whole reason this is a registry and not a `require`: a Metro
+ * `require` of a module a build does not carry is FATAL and cannot be caught, so "try to load it and
+ * see" is not available on this platform.
+ */
+import type { StartPhoneEngine } from "./standalone-door";
+
+let registered: StartPhoneEngine | null = null;
+
+/**
+ * Register the artifact's composition root. Called once, by the packaging half.
+ *
+ * Idempotent on the same value and REFUSES a second, different one: two engines in one process
+ * would be two organizers of one mailbox, which is the invariant the whole product is built on.
+ */
+export function registerPhoneEngine(start: StartPhoneEngine): void {
+  if (registered !== null && registered !== start) {
+    throw new Error("a phone engine is already registered");
+  }
+  registered = start;
+}
+
+/** The registered artifact, or `null`. `null` is "this build carries no engine", not an error. */
+export function phoneEngineStart(): StartPhoneEngine | null {
+  return registered;
+}
+
+/** Test seam: forget the registration. Never called by the app. */
+export function forgetPhoneEngine(): void {
+  registered = null;
+}

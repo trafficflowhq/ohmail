@@ -303,6 +303,17 @@ const TABLE = {
   settingsStopHereConfirm: "Hand the mailbox back",
   settingsStopHereCancel: "Keep organizing",
 
+  /* The standalone door's own refusals. Each one names what is missing; none of them ever
+     carries the password, which is not an argument any of these takes. */
+  standaloneNoEngine:
+    "This build cannot organize a mailbox on this phone. Connect it to a computer, a server or ohmail Cloud instead.",
+  standaloneNoHost:
+    "ohmail needs your incoming server (IMAP). Open Server settings and give its address.",
+  standaloneNoPort:
+    "That IMAP port is not a number ohmail can dial. Open Server settings and check it.",
+  standaloneRefused: (detail: string) =>
+    `Opening the mailbox stopped: ${detail}`,
+
   /* --------------------------------------------------- servers & pairing */
 
   serversTitle: "Servers",
