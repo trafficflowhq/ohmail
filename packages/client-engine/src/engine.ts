@@ -2587,27 +2587,19 @@ export class OhmailEngine {
   // ── eager recent-window hydration ──────────────────────────────────────────
 
   /**
-   * Start (or queue) one eager pass. See {@link EngineOptions.eagerBodies} for what it is for
-   * and {@link EAGER_BODIES_MAX}/{@link EAGER_BODIES_SLICE} for the bounds.
-   *
-   * CALLED BY THE SHELL'S SCHEDULER after a settled drain — deliberately NOT by `drain()`
-   * itself. The engine owns the MECHANISM (bounded, admission-gated, abortable); WHEN background
-   * work is welcome is the driver's knowledge, exactly the split the sync gate already draws.
-   * The first wiring had `drain()` fire it, and what that shipped was a transport nothing could
-   * reason about: every bare `syncOnce()` in a test — and every discarded engine whose drain
-   * settled after teardown — issued body fetches from behind the caller's back, which is the
-   * same "requests on behalf of nobody" shape the gate exists to refuse. An engine an embedder
-   * drives by hand (apps/mobile's loop, a bare `engine.start()`) prefetches exactly when and if
-   * it is asked to, and the OPT-IN flag makes even that ask a no-op until the embedder means it.
-   *
-   * SINGLE-FLIGHT WITH ONE QUEUED RE-RUN: every settled drain kicks, and a kick during a pass
-   * must not stack passes — but it must not be LOST either, because the drain that kicked may
-   * have applied new mail the running pass's snapshot of the mirror predates. One boolean is
-   * exactly "run once more with fresh eyes", and a settled mailbox's re-run costs nothing —
-   * every id plans to `skip`.
-   *
-   * NEVER REJECTS: failures land as per-id `failed` records exactly as an explicit open's would.
-   * The returned promise settles when the pass this call joined (or started) is done.
+   * Start (or queue) one eager pass — see {@link EngineOptions.eagerBodies} and the {@link EAGER_BODIES_MAX}/{@link
+   * EAGER_BODIES_SLICE} bounds. Called by the SHELL's scheduler after a settled drain, deliberately not by `drain()`
+   * itself: the engine owns the mechanism, the driver owns WHEN background work is welcome — the first wiring had
+   * `drain()` fire it, and every bare `syncOnce()` in a test (and every discarded engine whose drain settled after
+   * teardown) issued body fetches from behind the caller's back, the "requests on behalf of nobody" shape the gate
+   * refuses; the opt-in flag makes even the ask a no-op until the embedder means it.
+   */
+
+  /**
+   * Single-flight with ONE queued re-run: a kick during a pass must not stack passes, and must not be lost either —
+   * the drain that kicked may have applied mail the running pass's snapshot predates; one boolean is exactly "run
+   * once more with fresh eyes", and a settled mailbox's re-run costs nothing (every id plans to `skip`). Never
+   * rejects: failures land as per-id `failed` records exactly as an explicit open's would.
    */
   prefetchRecentBodies(): Promise<void> {
     if (!this.eagerBodiesOn) return Promise.resolve();
@@ -2681,59 +2673,30 @@ export class OhmailEngine {
   }
 
   /**
-   * A STALE RESUME FETCHES THE NEWEST PAGE BEFORE IT REPLAYS ITS BACKLOG.
-   *
-   * ## THE DEFECT THIS EXISTS FOR — measured, not assumed (2026-08-10, production)
-   *
-   * The delta feed is ascending-seq by contract, so a warm mirror that resumes hours or days
-   * stale replays its backlog OLDEST-FIRST: the thing a returning user is looking for — the mail
-   * that arrived while they were away, the triage they did on another device — is in the LAST
-   * page of the drain, behind every page of history before it. Against a live account, a
-   * full-log replay took 4 pages and 28.5 s of wall clock, and the newest message's create
-   * applied at +28.5 s — the very end — while `GET /sync/snapshot` page 1 (the newest page of
-   * messages, every live thread, ALL small state: rules, message_states, decisions, approvals,
-   * drafts, tags) answered in 509 ms. On a real mailbox the same shape reads as "the app takes
-   * minutes to show what I did on the other machine".
-   *
-   * So: when the stamp {@link LAST_DRAIN_AT_META} says this mirror has not completed a drain
-   * within {@link STALE_RESUME_MS}, fetch snapshot page 1 and apply it ROWS-ONLY before the
-   * delta loop runs. Ohbox above the fold, unread counts and the Screener are current after one
-   * round trip; the backlog then replays behind content that is already right.
-   *
-   * ## WHY APPLYING A SNAPSHOT PAGE OVER A WARM MIRROR IS SOUND
-   *
-   * Snapshot rows carry `seq === asOfSeq`, the consistent point the server read them at, which
-   * is ≥ every seq in the backlog. The apply contract does the rest:
-   *
-   *  · the backlog's replay of those same rows — every intermediate state, ending at or below
-   *    `asOfSeq` — is refused by the older-or-equal guard, so history cannot un-freshen them;
-   *  · anything that changes AFTER the snapshot read arrives with a seq above `asOfSeq` and
-   *    wins, exactly as it would have without this;
-   *  · a row deleted while the client was away is simply absent from the snapshot — nothing
-   *    shields the stale copy, and the delta's tombstone removes it when the replay gets there.
-   *
-   * ## THE CURSOR IS NEVER TOUCHED — this is `applyChanges`, deliberately
-   *
-   * Committing `asOfSeq` here would be the unsound version: a snapshot page carries live rows
-   * only, so jumping the cursor over the backlog skips every tombstone in it and the mirror
-   * keeps ghosts of everything deleted while it was away, forever. The delta replay from the OLD
-   * cursor stays the one mechanism of record; this method only decides what the user is looking
-   * at while it runs. (Mutations are untouched for the same reason: this is a READ overlay — the
-   * queue's write ordering never passes through here.)
-   *
-   * ## FAILURE IS SWALLOWED, AND MUST NOT LATCH {@link snapshotUnavailable}
-   *
-   * Freshness is an optimization; the delta is the contract. A resume against a server without
-   * the route costs its head start and nothing else. And it must not latch the unavailable flag:
-   * that latch belongs to the BOOTSTRAP path's page-1 probe — latching it here on a transient
-   * failure would push a later 410 re-bootstrap onto the full `since=0` log replay for the life
-   * of the tab.
-   *
-   * ## A MISSING STAMP ON A WARM CURSOR IS STALE
-   *
-   * That is every mirror persisted before this shipped, resuming for the first time — exactly
-   * the mailboxes that reported the symptom. Within a session the stamp always exists after the
-   * first completed drain, so this arm fires at most once per pre-upgrade mirror.
+   * A stale resume fetches the newest page before it replays its backlog. The delta feed is ascending-seq, so a
+   * mirror resuming days stale replays oldest-first: the mail a returning user is looking for is in the LAST page.
+   * Measured in production (2026-08-10): a full-log replay took 4 pages and 28.5 s, the newest message applying at
+   * the very end, while `GET /sync/snapshot` page 1 (the newest messages plus ALL small state) answered in 509 ms —
+   * on a real mailbox that reads as "the app takes minutes to show what I did on the other machine". So when {@link
+   * LAST_DRAIN_AT_META} says no drain completed within {@link STALE_RESUME_MS}, snapshot page 1 is applied ROWS-ONLY
+   * before the delta loop: Ohbox, counts and Screener are current after one round trip, and the backlog replays
+   * behind content that is already right.
+   */
+
+  /**
+   * Applying a snapshot page over a warm mirror is sound: snapshot rows carry `seq === asOfSeq`, ≥ every seq in the
+   * backlog, so the backlog's replay of the same rows is refused by the older-or-equal guard; anything after the
+   * snapshot read has a higher seq and wins; a row deleted while away is absent from the snapshot and the delta's
+   * tombstone removes it. The CURSOR is never touched — committing `asOfSeq` here would skip every tombstone in the
+   * backlog and keep ghosts for ever; the delta replay from the OLD cursor stays the mechanism of record, and
+   * mutations are untouched (this is a READ overlay). Failure is swallowed and must not latch {@link
+   * snapshotUnavailable} — that latch is the BOOTSTRAP probe's, and latching here on a transient would push a later
+   * 410 re-bootstrap onto the full `since=0` replay for the life of the tab.
+   */
+
+  /**
+   * A missing stamp on a warm cursor is stale: every pre-upgrade mirror, exactly the mailboxes that reported the
+   * symptom; the arm fires at most once per such mirror.
    */
   /**
    * IS THIS DRAIN A STALE RESUME — a warm cursor whose last completed drain is older than
@@ -2766,75 +2729,44 @@ export class OhmailEngine {
   }
 
   /**
-   * FETCH `GET /sync/snapshot` TO COMPLETION, COMMITTING THE CURSOR WITH THE LAST PAGE AND NOT
-   * ONE PAGE EARLIER.
-   *
-   * ## THE ATOMICITY THAT MAKES A CRASH SAFE
-   *
-   * Every page but the last goes through `applyChanges`, which writes rows and DOES NOT TOUCH THE
-   * CURSOR. Only the last page goes through `applyResponse`, whose single flush carries the rows
-   * and `String(asOfSeq)` together (contract §3.3 step 3). So the mirror is only ever in one of
-   * two states a restart can observe:
-   *
-   *  · cursor "0" — some prefix of the snapshot is present, and the next drain re-snapshots. The
-   *    rows already written are not wasted and not wrong: they carry `seq === asOfSeq`, so a
-   *    re-snapshot at the same point skips them on the seq guard and a re-snapshot at a LATER
-   *    point overwrites them. Either way it converges, which is what makes "just do it again" a
-   *    complete recovery rather than a hope.
-   *  · cursor `asOfSeq` — the whole snapshot landed, and the delta drain resumes from a point the
-   *    mirror genuinely holds.
-   *
-   * There is no third state. The one that would be fatal — a cursor past rows that never
-   * arrived — is unreachable, because nothing but the final page can write the cursor at all.
-   *
-   * ## WHY RESUMING AT `asOfSeq` MISSES NOTHING
-   *
-   * `asOfSeq` is the point the snapshot was READ at, identical on every page, not "where paging
-   * got to". Changes committed while the pages were being fetched have seqs above it and are
-   * still in the log, so the delta drain that follows picks them up. A cursor of "the last page's
-   * high-water mark" would be the version of this that silently loses writes.
-   *
-   * ## THE PAGING TOKEN IS NEVER THE CURSOR, AND THE CURSOR IS NOT A DECIMAL
-   *
-   * `nextCursor` is the server's opaque paging state and is passed straight back; it is not
-   * written to the mirror and has no relationship to a `/sync` cursor. Conflating the two would
-   * put a token `/sync` cannot read into `since=`.
-   *
-   * The cursor written for `asOfSeq` is {@link encodeSeqCursor}'s base64url, NOT `String(seq)`.
-   * This was measured, not assumed: `String(asOfSeq)` is what the first version committed, and
-   * `contract.test.ts` — which drives a real backend — turned eight tests red with
-   * `CursorExpiredError`, because `SyncService.decodeCursor` base64url-decodes what it is given
-   * and treats a non-numeric result as an expired cursor. A bare "900" decodes to bytes that are
-   * not digits, so every drain after a snapshot 410'd. The two encoders are the same function on
-   * both sides of the wire and must stay that way.
-   *
-   * ## A FIRST-PAGE FAILURE FALLS BACK; A LATER ONE DOES NOT
-   *
-   * This route is newer than the clients that call it, and an engine whose cold start HARD-FAILS
-   * when it is missing or misbehaving is a mailbox that renders empty in silence —
-   * `http-adapter-binding.test.ts` exists because that exact thing shipped once already. So a
-   * failure on page 1 latches {@link snapshotUnavailable} and returns, and the caller proceeds
-   * down the `since=0` path that every client used before this existed.
-   *
-   * That swallow cannot hide an outage, which is the only reason it is acceptable: the very next
-   * thing the drain does is call `/sync` on the same origin, so a server that is down, refusing,
-   * or unreachable still rejects the drain a moment later, through the path that has always
-   * reported it.
-   *
-   * ## AND AN ABANDONED ATTEMPT'S ROWS DO NOT SURVIVE INTO THE NEXT ONE
-   *
-   * See {@link OhmailEngine.claimSnapshotPrefix}. A mid-stream failure leaves rows at the OLD
-   * `asOfSeq` in the mirror; a later attempt reads at a NEWER one and cannot mention anything the
-   * server deleted in between, so without the sweep those rows would ride into a completed
-   * bootstrap and the cursor would then commit PAST their tombstones.
-   *
-   * A failure on a LATER page is different in kind and is rethrown. Rows carrying `seq ===
-   * asOfSeq` are already in the mirror, and `since=0` over them would be silently WRONG: the seq
-   * guard drops every replayed change at or below `asOfSeq`, so the pages the snapshot had not
-   * reached yet would never be delivered by either path, and the mirror would settle into a
-   * permanently truncated state that looks healthy. Rethrowing leaves the cursor at "0", so the
-   * next drain re-snapshots from page 1 — and if the route really has gone, that page-1 attempt
-   * takes the fallback above.
+   * Fetch `GET /sync/snapshot` to completion, committing the cursor with the LAST page and not one page earlier.
+   * Every page but the last goes through `applyChanges` (writes rows, never the cursor); only the last goes through
+   * `applyResponse`, whose single flush carries the rows and the cursor together (contract §3.3 step 3). A restart
+   * can observe two states only: cursor "0" — a prefix of the snapshot present, and the next drain re-snapshots (rows
+   * carry `seq === asOfSeq`, so a re-read skips or overwrites them; it converges) — or cursor `asOfSeq`, the whole
+   * snapshot landed. The fatal third state — a cursor past rows that never arrived — is unreachable, because nothing
+   * but the final page can write the cursor at all.
+   */
+
+  /**
+   * Resuming at `asOfSeq` misses nothing: it is the point the snapshot was READ at, identical on every page; changes
+   * committed while paging have seqs above it and the delta drain picks them up.
+   */
+
+  /**
+   * The paging token is never the cursor (`nextCursor` is opaque server state, passed straight
+   * back), and the cursor is not a decimal: it is {@link encodeSeqCursor}'s base64url, NOT
+   * `String(seq)` — measured, not assumed: the first version committed `String(asOfSeq)` and eight
+   * `contract.test.ts` tests went red with `CursorExpiredError`, because `SyncService.decodeCursor`
+   * base64url-decodes what it is given and a bare "900" decodes to non-digits, so every drain
+   * after a snapshot 410'd. The two encoders are the same function on both sides of the wire and
+   * must stay that way.
+   */
+
+  /**
+   * A first-page failure falls back; a later one does not. Page 1 failing latches {@link snapshotUnavailable} and the
+   * caller takes the `since=0` path every client used before — an engine whose cold start hard-fails on a missing
+   * route is a mailbox rendering empty in silence (`http-adapter-binding.test.ts` exists because that shipped once).
+   * The swallow cannot hide an outage: the very next call is `/sync` on the same origin, which still rejects through
+   * the path that has always reported it. A LATER page's failure is rethrown, different in kind: rows carrying `seq
+   * === asOfSeq` are already in the mirror, and `since=0` over them would be silently wrong — the seq guard drops
+   * every replayed change at or below `asOfSeq`, so the unreached pages would never be delivered by either path and
+   * the mirror would settle into a permanently truncated state that looks healthy.
+   */
+
+  /**
+   * Rethrowing leaves the cursor at "0", so the next drain re-snapshots from page 1. An abandoned attempt's rows do
+   * not survive into the next one — see {@link OhmailEngine.claimSnapshotPrefix}.
    */
   /**
    * CLAIM THIS SNAPSHOT'S SEQ, AND SWEEP AN EARLIER ATTEMPT'S ROWS BEFORE WRITING OVER THEM.
