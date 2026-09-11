@@ -7,24 +7,14 @@ import { isAiRefusalReason } from "./ai-gate-port.js";
 import { assertAttemptKey } from "./ledger-source.js";
 
 /**
- * THE HTTP CLIENT of an entitlements program, implementing {@link EntitlementsPort} over that
- * program's wire contract v1. An operator who runs their own points `ENTITLEMENTS_URL` at it and
- * every route works unchanged; a host that sets nothing constructs none and is unmetered.
- *
- * ── THE FAULT ARM IS THE LOAD-BEARING LINE ────────────────────────────────────────────────
- *
- * `access` is consulted on the mail path, so an unreachable program must not lock a paying
- * customer out of their own mail. A fault answers with the last verdict this process saw for the
- * account, and with none, allow. The opposite direction — refuse when unsure — turns one outage
- * into every customer's inbox going dark, and no test of a healthy program would ever show it.
- *
- * ── AND A 200 NOBODY CAN PARSE IS A FAULT, NOT AN ALLOW ───────────────────────────────────
- *
- * The two sides can drift: a field renamed, a verdict added, a proxy rewriting a body. Reading
- * such an answer as "no verdict, therefore fine" is a silent allow — metering that has stopped
- * applying, with nothing in any log. So an unrecognised 200 is reported by name with the offending
- * field and THEN takes the fault path. The customer is still never locked out; the operator is
- * told.
+ * The HTTP client of an entitlements program, implementing {@link EntitlementsPort} over that
+ * program's wire contract v1. An operator who runs their own points `ENTITLEMENTS_URL` at it; a
+ * host that sets nothing constructs none and is unmetered. The fault arm is the load-bearing
+ * line: `access` sits on the mail path, so an unreachable program must not lock a paying customer
+ * out of their own mail — a fault answers with the last verdict this process saw, and with none,
+ * allow; refuse-when-unsure turns one outage into every inbox going dark. And a 200 nobody can
+ * parse is a FAULT, not an allow — that would be silent unmetering: an unrecognised 200 is
+ * reported by name with the offending field and then takes the fault path.
  */
 
 /** The ceiling on every call. Short, because `access` sits in front of mail reads. */

@@ -4,24 +4,14 @@ import { accounts } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE ERASURE FENCE'S PRIMITIVE — moved down the spine for the request drain (0.14.1)
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * `packages/services/src/erasure-fence.ts#fenceErasedAccount` is the ORIGINAL and remains the
- * one every HTTP writer of `account_settings` calls — read its own header for the full argument
- * (why a `FOR SHARE` read on `accounts`, first in the transaction, closes the late-recreation race
- * against `deleteAccount`). This file holds the SQL that decision rests on, so a SECOND caller can
- * reach it without importing `@trafficflow/services`: the organizer's request drain
- * (`apps/worker/src/request-drain.ts`) applies a reader's screener decision, which is a settings
- * writer too (it stamps `account_settings.screening_baseline_at` on a first decide, exactly as
- * `ScreenerService.decide` does), and the worker may not import the services package at runtime
- * (`apps/worker/package.json` "//services-is-test-only"). `learning-signal.ts` beside this file
- * makes the identical move for the identical reason.
- *
- * `packages/services/src/erasure-fence.ts` now calls THIS function and translates its answer into
- * a `ServiceError` for HTTP callers — one implementation of the read, two idiomatic error shapes
- * for two runtimes.
+ * The erasure fence's primitive. `packages/services/src/erasure-fence.ts#fenceErasedAccount` is
+ * the ORIGINAL and remains what every HTTP writer of `account_settings` calls — its header holds
+ * the full argument. This file holds the SQL that decision rests on, so a second caller can reach
+ * it without importing `@trafficflow/services`: the organizer's request drain applies a reader's
+ * screener decision — a settings writer too — and the worker may not import the services package
+ * at runtime; `learning-signal.ts` makes the identical move. The services module now calls THIS
+ * function and translates the answer into a `ServiceError` — one implementation of the read, two
+ * error shapes for two runtimes.
  */
 
 /**

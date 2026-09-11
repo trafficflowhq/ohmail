@@ -2,30 +2,14 @@ import { sql, type SQL } from "drizzle-orm";
 import { MIGRATION_LOCK_KEY, MIGRATION_LOCK_TIMEOUT_MS } from "./migrate.js";
 
 /**
- * Two hot-path indexes, built CONCURRENTLY outside the migrator.
- *
- * They are not journal statements, and cannot be: the shared migrator wraps the whole journal
- * pass in ONE transaction (`drizzle-orm` `PgDialect.migrate`), and `CREATE INDEX CONCURRENTLY`
- * refuses inside a transaction block — `25001`, measured through the real migrator. The same
- * argument, and the same remedy, that `ensureWithheldProvenanceIndex` already carries; the
- * difference is that this one races no journal statement, so it runs AFTER the migrator on the
- * setup command's own autocommit session, where the tables it indexes certainly exist.
- *
- * Both reads scan today, measured read-only on the deployed database with `EXPLAIN`:
- *
- *  · `audit_log` — the profile-import "already resolved?" probe filters `(account_id, action)`
- *    plus two JSONB keys, and the table's only index is its primary key: Seq Scan, cost 4615,
- *    at 59 772 rows. It runs on every import candidate and every dismissal, and an audit log
- *    only grows.
- *  · `messages` — the storage-eviction victim read orders by `coalesce(date, created_at), id`
- *    within one account and no index offers that order: a Sort, at 93 276 rows. The planner
- *    reaches the account rows through an unrelated expression index for the `account_id`
- *    prefix alone.
- *
- * Three other reads the same review named do NOT get an index: `billing_events` (13 rows),
- * `outbound_sends` (120) and `webauthn_challenges` (2) all show a Seq Scan because they are
- * tiny, and an index there would be a plan the planner declines to use. `webauthn_challenges`
- * has a real defect — nothing prunes it — which is a retention fix, not an index.
+ * Two hot-path indexes, built CONCURRENTLY outside the migrator. They cannot be journal
+ * statements: the shared migrator wraps the journal pass in ONE transaction, and `CREATE INDEX
+ * CONCURRENTLY` refuses inside a transaction block (25001, measured through the real migrator);
+ * it runs AFTER the migrator on the setup command's autocommit session. Both reads scan today,
+ * measured with `EXPLAIN`: the profile-import "already resolved?" probe on `audit_log` (runs on
+ * every candidate, and an audit log only grows) and the storage-eviction victim read on
+ * `messages` (a Sort — no index offers `coalesce(date, created_at), id` order). Three tiny tables
+ * named by the same measurement get NO index: the planner would decline to use one.
  */
 interface SqlExecutor {
   execute(query: SQL): Promise<unknown>;

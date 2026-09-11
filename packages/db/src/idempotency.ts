@@ -4,45 +4,14 @@ import { idempotencyKeys } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
 /**
- * The `idempotency_keys` WRITE primitive, in `packages/db` because six services
- * need it and `packages/services` may not import `packages/api`.
- *
- * ## Why a CLAIM and not an insert
- *
- * The rule is that the dedup record must commit in the SAME transaction as the effect —
- * never "apply the effect, then mark it applied", which reopens the commit-then-crash
- * window. That law is necessary but on its own it was not SUFFICIENT, and the gap was a
- * real double-effect bug:
- *
- *   1. two concurrent invocations carrying the SAME `Idempotency-Key` both run
- *      `lookupIdempotent` (autocommit, before either transaction opens) and both MISS;
- *   2. both open a transaction and both apply the effect;
- *   3. both insert the idempotency row — and with `ON CONFLICT DO NOTHING` the second
- *      insert quietly does nothing while its transaction commits anyway.
- *
- * The result was two runs from one `POST /workflows/:id/run`, two promoted rules from one
- * screener decision, and two different responses for one key. On a serverless host this is
- * not exotic: a client retrying a request whose response was lost, or a double-tap, lands
- * as two simultaneous invocations by construction.
- *
- * So the insert becomes a CLAIM whose result is load-bearing. Postgres does the
- * serialization for us: the second `INSERT … ON CONFLICT` BLOCKS on the conflicting tuple
- * until the first transaction ends, and then reports whether it wrote anything.
- *  • claimed (a row came back) → this transaction owns the key; carry on and commit.
- *  • NOT claimed → another transaction already committed this key. The caller must throw,
- *    which ROLLS BACK its own effect, and the request replays the winner's stored response
- *    (`withIdempotency` in `packages/api`). Exactly one effect, one response, no 409.
- *
- * The rollback is what makes this correct rather than merely tidy, and it is only sound
- * because the effect and this row are already in one transaction: a lost claim means
- * the loser's effect is undone in full.
- *
- * ## Expiry is enforced, not decorative
- *
- * `expires_at` used to be written and never read, which made a nominally 24-hour key
- * permanent and `idempotency_keys` unbounded. The claim therefore takes over an EXPIRED
- * row (`setWhere: expires_at <= now`) instead of colliding with it forever, `lookupIdempotent`
- * filters on it, and {@link pruneIdempotencyKeys} deletes what has aged out.
+ * The `idempotency_keys` WRITE primitive, in `packages/db` because six services need it and
+ * `packages/services` may not import `packages/api`. A CLAIM, not an insert. Committing the dedup
+ * row with the effect was not sufficient: two concurrent invocations both miss the autocommit
+ * lookup, both apply the effect, and with `ON CONFLICT DO NOTHING` the second insert quietly does
+ * nothing. So the claim's result is load-bearing: the second INSERT BLOCKS until the first
+ * transaction ends; a caller that did not claim throws — rolling back its own effect — and the
+ * request replays the winner's stored response. Expiry is enforced: the claim takes over an
+ * EXPIRED row, and {@link pruneIdempotencyKeys} deletes what aged out.
  */
 
 /** The TTL of a stored idempotent response. */

@@ -1,47 +1,12 @@
 /**
- * THE TWO SQL DIALECTS THIS SCHEMA RUNS ON, AND THE ONE PLACE THAT KNOWS THE DIFFERENCE.
- *
- * The same engine — the same services, the same sync loop, the same lease — runs against Postgres
- * on a server and against SQLite on a phone. Everything above this module is written once. This is
- * the seam where "the current timestamp", "lock this row", "search this text" stop being one thing
- * and become two, and it is deliberately small: every member names a construct a census over the
- * engine's own sources actually found. Which of them have a caller TODAY, and which are waiting
- * for the port that will use them, is set out below — it is mostly the latter, and saying so here
- * matters because the sentence this replaced claimed the opposite four paragraphs above the list
- * that contradicted it.
- *
- * ── WHY A BRAND AND NOT A SHAPE TEST ──────────────────────────────────────────────────────
- *
- * The handle is chosen by a BRAND its factory stamps, never by inspecting it. A shape test —
- * "does it have `.execute`?", "is this a proxy?" — is a guess that gets the answer right until a
- * version bump changes a private field, and its failure mode is the worst available: the wrong
- * arm runs, every statement still parses, and the damage is a `FOR UPDATE` that quietly locked
- * nothing. A brand is a fact somebody wrote down. An unbranded handle is refused rather than
- * guessed at, because a default here is a silent choice of dialect and the dangerous one is
- * whichever the tests do not run.
- *
- * The brand lives on a globally registered symbol rather than a module-local one, so two copies
- * of this package in one process still agree.
- *
- * ── WHAT HAS A CALLER TODAY, AND WHAT IS WAITING FOR ONE ──────────────────────────────────
- *
- * Three members are in use: `forUpdate` at four sites, `hasNonBlank` at two and `advisoryLock` at
- * one, all in the repository. **The rest have no caller yet** — they exist because a census over
- * the engine's own sources named every construct that would need one, and porting those sources is
- * the next piece of work rather than this one.
- *
- * The count is deliberately not spelled out for the unused half: it was written as a number twice
- * and was wrong the second time within a day of the first, because adding a member is exactly the
- * moment nobody rereads this paragraph.
- *
- * That is stated because the alternative is worse in both directions. Code with no caller is code
- * nothing exercises, and this file's own rule is that a guard nobody has watched fail is not
- * evidence — so each unused member is executed by a test against a real store rather than merely
- * rendered, and the ones that were wrong were wrong in ways only running them showed. And
- * deleting them until needed would mean the census has no vocabulary to name what it finds.
- *
- * A member that is still listed here with no caller when the port is finished is a member to
- * delete, not to keep.
+ * The two SQL dialects this schema runs on, and the one place that knows the difference. The same
+ * engine runs against Postgres on a server and SQLite on a phone; this is the seam where "the
+ * current timestamp", "lock this row", "search this text" become two things. The handle is chosen
+ * by a BRAND its factory stamps, never by inspecting it: a shape test guesses right until a
+ * version bump, and then the wrong arm runs, every statement parses, and a `FOR UPDATE` quietly
+ * locks nothing. An unbranded handle is refused. The brand is a globally registered symbol, so
+ * two copies of this package agree. Members with no caller yet were named by a census over the
+ * engine's sources; each is exercised against a real store.
  */
 import { sql, type SQL } from "drizzle-orm";
 import { pgDialect } from "./pg.js";
@@ -60,31 +25,13 @@ export const DIALECT_BRAND: unique symbol = Symbol.for("ohmail.db.dialect") as n
 const TRANSACTION_WRAPPED: unique symbol = Symbol.for("ohmail.db.dialect.txWrapped") as never;
 
 /**
- * Stamp a handle with the dialect it speaks. Called by the factories, by nobody else.
- *
- * ── AND THE BRAND IS INHERITED BY TRANSACTIONS, WHICH IS THE WHOLE POINT ──────────────────
- *
- * A driver's transaction object is NOT the connection it was opened on: it is a fresh object the
- * query builder makes, and a property defined on the handle does not travel to it. Everything that
- * composes a statement per dialect therefore refused a transaction — and almost every statement in
- * this engine runs inside one.
- *
- * That was met twice by hand, and both answers were wrong at the scale they had to work at.
- * Passing the dialect down as a parameter means every function between the factory and the
- * statement grows an argument; the change-log's own recorder has a hundred callers, none of which
- * has an opinion about dialects. Stamping the transaction at each site means every site must
- * remember, and the failure of forgetting is not a compile error — it is a refusal deep inside a
- * request, which a route's error handler turns into a 500 with the reason discarded. Nineteen
- * requests failed that way before this existed.
- *
- * So the brand travels with the thing that creates the transaction. Branding a handle also wraps
- * its `transaction`, so the callback receives a branded object; and because the wrapper brands
- * recursively, a SAVEPOINT opened on that transaction is branded too, to any depth. One edit, and
- * "a handle that reaches a statement is branded" becomes true by construction rather than by
- * everybody remembering.
- *
- * Wrapping is idempotent — branding the same handle twice must not nest wrappers — and the wrapper
- * is defined as an OWN property, shadowing the prototype's method for this instance only, so two
+ * Stamp a handle with the dialect it speaks. Called by the factories, by nobody else. The brand
+ * is inherited by TRANSACTIONS, which is the point: a driver's transaction object is a fresh
+ * object, and a property on the handle does not travel to it — yet almost every statement runs
+ * inside one. Passing the dialect as a parameter grows an argument through every intermediate
+ * function; stamping at each site means remembering, and forgetting is a refusal deep inside a
+ * request. So branding a handle also wraps its `transaction`, recursively, so SAVEPOINTs are
+ * branded to any depth. Wrapping is idempotent, and the wrapper is an OWN property, so two
  * handles from one driver do not interfere.
  */
 export function brandDialect<T extends object>(db: T, name: DialectName): T {
@@ -167,16 +114,12 @@ export function assertComparable(count: number): void {
 }
 
 /**
- * Give a handle the dialect of the handle it came from.
- *
- * A driver's transaction object is not the connection it was opened on — it is a fresh object, and
- * the brand does not travel to it. Anything that opens a transaction and then builds a repository
- * around the transaction handle is therefore holding something unbranded, and the refusal in
- * `dialectOf` will fire on its first locking statement rather than at the point the mistake was
- * made.
- *
- * Passing both handles here says where the answer came from, which is the part a bare
- * `brandDialect(tx, "pg")` at the call site would be guessing at.
+ * Give a handle the dialect of the handle it came from. A driver's transaction object is not the
+ * connection it was opened on — it is a fresh object, and the brand does not travel to it.
+ * Anything that opens a transaction and builds a repository around the transaction handle is
+ * holding something unbranded, and the refusal in `dialectOf` fires on its first locking
+ * statement rather than where the mistake was made. Passing both handles says where the answer
+ * came from — the part a bare `brandDialect(tx, "pg")` at the call site would be guessing.
  */
 export function carryDialect<T extends object>(from: unknown, to: T): T {
   return brandDialect(to, dialectOf(from));
@@ -252,19 +195,13 @@ export interface JsonElements {
 export const SQL_TRIM_BLANK = " \t\n\r\f\v";
 
 /**
- * WHICH BODY OF TEXT A SEARCH IS OVER — named, because neither store can be told in columns.
- *
- * The server searches a generated `tsvector` column that lives ON the row. This store cannot have
- * one, so the same text is kept in a separate full-text table joined back by `rowid`. A caller
- * that passed COLUMNS could describe the first arrangement and not the second — it would have no
- * way to name a table it does not know exists — so it would be passing the server's shape through
- * a parameter that is supposed to be dialect-free.
- *
- * A name instead. The seam owns the mapping, which is the only place that can hold both.
- *
- * `mail` is the message corpus: subject and sender, plus the stored body, joined as `m` and `b`
- * the way every query over it already joins them. `kb` is the knowledge base's own entries, one
- * table and no alias.
+ * Which body of text a search is over — named, because neither store can be told in columns. The
+ * server searches a generated `tsvector` column on the row; this store cannot have one, so the
+ * same text lives in a separate full-text table joined by `rowid`. A caller passing COLUMNS could
+ * describe the first arrangement and not the second, so it would be passing the server's shape
+ * through a dialect-free parameter. A name instead; the seam owns the mapping. `mail` is the
+ * message corpus (subject, sender, stored body, joined as `m` and `b`); `kb` is the knowledge
+ * base's own entries.
  */
 export type SearchCorpus = "mail" | "kb";
 
@@ -327,15 +264,12 @@ export interface Dialect {
   ilike(column: SQL | unknown, pattern: string): SQL;
 
   /**
-   * TRUE when the column holds at least one character that is not whitespace.
-   *
-   * The rule router ranks a rule by which of its terms are present, and "present" has to mean the
-   * same thing in SQL as it does in the evaluator: a term of `'  '` is BARE. The server says that
-   * with a regex match against a character class; this store has no regex operator at all, and a
-   * query using one does not fail on the device with a wrong answer, it fails with a syntax error.
-   *
-   * The class is `SUBJECT_TERM_TRIM` in `rules.ts` spelled in SQL, and the pg test checks the two
-   * agree over every one of its six characters.
+   * TRUE when the column holds at least one character that is not whitespace. The rule router
+   * ranks a rule by which of its terms are present, and "present" must mean the same in SQL as in
+   * the evaluator: a term of `' '` is BARE. The server says that with a regex character class;
+   * this store has no regex operator at all — a query using one fails with a syntax error, not a
+   * wrong answer. The class is `SUBJECT_TERM_TRIM` in `rules.ts` spelled in SQL, and the pg test
+   * checks the two agree over every one of its six characters.
    */
   hasNonBlank(column: SQL | unknown): SQL;
 
@@ -343,51 +277,36 @@ export interface Dialect {
   interval(ms: number): SQL;
 
   /**
-   * A timestamp truncated to whole milliseconds.
-   *
-   * A member and NOT a deletion, which is the whole reason it exists. The server stores
-   * microseconds and the sort key it builds must round-trip through a JavaScript `Date` — which
-   * carries milliseconds — or a keyset cursor cannot name the row it stopped at: the value handed
-   * out is short by the microseconds and the comparison that resumes from it never matches. The
-   * device store keeps epoch milliseconds already, so there the answer is the value itself. Dropping
-   * the call would be correct on one store and silently wrong on the other, which is exactly the
-   * shape this seam refuses.
+   * A timestamp truncated to whole milliseconds — a member and NOT a deletion, which is why it
+   * exists. The server stores microseconds and the sort key must round-trip through a JavaScript
+   * `Date`, which carries milliseconds; otherwise a keyset cursor cannot name the row it stopped
+   * at — the value handed out is short by the microseconds and the resuming comparison never
+   * matches. The device store keeps epoch milliseconds already, so there the answer is the value
+   * itself. Dropping the call would be correct on one store and silently wrong on the other —
+   * exactly the shape this seam refuses.
    */
   truncMs(at: SQL | unknown): SQL;
 
   /**
-   * A row-locking clause as TEXT, for the one statement no builder can reach.
-   *
-   * {@link forUpdate} is the member to use and takes a QUERY, which is what makes it safe: it can
-   * only be attached to something the builder is composing, and it can name the table. This one
-   * emits the clause itself and is therefore the sharper tool — it exists because a subselect
-   * written as raw SQL has no builder around it to attach anything to, and the site that needs it
-   * carries a measured note saying so: embedding a locked builder there rendered something else
-   * and turned twelve of fifteen send cases red against real Postgres.
-   *
-   * On the device store the clause is EMPTY, for the same reason every lock there is the identity:
-   * one serialized writer, so there is nothing to exclude and nothing to skip.
+   * A row-locking clause as TEXT, for the one statement no builder can reach. {@link forUpdate}
+   * is the member to use and takes a QUERY, which is what makes it safe: it attaches only to
+   * something the builder is composing and can name the table. This one emits the clause itself —
+   * the sharper tool — because a subselect written as raw SQL has no builder to attach to; the
+   * site that needs it carries a measured note (embedding a locked builder there rendered
+   * something else and turned twelve of fifteen send cases red against real Postgres). On the
+   * device store the clause is EMPTY: one serialized writer, nothing to exclude, nothing to skip.
    */
   lockClause(opts?: LockOptions): SQL;
 
   /**
-   * A JSON array's elements as ROWS, joined into a statement's FROM.
-   *
-   * `from` is the source expression, `value` is how to name one element inside it — two fragments
-   * rather than one, because the two stores put the element in different places: the server's
-   * function yields the element as the aliased relation's single column, and this store's yields a
-   * table whose element is a NAMED column of it. A member returning one fragment would have made
-   * the caller spell the difference, which is the thing it exists to remove.
-   *
-   * `isString` and `text` are here for the same reason and are NOT derivable from `value`: the
-   * server's element is a JSON value, so its type comes from `jsonb_typeof` and its text from
-   * `#>> '{}'`; this store's element is already an SQL value, so `json_type` over it is a
-   * malformed-JSON error and the text is the value itself. The element's TYPE is `json_each`'s own
-   * column here. A caller composing either from `value` would be right on one store only.
-   *
-   * NO ORDINALITY. Both stores can produce a position, and they spell it differently enough that a
-   * caller wanting one is a second member and its own decision — so a statement that needs element
-   * ORDER must not use this.
+   * A JSON array's elements as ROWS, joined into a statement's FROM. `from` is the source
+   * expression, `value` names one element inside it — two fragments, because the stores put the
+   * element in different places: the server's function yields the element as the aliased
+   * relation's single column; this store's yields a table whose element is a NAMED column.
+   * `isString` and `text` are NOT derivable from `value`: the server's element is a JSON value
+   * (`jsonb_typeof`, `#>> '{}'`); this store's is already an SQL value, where `json_type` over it
+   * is a malformed-JSON error and the text is the value itself. NO ORDINALITY: the stores spell
+   * position differently enough that a statement needing element ORDER must not use this.
    */
   jsonArrayElements(source: SQL | unknown, alias: string): JsonElements;
 
@@ -407,16 +326,13 @@ export interface Dialect {
   jsonIsArray(value: SQL | unknown): SQL;
 
   /**
-   * `patch`'s top-level keys written over `document`'s, the rest of `document` surviving.
-   *
-   * The server's `||` is this by construction. This store has no such operator — `||` there is
-   * string CONCATENATION, so the server's spelling would run and produce two JSON documents stuck
-   * end to end — and its `json_patch` is RFC 7396, which merges nested objects instead of
-   * replacing them and DELETES a key whose patch value is null. Neither is what the callers mean,
-   * so the arm is spelled out. Key ORDER differs (the server sorts, this store keeps insertion
-   * order); the value is read back through a JSON parse on both, so nothing depends on it.
-   *
-   * A NULL `document` reads as `{}`, which is what every caller's `coalesce` used to say.
+   * `patch`'s top-level keys written over `document`'s, the rest of `document` surviving. The
+   * server's `||` is this by construction. This store has no such operator — `||` there is string
+   * CONCATENATION, so the server's spelling would produce two JSON documents stuck end to end —
+   * and its `json_patch` is RFC 7396, which merges nested objects and DELETES a key whose patch
+   * value is null. Neither is what callers mean, so the arm is spelled out. Key ORDER differs;
+   * the value is read back through a JSON parse on both, so nothing depends on it. A NULL
+   * `document` reads as `{}`.
    */
   jsonMergeShallow(document: SQL | unknown, patch: SQL | unknown): SQL;
 
@@ -478,15 +394,12 @@ export interface Dialect {
     lexical(q: string, corpus: SearchCorpus): SearchArm;
     /**
      * Typo-tolerant search over one corpus, and what it degrades to when trigrams are absent.
-     *
-     * `trigram` is the caller's own probe of the deployment it is talking to, not a guess made
-     * here: the same dialect runs on a database that has the extension and one that does not.
-     *
-     * THE DEGRADE RANKS DIFFERENTLY PER CORPUS, and that is recorded rather than smoothed over.
-     * The mail arm falls back to RECENCY — its caller's comment says "no relevance signal offline
-     * → recency" — and the knowledge base falls back to a constant, because its query already
-     * breaks ties on `updated_at`. Making them agree would change what one of the two returns,
-     * which is a product decision and not a port's to take.
+     * `trigram` is the caller's own probe of the deployment, not a guess made here: the same
+     * dialect runs on a database with the extension and one without. The degrade ranks
+     * differently per corpus, recorded rather than smoothed over: the mail arm falls back to
+     * RECENCY (no relevance signal offline), the knowledge base to a constant, because its query
+     * already breaks ties on `updated_at`. Making them agree would change what one of the two
+     * returns — a product decision, not a port's.
      */
     fuzzy(q: string, corpus: SearchCorpus, opts: { trigram: boolean; threshold: number }): SearchArm;
   };
@@ -503,29 +416,14 @@ export function frag(value: SQL | unknown): SQL {
 }
 
 /**
- * DECLARE that a statement is reached only on Postgres. The identity function at runtime.
- *
- * Where the two stores cannot share a statement the engine BRANCHES rather than abstracting, and
- * the Postgres arm keeps the server's construct on purpose. `xmax` is the case that forced this:
- * it is not a spelling difference but a fact about one store's row visibility — how the server, and
- * only the server, answers "did this statement insert the row" — so there is no member this
- * interface could grow for it, and a device arm has to answer the question a different way.
- *
- * ── WHY A MARKER AND NOT AN EXEMPTION ─────────────────────────────────────────────────────
- *
- * The census over the engine's sources allows nothing, which is right and which a branch makes
- * unreachable: the server's arm is still in the file. The two obvious ways out are both worse. A
- * per-token exemption list is an allowance somebody adds a line to and nobody re-reads. Deleting
- * the arm deletes the feature.
- *
- * So the arm says what it is, at the site, in code. This carries no runtime cost and no type
- * change; what it buys is that the census can PIN how many such arms each file has, exactly — so
- * adding one is a red that names the file, and the pin is the thing a reviewer looks at. It is not
- * an escape hatch: every pinned arm carries a device-store twin test beside it proving the OTHER
- * arm answers the same question, and a `pgOnly(` in a file with no pin fails.
- *
- * Wrap the TEMPLATE, not the call around it — the census skips a template that is this function's
- * direct argument, and nothing else.
+ * Declare that a statement is reached only on Postgres — the identity function at runtime. Where
+ * the two stores cannot share a statement, the engine BRANCHES, and the Postgres arm keeps the
+ * server's construct: `xmax` forced this — a fact about one store's row visibility, so no
+ * interface member can carry it. A marker rather than an exemption: a per-token exemption list is
+ * an allowance nobody re-reads, and deleting the arm deletes the feature. The census pins the
+ * count of such arms per file; every pinned arm carries a device-store twin test proving the
+ * OTHER arm answers the same question. Wrap the TEMPLATE, not the call — the census skips a
+ * template that is this function's direct argument, nothing else.
  */
 export function pgOnly<T>(statement: T): T {
   return statement;

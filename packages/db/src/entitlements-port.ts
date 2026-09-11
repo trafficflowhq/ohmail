@@ -2,21 +2,14 @@ import type { SpendAction } from "./ledger-source.js";
 import type { AiRefusalReason } from "./ai-gate-port.js";
 
 /**
- * THE ENTITLEMENTS PORT — the one question the open server asks about an account's standing, and
- * nothing that answers it.
- *
- * Limits, access and AI metering belong to whoever operates the service: a managed deployment
- * points `ENTITLEMENTS_URL` at a program that holds that state, and a self-hosted or desktop
- * install has none and is unmetered. Both run the same route table, so callers must be able to
- * name the answer they may be handed without depending on what answers.
- *
- * On the MAIL barrel — pure types and two literals, no database — for the reason `ai-gate-port.ts`
- * is: every host compiles the route table, and the engine artifact may not carry the hosted half.
- * `entitlements-local.ts` and `entitlements-client.ts` are the two answers, on the hosted barrel.
- *
- * The shapes below follow the entitlements program's own wire contract v1, which is the authority
- * for both sides. Where they differ from it they REDUCE: the program answers ten `reason` values
- * and this port carries two, because the open app has two sentences to say.
+ * The entitlements port — the one question the open server asks about an account's standing, and
+ * nothing that answers it. Metering belongs to whoever operates the service: a managed deployment
+ * points `ENTITLEMENTS_URL` at a program holding that state; a self-hosted or desktop install has
+ * none and is unmetered. Both run the same route table, so callers must name the answer without
+ * depending on what answers. On the MAIL barrel — pure types, no database — because every host
+ * compiles the route table and the engine artifact may not carry the hosted half; the two answers
+ * live on the hosted barrel. The shapes follow wire contract v1 and only ever REDUCE it: the
+ * program answers ten `reason` values, this port carries two.
  */
 
 /** Why access was refused. Two states, because a refusal has two remedies: pay, or ask us. */
@@ -43,17 +36,14 @@ export interface AccessLimits {
 }
 
 /**
- * THE MONEY ANSWER FOR ONE AI ACTION — five verdicts the program states, plus the one the CALLER
- * synthesizes. Four would not carry it, and each of the two extras is a defect if folded:
- *
- *  · `refused` folded into `insufficient` answers "out of credits" to a funded account whose owner
- *    switched AI off — a payment demand for the product working as asked (409, never 402);
- *  · `inflight` folded into `duplicate` tells the loser of a race to PROCEED, buying a second paid
- *    model call for one credit. It is the exclusive claim's whole purpose. The caller does not
- *    proceed on it and does not treat it as a duplicate; it is per-SOURCE, so a batch moves on.
- *
- * `fault` is never a 200 body. It is what a caller says when the program could not answer, which
- * is what keeps a fault impossible to mistake for a refusal.
+ * The money answer for one AI action — five verdicts the program states, plus the one the CALLER
+ * synthesizes. Each of the two extras is a defect if folded: `refused` folded into `insufficient`
+ * answers "out of credits" to a funded account whose owner switched AI off — a payment demand for
+ * the product working as asked (409, never 402); `inflight` folded into `duplicate` tells the
+ * loser of a race to PROCEED, buying a second paid model call for one credit — it is the
+ * exclusive claim's whole purpose, per-SOURCE so a batch moves on. `fault` is never a 200 body:
+ * it is what a caller says when the program could not answer, which keeps a fault impossible to
+ * mistake for a refusal.
  */
 export type SpendOutcome =
   /** Proceed; this attempt moved money. KEEP `attempt` — it is what a reversal names. */
@@ -80,16 +70,14 @@ export type SpendOutcome =
 export type { SpendAction } from "./ledger-source.js";
 
 /**
- * HOW A SPEND ENDED — `refund: false` gives the claim back, `true` also reverses the charge.
- *
- * A UNION, and the asymmetry is deliberate: a reversal must NAME the attempt it reverses, and a
- * release that reverses nothing has nothing to name. Written as one shape with an optional
- * `attempt`, "refund this, I forget which attempt" is representable — and it is the shape that
- * reverses a neighbour's charge, because the gate falls back to the bare source, which is
- * attempt 1 and may belong to work that was delivered months ago.
- *
- * Pass `refund: true` only with an `attempt` THIS caller was told was `charged: true`, once per
- * abandonment. A `duplicate` charged nothing, so its caller releases and does not refund.
+ * How a spend ended — `refund: false` gives the claim back, `true` also reverses the charge. A
+ * UNION, and the asymmetry is deliberate: a reversal must NAME the attempt it reverses, and a
+ * release that reverses nothing has nothing to name. As one shape with an optional `attempt`,
+ * "refund this, I forget which attempt" is representable — and that shape reverses a NEIGHBOUR'S
+ * charge, because the gate falls back to the bare source, which is attempt 1 and may belong to
+ * work delivered months ago. Pass `refund: true` only with an `attempt` THIS caller was told was
+ * `charged: true`, once per abandonment. A `duplicate` charged nothing; its caller releases and
+ * does not refund.
  */
 export type SpendRelease = {
   action: SpendAction;
@@ -131,15 +119,12 @@ export interface EntitlementsPort {
   access(accountId: string): Promise<AccessVerdict>;
   /**
    * Charge one AI action against `attemptKey`, which names the unit of WORK so retries are free.
-   *
-   * `attemptKey` is the BARE key — the message, `<messageId>:<hashed client key>`, the run id,
-   * `<runId>:<stepIndex>` — never a composed ledger source. Both implementations compose the
-   * source through the one composer (`sourceFor`), which refuses a key that is already a source:
-   * a double-prefixed one passes the ledger's namespace CHECK and its UNIQUE, so already-paid
-   * work would answer `ok` and be charged twice. Build keys with `ledger-source.ts`.
-   *
-   * Never answers a money verdict by throwing — see {@link SpendOutcome}. A malformed key is not
-   * a money verdict: it is the caller-bug class, and it raises.
+   * `attemptKey` is the BARE key — the message, `<messageId>:<hashed client key>`, the run id —
+   * never a composed ledger source. Both implementations compose the source through the one
+   * composer (`sourceFor`), which refuses a key that is already a source: a double-prefixed one
+   * passes the ledger's namespace CHECK and its UNIQUE, so already-paid work would answer `ok`
+   * and be charged twice. Build keys with `ledger-source.ts`. Never answers a money verdict by
+   * throwing — see {@link SpendOutcome}; a malformed key is the caller-bug class and raises.
    */
   spend(
     accountId: string, action: SpendAction, attemptKey: string, meta?: SpendMeta,

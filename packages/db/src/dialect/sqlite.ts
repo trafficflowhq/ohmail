@@ -1,16 +1,12 @@
 /**
- * The SQLite arm — a device's answer to each question, and the reason it is the right one.
- *
- * Two of these are no-ops, and a no-op is the most dangerous thing this file can contain: it
- * compiles, it runs, and it protects nothing. Both are safe for the SAME structural reason and it
- * is written beside each rather than assumed — the engine store is reached through ONE serialized
- * connection. There is no second writer to exclude, and a second connection to the same file does
- * not contend for rows, it fails outright. So the ordering the server buys with locks is already
- * true here by construction, and adding a lock would be a second mechanism guarding nothing.
- *
- * The rest are real translations, and the two that change meaning are named: text search moves
- * from a generated tsvector to an external-content full-text index, and case-insensitive matching
- * is folded explicitly because this dialect's own `like` folds ASCII only.
+ * The SQLite arm — a device's answer to each question, and why it is right. Two of these are
+ * no-ops, and a no-op is the most dangerous thing this file can contain: it compiles, runs, and
+ * protects nothing. Both are safe for the same structural reason, written beside each rather than
+ * assumed — the engine store is reached through ONE serialized connection: no second writer to
+ * exclude, and a second connection to the same file fails outright, so the ordering the server
+ * buys with locks is already true here. The two translations that change meaning are named: text
+ * search moves to an external-content full-text index, and case-insensitive matching is folded
+ * explicitly because this dialect's `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
 import { assertComparable, assertJsonKey } from "./index.js";
