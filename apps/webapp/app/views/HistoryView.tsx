@@ -1,55 +1,20 @@
 "use client";
 
 /**
- * HISTORY — mail from people nobody ever decided about, who then went quiet.
- *
- * Every message in this list is READ, and that is guaranteed rather than arranged: a sender
- * with any unread mail is ACTIVE whatever its age, so an unread message pulls its sender into
- * the Screener queue instead. History therefore cannot contain anything that wants attention,
- * which is why the rail entry beside it carries no count and this pane shows no unread state.
- *
- * It is not called Archive. "Archive" is a verb in every other mail client — an action this
- * mail never received — and a mailbox with a real server-side Archive folder would be shown a
- * view by that name whose contents are not that folder's.
- *
- * ── NOTHING HERE HAS MOVED ─────────────────────────────────────────────────────────────────
- *
- * This is a presentation, not a location. Every message in the list is sitting exactly where
- * the mail server has it — usually the INBOX — and every other mail client the person owns
- * still shows it there. The row states the server folder for that reason: a place the product
- * invented must not be mistaken for a place mail was put.
- *
- * ── ONE WAY TO READ IT: THE OHBOX'S ─────────────────────────────────────────────────────────
- *
- * A list beside a reading column, which is the composition every other pile in the product
- * already uses. There used to be a `List` / `Split` segmented control above the rows, defaulting
- * to a solo centred list that raised a reader sheet per message — and it was a control offering
- * a choice nobody wants to make twice: going through old mail one sheet at a time is the slower
- * half of a pair, it was the DEFAULT half, and the toggle reset on every visit, so the cost was
- * paid again on each arrival. The choice is gone and the better shape is simply the shape.
- *
- * READING IN PLACE IS UNCHANGED, and it was the point of the toggle rather than of the modes.
- * A click selects into the column and the message renders where History shows it; the tag or
- * the pile never leaves the screen. Under 900px the reading column is `display:none`, so there
- * a click still raises the shell's reader sheet (`onOpen`) — the same rule the Ohbox keeps, and
- * the reason `readColumnHidden()` survives the deletion.
- *
- * ── THE ONE PILE WITH NO UPPER BOUND ───────────────────────────────────────────────────────
- *
- * Every other list here is a working set — what arrived, what is owed a decision, what was kept.
- * History is the residue of an entire mailbox: every message from everybody nobody ever screened,
- * accumulated for as long as the account has existed. On a standalone desktop client, whose
- * mirror is the whole mailbox rather than the browser's 5 000-row window, that is tens of
- * thousands of rows, and `messages.map(row)` renders all of them.
- *
- * Measured at 20 000 rows: the full list mounted in 4 050 ms as 242 904 DOM nodes, and picking a
- * row — which re-renders the list to move the selection — took 1 409 ms. So the pile that is
- * cheapest to think about was the most expensive thing in the product to look at. Windowed, the
- * same three numbers are 44 ms, 423 nodes and 6 ms.
- *
- * It is rendered through {@link useListWindow} for that reason: the rows on screen are mounted
- * and the rest are two spacer elements holding their height. See that file for why the row
- * height is measured rather than assumed, and for what the window deliberately does not do.
+ * History — mail from people nobody ever decided about, who then went quiet. Every message here is READ, guaranteed
+ * rather than arranged: a sender with any unread mail is ACTIVE and pulls into the Screener queue instead — so the
+ * rail entry carries no count and the pane shows no unread state. Not called Archive: "Archive" is a verb in every
+ * other client, an action this mail never received, and a mailbox with a real Archive folder would meet a view by
+ * that name whose contents are not that folder's.
+ */
+
+/**
+ * Nothing here has moved: this is a presentation, not a location — every message sits exactly where the mail server
+ * has it, and the row states the server folder so an invented place is not mistaken for a real one. One way to read
+ * it — the Ohbox's list beside a reading column (the old List/Split toggle reset per visit and defaulted to the
+ * slower half; the better shape is simply the shape; under 900px a click raises the reader sheet). The one pile with
+ * no upper bound: measured at 20 000 rows, `messages.map` mounted in 4 050 ms as 242 904 nodes with 1 409 ms clicks —
+ * windowed ({@link useListWindow}): 44 ms, 423 nodes, 6 ms.
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -229,18 +194,14 @@ export function HistoryView({
            handle ("if the app drives scrolling itself"), so nothing in the pane changes. */
         scrollerRef={scrollerRef}
       >
-        {/* ONE SENTENCE, ALWAYS PRESENT, AND ABOVE THE LIST.
-            "History" is a word this product is using in a way no other mail client does, and a
-            list of a thousand old messages under an unexplained heading is a list somebody has
-            to guess the meaning of. It is not a dismissible first-run tip: the explanation is
-            as true on the hundredth visit as the first, and a hint that disappears is a hint
-            nobody can go back to.
-
-            The other two sentences — that it is all read, and that nothing has moved on the
-            mail server — are behind the (i). They answer the second and third questions, not
-            the first, and as a block of three they pushed the first row of the list off a short
-            window. Collapsed, not deleted: "a hint that disappears" above is still the rule,
-            and a disclosure that is always in the same place is not a hint that disappears. */}
+        {/* One sentence, always present, above the list: "History" is a word this product uses as
+            no other mail client does, and a thousand old messages under an unexplained heading is
+            a list somebody has to guess at. Not a dismissible tip — the explanation is as true on
+            the hundredth visit as the first, and a hint that disappears is a hint nobody can go
+            back to. The other two sentences (all read; nothing moved on the mail server) are
+            behind the (i): they answer the second and third questions, and as a block of three
+            they pushed the first row off a short window. Collapsed, not deleted — a disclosure
+            always in the same place is not a hint that disappears. */}
         <InfoNote
           className="view-note"
           lead={t("explainer")}

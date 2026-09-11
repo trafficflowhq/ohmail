@@ -1,21 +1,17 @@
 "use client";
 
 /**
- * Receipts — the same two-pane pattern as Reads, with amounts on the right and ONE FLAT LIST
- * of rows. The day headings this view used to draw are gone: they split a short list into
- * one-row sections whose heading was taller than the row under it, and each row already carries
- * its own time stamp, so the heading restated what the row said. Reads never had them, and the
- * two views are meant to read as the same thing.
- *
- * Order still comes from the shell's `receiptsByDay` flatten — newest day first, newest within
- * a day — so nothing about the sequence changed, only what is drawn between the rows.
- *
- * Like Reads, the rows keep two facts apart: NEWNESS is position relative to this view's
- * OWN waterline ("new since last visit" — `view_meta` "receipts_waterline", independent of
- * Reads'; no dots), and READNESS is the mailbox's `\Seen`, rendered as the quiet ink on
- * read rows. Scroll-past still feeds per-message `\Seen` through `mark_seen` (the eventual
- * sweep; the `justSeen` set below is dedup, not state), and LEAVING the view commits the
- * waterline in one anchored `feed_mark_seen` via `onLeaveSeen`.
+ * Receipts — the same two-pane pattern as Reads, with amounts on the right and ONE FLAT LIST. The day headings are
+ * gone: they split a short list into one-row sections whose heading was taller than the row under it, and each row
+ * carries its own stamp — Reads never had them, and the two views are meant to read as the same thing. Order still
+ * comes from the shell's `receiptsByDay` flatten.
+ */
+
+/**
+ * Like Reads, the rows keep two facts apart: NEWNESS is position relative to this view's OWN waterline (`view_meta`
+ * "receipts_waterline", independent of Reads'; no dots) and READNESS is the mailbox's `\Seen`, the quiet ink on read
+ * rows. Scroll-past feeds per-message `\Seen` through `mark_seen` (the `justSeen` set is dedup, not state), and
+ * LEAVING the view commits the waterline in one anchored `feed_mark_seen` via `onLeaveSeen`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
@@ -445,17 +441,13 @@ export function ReceiptsView({
       subject={m.subject}
       preview={m.snippet}
       amount={m.amount}
-      /* `data-unseen` for the sweep; NO dot — newness is position relative to the line,
-         exactly as in Reads. Read state renders truthfully beside it: a `\Seen` receipt
-         takes the quiet ink, an unread one keeps full weight (see the Reads row for the
-         live measurement behind this).
-
-         `presentsUnread` and not the `isUnread` prop, and the split is deliberate: the pin is
-         state rather than a folder, so a resurfaced receipt is listed here AND at the top of
-         the Ohbox, and the two must draw it the same way. `isUnread` stays the answer for
-         everything that ACTS or COUNTS in this view — the mark-all list, the landing cursor,
-         the scroll sweep's re-judgement — so a pinned row that is already read is observed
-         and skipped rather than written. */
+      /* `data-unseen` for the sweep; NO dot — newness is position relative to the line, exactly as
+         in Reads, and read state renders truthfully beside it (a `\Seen` receipt takes the quiet
+         ink; see the Reads row for the measurement). `presentsUnread` and not the `isUnread` prop,
+         deliberately: the pin is state rather than a folder, so a resurfaced receipt is listed
+         here AND at the top of the Ohbox, and the two must draw it the same way. `isUnread` stays
+         the answer for everything that ACTS or COUNTS — the mark-all list, the landing cursor, the
+         scroll sweep's re-judgement — so a pinned row already read is observed and skipped. */
       unread={presentsUnread(m)}
       seen={!presentsUnread(m)}
       dotless

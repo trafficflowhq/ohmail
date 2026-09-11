@@ -1,50 +1,19 @@
 "use client";
 
 /**
- * TRASH — mail you deleted in ohmail, and the one place it can be put back.
- *
- * The composition is `FolderView`'s, deliberately: the same two-pane list beside a reading
- * column, the same row component, the same empty and end-of-list lines, the shell's sheet under
- * 900px. A bin that looked like its own product would be a second mail client inside the first.
- *
- * ══ THE ROWS ARE NOT IN THE MIRROR, AND HERE THAT IS STRUCTURAL ═════════════════════════════
- *
- * A delete tombstones the row in every client's mirror, so there is nothing local to filter. The
- * page comes from the server and is held by {@link useTrashPage} for as long as this view is
- * mounted — see that hook's header for why it is not `older-mail.ts`.
- *
- * ══ WHAT THIS LIST CLAIMS, AND WHAT IT DOES NOT ═════════════════════════════════════════════
- *
- * "Mail you deleted in ohmail" — the message-delete verb's own rows, and nothing else. Mail
- * trashed in another mail app is in the mail server's Trash and the server here has never read
- * that folder, so it is not in this list; mail whose FOLDER was deleted is tombstoned without
- * riding to Trash, so it is not either. `trash.foot` says the first of those in the reader's own
- * words rather than leaving them to notice a gap.
- *
- * ══ TWO ROW DIFFERENCES, BOTH TEXTUAL ══════════════════════════════════════════════════════
- *
- *  · the stamp slot says WHEN IT WAS DELETED, not when the message was sent. A list somebody is
- *    scanning for what they just threw away is scanned by the deletion, and the send date would
- *    put a mail from last year at the top of a bin emptied this morning. Ordered by it too, on
- *    the server.
- *  · a quiet gloss after the subject names WHERE A RESTORE WOULD PUT IT (`MessageRowProps
- *    .destination`). It is the server's resolved answer, not this client's guess: the origin
- *    folder can be gone, and only the server holds the mailbox's folder inventory.
- *
- * ══ AND A SECOND SECTION FOR THE OTHER POPULATION ══════════════════════════════════════════
- *
- * Under the mirrored list, what sits in the mail server's OWN Trash — read live through
- * `useTrashWindow`, never mirrored, never written anywhere. Mail deleted in another mail app is
- * in that folder and the sync cannot see it, so the view now reads it instead of only saying it
- * exists. The two sections are independent: a live read that fails renders its own failed
- * sentence and leaves the mirrored list exactly as it was.
- *
- * ══ AND THE READING PANE HAS ONE VERB, OR NONE ═════════════════════════════════════════════
- *
- * Over a mirrored row: restore, plus the read switch. `MessagePane`'s `trash` prop carries it;
- * the argument for one early return rather than eleven gated groups is written at `ActionBar`'s
- * own prop. Over a LIVE row: nothing — {@link trashReadVerbs} names the empty set, because a
- * message the mirror has never held records no folder for a restore to aim at.
+ * Trash — mail you deleted in ohmail, and the one place it can be put back. The composition is `FolderView`'s,
+ * deliberately: a bin that looked like its own product would be a second mail client inside the first. The rows are
+ * NOT in the mirror, structurally: a delete tombstones the row in every mirror, so the page comes from the server
+ * ({@link useTrashPage}). What the list claims: the message-delete verb's own rows and nothing else — mail trashed in
+ * another app is in the server's Trash folder this server never reads, and `trash.foot` says so.
+ */
+
+/**
+ * Two row differences, both textual: the stamp says WHEN IT WAS DELETED (ordered by it, on the server), and a quiet
+ * gloss names where a restore would put it — the server's resolved answer, since the origin folder can be gone. A
+ * second section reads the mail server's OWN Trash live (`useTrashWindow`, never mirrored); the sections are
+ * independent. The reading pane has one verb or none: restore over a mirrored row; over a LIVE row nothing ({@link
+ * trashReadVerbs}) — a message the mirror never held records no folder for a restore to aim at.
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -68,17 +37,13 @@ import {
 } from "../shell/trash-window";
 
 /**
- * THE ROW'S STAMP — how long ago it was deleted, plus the exact instant on hover.
- *
- * `agoStamp` and not the list's `rowStamp`: the two answer different questions. `rowStamp` says
- * WHICH DAY a message is from, which is what a reader scanning a pile by date wants; this says
- * HOW LONG AGO something happened, which is what somebody looking for what they just deleted
- * wants. `agoStamp` is already the product's answer to the second question (the mailbox rows'
- * "Synced 2 minutes ago") and reads the app's own locale and zone.
- *
- * A row whose `trashedAt` is absent — a server older than the field — falls back to no stamp at
- * all rather than to the message's own date: a date in the deletion slot would be read as a
- * deletion time, which is a false statement, and an empty slot is merely quiet.
+ * The row's stamp — how long ago it was deleted, plus the exact instant on hover. `agoStamp`, not
+ * the list's `rowStamp`: `rowStamp` says WHICH DAY a message is from, this says HOW LONG AGO
+ * something happened, which is what somebody looking for what they just deleted wants — `agoStamp`
+ * is already the product's answer to that question and reads the app's own locale and zone. A row
+ * whose `trashedAt` is absent (a server older than the field) falls back to no stamp at all rather
+ * than the message's own date: a date in the deletion slot would be read as a deletion time, a
+ * false statement, while an empty slot is merely quiet.
  */
 function trashStamp(
   row: TrashRowWire,

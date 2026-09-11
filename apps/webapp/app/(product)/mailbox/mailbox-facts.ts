@@ -2,28 +2,17 @@ import type { MailboxDTO } from "../../api-client";
 import type { MailboxFacts } from "../../shell/mail-state";
 
 /**
- * ONE MAILBOX ROW, NARROWED FROM THE WIRE TO WHAT THE SHELL MAY READ.
- *
- * ── WHY THIS IS A MODULE AND NOT A CLOSURE IN `CloudShell` ─────────────────────────────────
- *
- * It was a closure, and that is precisely what made the most dangerous line in it untestable.
- * Every component test injects `MailboxFacts` through the mocked provider, so none of them ever
- * reaches the mapping — the defaults for an ABSENT field are decided here and were checked
- * nowhere. The equivalent seam on the desktop had the same hole and it was found the same way:
- * inverting the absent-role default left every component case GREEN, while the line it inverted
- * decides whether a claim banner appears on every mailbox of every install whose API predates the
- * column.
- *
- * So the mapping is a plain function over a plain object, driven directly by its own unit tests.
- * `CloudShell` keeps the fetch.
- *
- * ── THE RULE EVERY LINE HERE FOLLOWS ──────────────────────────────────────────────────────
- *
- * An optional field is forwarded UNTOUCHED unless there is a reason to narrow it, because absent
- * and `null` are different answers and a `?? null` at a seam destroys the difference. Two fields
- * were broken exactly that way before: the import stamp (which pinned "Syncing your mail" over a
- * finished mirror) and the pending-move count (which turned "cannot tell" into "nothing
- * outstanding"). The one field that IS narrowed says why in its own comment.
+ * One mailbox row, narrowed from the wire to what the shell may read. A module and not a closure in `CloudShell`,
+ * because the closure made the most dangerous line untestable: every component test injects `MailboxFacts` through
+ * the mocked provider, so none reaches the mapping — inverting the absent-role default left every case green, while
+ * that line decides whether a claim banner appears on every install whose API predates the column.
+ */
+
+/**
+ * So the mapping is a plain function driven by its own unit tests; `CloudShell` keeps the fetch. The rule every line
+ * follows: an optional field is forwarded UNTOUCHED unless there is a reason to narrow — absent and `null` are
+ * different answers, and a `?? null` at a seam destroys the difference (the import stamp and the pending-move count
+ * were both broken exactly that way). The one field that IS narrowed says why in its own comment.
  */
 export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
   return {
@@ -133,22 +122,14 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // nothing breaks either way — the `??` is left off because the seam is where that distinction
     // was destroyed the last two times, not because this consumer needs it.
     smtpMaxSizeBytes: m.smtpMaxSizeBytes,
-    // ── NEVER `?? new Date()`, AND THE COMMENT THAT STOOD HERE WAS WRONG ABOUT WHY ──────
-    //
-    // The server has sent this since mail 0001 and always will (`toDTO` reads a NOT NULL
-    // column), so the fallback exists only for a stale cached bundle compiled without the
-    // field. It claimed to degrade to "no elapsed time"; it did not. A now-stamp is perfectly
-    // parseable, so `minutesSince` answers 0 rather than null, and — the half that matters —
-    // `importFloorSpeaks` obeys the import floor ABSOLUTELY for `IMPORT_FLOOR_MAX_MS` (24 h)
-    // measured from this value. Re-stamping it as NOW on every poll means `now - connectedAt`
-    // is always ~0, the bound can never elapse, and the strip announces "Syncing your mail"
-    // for ever over a finished mirror. The guard was load-bearing in exactly the case it got
-    // wrong, which is why it is worth fixing on a path that is currently unreachable.
-    //
-    // The empty string is "the server did not say", and every reader already treats an
-    // unparseable stamp as unknown: the floor's `Number.isFinite` guard takes the corroborated
-    // path, `earliest` skips it, `minutesSince` answers null. The desktop's own narrowing
-    // (`DesktopMailboxes.tsx`) carries the same rule for the same reason.
+    // Never `?? new Date()`, and the comment that stood here was wrong about why. The server has
+    // sent this since mail 0001 (`toDTO` reads a NOT NULL column), so the fallback exists only for
+    // a stale cached bundle. It claimed to degrade to "no elapsed time"; it did not: a now-stamp
+    // is perfectly parseable, so `minutesSince` answers 0, and `importFloorSpeaks` obeys the import
+    // floor absolutely for 24 h measured from this value — re-stamped as NOW on every poll, the
+    // bound can never elapse and the strip announces "Syncing your mail" for ever over a finished
+    // mirror. The empty string is "the server did not say", and every reader treats an unparseable
+    // stamp as unknown; the desktop's own narrowing carries the same rule.
     createdAt: m.createdAt ?? "",
   };
 }

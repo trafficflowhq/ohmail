@@ -1,33 +1,19 @@
 "use client";
 
 /**
- * THE CLOUD (AND SELF-HOST) DOOR'S FIRST-RUN HOST — every call the setup flow makes, over REST.
- *
- * The shared shell may not import `app/api-client` (it ships inside the standalone desktop and
- * is copied into a mirror that does not contain the module), so this is where the browser's own
- * client is bound to the flow's seam. `CloudShell` supplies the result to `AppShell`.
- *
- * ── ONE DOOR, TWO FLAVORS, AND THE DIFFERENCE IS THREE LINES ──────────────────────────────
- *
- * Managed and self-host are the SAME client talking to the same API; what differs is who pays
- * for the model. `SELF_HOST_BUILD` is a compiled constant, so the managed bundle carries no
- * `/hello` round trip for this at all, and the operator's AI state (`features.ai`, which is
- * `anthropicApiKey !== null` server-side) is read only where it is going to be shown.
- *
- * ── THE AI POSTURE SUPPLIES ALL FOUR STATES NOW, AND THE OLD NOTE HAD IT BACKWARDS ────────
- *
- * This block used to say `accounts.ai_enabled` "rests false", so the door reported `unset` for
- * both "never asked" and "answered no", and the cost was one repeated question on a resumed run.
- * **Both halves were wrong.** The column is `NOT NULL DEFAULT true` (migration 0019) and
- * `aiEnabledFor` falls back to `true` for a missing row, so a brand-new account reported `on` —
- * and `deriveOnboardingStep`'s row 5 (`facts.ai === "unset"`) therefore never fired. Measured by
- * driving the derivation with a fresh hosted account: it answers `pull`. On this door the
- * question was not asked twice; it was **not asked at all**, on an account whose AI was already
- * spending its credits.
- *
- * Migration 0084 adds `accounts.ai_answered_at` beside the switch, and `GET /account/ai` serves
- * both facts. The posture below is the whole fix: a null stamp is `unset` WHATEVER the switch
- * says, because the switch's resting value is not an answer.
+ * The Cloud (and self-host) door's first-run host — every call the setup flow makes, over REST. The shared shell may
+ * not import `app/api-client`, so this is where the browser's client is bound to the flow's seam; `CloudShell`
+ * supplies the result. Managed and self-host are the SAME client; `SELF_HOST_BUILD` is compiled, so the managed
+ * bundle carries no `/hello` round trip.
+ */
+
+/**
+ * The AI posture supplies all four states, and the old note had it backwards: it said `accounts.ai_enabled` "rests
+ * false", but the column is `NOT NULL DEFAULT true` (migration 0019) and `aiEnabledFor` falls back to `true`, so a
+ * brand-new account reported `on` and `deriveOnboardingStep`'s row 5 never fired — measured with a fresh hosted
+ * account: the question was not asked at all, on an account already spending credits. Migration 0084 adds
+ * `accounts.ai_answered_at`, and the posture is the fix: a null stamp is `unset` WHATEVER the switch says — its
+ * resting value is not an answer.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -178,17 +164,14 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
     // BEFORE the request leaves — see `wrote`. A read already in the air must lose from here on.
     wrote.current = true;
     const r = await aiSettings.set(enabled);
-    /* A SUCCESSFUL WRITE IS ITSELF THE ANSWER, and reading the echo strictly was a regression.
-       The posture must move off `unset` here even when the switch did not — the common case,
-       since `ai_enabled` rests `true` and "Yes" writes the value the account already had.
-       Against a PRE-0084 API the PATCH succeeds and omits the field, so `=== true` stored
-       `false`: the flow cleared its cursor, re-derived `unset`, and returned to the question it
-       had just asked, indefinitely. The old client did not have that — its posture read
-       `aiEnabled ? "on" : "unset"`, so "Yes" walked past — which makes it a regression this
-       change introduced rather than one it inherited.
-       The person answered; that is a fact about THIS run whatever the server can store. On a
-       0084 API the stamp is durable and a resumed run walks past too; on an older one it is not,
-       and a later resume asks again — the pre-migration behaviour, and the safe direction. */
+    /* A successful write is itself the answer, and reading the echo strictly was a regression. The
+       posture must move off `unset` even when the switch did not change — the common case, since
+       `ai_enabled` rests `true` and "Yes" writes the value the account already had. Against a
+       pre-0084 API the PATCH succeeds and omits the field, so `=== true` stored `false`: the flow
+       re-derived `unset` and returned to the question it had just asked, indefinitely — a
+       regression this change introduced, not inherited. The person answered; that is a fact about
+       THIS run whatever the server can store. On a 0084 API the stamp is durable and a resumed run
+       walks past; on an older one a later resume asks again — the safe direction. */
     setAiAnswered(true);
     // THE ECHO, NOT THE ARGUMENT. The posture the flow re-derives from must be what the server
     // stored, so a write the server clamped or refused cannot leave this client believing it

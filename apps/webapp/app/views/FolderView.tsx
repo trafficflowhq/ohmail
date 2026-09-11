@@ -1,28 +1,17 @@
 "use client";
 
 /**
- * FOLDER — one of the mailbox's OWN folders, opened from the rail (FOLDERS-SPEC.md §3,
- * "Views: a user folder opens as a parameterized view — a list filtered on `m.folder`").
- *
- * The composition is `TagView`'s — a lens read in place: the two-pane list beside a reading
- * column, a click selecting into the column, the shell's sheet under 900px. The differences
- * are the folder's, both deliberate:
- *
- *  · the list wears the standard NEW-FOR-YOU / EARLIER grouping (iteration 2, feedback 5 —
- *    "it's perfect that you show the earlier / unread layout on the folders");
- *  · an EMPTY folder is an answer, not an error: it exists on the server and holds no mail,
- *    and the empty state says exactly that — the folder list comes from the mailbox itself,
- *    not from the messages in it.
- *
- * THE LIST IS WINDOWED, for History's measured reason (`useListWindow`): a folder is the
- * user's own filing and has no upper bound — an archive-style folder holds years of mail by
- * the thousands, and on the standalone desktop the mirror is the whole mailbox — so
- * `messages.map` would mount every row at once, which is the multi-second freeze History
- * already paid for and solved. One window over the flat unread-then-read ordering; the two group labels render
- * with the first row of their group, so they unmount when scrolled past — a bounded (two
- * label-heights) spacer drift, taken over per-row offset bookkeeping the rows do not need.
- *
- * Read-only in the foundation stage: no move verb, no rules door, no menu — later stages.
+ * Folder — one of the mailbox's OWN folders, opened from the rail (FOLDERS-SPEC.md §3). The composition is
+ * `TagView`'s — a lens read in place — with two deliberate differences: the list wears the standard NEW-FOR-YOU /
+ * EARLIER grouping (iteration 2, feedback 5), and an EMPTY folder is an answer, not an error — it exists on the
+ * server and holds no mail, and the empty state says exactly that.
+ */
+
+/**
+ * The list is windowed for History's measured reason (`useListWindow`): a folder has no upper bound, and on the
+ * standalone desktop the mirror is the whole mailbox. The two group labels render with the first row of their group,
+ * so they unmount when scrolled past — a bounded spacer drift, taken over per-row offset bookkeeping. Read-only in
+ * the foundation stage: no move verb, no rules door, no menu.
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -224,20 +213,14 @@ export function FolderView({
   });
 
   /**
-   * REVEAL A TARGET THE WINDOW HAS NOT MOUNTED — the Ohbox window's own rule, verbatim in
-   * spirit: the slice derives from `scrollTop`, so putting the row's offset in view mounts
-   * it, and the shell's locate pass then finds, centers and flashes it.
-   *
-   * Keyed on the target AND on whether the list holds it: on a cold restore the folder entity
-   * rides snapshot page 1 while an old target message can arrive on a LATER page, so the first
-   * run finds no index and a target-only dependency would never fire again. `locateFound`
-   * flips exactly once when the row enters the mirror, which re-runs the reveal without ever
-   * re-running on scroll or on ordinary list churn — the window's own fields are still read at
-   * fire time, so it cannot re-scroll the list under the user.
-   *
-   * The target also becomes the SELECTION, not merely a fallback: closing the reader clears
-   * the URL's `/m/<id>` tail (and with it `locateId`), and a fallback-only target would snap
-   * the wide layout's column back to the first row over a scroller still centered on the hit.
+   * Reveal a target the window has not mounted — the Ohbox window's own rule: the slice derives
+   * from `scrollTop`, so putting the row's offset in view mounts it, and the shell's locate pass
+   * finds, centers and flashes it. Keyed on the target AND on whether the list holds it: on a cold
+   * restore the folder entity rides snapshot page 1 while an old target arrives on a LATER page, so
+   * the first run finds no index and a target-only dependency would never fire again; `locateFound`
+   * flips exactly once when the row enters the mirror, and the window's fields are still read at
+   * fire time, so it cannot re-scroll under the user. The target also becomes the SELECTION: a
+   * fallback-only target would snap the wide layout's column back to the first row on reader close.
    */
   const locateIdx = locateId ? ordered.findIndex((m) => m.id === locateId) : -1;
   const locateFound = locateIdx >= 0;

@@ -1,50 +1,20 @@
 "use client";
 
 /**
- * DRAFTS — the messages you started and have not sent.
- *
- * ── THE DEFECT THIS CLOSES ──────────────────────────────────────────────────────────────
- *
- * The `drafts` table, its four routes and the `draft` sync entity have existed since the send
- * path was built. The compose form never used any of it: a half-written message lived in
- * `localStorage`, under one key, in one browser. That is enough to survive navigating away and a
- * reload — which is what it was for — and it means a draft is not on the account. Close the tab
- * on a phone and it is on the laptop's disk. Clear site data and it is gone. Open the mail
- * anywhere else and there is nothing to open.
- *
- * The compose form now autosaves to a real row (`compose-autosave.ts`), which is what gives this
- * list something to list. Every row here came off `/sync`, so it is the same list on every device
- * the account is open on.
- *
- * ── WHAT A ROW OFFERS, AND THE ONE IT DOES NOT ──────────────────────────────────────────
- *
- * Open, and Discard. There is deliberately no Send from here: sending is a decision taken while
- * looking at the message, with the recipients, the subject and the From line in front of you, and
- * a Send button in a list is a button whose blast radius is a row of preview text. Open, read it,
- * send it from the place that shows it to you.
- *
- * DISCARD IS TWO PRESSES and the second one is under a sentence, on `RulesView`'s reasoning: a
- * draft is unrecoverable — `DELETE /drafts/:id` is a real delete, not a soft one — and the only
- * copy of an unsent message is not something a mis-click may take.
- *
- * ── A REPLY OPENS AS A REPLY ────────────────────────────────────────────────────────────
- *
- * A draft with an `inReplyToMessageId` this device can resolve is a half-written answer to a
- * message the reader can see, and opening it in a standalone compose form would strip it of the
- * conversation it belongs to. The shell routes those back to the message's own inline editor;
- * everything else — a compose, or a reply whose parent this device has not synced — opens in
- * Compose. The decision is the shell's because only the shell can look in the mirror; this view
- * reports the press and says which kind of thing each row is.
- *
- * ── A SEND THAT DID NOT CONFIRM IS A ROW HERE, AND IT SAYS SO ───────────────────────────
- *
- * `draftsList` also surfaces `unverified` rows (SMTP threw and the Sent probe found nothing)
- * and `sending` rows old enough that no send can still be running. Both hold the only copy of
- * a message that may never have been delivered, and both used to be invisible on every surface
- * — the compose sheet's warning was the last anyone heard of them. The row states what is and
- * is not known, in the row, before any press; opening one recovers the text into a fresh
- * message (the shell's rule — the stranded row itself is never blindly re-sent), and Discard
- * works as on any draft.
+ * Drafts — the messages you started and have not sent. A half-written message used to live in `localStorage`, one
+ * key, one browser — enough to survive a reload, and invisible on every other device. The compose form now autosaves
+ * to a real row (`compose-autosave.ts`), every row here came off `/sync`, so it is the same list on every device. A
+ * row offers Open and Discard — deliberately no Send from a list: sending is a decision taken while looking at the
+ * message.
+ */
+
+/**
+ * Discard is two presses (`RulesView`'s reasoning): `DELETE /drafts/:id` is a real delete, and the only copy of an
+ * unsent message is not something a mis-click may take. A reply opens as a reply: a draft with a resolvable
+ * `inReplyToMessageId` routes back to the message's own inline editor (the shell decides — only it can look in the
+ * mirror). A send that did not confirm is a row here and says so: `draftsList` surfaces `unverified` rows and stale
+ * `sending` rows — both hold the only copy of a message that may never have been delivered; opening one recovers the
+ * text into a fresh message, never a blind re-send.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -259,22 +229,15 @@ export function DraftsView({
                       {t("discard")}
                     </button>
                   </div>
-                  {/* ── THE HELD ROW'S WAY OUT ────────────────────────────────────────────
-                      A send whose outcome could not be confirmed used to be a dead end: the
-                      note above asked the reader a question and there was nowhere to put the
-                      answer, so Discard refused the row for ever. These are that answer, and
-                      they are the only two things a reader is in a position to know — they
-                      looked in their Sent folder, and the message is either there or it is not.
-
-                      NOT offered for `interruptedNote` rows. `unverified` is the state the
-                      server can act on: `resolve` moves an `unverified` reservation and nothing
-                      else, so offering the verbs on a `sending` row would be a control whose
-                      press the server correctly ignores.
-
-                      Only the mutation is dispatched from here. Whether the row may then be
-                      discarded is not this component's judgement — it asks nothing about the
-                      hold and holds no send state; the shell's own predicate answers that on
-                      the next render, once the mirror says the row is an ordinary draft. */}
+                  {/* The held row's way out. A send whose outcome could not be confirmed used to
+                      be a dead end: the note asked a question with nowhere to put the answer, so
+                      Discard refused the row for ever. These are that answer — the only two things
+                      a reader can know: they looked in Sent, and the message is there or it is
+                      not. NOT offered for `interruptedNote` rows: `resolve` moves an `unverified`
+                      reservation and nothing else, so the verbs on a `sending` row would be a
+                      control the server correctly ignores. Only the mutation dispatches from here;
+                      whether the row may then be discarded is the shell's predicate on the next
+                      render, once the mirror says the row is an ordinary draft. */}
                   {d.status === "unverified" ? (
                     <HeldSendResolve draftId={d.id} onResolve={onResolve} />
                   ) : null}
