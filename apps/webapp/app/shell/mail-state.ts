@@ -1,12 +1,12 @@
 /**
- * What is happening to my mail — one derivation for every surface (the old
- * "Waiting for first sync" stayed up half an hour while mail arrived).
- * `lastSyncAt` cannot be a progress signal: SHARED (one UPDATE stamps every
- * mailbox a cycle served) and EARLY (stamped per cycle whatever the
- * backlog) — read exactly once, as `=== null`. The growing state keys on
- * the MIRROR GROWING; the one sound server stamp, `initial_import_completed_at`, is read as a bounded floor
- * ({@link importFloorSpeaks}). Pure, run once per shell: three surfaces
- * render its answer, none decides; the growth sampler is stateful.
+ * What is happening to my mail — one derivation for every surface. The old single sentence ("Waiting for first sync", keyed on `lastSyncAt`
+ * null) stayed up for half an hour while hundreds of messages arrived. `lastSyncAt` cannot be a progress signal: it is SHARED (one UPDATE
+ * stamps every mailbox a cycle served) and lands EARLY (stamped per cycle whether or not a backlog remains) — it is read exactly once, as `===
+ * null`, the one sound reading. The growing state keys on THE MIRROR GROWING — the client's own count rising across syncs. One server stamp is
+ * sound and is read as a floor: `initial_import_completed_at`, per-mailbox and late, also only as `=== null`; the floor is BOUNDED ({@link
+ * importFloorSpeaks}) because "not known to be finished" is not "in progress" — a mailbox went four days without a no-backlog cycle and the
+ * strip claimed a permanent import. The derivation is here, pure, run once per shell: three surfaces render its answer and none of them decides
+ * anything; the growth sampler is stateful, which is the other half of "run once".
  */
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -121,16 +121,16 @@ export function readerStandDown(m: {
      Losing an explanation costs a sentence; inventing one costs a false claim. */
   const consented = m.organizeConsentedAt !== null && m.organizeConsentedAt !== undefined;
   if (!holder && !consented) return null;
-  /* The release is its own answer, and the MARKER names it. A consented
-   * reader with nobody holding it used to report
-   * `organized_elsewhere_unknown` — a row arguing with its own claim
-   * button. The discriminator is the marker, not the absent holder: the
-   * per-cycle peek rewrites the holder columns all-null on an empty claim
-   * folder, so a genuine stand-down decays into the holder-less shape;
-   * `organizer_released_at` is written by the release alone and every
-   * promotion clears it (`standDownMemory`, server-side). A host too old to
-   * send the marker keeps the stand-down sentence — the cheaper error: a
-   * stale explanation costs a sentence, a false release costs a claim. */
+  /* The release is its own answer, and the MARKER is what names it. A
+   * consented reader with nobody holding it used to report `organized_elsewhere_unknown` over a mailbox nobody held — a row
+   * arguing with its own claim button. The discriminator is the marker, not
+   * the absent holder: the per-cycle peek rewrites the holder columns
+   * all-null on an empty claim folder, so a genuine stand-down decays into
+   * the holder-less shape on its own; `organizer_released_at` is written by
+   * the release and nothing else, and every promotion clears it (`standDownMemory` reached the same rule server-side). A host too old
+   * to send the marker keeps the stand-down sentence — the cheaper error:
+   * a stale explanation costs a sentence, a false release costs a claim
+   * about something the person did. */
   if (!holder && m.organizerReleasedAt !== null && m.organizerReleasedAt !== undefined) {
     return "released";
   }
@@ -140,25 +140,36 @@ export function readerStandDown(m: {
 }
 
 /**
- * This install's own claim is still on the mailbox while this install is not organizing it. A real state: an install
- * that stood down without its claim being removed leaves a record every OTHER install reads as "somebody holds this",
- * so they stand down too — and this one reads their absence the same way. Nothing organizes the mailbox, each side's
- * row says the other does; a claim seen this way had been sitting for three days. "Ours" is an identity `kind` cannot
- * answer: this asked `organizedBy.kind === "cloud"`, but the hosted organizer's id is SCOPED BY ENVIRONMENT (a
- * staging deployment pointed at a production mailbox is a different organizer) and the claim removal matches on that
- * id — so `cloud` is also what a SECOND Cloud deployment is, and the predicate answered "ours" over a claim this
- * install could not remove.
- */
-
-/**
- * A mailbox has one organizer AT A TIME; another Cloud install is foreign, exactly like a foreign desktop. So the
- * server compares the ids and sends the answer, and this reads it — the id itself is not on the wire (an internal
- * deployment name with no use on a screen), and re-deriving the comparison here would be the same rule in two
- * vocabularies, which is what went wrong the first time. The verb this unlocks is the ordinary release — the only
- * thing that takes a claim off a mailbox is the process holding it — so only REACHABILITY moves: the release is
- * reachable whenever this install's claim is on the mailbox, whatever the local stand-down state says, because that
- * state is exactly what is wrong here. Consent is asked for {@link readerStandDown}'s reason: a reader that never
- * agreed to be organized is a fresh mailbox, whose next screen is the consent statement and not a release.
+ * THIS INSTALL'S OWN CLAIM IS STILL ON THE MAILBOX WHILE THIS INSTALL IS NOT ORGANIZING IT.
+ *
+ * The two-sided belief, and a real state rather than a theoretical one: an install that stood down
+ * without its claim being taken out of the mailbox leaves a record every OTHER install reads as
+ * "somebody holds this", so they stand down too — and this one reads their absence the same way.
+ * Nothing organizes the mailbox, and each side's row says the other one does. A claim seen this way
+ * had been sitting for three days.
+ *
+ * ── "OURS" IS AN IDENTITY, AND `kind` CANNOT ANSWER IT ──────────────────────────────────────
+ *
+ * This asked `organizedBy.kind === "cloud"`, on the premise that a mailbox has one hosted
+ * organizer. It does not: the hosted organizer's id is SCOPED BY ENVIRONMENT precisely so that a
+ * staging deployment pointed at a production mailbox is a different organizer, and the claim
+ * removal matches on that id. So `cloud` is what a SECOND Cloud deployment is too, and the
+ * predicate answered "ours" over a claim this install could not remove — the hand-back was offered,
+ * the row was cleared, and the claim stayed in the folder.
+ *
+ * A mailbox has one organizer AT A TIME; another Cloud install is a foreign one, exactly like a
+ * foreign desktop. So the server compares the ids and sends the answer, and this reads it. The id
+ * itself is not on the wire — it is an internal deployment name with no use on a screen — and
+ * re-deriving the comparison here would be the same rule in two vocabularies, which is what went
+ * wrong the first time.
+ *
+ * The verb this unlocks is the ordinary release — the only thing that takes a claim off a mailbox is
+ * the process holding it — so the mechanism is unchanged and only its REACHABILITY moves. The rule
+ * is that the release is reachable whenever this install's claim is on the mailbox, whatever the
+ * local stand-down state says, because the stand-down state is exactly what is wrong here.
+ *
+ * Consent is asked for the reason {@link readerStandDown} asks it: a reader that never agreed to be
+ * organized is a fresh mailbox, whose next screen is the consent statement and not a release.
  */
 export function claimLeftBehind(m: {
   status?: string;
@@ -194,44 +205,57 @@ type OrganizerRow = Parameters<typeof readerStandDown>[0] & {
 };
 
 /**
- * What the Screener can do on this install — three answers, and they are not two. `organizer`: this install organizes
- * at least one live mailbox; every verb works as it always has. `pending`: every live mailbox belongs to somebody
- * else AND that somebody can take a decision made here and apply it on their next pass — the bar stays, a press is
- * real, it just does not land immediately, and the pane says who lands it. `blocked`: every live mailbox belongs to
- * somebody else and no decision has anywhere to go — the bar is WITHHELD and the pane names the way out. The third
- * state is not a disabled second, because a control wired to a refusal is worse than an absent one, with a receipt: a
- * released build drew the full bar on a mailbox it did not organize — the press said "filed", the sender left the
- * list, and forty-five seconds later was back marked "Not saved" with no sentence why.
- */
-
-/**
- * The refusal has to be visible BEFORE the press.
- */
-
-/**
- * The whole roster rather than one mailbox, because the Screener's queue does not say which mailbox each sender
- * belongs to. Account-scoped configuration is permitted where the account holds at least one organized mailbox, and a
- * Screener decision writes a rule, so it is inside that set — also the SAFE direction: with an organizer present
- * nothing is refused, so a decision that could have succeeded never is. The aggregation FLIPS for `pending`: every
- * live reader must accept decisions before the bar is offered, because one that does not is a sender whose press
- * would be refused. Permissive where refusing costs a decision that works; conservative where offering costs one that
- * does not. And `live` first, not cosmetic: a `disabled` row is a tombstone that KEEPS its role ({@link
- * readerStandDown}), and a mailbox removed last week must not decide whether the Screener works today.
- */
-
-/**
- * An empty roster answers `organizer`: "we cannot see" is not "somebody else has it".
+ * WHAT THE SCREENER CAN DO ON THIS INSTALL — three answers, and they are not two.
+ *
+ *  · `organizer` — this install organizes at least one live mailbox. Every verb works exactly as
+ *    it always has, and nothing on the pane changes.
+ *  · `pending` — every live mailbox belongs to somebody else, AND that somebody can take a
+ *    decision made here and apply it on their own next pass. The decision bar stays: a press is
+ *    real, it just does not land immediately, and the pane says who is going to land it.
+ *  · `blocked` — every live mailbox belongs to somebody else and no decision made here has
+ *    anywhere to go. The bar is WITHHELD and the pane names the way out.
+ *
+ * ── WHY THE THIRD STATE IS NOT A DISABLED VERSION OF THE SECOND ───────────────────────────────
+ *
+ * Because a control wired to a refusal is worse than an absent one, and this product has the
+ * receipt. A released build drew the full decision bar on a mailbox it did not organize: the press
+ * said "filed", the sender left the list and the count dropped — while nothing had happened on the
+ * server. Forty-five seconds later the sender was back, marked "Not saved", with no sentence
+ * saying why. The refusal has to be visible BEFORE the press, or it is not a refusal but a
+ * rollback with an explanation nobody reads.
+ *
+ * ── WHY THE WHOLE ROSTER RATHER THAN ONE MAILBOX ──────────────────────────────────────────────
+ *
+ * The Screener's queue does not say which mailbox each sender belongs to, so a per-mailbox answer
+ * has nothing to key on. Account-scoped configuration is permitted where the account holds at
+ * least one organized mailbox, and a Screener decision writes a rule, so it is inside that set.
+ * That is also the SAFE direction: with an organizer present nothing is refused, so a decision
+ * that could have succeeded never is.
+ *
+ * The aggregation FLIPS for `pending`, and deliberately: every live reader must accept decisions
+ * before the bar is offered, because one that does not is a sender whose press would be refused.
+ * Permissive where refusing would cost a decision that works; conservative where offering would
+ * cost a decision that does not.
+ *
+ * ── AND `live` FIRST, WHICH IS NOT COSMETIC ───────────────────────────────────────────────────
+ *
+ * A `disabled` row is a tombstone and KEEPS whatever role it had ({@link readerStandDown}'s own
+ * first line). Counting it would let a mailbox somebody removed last week decide whether the
+ * Screener works today. An empty roster answers `organizer` for the same reason a missing field
+ * does everywhere on this surface: "we cannot see" is not "somebody else has it".
  */
 export type ScreenerMode = "organizer" | "pending" | "blocked";
 
 /**
  * WHY A DECISION HAS NOWHERE TO GO — the finer answer under {@link ScreenerMode} `blocked`.
- * · `organizer_outdated` — somebody holds the mailbox and their build cannot take a decision from a reader. The way
- *   out is to take the mailbox over, or to update that install.
- * · `no_organizer` — nobody holds it at all. Nothing is filing this mailbox, which is a different sentence and a
- *   different remedy.
- * The same two words the decision door answers with, so the pane and the refusal cannot come to describe one state
- * differently.
+ *
+ *  · `organizer_outdated` — somebody holds the mailbox and their build cannot take a decision
+ *    from a reader. The way out is to take the mailbox over, or to update that install.
+ *  · `no_organizer` — nobody holds it at all. Nothing is filing this mailbox, which is a
+ *    different sentence and a different remedy.
+ *
+ * The same two words the decision door answers with, so the pane and the refusal cannot come to
+ * describe one state differently.
  */
 export type ScreenerBlockReason = "organizer_outdated" | "no_organizer";
 
@@ -285,43 +309,67 @@ export function screenerMode(facts: ReadonlyArray<OrganizerRow> | null): Screene
 }
 
 /**
- * THE HOLDER, FOR A SURFACE THAT ASKS A TWO-WAY QUESTION — `null` where this install organizes. Several panes ask
- * only "does this install organize these mailboxes, or read them?": the install's own About and Desktop rows, and the
- * screening preferences, whose stored values take effect on a takeover and take effect on nothing before one. Both
- * reader modes answer that question identically — a `pending` reader still moves no mail here — so narrowing at the
- * read is the honest shape rather than a lossy one. It exists so the narrowing is written ONCE. A surface that wrote
- * `role.mode !== "organizer"` inline would be one edit away from accidentally treating `pending` as organizing on the
- * day somebody adds a fourth mode.
+ * THE HOLDER, FOR A SURFACE THAT ASKS A TWO-WAY QUESTION — `null` where this install organizes.
+ *
+ * Several panes ask only "does this install organize these mailboxes, or read them?": the
+ * install's own About and Desktop rows, and the screening preferences, whose stored values take
+ * effect on a takeover and take effect on nothing before one. Both reader modes answer that
+ * question identically — a `pending` reader still moves no mail here — so narrowing at the read
+ * is the honest shape rather than a lossy one.
+ *
+ * It exists so the narrowing is written ONCE. A surface that wrote `role.mode !== "organizer"`
+ * inline would be one edit away from accidentally treating `pending` as organizing on the day
+ * somebody adds a fourth mode.
  */
 export function readerHolder(role: ScreenerRole): { name: string | null } | null {
   return role.mode === "organizer" ? null : { name: role.name };
 }
 
 /**
- * May these mailboxes be written to from here — the sentence to say, or `null` for yes. One predicate, two lanes: the
- * single-message verbs (Backspace/Delete) and the bulk verbs over a selection ask the same question about different
- * numbers of mailboxes; the single-message arm passes `[m.mailboxId]` deliberately, so a selection spanning two
- * mailboxes cannot take a route the single press has never been down. It takes the RAW roster because the only
- * resolved role here is `screenerMode`'s, and that is the wrong one: deliberately permissive account-wide, right for
- * the Screener, wrong for a message verb — an account organizing mailbox A and reading mailbox B answered
- * `organizer`, so Delete on B's mail was offered, held, hidden and dispatched, rolled back only by the server's
- * per-mailbox `assertOrganizerRole` (review, 2026-09-06).
- */
-
-/**
- * So nothing is aggregated: each named mailbox is judged on its own row, and the FIRST refusal supplies the sentence
- * — list order, stable across calls.
- */
-
-/**
- * An unknown roster refuses, because these verbs fail closed. Everywhere else an absent fact reads as `organizer` ("a
- * host that does not send the column has not demoted anybody"); a WRITE inverts that calculus — refusing an organizer
- * for the second the roster takes costs a sentence, permitting a reader moves mail on somebody else's server, and the
- * roster is `null` before the first probe and through an outage, so the window is real. Four things refuse: a PENDING
- * roster, an empty `mailboxIds`, an id no live row carries, and a row this install reads rather than organizes — the
- * first three take `say.unknown()`, which claims no particular install. A shell with NO PROBE permits (see the
- * `absent` arm below), and a `disabled` row is skipped as unknown: a tombstone KEEPS whatever role it had ({@link
- * readerStandDown}), and nothing should be written to a removed mailbox.
+ * MAY THESE MAILBOXES BE WRITTEN TO FROM HERE — the sentence to say, or `null` for yes.
+ *
+ * ══ ONE PREDICATE, TWO LANES ══════════════════════════════════════════════════════════════
+ *
+ * The single-message verbs (Backspace/Delete) and the bulk verbs over a selection ask the same
+ * question about different numbers of mailboxes, so they ask it here. The single-message arm
+ * passes `[m.mailboxId]` rather than a scalar, deliberately: one code path, and a selection
+ * spanning two mailboxes cannot take a route the single press has never been down.
+ *
+ * ══ WHY IT TAKES THE RAW ROSTER AND NOT A RESOLVED ROLE ═══════════════════════════════════
+ *
+ * Because the only resolved role on this surface is `screenerMode`'s, and it is the WRONG one.
+ * That derivation aggregates the whole roster and is deliberately permissive — "with an organizer
+ * present nothing is refused, so a decision that could have succeeded never is" — which is correct
+ * for the Screener, whose queue does not say which mailbox a sender belongs to and whose decision
+ * writes an ACCOUNT-scoped rule. Handing it a message verb produced a concrete defect: an account
+ * organizing mailbox A and reading mailbox B answered `organizer`, so Delete on B's mail was
+ * offered, held, hidden and dispatched, and only the server's own per-mailbox
+ * `assertOrganizerRole` rolled it back — the control-wired-to-a-refusal shape `ScreenerMode`'s
+ * third state was invented to end, reintroduced one verb over. Found by review, 2026-09-06.
+ *
+ * So nothing is aggregated. Each named mailbox is looked up in the roster and judged on its own
+ * row, and the FIRST one that refuses supplies the sentence — list order, so the answer is stable
+ * across repeated calls and a caller can put the mailbox it cares about first.
+ *
+ * ══ AND AN UNKNOWN ROSTER REFUSES, BECAUSE THESE VERBS FAIL CLOSED ════════════════════════
+ *
+ * Everywhere else on this surface an absent fact reads as `organizer` — "a host that does not send
+ * the column has not demoted anybody", and the dangerous default there is the other one, which
+ * would hang a claim banner over a mailbox this machine already organizes. A WRITE inverts that
+ * calculus: refusing an organizer for the second it takes the roster to arrive costs a sentence;
+ * permitting a reader moves mail on somebody else's server. The roster is `null` before the first
+ * probe answers and stays `null` through an outage, so the window is real, not theoretical.
+ *
+ * Four things therefore refuse: a roster still PENDING, an empty `mailboxIds`, an id no live row
+ * carries, and a row this install reads rather than organizes. The first three have no holder to
+ * name and take `say.unknown()`, which claims no particular install — the honest sentence when the
+ * answer is "not from here" and nothing more is known.
+ *
+ * A shell with NO PROBE AT ALL permits, and that is not a hole: see the `absent` arm below.
+ *
+ * A `disabled` row is skipped as unknown rather than read: it is a tombstone that KEEPS whatever
+ * role it had ({@link readerStandDown}'s own first line), and nothing should be written to a
+ * mailbox that has been removed.
  */
 export type RosterState =
   /** This shell was given no probe: the desktop, the demo. There is no roster and never will be. */
@@ -367,19 +415,29 @@ export function readerMoveRefusal(
 }
 
 /**
- * What changed about who organizes these mailboxes, and has not been acknowledged yet. One entry per mailbox whose
- * `organizerEventAt` is newer than its `organizerEventSeenAt`. Two instants rather than a flag is the whole
- * mechanism: once per change on every door (every client computes the same predicate, so an acknowledgement on the
- * phone removes the line in the browser); two changes between two reads collapse to one line describing where it
- * ended up (no queue to drain — the only statement still true); and an acknowledgement cannot suppress a later change
- * — it answers the change that stood when the press happened.
- */
-
-/**
- * Withheld: a tombstone (a removed mailbox is not news about organizing); an absent or unparseable instant ("this
- * build cannot tell" must not become a sentence about a machine that never changed hands); and a reader with no
- * holder nobody ever agreed to organize — a freshly connected mailbox, whose next screen is the agreement. Newest
- * change first, so a one-line slot carries the most recent.
+ * WHAT CHANGED ABOUT WHO ORGANIZES THESE MAILBOXES, AND HAS NOT BEEN ACKNOWLEDGED YET.
+ *
+ * One entry per mailbox whose `organizerEventAt` is newer than its `organizerEventSeenAt`. The
+ * comparison is the whole mechanism, and it is deliberately two instants rather than a flag:
+ *
+ *  · ONCE PER CHANGE, ON EVERY DOOR. Every client computes the same predicate from the same two
+ *    instants, so an acknowledgement on the phone removes the line in the browser on its next
+ *    poll. A per-client flag shows one change once per client, which is the same sentence three
+ *    times.
+ *  · TWO CHANGES BETWEEN TWO READS COLLAPSE TO ONE LINE. There is no queue to drain, so a mailbox
+ *    that changed hands twice while nobody looked produces one line describing where it ended up
+ *    — the only statement still true.
+ *  · AN ACKNOWLEDGEMENT CANNOT SUPPRESS A LATER CHANGE. It answers the change that stood when the
+ *    press happened, and nothing after it.
+ *
+ * ── WHAT IS WITHHELD, AND WHY EACH ────────────────────────────────────────────────────────────
+ *
+ * A tombstone: a mailbox somebody removed is not news about organizing. An absent or unparseable
+ * instant: "this build cannot tell" must not become a sentence about a machine that never changed
+ * hands. And a reader with no holder that nobody has ever agreed to organize — that is an ordinary
+ * freshly connected mailbox, and its next screen is the agreement, not a notice.
+ *
+ * Ordered newest change first, so a slot with room for one line carries the most recent.
  */
 export type OrganizerNoticeKind = "elsewhere" | "stopped" | "here" | "released";
 
@@ -439,23 +497,23 @@ function noticeKind(m: OrganizerRow): OrganizerNoticeKind | null {
      is the agreement rather than a notice about a handover that never happened. `=== null` and
      not `== null`, so an absent stamp (a build that cannot tell) says nothing. */
   if (m.organizeConsentedAt === null || m.organizeConsentedAt === undefined) return null;
-  /**
-   * NO HOLDER, CONSENTED: TWO STATES, AND ONLY THE MARKER TELLS THEM APART: This line answered `released` for both of
-   * them, and one of the two is not a release. The per-cycle peek rewrites all four holder columns and writes them
-   * ALL NULL when it finds an empty claim folder — so a stand-down whose winner was removed DECAYS into this exact
-   * shape, with nobody having released anything. Worse, the same write stamps `organizer_event_at` on a flip in
-   * either direction INCLUDING to and from NULL, so the decayed row arrives here with a fresh unacknowledged event
-   * and the line fires on it: "You stopped organizing … here", about something the person never did. So `released`
-   * needs the marker `readerStandDown` keys on, and the decayed row gets the sentence that is true of it — organizing
-   * here has stopped and nobody known holds it, which is `stopped` with no name.
-   */
-
-  /**
-   * That is the ONE open condition of the four: nothing files this mailbox, and mail accumulates unsorted while it is
-   * true, which is precisely the decayed row's situation and worth the emphasis the sentence carries.
-   * `organizerNotices` withholds the name for a row with no named holder already, so the unknown-holder wording is
-   * reached by the same rule that serves a stopped holder whose claim recorded no name.
-   */
+  /* ── NO HOLDER, CONSENTED: TWO STATES, AND ONLY THE MARKER TELLS THEM APART ────────────────
+   *
+   * This line answered `released` for both of them, and one of the two is not a release. The
+   * per-cycle peek rewrites all four holder columns and writes them ALL NULL when it finds an
+   * empty claim folder — so a stand-down whose winner was removed DECAYS into this exact shape,
+   * with nobody having released anything. Worse, the same write stamps `organizer_event_at` on a
+   * flip in either direction INCLUDING to and from NULL, so the decayed row arrives here with a
+   * fresh unacknowledged event and the line fires on it: "You stopped organizing … here", about
+   * something the person never did.
+   *
+   * So `released` needs the marker `readerStandDown` keys on, and the decayed row gets the
+   * sentence that is true of it — organizing here has stopped and nobody known holds it, which is
+   * `stopped` with no name. That is the ONE open condition of the four: nothing files this
+   * mailbox, and mail accumulates unsorted while it is true, which is precisely the decayed row's
+   * situation and worth the emphasis the sentence carries. `organizerNotices` withholds the name
+   * for a row with no named holder already, so the unknown-holder wording is reached by the same
+   * rule that serves a stopped holder whose claim recorded no name. */
   return m.organizerReleasedAt !== null && m.organizerReleasedAt !== undefined
     ? "released"
     : "stopped";
@@ -688,14 +746,14 @@ export interface MailboxFacts {
 }
 
 /**
- * Whether the forwarding-detection notice shows on a mailbox row (mail
- * 0078). Exported pure so the suite can bite each clause; in the shared
- * shell because two panes render it — one rule, or two surfaces tell one
- * owner two stories. Three gates: `inboundQuietSince` set (the worker's
- * pass is the predicate's single owner); the mailbox healthy ON SCREEN
- * (connected, unblocked, synced, FRESH — `now` is a parameter; health gates
- * hide, never reset); and not dismissed, or dismissed before this
- * episode's evidence (`dismissedAt < since`, via `Date.parse`, never string order).
+ * Whether the forwarding-detection notice shows on a mailbox row (mail 0078). Exported pure so the suite can bite each clause, and in the
+ * shared shell because two panes render it — one rule, or two surfaces tell one owner two stories. Three claims, each a gate:
+ *  · `inboundQuietSince` set — the worker's pass is the predicate's single
+ *    owner; nothing is re-derived here.  · the mailbox is healthy ON SCREEN (connected, unblocked, synced, and
+ *    FRESH — `now` is a parameter because a day-old cycle belongs to the
+ *    outage surfaces). Health gates HIDE, never reset: health back, notice
+ *    back, dismissal intact.  · not dismissed, or dismissed before this episode's evidence
+ *    (`dismissedAt < since`, via `Date.parse`, never string order).
  */
 export const INBOUND_QUIET_SHOW_FRESH_MS = 24 * 60 * 60 * 1000;
 
@@ -1161,11 +1219,11 @@ export const AWAITING_SLOW_MS = 600_000;
 
 /**
  * Why an outstanding filing is outstanding — the four situations one
- * sentence used to cover ("the server is catching up", on screen ten
- * minutes, twice; the count was right, the reason was not):
- *  · WORKING — the organizer has not reached this mailbox in its rotation.
- *  · WAITING — the server refused the move; deferred until    `next_attempt_at`, so nothing is catching up.
- *  · STUCK — refused more than once, or outstanding past a rotation.
+ * sentence used to cover ("the server is catching up", on screen for ten minutes, twice). The count was right; the reason was not:
+ *  · WORKING — the organizer has not reached this mailbox in its rotation
+ *    (a 60 s tick, one bounded turn per mailbox — a minute or two is normal).
+ *  · WAITING — the server refused the move; the row is deferred until
+ *    `next_attempt_at`, so nothing is catching up.  · STUCK — refused more than once, or outstanding past a rotation.
  *  · SOMEBODY ELSE FILES IT — a reader install: the reconcile pass is
  *    skipped, and "the server is catching up" is false by construction.
  */
@@ -1555,15 +1613,15 @@ function climb(input: MailStateInputs): MailState {
   const live = mailboxes.filter((m) => m.status !== "disabled");
 
   /* 4a. STOOD DOWN — the organizer lease is declining to serve it. The
-   * `live` filter drops every `disabled` row, so an account whose only
-   * mailbox was stood down read "No mailbox connected" minutes after
+   * `live` filter drops every `disabled` row, so an account whose only mailbox was stood down read "No mailbox connected" three minutes after
    * connecting one. This arm scans `mailboxes`, not `live` — "disabled" has
-   * two causes and `disabledReason` discriminates; an ordinary disconnect
-   * still reaches `noMailbox`. It outranks `blocked`: a sync block retries
-   * and clears itself, a stand-down is terminal from this side — between
+   * two causes and `disabledReason` is the discriminator; an ordinary disconnect must still reach `noMailbox`. It outranks `blocked`: a sync
+   * block retries and clears itself, a stand-down is terminal from this
+   * side (`loadEnabledMailboxes` filters the row off the roster) — between
    * two true sentences, the one that will not stop being true wins. Above
    * the growth states for `blocked`'s reason. `minutes` stays null: nothing
-   * timestamps a stand-down. */
+   * timestamps a stand-down, and `createdAt` would measure the wrong thing.
+   */
   /* `typeof === "string"` AND NOT `!== null`, and the difference is a caught defect. The field
    * is typed `string | null`, but a probe compiled before the field existed — a cached Cloud
    * bundle, a fixture that predates it — simply omits it, and `undefined !== null` is TRUE. That reading
@@ -1636,14 +1694,14 @@ function climb(input: MailStateInputs): MailState {
 
   // 5a. FILING — we have filed the mail and the server has not. The API
   // never opens IMAP: decisions write `folder_state` and the worker moves
-  // mail on its next cycle — a window nothing above this arm can see
-  // (still `connected`, not `blocked`, not stood down), so the ladder fell
-  // through to `quiet` while the backlog grew. Below `mailboxError` (a
-  // quarantined mailbox is the larger fact); above `importing` (decisions
-  // going OUT must not be buried under mail coming in).
-  // `typeof === "number"` and `> 0`: an absent field must produce silence,
-  // and "Filing 0 messages" is a sentence about nothing. Summed across live
-  // mailboxes; the address is named only when there is exactly one.
+  // mail on its next cycle, so there is a window where ohmail shows the
+  // mail filed and the user's server does not — and nothing above this arm
+  // can see it (still `connected`, not `blocked`, not stood down), so the
+  // ladder fell through to `quiet` while the backlog grew. Below `mailboxError` (a quarantined mailbox is the larger fact); above
+  // `importing` (decisions going OUT must not be buried under mail coming
+  // in). `typeof m.pendingMoves === "number"` and `> 0`: an absent field is
+  // "this build cannot tell" and must produce silence, and "Filing 0 messages" is a sentence about nothing. Summed across live mailboxes;
+  // the address is named only when there is exactly one.
   const filing = live.filter((m) => typeof m.pendingMoves === "number" && m.pendingMoves > 0);
   const outstanding = filing.reduce((n, m) => n + (m.pendingMoves ?? 0), 0);
   // And WHY they are outstanding, when the server can say (mail 0097): the
@@ -1735,15 +1793,15 @@ function climb(input: MailStateInputs): MailState {
   }
 
   // 2b. THE IMPORT FLOOR — the server has not stamped this mailbox's first
-  // import done. A first import leaves a PARTIAL mailbox for minutes, and
-  // the growth arm is blind at the edges: a tab opening onto it declares a
-  // mailbox with a hole complete. `initial_import_completed_at` is read as
-  // a floor, `=== null` never `== null` (an older server omits the field,
-  // degrading to growth-only). `some`, not `every`, judged per mailbox — a
-  // young mailbox keeps its floor while a four-day sibling releases. The
-  // floor is bounded ({@link importFloorSpeaks}); `mirrored > 0` confines
-  // it to the partial-mailbox case (`awaiting` owns the empty one);
-  // `clock: true` is load-bearing — the release is driven by time alone.
+  // import done. A first import leaves the server holding a PARTIAL mailbox
+  // for minutes, and the growth arm is blind at the edges: a tab opening onto the partial state sees a settled mirror and declares a mailbox
+  // with a hole in it complete. `initial_import_completed_at` is the one stamp this module reads — per-mailbox and late — read as a floor, and
+  // `=== null`, never `== null`: an older server omits the field (`undefined`), degrading to growth-only rather than a false import.
+  // `some`, not `every`, judged per mailbox — a five-minute-old mailbox
+  // keeps its absolute floor while a four-day sibling releases. The floor is bounded ({@link importFloorSpeaks}): unbounded, it announced a
+  // permanent import over a finished mirror. `mirrored > 0` confines it to
+  // the partial-mailbox case (`awaiting` owns the empty one); `clock: true`
+  // is load-bearing here — the release is driven by elapsed time alone.
   if (mirrored > 0 && connected.some((m) => importFloorSpeaks(m, growth, sync, now))) {
     return { ...QUIET, key: "importing", clock: true, count: mirrored, total: totalIfAhead };
   }

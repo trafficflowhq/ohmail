@@ -296,19 +296,13 @@ const PILE_CHORD_LABEL: Record<string, "shortcuts.goOhbox" | "shortcuts.goReads"
 const OWN_ADDRESSES_BOOT_SCOPE = "own-addresses";
 
 /**
- * The memo key for {@link ShellInner}'s `ownAddresses` — see the comment there for why the addresses
- * and not the facts row.
- *
- * Sorted and lower-cased so the same set of mailboxes in a different order, or with a server that
- * changed the case it echoes, is one key.
- *
- * JSON RATHER THAN A JOIN CHARACTER, and this comment used to argue for the opposite while the
- * code did something worse than either: it joined on a literal NUL byte, which made `file` report
- * this whole source as `data` and every grep-family tool skip it in silence — the trap CLAUDE.md
- * names, introduced by the very comment claiming to have avoided it. `keymap.tsx`'s shape key
- * settled this question already and its reasoning is not re-derived here: JSON escapes its own
- * delimiters, so no two distinct lists can produce one string, and every byte of the result is
- * printable.
+ * The memo key for {@link ShellInner}'s `ownAddresses` — see there for why
+ * the addresses and not the facts row. Sorted and lower-cased so the same
+ * set in a different order, or with different server casing, is one key.
+ * JSON, never a join character: a literal NUL join once made `file` report
+ * this source as `data` and every grep-family tool skip it in silence.
+ * JSON escapes its own delimiters, so no two distinct lists can produce
+ * one string, and every byte of the result is printable.
  */
 function ownAddressKey(
   facts: ReadonlyArray<{ address: string }> | null,
@@ -374,69 +368,14 @@ export type OpenTarget =
   | { kind: "reader"; id: string };
 
 /**
- * @param narrow   the reading column is `display:none` — under 900px, `app.css`.
- * @param rowFor   the Screener row that speaks for this sender, or null when none is held. A
- *                 null answer routes the hit to the READER, not to a rowless Screener queue —
- *                 see the screener arm.
- * @param placeOf  the consent cutline's presentation map, or undefined when there is no
- *                 partition (demo, desktop, or before `GET /consent` lands). See below.
- * @param holds    does that pile actually hold this message? Optional; absent means "no pile
- *                 knowledge", which routes exactly as this function did before it existed — the
- *                 state a harness mounted without a shell is in. See below.
- *
- * ── PRESENTATION BEFORE PHYSICAL FOLDER, OR THE HIT LANDS IN THE WRONG PILE ──────────────
- *
- * The consent cutline SHOWS a message somewhere other than its folder without moving it on the
- * server: an active-undecided sender's INBOX mail presents in the Screener, a dormant one's in
- * History, and a decided sender's Screener mail presents in the Ohbox. `SearchView` already
- * reads `consentView.placeOf` to label a hit's chip with where it lives — but opening the hit
- * routed by `m.folder`, so a message presenting in the Screener was navigated to the Ohbox,
- * where its row does not exist and the locate flash times out against a pile it was never in.
- * The reported "brings me to the mail in the screener but does not select it" was the SAME hit
- * on the day its folder happened to agree with its presentation; this is the day it does not.
- *
- * So consult `placeOf` first. It is total over the mirror (`consent-cutline.ts`), so a `get`
- * that returns `undefined` means "no partition considered this message" — demo/desktop, or a
- * folder outside the presented set — and only THEN is the physical folder the honest answer.
- * `null` is History, which is pile-less by construction: a message there belongs to no list, so
- * the reader is the only surface that can show it — the same choice `HistoryView`'s own `onOpen`
- * makes, and the reason there is no "history" list-row to locate.
- *
- * ── AND PARKED MAIL IS PILE-LESS IN THE SAME SENSE ────────────────────────────────────────
- *
- * @param parked `parkedMessageIds` — mail the reader filed under Answer Later, Set aside or
- * Resurface. Since a mail is in exactly one pile, no Ohbox group lists these rows
- * (`selectors.ts#OhboxView`), so the `ohbox` arm below would name a surface that cannot show the
- * message — the one thing this function's type exists to prevent. Without this arm, clicking a
- * search hit for a message you had answered-later navigated to the Ohbox, found no row, selected
- * nothing and flashed nothing: the identical dead end the `placeOf` paragraph above describes,
- * reached through triage state instead of through consent.
- *
- * Answered with the READER for the reason History is: the surface that needs no list. Routing to
- * the pile itself would be better and is deliberately not done here — `OpenTarget` has no triage
- * arm, the Triage view shows one message per pile behind a segmented control rather than a
- * locatable list, and inventing that navigation is a larger change than the hole needs.
- *
- * ── AND THE PILE HAS TO ACTUALLY HOLD IT, WHICH `placeOf` CANNOT ANSWER ───────────────────
- *
- * The Screener arm has always asked this question (`rowFor`), and `parked` above is the same
- * question asked of one specific reason a row is absent. `holds` is the GENERAL form of it, put to
- * the very lists the views render, and there are two ways for a message to need it.
- *
- * The reachable one is the ARCHIVE. Search runs two passes and the second is `GET /search` over
- * the whole corpus, which returns mail this device's mirror does not hold at all (`SearchView`
- * marks those hits, and the browser's mirror is a window over a server that keeps everything —
- * see `older-mail.ts`). `placeOf` is built from the mirror, so it says nothing about such a row
- * and the hit routes by the folder on the wire item: the shell then navigates to Reads, sets a
- * cursor to an id no card and no row carries, and the reader is left looking at a pile with the
- * message they asked for nowhere in it. The Ohbox arm is the same — `selectedOhbox` is a `find`
- * over the pile, so it resolves to null and the reading column shows nothing.
- *
- * The second is any disagreement between a presentation map and the list a selector actually
- * built. It should not happen; the point of asking is that it does not have to be trusted.
- *
- * `holds` is that question, and the answer for a message no pile holds is the same one History and
- * a parked row get: the reader, in place. Search must open what it found.
+ * Where a hit opens. Presentation before physical folder: the consent cutline SHOWS a message somewhere other
+ * than its folder (`placeOf`, total over the mirror), so routing by `m.folder` navigated to a pile the row was
+ * never in; `undefined` = no partition considered it (demo, desktop, folder outside the presented set) and only
+ * then is the folder honest; `null` = History, pile-less, opened in the reader. `parked` mail is pile-less the
+ * same way (no Ohbox group lists it) and opens in the reader too. `rowFor` = the Screener row that speaks for
+ * the sender, else the reader. `holds` asks whether the pile's own list actually holds the id — an archive
+ * search hit can name a message no local row exists for — and a message no pile holds opens in the reader, in
+ * place. Search must open what it found.
  */
 export function openTargetFor(
   m: EngineMessage,
@@ -506,28 +445,13 @@ export function openTargetFor(
 }
 
 /**
- * WHAT THE READER SHOWS — the mirror's own row, else the row the opener carried in with it.
- *
- * A named unit for the reason `makeHydrateBody` below is one: it used to be
- * `reader.get("message", readerFor) ?? null` inline, and that `?? null` is the difference between
- * a message opening and a click doing nothing at all.
- *
- * `GET /search` answers over the whole archive while this device's mirror is a window over it
- * (`older-mail.ts`, and the engine prunes what nothing is looking at), so a search hit can name a
- * message no local row exists for — `SearchView` marks those hits on screen. For one of those the
- * mirror answers `undefined`, the reader's `open` prop was therefore false, and the sheet never
- * came up: the reported "clicking it does not open it", in the one arm that has no pile to blame.
- *
- * The fallback is keyed on the ID, so a held row can never be shown for a different open. What it
- * renders is exactly what the archive returned — sender, subject, date, and `bodyOf`'s honest
- * `snippet` state — because a body cannot be fetched for a message the mirror has no row for
- * (`OhmailEngine.bodyPlan` skips it). Opening what search found is the requirement; a snippet is
- * the fidelity this device has for a row it does not hold, and it says so rather than showing an
- * empty sheet.
- *
- * The mirror WINS whenever it has the row: it carries the optimistic overlay and this device's own
- * triage and flag state, while the carried row is a snapshot from before whatever the reader just
- * did — the same precedence `SearchView`'s merge keeps for the same reason.
+ * What the reader shows — the mirror's own row, else the row the opener carried in. `GET
+ * /search` answers over the whole archive while the mirror is a window over it, so a hit can
+ * name a message with no local row: the mirror answered `undefined`, the reader's `open` prop
+ * was false, and the sheet never came up ("clicking it does not open it"). The fallback is
+ * keyed on the id, renders exactly what the archive returned (a body cannot be fetched for a
+ * rowless message, so `snippet` says so). The mirror wins whenever it has the row — it carries
+ * the overlay and this device's own triage and flag state.
  */
 export function readerMessageFor(
   readerFor: string | null,
@@ -541,20 +465,14 @@ export function readerMessageFor(
 }
 
 /**
- * THE BODY-HYDRATION CALLBACK, as a factory whose one job is watchable: FORWARD the caller's
- * options to the engine.
- *
- * This lived inline as `(messageId) => engine.hydrateBody(messageId)` — dropping the second
- * argument. Every consumer's type is `(id, opts?: { retry?: boolean }) => void` and four of them
- * (`MessagePane`, `ScreenerView`, `ReadsView`, `ReceiptsView`) pass `{ retry: true }` from a
- * human pressing "try again". `OhmailEngine.hydrateBody` re-asks a FAILED body ONLY under that
- * flag (`engine.ts` — an automatic trigger must never re-poll a server that refused, because a
- * retry loop nobody asked for is API cost with nobody behind it), so with the flag dropped every
- * retry button in the app was inert: a held message whose
- * body 500'd could not be recovered without reloading the tab, and in the Screener that is a
- * consent decision left standing on a one-line snippet. The declared type accepted `opts` and the
- * implementation ignored them — the "type-level guard that silently does not guard", so it is a
- * named unit now, with `test/hydrate-body-retry.test.ts` watching the forward.
+ * The body-hydration callback, as a factory whose one job is watchable:
+ * FORWARD the caller's options to the engine. Inline it was
+ * `(id) => engine.hydrateBody(id)` — dropping `{ retry: true }` from four
+ * consumers' retry buttons, and the engine re-asks a FAILED body only
+ * under that flag, so every retry button was inert: a body that 500'd
+ * could not be recovered without a reload. The declared type accepted
+ * `opts` and the implementation ignored them — a named unit now, with
+ * `test/hydrate-body-retry.test.ts` watching the forward.
  */
 export function makeHydrateBody(
   engine: { hydrateBody: (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => unknown },
@@ -628,35 +546,24 @@ function tagsOnAll(reader: EntityReader, ids: string[]): string[] {
 }
 
 /**
- * THE RAIL, AND THE TAG-COLLAPSE STATE THAT BELONGS TO IT.
- *
- * `tagsOpen` used to be `AppShell` state, and it caused the ~5s tag collapse two ways at once:
- *
- *  1. It re-rendered the WHOLE shell. Toggling a rail group has nothing to do with the mail, but
- *     `setTagsOpen` sat on the top-level component, so every toggle re-rendered the active view —
- *     on a full mailbox that is the hundreds-of-rows list, and that reconciliation is the wait.
- *  2. It did not even respond. `open: tagsOpen` / `onOpenChange: setTagsOpen` were baked into
- *     `AppShell`'s `groups` `useMemo`, whose deps did NOT list `tagsOpen`, so the controlled
- *     `open` prop was frozen — the group only "caught up" when some unrelated change happened to
- *     recompute that memo, which is what made the collapse feel like it lagged by seconds.
- *
- * Holding the state HERE fixes both. A toggle re-renders only this component and `RailNav`, never
- * `AppShell` and never the view beside it; and `open` is injected fresh on every render, so there
- * is no memo to go stale. Persistence stays the shell's job because `RailNav` is shared with the
- * Desktop, which has no `localStorage` — `usePersistedFlag` is SSR-safe and its post-mount read
- * now re-renders only the rail. The `groups` handed in still carry `defaultOpen`; this injects the
- * live `open`/`onOpenChange` onto whichever group owns the Tags sub-list.
+ * The rail, and the tag-collapse state that belongs to it. `tagsOpen` as `AppShell` state
+ * caused the ~5s tag collapse twice over: the toggle re-rendered the whole shell (hundreds of
+ * list rows), and the controlled `open` was baked into a `groups` memo whose deps did not list
+ * it, so the group only caught up when something unrelated recomputed the memo. Holding the
+ * state here re-renders only this component and `RailNav`, and `open` is injected fresh per
+ * render. Persistence stays the shell's job (`RailNav` is shared with the desktop, which has no
+ * localStorage); `usePersistedFlag` is SSR-safe and its post-mount read re-renders only the
+ * rail.
  */
 /**
- * WHERE THE "GET OHMAIL FOR DESKTOP" PROMPT MAY APPEAR — the signed-in browser, and only there.
- *
- * `desktop` is the shell's own platform tell: the desktop app injects `desktopSection` (the pane
- * only a native process can have), so its presence IS "this build is the desktop app" — the same
- * signal the Settings nav already reads. A `desktopSection` is never handed to the Cloud shell, so
- * the prompt cannot show inside the app it is inviting people to install. `demo` is excluded
- * because the demo is a shop window, not an account, and the shell only ever renders for the demo
- * or a validated session — so `!demo` in a browser is a signed-in reader. Pure and exported so the
- * platform branch is a value a test can drive, not a JSX condition it has to reach through a shell.
+ * Where the "Get ohmail for desktop" prompt may appear — the signed-in
+ * browser, only. `desktop` is the shell's platform tell: the desktop app
+ * injects `desktopSection` (the pane only a native process can have), so
+ * its presence IS "this build is the desktop app" — the prompt cannot show
+ * inside the app it invites people to install. `demo` is excluded because
+ * the demo is a shop window, and the shell renders only for the demo or a
+ * validated session, so `!demo` in a browser is a signed-in reader. Pure
+ * and exported so a test drives the branch as a value.
  */
 export function showDesktopCta(opts: { demo: boolean; desktop: boolean }): boolean {
   return !opts.demo && !opts.desktop;
@@ -682,17 +589,14 @@ export const DESKTOP_CTA_DISMISSED = "ohmail.desktopCtaDismissed";
 export const CURSOR_HINT_MS = 2400;
 
 /**
- * A subtle, dismissible line at the foot of the rail: "Get ohmail for desktop", linking to the
- * download section of the site (a new tab, so the reader's mailbox stays open).
- *
- * CONTROLLED — the dismissal state lives in `AppShell` (`usePersistedFlag`, the rail's own
- * idiom), not in here, and that placement is a fix rather than a preference: when this
- * component owned the flag it answered its dismissal by rendering `null`, but `AppShell` had
- * already judged the rail's `footer` slot non-empty for its sake — so `RailNav` kept a
- * `.rail-mail` box (`padding: 14px 8px 0`) around nothing, a dead band under the Command row
- * on every dismissed install (measured live at 14px, on top of the rail's own 18px bottom
- * padding). The component that decides whether the slot exists must be the one that knows whether
- * anything will be in it.
+ * A subtle, dismissible line at the foot of the rail: "Get ohmail for
+ * desktop", linking to the site's download section in a new tab.
+ * CONTROLLED — the dismissal state lives in `AppShell`
+ * (`usePersistedFlag`), and that placement is a fix: when this component
+ * owned the flag it answered dismissal by rendering `null`, but `AppShell`
+ * had already judged the footer slot non-empty for its sake, leaving a
+ * dead padded band under the Command row on every dismissed install. The
+ * component that decides whether the slot exists must know what is in it.
  */
 export function DesktopCta({ href, label, dismissLabel, onDismiss }: {
   href: string;
@@ -719,18 +623,14 @@ export function DesktopCta({ href, label, dismissLabel, onDismiss }: {
 
 function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }: RailNavProps & {
   /**
-   * THE PAIRED DESKTOP'S STANDING LINE — the THIRD member of the footer slot, beside the account
-   * address and the desktop prompt.
-   *
-   * It is in this slot and not the sync slot because of what the two slots MEAN. The sync slot's
-   * every state clears itself; this one is where the rail says whose mail this is, and on a paired
-   * desktop whose mail this is is "that computer's copy" — so whether that computer is answering
-   * belongs to the same line. `rail.css` carries the full argument beside `.rail-host`.
-   *
-   * It also makes the slot non-empty on its own: `RailNav` keeps a padded `.rail-mail` box around
-   * any truthy footer, so the decision about whether the slot exists has to be made where the last
-   * of its contents is known — which is here, and is why `fullFooter` counts three things now
-   * rather than two.
+   * The paired desktop's standing line — the third member of the footer
+   * slot, beside the account address and the desktop prompt. In this slot
+   * and not the sync slot because of what the two mean: the sync slot's
+   * every state clears itself; this one is where the rail says whose mail
+   * this is, and on a paired desktop that is "that computer's copy" —
+   * whether that computer answers belongs to the same line (`rail.css`,
+   * beside `.rail-host`). It also makes the slot non-empty on its own,
+   * which is why `fullFooter` counts three things now.
    */
   hostConnection?: HostConnection;
   /**
@@ -869,41 +769,25 @@ export function AppShell({
    */
   mirrorFreshness?: FreshnessProbe;
   /**
-   * "IS THE COMPUTER THIS WINDOW READS THROUGH ANSWERING?" — the desktop's seam and nobody
-   * else's, on `mirrorFreshness`'s rule and for its reason: this shell is compiled into a browser
-   * tab too, and a browser tab is never paired to anybody's laptop.
-   *
-   * PRESENT MEANS THERE IS SOMETHING WRONG TO SAY. Absent covers a browser tab, a desktop on
-   * either of the other doors, AND a paired desktop whose host is answering normally — three
-   * different situations that must render identically, because a line permanently in the rail
-   * saying "reachable" would make the one state worth noticing a change of wording rather than
-   * the arrival of a warning. The window decides; see `host-connection.ts` for the shape and for
-   * the sixty-second grace that keeps a fresh pairing quiet.
-   *
-   * IT ALSO SILENCES THE SYNC STRIP'S `stale` ARM. That arm says "As of {time} · catching up",
-   * with a spinner and a travelling track — an activity claim, and on a paired desktop with the
-   * other machine off nothing is catching up. The ladder still DERIVES `stale` (the settled
-   * clock, the holdings sentence and the beat all depend on it); only the sentence is withheld,
-   * and this line says the true thing in its place.
+   * "Is the computer this window reads through answering?" — the desktop's seam only; a browser
+   * tab is never paired to anybody's laptop. Present means there is something wrong to say;
+   * absent covers a browser tab, the other desktop doors, AND a healthy paired host — three
+   * situations that must render identically, or the one state worth noticing becomes a change of
+   * wording instead of the arrival of a warning (`host-connection.ts` has the shape and the
+   * sixty-second grace). It also silences the sync strip's `stale` sentence — "catching up" is
+   * an activity claim, and with the other machine off nothing is catching up; the ladder still
+   * derives `stale`, only the sentence is withheld.
    */
   hostConnection?: HostConnection;
   /**
-   * THE HOST'S OWN CEILING ON ATTACHMENT BYTES IN ONE SEND — what the pipeline a send from this
-   * window rides can carry, declared by the host because only the host knows its transport.
-   *
-   * The form-side twin of the `sendSurfaceMaxTotalBytes` every send handler's service bag
-   * declares, with the same three states (`composeAttachCap` holds the rule): ABSENT is a host
-   * that has not declared itself — every browser tab, whose sends ride the hosted API's
-   * serverless request body — and resolves to the strict constant; `null` is the desktop's
-   * STANDALONE door, where the compose form, the send handler and the SMTP dial are one process
-   * and the only real ceiling is the sending mailbox's own `SIZE` announcement; a number is a
-   * host naming its own transport's limit.
-   *
-   * NOT passed on the desktop's CLOUD door, deliberately: that door forwards
-   * `POST /drafts/:id/send` verbatim to the hosted API, so its sends stand under exactly the
-   * body limit the constant expresses, and an uncapped declaration there would promise
-   * attachments the forwarded send must refuse. See `DesktopGate` for the declaration and
-   * `apps/desktop/test/desktop-attach-cap.test.ts` for the guard on both halves.
+   * The host's own ceiling on attachment bytes in one send — declared by the host because only
+   * the host knows its transport. The form-side twin of `sendSurfaceMaxTotalBytes`, same three
+   * states (`composeAttachCap` holds the rule): absent = an undeclared host (every browser tab)
+   * and resolves to the strict constant; `null` = the desktop's standalone door, where the only
+   * real ceiling is the mailbox's own SIZE announcement; a number = a host naming its limit. NOT
+   * passed on the desktop's cloud door — it forwards sends verbatim to the hosted API, so an
+   * uncapped declaration would promise what the forward must refuse (`DesktopGate`;
+   * `desktop-attach-cap.test.ts` guards both halves).
    */
   sendSurfaceMaxTotalBytes?: number | null;
   /**
@@ -941,37 +825,25 @@ export function AppShell({
    */
   aboutSection?: ReactNode;
   /**
-   * THE PANE THAT ONLY A SHELL WITH A NATIVE PROCESS BEHIND IT CAN HAVE.
-   *
-   * Which door this install came in by, which mailbox it opens, and the three actions that
-   * change either. Every one of those is a call to the desktop shell — a native command or a
-   * request down the pipe it holds — so the code cannot live here: this file is compiled into
-   * the desktop app and into a browser tab, and the browser tab has no shell to call. Injected
-   * for the same reason {@link accountSection} is, and it is the mirror image of that one:
-   * absent on the web because there is no shell, where Account is absent on the desktop
-   * because there is no account.
-   *
-   * It carries its own `label`, like the sent-mail review's entry does, because the words
-   * belong to the desktop's vocabulary and this shared file does not own them.
-   *
-   * NOT gated on `demo`, unlike the four panes above it, and that is the whole difference: the
-   * pane describes the INSTALL rather than an account, so it is as true of a window showing
-   * sample mail as of one showing somebody's own. A `demo ? undefined : …` here would withhold
-   * it from the surface it exists for on exactly the launches where somebody is most likely to
-   * go looking for it.
+   * The pane only a shell with a native process behind it can have: which
+   * door this install came in by, which mailbox it opens, and the actions
+   * that change either — every one a call to the desktop shell, which this
+   * file cannot make (it also compiles into a browser tab). Injected like
+   * {@link accountSection} and its mirror image: absent on the web (no
+   * shell), where Account is absent on the desktop (no account). Carries
+   * its own `label` — the words are the desktop's vocabulary. NOT gated on
+   * `demo`: the pane describes the INSTALL, not an account, and is as true of a window showing sample mail.
    */
   desktopSection?: { label: string; node: ReactNode };
   /**
-   * SETTINGS → DEVICES — pairing this account's mail onto other devices, injected in whichever
-   * shape the host has: the desktop's host mode (serve this install's mail over the user's own
-   * tailnet, gated by the desktop gate to the standalone door), or the Cloud client's
-   * server-side ceremony (mint a pairing QR, list and revoke the signed-in devices, gated on
-   * `/hello` announcing `features.pairing`).
-   *
-   * DEMO-MASKED below like the other account panes, and no longer exempt: the exemption's
-   * premise ("a browser tab passes nothing") ended when the Cloud client grew its node, and an
-   * unmasked seam let `?demo=1` grow the ONE account pane whose every verb mints or revokes a
-   * real credential.
+   * Settings → Devices — pairing this account's mail onto other devices,
+   * injected in whichever shape the host has: the desktop's host mode
+   * (serve this install's mail over the user's own tailnet) or the Cloud
+   * client's server-side ceremony (mint a pairing QR, list and revoke
+   * devices, gated on `/hello` announcing `features.pairing`).
+   * Demo-masked like the other account panes, no longer exempt: the
+   * exemption's premise ended when the Cloud client grew its node, and an
+   * unmasked seam let `?demo=1` grow the one pane whose every verb mints or revokes a real credential.
    */
   devicesSection?: ReactNode;
   /**
@@ -984,46 +856,34 @@ export function AppShell({
    */
   defaultMailSection?: ReactNode;
   /**
-   * WHERE THE OPERATING SYSTEM'S NOTIFICATION ANSWER COMES FROM, when it is not this page's.
-   *
-   * ABSENT means the browser's own reader, which is right in a tab: `Notification.permission` IS
-   * the OS answer there. The DESKTOP window holds no notification permission and cannot acquire
-   * one — its shell asks the platform on first use — so it injects a host that says so, and the
-   * pane grows one sentence about who has the last word.
-   *
-   * Threaded rather than read here, and `SettingsView` has documented the arrangement since the
-   * prop was added; what was missing was a host to inject and a wire to inject it on. Measured
-   * cost of the gap: a master switch that could not be turned on, with no sentence anywhere on
-   * the pane. See `apps/desktop/src/notify-host.ts`.
+   * Where the operating system's notification answer comes from, when it
+   * is not this page's. Absent means the browser's own reader
+   * (`Notification.permission` IS the OS answer in a tab). The desktop
+   * window holds no notification permission and cannot acquire one — its
+   * shell asks the platform on first use — so it injects a host that says
+   * so, and the pane grows one sentence about who has the last word.
+   * Measured cost of the gap: a master switch that could not be turned on,
+   * with no sentence anywhere. See `apps/desktop/src/notify-host.ts`.
    */
   notificationHost?: NotificationHost;
   /**
-   * THE SCREENER PANE'S OWN CONTROLS, WHEN THE HOST HAS ITS OWN — the desktop's, and nobody else's.
-   *
-   * The same seam as {@link screenerSuggest} and for the same reason. This shell builds
-   * `ScreeningSection` for the Screener pane, and every control in it reads and writes through
-   * `app/api-client` — which is not part of the desktop build. There the section renders NOTHING:
-   * each control asks for its value, is refused, and draws nothing, so the pane existed in the nav
-   * and was blank when opened. A host with its own transport hands in its own section instead.
-   *
-   * Present ⇒ this shell's own section is not built. Never both.
+   * The Screener pane's own controls, when the host has its own — the
+   * desktop's, and nobody else's. This shell's `ScreeningSection` reads and
+   * writes through `app/api-client`, which is not in the desktop build:
+   * there every control asked, was refused, and drew nothing, so the pane
+   * existed in the nav and was blank when opened. A host with its own
+   * transport hands in its own section. Present ⇒ this shell's own section
+   * is not built. Never both.
    */
   screeningSection?: ReactNode;
   /**
-   * THE SCREENER'S SUGGEST CONTROL, WHEN THE HOST HAS ITS OWN — the desktop's, and nobody else's.
-   *
-   * The control this shell builds asks a server what a set of senders would cost and shows the
-   * number before it offers a button, because a hosted account spends an allowance. A standalone
-   * install spends nothing: the model belongs to whoever installed it, reached over a channel this
-   * file cannot use. Its control is therefore a different control rather than the same one with
-   * different words, and it is handed in — the same seam as {@link desktopSection}, for the same
-   * reason, with the two extra capabilities a Settings pane does not need.
-   *
-   * `absorb` is what makes an injected control possible at all: there is exactly one suggestion
-   * overlay on screen and the rows, the count, "Apply all" and Enter-accept all read it, so a host
-   * that answers senders its own way lands them there or they are answers nothing can display.
-   *
-   * Present ⇒ this shell's own control is not offered. Never both.
+   * The Screener's suggest control, when the host has its own — the desktop's. The control this
+   * shell builds asks a server what a set of senders would cost, because a hosted account
+   * spends an allowance; a standalone install spends nothing and reaches its own model over a
+   * channel this file cannot use — a different control, handed in ({@link desktopSection}'s
+   * seam). `absorb` is what makes an injected control possible: there is exactly one suggestion
+   * overlay and all its consumers read it, so a host lands answers there or nothing can display
+   * them. Present ⇒ this shell's own control is not offered.
    */
   screenerSuggest?: (ctx: {
     /** Waiting senders with no answer yet, in queue order — what a purchase would buy. */
@@ -1040,51 +900,14 @@ export function AppShell({
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
   /**
-   * THE AWAY RESPONDER'S TWO CALLS, WHEN THE HOST HAS ITS OWN WIRE — the desktop on its HOSTED
-   * door, and nobody else.
-   *
-   * ── WHY A TRANSPORT AND NOT A SECTION, WHICH IS HOW EVERY OTHER DESKTOP SEAM HERE WORKS ─────
-   *
-   * Because the responder must not have two implementations. `screeningSection` and
-   * `screenerSuggest` are handed over as NODES because the desktop's versions of those are genuinely
-   * different controls — a standalone install's model is not a hosted account's allowance, and a
-   * pane about a local engine is not a pane about a subscription. The responder is the same control
-   * over the same hosted row: one `PUT /away-responder`, whose `updatedAt` IS the enablement episode
-   * the worker's at-most-once record is filed under. A second copy of this control would be a second
-   * definition of when an episode begins, and the visible failure — a correspondent answered twice —
-   * would show up in somebody's mailbox rather than in a suite. So only the wire is injected.
-   *
-   * ── WHY THE DESKTOP NEEDS ONE AT ALL ────────────────────────────────────────────────────────
-   *
-   * `apiConfigured()` is FALSE in every desktop build, both doors: `apps/desktop/vite.config.ts`
-   * aliases `app/api-client` to a stub whose value exports refuse, so the gate below withheld this
-   * control from the hosted door as well as the standalone one. That was right for one of them and
-   * wrong for the other. A desktop install on the HOSTED door is mirroring a real account: its
-   * window cannot open a socket (`connect-src 'none'`), but its mail engine holds the account's
-   * session, serves no `/away-responder` locally, and forwards it to Cloud with the bearer. The row
-   * that is written is the hosted account's own, and the hosted worker sends from it — exactly as
-   * for a browser tab.
-   *
-   * ── THE STANDALONE DOOR GETS IT TOO NOW, AND THIS PARAGRAPH USED TO SAY THE OPPOSITE ───────
-   *
-   * It said the standalone install "still gets nothing", that this was "a product boundary rather
-   * than a missing transport", and that "an always-on replier cannot live in an application that
-   * only runs while its window is open". The first two are simply no longer true and the third was
-   * an argument for a WEAKER PROMISE, not for no feature: replies go out while ohmail is open on
-   * that computer, the pane says exactly that, and mail that arrives overnight is answered on the
-   * next launch's first drain.
-   *
-   * What made it possible is that the sender is no longer a pass in the hosted worker's private
-   * module map. It is `runAwayResponderPass` in `@trafficflow/services`, which the desktop engine
-   * already bundles, so the standalone door runs the SAME implementation with its own SMTP dial —
-   * the sync pipeline's one-implementation rule, applied to replying.
-   *
-   * The two-responders objection was real and is answered structurally rather than by withholding
-   * the door: exactly one install organizes a mailbox at a time (the lease), the pass's candidate
-   * query JOINs `organizer_role='organizer'`, and the reservation is a UNIQUE on (account, message).
-   * A reader answers nobody, and two runners racing one message produce one reply.
-   *
-   * Absent ⇒ the hosted client, which is what a browser tab has, gated on `autoOptIn.supported`.
+   * The away responder's two calls, when the host has its own wire. A transport and not a section: the responder must
+   * not have two implementations — one `PUT /away-responder` whose `updatedAt` IS the enablement episode the worker's
+   * at-most-once record files under; a second copy would be a second definition of when an episode begins, visible as a
+   * correspondent answered twice. The desktop needs it because `apiConfigured()` is false in every desktop build; the
+   * hosted door forwards with the bearer. The standalone door runs the SAME implementation (`runAwayResponderPass` in
+   * `@trafficflow/services`) with its own SMTP dial — replies go out while ohmail is open, the pane says exactly that.
+   * Two-runners safety is structural: the lease, the organizer JOIN, and a UNIQUE reservation on (account, message).
+   * Absent ⇒ the hosted client, gated on `autoOptIn.supported`.
    */
   awayTransport?: AwayTransport;
   /**
@@ -1099,63 +922,36 @@ export function AppShell({
    */
   awayIsLocal?: boolean;
   /**
-   * THE OTHER COMPUTER THIS INSTALL READS THROUGH, when it is a paired desktop — the away
-   * responder's third promise, on `awayIsLocal`'s seam and for its reason.
-   *
-   * `awayIsLocal` says WHICH MACHINE has to be awake for a reply to go out, as a boolean, which
-   * had exactly two answers while there were two doors. A paired desktop is a third: the row and
-   * the drain are the HOST's, so the machine to leave running is neither ours nor "the service".
-   * Naming it is the content of the sentence. Absent everywhere else — the browser and the two
-   * older doors — and `AwayResponderRow` prefers it over `awayIsLocal` when both arrive, which
-   * `awayDoorFor` makes unreachable in this app.
+   * The other computer this install reads through, when it is a paired
+   * desktop — the away responder's third promise. `awayIsLocal` says which
+   * machine must be awake for a reply to go out, as a boolean; a paired
+   * desktop is a third answer — the row and the drain are the HOST's, so
+   * the machine to leave running is neither ours nor "the service", and
+   * naming it is the content of the sentence. Absent everywhere else;
+   * `AwayResponderRow` prefers it over `awayIsLocal` when both arrive,
+   * which `awayDoorFor` makes unreachable in this app.
    */
   awayOnHost?: string | null;
   /**
-   * THE PROFILE IMPORT'S THREE CALLS, WHEN THE HOST HAS ITS OWN WIRE — the desktop, on BOTH of
-   * its doors, and nobody else.
-   *
-   * The same seam as {@link awayTransport}, injected for the same reason — `apiConfigured()` is
-   * false in every desktop build, so the shell's own check never ran there — and with the
-   * sharper irony: the STANDALONE desktop is the tier whose whole story is "connect the mailbox
-   * and the settings it travelled with are waiting", and it was the one tier that never asked.
-   *
-   * Unlike the responder, this wire is live on the standalone door too, and the difference is a
-   * fact about where the routes are served rather than a policy choice: the confirm flow's three
-   * verbs are mounted on the LOCAL engine's own table and answered out of the store on this
-   * machine (the mailbox dial rides the sealed credential), so a standalone install asking is an
-   * install asking ITSELF. On the HOSTED door the engine forwards the three routes to the
-   * account with the bearer, exactly as it forwards the responder's two. `profileImportDoorFor`
-   * in the desktop's `doors.ts` is where the door rule lives, as a pure function a test drives.
-   *
-   * A TRANSPORT and not a section, for {@link awayTransport}'s reason: the card, the counts, the
-   * fingerprint-as-consent and the durable dismissal must have ONE implementation — a second
-   * copy would be a second definition of what "answered" means, and the failure (the same
-   * document asking twice, or applying content nobody was shown) lands in somebody's settings
-   * rather than in a suite. Absent ⇒ the hosted client, which is what a browser tab has.
+   * The profile import's three calls, when the host has its own wire — the desktop, on BOTH doors
+   * ({@link awayTransport}'s seam; `apiConfigured()` is false in every desktop build, so the shell's
+   * own check never ran there). Live on the standalone door too, a fact about where the routes are
+   * served: the confirm flow's three verbs are mounted on the local engine's own table, so a
+   * standalone install asking is an install asking itself; the hosted door forwards with the bearer
+   * (`profileImportDoorFor` in the desktop's `doors.ts` holds the rule). A transport, not a section:
+   * the card, counts, fingerprint-as-consent and durable dismissal must have ONE implementation.
+   * Absent ⇒ the hosted client, which is what a browser tab has.
    */
   profileImportTransport?: ProfileImportTransport;
   /**
-   * `GET /consent` AND ITS FOUR WRITES, WHEN THE HOST HAS ITS OWN WIRE — the desktop on its
-   * HOSTED door, and nobody else.
-   *
-   * The same seam as {@link awayTransport} and injected for the same reason, with a wider blast
-   * radius: `apiConfigured()` is false in every desktop build, so this shell's `GET /consent`
-   * never ran there, `consent.known` was false for the life of the process, and FOUR controls
-   * were withheld from an install that is mirroring a real account — the dormancy dial, the
-   * auto-suggest opt-in, auto-unsubscribe, and (through `consent.locale`) the account's own
-   * choice of interface language. Every one of those is stored on the hosted account and reached
-   * by forwarding, exactly as the away responder is.
-   *
-   * A TRANSPORT and not a set of sections, for the reason {@link awayTransport} gives and one
-   * sharper: `autoSuggest` is the only flag in this product that authorises SPENDING, and the
-   * spender (`useScreenerSuggestions` above) reads it off this one hook. A host that wrote the
-   * flag its own way would leave that copy stale, and the direction that costs money is OFF —
-   * revoked in Settings, still authorised in the Screener.
-   *
-   * The STANDALONE door hands in nothing, and that is a product boundary rather than a missing
-   * wire: it has no account, so there is no row to read and nowhere to put a window, a watermark
-   * or a consent instant. Absent ⇒ `consent.standalone`, and every control above is withheld
-   * structurally rather than offered dead.
+   * `GET /consent` and its four writes, when the host has its own wire — the desktop's hosted door. Injected for
+   * {@link awayTransport}'s reason with a wider blast radius: with `apiConfigured()` false, `consent.known`
+   * stayed false for the life of the process and FOUR controls were withheld from an install mirroring a real
+   * account — the dormancy dial, auto-suggest, auto-unsubscribe, and the account's interface language. A
+   * transport, not sections, and one reason is sharper: `autoSuggest` is the only flag that authorises SPENDING,
+   * and the spender reads it off this one hook — a host writing the flag its own way would leave that copy stale
+   * in the direction that costs money. The standalone door hands in nothing: no account, no row —
+   * `consent.standalone`, every control withheld structurally rather than offered dead.
    */
   consentTransport?: ConsentTransport;
   /**
@@ -1168,22 +964,14 @@ export function AppShell({
    */
   olderBodyWire?: OlderBodyWire;
   /**
-   * THE JUNK WINDOW'S WIRE, when the host has its own — the desktop, on BOTH doors. The shared
-   * shell's default is the browser's Cloud client (decided inside `junk-window.ts`, which owns
-   * the api-client import and answers `supported` with `apiConfigured()`); the desktop aliases
-   * that client to a refusing stub, so without this wire the Screener's third segment stayed the
-   * flag-off Spam pile there even with "Use folders" on. Same transport-not-a-control rule as
-   * {@link olderBodyWire}: the segment, its states, its two rescue verbs, the search-append and
-   * the sweep offer are `junk-window.ts`'s; only the bytes' route is injected. On the desktop's
-   * hosted door the engine forwards these routes to the account (Junk is never mirrored, so the
-   * mirror has nothing to answer them from); on its standalone door the flag in front of the
-   * segment cannot be STORED (§17), so the control stays withheld by the same gate that withholds
-   * it in a browser with the flag off.
-   *
-   * "Cannot be stored" and not "has no consent row to live in", which is what this line said: the
-   * row exists on that door and is served — `consentRoutes` are on `localRoutes` — and the
-   * standalone install keeps its own screening window in it. One FIELD is missing, because that
-   * engine mounts no folder verb; see {@link ConsentTransport.foldersStorable}.
+   * The junk window's wire, when the host has its own — the desktop, both doors. The shared
+   * shell's default is the browser's Cloud client (`junk-window.ts` owns the import); the
+   * desktop aliases that client to a refusing stub, so without this wire the Screener's third
+   * segment stayed the flag-off Spam pile. Same transport-not-a-control rule as {@link
+   * olderBodyWire}: only the bytes' route is injected. The hosted door forwards (Junk is never
+   * mirrored); on the standalone door the flag in front of the segment cannot be STORED — one
+   * field is missing (§17), see {@link ConsentTransport.foldersStorable} — so the control stays
+   * withheld by the same gate as a flag-off browser.
    */
   junkWire?: JunkWire;
   /**
@@ -1194,23 +982,14 @@ export function AppShell({
    */
   trashWire?: TrashWire;
   /**
-   * THE SCREENER'S TWO SPEND CALLS, WHEN THE HOST HAS ITS OWN WIRE — the desktop on its HOSTED
-   * door, and nobody else.
-   *
-   * Distinct from {@link screenerSuggest}, which hands in a whole CONTROL, and the two are not
-   * alternatives: that one is the Screener's own purchase ladder, whose desktop version already
-   * exists (`CloudSuggest`). This is the wire the SHELL's copy of the machinery runs on, and it
-   * is needed for the part `CloudSuggest` structurally cannot do — `autoOptIn.supported`, which
-   * is `wire.configured()` and which gates the Settings opt-in row. `CloudSuggest` says so
-   * itself: *"the setting that authorises it is written from a Settings row this app does not
-   * render"*. This is that row's wire.
-   *
-   * Supplying it also lets the shell's overlay HYDRATE from `GET /screener` — the answers the
-   * account has already paid for — which on the desktop had never been read, so a relaunch lost
-   * every suggestion until it was bought again.
-   *
-   * Absent ⇒ the hosted client, which is what a browser tab has, and `false` on a standalone
-   * install: no account, no ledger, no spend control.
+   * The Screener's two spend calls, when the host has its own wire — the
+   * desktop's hosted door. Distinct from {@link screenerSuggest}, which
+   * hands in a whole control: this is the wire the SHELL's machinery runs
+   * on, needed for the part `CloudSuggest` structurally cannot do —
+   * `autoOptIn.supported` gates the Settings opt-in row. Supplying it also
+   * lets the overlay hydrate from `GET /screener` — answers the account
+   * already paid for, which a desktop relaunch used to lose. Absent ⇒ the
+   * hosted client; `false` on standalone: no account, no ledger, no spend.
    */
   suggestWire?: SuggestWire;
   /**
@@ -1224,34 +1003,25 @@ export function AppShell({
    */
   firstRun?: FirstRunHost;
   /**
-   * A COMPOSE THE HOST WAS HANDED FROM OUTSIDE — the desktop's mailto seam, and nobody else's.
-   *
-   * When the operating system delivers a `mailto:` click to the desktop shell, the parsed
-   * fields arrive here and the shell below seeds the compose form with them, exactly the way
-   * `writeTo` and `openDraft` seed it — same release-first rule, same chip formatting — and
-   * then navigates to compose. `onMailtoDraftSeeded` is called once the form holds the fields,
-   * so the host can drop its copy; a draft left in this prop would otherwise re-seed on every
-   * remount, over whatever the person had typed since.
-   *
-   * The FIELDS are already plain bounded text (the desktop's `mailto.ts` parser is the one
-   * place a mailto is read, and its contract is stated there); this shell treats them as what
-   * they are — text for text inputs. The body is PLAIN text and is seeded as such (`html: ""`),
-   * `openDraft`'s rule.
+   * A compose the host was handed from outside — the desktop's mailto seam. The OS delivers a
+   * `mailto:` click to the desktop shell, the parsed fields arrive here, and the shell seeds
+   * the compose form the way `writeTo` and `openDraft` do — same release-first rule, same chip
+   * formatting — then navigates to compose. `onMailtoDraftSeeded` is called once the form holds
+   * the fields so the host drops its copy; a draft left in the prop would re-seed on every
+   * remount over whatever was typed since. Fields are plain bounded text (the desktop's
+   * `mailto.ts` is the one place a mailto is read); the body seeds as plain text (`html: ""`,
+   * `openDraft`'s rule).
    */
   mailtoDraft?: ComposePrefill | null;
   onMailtoDraftSeeded?: () => void;
   /**
-   * HOW MANY PIECES OF MAIL ARE WAITING FOR YOU — published, for a surface outside the page.
-   *
-   * The number the Ohbox's rail row already shows, handed out so a shell that has a dock icon
-   * can put it on one. It is deliberately that number and not a sum of every count in the rail:
-   * the Screener's waiting senders are people to decide about rather than mail to read, and a
-   * badge that counted them would ask for attention the product spent two years learning not to
-   * ask for.
-   *
-   * A callback and not a return value, because the only consumer is a native shell and the shell
-   * is not in this tree. Absent everywhere else, which is every browser tab — nothing on the web
-   * has an icon to write on.
+   * How many pieces of mail are waiting — published for a surface outside
+   * the page (a dock icon). Deliberately the Ohbox rail number and not a
+   * sum of every rail count: the Screener's waiting senders are people to
+   * decide about rather than mail to read, and a badge counting them would
+   * ask for attention the product spent two years learning not to ask for.
+   * A callback, not a return value — the only consumer is a native shell
+   * outside this tree. Absent in every browser tab.
    */
   onUnread?: (unread: number) => void;
 }) {
@@ -1304,21 +1074,14 @@ export function AppShell({
 }
 
 /**
- * The mail-state provider, hoisted ABOVE `ShellInner`.
- *
- * It used to be the outermost element of `ShellInner`'s own return, which meant the shell
- * PROVIDED the mailbox facts and could not read them. That was fine while the only consumers
- * were leaves — the strip, the Ohbox's empty pane, the injected Settings rows — and stopped
- * being fine the moment the From line needed the same facts on the WIRE: `sendReply` and the
- * compose plan are built in `ShellInner`, and a fact the shell cannot see is a fact the mutation
- * cannot carry. Moving the plan down into the views instead would have split the rule across
- * two components and left `sendReply` — whose signature is frozen behind `message-chrome.tsx` —
- * with no mechanism at all.
- *
- * `mirrored` moved up with it because the provider needs it and nothing else did.
- *
- * Nothing else changed position: `MessageChromeProvider` is still inside `ShellInner`, and the
- * three existing consumers read a context rather than a position, so none of them notices.
+ * The mail-state provider, hoisted above `ShellInner`. As the outermost
+ * element of `ShellInner`'s return, the shell PROVIDED the mailbox facts
+ * and could not read them — fine while consumers were leaves, wrong once
+ * the From line needed the facts on the wire: `sendReply` and the compose
+ * plan are built in `ShellInner`, and a fact the shell cannot see is one
+ * the mutation cannot carry. `mirrored` moved up because the provider
+ * needs it. Nothing else moved; the existing consumers read a context,
+ * not a position.
  */
 function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxProbe; freshnessProbe?: FreshnessProbe; children: ReactNode }) {
   const engine = useEngine();
@@ -1412,51 +1175,26 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * as it once was — so the From line and the mutation it describes come from one source.
    */
   /**
-   * `settled` travels to the piles as a PROP and not through `useMailState()` at their top
-   * level, and that is a hard constraint rather than a preference: `test/ohbox-read-state.test.ts`
-   * mounts `OhboxView` under `KeymapProvider` alone, and `useMailState` THROWS without a
-   * provider by design (`MailStateProvider`'s header argues why a resting default would be
-   * worse). A hook at the top of the view would take that harness down on mount, in every
-   * branch, whether or not the list was empty.
-   *
-   * It is still derived exactly once, up here, from the one binding, which is the rule the
-   * mail-state ladder established. A prop is how a derivation reaches a component that must be mountable alone.
+   * `settled` travels to the piles as a PROP, not through `useMailState()`
+   * at their top level — a hard constraint: `test/ohbox-read-state.test.ts`
+   * mounts `OhboxView` under `KeymapProvider` alone, and `useMailState`
+   * throws without a provider by design. A hook at the view's top would
+   * take that harness down on mount in every branch. Still derived exactly
+   * once, up here, from the one binding; a prop is how a derivation
+   * reaches a component that must be mountable alone.
    */
   const {
     mailboxes: facts, rosterProbed, state: mailState, refresh: refreshFacts,
   } = useMailState();
   /**
-   * ── EVERY FILING DISPATCH GOES THROUGH HERE, AND BEFORE THIS THERE WAS NO SUCH PLACE ──────
-   *
-   * A filing decision writes `folder_state` and returns; the organizer performs the IMAP move on
-   * its next turn. The strip reports that outstanding work from `GET /mailboxes`, which
-   * `MailStateProvider` reads every 30 s and ON NOTHING ELSE — not on a mutation, and not on the
-   * decision that created the outstanding row. So the sentence a person saw immediately after
-   * filing something was derived from facts read up to thirty seconds before they pressed
-   * anything, with a live clock running over that stale figure.
-   *
-   * ── WHY A HELPER RATHER THAN A CALL AT EACH DOOR ──────────────────────────────────────────
-   *
-   * Because there are five doors and they have five shapes: this handler's move and its delete,
-   * the selection's bulk move, the bulk screening plan's loop, and the Screener's own deferred
-   * dispatch. Adding a refresh at four of them is "fix the path you are looking at and not the one
-   * beside it" by construction, and the sixth door would arrive without one. One helper, and
-   * `test/filing-refresh-on-decision.test.tsx` pins every dispatch of a filing verb to it.
-   *
-   * ── AFTER THE SETTLE, NEVER AT THE PRESS ──────────────────────────────────────────────────
-   *
-   * The re-read is chained onto the mutation's promise. Firing it at the press would read the
-   * facts BEFORE the decision reached the server and report the pre-decision number — a refresh
-   * that makes the staleness worse rather than better, and one that would look like it worked.
-   *
-   * A REJECTION STILL REFRESHES, deliberately: a mutation the server refused rolls its overlay
-   * back, and what the mailbox actually owes is then exactly what a fresh read says. Swallowing
-   * the rejection here would be wrong for a different reason, so the promise is returned and the
-   * callers that need the answer (the delete's toast) keep chaining on it.
-   *
-   * `refreshFacts` is safe in a dependency list because `MailStateProvider` now returns it through
-   * a ref with a constant identity — it used to be rebuilt on every poll, which would have made
-   * every handler below it rebuild 120 times an hour. That note is at the provider.
+   * Every filing dispatch goes through here. A filing decision writes `folder_state`; the strip
+   * reports the outstanding work from `GET /mailboxes`, which is polled every 30 s and on
+   * nothing else — so the sentence after a press was up to thirty seconds stale. A helper rather
+   * than a call at each door because there are five doors with five shapes
+   * (`test/filing-refresh-on-decision.test.tsx` pins every filing dispatch to it). Chained AFTER
+   * the settle, never at the press — a press-time read reports the pre-decision number. A
+   * rejection still refreshes: the rolled-back overlay leaves exactly what a fresh read says.
+   * `refreshFacts` has a constant identity (a ref at the provider).
    */
   const fileAndRefresh = useStableCallback(<T,>(dispatch: Promise<T>): Promise<T> => {
     dispatch.then(refreshFacts, refreshFacts);
@@ -1473,22 +1211,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const reader = engine.read();
   const toast = useToast();
   /**
-   * DELETE, WITH THE WINDOW IN WHICH IT HAS NOT HAPPENED YET — see `delete-undo.ts` for why an
-   * Undo on this verb can only be a delayed commit.
-   *
-   * Declared HERE, above `presented`, because the held ids are what that projection subtracts:
-   * the row has to leave every pile on the press, and the mutation that would do that is the
-   * thing the window is postponing.
-   *
-   * THE ROSTER RIDES A REF, AND THE REF IS WRITTEN IN AN EFFECT. Two reasons, and the second one
-   * was a review finding: the polled facts are derived below this line (they feed several
-   * memos), so a value could not be passed in; and assigning during render publishes a value a
-   * concurrent render may yield and discard, which would expose a role that never committed to a
-   * key handler that did. An effect runs only on the render that commits.
-   *
-   * The refusal asks about THIS MESSAGE'S MAILBOX and never about the account — see
-   * `readerMoveRefusal`, and the defect that made it necessary. `[mailboxId]` rather than a
-   * scalar so the single-message arm and the bulk arm are one code path.
+   * Delete, with the window in which it has not happened yet — see `delete-undo.ts` for why
+   * Undo on this verb is a delayed commit. Declared here, above `presented`, because the held
+   * ids are what that projection subtracts: the row leaves every pile on the press, and the
+   * mutation that would do that is what the window postpones. The roster rides a ref written in
+   * an EFFECT: assigning during render publishes a value a concurrent render may discard — a
+   * role that never committed, exposed to a key handler that did. The refusal asks about THIS
+   * MESSAGE'S mailbox, never the account (`readerMoveRefusal`); `[mailboxId]` so single and
+   * bulk arms are one code path.
    */
   /* THE STATE, not the array. `mailboxes: null` collapses "no probe on this shell" (the desktop,
      the demo) with "the probe has not answered", and those are opposite answers for a write gate
@@ -1529,26 +1259,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     ),
   });
   /**
-   * RESTORE, HELD THE SAME WAY THE DELETE IS — a SECOND window over the same machinery.
-   *
-   * Two windows and not one queue with two verbs in it, because the two hold different things:
-   * a held delete subtracts from `presented` (the row has to leave every pile), and a held
-   * restore subtracts from the TRASH PAGE, which is off-mirror and has no reader to wrap. One
-   * queue would publish one held set that both surfaces would have to filter by, and each would
-   * then be hiding the other's rows.
-   *
-   * The refusal is the same one: a restore writes a desired folder and the reconciler turns it
-   * into a real IMAP move, so on a mailbox another install organizes it is two organizers moving
-   * one person's mail. `readerMoveRefusal` over the same roster ref, asked at the press.
-   *
-   * The dispatch is `restoreDispatch` over `engine.restoreFromTrash` — NOT `engine.mutate`,
-   * which would reject a mutation over a tombstoned row (its local effects are empty by
-   * definition). `delete-undo.ts`'s header carries that whole argument.
-   *
-   * The TOAST names the server's answer and not the row's: the origin folder can disappear
-   * between the page and the press, so `restoreTo` is read off the response. That is why the
-   * copy's `restored` sentence is resolved per press below rather than once here — see the
-   * `restore` arm of `onMessageAction`.
+   * Restore, held the same way the delete is — a second window over the same machinery. Two
+   * windows, not one queue: a held delete subtracts from `presented`, a held restore subtracts
+   * from the TRASH page, which is off-mirror — one shared held set would make each surface hide
+   * the other's rows. The refusal is the same organizer question, asked at the press. The
+   * dispatch is `restoreDispatch` over `engine.restoreFromTrash` — NOT `engine.mutate`, which
+   * rejects a mutation over a tombstoned row (`delete-undo.ts` has the argument). The toast
+   * names the SERVER's answer (`restoreTo` off the response): the origin folder can disappear
+   * between the page and the press.
    */
   const restoring = useDeleteUndo({
     verb: "restore",
@@ -1685,27 +1403,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const syncStatus = useSyncStatus();
   /**
-   * THE ACCOUNT'S LANGUAGE WINS OVER THIS DEVICE'S — the whole of the account-tied half, and it
-   * rides the `GET /consent` this shell already makes rather than a request of its own.
-   *
-   * The two preferences exist for different reasons and both are needed. `localStorage` is what a
-   * STANDALONE install has (there is no account to store anything on) and what the SIGN-IN screen
-   * has (there is no account yet). The account column is what makes "my mail is in German" true on
-   * a machine that has never seen this account — a borrowed laptop, a second browser, a fresh
-   * install. So when both exist the account is the authority, which is this effect.
-   *
-   * `adoptLocale`, never `setLocale`: on the Cloud client the latter WRITES the account, so adopting
-   * a value that came FROM the account would PATCH it back on every boot of every tab — and a
-   * failed write of a value nobody changed would reject into a control nobody touched. See
-   * `LocaleControls.adoptLocale`.
-   *
-   * Null means the account has no preference and the device's choice stands, which is why there is
-   * no `else` arm here: this effect can only ever move the language TOWARDS what an account said.
-   * `adoptLocale` is a no-op when the two already agree, so the steady state is one comparison per
-   * consent read and nothing else.
-   *
-   * Absent provider (`locale === null`) is the demo and the unit tests, which have no locale
-   * machinery at all — nothing to adopt into, and no error worth raising.
+   * The account's language wins over this device's — riding the `GET /consent` this shell
+   * already makes. Both preferences are needed: localStorage is what a standalone install and
+   * the sign-in screen have; the account column is what makes "my mail is in German" true on a
+   * machine that has never seen this account. `adoptLocale`, never `setLocale` — the latter
+   * WRITES the account, and adopting a value that came FROM the account would PATCH it back on
+   * every boot of every tab. Null means the account has no preference and the device stands (no
+   * `else` arm: this effect only moves the language TOWARDS an account's answer). Absent
+   * provider = demo and unit tests; nothing to adopt into.
    */
   const localeControls = useAppLocale();
   const accountLocale = consent.locale;
@@ -1716,20 +1421,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     void adoptLocale(accountLocale);
   }, [adoptLocale, accountLocale, activeLocale]);
   /**
-   * THE ACCOUNT'S FACE, ADOPTED THE SAME WAY — riding the same `GET /consent` read, into the
-   * ThemeProvider's `adoptAccountFace` (which also mirrors it to storage so the NEXT boot's
-   * init script stamps it pre-paint).
-   *
-   * `adoptAccountFace`, never a write: the value came FROM the account; PATCHing it back on
-   * every boot is the loop `adoptLocale`'s docstring warns about. TWO differences from the
-   * locale effect above, both deliberate:
-   *
-   *  · null IS adopted once the answer is known. For locale, null means "leave the device
-   *    alone" and adopting it would be a no-op with an else-arm smell. For the face, adoption
-   *    of null clears the device's MIRROR of a previous account answer — without it, an
-   *    account whose choice went away would keep re-skinning this device from a stale copy.
-   *  · the device's own explicit pin still outranks what is adopted here — the provider's
-   *    resolution order, which is what the "only this device" scope promised.
+   * The account's face, adopted the same way — same `GET /consent` read, into
+   * `adoptAccountFace` (which mirrors it to storage so the next boot's init script stamps it
+   * pre-paint). Never a write: PATCHing back a value that came from the account is the loop
+   * `adoptLocale` warns about. Two deliberate differences from the locale effect: null IS
+   * adopted once known — it clears the device's mirror of a previous account answer, else a
+   * revoked choice keeps re-skinning this device from a stale copy; and the device's own
+   * explicit pin still outranks what is adopted (the provider's resolution order).
    */
   const adoptAccountFace = theme.adoptAccountFace;
   const accountThemeFace = consent.themeFace;
@@ -1753,28 +1451,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     adoptAccountFace(accountThemeFace);
   }, [adoptAccountFace, accountThemeFace, themeFaceKnown, consentStandalone]);
   /**
-   * BEING WOKEN, RECONCILED AT BOOT — the sign-in counterpart of the sign-out revoke.
-   *
-   * Sign-out drops this browser's push row and tells the worker to stop drawing. The channels in
-   * `localStorage` and the OS permission both SURVIVE it deliberately — they are a per-install
-   * preference, like the theme — so the same reader signing back in on their own laptop had every
-   * switch rendering ON over no registration at all, and closed-browser new-mail notices silently
-   * off. Nothing re-established either: the app's ONLY reconcile was `SettingsView`'s mount
-   * effect, which is to say it happened if and only if somebody went looking in Settings.
-   *
-   * Here instead, because the shell boots exactly once per sign-in and the settings pane may
-   * never be opened at all. `demo` is the whole gate: the shell renders for the demo or for a
-   * validated session, so `!demo` IS the signed-in reader (`showDesktopCta`'s docstring makes the
-   * same argument). Every narrower condition is already inside — `syncSubscription` is a no-op
-   * without `apiConfigured()`, which is every desktop build, and `syncWebPush` answers
-   * "unsupported" where there is no service worker.
-   *
-   * NO STATE IS WRITTEN FROM HERE, and that is deliberate rather than incidental: the pane owns
-   * the sentence about delivery, and an unconditional `setState` in a boot effect makes every
-   * test that mounts this shell without `act` print a React warning — a suite that prints
-   * warnings is one where a real one is not noticed. The call is bounded internally
-   * ({@link reconcileWakeRegistration}); it must never be awaited here, because it joins a
-   * module-global queue of `fetch`es that have no timeout.
+   * Being woken, reconciled at boot — the sign-in counterpart of the sign-out revoke. Sign-out
+   * drops this browser's push row; the channels in localStorage and the OS permission survive it
+   * (a per-install preference), so signing back in showed every switch ON over no registration,
+   * with closed-browser notices silently off — and the only reconcile was `SettingsView`'s mount
+   * effect. Here instead: the shell boots exactly once per sign-in, and `!demo` IS the signed-in
+   * reader. No state is written from here — the pane owns the delivery sentence, and a boot-effect
+   * `setState` makes every act-less test print warnings. Bounded internally; never awaited (it
+   * joins a queue of fetches with no timeout).
    */
   useEffect(() => {
     /* `resolvedDemo`, NOT `demo` — review-caught, and the difference is one render wide.
@@ -1791,31 +1475,27 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedDemo]);
   /**
-   * THE WORKER'S WORDS FOLLOW THE ACCOUNT'S LANGUAGE — the locale is adopted after boot.
-   *
-   * `GET /consent` answers well after this shell mounts, so the reconcile above has already
-   * written the notify-state body in the DEVICE's language. Without this a German account on an
-   * English device gets "New mail." drawn on the lock screen until somebody opens Settings.
-   *
-   * A RELABEL, not a reconcile: `updateNotifyWords` preserves the stored `enabled` byte for byte.
-   * Re-running the reconcile here would recompute it from `subscriptionWanted()`, which is an
-   * intent — and enabling on an intent rather than on a row this browser owns is exactly how a
-   * previous user's surviving registration gets re-armed.
+   * The worker's words follow the account's language — the locale is
+   * adopted after boot. `GET /consent` answers well after this shell
+   * mounts, so the reconcile above has already written the notify-state
+   * body in the DEVICE's language; without this a German account on an
+   * English device gets "New mail." until somebody opens Settings. A
+   * RELABEL, not a reconcile: `updateNotifyWords` preserves the stored
+   * `enabled` byte for byte — re-running the reconcile would recompute it
+   * from an intent, which is how a previous user's surviving registration gets re-armed.
    */
   useEffect(() => {
     if (resolvedDemo) return;
     void updateNotifyWords("ohmail", t("settings.notifyClosedBody"));
   }, [resolvedDemo, t]);
   /**
-   * "APPLY FOR ALL DEVICES" — the face's account write, folded to ONE nullable callback for
-   * both consumers (the Settings row's scope line and the Option B offer). Null on the demo
-   * (no session), before the first consent answer (a press racing the boot read would write
-   * over an account whose stance is not yet known), and on a transport that cannot store an
-   * account-wide face — each null withholds the affordance structurally. That last arm no longer
-   * names the desktop's hosted door: it has the knob now (`consentOverBridge.setThemeFace`, over
-   * the same forwarded PATCH its other settings ride). The gate stays because a STANDALONE
-   * desktop window passes no transport at all — it has no account row to store a shared choice
-   * in, and the device pin is the whole of the appearance choice such an install can make.
+   * "Apply for all devices" — the face's account write, folded to one nullable callback for
+   * both consumers (the Settings scope line and the Option B offer). Null on the demo (no
+   * session), before the first consent answer (a press racing the boot read would write over an
+   * unknown stance), and on a transport that cannot store an account-wide face — each null
+   * withholds the affordance structurally. The desktop's hosted door has the knob now
+   * (`consentOverBridge.setThemeFace`); the gate stays for the STANDALONE window, which passes
+   * no transport — the device pin is the whole of its appearance choice.
    */
   const applyFaceAllDevices: ApplyFaceAllDevices | null =
     !demo && themeFaceKnown && consent.setThemeFace !== null ? consent.setThemeFace : null;
@@ -1823,60 +1503,37 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
      hook — see OhmarchyOffer.tsx. */
   const faceOffer = useOhmarchyOffer(applyFaceAllDevices);
   /**
-   * THE SEED REVIEW, OFFERED ONCE THE SERVER SAYS IT IS OWED — and dismissible.
-   *
-   * `seedConfirmedAt` is null until somebody has answered the review, which is also the state
-   * a reset puts an account back into. The screen takes over the stage rather than sitting in
-   * a corner, because it is the step that decides what the Ohbox contains and a mailbox that
-   * has not been through it presents almost everything through the Screener.
-   *
-   * "Later" is a real answer and is remembered for this tab only. Nothing about the product is
-   * gated on completing it — an account that never does simply screens every stranger, which
-   * is the old behaviour and not a broken one — so a modal nobody could leave would be a wall
-   * in front of somebody's mail for a step that is an offer.
-   *
-   * ── "NOT NOW" IS NOT "NEVER", AND NEITHER IS "DONE" ───────────────────────────────────────
-   *
-   * `seedReopened` is the door back, and there has to be one. Dismissing used to leave the
-   * screen unreachable for the rest of the tab's life, and CONFIRMING left it unreachable for
-   * the rest of the account's — `seedConfirmedAt` was set and nothing ever unset it short of
-   * wiping every screening decision on the account. Connecting a second mailbox is the case
-   * that makes that wrong rather than merely awkward: it brings a second address book of
-   * people the user has written to, and the screen that consents to them was walled off. The
-   * Settings entry sets this, `confirmSeed` writes only who is new, and the review recomputes
-   * itself from whatever mailboxes are attached when it is opened.
+   * The seed review, offered once the server says it is owed — and dismissible. `seedConfirmedAt` is
+   * null until somebody answers (also the post-reset state). It takes the stage because it decides
+   * what the Ohbox contains. "Later" is a real answer, remembered per tab; nothing is gated on
+   * completing it — an account that never does screens every stranger, the old behaviour. "Not now" is
+   * not "never", and neither is "Done": dismissing once left the screen unreachable for the tab's
+   * life, confirming for the account's — wrong once a second mailbox brings a second address book. The
+   * Settings entry sets `seedReopened`, `confirmSeed` writes only who is new, and the review
+   * recomputes from whatever mailboxes are attached when opened.
    */
   const [seedDismissed, setSeedDismissed] = useState(false);
   const [seedReopened, setSeedReopened] = useState(false);
   /**
-   * THE REVIEW NEEDS THE BROWSER'S CLOUD CLIENT, and no injected wire substitutes for it.
-   *
-   * `consent.known` used to be the whole gate, and it was sufficient for exactly as long as
-   * "the server answered" and "this bundle can call the server" were one fact. A host with its
-   * own {@link consentTransport} splits them: `known` becomes true on the desktop's hosted door,
-   * and `SeedReviewView` still imports `app/api-client` DIRECTLY — `seedReview`, `confirmSeed`,
-   * a ceremony's worth of calls no transport carries. Without this clause an account that has
-   * never answered the review would have had it take the WHOLE STAGE of the desktop window, on
-   * top of its mail, unable to load its own candidates and unable to be completed.
-   *
-   * So the review is offered where the client that runs it exists, which is the browser. This is
-   * the same fact `seedSection` is gated on below — the settings door back to a screen that
-   * cannot open is a door to nothing — and it is why {@link ConsentState.cloudClient} is
-   * published separately from `standalone`.
+   * The review needs the browser's Cloud client; no injected wire substitutes. `consent.known`
+   * was the whole gate while "the server answered" and "this bundle can call the server" were
+   * one fact; a host transport splits them — `known` goes true on the desktop's hosted door
+   * while `SeedReviewView` still imports `app/api-client` DIRECTLY, so the review would have
+   * taken the whole stage there, unable to load or complete. Offered where the client that runs
+   * it exists: the browser. The same fact gates `seedSection` below, and it is why {@link
+   * ConsentState.cloudClient} is published separately from `standalone`.
    */
   const seedSupported = consent.cloudClient;
   const seedOwed = !demo && consent.known && seedSupported
     && (seedReopened || (consent.seedConfirmedAt === null && !seedDismissed));
   /**
-   * The account's OWN addresses, from `GET /mailboxes` — passed EXPLICITLY and not left to
-   * the default.
-   *
-   * `consentPartition` falls back to the mirror's `mailbox` entities, and a live `/sync` feed
-   * carries none: the fallback is an empty set on exactly the surface that matters. With an
-   * empty set the user is not recognised as themselves, and their own mail — a note to
-   * themselves, a forward from another account — lands in their own Screener queue asking
-   * whether they would like to hear from themselves. The demo's mirror DOES hold mailbox rows,
-   * so no fixture test could ever have shown this.
+   * The account's own addresses, from `GET /mailboxes` — passed explicitly,
+   * not left to the default. `consentPartition` falls back to the mirror's
+   * `mailbox` entities, and a live `/sync` feed carries none: an empty set
+   * on exactly the surface that matters, so the user is not recognised as
+   * themselves and their own mail (a note to self, a cross-account
+   * forward) queues in their own Screener. The demo's mirror DOES hold
+   * mailbox rows, so no fixture test could have shown this.
    */
   /**
    * …AND THE BOOT USES THE DEVICE'S COPY OF THAT ANSWER. `facts` is a round trip away on every
@@ -1901,24 +1558,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     if (cached !== null) setRememberedOwn(cached);
   }, [demo, facts]);
   /**
-   * KEYED ON THE ADDRESSES, NOT ON THE FACTS ROW.
-   *
-   * `consentView` below takes this as a dependency and depends on NOTHING ELSE about a mailbox.
-   * Keyed on `facts`, it produced a new array whenever ANY field of ANY mailbox moved — and one of
-   * them moves constantly: `pendingMoves` decrements on every poll for as long as the organizer has
-   * a backlog, which on a freshly connected mailbox is hours. Each of those rebuilt the whole-mirror
-   * consent partition and the projection over every message, for an address list that had not
-   * changed.
-   *
-   * The key is a STRING of the sorted, lower-cased addresses rather than the identity of `facts`,
-   * because a `MailStateProvider` that now equality-gates its publishes still hands a new array the
-   * moment `pendingMoves` legitimately changes — that gate stops the poll that learned nothing, and
-   * this stops the poll that learned something the partition does not care about. Sorted, so two
-   * answers listing the same mailboxes in a different order are one key; lower-cased, because that
-   * is the comparison `ownAddresses`' own consumers make (`isOwnSent`, `replyEnvelopePlan`).
-   *
-   * The VALUE keeps the addresses in the server's order and original case — only the KEY is
-   * normalised. Nothing downstream may see a re-ordered or case-folded address.
+   * Keyed on the addresses, not the facts row. `consentView` depends on nothing else about a
+   * mailbox, and keyed on `facts` it rebuilt the whole-mirror partition whenever ANY field
+   * moved — `pendingMoves` decrements on every poll for hours on a fresh mailbox. A STRING of
+   * the sorted, lower-cased addresses rather than the identity of `facts`: the provider's
+   * equality gate stops the poll that learned nothing, this stops the poll that learned
+   * something the partition does not care about. Sorted and lower-cased is the KEY only — the
+   * value keeps the server's order and case; nothing downstream may see a folded address.
    */
   const ownAddresses = useMemo(
     () => facts?.map((m) => m.address) ?? rememberedOwn ?? [],
@@ -1942,53 +1588,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     return label ? label : null;
   });
   const consentView: ConsentPartition | null = useMemo(
-    // THE DEMO IS NOT PARTITIONED, and this is a fact about the data rather than a shortcut.
-    //
-    // Consent is derived from rules, and the fixture world has none — nobody has ever screened
-    // anybody in it, because there is no server to screen against. Run over that mirror the
-    // partition is right and useless: every read message older than the window is undecided
-    // and dormant, so the whole curated world empties into History and the tour has nothing to
-    // show. The fixture placements were AUTHORED to demonstrate the piles; they are not a
-    // record of decisions this model can read, and pretending otherwise is what would be
-    // dishonest here.
-    //
-    // AND NOTHING IS PARTITIONED BEFORE THE ACCOUNT'S WINDOW IS KNOWN. `consent.known` is
-    // false until `GET /consent` lands — or, on a device that has held this account before,
-    // until the boot applies the account's CACHED last answer (`consent-state.ts`,
-    // `boot-cache.ts`), which is what stops every reload presenting the raw piles for the
-    // whole consent round trip: measured live, the Screener resurrected the same set of
-    // already-decided senders on every boot and held them until the answer arrived, however
-    // many /sync drains completed first. A tab with NO cache and no answer still partitions
-    // nothing, for ever if the endpoint never answers. That refusal is about GUESSED windows:
-    // partitioning on a default the account may not be using would move mail out of the piles
-    // and into History, and a request that simply failed would silently hide somebody's mail.
-    // The cache is not a guess — it is the account's own stored window, one session old at
-    // most — while unpartitioned remains what the product did before consent existed, so a tab
-    // that cannot know degrades to showing MORE, never less.
-    //
-    // ── UNLESS THERE IS NO SERVER TO ANSWER, WHICH IS THE DESKTOP ────────────────────────
-    //
-    // `consent.standalone` is that case and only that case: a build with no Cloud API behind
-    // it, where the fetch above never runs and `known` is false for the life of the process.
-    // The known-gate's reason does not reach it — there IS no stored window to guess at, so
-    // `DEFAULT_DORMANCY_DAYS` (what `consent.dormancyDays` already holds) is not a default
-    // standing in for the truth, it is the truth. Read as "the answer has not arrived", the
-    // gate switched the cutline off for the whole desktop tier: the Screener drew over the raw
-    // mirror, there was no History pile at all, and every sender a backfill had already filed
-    // into the Screener folder queued for ever. `screener-state.ts`'s past-the-gate branch was
-    // inert there too — it only fires on a row the projection marked, and nothing was
-    // projected.
-    //
-    // The web path is untouched. A browser tab with no API base never reaches this line:
-    // `createEngine` throws `EngineUnarmedError` rather than serve fixtures to a live account.
-    //
-    // ── THE BASELINE RIDES THE SAME ANSWER AS THE WINDOW ─────────────────────────────────
-    //
-    // `consent.screeningBaselineAt` comes from the same `GET /consent` body as
-    // `consent.dormancyDays`, so the two halves of the cutoff — `(baseline ?? now) - days` —
-    // cannot be measured from different fetches. It is null on the desktop and on every account
-    // that has never decided anything, which selects the pre-0056 sliding window rather than a
-    // guess; see `consent-state.ts`.
+    // The demo is not partitioned — a fact about the data: consent derives
+    // from rules and the fixture world has none, so the partition would empty the curated world into History. Nothing is partitioned before
+    // the account's window is known: `consent.known` is false until `GET /consent` lands or the boot applies the account's CACHED last
+    // answer (`boot-cache.ts` — without it every reload resurrected already-decided senders until the answer arrived). A tab that cannot
+    // know degrades to showing MORE, never less — partitioning on a guessed
+    // window would hide somebody's mail. The desktop (`consent.standalone`)
+    // partitions anyway: there is no stored window to guess at, so `DEFAULT_DORMANCY_DAYS` is not a stand-in but the truth — read as
+    // "not yet known" it switched the cutline off for the whole desktop tier (no History pile, senders queued for ever). The baseline rides
+    // the same `GET /consent` answer as the window, so the two halves of
+    // the cutoff cannot come from different fetches.
     () =>
       demo || !(consent.known || consent.standalone)
         ? null
@@ -2031,27 +1640,23 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * MAIL FROM BEYOND WHAT THIS DEVICE KEPT — one keyset page at a time, on an explicit ask.
-   *
-   * The browser's mirror is a window over a server that still holds everything, so the bottom of
-   * a pile is a boundary rather than an end. This is how the Ohbox reaches past it; see
-   * `older-mail.ts` for why nothing fires speculatively and why the rows are never written to
-   * the mirror.
-   *
-   * Inert on a client whose mirror IS the mailbox: `listOlderAvailable()` is false for the demo
-   * and for the standalone desktop client, and the view renders no control at all in that case.
+   * Mail from beyond what this device kept — one keyset page at a time, on
+   * an explicit ask. The browser's mirror is a window over a server that
+   * still holds everything, so the bottom of a pile is a boundary, not an
+   * end; see `older-mail.ts` for why nothing fires speculatively and the
+   * rows are never written to the mirror. Inert on a client whose mirror
+   * IS the mailbox: `listOlderAvailable()` is false for the demo and the
+   * standalone desktop, and the view renders no control.
    */
   /** The open folder's entity id, for the reach-past hook below — route-derived, shell-early. */
   /**
-   * THE TRASH PAGE — off-mirror, fetched on arrival, dropped on leaving.
-   *
-   * `route.view` and not `effectiveView`: this is a fetch, and `effectiveView` is derived from
-   * things that can withhold the stage (the seed screen). Rendering the seed screen over Trash
-   * should not throw away a page that has already arrived, and arriving BACK at Trash from the
-   * seed screen should not need a second fetch.
-   *
-   * The held-restore ids are subtracted here rather than in the view — one place, so the list
-   * and the row count in the rail entry can never disagree about how many rows there are.
+   * The Trash page — off-mirror, fetched on arrival, dropped on leaving.
+   * `route.view`, not `effectiveView`: this is a fetch, and `effectiveView`
+   * is derived from things that can withhold the stage (the seed screen) —
+   * rendering the seed screen over Trash should not throw away an arrived
+   * page, and coming back should not need a second fetch. The held-restore
+   * ids are subtracted here rather than in the view — one place, so the
+   * list and the rail count cannot disagree.
    */
   const trashPage = useTrashPage(engine, route.view === "trash", restoring.held);
   /**
@@ -2068,15 +1673,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
   const folderIdForOlder = route.view === "folder" ? (route.folderId ?? undefined) : undefined;
   /**
-   * DELIBERATELY NO CLIENT-DERIVED BOUNDARY for the folder reach-past. The obvious one — the
-   * folder's oldest mirrored row — is WRONG on a windowed mirror, whose held rows are not
-   * contiguous: the bootstrap window plus scattered outliers the mirror retains on purpose
-   * (pinned rows a draft references, the labeled tail's old tagged mail). An outlier below the
-   * window would become the boundary and every unmirrored row between the window's edge and it
-   * would be skipped by every page, permanently. So page one starts at the folder's newest and
-   * the view's id-filter drops what the mirror already renders — the Ohbox's own overlap-and-
-   * deduplicate shape, whose cost is extra presses and whose failure mode is none. The wire's
-   * `startBelow` stays for a future CONTIGUOUS-edge derivation; nothing arms it today.
+   * Deliberately no client-derived boundary for the folder reach-past. The obvious one — the
+   * folder's oldest mirrored row — is wrong on a windowed mirror whose held rows are not
+   * contiguous (pinned rows, the labeled tail): an outlier below the window would become the
+   * boundary and every unmirrored row between would be skipped, permanently. So page one starts
+   * at the folder's newest and the view's id-filter drops what the mirror already renders —
+   * overlap-and-deduplicate, cost extra presses, failure mode none. The wire's `startBelow`
+   * stays for a future contiguous-edge derivation; nothing arms it today.
    */
   const folderOlderBoundary = undefined;
   /** The open folder entity, read ONCE per render for the reach-past pieces below: the verdicts
@@ -2119,37 +1722,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     folderTailEpoch.current.epoch,
   );
 
-  /* ── engine-derived world ────────────────────────────────────────────────────────────────
-   *
-   * Every memo below is a WHOLE-MIRROR pass, and each carries `[presented, version]`: `presented`
-   * because a new consent projection is a different mirror, `version` because the projection object
-   * cannot carry a cache of its own (it is rebuilt with the partition — `consent-cutline.ts` says so
-   * at `presentationReader`).
-   *
-   * "Recomputed exactly when the mirror moves" is what this line used to claim, and it was not
-   * true: `version` moved on a `/sync` page that carried no rows and on the drain's completion
-   * stamp, and `presented` moved whenever `ownAddresses` got a new identity — which a mailbox poll
-   * produced on every read, and again whenever `pendingMoves` ticked down. All three are closed
-   * (`store.ts`, `MailStateProvider`'s equality gate, `ownAddressKey` above), so the line is now
-   * closer to true than it was.
-   *
-   * IT IS STILL NOT "EXACTLY", IN BOTH DIRECTIONS, and neither is a defect:
-   *
-   *  · MORE OFTEN than the entity mirror moves. `presented` is rebuilt whenever the CONSENT answer
-   *    moves — the dormancy window, the screening baseline, the scope, the folders flag — and none
-   *    of those is a message changing. That is correct: the same rows are presented somewhere else,
-   *    so every derivation below genuinely is stale. `version` is also the overlay-merged number
-   *    (see `useEngineVersion`), so an optimistic overlay moves it with no stored record touched.
-   *  · and every rebuild is retained for as long as the render scope that made it —
-   *    a render scope is retained for as long as any closure created in it survives, and a
-   *    memoized callback handed back unchanged is exactly such a closure. `stable-callback.ts`
-   *    is the account of that mechanism, and every callback here now reads through a ref so no
-   *    render scope is retained through one.
-   *
-   * So: these rebuild when what they are derived FROM changes — the mirror, the overlay on top of
-   * it, or where consent says the rows are presented. Never read them as "only when a message
-   * changed".
-   */
+  /* Engine-derived world. Every memo below is a whole-mirror pass keyed
+   * `[presented, version]`: `presented` because a new consent projection is
+   * a different mirror, `version` because the projection cannot carry a
+   * cache of its own. These rebuild when what they derive from changes —
+   * the mirror, the overlay on it (`useEngineVersion` merges it), or where
+   * consent presents the rows — never read them as "only when a message
+   * changed". Every rebuild is retained as long as the render scope that
+   * made it, so every callback here reads through a ref
+   * (`stable-callback.ts` is the account of that mechanism). */
   const ohbox = useMemo(() => ohboxView(presented), [presented, version]);
   const partition = useMemo(() => feedPartition(presented, "reads"), [presented, version]);
   /**
@@ -2322,34 +1903,23 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     ...(suggestWire ? { wire: suggestWire } : {}),
   });
   /**
-   * `presented`, NOT `engine.read()` — the Screener is the cutline's own surface.
-   *
-   * Every other pile above is built from the projected reader; this was the one that grouped by
-   * the folder the mail server happens to hold a message in. The queue's whole question is "who
-   * is still owed a decision", and that is what the partition answers. The hook keeps the raw
-   * mirror for its mutations — see the `presented` parameter on `useScreenerState`.
-   *
-   * Consequence worth naming here, at the call site: `screener.unsuggestedSenders` feeds the
-   * metered auto-suggest batch below, so this also stops the spender from being offered senders
-   * the cutline had already ruled out as not-work.
+   * `presented`, NOT `engine.read()` — the Screener is the cutline's own
+   * surface. Every other pile is built from the projected reader; this one
+   * grouped by physical folder, and the queue's whole question is "who is
+   * still owed a decision", which the partition answers. The hook keeps the
+   * raw mirror for its mutations (`useScreenerState`'s `presented`
+   * parameter). Consequence: `screener.unsuggestedSenders` feeds the
+   * metered auto-suggest batch, so the cutline also stops the spender from
+   * being offered senders it already ruled out.
    */
   /**
-   * WILL SCREENING A SENDER OUT ALSO UNSUBSCRIBE FROM THEIR LIST, ON THIS BUILD, FOR THIS ACCOUNT?
-   *
-   * The single answer every disclosure in this shell reads — the sender sheet's pre-click confirm
-   * and the Screener's toasts — so the sentence and the sending can never come apart. Two
-   * conditions, and they are independent facts rather than belt and braces:
-   *
-   *  · `consent.autoUnsubscribe` — the ACCOUNT's switch (mail 0054), which is what the server
-   *    itself reads at the seam. Resting TRUE, so a failed `GET /consent` keeps the disclosure
-   *    exactly as it was before the switch existed rather than silently dropping it.
-   *  · `!consent.standalone` — the BUILD. A standalone install wires no unsubscribe service into
-   *    its screener at all (`apps/sidecar`'s bag has no `unsubscribe` entry), so a decision there
-   *    sends nothing whatever the account row says. Without this clause the desktop would warn
-   *    about a request it structurally cannot make.
-   *
-   * The demo is deliberately NOT excluded: `standalone` is false there, and the demo's job is to
-   * show what the product does.
+   * Will screening a sender out also unsubscribe from their list, on this build, for this
+   * account? The single answer every disclosure reads (the sender sheet's confirm, the
+   * Screener's toasts), so sentence and sending cannot come apart. Two independent facts:
+   * `consent.autoUnsubscribe` — the account's switch (mail 0054), resting TRUE so a failed `GET
+   * /consent` keeps the disclosure; and `!consent.standalone` — the build: a standalone install
+   * wires no unsubscribe service, so a warning there would name a request it cannot make. The
+   * demo is not excluded: its job is to show what the product does.
    */
   const autoUnsubscribeDiscloses = consent.autoUnsubscribe && !consent.standalone;
   /**
@@ -2374,31 +1944,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const organizerChanges = useMemo(() => organizerNotices(facts), [facts]);
   /**
-   * HOW "Mark read" REACHES THE ROW, or `null` where nothing can — and `null` WITHHOLDS the line.
-   *
-   * A notice that cannot be acknowledged is the standing warning this design exists not to be, so
-   * the absence of a way to write the stamp is the absence of the notice. That is the honest
-   * degraded state: Settings → Mailboxes still keeps the permanent line and the controls.
-   *
-   * INJECTED AND NEVER IMPORTED, on `mailboxFacts`'s own rule: `scripts/publish-desktop.mjs`
-   * DENYs `app/api-client` to this shared shell, so it may not call the route itself on either
-   * door. One route (`POST /mailboxes/:id/organizer-notice/dismiss`, served on both) and two
-   * transports — the browser's Cloud client from `(product)/mailbox/CloudShell`, the desktop
-   * window's over its own pipe — with the sentence, the gate and the once-per-change rule shared.
-   *
-   * `refreshFacts` on success, so the line leaves on the answer rather than on the poller's
-   * slower clock; the component's own optimistic set covers the gap between the two. A REJECTION
-   * is passed through rather than swallowed — the component puts the line back, because the
-   * acknowledgement did not happen.
-   *
-   * ── AND WHY IT IS NOT A `useMemo` RETURNING A FUNCTION ────────────────────────────────────
-   *
-   * That was the last memoized closure in this component, and a memoized closure here is the
-   * webview's idle drift: every closure created in one render shares that render's whole scope,
-   * so a function React hands back unchanged pins the render it was made in — with its consent
-   * partition and its projection over every message. `useStableCallback`'s survivor closes over
-   * a ref and nothing else. `?.` rather than a null memo: the absence of a transport is decided
-   * where the notice is mounted, so nothing here needs a branch nobody can reach.
+   * How "Mark read" reaches the organizer-notice row, or `null` where nothing can — and `null`
+   * withholds the line (a notice that cannot be acknowledged is a standing warning; Settings →
+   * Mailboxes keeps the permanent controls). Injected, never imported: the publish script
+   * denies `app/api-client` to this shared shell, so one route (`POST
+   * /mailboxes/:id/organizer-notice/dismiss`) rides two transports. `refreshFacts` on success
+   * so the line leaves on the answer; a rejection is passed through — the component puts the
+   * line back. A stable callback, not a `useMemo` closure: a memoized closure pins its render's
+   * whole scope (`stable-callback.ts`).
    */
   const acknowledgeOrganizerNotice: OrganizerNoticeTransport = useStableCallback(async (id: string) => {
     const answer = await organizerNoticeTransport?.(id);
@@ -2422,67 +1975,36 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * calling it every render is free.
    */
   const autoOptIn = suggestions.autoOptIn(screener.unsuggestedSenders);
-  /* ── THE FIRST-RUN FLOW'S FACTS, GATHERED FROM THE FOUR PLACES THEY LIVE ──────────────────
-   *
-   * `deriveOnboardingStep` is a pure function over truth-conditions and this is where the four
-   * sources meet: the polled `GET /mailboxes` row, `GET /consent`, the door's own AI posture,
-   * and the Screener queue. It is composed unconditionally — it is three field reads and a
-   * length — and consumed only where the stage renders.
-   *
-   * WHICH MAILBOX — the one the ROUTE names (`#/first-run?mailbox=<id>`), and the first row only
-   * when it names none. `facts[0]` alone was the whole rule and it stopped being true the day a
-   * standalone install could hold more than one mailbox: the flow for the SECOND one would have
-   * rendered the FIRST one's state on every screen — its consent stamp, its holder, its address —
-   * and the consent press two screens in addresses `mailboxId`, so it would have organized the
-   * wrong mailbox.
-   *
-   * An id the list does not hold falls back to the first row rather than to `null`, on the
-   * router's own rule for every other id it carries: the URL is a claim about what is on screen,
-   * and a claim the data does not support is corrected in the shell, never 404'd in the router.
-   *
-   * `null` STILL MEANS "NONE CONNECTED" AND NOT "WE CANNOT SEE": `facts` itself is null then, and
-   * the guard at the mount site refuses to render over it. The one deliberate exception is an ADD
-   * run before its create has answered — see below.
+  /* The first-run flow's facts, gathered from the four places they live:
+   * the polled `GET /mailboxes` row, `GET /consent`, the door's AI posture,
+   * and the Screener queue — `deriveOnboardingStep` is pure over them.
+   * Which mailbox: the one the ROUTE names (`#/first-run?mailbox=<id>`),
+   * and the first row only when it names none — `facts[0]` alone rendered
+   * the FIRST mailbox's state (and consent write) on a run about the
+   * second. An id the list does not hold falls back to the first row, the
+   * router's rule: a claim the data does not support is corrected, never
+   * 404'd. `null` still means "none connected" — except an ADD run before its create answers; see below.
    */
   const namedFirstRunRow = facts === null || route.firstRunMailboxId === null
     ? null
     : facts.find((m) => m.id === route.firstRunMailboxId) ?? null;
   /**
-   * AN ADD RUN HAS NO MAILBOX UNTIL ITS CREATE ANSWERS — AND UNTIL THE FACTS SAY SO.
-   *
-   * `#/first-run/add` opens on the connect FORM, and the form is withheld the moment
-   * `facts.mailbox` is non-null — the mailbox step becomes a statement about the mailbox this run
-   * is about, which is right for a Back press and wrong here. On an install that already holds
-   * mailboxes the `?? facts[0]` fallback below would hand the stage row #1, so the person who
-   * pressed "Add mailbox" would be shown a statement about a mailbox they already have.
-   *
-   * ── AND THE CONDITION IS NOT "THE HASH NAMES NO MAILBOX" ──────────────────────────────────
-   *
-   * It was, and that left a window with a wrong-mailbox WRITE in it. `onConnected` puts the new
-   * id in the hash the instant the create answers, but `facts` still holds the pre-create list
-   * until `refreshFacts` round-trips — so `facts.find(id)` missed and the fallback resolved the
-   * run to mailbox #1: its address on the screen, its consent stamp in the derivation, and its id
-   * in `mailboxId`. `run()` clears `busy` before the refetch lands, so the consent press was live
-   * in that window and would have posted `POST /local/mailboxes/<mailbox #1>/organize` — writing
-   * the window somebody had just chosen for mailbox #2 onto mailbox #1.
-   *
-   * So an add run is "pending" until the facts actually HOLD its named row, and while it is
-   * pending the flow is about no mailbox at all: the form stays, `mailboxId` is null, and there
-   * is nothing for `organize` to address. It is also the honest answer when `GET /mailboxes` is
-   * stale or failing, which is the same window arriving for a different reason.
+   * An add run has no mailbox until its create answers — AND until the facts say so. On an
+   * install that already holds mailboxes the `?? facts[0]` fallback would show a statement about
+   * a mailbox the person already has. The condition is not "the hash names no mailbox":
+   * `onConnected` writes the new id to the hash instantly, but `facts` holds the pre-create list
+   * until `refreshFacts` round-trips, and in that window the consent press was live and would
+   * have posted `organize` for mailbox #1 with mailbox #2's window. So an add run is pending
+   * until the facts hold its named row: the form stays, `mailboxId` is null, nothing to address —
+   * also the honest answer when `GET /mailboxes` is failing.
    */
-  /* ── AND IT IS NOT THE ADD RUN'S PROBLEM ALONE ─────────────────────────────────────────────
-   *
-   * The re-run names a mailbox too (`#/first-run/again?mailbox=<id>`, from the row's own "Run
-   * setup"), and it had no equivalent guard: let the poller drop that row — a removal from another
-   * surface, a stale or failing `GET /mailboxes` — and `?? facts[0]` silently resolved the run to
-   * mailbox #1. The window screen's press then posts `organize` for THAT mailbox with the window
-   * somebody chose for a different one. Same wrong-mailbox write, different door.
-   *
-   * So the rule is about the HASH rather than about the intent: a run that NAMES a mailbox is
-   * about that mailbox or about none. The `facts[0]` fallback survives for the one case it was
-   * written for — a hash that names none at all, which is a first run and an add run before its
-   * create answers. */
+  /* Not the add run's problem alone: the re-run names a mailbox too
+   * (`#/first-run/again?mailbox=<id>`), and if the poller drops that row,
+   * `?? facts[0]` silently resolved the run to mailbox #1 — the same
+   * wrong-mailbox `organize` write through a different door. The rule is
+   * about the HASH: a run that names a mailbox is about that mailbox or
+   * about none. The `facts[0]` fallback survives only for a hash that
+   * names none — a first run, or an add run before its create answers. */
   const namedRowMissing = route.firstRunMailboxId !== null && namedFirstRunRow === null;
   const addPending = namedRowMissing || (route.firstRunAdd && route.firstRunMailboxId === null);
   /**
@@ -2528,16 +2050,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     };
   }, [firstRun, facts, firstRunMailbox, consent.onboardingCompletedAt, screener.waitingCount]);
   /**
-   * THE ONE SENDER THE GUIDED DECISION IS ABOUT — the head of the real queue, decided through
-   * the real `ScreenerState`.
-   *
-   * Not a fabricated card. The whole point of step 8 is that the first decision a person makes
-   * in the flow IS a decision: it writes the same mutation, mints the same rule and moves the
-   * same mail as one taken in the Screener a minute later. A mock here would teach a gesture
-   * that does something else in the product.
-   *
-   * `null` when the queue is empty — which the derivation reads as "skip this step silently",
-   * because a guided "take your first decision" over nothing is a dead end.
+   * The one sender the guided decision is about — the head of the real
+   * queue, decided through the real `ScreenerState`, not a fabricated card:
+   * the first decision a person makes in the flow IS a decision — same
+   * mutation, same rule, same move as one taken in the Screener a minute
+   * later; a mock would teach a gesture that does something else. `null`
+   * when the queue is empty, which the derivation reads as "skip this step
+   * silently" — a guided first decision over nothing is a dead end.
    */
   const firstRunDecide: FirstRunDecideSubject | null = useMemo(() => {
     const row = screener.waiting[0];
@@ -2575,20 +2094,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     junkWire,
   );
   /**
-   * IS THERE ANYWHERE FOR THE AWAY RESPONDER TO BE STORED — the one gate the control, its Ohbox
-   * notice and its Settings entry all read, so those three can only agree.
-   *
-   * TWO ways to be true, and they are the two installs that have a hosted account behind them:
-   *
-   *  · `autoOptIn.supported` is `wire.configured()` — the browser talking to the hosted API, OR a
-   *    host that handed in a {@link suggestWire}. It used to be exactly `apiConfigured()` and this
-   *    line used to say so; a host wire is what widened it, and the widening is in the same
-   *    direction and for the same installs, so this clause covers strictly more of what it always
-   *    meant. Read off the opt-in rather than by calling `apiConfigured()` here because this
-   *    shared shell does not import the Cloud API client at all;
-   *  · a host handed in a transport — the desktop on its HOSTED door, whose window cannot open a
-   *    socket but whose engine forwards this endpoint to the account. See {@link awayTransport},
-   *    which also states why the STANDALONE door deliberately reaches neither branch.
+   * Is there anywhere for the away responder to be stored — the one gate
+   * the control, its Ohbox notice and its Settings entry all read, so the
+   * three can only agree. True two ways, the two installs with a hosted
+   * account behind them: `autoOptIn.supported` (`wire.configured()` — the
+   * browser on the hosted API, or a host-supplied {@link suggestWire}), or
+   * a host-injected transport — the desktop's hosted door, whose window
+   * cannot open a socket but whose engine forwards the endpoint. See
+   * {@link awayTransport} for why the standalone door reaches neither branch.
    */
   const awaySupported = autoOptIn.supported || awayTransport !== undefined;
   /**
@@ -2610,15 +2123,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
      `useResolvedDemoMode` is for; nothing here is rendered from it. */
   const awayNotice = useAwayNotice(!resolvedDemo && awaySupported, awayTransport);
   /**
-   * SETTINGS FOUND ON A MAILBOX — the portable profile's confirm moment, held by the shell.
-   *
-   * One check per mailbox per tab (plus a slow, visibility-gated beat) against a server answer
-   * that is one indexed read in the resting case; the card renders over the stage only when the
-   * server says a document is genuinely waiting on this person's yes or no. Gated on `!demo`
-   * alone — the hook re-checks `apiConfigured()` itself, so a build where the Cloud client is a
-   * refusing stub asks nothing UNLESS its host wired a transport of its own, which the desktop
-   * now does on both doors ({@link profileImportTransport}): the standalone engine answers the
-   * three verbs out of the store on this machine, the hosted door forwards them to the account.
+   * Settings found on a mailbox — the portable profile's confirm moment,
+   * held by the shell. One check per mailbox per tab (plus a slow,
+   * visibility-gated beat); the card renders over the stage only when the
+   * server says a document is genuinely waiting on a yes or no. Gated on
+   * `!demo` alone — the hook re-checks `apiConfigured()` itself, so a build
+   * with a refusing stub asks nothing unless its host wired a transport,
+   * which the desktop does on both doors ({@link profileImportTransport}).
    */
   const profileImportOffer = useProfileImport(!demo, facts, profileImportTransport);
 
@@ -2646,17 +2157,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     goSettings(pane);
   });
   /**
-   * THE READER IS A MESSAGE NOW, NOT A BOOLEAN.
-   *
-   * It was `readerOpen: boolean` rendering `selectedOhbox`, which made the overlay a
-   * property of ONE pile: nothing outside the Ohbox could open a message, and a message in
-   * a folder this client has no view for could not be opened at all. `openMessage` — the
-   * one answer to "open it where it lives" — therefore had no way to finish the job for
-   * search hits, which is where three of the four reported defects met: one missing call.
-   *
-   * An id and not the `EngineMessage`: the mirror re-issues entities on every delta, so a
-   * held object would be a snapshot that stops tracking read-state, tags and triage the
-   * moment the reader is open — exactly the window in which they change.
+   * The reader is a message now, not a boolean. `readerOpen: boolean`
+   * rendering `selectedOhbox` made the overlay a property of one pile:
+   * nothing outside the Ohbox could open a message, and a message in a
+   * folder with no view could not be opened at all — where three of the
+   * four reported search defects met. An id, not the `EngineMessage`: the
+   * mirror re-issues entities per delta, so a held object would stop
+   * tracking read state, tags and triage the moment the reader is open.
    */
   const [readerFor, setReaderFor] = useState<string | null>(null);
   /**
@@ -2800,17 +2307,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     writeReplyMeta(lane, { ...readReplyMeta(lane), subject });
   });
   /**
-   * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
-   *
-   * The view is mounted only while `#/compose` is the route, so state inside it is erased by
-   * navigating to the Ohbox and back — which is a message the user has to write twice. Holding
-   * it in the shell is the same reason the reply body is held here, and it is also what lets
-   * ONE `onSendSettled` clear whichever surface just delivered.
-   *
-   * The `localStorage` mirror on top of that is for a RELOAD, and it is read after mount for
-   * the hydration reason `persisted-ui.ts` spells out: reading storage in the initializer makes
-   * the server and client render different markup, and React resolves that by keeping the
-   * server's — so the saved draft would be read and then silently discarded.
+   * The compose form lives up here rather than in `ComposeView`: the view
+   * is mounted only while `#/compose` is the route, so state inside it is
+   * erased by navigating away and back — a message written twice. Same
+   * reason the reply body is held here, and it lets one `onSendSettled`
+   * clear whichever surface delivered. The `localStorage` mirror on top is
+   * for a reload, read after mount (`persisted-ui.ts`: an initializer read
+   * makes server and client render different markup, and React keeps the
+   * server's — the saved draft would be read and silently discarded).
    */
   const [compose, setCompose] = useState<ComposeFields>(EMPTY_COMPOSE);
   /**
@@ -2853,19 +2357,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const [closeCard, setCloseCard] = useState<{ view: "reads" | "receipts"; id: string } | null>(null);
   /**
-   * ── ABSOLUTE-TIME STAMPS — A MOMENTARY, VIEW-SCOPED FLIP, NOT A SETTING ────────────────────
-   *
-   * Clicking any stamp flips every stamp on screen to the exact date and time — in the open
-   * message (see `absoluteTime` on `MessageChrome`, read by `MessageHeader`/`MessageCard`) and,
-   * from the same boolean, on every LIST ROW of the six mail lists (`rowStamp`, threaded to each
-   * view below). One state and not two: a reader who has asked for exact dates has asked the
-   * question of the mail in front of them, and a list whose rows disagreed with the message open
-   * beside them would be answering it twice.
-   *
-   * It is deliberately NOT persisted, and it resets on every view switch: it answers "let me read
-   * the exact dates on THIS", so carrying it to the next pile — or across a reload — would be the
-   * interface remembering a glance nobody asked it to keep. In-memory state covers reload and
-   * re-open for free; the effect below covers moving between rail views.
+   * Absolute-time stamps — a momentary, view-scoped flip, not a setting.
+   * Clicking any stamp flips every stamp on screen to the exact date — the
+   * open message (`absoluteTime` on `MessageChrome`) and every list row
+   * (`rowStamp`), from one boolean: a reader who asked for exact dates
+   * asked it of the mail in front of them, and rows disagreeing with the
+   * open message would answer twice. Deliberately not persisted, reset on
+   * every view switch: carrying it further would be the interface
+   * remembering a glance nobody asked it to keep.
    */
   const [absoluteTime, setAbsoluteTime] = useState(false);
   useEffect(() => {
@@ -2876,46 +2375,36 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
      memoizable views. */
   const toggleAbsoluteTime = useStableCallback(() => setAbsoluteTime((v) => !v));
   /**
-   * THE ROW A SEARCH HIT LANDED ON — so the user can SEE where they were taken.
-   *
-   * Reported as: opening a search result "brings me to the mail in the screener but does not
-   * highlight / select it". The routing was right and the arrival was silent: `openMessage`
-   * set each view's cursor and navigated, and the user was handed a list with a cursor
-   * somewhere in it and no indication which row they had just asked for. On the Screener,
-   * where rows are SENDERS and the list is long, that is indistinguishable from having been
-   * dropped at the top of a queue of strangers.
-   *
-   * This holds the id that the destination view puts in `data-id` — the message id in three
-   * views, the SENDER row's id in the Screener — and is cleared once the flash has run.
+   * The row a search hit landed on — so the user can SEE where they were
+   * taken. Reported: opening a search result "brings me to the mail in the
+   * screener but does not highlight / select it" — the routing was right,
+   * the arrival silent, and on the Screener (rows are senders) that is
+   * indistinguishable from being dropped at the top of a queue of
+   * strangers. Holds the id the destination view puts in `data-id` (the
+   * message id in three views, the sender row's id in the Screener);
+   * cleared once the flash has run.
    */
   const [located, setLocated] = useState<string | null>(null);
   const [fr, setFr] = useState<{ step: number; items: TriagePileEntry[] } | null>(null);
   /**
-   * "Start a Reply Run once we are on Triage", as an INTENT rather than a race.
-   *
-   * `f` and the palette both did `go("triage"); setTimeout(startFR, 130)`. The route-transition
-   * effect below clears every overlay — `setFr(null)` included — whenever the view changes, so
-   * that 130 ms was a bet that the effect would run first. Any extra render moves the deadline:
-   * with a row selected the effect landed AFTER the timeout and wiped the state that had just
-   * opened the overlay, so `f` navigated to Triage and then silently did nothing. It was filed
-   * as "a selection blocks the Reply Run"; the selection was only the cheapest way to buy
-   * enough renders to lose the race.
-   *
-   * A flag the effect itself honours cannot lose it: the clear and the re-arm are one pass, in
-   * that order, however many times React re-renders on the way.
+   * "Start a Reply Run once we are on Triage", as an intent rather than a
+   * race. `f` and the palette did `go("triage"); setTimeout(startFR, 130)`,
+   * betting the route-transition effect (which clears every overlay,
+   * `setFr(null)` included) would run first; any extra render moved the
+   * deadline, so with a row selected the effect wiped the just-opened
+   * overlay and `f` silently did nothing. A flag the effect itself honours
+   * cannot lose the race: the clear and the re-arm are one pass, in order,
+   * however many times React re-renders.
    */
   const [frPending, setFrPending] = useState(false);
   /**
-   * WHAT THE USER TYPED IN THE RUN, KEYED BY MESSAGE.
-   *
-   * This was `Record<number, string>` — keyed by the STEP INDEX — and nothing in the file read
-   * it: the overlay wrote into it and `onDone` dispatched `triage_set → none` without ever
-   * looking. Both halves are fixed here, and the re-keying is not cosmetic. A step index is
-   * re-issued by the next run over a pile that has since moved, so "step 0's text" is a
-   * different person's answer tomorrow; the message id is the only stable name for what was
-   * written. It is also the key `writeReplyDraft`, `sendKeyOf` and `settle` already use, which
-   * is what lets the run share one scratch buffer with the inline editor rather than inventing
-   * a second one that `settle` would not know to clear.
+   * What the user typed in the run, keyed by MESSAGE. It was keyed by step
+   * index and nothing read it — the overlay wrote and `onDone` dispatched
+   * without looking. A step index is re-issued by the next run over a pile
+   * that has moved, so "step 0's text" is a different person's answer
+   * tomorrow; the message id is the only stable name, and it is the key
+   * `writeReplyDraft`, `sendKeyOf` and `settle` already use — the run
+   * shares one scratch buffer with the inline editor.
    */
   const [frValues, setFrValues] = useState<Record<string, RichValue>>({});
   const [frDone, setFrDone] = useState<Set<string>>(() => new Set());
@@ -2934,20 +2423,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     [ohbox],
   );
   /**
-   * THE CONVERSATION'S PEOPLE, for a row's lead circles — bound to the presented reader here
-   * because the views have no reader of their own, and mapped to `{initials, hue}` with the same
-   * helpers every other avatar in the app uses, so a face is the same colour everywhere.
-   *
-   * BUILT ONCE PER VERSION, NOT ONCE PER ROW, and that is the whole reason the index selector
-   * exists. Every mail list in the app draws these circles now — Ohbox, Reads, Receipts, History,
-   * Triage, Tag — so the per-thread selector's mirror scan would run once per mounted row per
-   * render: O(mirror × rows), on the largest structure the client holds, for a decoration. One
-   * pass fills the map; a row's lookup is a `Map.get`, and the mapped shape is built here so a
-   * render allocates nothing per row either.
-   *
-   * The empty answer is a SHARED CONSTANT so that a thread with no conversation of people in it
-   * gives the same array reference on every render — a fresh `[]` per row per render is a new
-   * prop identity, which is exactly what defeats a memo further down.
+   * The conversation's people for a row's lead circles — bound to the
+   * presented reader here (the views have no reader), mapped to
+   * `{initials, hue}` with the same helpers every avatar uses. Built once
+   * per version, not once per row: every mail list draws these circles, and
+   * the per-thread selector's mirror scan would be O(mirror × rows) for a
+   * decoration — one pass fills the map, a row's lookup is `Map.get`. The
+   * empty answer is a shared constant so a thread with no people gives the
+   * same array reference per render (a fresh `[]` defeats memos below).
    */
   const participantIndex = useMemo(() => {
     const out = new Map<string, { initials: string; hue: number }[]>();
@@ -2968,21 +2451,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const threadSubjectOf = useStableCallback((threadId: string) => threadSubject(presented, threadId));
   /**
-   * WHAT IS OPEN IN THE OHBOX — and `null` until somebody opens something.
-   *
-   * There was a `?? allOhbox[0]` on the end of this, so an Ohbox nobody had touched reported the
-   * newest unread message as "the open one". That is not a display detail: this value decides
-   * which body is FETCHED (the hydration effect below), which attachments are held and revoked,
-   * and which message `s`, `e`, `r` and the reader act on. Arriving at the Ohbox therefore
-   * fetched a message from the user's own server and put it in the reading column, and the row
-   * was then one keypress away from a departure that marks it read.
-   *
-   * The dwell already refuses to arm from a selection nobody made (`OhboxView.dwellOn`), which
-   * stopped the runaway; it did not stop the product opening mail on its own. The rule the
-   * runaway fix was written under — "a fallback may decide what is DISPLAYED; it may never
-   * drive seen-machinery" — holds for the piles whose lists do not re-partition on read and
-   * where no leave-commit runs (Tag, History, Reads, Receipts keep theirs). Here the display
-   * IS an open, so there is nothing left for a fallback to be innocent of.
+   * What is open in the Ohbox — and `null` until somebody opens something.
+   * A `?? allOhbox[0]` here made an untouched Ohbox report the newest
+   * unread as "open", and this value decides which body is FETCHED, which
+   * attachments are held, and which message `s`/`e`/`r` act on — arriving
+   * at the Ohbox fetched a message and left it one keypress from a
+   * read-marking departure. The rule: a fallback may decide what is
+   * displayed; it may never drive seen-machinery — and here the display IS
+   * an open, so there is nothing left for a fallback to be innocent of.
    */
   const selectedOhbox = allOhbox.find((m) => m.id === ohboxSel) ?? null;
 
@@ -2999,24 +2475,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     previewSelection.current = selectedOhbox?.id ?? null;
     if (!previewFor) return;
     /*
-     * Members of the ACTIVE conversation keep their previews — under a STANDING selection.
-     * Sibling panels render attachment strips now, and the seam holds lists and bytes for the
-     * WHOLE conversation (`useMessageAttachments`), so the focused-id-only test this replaces
-     * closed a sibling's overlay in the same breath its eye opened it — the primary action on
-     * every previewable sibling file was a flash or a no-op (review finding).
-     *
-     * Two bounds keep the widened guard honest (both review findings on the widening itself):
-     *
-     *  · ANY selection move closes the overlay — a within-thread move included, because the
-     *    seam's cleanup releases and revokes the whole conversation's byte state on exactly
-     *    that trigger, and an overlay held open across it would stand over revoked bytes and
-     *    re-fetch them on its own (`ensure` runs from its render effect). The previous
-     *    selection is a ref, not state: it is bookkeeping about the transition, and reading
-     *    it in render would make the transition a render input.
-     *
-     *  · `version` is a dependency, so the membership test is re-evaluated when the MIRROR
-     *    moves — a previewed sibling that a drain deletes, rethreads or twin-collapses away
-     *    no longer holds its overlay open on a stale answer.
+     * Members of the ACTIVE conversation keep their previews under a standing selection: the seam holds lists and bytes for the whole
+     * conversation, and a focused-id-only test closed a sibling's overlay
+     * in the same breath its eye opened it. Two bounds keep the widened
+     * guard honest: ANY selection move closes the overlay (the seam's cleanup revokes the conversation's byte state on exactly that
+     * trigger, and an overlay held across it would re-fetch revoked bytes);
+     * and `version` is a dependency, so a previewed sibling a drain
+     * deletes or rethreads no longer holds its overlay open. The previous
+     * selection is a ref — transition bookkeeping, not a render input.
      */
     const held =
       before === (selectedOhbox?.id ?? null) &&
@@ -3052,16 +2518,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const [ohboxArmedRead, setOhboxArmedRead] = useState<string | null>(null);
   /**
-   * THE SHEET'S MESSAGE, WITH READ STATE AS THE LIST BEHIND IT DRAWS IT.
-   *
-   * Two subtractions and one addition, and they are the same pair `OhboxView.effUnread` applies —
-   * shared through `presentsUnread` so the sheet and the row it was opened from cannot disagree:
-   *
-   *  · a RESURFACED message reads unread whatever its stored flag says (owner ruling
-   *    2026-08-31), so the sheet offers "Mark as read" — the deliberate verb that spends the pin
-   *    and releases the row, which is the action a pinned message actually has;
-   *  · an ARMED read reads read, so the sheet offers "Mark unread" while the departure write
-   *    still waits — and the arm does NOT subtract from a pin, for the reason `effUnread` gives.
+   * The sheet's message, with read state as the list behind it draws it —
+   * the same pair `OhboxView.effUnread` applies, shared through
+   * `presentsUnread` so sheet and row cannot disagree: a RESURFACED message
+   * reads unread whatever its stored flag says (owner ruling 2026-08-31),
+   * so the sheet offers "Mark as read" — the deliberate verb that spends
+   * the pin; an ARMED read reads read, so the sheet offers "Mark unread"
+   * while the departure write waits — and the arm does not spend a pin.
    */
   const sheetPresentsUnread =
     readerMessage != null && (isResurfaced(readerMessage) || (readerMessage.unread && readerMessage.id !== ohboxArmedRead));
@@ -3079,26 +2542,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
 
   /**
-   * OPENING THE READER — THE ONE GATE.
-   *
-   * A live walk at 1440 found the reading experience rendered TWICE: the message painted in
-   * the split's 752px column AND a 660px modal over it, with the ghost of that column — and
-   * a second action bar — legible behind the sheet. The sheet is not a bigger view of the
-   * message; it is a NARROWER duplicate of one already on screen.
-   *
-   * The rule was never in doubt, only unenforced: `readColumnHidden` is what "opened" means
-   * on a width whose reading column is `display:none`, and `openReply` and `openMessage`
-   * both already ask it. `OhboxView.open` was the one path that did not — it called
-   * `onEnterReader` unconditionally, so ↵ and a second click on the selected row opened the
-   * sheet at every width.
-   *
-   * IT IS GATED HERE AND NOT IN THE VIEW, deliberately. A view that asked the media query
-   * itself would be a second copy of the predicate, live in one place and drifting from the
-   * two that already exist — the shape the keyboard registry deleted from the (i) panel and
-   * the action bar deleted from its own labels. The view's contract stays "the user asked to open this message"; what
-   * that MEANS at a given width is the shell's answer, given once.
-   *
-   * The id still travels (see the call site): this narrows WHETHER, never WHAT.
+   * Opening the reader — the one gate. A live walk at 1440 found the message painted twice: the
+   * split's reading column AND a modal over it. `readColumnHidden` is what "opened" means at a
+   * width whose reading column is `display:none`; `openReply` and `openMessage` already ask it,
+   * and `OhboxView.open` was the one path that did not — ↵ and a second click opened the sheet
+   * at every width. Gated here and not in the view: a view asking the media query itself would
+   * be a second copy of the predicate. The view's contract stays "open this message"; the id
+   * still travels — this narrows WHETHER, never WHAT.
    */
   const enterReader = useStableCallback((messageId: string) => {
     if (readColumnHidden()) setReaderFor(messageId);
@@ -3107,25 +2557,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const waitingLive = screener.waiting.filter((w) => !screener.isExiting(w.id));
 
   /**
-   * READ-STATE, for every view.
-   *
-   * One call site for one mutation. Before this, "seen" meant three different things depending
-   * on where you were standing: Reads dispatched `feed_mark_seen`, Receipts kept an unpersisted
-   * React `Set` that a reload erased, and the Ohbox dispatched nothing at all — opening a
-   * message left it bold forever. All three now write the same row, and the worker puts `\Seen`
-   * on the user's own IMAP server, which is what makes the state survive the product.
-   *
-   * ── `via` IS A PASS-THROUGH, and no decision is taken here ──────────────────────────────
-   *
-   * A surface that marks mail read on the reader's BEHALF — the Ohbox's dwell commit, the
-   * Receipts per-card mark — labels itself `"glance"`, and the engine is the single place that
-   * acts on the label: it drops resurfaced ids from a glance, so a pin survives being merely
-   * looked at. Absent means deliberate, which is every other caller of this (the read pill,
-   * `⇧I`, bulk, read-all), and those spend pins exactly as they always have.
-   *
-   * Forwarding it is easy to lose and impossible to typecheck — a two-parameter callback is
-   * assignable where three are expected — so `test/resurface-now-shell.test.ts` asserts the label
-   * arrives at the adapter rather than trusting this line.
+   * Read-state, for every view — one call site for one mutation. "Seen" used to mean three
+   * things: Reads dispatched `feed_mark_seen`, Receipts kept an unpersisted React Set, the
+   * Ohbox dispatched nothing. All three now write the same row and the worker puts `\Seen` on
+   * the user's own IMAP server. `via` is a pass-through: a surface that marks read on the
+   * reader's behalf labels itself `"glance"` and the engine alone acts on it (a pin survives
+   * being looked at); absent means deliberate. The forward is easy to lose and impossible to
+   * typecheck, so `test/resurface-now-shell.test.ts` asserts the label reaches the adapter.
    */
   const markSeen = useStableCallback((ids: string[], unread: boolean, via?: "glance") => {
     if (ids.length === 0) return;
@@ -3133,22 +2571,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * "Mark all read" for a whole view. Unlike {@link markSeen}, this CHUNKS at
-   * {@link MARK_SEEN_CHUNK} because a full-view selection can exceed the route's 200-id cap; each
-   * chunk is a separate mutation with its own Idempotency-Key. The write reaches `\Seen` via the
-   * worker; the API opens no IMAP. `dispatchMarkAllRead` is a no-op on an empty list.
-   *
-   * ── IT ANSWERS WITH AN UNDO, because the press is one click over hundreds ────────────────
-   *
-   * The button fired instantly, silently and irreversibly: no confirmation, no toast, and at
-   * three hundred unread the only way back was marking each row unread by hand. A confirm
-   * dialog is the wrong ceremony for a verb that is usually meant — the product's own pattern
-   * is the TRUE-UNDO toast (`ToastHost`: the toast carries the action, it fires at most once).
-   * The undo flips exactly the ids this press flipped, through the same chunked walk
-   * (`dispatchMarkAll`, unread direction), so what it restores is precisely what was taken —
-   * mail that was already read before the press stays read, which a blanket "mark everything
-   * unread" would get wrong. Held longer than the default toast, since reading "Marked 312
-   * read" and deciding takes longer than a confirmation glance.
+   * "Mark all read" for a whole view. Unlike {@link markSeen} it CHUNKS at
+   * {@link MARK_SEEN_CHUNK} (a full view can exceed the route's 200-id
+   * cap); each chunk is its own mutation and Idempotency-Key; `\Seen` lands
+   * via the worker. It answers with a true-undo toast rather than a
+   * confirm — the product's pattern for a verb that is usually meant: the
+   * undo flips exactly the ids this press flipped, so mail already read
+   * before the press stays read (a blanket "mark everything unread" would
+   * not). Held longer than the default toast.
    */
   const markAllRead = useStableCallback((ids: string[]) => {
     if (ids.length === 0) return;
@@ -3161,34 +2591,27 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * BODY HYDRATION, WIRED ONCE.
-   *
-   * Both reads read `engine.read()` at INVOCATION time — the same discipline `conversationOf`
-   * documents below — and both are keyed on `engine` alone, NOT on `version`: a new identity every
-   * mirror delta would re-fire every view effect that depends on `hydrateBody` once per delta.
-   *
-   * `hydrateBody` is `makeHydrateBody(engine)` (see its docblock) so that the FORWARD of the
-   * caller's `{ retry }` option is a named, tested unit rather than an inline closure that once
-   * silently dropped it. It swallows nothing: `OhmailEngine.hydrateBody` never rejects — its
-   * outcome is a record the UI renders rather than an exception thrown at a React effect — so the
-   * `void` inside the factory states there is no promise worth awaiting, not a discarded error.
+   * Body hydration, wired once. Both reads read `engine.read()` at
+   * invocation time and are keyed on `engine` alone, NOT `version` — a new
+   * identity per mirror delta would re-fire every dependent view effect per
+   * delta. `hydrateBody` is `makeHydrateBody(engine)` so the forward of the
+   * caller's `{ retry }` option is a named, tested unit (an inline closure
+   * once silently dropped it). It swallows nothing: the engine's outcome is
+   * a record the UI renders, so `void` states there is no promise worth
+   * awaiting, not a discarded error.
    */
   const engineHydrateBody = useMemo(() => makeHydrateBody(engine), [engine]);
   const hydrateThread = useMemo(() => makeHydrateThread(engine), [engine]);
 
   /**
-   * ── THE REACH-PAST BODY DOOR, SPLICED IN AT THE ONE SEAM EVERY PANE READS ────────────────
-   *
-   * A reach-past row (`useOlderMail`) is deliberately not a mirror row, and the engine's own
-   * body machinery keys on the mirror — `hydrateBody` for such an id was a silent no-op, so the
-   * pane's stall face said "Couldn't load the full message" over a fetch that never started and
-   * offered a Retry that re-ran the same no-op. The split is decided HERE, per invocation,
-   * against the live mirror: a mirror-resident id takes the engine's path exactly as before
-   * (persisted record, eager hydration, the failed-guard), and an id the mirror does not hold
-   * takes the session door (`older-body.ts` — fetched on show, held for this session, never
-   * persisted). Deciding per invocation matters: a drain can bring a reach-past row INTO the
-   * mirror mid-session, and from that moment the engine's path owns it — the door's held copy
-   * simply stops being read, because `bodyOf` below prefers the mirror by the same test.
+   * The reach-past body door, spliced in at the one seam every pane reads.
+   * A reach-past row is deliberately not a mirror row, and the engine's
+   * body machinery keys on the mirror — `hydrateBody` for such an id was a
+   * silent no-op with a Retry that re-ran it. The split is decided here,
+   * per invocation, against the live mirror: mirror-resident ids take the
+   * engine's path; others take the session door (`older-body.ts` — fetched
+   * on show, never persisted). Per invocation matters: a drain can bring a
+   * reach-past row into the mirror mid-session, and from that moment the engine's path owns it.
    */
   // Destructured so `hydrateBody` can depend on the STABLE dispatch alone — the door's `bodyFor`
   // changes identity when an answer lands (that is how panes learn), and riding the whole object
@@ -3271,41 +2694,28 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * THE OHBOX'S SPLIT-PANE SELECTION IS THE INTENT.
-   *
-   * Selecting a row IS opening the message here — the reading column renders it in full
-   * message anatomy, which is precisely why the snippet-only bug was hardest to see in this
-   * pile: a truncation inside that anatomy reads as a short email rather than as a missing
-   * body. So the selected message's body is fetched, one id, on selection.
-   *
-   * It lives in the shell rather than in `OhboxView` for the reason `message-chrome.tsx`
-   * gives: the pane is mounted twice while the reader is open, `test/ohbox-read-state.test.ts`
-   * mounts the view with no `EngineProvider`, and the dwell machinery in that view is not
-   * something this change may reach into. The reader sheet shows the same message, so opening
-   * it needs no second trigger.
-   *
-   * `urgent`, AND ONLY THE TWO SELECTION EFFECTS PASS IT. This is the one message that IS the
-   * screen, so it must not queue behind the four-wide body limiter while a Screener preview's
-   * backlog — bodies nobody is looking at — drains ahead of it. It is deliberately not `retry`:
-   * that flag would also re-ask a server that already refused, on an effect that re-runs, which
-   * is the billed poll `hydrateBody`'s failed-guard exists to prevent.
+   * The Ohbox's split-pane selection IS the intent: selecting a row renders the message in full
+   * anatomy, so the selected body is fetched on selection (a truncation inside that anatomy
+   * reads as a short email, not a missing body). In the shell rather than `OhboxView` for
+   * `message-chrome.tsx`'s reason: the pane mounts twice while the reader is open, and the test
+   * harness mounts the view with no `EngineProvider`. `urgent`, and only the two selection
+   * effects pass it: this message IS the screen and must not queue behind the four-wide limiter.
+   * It is deliberately not `retry`, which would re-ask a refusing server from a re-running
+   * effect — the billed poll the failed-guard prevents.
    */
   useEffect(() => {
     if (selectedOhbox) hydrateBody(selectedOhbox.id, { urgent: true });
   }, [selectedOhbox?.id, hydrateBody]);
 
   /**
-   * THE READER'S OWN MESSAGE IS HYDRATED TOO — the gap that made History snippet-only.
-   *
-   * The effect above covers the split-pane selection (`selectedOhbox`). A message opened
-   * STRAIGHT into the reader sheet was never reached by it: History's `onOpen` sets
-   * `readerFor` directly, and every width whose reading column is hidden opens the sheet
-   * rather than a selection. So the pane rendered `bodyOf` over an un-hydrated mirror — a
-   * `snippet`, with no html for `MessageBody` to render — which is exactly the inconsistency
-   * routing every surface through one viewer is meant to close. Keyed on `readerFor` for the
-   * same reason the selection effect is keyed on `selectedOhbox.id`; `hydrateBody` is
-   * single-flight and idempotent, so the overlap when the reader shows an Ohbox message costs
-   * nothing.
+   * The reader's own message is hydrated too — the gap that made History
+   * snippet-only. The effect above covers the split-pane selection; a
+   * message opened straight into the reader sheet (History's `onOpen`, and
+   * every width whose reading column is hidden) was never reached by it, so
+   * the pane rendered `bodyOf` over an un-hydrated mirror. Keyed on
+   * `readerFor` as the selection effect is keyed on `selectedOhbox.id`;
+   * `hydrateBody` is single-flight and idempotent, so the overlap when the
+   * reader shows an Ohbox message costs nothing.
    */
   useEffect(() => {
     if (readerFor) hydrateBody(readerFor, { urgent: true });
@@ -3317,19 +2727,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const receiptsIsUnread = useStableCallback((m: EngineMessage) => m.unread);
   const receiptsUnread = receipts.filter(receiptsIsUnread).length;
   /**
-   * WHAT THE RAIL COUNTS FOR THE STREAMS: "new since last visit" — the fresh side of each
-   * view's line, still unread on the server ({@link FeedPartition.newCount}, which holds the
-   * whole argument and the report that produced it). Never a bare unread count over the pile:
-   * Reads and Receipts carry no per-row unread status, so a badge derived from a signal the
-   * piles themselves no longer show would keep demanding attention for mail that is simply old.
-   * And never the bare `fresh.length` this used to be — the line is per-device, so that number
-   * differed by thirteen between this app and the desktop over a pile the mail server said was
-   * entirely read. `rail.readsTitle` says it in full — "12 new since you were here", the same
-   * sentence the pile header carries (`stream.newSince`), because a bare "new" beside a number
-   * is the word this app also uses for unread and the two are not the same fact.
-   * `receiptsUnread` above survives for Mark-all-read only (Reads computes its own inside the
-   * view) — that control is about `\Seen` on the user's other clients, not about this pile's
-   * newness.
+   * What the rail counts for the streams: "new since last visit" — the fresh side of each
+   * view's line, still unread on the server ({@link FeedPartition.newCount} holds the
+   * argument). Never a bare unread count (the piles carry no per-row unread status), and never
+   * bare `fresh.length` — the line is per-device and that number once differed by thirteen
+   * between two clients over a fully read pile. `rail.readsTitle` says it in full ("12 new
+   * since you were here"). `receiptsUnread` survives for Mark-all-read only — that control is
+   * about `\Seen` on the user's other clients, not this pile's newness.
    */
   const readsNew = partition.newCount;
   const receiptsNew = receiptsPartition.newCount;
@@ -3419,18 +2823,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * THE INLINE FORWARD — the reply dock in forward mode, inside the thread.
-   *
-   * This REPLACES the navigation `forwardMessage` used to make: forwarding one message of a
-   * conversation meant leaving the conversation for the compose screen (reported from real
-   * use). The compose machinery's semantics are unchanged — the wire is the same
-   * `mail_send { forwardOf }` the compose form sends, the server still builds the quote and
-   * streams the original's attachments, recipients are still the user's to pick — only the
-   * SURFACE moved: the same editor the reply uses, docked at the thread's foot, bound to the
-   * panel whose ⋯ menu asked.
-   *
-   * The `no_forward` refusal stays client-side courtesy AND server-side law, exactly as the
-   * compose entry states: the user who presses Forward on an OTP learns why immediately.
+   * The inline forward — the reply dock in forward mode, inside the thread.
+   * Replaces the navigation `forwardMessage` used to make (forwarding one
+   * message of a conversation meant leaving it for the compose screen).
+   * The wire is unchanged — the same `mail_send { forwardOf }`, the server
+   * builds the quote and streams the original's attachments, recipients are
+   * the user's — only the surface moved: the reply's editor, docked at the
+   * thread's foot. The `no_forward` refusal stays client-side courtesy AND
+   * server-side law.
    */
   const openForward = useStableCallback((messageId: string) => {
     const m = engine.read().get<EngineMessage>("message", messageId);
@@ -3450,15 +2850,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const closeReply = useStableCallback(() => setReplyTo(null));
 
   /**
-   * REPLY IS A TOGGLE ON THE VERBS THAT SAY "Reply" — the pill's button and the `r`/`⇧R` keys.
-   * Pressing the verb that opened the editor closes it again; the draft survives, exactly as
-   * it survives Cancel and Escape (`closeReply` and the scratch buffer's own rule).
-   *
-   * The MODE is part of the identity, which is what keeps the narrowing `openReply` documents:
-   * Reply pressed while a reply-ALL editor is up on the same message is an explicit narrowing
-   * (and vice versa), not a close — only the same verb on the same message toggles. Retargeting
-   * paths (a panel's ⋯ menu, a sibling's footer verbs, the drafter) stay on `openReply`, because
-   * "reply to THIS message" is not a toggle.
+   * Reply is a toggle on the verbs that say "Reply" — the pill and `r`/`⇧R`.
+   * Pressing the verb that opened the editor closes it; the draft survives,
+   * as it survives Cancel and Escape. The MODE is part of the identity:
+   * Reply pressed while a reply-all editor is up is an explicit narrowing,
+   * not a close — only the same verb on the same message toggles.
+   * Retargeting paths (a panel's ⋯ menu, a sibling's footer verbs, the
+   * drafter) stay on `openReply`: "reply to THIS message" is not a toggle.
    */
   const toggleReply = useStableCallback((messageId: string, all = false) => {
     // The MODE is part of the editor's identity: Reply pressed while the FORWARD dock is up on
@@ -3530,15 +2928,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * THE DRAFT ARRIVES. It goes into the editor and NOWHERE ELSE.
-   *
-   * No mutation is dispatched, nothing is sent, and no triage state moves — a generated draft
-   * is not an answered message, and the Reply Run's debt is discharged by a send settling and
-   * by nothing else (`onSendSettled`). That separation is asserted rather than described; see
-   * `draft-reply-wiring.test.tsx`.
-   *
-   * An empty editor takes the draft directly, because there is no question to ask. A non-empty
-   * one is asked, and keeps its text until it is answered.
+   * The draft arrives. It goes into the editor and nowhere else: no
+   * mutation, nothing sent, no triage state moved — a generated draft is
+   * not an answered message, and the Reply Run's debt is discharged by a
+   * send settling and nothing else (`onSendSettled`); asserted in
+   * `draft-reply-wiring.test.tsx`. An empty editor takes the draft
+   * directly; a non-empty one is asked, and keeps its text until answered.
    */
   const onDraft = useStableCallback((draft: DraftedReply, messageId: string) => {
     // The FORWARD dock's body is not "existing reply text": when the open editor is the
@@ -3576,41 +2971,24 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * SENDING. The state machine, the retry driver and the triage clear all live in
-   * `mail-send.ts`; this only says what "the send settled" means to the shell.
-   *
-   * For a reply: close the editor, but ONLY if it is still open on that same message. A
-   * confirmation can arrive from a retry long after the user moved on, and closing whatever
-   * editor happens to be open then would discard a different half-written reply.
-   *
-   * For a compose: empty the form. The scratch buffer in `localStorage` is cleared by the send
-   * machine itself (it must happen even if this view is long gone); this is the in-memory half,
-   * and without it the fields would still be full of a message that has already been delivered.
-   *
-   * ── AND FOR A REPLY RUN STEP: THIS IS WHERE IT IS DISCHARGED ────────────────────────────
-   *
-   * `onDone` used to dispatch `triage_set → none` at PRESS time and step forward, with no send
-   * anywhere. Adding a send while keeping that would have left TWO independent discharge
-   * rules, and two discharge rules is exactly how a FAILED send still clears the debt — the
-   * same bug wearing the fix as a costume. So the press only sends, and everything that means
-   * "this one is dealt with" happens here: `settle` calls this on a CONFIRMATION and on
-   * nothing else, so a step is left behind only by a reply that exists. The triage state
-   * itself is cleared by `settle` in `mail-send.ts`, which is now the only rule
-   * that clears one.
+   * Sending. The state machine, retry driver and triage clear live in `mail-send.ts`; this only
+   * says what "settled" means to the shell. For a reply: close the editor only if it is still
+   * open on that same message — a retry's confirmation can arrive after the user moved on, and
+   * closing then would discard a different half-written reply. For a compose: empty the form
+   * (the localStorage half is cleared by the send machine itself). A Reply Run step is
+   * discharged HERE and only here: the press only sends, `settle` calls this on a confirmation
+   * and nothing else, so a step is left behind only by a reply that exists — two discharge
+   * rules is how a FAILED send still clears the debt.
    */
   /**
-   * THE AUTOSAVE HOOK'S ENDINGS, THROUGH REFS, AND THE REFS ARE NOT DECORATION.
-   *
-   * `onSendSettled` and `discardDraft` are declared here and `useComposeAutosave` is called two
-   * hundred lines below them — it needs `composeMailbox`, which needs the resolved From options,
-   * which need the mailboxes. Naming `autosave` directly in a callback body would be a
-   * temporal-dead-zone reference that TypeScript accepts (it is inside a closure) and that cannot
-   * be put in the dependency array without throwing at render. The refs are assigned once the hook
-   * exists, which is the shape `attachments.ts` uses for the same reason.
-   *
-   * `settleComposeRef` is invariant T's one function — every ending of a bound compose goes
-   * through it. The two beside it are the pieces `discardDraft` needs AFTER the server has
-   * answered, which is the whole of that finding: it used to read them before.
+   * The autosave hook's endings, through refs — not decoration:
+   * `onSendSettled` and `discardDraft` are declared here and
+   * `useComposeAutosave` is called two hundred lines below (it needs the
+   * resolved From options). Naming `autosave` directly in a callback body
+   * is a temporal-dead-zone reference TypeScript accepts inside a closure
+   * but cannot join a dependency array. The refs are assigned once the hook
+   * exists (`attachments.ts`'s shape). `settleComposeRef` is invariant T's
+   * one function — every ending of a bound compose goes through it.
    */
   const settleComposeRef = useRef<(fate: ComposeFate) => void>(() => {});
   const releaseDraftIdRef = useRef<string | null>(null);
@@ -3627,24 +3005,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const replySeedDrafts = useRef(new Map<string, string>());
   /*
-   * ── THE COMPOSE RECOVERY IS GONE, AND ITS ABSENCE IS THE FIX ─────────────────────────────────
-   *
-   * `recoverySeed` stood here: the row a compose was "recovering" — an `unverified` or stranded
-   * `sending` draft whose text had been seeded into a FRESH row, with the stranded one discarded
-   * once the fresh send confirmed.
-   *
-   * Invariant S(2) says a row past `draft` is never recovered into a fresh key, and the recovery is
-   * exactly that: it takes a message whose first send may already have been delivered and sends it
-   * again under a key the server cannot recognise. Its only reachable case was a stranded `sending`
-   * row — an `unverified` one was already parked — and that is the row whose send is most likely
-   * still in flight. Such a row is PARKED now (`holdOf` calls every non-`draft` status parked), so
-   * the branch that set this ref cannot be entered and the ref, its discard on confirmation, and
-   * its four clears are removed rather than left as a dead arm a later reader would take for a
-   * guarantee.
-   *
-   * What a person does with such a message instead: it is listed in Drafts with the warning, it is
-   * not sent again on its own, and Try again on the record replays the ORIGINAL key, which is the
-   * one repeat the server can recognise.
+   * The compose recovery is gone, and its absence is the fix. `recoverySeed`
+   * seeded an `unverified` or stranded `sending` draft's text into a FRESH
+   * row — exactly what invariant S(2) forbids: a message whose first send
+   * may already be delivered, re-sent under a key the server cannot
+   * recognise. Such a row is PARKED now (`holdOf` parks every non-`draft`
+   * status), so the branch cannot be entered and the ref and its clears are
+   * removed rather than left as a dead arm. Instead: the row is listed in
+   * Drafts with the warning, and Try again replays the ORIGINAL key — the one repeat the server can recognise.
    */
 
   /**
@@ -3657,43 +3025,27 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
 
   const onSendSettled = useStableCallback((key: string, m: MailSendMutation) => {
     if (key === COMPOSE_SEND_KEY) {
-      /* ── INVARIANT T(b), AND THIS IS THE ONE IMPLEMENTATION OF IT ──────────────────────────
-         The live confirmed path used to clear the compose here, in four statements, while the
-         reload path cleared it in two somewhere else — and the two drifted, which is how a
-         delivered message came to sit in the composer behind an idle projection. Both call
-         `settleCompose` now. It still RELEASES when the send used the row and DISCARDS when it
-         did not (`autosave.settled`'s judgement, unchanged, inside): a send that carried the row
-         turned it into a sent message and deleting that would destroy the account's record of an
-         outgoing mail, while a send pressed before the first save made its own row and the one
-         this hook adopted is a phantom — the sent message sitting in Drafts with Send live.
-         The surface half — emptying the form, dropping the selection, arriving at the list — is
-         passed in as `onCleared`, because it is this component's state and not the hook's. */
+      /* Invariant T(b), and this is the one implementation of it: the live
+         confirmed path and the reload path both call `settleCompose` now
+         (they used to clear the compose in different statements and
+         drifted — a delivered message sat in the composer). It RELEASES
+         when the send used the row and DISCARDS when it did not
+         (`autosave.settled`'s judgement): deleting a row the send used
+         would destroy the account's record of an outgoing mail, while a
+         send pressed before the first save made its own row. The surface
+         half — emptying the form, arriving at the list — is `onCleared`. */
       settleComposeRef.current({
         kind: "sentByMirror", rowId: m.draftId ?? null, toList: m.sendAt ? "drafts" : "ohbox",
       });
       /**
-       * ── AND THE MESSAGE IS SENT, SO THE COMPOSE IS OVER ────────────────────────────────
-       *
-       * Compose used to stay on screen after a confirmed send: the form emptied and the view
-       * did not change, so the only thing that said the mail had gone was a toast, and the
-       * reader was left staring at a blank compose form wondering whether to press Send again.
-       * `cancelCompose` has always navigated (`go("ohbox")`); the successful path did not.
-       *
-       * ON THE CONFIRMATION AND NOT ON THE PRESS, which is the whole reason this can be here
-       * rather than in `sendCompose`. The Ohbox this lands on already holds the message: the
-       * engine materialises the optimistic Sent copy from the server's own `{status:"sent"}`
-       * answer, and `dispatch` now does that the instant that answer arrives rather than behind
-       * a reconciliation drain — so by the time this callback runs, the row is in the mirror and
-       * "Earlier" renders it first (`readTimeOf` ranks a sent message by when it was sent).
-       * Navigating at press time would show an Ohbox that does NOT yet hold it, and a message
-       * appearing a second after the list did is the flicker this is avoiding. A send that fails
-       * never reaches here at all — the compose stays put with its text, which is where somebody
-       * has to be to decide what to do about it.
-       *
-       * The selection is cleared with it. Arriving at a list with a message open from an
-       * earlier visit puts a stranger's mail in the reading column at the moment the reader is
-       * looking for their own — and the row this arrival is about is at the top of the list,
-       * unselected, exactly as arriving anywhere else in the product leaves it.
+       * And the message is sent, so the compose is over. It used to stay on screen after a
+       * confirmed send — an emptied form and a toast, the reader wondering whether to press
+       * Send again. Navigate on the CONFIRMATION, not the press: by then the engine has
+       * materialised the optimistic Sent copy from the server's `{status:"sent"}` answer, so
+       * the Ohbox this lands on already holds the message ("Earlier" ranks a sent message by
+       * its send time). A failed send never reaches here — the compose stays put with its text.
+       * The selection clears too: arriving with an earlier visit's message open would put a
+       * stranger's mail in the reading column.
        */
       return;
     }
