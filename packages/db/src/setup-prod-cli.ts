@@ -16,46 +16,14 @@ import { dataApiPolicyFromEnv } from "./supabase-lockdown-core.js";
  */
 
 /**
- * CLI: `pnpm db:setup:prod` (root) — reads `DATABASE_URL_SESSION` from the environment.
- * The URL is never accepted on argv so it cannot land in a shell history or `ps` output.
- *
- * `TF_PROD_DB_HOST` is REQUIRED here (see {@link assertExpectedHost}): the one command in
- * this repository that runs DDL against a real database must state which database it
- * believes that is, and be refused when the URL disagrees. It is not required by the
- * programmatic function, so tests and throwaway databases stay ergonomic.
- *
- * ── EVERY EXIT PATH RETURNS A CODE; NOTHING CALLS `process.exit` ────────────────────────
- *
- * `console.log`/`console.error` QUEUE when the destination is a pipe and `process.exit`
- * discards whatever has not drained. Measured, not assumed:
- * `node -e 'console.log("x".repeat(120000)); process.exit(0)' | wc -c` emits 65536 of 120001
- * on this platform. The stake is a cutover: the line lost is the one explaining the failure,
- * during the incident. The exposure needs a pipe that is still NON-BLOCKING, because that is
- * where the queue exists at all — this file COMPILED, or `pnpm db:setup:prod 2>&1 | tee
- * cutover.log` under any loader that has not cleared `O_NONBLOCK` on it first. Today's `tsx` HAS
- * cleared it by then: it transforms this file with an `esbuild` service process spawned with
- * stderr inherited, and an inherited pipe goes back to blocking for every holder of that file
- * description, so the writes complete synchronously and there is nothing left to discard. That
- * masking belongs to a dev dependency, not to this program, so it is not something to rely on —
- * `test/cli-exit-drain.test.ts` turns it off to observe the defect. `process.exitCode`
- * plus a natural return keeps the pending write alive until it has left the process; it is
- * the shape `provision-staff-role.ts` already uses.
- *
- * The URL guards moved INSIDE the try for the same reason and one more: `assertSessionUrl` used
- * to be evaluated in the module body, outside any handler, so a rejected `DATABASE_URL_SESSION`
- * reported itself through Node's default path — a stack trace instead of this file's own
- * `[db:setup:prod] FAILED:` line. Same exit code, the CLI's own failure shape.
- *
- * `.then`, NOT top-level `await`, even though `provision-staff-role.ts` uses `await`. That file
- * is a leaf; THIS one is re-exported through `@trafficflow/db/admin` and reaches `apps/admin`
- * and `apps/api-vercel`, so a top-level await here makes an async module out of a dependency of
- * two Next builds. Nothing local runs `next build`, so that is precisely the class of breakage a
- * green `tsc -b` and a green suite would both wave through.
- *
- * `pathToFileURL` and NOT `file://${process.argv[1]}`: the latter is false for any path
- * that needs percent-encoding, so on a checkout under a directory with a SPACE (this
- * one) the script would exit 0 having done nothing at all — a lesson this repository has
- * already paid for once.
+ * CLI: `pnpm db:setup:prod` — reads `DATABASE_URL_SESSION` from the environment; never on argv,
+ * so it cannot land in shell history or `ps`. `TF_PROD_DB_HOST` is REQUIRED: the one command that
+ * runs DDL against a real database must state which database it believes that is. Every exit path
+ * returns a code; nothing calls `process.exit`: `console.log` QUEUES on a pipe and `process.exit`
+ * discards what has not drained — the lost line is the one explaining the failure. `tsx` masks
+ * it; a test unmasks it. The URL guards live INSIDE the try, so a rejected URL reports through
+ * this file's own `FAILED:` line. `.then`, NOT top-level `await`: this file reaches two Next
+ * builds. `pathToFileURL`, not `file://${argv}` — a checkout under a SPACE exits 0 silently.
  */
 async function runCli(): Promise<number> {
   try {

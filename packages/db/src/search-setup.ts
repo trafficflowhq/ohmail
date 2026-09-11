@@ -27,27 +27,14 @@ export async function ensureSearchExtensions(db: SqlExecutor): Promise<void> {
 }
 
 /**
- * THE PRE-MIGRATION BUILD OF MAIL 0071's PARTIAL INDEX, CONCURRENTLY — the standing rule
- * (`0047_read_order`'s, restated when the away responder's candidate index was deferred for
- * exactly this reason) is that a plain `CREATE INDEX`
- * over the schema's largest table must never run as a journal statement: it scans every row to
- * evaluate the predicate and holds a write-conflicting lock for the length of the build, inside
- * the migrator's transaction, where CONCURRENTLY cannot run at all. Mail 0071 carries the same
- * statement with `IF NOT EXISTS` — so THIS step, run BEFORE the migrator on the setup CLI's own
- * autocommit connection, builds the index without blocking writes, and the journal statement
- * then no-ops. The two must stay byte-equivalent; each names the other.
- *
- * The populations, spelled out:
- *  · a FRESH database: `message_bodies` does not exist yet — skip; the journal builds the index
- *    on the then-empty table instantly.
- *  · the database that applied 0071 before this step existed (the managed production db, at
- *    85k body rows — measured in seconds): the index exists — `IF NOT EXISTS` no-ops.
- *  · an EXISTING install upgrading past 0071 with years of mail — the population the rule is
- *    for: built here, concurrently, before the migrator reaches 0071.
- *
- * A failed CONCURRENTLY build leaves an INVALID index behind (Postgres documents this), which
- * `IF NOT EXISTS` would then treat as present — permanently broken. So an invalid leftover is
- * dropped and rebuilt first.
+ * The pre-migration build of mail 0071's partial index, CONCURRENTLY. A plain `CREATE INDEX` over
+ * the schema's largest table must never run as a journal statement — it holds a write-conflicting
+ * lock inside the migrator's transaction, where CONCURRENTLY cannot run. Mail 0071 carries the
+ * same statement with `IF NOT EXISTS`, so THIS step, run BEFORE the migrator on an autocommit
+ * connection, builds without blocking writes and the journal statement no-ops; the two must stay
+ * byte-equivalent. A fresh database skips; an already-indexed one no-ops; an existing install
+ * upgrading with years of mail builds here. A failed CONCURRENTLY build leaves an INVALID index
+ * that `IF NOT EXISTS` would treat as present — an invalid leftover is dropped and rebuilt first.
  */
 export async function ensureWithheldProvenanceIndex(
   db: SqlExecutor, opts: { log?: (msg: string) => void } = {},
