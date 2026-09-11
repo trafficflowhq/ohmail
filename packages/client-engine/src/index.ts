@@ -403,3 +403,17 @@ export {
   type StorePolicy,
   type WakeSignalSource,
 } from "./engine.js";
+
+/* The provider presets every connect surface reads. A leaf that imports nothing — see its header
+   for why the phone is the reason it lives here. */
+export {
+  PROVIDERS,
+  hostsFor,
+  portMeansImplicitTls,
+  presetForAddress,
+  providerById,
+  providerLabel,
+  serverGuessFor,
+  type ProviderPreset,
+  type ServerGuess,
+} from "./providers.js";
