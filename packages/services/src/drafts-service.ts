@@ -38,105 +38,49 @@ export interface DraftCreateIdempotency {
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
 /**
- * HOW MANY ADDRESSES ONE RECIPIENT FIELD MAY NAME (`to`, `cc`, `bcc` each).
- *
- * ── THIS BOUNDS A STORED COLUMN. IT IS NOT THE SEND'S BOUND ──────────────────────────────
- *
- * Each of the three fields is a `jsonb` column written by an autosaving compose surface, and
- * before this they were unbounded: `validAddresses` checked every entry's SHAPE and never its
- * count. What this number says is that a single request naming more than 100 addresses in one
- * field is not a compose gesture, and that is all it says.
- *
- * **The per-MESSAGE ceiling is `SEND_MAX_RECIPIENTS` (500), enforced in `SendService.reserve`**,
- * because that is where the count stops being a column and becomes one `RCPT TO` command per
- * address on a held SMTP socket. The two bounds are separate because they are about two different
- * costs, and deriving this one from a per-message provider limit would be a rationale that does
- * not match its enforcement: three fields at 100 is 300, which Outlook and iCloud deliver and
- * Gmail does not — a per-field cap cannot express a per-message policy, so it does not try to.
- *
- * ── IT IS `SEND_MAX_RECIPIENTS`, AND THAT IS A CORRECTION ────────────────────────────────
- *
- * This was 100 per field, on the reading that 100 is *"far above what a person types into a
- * field"*. A person, yes — but a person is not the only producer. **Reply All copies the
- * received audience into `to` and `cc`** (`apps/webapp/app/shell/compose-from.ts`), and a message
- * may legally arrive with more than 100 addresses in `To:` while still being under the 500 this
- * product will SEND. So the tighter ceiling refused a draft the product itself had just composed,
- * from a message it had just accepted — the fourth time in this slice a bound was written from a
- * comment about human behaviour rather than from the code producing the value, and the one that
- * reached furthest into the product before a review round caught it.
- *
- * Two ceilings on the same list must not disagree, so there is one number: a draft may hold what
- * a send may carry. The per-field check stays per field because this function sees one field —
- * a total computed here would have to guess at the two fields a partial update does not carry —
- * and `SendService.reserve` still totals all three where they become RCPT TO commands. A field
- * at the ceiling therefore passes here and the message may still be refused there, which is the
- * honest order: the draft is storage, the send is the network.
+ * How many addresses one recipient field may name (`to`, `cc`, `bcc` each). This bounds a STORED
+ * COLUMN, not the send: the per-message ceiling is `SEND_MAX_RECIPIENTS` (500) in
+ * `SendService.reserve`, where the count becomes one `RCPT TO` per address. It IS
+ * `SEND_MAX_RECIPIENTS`, a correction: it was 100 per field on the reading that 100 is far above
+ * what a person types — but Reply All copies the received audience into `to` and `cc`, so the
+ * tighter ceiling refused a draft the product itself had just composed. Two ceilings on one list
+ * must not disagree, so there is one number. Per field because this function sees one field;
+ * `reserve` totals all three — the draft is storage, the send is the network.
  */
 export const DRAFT_MAX_RECIPIENTS = SEND_MAX_RECIPIENTS;
 
 /**
- * The longest ADDRESS one recipient entry may carry.
- *
- * **254, not 320, and the difference is the citation being read properly.** RFC 5321 §4.5.3.1
- * gives 64 octets for the local part and 255 for the domain, which is where 320 comes from — but
- * the same section caps the complete FORWARD PATH at 256 octets *including* the angle brackets,
- * so a usable mailbox is at most 254 and the two component maxima cannot both be met. Anything
- * longer is not an address a transport will deliver, so refusing it here is telling the truth
- * earlier.
- *
- * Measured in UTF-16 code units (what `.length` returns) rather than octets, and for a non-ASCII
- * SMTPUTF8 address that is LOOSER, not stricter: 200 two-byte characters are 200 to `.length` and
- * about 400 octets, so such an address passes a guard the RFC would refuse. The direction is
- * deliberate — being generous here costs a stored column and a bounce the transport was going to
+ * The longest ADDRESS one recipient entry may carry. 254, not 320 — the citation read properly:
+ * RFC 5321 §4.5.3.1 gives 64 octets local + 255 domain (where 320 comes from), but the same
+ * section caps the complete FORWARD PATH at 256 octets including the angle brackets, so a usable
+ * mailbox is at most 254. Anything longer is not an address a transport will deliver; refusing it
+ * here is telling the truth earlier. Measured in UTF-16 code units, which for SMTPUTF8 addresses
+ * is LOOSER, deliberately: being generous costs a stored column and a bounce the transport would
  * send anyway, while being strict on a count that is not the RFC's would refuse addresses on the
- * wrong arithmetic. A proper octet validator belongs with address parsing, not with a bound whose
- * job is to stop the unbounded case.
+ * wrong arithmetic.
  */
 export const RECIPIENT_ADDRESS_MAX_CHARS = 254;
 
 /**
- * The longest SUBJECT a draft may carry — a PRODUCT ceiling, not an RFC one.
- *
- * ── WHY IT IS NOT 998 ────────────────────────────────────────────────────────────────────
- *
- * It was, on the reading that RFC 5322 §2.1.1 makes 998 octets the maximum length of a header
- * line and a subject is one header. That is a LINE limit: a long subject is legally FOLDED
- * across several lines, Nodemailer folds on the way out, and a received message may carry one
- * far longer than 998. `replySubject` inherits a received subject verbatim, so the 998 version
- * refused the first autosave of a reply to real mail — a bound that breaks replying to a message
- * this product already accepted.
- *
- * 8 192 characters instead. Ours, deliberately generous, and its job is only to make the value
- * BOUNDED: with the html cap, the recipient caps and this one, `POST /drafts` has a worst legal
- * body that can be calculated, and `input-bounds-census.test.ts` calculates it against the
- * request door. Before it, `subject` reached a stored column with no ceiling of any kind and the
- * door's own derivation was fiction.
+ * The longest SUBJECT a draft may carry — a PRODUCT ceiling, not an RFC one. It was 998, on the
+ * reading that RFC 5322 §2.1.1 caps a header line — but that is a LINE limit: a long subject is
+ * legally FOLDED, Nodemailer folds on the way out, and a received message may carry one far
+ * longer. `replySubject` inherits a received subject verbatim, so the 998 version refused the
+ * first autosave of a reply to real mail. 8 192 characters instead — ours, deliberately generous;
+ * its job is only to make the value BOUNDED so `POST /drafts` has a worst legal body that can be
+ * calculated, which `input-bounds-census.test.ts` calculates against the request door.
  */
 export const DRAFT_SUBJECT_MAX_CHARS = 8192;
 
 /**
- * The longest DISPLAY NAME one recipient entry may carry.
- *
- * The reason it exists at all is that {@link DRAFT_MAX_RECIPIENTS} bounds the COUNT and the
- * entries were unbounded strings — so the request's SIZE was still the caller's to choose.
- * Together the two make the recipient half of a draft body a computable maximum, which is what
- * `input-bounds-census.test.ts` checks against the request door's own ceiling.
- *
- * **100, and it was 200 until the count ceiling moved.** Raising {@link DRAFT_MAX_RECIPIENTS}
- * from 100 to 500 (so Reply All cannot compose a draft this service refuses) multiplied the worst
- * legal body by five, and the census — which recomputes that product rather than trusting it —
- * failed with the arithmetic: 5 732 016 bytes against a 3 MiB door. That is the census doing the
- * job it exists for, on the very first change made after it was written.
- *
- * The resolution is the one the fleet's smallest door forces. The managed host is capped by the
- * platform at 4.5 MB whatever we write, so the worst legal body has to clear THAT, not just our
- * own number — a door we set above the platform's would certify a compatibility the deployment
- * does not have. 3 × 500 × (254 + 100) × 6 + 262 144 + 49 152 ≈ 3.34 MB fits under both the
- * 4 MiB door and the platform's ceiling, with headroom.
- *
- * 100 characters is a display NAME — a person's or an organisation's — so the shorter number
- * refuses nothing anybody sends. The address keeps its RFC-derived 254; that one is not ours to
- * trade against a body size.
+ * The longest DISPLAY NAME one recipient entry may carry. It exists because {@link
+ * DRAFT_MAX_RECIPIENTS} bounds the COUNT and the entries were unbounded strings; together the two
+ * make the recipient half of a draft body a computable maximum (`input-bounds-census.test.ts`).
+ * 100, down from 200: raising the count ceiling to 500 multiplied the worst legal body by five,
+ * and the census failed on the arithmetic. The resolution is what the fleet's smallest door
+ * forces: the managed host caps requests at 4.5 MB, and 3 × 500 × (254 + 100) × 6 + 262 144 + 49
+ * 152 ≈ 3.34 MB fits under both doors. 100 characters is a display NAME, so the shorter number
+ * refuses nothing anybody sends.
  */
 export const RECIPIENT_NAME_MAX_CHARS = 100;
 
@@ -171,16 +115,14 @@ export interface CreateDraftBody {
 }
 
 /**
- * PUT/PATCH â any subset of the composable fields, `mailboxId` included.
- *
- * `mailboxId` was fixed after create, and that froze the sending IDENTITY at the first
- * autosave: the row is born at the first keystroke, so a From picked afterwards â the
- * explicit selector, or the domain-match switch that fires only once recipients exist â
- * changed the screen and nothing else, and the mail left under whatever the picker held
- * when typing began. The pick has to reach the row, so the patch may move it: validated
- * exactly like create (owned, not disabled), and refused with a 409 the moment the row
- * has left `draft` â a send in flight, or already out, keeps the identity it was
- * reserved under (see {@link DraftsService.update}).
+ * PUT/PATCH — any subset of the composable fields, `mailboxId` included. `mailboxId` was fixed
+ * after create, which froze the sending IDENTITY at the first autosave: the row is born at the
+ * first keystroke, so a From picked afterwards — the explicit selector, or the domain-match
+ * switch that fires once recipients exist — changed the screen and nothing else, and the mail
+ * left under whatever the picker held when typing began. The pick has to reach the row, so the
+ * patch may move it: validated exactly like create (owned, not disabled), and refused with a 409
+ * the moment the row has left `draft` — a send in flight keeps the identity it was reserved
+ * under.
  */
 export type PatchDraftBody = Partial<CreateDraftBody>;
 
@@ -210,31 +152,26 @@ export interface DraftMutation {
 export type SendResolution = "arrived" | "not_arrived";
 
 /**
- * THE STATUSES THAT MEAN "AN ATTEMPT IS STILL ON RECORD", and the reason there is exactly one list.
- *
- * `pending` is an invocation that is live right now (or one that died holding the reservation);
- * `unverified` is the ambiguous ending — SMTP said nothing conclusive and the minted Message-ID was
- * not in Sent. Both are open questions about mail that may or may not have gone out, and while one
- * stands, the draft is the account's only copy of a message somebody may have received.
- *
- * `sent` and `failed` are NOT here, and that is the correction this list exists to record. They are
- * LEDGER ENTRIES ABOUT THE PAST — one delivery this server watched succeed, one it watched fail —
- * and neither is a reason to keep the text. The predicate used to be "does a row exist", which
- * conflated the two kinds of fact and made a definitively-failed send's draft undeletable for ever.
+ * The statuses that mean "an attempt is still on record", and why there is exactly one list.
+ * `pending` is an invocation live right now (or one that died holding the reservation);
+ * `unverified` is the ambiguous ending — SMTP said nothing conclusive and the minted Message-ID
+ * was not in Sent. Both are open questions about mail somebody may have received, and while one
+ * stands the draft is the account's only copy. `sent` and `failed` are NOT here — the correction
+ * this list records: they are LEDGER ENTRIES ABOUT THE PAST, and neither is a reason to keep the
+ * text. The old predicate was "does a row exist", which made a definitively-failed send's draft
+ * undeletable for ever.
  */
 const SEND_ON_RECORD_STATUSES = ["pending", "unverified"] as const;
 
 export class DraftsService {
   /**
-   * IS AN ATTEMPT STILL ON RECORD FOR THIS DRAFT? One predicate, three callers.
-   *
-   * Takes `tx` rather than `ctx` because every caller asks INSIDE the transaction that is about to
-   * act on the answer, and after taking `FOR UPDATE` on the draft row. That order is the whole
-   * race: `SendService.reserve` inserts its reservation in another transaction, and that INSERT
-   * takes `FOR KEY SHARE` on the draft for the foreign key. `FOR UPDATE` is the one row-lock mode
-   * that conflicts with it, so a reserve committing concurrently either lands before this read
-   * (and is seen) or blocks until after the caller has committed. A predicate that read this table
-   * without that lock held would answer about the past.
+   * Is an attempt still on record for this draft? One predicate, three callers. Takes `tx` rather
+   * than `ctx` because every caller asks INSIDE the transaction about to act on the answer, after
+   * taking `FOR UPDATE` on the draft row. That order is the whole race: `SendService.reserve`
+   * inserts its reservation in another transaction, and that INSERT takes `FOR KEY SHARE` on the
+   * draft for the foreign key. `FOR UPDATE` is the one row-lock mode that conflicts with it, so a
+   * concurrent reserve either lands before this read (and is seen) or blocks until after the
+   * caller commits. A predicate reading this table without that lock would answer about the past.
    */
   private async sendOnRecord(tx: Tx, accountId: string, draftId: string): Promise<boolean> {
     const [row] = await tx.select({ id: outboundSends.id }).from(outboundSends)
@@ -383,24 +320,13 @@ export class DraftsService {
       }
       await this.requireOwnedReplyTarget(tx, ctx, patch.inReplyToMessageId ?? null);
       /**
-       * ── AN ATTEMPT STILL ON RECORD FREEZES THE WORDS, for the reason it blocks the discard ──
-       *
-       * `remove` and `update` ask the SAME question ({@link sendOnRecord}) because a message whose
-       * fate is unknown has one property that decides both: somebody may already be holding a
-       * copy of exactly these words. Editing them would leave the account's only record of what
-       * was sent saying something that was never sent — and if the reader then resolves the row
-       * `arrived`, the lie is what gets filed as delivered.
-       *
-       * `failed` and `sent` are not on record ({@link SEND_ON_RECORD_STATUSES}), so this refuses
-       * nothing it used to allow except the one case it is about: an `unverified` row. Resolve it
-       * first — `not_arrived` returns the row to an ordinary draft and editing is open again.
-       *
-       * AFTER the thread read and BEFORE the UPDATE, deliberately. The class takes thread rows
-       * before draft rows (the merge paths hold a thread `FOR UPDATE` while repointing drafts) and
-       * the reversed order is a deadlock both sides pay as a 500 — so the draft lock cannot move
-       * above `patch.threadId`'s key-share. It has to be a `FOR UPDATE` and not a plain read for
-       * `remove`'s reason: `SendService.reserve` takes `FOR KEY SHARE` on this row, and only
-       * `FOR UPDATE` serializes against it.
+       * An attempt still on record FREEZES the words, for the reason it blocks the discard:
+       * somebody may already hold a copy of exactly these words, and editing them would leave the
+       * account's only record of what was sent saying something never sent. `failed` and `sent`
+       * are not on record, so this refuses only the `unverified` case — resolve it first. AFTER
+       * the thread read and BEFORE the UPDATE: the class takes thread rows before draft rows, and
+       * the reversed order is a deadlock. A `FOR UPDATE`, not a plain read: only `FOR UPDATE`
+       * serializes against `reserve`'s `FOR KEY SHARE`.
        */
       const [locked] = await dialect(ctx.db).forUpdate(tx.select({ id: drafts.id }).from(drafts)
         .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
@@ -412,23 +338,15 @@ export class DraftsService {
         );
       }
       // Scope the UPDATE to the account: a cross-account id matches 0 rows. A mailbox move
-      // additionally requires `status = 'draft'` IN THE PREDICATE â not in a prior read â
-      // because the send path flips the row to `sending` in its own transaction, and a check
-      // that ran before this UPDATE took the row lock would let the move land on a row whose
-      // send is already reserved under the old identity.
-      // A row WEARING AN APPOINTMENT is FROZEN (mail 0077): what the worker sends must be
-      // exactly what the user last saw when they pressed "Send later", and an edit landing
-      // while the claim is picking the row up would send words nobody reviewed at the time
-      // they chose. The predicate is `send_key IS NULL`, NOT `status <> 'scheduled'`, because
-      // the claim window is the case that matters: the worker's claim flips the row to
-      // 'draft' with the key standing, and a status-only freeze would let a stale client PUT
-      // win the row lock ahead of the reservation and change the content that sends. The key
-      // covers every phase of an appointment's life ('scheduled', the claim window, and
-      // 'sending' up to the finalizer that clears it) and nothing else â an ordinary draft
-      // never carries one. The edit flow is cancel â edit â schedule again, which re-mints
-      // the key, so "an edited message sends only its final content" is structural rather
-      // than a race. In the PREDICATE, not a prior read, for the same reason the mailbox
-      // move's status check is.
+      // additionally requires `status = 'draft'` IN THE PREDICATE — not a prior read — because
+      // the send path flips the row to `sending` in its own transaction. A row WEARING AN
+      // APPOINTMENT is FROZEN (mail 0077): what the worker sends must be exactly what the user
+      // last saw. The predicate is `send_key IS NULL`, NOT `status <> 'scheduled'`: the worker's
+      // claim flips the row to 'draft' with the key standing, and a status-only freeze would let
+      // a stale client PUT win the row lock ahead of the reservation. The key covers every phase
+      // of an appointment's life; an ordinary draft never carries one. The edit flow is cancel →
+      // edit → schedule again, which re-mints the key, so "an edited message sends only its final
+      // content" is structural.
       const updated = await tx.update(drafts).set(set)
         .where(and(
           eq(drafts.id, id), eq(drafts.accountId, ctx.accountId),
@@ -468,63 +386,14 @@ export class DraftsService {
   }
 
   /**
-   * A PERSON ANSWERS FOR A SEND THIS SERVER COULD NOT CONFIRM.
-   *
-   * ── WHY THE PRODUCT NEEDED A VERB HERE AT ALL ───────────────────────────────────────────────
-   *
-   * `finalizeUnverified` is the honest ending for an attempt whose outcome is genuinely unknown:
-   * SMTP said nothing conclusive and the minted Message-ID was not in Sent. It leaves the draft at
-   * `unverified` and the row says so — *"it may not have been delivered … check your Sent folder."*
-   *
-   * That sentence asks the reader a question, and until now there was nowhere to put the answer.
-   * The row was frozen: Discard refused it, the client parked it, and the state was permanent
-   * because it was keyed on STATUS and nothing ever moved the status. A reader who checked their
-   * Sent folder, found the message, and came back had no way to say so — which is the whole defect.
-   * `SEND_LOCK_TTL_MS` does not help: a 7-day lock expiring does not decide what happened.
-   *
-   * ── ONE TRANSACTION, AND THE LOCK ORDER IS THE DRAFT THEN ITS SENDS ─────────────────────────
-   *
-   * `FOR UPDATE` on the draft first, exactly as `remove` does and for the same reason: it is the
-   * row `SendService.reserve` takes `FOR KEY SHARE` on, so taking it here serializes this verb
-   * against a reservation arriving concurrently. Then the sends, so a second resolve (or a
-   * reconciling pass) cannot interleave between the read and the write.
-   *
-   * ── AND EVERY WRITE IS A COMPARE-AND-SWAP ON `unverified` ───────────────────────────────────
-   *
-   * The three finalizers all guard their writes on the status they expect to find
-   * (`SendService.finalizeSent`'s rule: exactly one resolver writes a terminal state), and this is
-   * a fourth resolver, so it obeys the same discipline. `'unverified' → …` in the predicate means:
-   *
-   *  · a REPEATED resolve matches nothing and is the asked-for state — idempotent success, on
-   *    `ScheduleService.cancel`'s terms. It answers 200 with the row as it stands rather than an
-   *    error about a decision that has already been made, because the honest reading of a
-   *    double-tap or a retry after a blip is that the caller wants the state it asked for.
-   *  · the OTHER outcome arriving second cannot reopen the first. Without the predicate,
-   *    `not_arrived` after `arrived` would turn a delivery the person had already confirmed back
-   *    into an unsent draft — the one direction that manufactures a duplicate send.
-   *  · a reconciler that finalizes `sent` while a person is answering `not_arrived` wins or loses
-   *    cleanly; neither overwrites the other's terminal word.
-   *
-   * The draft's own status write is guarded on `unverified` for the same reason: winning the
-   * ledger's CAS says what became of the SEND, and this says the row is still the held one nobody
-   * has moved.
-   *
-   * ── WHAT EACH OUTCOME LEAVES BEHIND ─────────────────────────────────────────────────────────
-   *
-   * `arrived` → the ledger row is `sent` and the draft is `sent`. The draft row is NOT deleted:
-   * the mail itself is the copy in the user's Sent folder, and this row is the account's record of
-   * having sent it, which is what every other terminal send leaves too. It leaves the Drafts list
-   * because the list shows `draft`/`unverified`/interrupted rows, not sent ones.
-   *
-   * `not_arrived` → the ledger row is `failed` and the draft is an ORDINARY DRAFT again: editable,
-   * discardable, and `send_error` cleared because the sentence was about an appointment that is no
-   * longer pending. The next Send mints a fresh key rather than replaying this one, because
-   * `failed` is terminal for this key and the client releases the durable key on any terminal
-   * outcome — so "it didn't arrive, send it again" is a genuinely new delivery and not a replay of
-   * a refusal.
-   *
-   * Neither outcome touches the IMAP mailbox. The mailbox is the master, and a person reporting
-   * what they saw in it is not a licence to write to it.
+   * A person answers for a send this server could not confirm. `finalizeUnverified` leaves the
+   * draft at `unverified` ("check your Sent folder") — a question with nowhere to put the answer:
+   * the row was frozen, keyed on STATUS. One transaction; lock order draft THEN its sends. Every
+   * write is a compare-and-swap on `unverified`: a repeated resolve answers 200 with the row as
+   * it stands; the other outcome arriving second cannot reopen the first (`not_arrived` after
+   * `arrived` would manufacture a duplicate send). `arrived` → ledger and draft `sent`, row kept.
+   * `not_arrived` → ledger `failed`, draft ordinary again; the next Send mints a fresh key.
+   * Neither touches the IMAP mailbox: the mailbox is the master.
    */
   async resolve(ctx: ServiceContext, id: string, outcome: SendResolution): Promise<DraftMutation> {
     if (outcome !== "arrived" && outcome !== "not_arrived") {
@@ -591,51 +460,14 @@ export class DraftsService {
   async remove(ctx: ServiceContext, id: string): Promise<{ seq: number }> {
     const seq = await asTx(ctx).transaction(async (tx) => {
       /**
-       * ── A SEND WE COULD NOT CONFIRM IS REFUSED BY NAME; A FINISHED ONE IS NOT REFUSED AT ALL ──
-       *
-       * The reservation deliberately OUTLIVES every terminal outcome: `finalizeSent` clears
-       * `send_at`/`send_key` and moves the row to `sent`, the ambiguous ending moves it to
-       * `unverified`, and a failed attempt puts it back at `draft` — in all three the
-       * `outbound_sends` row stays, because it is the guard that makes a same-key retry replay
-       * instead of delivering a second copy.
-       *
-       * THIS USED TO ASK WHETHER A ROW EXISTED, which conflated two different kinds of fact and
-       * is the defect the resolution verb exists to close. A `pending` or `unverified` row is an
-       * OPEN QUESTION about mail that may be in somebody's inbox. A `sent` or `failed` row is a
-       * LEDGER ENTRY ABOUT THE PAST. Only the first is a reason to keep the words, and asking the
-       * cruder question made a definitively-FAILED send's draft undeletable for ever — a row whose
-       * own `send_error` says it never went out, that could not be thrown away.
-       *
-       * NOTHING CASCADES. `outbound_sends.draft_id` is nullable `ON DELETE SET NULL` (mail 0095),
-       * so the delete below clears the reference and the ledger row survives without it: the
-       * reservation's identity is `UNIQUE(account_id, idempotency_key)` — the replay gate — and
-       * that gate does not mention the draft. Deleting the reservation to make the delete succeed
-       * would hand the next press of the same key a clean slate for a message that may already
-       * have been delivered; leaving it in place with a NULL reference keeps the gate and honours
-       * what the person asked for, which was that the TEXT go away.
-       *
-       * Before that migration the statement reached the constraint, Postgres raised
-       * `23503 outbound_sends_draft_id_drafts_id_fk`, and — not being a {@link ServiceError} — it
-       * left the router as `internal` 500. That is why the named 409 was put in front of it, and
-       * why narrowing this predicate without changing the constraint would have turned the honest
-       * refusal straight back into the fault it replaced.
-       *
-       * ── WHY THE ROW IS LOCKED FIRST, AND WHY THAT ORDER IS THE WHOLE RACE ─────────────────
-       *
-       * A check that merely READ `outbound_sends` would answer about the past: `SendService.reserve`
-       * inserts its reservation in another transaction, and that INSERT takes a `FOR KEY SHARE` on
-       * this drafts row for the foreign key — so a reserve committing between the read and the
-       * DELETE puts the 500 straight back. `FOR UPDATE` is the one row-lock mode that conflicts
-       * with `FOR KEY SHARE`, and `reserve`'s first statement is a `FOR UPDATE` on the same row, so
-       * taking it here serializes the two: either the reserve committed first and this read sees
-       * its reservation (409), or this delete committed first and the reserve's own locked read
-       * finds no draft (404). Neither ending is the foreign key.
-       *
-       * ASKED ONLY FOR A ROW THE DELETE COULD ACTUALLY TAKE. A row wearing an appointment is
-       * refused below with the sentence that names the way forward (cancel the schedule), and the
-       * worker's claim mints a reservation for exactly such a row — asking about the reservation
-       * first would swap the two answers and tell somebody their scheduled message "has a send on
-       * record" instead of how to stop it.
+       * A send we could not confirm is refused by name; a finished one is not refused at all. The
+       * reservation OUTLIVES every terminal outcome — the `outbound_sends` row makes a same-key
+       * retry replay instead of delivering twice. This used to ask whether a row EXISTED,
+       * conflating an open question (`pending`/`unverified`) with a ledger entry
+       * (`sent`/`failed`) — a failed send's draft was undeletable. Nothing cascades: `draft_id`
+       * is `ON DELETE SET NULL` (mail 0095). The row is locked FIRST — only `FOR UPDATE`
+       * conflicts with `reserve`'s `FOR KEY SHARE`: the reserve committed first (409) or the
+       * delete did (404). An appointment is refused below with the way forward.
        */
       const [held] = await dialect(ctx.db).forUpdate(
         tx.select({ status: drafts.status, sendKey: drafts.sendKey }).from(drafts)
@@ -688,24 +520,13 @@ export class DraftsService {
   }
 
   /**
-   * The mailbox must exist, belong to the caller's account â AND still be
-   * connected.
-   *
-   * ââ WHY STATUS BELONGS HERE AND NOT ONLY AT SEND ââââââââââââââââââââââââââââââââââââââââââ
-   *
-   * This used to check ownership alone, which let a draft be composed against a mailbox that
-   * can never send it. The send path is where that becomes destructive (see `SendService.
-   * reserve`, which holds the refusal that actually matters), but refusing at compose is the
-   * difference between "you cannot pick this sender" and "we accepted your message and then
-   * could not send it". The user finds out while they still have the text in front of them.
-   *
-   * `'error'` is DELIBERATELY ALLOWED. It is the sync worker's word about IMAP â written by
-   * `markMailboxFailed`, cleared by the worker itself on recovery â and SMTP is a separate
-   * transport: a mailbox that cannot be read may still be able to send, and an `error` a user
-   * cannot clear would strand their outbox on a transient fault they did not cause. The same
-   * reasoning excludes `sync_blocked_reason`, which `markMailboxSyncBlocked` writes WITHOUT
-   * touching `status` precisely because it is a note about our infrastructure, not the mailbox.
-   * Only `'disabled'` â the state a human or a billing/lease decision put the row in â refuses.
+   * The mailbox must exist, belong to the caller's account — AND still be connected. Ownership
+   * alone let a draft be composed against a mailbox that can never send it; refusing at compose
+   * means the user finds out while the text is still in front of them (`SendService.reserve`
+   * holds the refusal that matters). `'error'` is DELIBERATELY ALLOWED: it is the sync worker's
+   * word about IMAP, and SMTP is a separate transport — a mailbox that cannot be read may still
+   * send. The same reasoning excludes `sync_blocked_reason`. Only `'disabled'` — the state a
+   * human or a billing/lease decision put the row in — refuses.
    */
   private async validMailbox(ctx: ServiceContext, v: unknown): Promise<string> {
     if (typeof v !== "string" || v.length === 0) {
@@ -724,31 +545,13 @@ export class DraftsService {
   }
 
   /**
-   * The rich body, sanitized, with its text/plain alternative derived from what survived.
-   *
-   * Returns `null` when the request carries no html at all, which is the plain-text path and is
-   * left byte-exact â the compose surface that has always sent a string still sends one, and
-   * nothing about it changes.
-   *
-   * ââ WHY THE SERVER DERIVES `body` INSTEAD OF ACCEPTING IT ââââââââââââââââââââââââââââââââ
-   *
-   * A `multipart/alternative` is a promise that its two parts say the same thing. If both parts
-   * arrive from the client, that promise is a convention two codebases have to keep, and the
-   * first client that gets it wrong ships a message whose plaintext readers see something its
-   * html readers do not â including the case that matters, where the html says one thing and
-   * the text says another to the same person on two devices. Deriving one from the other makes
-   * the promise structural: there is no request that can express a disagreement.
-   *
-   * So a `body` sent ALONGSIDE html is a `400` rather than something quietly overwritten.
-   * Ignoring it would make a client that believes it is setting the plain part indistinguishable
-   * from one that is not, and the symptom would appear only in somebody's inbox.
-   *
-   * ââ THE ORDER IS SANITIZE, THEN MEASURE, THEN DERIVE âââââââââââââââââââââââââââââââââââââ
-   *
-   * The cap is applied to what will be STORED, not to what arrived: a request whose markup is
-   * mostly attributes the allowlist strips is not over the limit, and refusing it on its raw
-   * length would reject a message the database would have accepted. The text half is derived
-   * last, from the sanitized markup, so nothing the sanitizer removed can reappear as words.
+   * The rich body, sanitized, with its text/plain alternative derived from what survived. Returns
+   * `null` when the request carries no html — the plain-text path, byte-exact. The server DERIVES
+   * `body`: a `multipart/alternative` promises its two parts say the same thing, and deriving one
+   * from the other makes that structural — no request can express a disagreement. A `body` sent
+   * ALONGSIDE html is a 400, never quietly overwritten. Sanitize, then measure, then derive: the
+   * cap applies to what will be STORED, and the text half comes last, from the sanitized markup,
+   * so nothing the sanitizer removed can reappear as words.
    */
   private richBody(html: unknown, body: unknown): { html: string; text: string } | null {
     if (html === undefined || html === null) return null;
@@ -784,30 +587,14 @@ export class DraftsService {
    * A `WHERE html IS NULL` added to the update would collapse both into "not found".
    */
   /**
-   * THE REPLY TARGET IS THE ACCOUNT'S OWN MESSAGE, OR IT IS A 404.
-   *
-   * `drafts.in_reply_to_message_id` carries a foreign key to `messages.id` and NOTHING checked
-   * whose message that was: both write paths took the value straight from the request body. The
-   * asymmetry was visible inside `create` and `update` themselves — the `thread_id` block says so
-   * in its own comment, *"the read is also the OWNERSHIP check the column never had: account
-   * isolation is absolute, so another account's thread id is a 404, not a stored reference"* — and
-   * the column written on the next line had no such read.
-   *
-   * ── WHAT THE UNCHECKED EDGE ACTUALLY DOES ────────────────────────────────────────────────────
-   *
-   * It is not primarily a disclosure: the id is stored, not dereferenced into the draft. It is a
-   * WRITE into another account's referential graph, and the damage lands when that account tries
-   * to leave. The foreign key declares no `ON DELETE`, so it restricts — a stranger's draft row
-   * pointing at a victim's message makes deleting that message fail, and account erasure deletes
-   * messages. One row authored by somebody the victim has never heard of can hold their erasure
-   * open, and the victim can neither see nor remove the row that does it.
-   *
-   * Precondition: knowing a message id. That is not a defence — isolation is required to be
-   * structural rather than to rest on an identifier being hard to guess — but it is why this is a
-   * cross-account WRITE rather than a leak.
-   *
-   * A key-share read, matching the thread block, so the FK check that follows cannot race a
-   * concurrent delete of the row it just approved.
+   * The reply target is the account's OWN message, or a 404. `drafts.in_reply_to_message_id`
+   * carries a foreign key and nothing checked whose message it was. The unchecked edge is not
+   * primarily disclosure (the id is stored, not dereferenced) but a WRITE into another account's
+   * referential graph: the FK restricts, so a stranger's draft row pointing at a victim's message
+   * makes deleting that message fail — and account erasure deletes messages: one stranger's row
+   * can hold an erasure open, invisibly. Knowing an id is a precondition, not a defence —
+   * isolation must be structural. A key-share read, so the FK check cannot race a concurrent
+   * delete.
    */
   private async requireOwnedReplyTarget(
     tx: Tx, ctx: ServiceContext, messageId: string | null,
@@ -838,24 +625,13 @@ export class DraftsService {
   }
 
   /**
-   * The SUBJECT, type-checked and bounded.
-   *
-   * ── WHY THIS IS ITS OWN VALIDATOR ────────────────────────────────────────────────────────
-   *
-   * The ceiling was briefly added inside {@link validString}, which is shared — and `body` goes
-   * through it too. So a plain-text draft with a 1 000-character body was refused with a message
-   * about a limit that has nothing to do with it, while a RICH draft of the same length was
-   * accepted because `richBody` is a different path. A bound that depends on the format the user
-   * happened to choose is not a bound; it is a bug with a number in it. Caught by a review round
-   * before it shipped, and the lesson is the obvious one: a per-field ceiling belongs in a
-   * per-field validator.
-   *
-   * The plain body's own ceiling is the request door and nothing else. It is stored on one column
-   * and later placed in an `OutboundMessage` the transport sends — a real sink, not a terminal
-   * one, and the input-bounds census records it that way rather than calling the column the end
-   * of the story. The rich body DOES have a ceiling of its own (`DRAFT_HTML_CAP_BYTES`), and the
-   * asymmetry is deliberate: the html is sanitized and measured because markup is where a
-   * megabyte hides, while plain text is what a person typed.
+   * The subject, type-checked and bounded — its own validator: the ceiling was briefly inside the
+   * shared {@link validString}, and `body` goes through that too, so a plain-text draft with a
+   * long body was refused about a limit that has nothing to do with it while a rich draft of the
+   * same length passed. A bound that depends on the format the user chose is not a bound. The
+   * plain body's ceiling is the request door and nothing else; the rich body has its own
+   * (`DRAFT_HTML_CAP_BYTES`) — markup is where a megabyte hides, plain text is what a person
+   * typed.
    */
   private validSubject(v: unknown): string {
     const subject = this.validString(v, "subject");
@@ -869,44 +645,23 @@ export class DraftsService {
   }
 
   /**
-   * One recipient list, validated for SHAPE and for LENGTH.
-   *
-   * The shape half is original; the length half was missing, and the sink is what made that
-   * matter: `SendService.reserve` hands `to`/`cc`/`bcc` to Nodemailer entry by entry, so the
-   * number of SMTP `RCPT TO` commands one send issues against the user's own mail server was
-   * whatever the request body contained. Three unbounded arrays in one draft, stored on a `PUT`
-   * that costs nothing and replayed by every send of that draft.
-   *
-   * {@link DRAFT_MAX_RECIPIENTS} is per FIELD because this function sees one field. The
-   * per-message total is `SEND_MAX_RECIPIENTS`, checked where all three are in hand and where
-   * they become network commands — a total computed here would have to guess at the two fields
-   * a partial update does not carry.
+   * One recipient list, validated for SHAPE and for LENGTH. The shape half is original; the
+   * length half was missing, and the sink made that matter: `SendService.reserve` hands
+   * `to`/`cc`/`bcc` to Nodemailer entry by entry, so the number of SMTP `RCPT TO` commands one
+   * send issues was whatever the request contained — three unbounded arrays, stored on a `PUT`
+   * that costs nothing and replayed by every send. {@link DRAFT_MAX_RECIPIENTS} is per FIELD
+   * because this function sees one field; the per-message total is `SEND_MAX_RECIPIENTS`, checked
+   * where all three are in hand and become network commands.
    */
   /**
-   * THE RECIPIENT CEILING IS A TOTAL OVER THE REQUEST, not three independent per-field ones.
-   *
-   * ── WHY THE PER-FIELD READING DOES NOT WORK, ARITHMETICALLY ──────────────────────────────
-   *
-   * {@link DRAFT_MAX_RECIPIENTS} is {@link SEND_MAX_RECIPIENTS}, so that Reply All cannot compose
-   * a draft this service refuses. Applied per FIELD that is 1 500 entries in one body, and the
-   * census computed what that costs: 4 832 016 wire bytes, against a request door the whole
-   * slice exists to keep small. No door both admits that and is worth having — 254 octets of
-   * address alone, at 1 500 entries and six wire bytes a character, is 2.3 MB before a display
-   * name or a byte of html.
-   *
-   * A total fixes it without giving anything up, because 500 is a ceiling on the MESSAGE and a
-   * message's recipients are its `to`, `cc` and `bcc` together — which is exactly how
-   * `SendService.reserve` counts them. Reply All produces one audience split across two fields,
-   * never 500 in each, so nothing the product composes is refused.
-   *
-   * ── WHAT IT DOES NOT CLOSE, said plainly ─────────────────────────────────────────────────
-   *
-   * It bounds the REQUEST, so a caller may still accumulate past 500 across several patches: this
-   * sees only the fields the patch carries, and reading the stored row to merge them would put a
-   * query in front of a validator. That is deliberate and it costs nothing real — the accumulated
-   * draft is storage, and `SendService.reserve` totals all three where they become RCPT TO
-   * commands and refuses it there. The door's question is how big one BODY may be, and this
-   * answers exactly that.
+   * The recipient ceiling is a TOTAL over the request, not three per-field ones. {@link
+   * DRAFT_MAX_RECIPIENTS} is {@link SEND_MAX_RECIPIENTS} so Reply All cannot compose a draft this
+   * service refuses — but per FIELD that is 1 500 entries, measured at 4 832 016 wire bytes
+   * against a door the slice exists to keep small. A total gives nothing up: 500 is a ceiling on
+   * the MESSAGE, counted as `reserve` counts it; Reply All splits one audience across two fields,
+   * never 500 in each. Not closed, said plainly: accumulation past 500 across several patches —
+   * deliberate, because `reserve` totals all three where they become RCPT TO commands. The door's
+   * question is how big one BODY may be.
    */
   private boundRecipientTotal(fields: ReadonlyArray<EmailAddress[] | undefined>): void {
     let total = 0;
@@ -934,17 +689,14 @@ export class DraftsService {
       if (typeof a !== "object" || a === null || typeof (a as EmailAddress).address !== "string") {
         throw new ServiceError("validation_failed", 400, `${field} entries must be { name?, address }`);
       }
-      // ── AND EACH ENTRY IS BOUNDED, not just the list ──────────────────────────────────
-      //
-      // The COUNT was the obvious half; the entries were unbounded strings, so
-      // `DRAFT_MAX_RECIPIENTS` bounded how many megabytes a request could carry only in the sense
+      // And each ENTRY is bounded, not just the list. The count was the obvious half; the entries
+      // were unbounded strings, so `DRAFT_MAX_RECIPIENTS` bounded the megabytes only in the sense
       // that 100 of them is not 101. The address ceiling is not ours: RFC 5321 §4.5.3.1 caps the
-      // complete FORWARD PATH at 256 octets including the angle brackets, so a usable mailbox is
-      // 254 — the familiar 320 is the sum of the component maxima (64 local + 1 + 255 domain),
-      // which cannot all be met at once. Anything longer is not an address a transport will
-      // deliver, so refusing it here is telling the truth earlier. The display name is the
-      // product's own limit, generous enough for any real name and small enough that a hundred
-      // of them is a header, not a payload.
+      // complete FORWARD PATH at 256 octets including the brackets, so a usable mailbox is 254 —
+      // the familiar 320 is the sum of component maxima that cannot all be met at once. Anything
+      // longer is not an address a transport will deliver. The display name is the product's own
+      // limit: generous for any real name, small enough that a hundred of them is a header, not a
+      // payload.
       const entry = a as EmailAddress;
       if (entry.address.length > RECIPIENT_ADDRESS_MAX_CHARS) {
         throw new ServiceError(
