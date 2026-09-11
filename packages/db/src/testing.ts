@@ -231,35 +231,14 @@ export async function journalDrift(url: string): Promise<string | null> {
 }
 
 /**
- * Is a real Postgres reachable — and is it ALLOWED to be missing?
- *
- * `*.pg.test.ts` files host the assertions PGlite structurally cannot: real concurrency across
- * separate connections, `pg_trgm`, and `setupProdDatabase` itself. They have always degraded to
- * `describe.skipIf` when docker was not running, which keeps the suite usable on a laptop — and
- * which also means the decisive cases can vanish silently and the run still exits 0. A gate that
- * can disappear is not a gate.
- *
- * So the skip is now a LOCAL convenience with an explicit opt-out: with
- * `TF_REQUIRE_PG=1` (what `pnpm test:pg` and CI set) an unreachable Postgres THROWS here, and the
- * file fails loudly instead of quietly not running. `pnpm test` on a laptop behaves exactly as
- * before.
- *
- * ── AND "AVAILABLE" MEANS THIS TREE'S SCHEMA, NOT MERELY A SERVER THAT ANSWERS ─────────────
- *
- * The database this reaches is long-lived and SHARED by every `*.pg.test.ts` in the workspace.
- * A run that migrated it from a different tree leaves its journal ahead of, or disagreeing with,
- * the migrations declared here — and from then on {@link journalDrift} explains exactly what
- * that costs: this tree's own migrations get recorded as applied without ever running, so the
- * files below assert against columns and constraints that are not there. The failures land on
- * whatever each test was about, name the wrong component, and survive every re-run.
- *
- * A shared database is not ours to drop, so the policy here is REFUSAL rather than repair: the
- * sentence goes to stderr and this answers false, which turns every dependent file into a
- * skip-with-a-reason instead of a suite full of reds that belong to nobody. Under
- * `TF_REQUIRE_PG=1` it throws for the same reason an unreachable server does — a gate that can
- * disappear in CI is not a gate.
- *
- * The repair is to reset that database to this tree's journals and run again.
+ * Is a real Postgres reachable — and is it ALLOWED to be missing? `*.pg.test.ts` files host the
+ * assertions PGlite structurally cannot: real concurrency, `pg_trgm`, `setupProdDatabase`. They
+ * degrade to `describe.skipIf` when docker is down — usable on a laptop, and the decisive cases
+ * vanish silently while the run exits 0; a gate that can disappear is not a gate. Under
+ * `TF_REQUIRE_PG=1` an unreachable Postgres THROWS. "Available" means THIS TREE'S schema: a
+ * shared database migrated from a different tree leaves its journal ahead or disagreeing ({@link
+ * journalDrift}). Not ours to drop, so the policy is REFUSAL: the sentence goes to stderr and
+ * this answers false. The repair is resetting the database to this tree's journals.
  */
 export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolean> {
   const c = postgres(url, { max: 1, connect_timeout: 3, onnotice: () => {} });
