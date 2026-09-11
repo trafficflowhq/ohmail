@@ -52,25 +52,16 @@ export interface MailboxSignatureResult {
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE SENT-MAIL SEED — consent, read off what the user has already done.
-
-   The strongest thing anybody does towards a correspondent is WRITE TO THEM. So the first
-   question a new mailbox is asked is not "who do you want to hear from" — an impossible
-   question against fifteen thousand messages — but "here are the people you have written to;
-   shall we let them through?". The list is shown BEFORE anything acts on it, and confirming it
-   is the consent event.
-
-   Three deliberate narrowings, each of which was easy to get wrong:
-
-     · ADDRESS-LEVEL ONLY, NEVER DOMAIN. Writing to one person at a large mail provider says
-       nothing about the rest of it, and writing to one colleague is indistinguishable from
-       that without knowing which domains are companies. Domain-wide consent stays available
-       where it belongs — as an explicit rule the user writes themselves.
-     · TO AND CC BOTH COUNT. Copying somebody in is addressing them.
-     · NO RETRO. A seeded rule routes future mail and moves nothing that already exists. One
-       confirmation must never turn into thousands of moves inside somebody's mailbox.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * The sent-mail seed — consent, read off what the user has already done. The strongest thing
+ * anybody does towards a correspondent is WRITE TO THEM, so the first question is not "who do you
+ * want to hear from" but "here are the people you have written to; shall we let them through?" —
+ * the list is shown BEFORE anything acts on it, and confirming it is the consent event. Three
+ * narrowings: ADDRESS-LEVEL ONLY, never domain (writing to one person at a provider says nothing
+ * about the rest; domain-wide consent stays an explicit user rule); TO AND CC both count (copying
+ * somebody in is addressing them); NO RETRO — a seeded rule routes future mail and moves nothing
+ * that exists: one confirmation must never turn into thousands of moves.
+ */
 
 /**
  * How many of the user's own messages the seed reads.
@@ -84,18 +75,14 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 export const SEED_SCAN_LIMIT = 5000;
 
 /**
- * HOW MANY ADDRESSES ONE CONFIRMATION MAY NAME.
- *
- * A COARSE ceiling, and coarse on purpose. Its job is to stop an unbounded list being lowercased
- * and folded into a Set before the intersection bounds the writes — nothing more. It is
- * deliberately NOT derived from {@link SEED_SCAN_LIMIT}: that is a count of MESSAGES, and one
- * sent message contributes every distinct recipient on it, so a review this product built can
- * legitimately offer more addresses than it scanned messages. A ceiling derived that way refuses
- * the product's own review.
- *
- * 50 000 is ten recipients per scanned message — well past any real address book, and four
- * orders of magnitude below what a script can put in a request. The number that actually decides
- * what gets written is the review's own candidate list, which this endpoint intersects against.
+ * How many addresses one confirmation may name. A COARSE ceiling, on purpose: its job is to stop
+ * an unbounded list being lowercased and folded into a Set before the intersection bounds the
+ * writes — nothing more. Deliberately NOT derived from {@link SEED_SCAN_LIMIT}: that counts
+ * MESSAGES, and one sent message contributes every distinct recipient on it, so a review this
+ * product built can offer more addresses than it scanned messages — a ceiling derived that way
+ * refuses the product's own review. 50 000 is ten recipients per scanned message, past any real
+ * address book. The number that decides what gets WRITTEN is the review's own candidate list,
+ * which this endpoint intersects against.
  */
 export const SEED_MAX_ADDRESSES = 50_000;
 
@@ -179,17 +166,13 @@ export function isRobotAddress(address: string): boolean {
 const OUT_OF_OFFICE = /^\s*(re:\s*)?(out of (the )?office|automatic(al)? reply|auto(matic)?[- ]?reply|abwesenheit|absence du bureau|autoreply|ferienabwesenheit)/i;
 
 /**
- * DID A MACHINE WRITE THIS — the three HEADER arms, and the half two subsystems share.
- *
- * Harvesting recipients out of the user's own out-of-office replies would read a machine's
- * address book as the user's. `Auto-Submitted: no` is RFC 3834's way of saying a human wrote
- * it, so presence alone is the wrong test.
- *
- * Split out of {@link isMachineSent} so the Ohbox rule can share the headers WITHOUT the subject
- * arm — see that function for the measured reason those two callers cannot share the whole
- * question. `packages/db/src/auto-reply-by-us.ts#machineSentHeadersWhere` is these same three arms
- * in SQL, and `auto-reply-by-us-parity.test.ts` asserts the two agree row by
- * row: neither is the definition, the pair is.
+ * Did a machine write this — the three HEADER arms, the half two subsystems share. Harvesting
+ * recipients out of the user's own out-of-office replies would read a machine's address book as
+ * the user's; `Auto-Submitted: no` is RFC 3834's way of saying a human wrote it, so presence
+ * alone is the wrong test. Split out of {@link isMachineSent} so the Ohbox rule can share the
+ * headers WITHOUT the subject arm. `packages/db/src/auto-reply-by-us.ts#machineSentHeadersWhere`
+ * is these same three arms in SQL, and `auto-reply-by-us-parity.test.ts` asserts the two agree
+ * row by row: neither is the definition, the pair is.
  */
 export function hasMachineSentHeaders(headers: Readonly<Record<string, unknown>>): boolean {
   const values = (name: string): string[] => {
@@ -203,20 +186,14 @@ export function hasMachineSentHeaders(headers: Readonly<Record<string, unknown>>
 }
 
 /**
- * THE SEED'S QUESTION, WHICH IS THE HEADERS PLUS THE SUBJECT — unchanged, and the split above is
- * why the split exists.
- *
- * The subject arm is deliberately NOT part of {@link hasMachineSentHeaders}, and therefore not
- * part of `autoReplyByUsWhere`, because the two callers pay opposite prices for a false positive.
- * HERE, a message wrongly called machine-sent costs one un-harvested contact — the seed simply
- * does not learn an address, and the user can still write to them. In the Ohbox, a message
- * wrongly called an auto-reply DISAPPEARS from the pile the person reads.
- *
- * That is not a hypothetical asymmetry. `Re: Out of office` is an ordinary thing for a person to
- * type, and {@link OUT_OF_OFFICE} matches it — with no `Auto-Submitted` header anywhere in sight,
- * so nothing else about such a message says "machine". Reusing this whole function for the Ohbox
- * rule would hide mail the person wrote from their own view, with every test green.
- * `dto-auto-reply-flag.test.ts` carries that case by name.
+ * The seed's question: the headers PLUS the subject — and the split above is why the split
+ * exists. The subject arm is deliberately NOT part of {@link hasMachineSentHeaders} because the
+ * two callers pay opposite prices for a false positive: HERE it costs one un-harvested contact;
+ * in the Ohbox a message wrongly called an auto-reply DISAPPEARS from the pile the person reads.
+ * Not hypothetical: `Re: Out of office` is an ordinary thing to type and {@link OUT_OF_OFFICE}
+ * matches it with no `Auto-Submitted` header in sight. Reusing the whole function for the Ohbox
+ * rule would hide mail the person wrote, every test green — `dto-auto-reply-flag.test.ts` carries
+ * the case by name.
  */
 export function isMachineSent(headers: Readonly<Record<string, unknown>>, subject: string): boolean {
   return hasMachineSentHeaders(headers) || OUT_OF_OFFICE.test(subject);
@@ -269,25 +246,14 @@ export function parseAddressList(line: string): Array<{ address: string; name: s
 }
 
 /**
- * A readable display name, or nothing.
- *
- * ── WHY THIS DECODES RATHER THAN DROPS ────────────────────────────────────────────────────
- *
- * It used to return `null` for anything starting with `=?`, on the theory that "a half-decoded
- * name is worse than none". In real mail that theory dropped the display name of every
- * correspondent whose name carries an accent: a `To:`/`Cc:` display name with any non-ASCII
- * letter is transmitted as an RFC 2047 encoded-word (an `=?utf-8?Q?...?=` token that spells the
- * accented bytes back in ASCII), which is ASCII on the wire, so the drop-rule turned a name like
- * "Sébastien" into a bare address on the screen whose whole job is to help someone recognise who
- * they wrote to. Encoded-words are the COMMON case for a non-English address book, not an edge
- * one, and decoding them is the fix.
- *
- * ── AND WHY IT ALSO REPAIRS MOJIBAKE ──────────────────────────────────────────────────────
- *
- * A second, rarer corruption is a display name that reached storage as raw 8-bit UTF-8 in a
- * header (non-conformant, but real senders do it) and was folded through Latin-1 somewhere on
- * the way in, so `ø` (`0xC3 0xB8`) is stored as `Ã¸`. `repairLatin1Mojibake` reverses exactly
- * that, and only that — its round-trip guard leaves a correctly-decoded name untouched.
+ * A readable display name, or nothing. It DECODES rather than drops: returning `null` for
+ * anything starting `=?` dropped the display name of every correspondent whose name carries an
+ * accent — a non-ASCII display name travels as an RFC 2047 encoded-word (`=?utf-8?Q?...?=`),
+ * ASCII on the wire, so the drop-rule turned "Sébastien" into a bare address on the screen whose
+ * job is recognising who you wrote to. Encoded-words are the COMMON case for a non-English
+ * address book. It also repairs mojibake: a name stored as raw UTF-8 folded through Latin-1 (`ø`
+ * stored as `Ã¸`) is reversed by `repairLatin1Mojibake`, whose round-trip guard leaves a
+ * correctly-decoded name untouched.
  */
 function displayName(raw: string): string | null {
   const decoded = repairLatin1Mojibake(decodeEncodedWords(raw.trim()));
@@ -297,14 +263,12 @@ function displayName(raw: string): string | null {
 
 /**
  * RFC 2047 encoded-words → text. Handles `B` (base64) and `Q` (quoted-printable-ish) with any
- * charset, decoding UTF-8 exactly and treating everything else as Latin-1 (the only other
- * charset that appears in practice, and a safe superset of US-ASCII for the rest).
- *
- * Adjacent encoded-words separated by only whitespace are joined with the whitespace removed,
- * per §6.2 — that is how a long name is split across two words, and printing the fold as a space
- * would insert one that was never in the name. A `=?` that is not a well-formed encoded-word is
- * left exactly as it was, which is the whole difference from the predecessor that treated the
- * prefix alone as a reason to give up.
+ * charset, decoding UTF-8 exactly and treating everything else as Latin-1 — the only other
+ * charset seen in practice, and a safe superset of US-ASCII. Adjacent encoded-words separated by
+ * whitespace are joined with the whitespace removed, per §6.2: that is how a long name splits
+ * across two words, and printing the fold as a space would insert one that was never in the name.
+ * A `=?` that is not a well-formed encoded-word is left exactly as it was — the whole difference
+ * from the predecessor that treated the prefix alone as a reason to give up.
  */
 export function decodeEncodedWords(input: string): string {
   const WORD = /=\?([^?]+)\?([bBqQ])\?([^?]*)\?=/g;
@@ -362,17 +326,13 @@ export function repairLatin1Mojibake(s: string): string {
 /* ── the review list ──────────────────────────────────────────────────────────────────── */
 
 /**
- * Everyone this account has written to, robot-filtered, newest correspondence first.
- *
- * "Written by the user" is `from_address` matching one of the account's own mailbox
- * addresses, NOT "sits in a folder called Sent". Sent folders are named a dozen different ways
- * across providers, and — more importantly — a folder-shaped test would also sweep up an
- * Archive folder, whose messages were RECEIVED. Harvesting their `To`/`Cc` would seed consent
- * for everyone the user was once copied alongside, which is not consent at all.
- *
- * The known limitation of that choice: mail sent from an alias the account does not list as a
- * mailbox address is not read. It is the safe direction to be wrong in — a missing candidate
- * is one row the user does not see, an extra one is consent nobody gave.
+ * Everyone this account has written to, robot-filtered, newest correspondence first. "Written by
+ * the user" is `from_address` matching one of the account's own mailbox addresses, NOT "sits in a
+ * folder called Sent": Sent folders are named a dozen ways, and a folder-shaped test would also
+ * sweep an Archive folder, whose messages were RECEIVED — harvesting their `To`/`Cc` would seed
+ * consent for everyone the user was once copied alongside. The known limitation: mail sent from
+ * an alias the account does not list is not read — the safe direction: a missing candidate is one
+ * row the user does not see, an extra one is consent nobody gave.
  */
 export async function buildSeedReview(ctx: ServiceContext, limit = SEED_SCAN_LIMIT): Promise<SeedReview> {
   const own = await ownAddresses(ctx);
@@ -486,20 +446,14 @@ async function decidedSenders(
 ): Promise<Set<string>> {
   if (addresses.length === 0) return new Set();
   /**
-   * ── CHUNKED, for the reason the WRITES a few lines down already are ──────────────────────
-   *
-   * This put the WHOLE address set into one `IN`, and the set is not bounded by anything anybody
-   * assumed it was: the review is built from at most `SEED_SCAN_LIMIT` MESSAGES, and one sent
-   * message contributes every distinct `To`/`Cc` recipient on it. A mailbox whose sent mail
-   * carries large recipient lists therefore produces a candidate list far larger than the scan,
-   * and past Postgres's 65 535 bind parameters the statement is refused — a 500 on
-   * `GET /consent/seed` for an account that is merely large.
-   *
-   * The same false premise — that the scan limit bounds the ADDRESSES — was corrected twice
-   * elsewhere in this file before it was noticed here, which is the argument for chunking rather
-   * than for another ceiling: {@link WRITE_CHUNK} already exists for exactly this arithmetic and
-   * its docstring already carries the parameter-limit reasoning. Reusing it means there is one
-   * place where "how many values fit in a statement" is decided.
+   * Chunked, for the reason the WRITES below already are. This put the whole address set into one
+   * `IN`, and the set is not bounded by what anybody assumed: the review is built from at most
+   * `SEED_SCAN_LIMIT` MESSAGES, and one sent message contributes every distinct recipient — past
+   * Postgres's 65 535 bind parameters the statement is refused, a 500 on `GET /consent/seed` for
+   * an account that is merely large. The same false premise was corrected twice elsewhere in this
+   * file, which is the argument for chunking rather than another ceiling: {@link WRITE_CHUNK}
+   * already carries the parameter-limit reasoning, so there is one place where "how many values
+   * fit in a statement" is decided.
    */
   const out = new Set<string>();
   for (const part of chunked(addresses, WRITE_CHUNK)) {
@@ -535,79 +489,27 @@ function chunked<T>(items: readonly T[], size: number): T[][] {
 /* ── the confirmation ─────────────────────────────────────────────────────────────────── */
 
 /**
- * Write the consent the user just gave. One transaction, no mail moved.
- *
- * The addresses the caller asks for are INTERSECTED with a freshly computed review list rather
- * than trusted. The list is the offer; a confirmation can only ever be a subset of it. Without
- * the intersection this endpoint would write a rule for any address a caller cared to name.
- *
- * `retroRequestedAt` stays NULL and no `folder_state` row is touched, which is the whole
- * difference between this and a Screener decision. A Screener decision is about one sender the
- * user is looking at; this is a bulk import of consent they gave by writing, and turning it
- * into thousands of server-side moves is precisely what the model exists to avoid.
- *
- * ── ONE EFFECT PER PERSON, ENFORCED BY A ROW LOCK AND A RE-READ — NOT BY A ONE-SHOT CLAIM ──
- *
- * Sequentially, running this twice is already harmless: the second `buildSeedReview` marks
- * every rule the first run wrote `alreadyDecided`, and those are skipped. CONCURRENTLY it was
- * not. Two submits of the same review — a double-click, a retry on a slow link — both computed
- * their list before either committed, so both saw `alreadyDecided: false` and both inserted a
- * rule per candidate. `rules` has no unique constraint on `(account_id, kind, match)`, and
- * deliberately so (two rules may legitimately name one sender; `consentIndex` resolves them),
- * which means nothing downstream would have rejected the duplicates either.
- *
- * The transaction therefore opens by taking the account's `account_settings` row — an upsert
- * that always fires, so it locks whether or not the row existed — and only THEN asks which of
- * the accepted addresses already carry a rule. That second question is the one that matters: a
- * concurrent confirm that got there first has committed by the time this one holds the lock,
- * so its rules are visible and every one of them drops out of the write set. Two simultaneous
- * confirmations produce one rule per person and two honest answers, the second reporting its
- * work as `skipped`.
- *
- * ── AND THE REVIEW CAN BE RUN AGAIN, WHICH IS WHY THE CLAIM HAD TO GO ──────────────────────
- *
- * The earlier design guarded the stamp — the upsert only fired while `seed_confirmed_at` was
- * NULL — so the second confirmation of an account's life was a 409 no matter how far apart the
- * two were. That made "the seed has been offered" and "the seed may never be offered again"
- * the same fact, and it is wrong in the ordinary case rather than an edge one: connecting a
- * second mailbox brings a second address book of people the user has written to, and the only
- * way to consent to them was to reset every screening decision on the account. The stamp now
- * records WHEN the review was last confirmed and nothing more. Re-running it writes rules for
- * whoever is new and skips whoever already has one, which is the same guarantee the race above
- * needs and is why one mechanism serves both.
+ * Write the consent the user just gave. One transaction, no mail moved. The addresses are
+ * INTERSECTED with a freshly computed review list, never trusted: the list is the offer, and a
+ * confirmation can only be a subset of it. `retroRequestedAt` stays NULL and no `folder_state`
+ * row is touched — a bulk import of consent must not become thousands of moves. One effect per
+ * person is enforced by a ROW LOCK and a re-read (two concurrent submits used to both insert
+ * duplicates): the transaction opens by locking `account_settings`, THEN asks which addresses
+ * already carry a rule — a concurrent confirm's rules are visible and drop out. The stamp records
+ * WHEN the review was last confirmed: re-running writes rules for whoever is new.
  */
 export async function confirmSeed(
   ctx: ServiceContext, addresses: readonly string[],
 ): Promise<SeedConfirmResult> {
   /**
-   * THE LIST IS BOUNDED BEFORE ANYTHING IS DONE WITH IT.
-   *
-   * The WRITE set has always been bounded — the loop below intersects what the caller names with
-   * what the review actually offered, and the review is built from at most {@link
-   * SEED_SCAN_LIMIT} MESSAGES. (Not candidates: one sent message contributes every distinct
-   * recipient on it, so the candidate list can be larger than the scan — which is the whole
-   * reason the ceiling below is not derived from that constant.) What was unbounded is the list
-   * on the way IN: every entry is trimmed, lowercased and folded into a Set before that
-   * intersection, so the caller chose how much work happened before the bound applied.
-   *
-   * ── AND THE CEILING IS NOT `SEED_SCAN_LIMIT`, WHICH IS A MESSAGE COUNT ──────────────────
-   *
-   * It briefly was, on the reasoning that a review cannot offer more candidates than it scanned
-   * messages. That is false: one sent message contributes every distinct recipient on it, so a
-   * review can legitimately offer several times {@link SEED_SCAN_LIMIT} addresses — and confirming
-   * a review this product produced would then have been a 413. A bound that refuses the product's
-   * own output is worse than the unbounded fold it replaces.
-   *
-   * So the ceiling is {@link SEED_MAX_ADDRESSES}: a coarse absolute limit whose only job is to
-   * stop the UNBOUNDED case, deliberately far above any review's fan-out. The precise bound on
-   * what is WRITTEN stays where it always was and needs no number — the intersection below keeps
-   * only addresses the review actually offered.
-   *
-   * IN THE SERVICE, not in `routes/consent.ts`, for the reason `SearchService`'s date guard
-   * gives about its own placement: *"the route is not the only door… a check living in the route
-   * would guard the hosted door and not the desktop one — the shape this repository treats as a
-   * finding in its own right"*. Nothing but the route calls this today; that is a fact about
-   * today's callers, not a property of the function.
+   * The list is bounded BEFORE anything is done with it. The WRITE set was always bounded (the
+   * intersection with the review); what was unbounded is the list on the way IN — every entry
+   * trimmed, lowercased and folded into a Set before the bound applied. The ceiling is NOT
+   * `SEED_SCAN_LIMIT`, a message count: one sent message contributes every distinct recipient, so
+   * a review can offer several times that many addresses — and confirming a review this product
+   * produced would have been a 413. So the ceiling is {@link SEED_MAX_ADDRESSES}, coarse and far
+   * above any review's fan-out. In the SERVICE, not the route: the route is not the only door,
+   * and a route-level check would guard the hosted door and not the desktop one.
    */
   if (addresses.length > SEED_MAX_ADDRESSES) {
     throw new ServiceError(
@@ -835,33 +737,24 @@ export async function consentSettings(
 }
 
 /**
- * ONE `settings` CHANGE ROW PER SETTINGS WRITE — the doorbell that makes a consent knob travel.
- *
- * Every writer below appends this in the SAME transaction as its column: `recordChanges` NOTIFYs
- * the wake channel at commit, so every signed-in surface's next drain — which the wake makes
- * immediate — carries the `settings` entity, and each surface re-asks `GET /consent` instead of
- * holding its boot-time answer for the life of the process. Measured before this existed:
- * disabling folders in a browser left the desktop drawing the folders group (over tombstoned
- * entities — an empty husk) until the app was restarted, and the reading-pane image/tracker
- * postures went equally stale in every other open surface.
- *
- * `entity_id` is the ACCOUNT id and the op is always `"update"`: one row per account, created
- * lazily, never deleted — `materializeSettings` answers a default-shaped DTO even before the
- * first write, so this can never drain as a tombstone.
+ * One `settings` change row per settings write — the doorbell that makes a consent knob travel.
+ * Every writer appends this in the SAME transaction as its column: `recordChanges` NOTIFYs the
+ * wake channel at commit, so every signed-in surface's next drain carries the `settings` entity
+ * and re-asks `GET /consent`. Measured before this existed: disabling folders in a browser left
+ * the desktop drawing the folders group over tombstoned entities until restart. `entity_id` is
+ * the ACCOUNT id and the op is always `"update"`: one row per account, never deleted —
+ * `materializeSettings` answers a default-shaped DTO before the first write, so this can never
+ * drain as a tombstone.
  */
 /**
- * ── THE GLOBAL LOCK ORDER: `account_settings` FIRST, THE SEQUENCE ROW SECOND ─────────────────
- *
- * `recordChanges` serializes on the account's `account_sync_state` row; the settings upsert
- * locks `account_settings`. Every transaction that touches BOTH rows takes them in ONE order —
- * settings first — because two transactions taking the same two row locks in opposite orders is
- * the textbook Postgres deadlock (40P01), and both directions of it were reproduced on real
- * Postgres during this entity's review rounds. The order is the one `confirmSeed` DESIGNED
- * around ("the transaction opens by taking the account's `account_settings` row") and
- * `ScreenerService.decide` already follows; `resetScreeningState` — the one long-standing
- * writer that rang first — was conformed in the same change (`consent-reset.ts` names it at its
- * own seam). So every writer below touches its settings column FIRST and rings the doorbell
- * second; both land or neither does, exactly as before.
+ * The global lock order: `account_settings` FIRST, the sequence row second. `recordChanges`
+ * serializes on the account's `account_sync_state` row; the settings upsert locks
+ * `account_settings`. Every transaction touching BOTH takes them in ONE order — settings first —
+ * because opposite orders are the textbook Postgres deadlock (40P01), and both directions were
+ * reproduced on real Postgres. The order is the one `confirmSeed` designed around and
+ * `ScreenerService.decide` follows; `resetScreeningState` was conformed in the same change. Every
+ * writer below touches its settings column FIRST and rings the doorbell second; both land or
+ * neither does.
  */
 // Every writer's INSERT path sets `updatedAt: ctx.now()` explicitly rather than taking the
 // column's `defaultNow()`: the row's stamp is the settings ENTITY's `updatedAt` on the wire, and
@@ -875,35 +768,14 @@ async function recordSettingsChange(tx: LedgerTx, accountId: string): Promise<vo
 }
 
 /**
- * TURN AUTO-SUGGEST ON OR OFF — a column-scoped write on the shared `account_settings` row.
- *
- * `dormancy_days` sat in the schema from 0035 with no writer at all — a column with no knob is a
- * setting nobody can change — until {@link setDormancyDays} below gave it one. Both follow the same
- * shape: a lazy upsert touching only its own column plus `updated_at`, so neither clobbers the other
- * when onboarding runs them on the same primary key within a minute.
- *
- * ── WHAT THE FLAG AUTHORISES, STATED HERE BECAUSE THIS IS WHERE IT IS GRANTED ─────────────
- *
- * ON lets the Screener surface buy a classifier suggestion for the senders at the front of the
- * queue without a per-batch click. That is a METERED spend against the account's credits, so
- * this write is the moment the account said yes to it — and it is the ONLY thing the flag does.
- * It grants no authority to decide: `POST /screener/suggest` writes a `routing_decisions` row
- * with `status = 'suggestion'` and deliberately no `change_log` entry, so nothing it produces
- * reaches the delta feed, moves a message, or writes a rule. A stranger still waits for a human.
- *
- * ── THE UPSERT, AND WHY IT IS `onConflictDoUpdate` AND NOT A SELECT-THEN-INSERT ───────────
- *
- * `account_settings` rows are created lazily by whichever feature writes first, so this races
- * `confirmSeed` and `resetScreeningState` — three writers, one primary key, and onboarding runs
- * all of them within a minute. A read-then-write would lose one of the two settings under
- * concurrency; the conflict target makes the outcome the same whichever arrives second, and
- * touching only this column plus `updated_at` means a concurrent seed confirmation is not
- * clobbered by a stale snapshot of the row. Proven under real Postgres in
- * `consent-auto-suggest.concurrency.pg.test.ts`, because PGlite serialises this by construction
- * and would report green for the losing implementation.
- *
- * Returns the stored instant so the caller echoes what the database holds rather than what it
- * hoped to write — the flag's whole purpose is to be readable back later.
+ * Turn auto-suggest on or off — a column-scoped write on the shared `account_settings` row. ON
+ * lets the Screener surface buy a classifier suggestion for the queue's front without a per-batch
+ * click — a METERED spend, and the ONLY thing the flag does: `POST /screener/suggest` writes
+ * `status = 'suggestion'` with no `change_log` entry, so nothing it produces moves a message or
+ * writes a rule. `onConflictDoUpdate`, not select-then-insert: rows are created lazily, so this
+ * races `confirmSeed` and `resetScreeningState` on one primary key — touching only this column
+ * plus `updated_at` keeps a concurrent seed confirmation intact
+ * (`consent-auto-suggest.concurrency.pg.test.ts`). Returns the stored instant.
  */
 export async function setAutoSuggest(
   ctx: ServiceContext, enabled: boolean,
@@ -932,30 +804,14 @@ export async function setAutoSuggest(
 }
 
 /**
- * TURN "USE FOLDERS" ON OR OFF — the folders foundation's master toggle (FOLDERS-SPEC.md §6),
- * a column-scoped upsert in {@link setAutoSuggest}'s shape PLUS the one thing no other consent
- * knob does: THE TRANSITION RIDES THE DELTA FEED.
- *
+ * Turn "use folders" on or off — the folders master toggle (FOLDERS-SPEC.md §6), a column-scoped
+ * upsert PLUS the one thing no other consent knob does: the transition RIDES THE DELTA FEED.
  * `/sync` emits `folder` entities only while the flag is on, and the delta is strictly
- * `change_log`-driven — so without change rows a live client would learn about the flip only on
- * its next re-bootstrap, and the settings switch would appear to do nothing to the rail beside
- * it. This writer therefore appends, in the SAME transaction as the column:
- *
- *   · ON  → one `folder` CREATE per user folder the account already has (the passive-presence
- *           inventory, post-exclusion) — the rail fills on the next drain;
- *   · OFF → one `folder` DELETE per user folder — the mirror forgets them, and the interface
- *           returns to the pre-feature rail with nothing to migrate.
- *
- * Re-enabling re-emits creates; the client's apply is an upsert, so a replay is idempotent.
- * Folders DISCOVERED WHILE ON do not stream yet — the worker's discovery writes no change rows
- * (that hook is the sync lane's seam; see `folders.ts`'s hand-off comment) — so a brand-new
- * external folder appears on the next re-bootstrap or re-toggle. Everything the account had
- * when it flipped the switch is live immediately, which is the case that matters: first render
- * of the feature is the fifteen-year-old mailbox, read-only (spec §10).
- *
- * One transaction for the same reason the route wraps its knobs in one: the column and the
- * change rows must land together, or a crash between them leaves a flag whose rail never
- * arrives. `recordChanges` requires a transaction anyway and this is it.
+ * `change_log`-driven. So, in the SAME transaction: ON appends one `folder` CREATE per existing
+ * user folder; OFF appends one DELETE per folder. Re-enabling re-emits creates; the client's
+ * apply is an upsert, so replay is idempotent. Folders discovered WHILE on do not stream yet —
+ * the worker's discovery writes no change rows — so a brand-new external folder appears at the
+ * next re-bootstrap or re-toggle.
  */
 export async function setFoldersEnabled(
   ctx: ServiceContext, enabled: boolean,
@@ -995,30 +851,14 @@ export async function setFoldersEnabled(
 }
 
 /**
- * SWITCH ONE MAILBOX'S FOLDERS ON OR OFF — the per-mailbox dial under the master toggle
- * (FOLDERS-SPEC.md §17; owner ruling 2026-08-25: *"folders should be possible to be enabled on
- * a per mailbox level"*). The column stores the EXCEPTION: `mailboxes.folders_disabled_at` NULL
- * means the mailbox participates, which is the default the ruling asks for — enabling the
- * master on a six-mailbox account shows all six trees, and this writer only ever records the
- * opt-outs.
- *
- * THE TRANSITION RIDES THE DELTA, {@link setFoldersEnabled}'s reason scoped to one mailbox:
- * while the MASTER flag is on, OFF appends one `folder` DELETE per user folder of this mailbox
- * (the rail drops the tree without a re-bootstrap) and ON appends the CREATEs back. The rows
- * come from {@link listMailboxUserFolders} — deliberately the UNFILTERED per-mailbox read,
- * because the filtered inventory already refuses to answer for the mailbox being switched off,
- * which is exactly when its tombstones must still be written. With the master OFF no change
- * rows are appended: nothing about this account is on the wire to retract, and the master's
- * own enable later emits creates for participating mailboxes only ({@link listUserFolders}
- * carries the participation filter), so the two dials compose without a special case.
- *
- * The column flip and the change rows land in ONE transaction, or a crash between them leaves
- * a rail that disagrees with the switch for ever — the master toggle's argument verbatim. The
- * mailbox must BELONG to the account: a foreign or unknown id is a 404 before anything writes,
- * measured against the same join every folder read scopes by.
- *
- * Returns the stored instant (`null` = participating) so the caller echoes what the database
- * holds — and the mailbox id, so a batched route can answer per entry.
+ * Switch one mailbox's folders on or off — the per-mailbox dial under the master toggle
+ * (FOLDERS-SPEC.md §17). The column stores the EXCEPTION: `folders_disabled_at` NULL means the
+ * mailbox participates. The transition rides the delta, scoped to one mailbox: with the master
+ * on, OFF appends one `folder` DELETE per user folder and ON appends the CREATEs back — from
+ * {@link listMailboxUserFolders}, the UNFILTERED read, because the filtered inventory refuses to
+ * answer for the mailbox being switched off, exactly when its tombstones must be written. With
+ * the master OFF no change rows are appended, so the dials compose. Column flip and change rows
+ * in ONE transaction; the mailbox must belong to the account (404 first).
  */
 export async function setMailboxFoldersEnabled(
   ctx: ServiceContext, mailboxId: string, enabled: boolean,
@@ -1089,47 +929,14 @@ export async function setMailboxFoldersEnabled(
 export const MAILBOX_SIGNATURE_MAX_CHARS = 10_000;
 
 /**
- * SET ONE MAILBOX'S SIGNATURE — the per-mailbox text a compose offers under the message when
- * that mailbox is the sender (owner ruling 2026-08-27; mail 0075).
- *
- * `null` — and a value that is empty after trimming — CLEARS it: "no signature" is the resting
- * state and an all-whitespace signature is nobody's choice. A non-empty value is stored AS
- * TYPED (interior whitespace and line breaks are the user's formatting; only a fully blank
- * value collapses), bounded by {@link MAILBOX_SIGNATURE_MAX_CHARS}.
- *
- * THE TRANSACTION IS {@link setMailboxFoldersEnabled}'s, statement for statement, because the
- * requirements are identical: the mailbox must BELONG to the account (404 before anything
- * writes), the `account_settings` stamp must MOVE (a client that already holds the settings
- * entity compares stamps, and a flip that left the row untouched is a doorbell nobody hears),
- * and the stamp moves BEFORE the mailbox row — the global lock chain (settings → mailboxes →
- * sequence row) that keeps this writer out of the 40P01 cycle with erasure. No entity change
- * rows beyond the `settings` doorbell: a signature moves no folder, no message, nothing on the
- * delta feed — the doorbell makes every surface re-read `GET /consent`, which is where the
- * signatures map travels.
- *
- * Returns the stored text (`null` = none) so the caller echoes what the database holds —
- * server-confirmed values only, which is what the Settings pane renders.
- *
- * ── THE MARKUP HALF, AND WHY THE TEXT IS DERIVED HERE (mail 0098, 0.16) ──────────────────
- *
- * Settings → Signatures mounts the compose editor, so a save may carry MARKUP. `signatureHtml`
- * is then the value and `signature` is COMPUTED FROM IT by {@link prepareOutboundBody} — the
- * same call that produces the two halves of every composed message. Which is to say the two
- * columns are one value in two shapes, produced by one function, and cannot drift.
- *
- * EXACTLY ONE OF THE TWO CARRIES IT, and a call that supplies both is REFUSED rather than
- * reconciled. Nothing about a request proves an editor was involved, so a client could send
- * markup reading `<b>Anna</b>` beside text reading `Bob` — a signature whose two halves say
- * different things to different recipients, which is the one promise a `multipart/alternative`
- * makes. Refusing is what makes that unrepresentable; picking a winner would only hide it.
- *
- * A PLAIN write CLEARS the markup. Saving text is saving the whole value, so a client with no
- * editor — the phone, whose composer has no formatting at all — must not leave stale markup
- * behind for the composer to ship in place of the words that were just saved.
- *
- * EMPTINESS IS DECIDED ON THE TEXT in both branches, which is `isRichEmpty`'s rule and for its
- * reason: an empty document serializes to `<p></p>`, four characters of markup and no signature,
- * and storing it would put an empty paragraph on the tail of every message.
+ * Set one mailbox's signature (mail 0075). `null` and a value empty after trimming CLEAR it; a
+ * non-empty value is stored AS TYPED, bounded by {@link MAILBOX_SIGNATURE_MAX_CHARS}. The
+ * transaction is {@link setMailboxFoldersEnabled}'s: the mailbox must belong to the account, the
+ * `account_settings` stamp must MOVE, and it moves BEFORE the mailbox row — the settings →
+ * mailboxes → sequence lock chain. The markup half (mail 0098): `signatureHtml` carries the
+ * editor's markup and `signature` is COMPUTED from it by {@link prepareOutboundBody} — two
+ * columns, one value. Supplying BOTH is refused: markup saying `Anna` beside text saying `Bob`. A
+ * PLAIN write clears the markup; emptiness is decided on the TEXT.
  */
 export async function setMailboxSignature(
   ctx: ServiceContext, mailboxId: string, signature: string | null,
@@ -1209,17 +1016,14 @@ export async function setMailboxSignature(
       .limit(1);
     if (!mb) throw new ServiceError("not_found", 404, "no such mailbox on this account");
 
-    /* ── THE SIGNATURE IS PER MAILBOX, SO IT TAKES THE PER-MAILBOX DISPATCH (mail 0094) ────
-     *
-     * The other three settings in this family are account-scoped and fan out.
-     * `mailboxes.signature` is not: a person with two addresses has two sign-offs, and asking
-     * the account-wide question here would publish one mailbox's into the other's document.
-     * `serializeOrganizerProfile` takes a mailbox id for exactly this reason.
-     *
-     * On a mailbox this install only reads, the signature is appended to outgoing mail by the
-     * install that HOLDS it, from the published document — so this write used to land in a
-     * column nothing reads while the pane showed the new sign-off. The request travels instead;
-     * the local column is left alone, never both.
+    /**
+     * The signature is per mailbox, so it takes the per-mailbox dispatch (mail 0094). The other
+     * three settings in this family are account-scoped and fan out; `mailboxes.signature` is not:
+     * a person with two addresses has two sign-offs, and the account-wide question would publish
+     * one mailbox's into the other's document. On a mailbox this install only reads, the
+     * signature is appended by the install that HOLDS it, from the published document — so this
+     * write used to land in a column nothing reads while the pane showed the new sign-off. The
+     * request travels instead; the local column is left alone, never both.
      */
     const route = await routeMailboxWrite(tx, ctx.accountId, mailboxId, "profile.update");
     if (route.route === "request") {
@@ -1323,65 +1127,14 @@ export async function mailboxSignatureHtmls(
 }
 
 /**
- * SET THE DORMANCY WINDOW — the cutline dial, the second knob on `account_settings`.
- *
- * The dial decides how long a sender may be quiet before the Screener stops asking about them: a
- * sender with no recent mail and no decision waits in History rather than the queue. It is PURE
- * VISIBILITY — it changes which UNDECIDED senders are SHOWN, never where any mail lives. Nothing
- * here writes a rule, a contact, a `folder_state` row or any MAIL-typed `change_log` entry, and
- * the pg test proves all three by making a stamp of any of them turn the assertion red. The one
- * change row it does append is the `settings` doorbell ({@link recordSettingsChange}) — a row
- * ABOUT the dial, so every other signed-in surface re-asks its consent answer and re-partitions
- * with the new window instead of holding the old one until reload. Recompute is READ-TIME
- * on both sides — `cutlineCounts` takes the window per request and the client re-partitions its own
- * mirror — so this writer moves no mail and arms no pass. It must NEVER travel through a writer that
- * can arm the tidy (`setScreeningPreference` stamps `ohbox_tidy_requested_at`); that is why the dial
- * lands on `PATCH /consent/settings` and not on `PATCH /account/screening`.
- *
- * ── THE 1–365 REFUSAL, AND WHY THE SERVICE RESTATES THE CHECK ──────────────────────────────
- *
- * The column's CHECK is `dormancy_days > 0 AND dormancy_days <= 365` (0035 + 0044). The service
- * refuses the same band with a 400 so a caller gets a readable answer rather than the raw 23514 —
- * the pattern `OHBOX_BAR_MAX_BYTES` uses one file over. The ceiling is load-bearing, not cosmetic: a
- * value like 2e8 is legal under the old floor alone and makes `cutlineCounts`' `toISOString()` throw
- * a `RangeError`, so `GET /consent` 500s for that account for ever. A non-integer (60.5) is refused
- * too — the column is `integer`, and a rounded float is a window nobody chose.
- *
- * ── NEVER STORE THE DEFAULT ────────────────────────────────────────────────────────────────
- *
- * `null` reverts to the product default, and so does passing the default value itself: storing 60
- * would freeze this account at 60 even after the product default moves — exactly what
- * `0035_account_settings.sql` calls "a constant wearing a dial's name". So both `null` and
- * `DEFAULT_DORMANCY_DAYS` persist NULL, and the read side substitutes the default unchanged
- * (`consent.ts`'s `?? DEFAULT_DORMANCY_DAYS`).
- *
- * ── THE UPSERT, COLUMN-SCOPED ──────────────────────────────────────────────────────────────
- *
- * Same shape and reason as {@link setAutoSuggest}: rows are created lazily by whichever feature
- * writes first, so this races `confirmSeed`, `resetScreeningState`, `setAutoSuggest` and
- * `setScreeningPreference` — five writers on one primary key. Touching only `dormancy_days` +
- * `updated_at` means a concurrent seed confirmation keeps its `seed_confirmed_at`. Proven under real
- * Postgres because PGlite serialises the race by construction.
- *
- * ── "ALL TIME" IS A MODE OF THIS SAME DIAL, SO IT IS THIS SAME WRITER ──────────────────────
- *
- * `account_settings.screening_scope` ('window' | 'all_time', mail 0083) decides whether the
- * cutline exists at all: `all_time` means no cutoff and no dormancy, in `resolveScreeningCutoff`
- * and in `consent-cutline.ts` alike. It is NOT a second dial beside this one — it is the same
- * question's other answer — so it is written HERE, by the one writer, in the one upsert. A second
- * writer touching `screening_scope` would be two functions racing one primary key with no
- * ordering between them, and the pair would be able to disagree: an account in `all_time` with a
- * 90-day window stored under it has two answers to "how far back does the Screener ask?".
- *
- * EITHER FIELD MAY BE ABSENT, and absent means UNTOUCHED — which is what lets every existing
- * caller keep its meaning while the route gains a second field. A caller that moves only the
- * window must not drag an `all_time` account back into a window nobody chose; a caller that
- * moves only the mode must not re-assert a window it never read. Both absent is a 400, for the
- * route's own reason: a write that changes nothing and reports success is a control that lies
- * about having acted.
- *
- * Returns the EFFECTIVE window — always a number — and the effective mode, so the caller echoes
- * what the account will be counted with, which is what the open tab re-partitions on.
+ * Set the dormancy window — the cutline dial: how long a sender may be quiet before the Screener
+ * stops asking. PURE VISIBILITY — it changes which undecided senders are SHOWN, never where mail
+ * lives (the pg test reddens on any rule, contact or `folder_state` write); the one change row is
+ * the `settings` doorbell. The 1–365 refusal restates the column CHECK as a 400 — load-bearing:
+ * 2e8 makes `toISOString()` throw, a permanent 500 on `GET /consent`. NEVER store the default:
+ * `null` and `DEFAULT_DORMANCY_DAYS` both persist NULL. `screening_scope` (mail 0083) is the same
+ * question's other answer, written HERE by the one writer; absent means UNTOUCHED, both absent a
+ * 400. Returns the EFFECTIVE window and mode.
  */
 export async function setDormancyDays(
   ctx: ServiceContext, days: number | null | undefined, scope?: "window" | "all_time",
@@ -1418,18 +1171,14 @@ export async function setDormancyDays(
     // the two-sided argument.
     await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
 
-    /* ── THE WINDOW IS APPLIED BY THE INSTALL THAT ORGANIZES (mail 0094) ─────────────────
-     *
-     * `dormancy_days` is the cutline the screening pass does arithmetic on, in the organizer's
-     * own cycle. Written where nothing organizes it is a dial wired to nothing — and this file
-     * is EXEMPTED from `organizer-role-census` on the argument that account settings are inert
-     * until something organizes, which is true and is exactly why the answer is a REQUEST
-     * rather than a refusal: the setting is not dangerous, it is just ineffective where it
-     * lands, and it can now travel to the install where it is not.
-     *
-     * The census's exemption is rewritten in the same commit as this line. What survives of it
-     * is the ONBOARDING case: 0 mailboxes held and 0 organized ADMITS the local write, because
-     * that is consent time and refusing there makes the flow that offers this dial
+    /**
+     * The window is applied by the install that ORGANIZES (mail 0094). `dormancy_days` is the
+     * cutline the screening pass does arithmetic on, in the organizer's own cycle — written where
+     * nothing organizes, it is a dial wired to nothing, which is exactly why the answer is a
+     * REQUEST rather than a refusal: the setting is not dangerous, just ineffective where it
+     * lands, and it can travel to the install where it is not. What survives of the old census
+     * exemption is the ONBOARDING case: 0 mailboxes held and 0 organized ADMITS the local write,
+     * because that is consent time and refusing there makes the flow that offers this dial
      * unfinishable. `planAccountFanOut` carries that state by name.
      */
     const plan = await planAccountFanOut(tx, ctx.accountId, "profile.update");
@@ -1508,33 +1257,14 @@ export async function setDormancyDays(
 }
 
 /**
- * KEEP THE PER-MESSAGE "SHOW IMAGES" FLOW, OR LET REMOTE IMAGES LOAD — the third knob on
- * `account_settings`, and the only one on the row that stores an OPT-OUT.
- *
- * `blocked === true` stamps the instant: this account asked to keep the consent flow. `false`
- * NULLs the column: the product default, which is that a message's remote images load through
- * `GET /img` without a press. See `0048_remote_images_default.sql` for why the column is spelled
- * as the opt-out rather than as an opt-in — an opt-in leaves every existing account on the old
- * behaviour, which is a default nobody is on.
- *
- * ── WHAT THIS FLAG DOES NOT AUTHORISE ──────────────────────────────────────────────────────
- *
- * It spends nothing and moves no mail. It changes exactly one thing: whether the reading pane
- * offers "Show images" per message or renders the pictures. Beacons are unaffected — the
- * sanitizer classifies a 1×1 or a beacon-shaped url as a pixel and refuses it the proxy in BOTH
- * modes — and so are remote stylesheets, which cannot travel through an image proxy at all. The
- * reader's address is protected by the proxy's url-only signature, not by the flag, which is why
- * turning the flag off is affordable in the first place.
- *
- * ── THE UPSERT, COLUMN-SCOPED ──────────────────────────────────────────────────────────────
- *
- * Same shape and reason as {@link setAutoSuggest} and {@link setDormancyDays}: rows are created
- * lazily by whichever feature writes first, so this races `confirmSeed`, `resetScreeningState` and
- * both other knobs on one primary key. Touching only `block_remote_images_at` + `updated_at` means
- * a concurrent seed confirmation keeps its `seed_confirmed_at`.
- *
- * Returns the stored instant so the caller echoes the database rather than the argument — the same
- * rule the other two follow, and the one that stops a refused write from being drawn as a move.
+ * Keep the per-message "show images" flow, or let remote images load — the only knob storing an
+ * OPT-OUT of the default. `blocked === true` stamps the instant: keep the consent flow. `false`
+ * NULLs the column — the default: remote images load through `GET /img` without a press
+ * (`0048_remote_images_default.sql`: an opt-in leaves every existing account on a default nobody
+ * is on). It spends nothing and moves no mail; it changes only whether the pane offers "Show
+ * images" per message. Beacons are unaffected — the sanitizer refuses pixel-shaped urls the proxy
+ * in BOTH modes — and the reader's address is protected by the proxy's url-only signature, not by
+ * the flag. Column-scoped upsert; returns the stored instant.
  */
 export async function setBlockRemoteImages(
   ctx: ServiceContext, blocked: boolean,
@@ -1565,32 +1295,14 @@ export async function setBlockRemoteImages(
 }
 
 /**
- * BLOCK TRACKING PIXELS, OR LET THEM LOAD — the knob beside {@link setBlockRemoteImages}, storing
- * the opt-out of a PROTECTION (mail 0072).
- *
- * `blocked === true` is the product default and NULLs the column. `false` stamps the instant: this
- * account asked for a beacon to load along with the pictures, through the same proxy. The sender
- * then learns the open — and, since a bulk sender's pixel url usually carries a per-recipient
- * token, which recipient opened it; what stays hidden is the reader's network (IP, location,
- * device), because the proxy's port takes a url and nothing else.
- *
- * The argument's sign is the reverse of the neighbour's and the column's own migration states it:
- * there, NULL is permissive and the row stores a request for more protection; here, NULL is
- * protective and the row stores a request for less. Spelled as an opt-out for the same reason —
- * the default must reach every account that never finds the setting.
- *
- * ── WHAT THIS FLAG DOES NOT AUTHORISE ──────────────────────────────────────────────────────
- *
- * It spends nothing, moves no mail, and sends no byte from the reader's machine: a pixel can load
- * only through `GET /img`, whose port takes a url and nothing else. It changes exactly one thing —
- * whether the sanitizer's pixel override refuses the proxy — and only where a proxy exists and
- * pictures load at all. In the manual images mode a pixel still waits behind "Show images".
- *
- * ── THE UPSERT, COLUMN-SCOPED ──────────────────────────────────────────────────────────────
- *
- * Same shape and reason as every sibling on this row: touching only `load_tracking_pixels_at` +
- * `updated_at`, so a concurrent write to any other knob keeps its column. Returns the stored
- * instant so the caller echoes the database rather than the argument.
+ * Block tracking pixels, or let them load — storing the opt-out of a PROTECTION (mail 0072).
+ * `blocked === true` is the default and NULLs the column; `false` stamps the instant: beacons
+ * load with the pictures, through the same proxy. The sender then learns the open — usually which
+ * recipient, via the per-recipient token — while the reader's network stays hidden: the proxy's
+ * port takes a url and nothing else. The sign is the reverse of the neighbour's: there NULL is
+ * permissive, here NULL is protective — an opt-out so the default reaches every account that
+ * never finds the setting. It changes one thing: whether the sanitizer's pixel override refuses
+ * the proxy; in manual-images mode a pixel still waits. Returns the stored instant.
  */
 export async function setBlockTrackingPixels(
   ctx: ServiceContext, blocked: boolean,
@@ -1617,41 +1329,14 @@ export async function setBlockTrackingPixels(
 }
 
 /**
- * KEEP AUTO-UNSUBSCRIBE, OR STOP IT — the fifth knob on `account_settings`, and the second one on
- * the row that stores an OPT-OUT.
- *
- * `blocked === true` stamps the instant: this account asked that screening a sender out stop
- * sending a one-click unsubscribe on their behalf. `false` NULLs the column and returns them to
- * the product default, which is that it does.
- *
- * ── WHY THE OPT-OUT SPELLING IS NOT ARGUABLE HERE ──────────────────────────────────────────
- *
- * `setBlockRemoteImages` makes the "a default nobody is on" argument for its own direction. This
- * column has a stronger version of it: the behaviour is ALREADY RUNNING for every account that
- * exists, so an opt-in column shipped without a backfill would have switched it off for all of
- * them silently, and shipped WITH one would have written a preference nobody expressed. See
- * `0054_auto_unsubscribe_optout.sql`.
- *
- * ── WHAT THIS FLAG DOES AND DOES NOT REACH ─────────────────────────────────────────────────
- *
- * It gates exactly one seam: {@link UnsubscribeService.onScreenOut}, the automatic entry point the
- * screen-out calls after its commit — and therefore `sweepScreenedOut` too, which goes through it.
- * It does NOT gate `UnsubscribeService.unsubscribe`, the per-message button: that is a person
- * pressing unsubscribe on mail in front of them, and a switch labelled "auto" may not quietly
- * disable a manual control. It spends nothing and moves no mail; both positions are reversible,
- * except for requests already sent, which is what makes the switch worth having.
- *
- * ── THE UPSERT, COLUMN-SCOPED ──────────────────────────────────────────────────────────────
- *
- * Same shape and reason as {@link setAutoSuggest}, {@link setDormancyDays} and
- * {@link setBlockRemoteImages}: rows are created lazily by whichever feature writes first, so this
- * races `confirmSeed`, `resetScreeningState` and every other knob on one primary key. Touching
- * only `block_auto_unsubscribe_at` + `updated_at` means a concurrent seed confirmation keeps its
- * `seed_confirmed_at`.
- *
- * Returns the stored instant so the caller echoes the database rather than the argument — a
- * refused write must never be drawn as a move, and here the move drawn wrongly would tell somebody
- * their lists are being left alone while the server goes on leaving them.
+ * Keep auto-unsubscribe, or stop it. `blocked === true` stamps the instant: screening a sender
+ * out stops sending a one-click unsubscribe on the account's behalf; `false` NULLs the column,
+ * the default. The spelling is not arguable: the behaviour is ALREADY RUNNING for every existing
+ * account, so an opt-in without a backfill would switch it off silently, and with one would write
+ * a preference nobody expressed (`0054_auto_unsubscribe_optout.sql`). It gates exactly one seam:
+ * {@link UnsubscribeService.onScreenOut} (and `sweepScreenedOut` through it) — NOT the
+ * per-message button: a switch labelled "auto" may not quietly disable a manual control. Returns
+ * the stored instant.
  */
 export async function setBlockAutoUnsubscribe(
   ctx: ServiceContext, blocked: boolean,
@@ -1695,37 +1380,14 @@ export const SUPPORTED_LOCALES: readonly string[] = ["en", "de"];
 const DEFAULT_LOCALE = "en";
 
 /**
- * SET THE INTERFACE LANGUAGE — the fourth knob on `account_settings`, and the only one whose value
- * is a string rather than an instant or a flag.
- *
- * `null` — and `'en'`, which means the same thing — persist NULL: **the default is never stored.**
- * That is the `dormancyDays` rule ("a dial, not a constant to hard-code") carrying a second,
- * sharper consequence here, because the client reads the difference:
- *
- *   · NULL  ⇒ "this account has no preference" ⇒ the DEVICE's remembered language stands.
- *   · 'de'  ⇒ "this account is in German"      ⇒ it OVERRIDES the device, on every machine.
- *
- * Storing `'en'` for an account that merely never opened the selector would silently move it from
- * the first state to the second, and would reset a German-set browser to English at every boot — a
- * setting acting on a decision nobody made. So English is expressed as absence, and asking for
- * English is how an account gives its devices their choice back.
- *
- * ── WHAT THIS WRITE AUTHORISES: NOTHING ────────────────────────────────────────────────────────
- *
- * It spends nothing, moves no mail, and files nothing differently. It changes which words are drawn.
- * That is worth stating because it shares a route with `autoSuggest`, which authorises metered
- * spend, and the route's `cost: "work"` is inherited from that neighbour rather than earned here.
- *
- * ── THE UPSERT, COLUMN-SCOPED ──────────────────────────────────────────────────────────────────
- *
- * Same shape and reason as {@link setAutoSuggest}, {@link setDormancyDays} and
- * {@link setBlockRemoteImages}: the row is created lazily by whichever feature writes first, so this
- * races `confirmSeed`, `resetScreeningState` and the three other knobs on one primary key. Touching
- * only `locale` + `updated_at` means a concurrent seed confirmation keeps its `seed_confirmed_at`.
- *
- * Returns the STORED value, so the caller echoes the database rather than the argument — the rule the
- * other three follow. A client that asked for English reads back `null`, which is exactly what it
- * needs in order to stop overriding its own device.
+ * Set the interface language — the only string-valued knob. `null` — and `'en'`, which means the
+ * same — persist NULL: the default is never stored, and the client reads the difference: NULL
+ * means "no account preference — the device's language stands"; `'de'` OVERRIDES the device, on
+ * every machine. Storing `'en'` for an account that never opened the selector would reset a
+ * German-set browser to English at every boot. Asking for English is how an account gives its
+ * devices their choice back. It authorises NOTHING. Column-scoped upsert; returns the STORED
+ * value — a client that asked for English reads back `null`, exactly what it needs to stop
+ * overriding its own device.
  */
 export async function setLocale(
   ctx: ServiceContext, locale: string | null,
@@ -1766,24 +1428,14 @@ export async function setLocale(
 export const SUPPORTED_THEME_FACES: readonly string[] = ["paper", "ohmarchy"];
 
 /**
- * SET THE ACCOUNT-WIDE APPEARANCE FACE — `locale`'s twin on `account_settings`, with ONE
- * deliberate inversion: **the default is stored.**
- *
- * `setLocale` maps a request for English back to NULL because "asked for the default" and
- * "never chose" resolve identically on every device. The face cannot collapse the two: a LINUX
- * device with no choice anywhere defaults to the ohmarchy face for that device only (Option B,
- * OHMARCHY-PLAN.md §3a), so an explicit account-wide `'paper'` is a real instruction — it is
- * exactly what overrides that detection — and storing NULL for it would make the instruction
- * unsayable on the one class of device it targets. `null` remains sendable and stores NULL:
- * "drop the account-wide choice, let each device resolve its own default".
- *
- * WHAT THIS WRITE AUTHORISES: NOTHING. It spends nothing, moves no mail, files nothing
- * differently — it changes which colors the interface is drawn in. The route's `cost: "work"`
- * is inherited from the auto-suggest neighbour, not earned here (setLocale's paragraph).
- *
- * The upsert is column-scoped for the same one-primary-key race the other knobs share; the
- * erasure fence and the `settings` change row bracket it in the same lock order. Returns the
- * STORED value so the caller echoes the database, never the argument.
+ * Set the account-wide appearance face — `locale`'s twin with ONE deliberate inversion: the
+ * default IS stored. `setLocale` maps a request for English back to NULL because "asked for the
+ * default" and "never chose" resolve identically on every device. The face cannot collapse the
+ * two: a Linux device with no choice defaults to the ohmarchy face for that device only, so an
+ * explicit account-wide `'paper'` is a real instruction — exactly what overrides that detection —
+ * and storing NULL would make it unsayable on the one class of device it targets. `null` remains
+ * sendable: "drop the account-wide choice, let each device resolve its own default". It
+ * authorises nothing. Column-scoped upsert in the same lock order; returns the STORED value.
  */
 export async function setThemeFace(
   ctx: ServiceContext, themeFace: string | null,
@@ -1810,39 +1462,14 @@ export async function setThemeFace(
 }
 
 /**
- * STAMP `account_settings.onboarding_completed_at` — the first-run flow has been LEFT (mail 0083).
- *
- * ── WHY THIS IS A STAMP AND NOT A STEP COUNTER ──────────────────────────────────────────────
- *
- * Onboarding state is derived from truth-conditions the product already stores — consent, the
- * screening baseline, the import stamp, the AI posture — and the derivation (`onboarding.ts` on
- * the client) walks them in order and renders the first unmet one. Exactly one fact about the
- * flow itself is not derivable from those, and it is this: whether the person has already been
- * offered the flow and left it. Without the stamp a finished account re-opens the flow on every
- * boot, and an account that cancelled it is asked again forever.
- *
- * ── CANCEL AND FINISH WRITE THE SAME THING, AND THAT IS THE POINT ───────────────────────────
- *
- * The stamp answers "should this open by itself again", and both endings answer no. Recording
- * them differently would invite a reader to treat a cancel as an unfinished flow and re-open it,
- * which is the behaviour the stamp exists to prevent — a person who pressed Cancel pressed it.
- * What was actually completed stays legible in the truth-conditions themselves: an account that
- * cancelled before consenting has no `organize_consented_at`, and every surface that cares reads
- * that rather than this.
- *
- * ── AND WHY IT RE-STAMPS RATHER THAN COALESCING ─────────────────────────────────────────────
- *
- * `organize_consented_at` COALESCEs (`organizeHere`) because it records a one-time authorisation
- * and moving it would relocate consent. This one records the LAST time the flow was left, and
- * Settings → "Run setup again" re-runs it deliberately, so a fresh instant is the true answer.
- * Nothing reads it as a duration or an age, only as null / not-null, so the re-stamp costs
- * nothing and keeps the column meaning one thing.
- *
- * WHAT THIS WRITE AUTHORISES: NOTHING. It spends nothing, moves no mail and files nothing
- * differently — it decides whether one overlay opens unbidden. The consent, the window and the
- * scope are written by `organizeHere` in ITS transaction (the single-write ruling); this is the
- * flow's own bookkeeping and is deliberately not on that path, so a cancel before consent
- * records the cancel and authorises nothing.
+ * Stamp `account_settings.onboarding_completed_at` — the first-run flow has been LEFT (mail
+ * 0083). A stamp, not a step counter: onboarding state is derived from truth-conditions the
+ * product stores, and exactly one fact is not derivable — whether the person was offered the flow
+ * and left it. Without it, a finished account re-opens the flow every boot. Cancel and finish
+ * write the SAME thing: both answer "should this open by itself again" with no; what was
+ * completed stays legible in the truth-conditions. It RE-STAMPS rather than coalescing — "Run
+ * setup again" re-runs deliberately, and nothing reads it as an age. It authorises nothing:
+ * consent, window and scope are written by `organizeHere` in ITS transaction.
  */
 export async function setOnboardingCompleted(
   ctx: ServiceContext,
