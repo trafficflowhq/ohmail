@@ -27,6 +27,7 @@
  * English-only without a provider in it.
  */
 import { createTranslator } from "next-intl";
+import { durableSet } from "./durable";
 
 /**
  * THE CLOSED SET, and it is closed in four places that must agree: here, the CHECK on
@@ -106,16 +107,15 @@ export function readStoredLocale(): AppLocale | null {
 /**
  * Persist the choice LOCALLY — both mediums, one call, never one without the other.
  *
- * Best-effort by construction: a blocked `localStorage` throws and a document-less environment
- * (the server render, a node test) has no `document`. Neither is an error worth surfacing, because
- * the in-memory locale is already correct — the only cost is that the NEXT load starts in English.
+ * Neither medium can fail the call: a blocked `localStorage` and a document-less environment (the
+ * server render, a node test) both leave the in-memory locale correct, and the only cost is that
+ * the NEXT load starts in English. That cost is exactly what the durable door reports, so the jar
+ * half is announced once per session while the cookie half stays silent — a missing `document` is
+ * this environment's shape, not a browser refusing to keep what somebody chose.
  */
 export function rememberLocale(locale: AppLocale): void {
-  try {
-    globalThis.localStorage?.setItem(LOCALE_STORAGE_KEY, locale);
-  } catch {
-    /* storage blocked — the live locale still applies for this session */
-  }
+  // The live locale still applies for this session; the jar's refusal is announced once.
+  durableSet(LOCALE_STORAGE_KEY, locale, "locale");
   try {
     if (typeof document !== "undefined") {
       document.cookie =

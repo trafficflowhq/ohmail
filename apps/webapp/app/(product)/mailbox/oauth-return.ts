@@ -37,6 +37,7 @@
 
 import { apiConfigured, mailboxes as mailboxApi, messageOf, pendApiOwner } from "../../api-client";
 import { readOwner } from "../../shell/owner-cookie";
+import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
 
 /**
  * WHAT THE CONSENT REDIRECT LEFT IN THE QUERY.
@@ -184,11 +185,8 @@ const OAUTH_OWNER_PREFIX = "ohmail.oauth.owner.";
 
 export function rememberOAuthOwner(state: string, accountId: string | null): void {
   if (typeof sessionStorage === "undefined" || accountId === null) return;
-  try {
-    sessionStorage.setItem(OAUTH_OWNER_PREFIX + state, accountId);
-  } catch {
-    /* storage refused — the return falls back to the marker, as it always did */
-  }
+  // The return falls back to the marker exactly as it always did; the refusal is announced once.
+  durableSessionSet(OAUTH_OWNER_PREFIX + state, accountId, "oauth.owner");
 }
 
 function takeOAuthOwner(state: string): string | null {
@@ -197,8 +195,10 @@ function takeOAuthOwner(state: string): string | null {
     const key = OAUTH_OWNER_PREFIX + state;
     const owner = sessionStorage.getItem(key);
     // Single use, like the `state` it is keyed by: a consumed ceremony must not leave an
-    // expectation behind for whatever navigates here next.
-    sessionStorage.removeItem(key);
+    // expectation behind for whatever navigates here next. A removal that REFUSED leaves that
+    // expectation in the jar, so the caller falls back to the marker — `null`, exactly as it
+    // did when the whole accessor threw.
+    if (durableSessionRemove(key, "oauth.owner") === "lost") return null;
     return owner;
   } catch {
     return null;

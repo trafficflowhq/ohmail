@@ -281,6 +281,7 @@ export function statusKey(m: Pick<MailboxDTO, "status" | "lastSyncAt">): string 
  * choice: `export { x } from "..."` re-exports without binding `x` in THIS module's scope, so the
  * call below became `Cannot find name` — typecheck and 43 tests, immediately and loudly. */
 import { addressKey } from "../../shell/address-key";
+import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
 export { addressKey };
 
 /**
@@ -3218,15 +3219,13 @@ interface StoredDevice {
 }
 
 function rememberDevice(d: StoredDevice): void {
-  try {
-    sessionStorage.setItem(DEVICE_STORE_KEY, JSON.stringify(d));
-  } catch { /* storage refused — the ceremony still runs, it just will not survive a reload */ }
+  // The ceremony still runs; it just will not survive a reload, and that is now said once.
+  durableSessionSet(DEVICE_STORE_KEY, JSON.stringify(d), "device.ceremony");
 }
 
 function forgetDevice(): void {
-  try {
-    sessionStorage.removeItem(DEVICE_STORE_KEY);
-  } catch { /* nothing to do; a stale entry is discarded on read by the expiry check below */ }
+  // A stale entry is discarded on read by the expiry check below; the refusal is still answered.
+  durableSessionRemove(DEVICE_STORE_KEY, "device.ceremony");
 }
 
 /**

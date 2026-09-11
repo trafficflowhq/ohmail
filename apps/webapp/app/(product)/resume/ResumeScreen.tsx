@@ -52,6 +52,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { REFRESH_ENDPOINT, resumeSession } from "../../session-refresh";
 import { readOwner } from "../../shell/owner-cookie";
+import { durableSessionSet } from "../../shell/durable";
 
 /** Survives the reload a successful resume performs; scoped to this tab. */
 const ONCE_KEY = "ohmail.resume-attempted";
@@ -83,10 +84,12 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
     try {
       const last = Number(sessionStorage.getItem(ONCE_KEY) ?? 0);
       looping = Number.isFinite(last) && last > 0 && Date.now() - last < LOOP_WINDOW_MS;
-      sessionStorage.setItem(ONCE_KEY, String(Date.now()));
     } catch {
       /* private mode, storage disabled — fall through and rely on guard 1 */
     }
+    // A stamp that could not be written leaves guard 1 as the only loop defence, which is what
+    // the catch above already accepted; it is no longer accepted in silence.
+    durableSessionSet(ONCE_KEY, String(Date.now()), "resume.once");
     if (looping) {
       setFailed(true);
       return;

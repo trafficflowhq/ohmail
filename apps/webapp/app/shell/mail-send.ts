@@ -91,6 +91,7 @@ import {
   clearComposeDraft, composePlan, composeSessionId, readComposeDraft, readComposeRow,
   type MailSend,
 } from "./compose";
+import { durableRemove, durableSet } from "./durable";
 import {
   allSendLocks, attachSendLockDraft, claimSendLock, holdOf, legacySendFingerprint_0_14_0,
   legacySendFingerprint_0_14_1, markSendLockUnverified, recordForSendKey,
@@ -496,13 +497,11 @@ export function readReplyDraft(messageId: string): RichValue {
  * that predates the envelope.
  */
 export function writeReplyDraft(messageId: string, value: RichValue): void {
-  try {
-    const raw = serializeRichValue(value);
-    if (raw === null) window.localStorage.removeItem(replyDraftKey(messageId));
-    else window.localStorage.setItem(replyDraftKey(messageId), raw);
-  } catch {
-    /* private mode refuses writes; the draft lives in React state only */
-  }
+  const raw = serializeRichValue(value);
+  // The draft still lives in React state for this session; a jar that refused it no longer
+  // passes for one that kept it.
+  if (raw === null) durableRemove(replyDraftKey(messageId), "reply.draft");
+  else durableSet(replyDraftKey(messageId), raw, "reply.draft");
 }
 
 /**
@@ -555,15 +554,12 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
 }
 
 export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
-  try {
-    if (meta.subject === undefined && meta.sig === undefined) {
-      window.localStorage.removeItem(replyMetaKey(lane));
-      return;
-    }
-    window.localStorage.setItem(replyMetaKey(lane), JSON.stringify(meta));
-  } catch {
-    /* private mode refuses writes; the meta lives in React state only */
+  // A meta with neither field stores nothing — absence IS the resting state, see above.
+  if (meta.subject === undefined && meta.sig === undefined) {
+    durableRemove(replyMetaKey(lane), "reply.meta");
+    return;
   }
+  durableSet(replyMetaKey(lane), JSON.stringify(meta), "reply.meta");
 }
 
 /**
@@ -574,41 +570,28 @@ export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
  * else. A second copy of "which keys is this lane holding" is a second place for a lane to leak a
  * draft that outlives the message it was.
  *
- * Every write is guarded: private mode refuses `localStorage` outright, and a lane that could not
- * store anything has nothing to remove.
+ * Every removal goes through the durable door: a browser that refuses `localStorage` outright
+ * holds nothing to remove, and one that refuses a single key says so rather than leaving the
+ * pair half-dropped — the body and its meta are one lane's scratch and clear together.
  */
 export function clearLaneScratch(key: string, m: MailSend, owner: string | null): void {
   if (m.inReplyTo === null) {
     if (key === COMPOSE_SEND_KEY) {
       clearComposeDraft(owner);
       // The delivered message's row is spent, and so is the block state keyed to it.
-      if (m.draftId) {
-        try {
-          window.localStorage.removeItem(replyMetaKey(`draft:${m.draftId}`));
-        } catch {
-          /* private mode refuses writes and therefore holds nothing to remove */
-        }
-      }
+      if (m.draftId) durableRemove(replyMetaKey(`draft:${m.draftId}`), "reply.meta");
       return;
     }
     // The INLINE forward — the lane doubles as the scratch suffix, so the note clears here
     // exactly as a reply's draft does below. The compose form's autosave is deliberately
     // untouched: this send never used the form, and a half-written compose must survive
     // somebody forwarding a message mid-sentence.
-    try {
-      window.localStorage.removeItem(replyDraftKey(key));
-      window.localStorage.removeItem(replyMetaKey(key));
-    } catch {
-      /* private mode refuses writes and therefore holds nothing to remove */
-    }
+    durableRemove(replyDraftKey(key), "reply.draft");
+    durableRemove(replyMetaKey(key), "reply.meta");
     return;
   }
-  try {
-    window.localStorage.removeItem(replyDraftKey(m.inReplyTo));
-    window.localStorage.removeItem(replyMetaKey(m.inReplyTo));
-  } catch {
-    /* private mode refuses writes and therefore holds nothing to remove */
-  }
+  durableRemove(replyDraftKey(m.inReplyTo), "reply.draft");
+  durableRemove(replyMetaKey(m.inReplyTo), "reply.meta");
 }
 
 /**

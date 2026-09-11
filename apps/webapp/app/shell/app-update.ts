@@ -27,6 +27,7 @@
  * next check off for as long as the jump was large, so a stamp ahead of now is treated as
  * elapsed rather than trusted.
  */
+import { durableSet } from "./durable";
 
 /**
  * How long between two checks, and between two asks about the same release.
@@ -155,13 +156,9 @@ export function readAskMemory(): AskMemory {
   }
 }
 
-/** Store the memory, and shrug at a jar that refuses writes — the restraint then holds for this run. */
+/** Store the memory. A jar that refuses holds the restraint for this run only, and says so. */
 export function writeAskMemory(memory: AskMemory): void {
-  try {
-    window.localStorage.setItem(ASK_MEMORY_KEY, JSON.stringify(memory));
-  } catch {
-    /* private mode, or a full store */
-  }
+  durableSet(ASK_MEMORY_KEY, JSON.stringify(memory), "update.asked");
 }
 
 /**

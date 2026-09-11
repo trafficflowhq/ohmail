@@ -38,6 +38,7 @@ import { useTranslations } from "next-intl";
 import { useTheme, useToast, type FaceName } from "@ohmail/ui";
 import { readOwner } from "./owner-cookie";
 import type { ApplyFaceAllDevices } from "./FaceRow";
+import { durableSet } from "./durable";
 
 /** Device-local dismissal memory. A read failure means "not dismissed", which only re-offers. */
 const DISMISS_KEY = "ohmail.faceOffer";
@@ -60,11 +61,8 @@ export function useOhmarchyOffer(apply: ApplyFaceAllDevices | null): {
   }, []);
   const dismiss = useCallback(() => {
     setDismissed(true);
-    try {
-      window.localStorage.setItem(DISMISS_KEY, "done");
-    } catch {
-      /* private mode refuses writes; the dismissal still holds for this tab */
-    }
+    // The dismissal still holds for this tab; a jar that refused it says so once.
+    durableSet(DISMISS_KEY, "done", "ohmarchy.dismissed");
   }, []);
   return {
     eligible:

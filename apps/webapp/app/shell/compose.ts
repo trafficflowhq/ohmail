@@ -303,8 +303,12 @@ export function composeSessionId(owner: string | null = storageOwner()): string 
     const held = window.localStorage.getItem(composeSessionKey(owner));
     if (held !== null && held.length > 0) return held;
     const minted = crypto.randomUUID();
-    window.localStorage.setItem(composeSessionKey(owner), minted);
-    return minted;
+    // A MINT NOBODY COULD STORE IS NOT AN IDENTITY. `null` here is the same answer a refused READ
+    // gives — "this browser cannot name the message" — because a session id held only in this
+    // call frame names nothing on the next reload. The refusal now also reaches the shell.
+    return durableSet(composeSessionKey(owner), minted, "compose.session") === "stored"
+      ? minted
+      : null;
   } catch {
     return null; // private mode, or a full quota — see the header on what `null` means
   }
@@ -324,11 +328,8 @@ export function composeSessionId(owner: string | null = storageOwner()): string 
  * the row with it. This only ever restores a session that a record still names.
  */
 export function writeComposeSession(session: string, owner: string | null = storageOwner()): void {
-  try {
-    window.localStorage.setItem(composeSessionKey(owner), session);
-  } catch {
-    /* private mode, or a full quota — the same failure `composeSessionId` answers `null` for */
-  }
+  // The same failure `composeSessionId` answers `null` for, and it is announced the same way.
+  durableSet(composeSessionKey(owner), session, "compose.session");
 }
 
 /**
@@ -383,33 +384,31 @@ export function writeComposeRow(id: string | null, owner: string | null = storag
   const key = composeRowKey(owner);
   if (id === null) composeRowInMemory.delete(key);
   else composeRowInMemory.set(key, id);
-  try {
-    if (id === null) window.localStorage.removeItem(key);
-    else window.localStorage.setItem(key, id);
-  } catch {
-    /* private mode, or a full quota — the row is as durable as the tab, remembered above */
-  }
+  // The row stays as durable as the tab through `composeRowInMemory` above, which is why a
+  // refusal is survivable here at all; it is no longer silent about being a tab's memory.
+  if (id === null) durableRemove(key, "compose.row");
+  else durableSet(key, id, "compose.row");
 }
 
 export function clearComposeDraft(owner: string | null = storageOwner()): void {
-  // BEFORE the try, because in the browser the memory exists for the first jar call throws and
-  // everything below it is skipped — which would leave the remembered row naming a message that
-  // has been cleared.
+  // FIRST, because the remembered row must not survive a clear of the message it names.
   composeRowInMemory.delete(composeRowKey(owner));
-  try {
-    window.localStorage.removeItem(composeDraftKey(owner));
-    // The session id goes with the buffer it names: the message-in-progress is over, so the next
-    // press is a new message and must not inherit this one's identity.
-    window.localStorage.removeItem(composeSessionKey(owner));
-    // AND the row that message had on the account — the other half of the identity, and the half
-    // a reload used to lose on its own. See `composeRowKey`.
-    window.localStorage.removeItem(composeRowKey(owner));
-    // AND the un-owned key a browser upgraded from an earlier bundle may still hold. This is
-    // the only line that touches it: it is drained on the next clear and never read back.
-    window.localStorage.removeItem(LEGACY_COMPOSE_DRAFT_KEY);
-  } catch {
-    /* nothing was stored, so there is nothing to remove */
-  }
+  /*
+   * FOUR INDEPENDENT REMOVALS, not one try block. Under a shared `try` the first refusal skipped
+   * every line below it, so a quota that rejected the buffer's removal left the session id and
+   * the row behind — the identity of a message this call has just declared over. Each door
+   * answers for itself now, exactly as the sign-out sweep's per-key catch does.
+   */
+  durableRemove(composeDraftKey(owner), "compose.draft");
+  // The session id goes with the buffer it names: the message-in-progress is over, so the next
+  // press is a new message and must not inherit this one's identity.
+  durableRemove(composeSessionKey(owner), "compose.session");
+  // AND the row that message had on the account — the other half of the identity, and the half
+  // a reload used to lose on its own. See `composeRowKey`.
+  durableRemove(composeRowKey(owner), "compose.row");
+  // AND the un-owned key a browser upgraded from an earlier bundle may still hold. This is
+  // the only line that touches it: it is drained on the next clear and never read back.
+  durableRemove(LEGACY_COMPOSE_DRAFT_KEY, "compose.draft");
 }
 
 /**

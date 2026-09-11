@@ -84,6 +84,7 @@ import {
 } from "./RecipientField";
 import { SignatureBlock } from "./SignatureBlock";
 import { SIG_FOLLOWING, type SignatureState } from "./signature";
+import { durableSessionSet } from "./durable";
 
 /*
  * The scratch-buffer helpers and `canSend` used to live here and now live in `mail-send.ts`,
@@ -149,11 +150,8 @@ function readStoredReplyHeight(): number | null {
   }
 }
 function storeReplyHeight(px: number): void {
-  try {
-    window.sessionStorage.setItem(REPLY_HEIGHT_KEY, String(px));
-  } catch {
-    /* a panel that cannot remember still resizes */
-  }
+  // A panel that cannot remember still resizes; the refusal is announced once.
+  durableSessionSet(REPLY_HEIGHT_KEY, String(px), "reply.panelHeight");
 }
 
 export function InlineReply({

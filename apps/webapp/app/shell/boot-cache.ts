@@ -46,6 +46,8 @@
  * prefix without knowing who wrote it.
  */
 
+import { durableSet } from "./durable";
+
 const PREFIX = "ohmail.boot.";
 
 /** The storage key for one scope of one account's cache. Exported for tests and sign-out. */
@@ -72,13 +74,13 @@ export function readBootCache<T>(
   }
 }
 
-/** Record a fresh server answer for the next boot. A refused write costs one round trip later. */
+/**
+ * Record a fresh server answer for the next boot. A refused write costs one round trip later —
+ * nothing is lost — but it goes through the durable door all the same, because the jar that
+ * refused a cache is the jar about to refuse a decision.
+ */
 export function writeBootCache(scope: string, owner: string, value: unknown): void {
-  try {
-    window.localStorage.setItem(bootCacheKey(scope, owner), JSON.stringify(value));
-  } catch {
-    /* private mode refuses writes — the next boot simply asks the server first again */
-  }
+  durableSet(bootCacheKey(scope, owner), JSON.stringify(value), "boot.cache");
 }
 
 /**

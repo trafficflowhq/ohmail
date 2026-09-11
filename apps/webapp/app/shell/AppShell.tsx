@@ -230,6 +230,7 @@ import { ComposeView } from "../views/ComposeView";
 import { DraftsView } from "../views/DraftsView";
 import { reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
 import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
+import { durableSessionSet } from "./durable";
 
 interface ReadsAiChipEntity {
   afterId: string;
@@ -7309,11 +7310,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
               type="button"
               onClick={() => {
                 setRibbonGone(true);
-                try {
-                  sessionStorage.setItem("ohmail.demo-ribbon", "gone");
-                } catch {
-                  /* fine — dismissed for this render only */
-                }
+                // Dismissed for this render either way; a refused jar is announced once.
+                durableSessionSet("ohmail.demo-ribbon", "gone", "demo.ribbon");
               }}
             >
               {t("ribbon.dismiss")}

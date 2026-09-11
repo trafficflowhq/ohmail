@@ -72,6 +72,8 @@
  * read ahead of the decode.
  */
 
+import { durableSet } from "../shell/durable";
+
 /**
  * The four levels, ASCENDING BY QUALITY, with `original` last.
  *
@@ -246,14 +248,8 @@ export function writeImageQualityLevel(
   level: ImageQualityLevel,
   accountId: string | null = null,
 ): void {
-  try {
-    (globalThis as { localStorage?: Storage }).localStorage?.setItem(
-      imageQualityKeyFor(accountId),
-      level,
-    );
-  } catch {
-    /* private mode refuses writes; the choice still holds for this session */
-  }
+  // The choice still holds for this session; a jar that refused it says so once.
+  durableSet(imageQualityKeyFor(accountId), level, "compose.imageQuality");
 }
 
 export interface CompressedFile {

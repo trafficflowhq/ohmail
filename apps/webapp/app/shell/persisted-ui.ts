@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { durableSet } from "./durable";
 
 /**
  * UI state that must survive a reload — "saved if it's collapsed or not so ui stays as one
@@ -44,11 +45,8 @@ export function usePersistedFlag(
   const set = useCallback(
     (next: boolean) => {
       setValue(next);
-      try {
-        window.localStorage.setItem(key, next ? "1" : "0");
-      } catch {
-        /* private mode refuses writes; the toggle still works for this session */
-      }
+      // The toggle still works for this session; a jar that refused it says so once.
+      durableSet(key, next ? "1" : "0", "ui.flag");
     },
     [key],
   );
@@ -104,11 +102,8 @@ export function usePersistedIdSet(
         // Re-adding moves an id to the newest slot, so eviction stays honestly oldest-first.
         const without = prev.filter((x) => x !== id);
         const next = on ? [...without, id].slice(-cap) : without;
-        try {
-          window.localStorage.setItem(key, JSON.stringify(next));
-        } catch {
-          /* private mode refuses writes; the choice still holds for this session */
-        }
+        // The choice still holds for this session; a jar that refused it says so once.
+        durableSet(key, JSON.stringify(next), "ui.idset");
         return next;
       });
     },
@@ -165,11 +160,8 @@ export function usePersistedChoice<T extends string>(
   const set = useCallback(
     (next: T) => {
       setValue(next);
-      try {
-        window.localStorage.setItem(key, next);
-      } catch {
-        /* private mode refuses writes; the choice still holds for this session */
-      }
+      // The choice still holds for this session; a jar that refused it says so once.
+      durableSet(key, next, "ui.choice");
     },
     [key],
   );

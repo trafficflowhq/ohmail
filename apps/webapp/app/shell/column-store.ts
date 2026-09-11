@@ -55,6 +55,7 @@
  */
 
 import { UI_KEYS } from "./persisted-ui";
+import { durableRemove, durableSet } from "./durable";
 
 /**
  * The store's key and its shape. The key itself comes from `UI_KEYS` rather than being spelled
@@ -210,17 +211,17 @@ export function normalizeColumns(parsed: unknown): ColumnState {
  * no entry behind rather than a record that says "the defaults, explicitly". The difference
  * matters the day a default changes.
  */
-export function writeColumns(state: ColumnState, storage?: Storage | null): void {
-  try {
-    const jar = storage ?? window.localStorage;
-    const out: Record<string, number> = { v: COLUMNS_VERSION };
-    if (state.rail !== undefined) out.rail = clampRail(state.rail);
-    if (state.list !== undefined) out.list = clampList(state.list);
-    if (out.rail === undefined && out.list === undefined) jar.removeItem(COLUMNS_KEY);
-    else jar.setItem(COLUMNS_KEY, JSON.stringify(out));
-  } catch {
-    /* private mode refuses writes; the widths still hold for this session */
-  }
+/*
+ * The `storage` parameter this took is gone: no caller ever passed one — not the handles, not
+ * the tests — so the injected arm was unreachable and the jar is always this browser's. The
+ * widths still hold for this session when a write is refused; it is no longer refused silently.
+ */
+export function writeColumns(state: ColumnState): void {
+  const out: Record<string, number> = { v: COLUMNS_VERSION };
+  if (state.rail !== undefined) out.rail = clampRail(state.rail);
+  if (state.list !== undefined) out.list = clampList(state.list);
+  if (out.rail === undefined && out.list === undefined) durableRemove(COLUMNS_KEY, "ui.columns");
+  else durableSet(COLUMNS_KEY, JSON.stringify(out), "ui.columns");
 }
 
 /**

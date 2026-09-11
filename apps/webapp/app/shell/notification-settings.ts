@@ -39,6 +39,7 @@ import {
   type NotificationChannels,
 } from "@ohmail/client-engine";
 import { apiConfigured, push as pushApi } from "../api-client";
+import { durableRemove, durableSet } from "./durable";
 
 /** One key, one JSON object — so a partial write cannot leave two switches disagreeing. */
 export const NOTIFICATION_CHANNELS_KEY = "ohmail.notifications.channels";
@@ -83,11 +84,8 @@ export function readChannels(): NotificationChannels {
  * because the switch still governs this session and the pane still reads back what it holds.
  */
 export function writeChannels(next: NotificationChannels): void {
-  try {
-    globalThis.localStorage?.setItem(NOTIFICATION_CHANNELS_KEY, JSON.stringify(next));
-  } catch {
-    /* Storage blocked or full. The in-memory value still drives this session. */
-  }
+  // The in-memory value still drives this session; the refusal is no longer silent.
+  durableSet(NOTIFICATION_CHANNELS_KEY, JSON.stringify(next), "notifications.channels");
 }
 
 /**
@@ -394,15 +392,15 @@ const readEndpoint = (): string | null => {
 };
 /** Id and endpoint move together — a row is only ever meaningful with the address it was made for. */
 const writeId = (id: string | null, endpoint?: string): void => {
-  try {
-    if (id === null) {
-      globalThis.localStorage?.removeItem(SUBSCRIPTION_ID_KEY);
-      globalThis.localStorage?.removeItem(SUBSCRIPTION_ENDPOINT_KEY);
-    } else {
-      globalThis.localStorage?.setItem(SUBSCRIPTION_ID_KEY, id);
-      if (endpoint !== undefined) globalThis.localStorage?.setItem(SUBSCRIPTION_ENDPOINT_KEY, endpoint);
-    }
-  } catch { /* blocked store */ }
+  if (id === null) {
+    durableRemove(SUBSCRIPTION_ID_KEY, "notifications.subscription");
+    durableRemove(SUBSCRIPTION_ENDPOINT_KEY, "notifications.subscription");
+    return;
+  }
+  durableSet(SUBSCRIPTION_ID_KEY, id, "notifications.subscription");
+  if (endpoint !== undefined) {
+    durableSet(SUBSCRIPTION_ENDPOINT_KEY, endpoint, "notifications.subscription");
+  }
 };
 
 /**

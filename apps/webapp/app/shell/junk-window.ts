@@ -74,6 +74,7 @@ import {
   type JunkItemWire, type JunkMailboxWire, type JunkPageWire, type JunkRescueWire,
   type JunkSearchWire, type JunkSweepWire,
 } from "../api-client";
+import { durableSet } from "./durable";
 
 /**
  * One row's stable key. EPOCH-SCOPED: a UID names a message only within one UIDVALIDITY, so a
@@ -576,9 +577,10 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   }, [requesting, wire, absorbPreview]);
 
   const dismiss = useCallback(() => {
-    try {
-      if (sweepPreview) window.localStorage.setItem(dismissKeyOf(sweepPreview), String(sweepPreview.movable));
-    } catch { /* storage blocked — the dismissal lasts the session */ }
+    // A blocked jar makes the dismissal last the session only, and says so once.
+    if (sweepPreview) {
+      durableSet(dismissKeyOf(sweepPreview), String(sweepPreview.movable), "junk.dismissed");
+    }
     setSweepPhase("none");
   }, [sweepPreview]);
 

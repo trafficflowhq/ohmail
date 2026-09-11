@@ -110,6 +110,7 @@
  */
 
 import type { MailSend } from "./compose";
+import { durableRemove, durableSet, type DurableWrite } from "./durable";
 import { storageOwner } from "./storage-owner";
 
 /**
@@ -569,13 +570,20 @@ function loadOrEmpty(owner: string | null = storageOwner()): SendLock[] {
   return load(owner) ?? [];
 }
 
-function save(rows: SendLock[], owner: string | null = storageOwner()): void {
-  try {
-    if (rows.length === 0) window.localStorage.removeItem(sendLocksKey(owner));
-    else window.localStorage.setItem(sendLocksKey(owner), JSON.stringify(rows));
-  } catch {
-    /* private mode, or a full quota — the lock is as durable as the tab, exactly as before */
-  }
+/**
+ * ── AND A LOCK THAT DID NOT REACH THE JAR SAYS SO ───────────────────────────────────────────
+ *
+ * This swallowed its own refusal, so in a private window the claim was as durable as the tab
+ * while every reader above still spoke as though a record had been written. The verdict is
+ * returned for the same reason the Screener's journal returns one, and `durable.ts` raises the
+ * shell's once-per-session notice: the press is still admitted — a browser with no jar must
+ * not lose the ability to send — but nobody is told a key is held across a reload when it is not.
+ */
+function save(rows: SendLock[], owner: string | null = storageOwner()): DurableWrite {
+  const key = sendLocksKey(owner);
+  return rows.length === 0
+    ? durableRemove(key, "send.locks")
+    : durableSet(key, JSON.stringify(rows), "send.locks");
 }
 
 /**
@@ -819,8 +827,10 @@ export function claimSendLock(lock: SendLock, owner: string | null = storageOwne
    * every unresolved record it has, minus any that names this same message: that one IS this
    * claim, and two rows for one message would answer twice about it.
    */
-  // AN UNREADABLE JAR IS EMPTY HERE ON PURPOSE: there is nothing to evict and `save` will no-op,
-  // so the claim is as durable as the tab — exactly what it was before this file existed.
+  // AN UNREADABLE JAR IS EMPTY HERE ON PURPOSE: there is nothing to evict, and a jar that then
+  // refuses the write leaves the claim as durable as the tab — exactly what it was before this
+  // file existed. What has changed is that the refusal is no longer silent: `save` answers, and
+  // the shell says once that this browser is not keeping decisions between reloads.
   const rows = loadOrEmpty(owner).filter((r) => r.lane !== lock.lane
     ? true
     // A record from a LATER format is not this build's to evict, ordinary or not.

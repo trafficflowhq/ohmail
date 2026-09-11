@@ -90,6 +90,35 @@ export function durableRemove(key: string, store: string): DurableWrite {
   }
 }
 
+/**
+ * THE SAME DOOR FOR THE PER-TAB JAR.
+ *
+ * `sessionStorage` holds the handles whose lifetime is one tab — an OAuth `state`'s owner, a
+ * device-code ceremony, a pane height. A browser that refuses one jar refuses the other for the
+ * same reasons (a private window, a profile with site data blocked, a full quota), so a refusal
+ * here is the same fact about this browser and earns the same sentence. Two functions rather than
+ * a store argument because the census below reads the CALL: one door per jar is a thing a parse
+ * can see, and a jar chosen by a variable is not.
+ */
+export function durableSessionSet(key: string, value: string, store: string): DurableWrite {
+  try {
+    window.sessionStorage.setItem(key, value);
+    return "stored";
+  } catch {
+    return lost(store);
+  }
+}
+
+/** Remove one per-tab key, and say whether it landed. See {@link durableRemove}. */
+export function durableSessionRemove(key: string, store: string): DurableWrite {
+  try {
+    window.sessionStorage.removeItem(key);
+    return "stored";
+  } catch {
+    return lost(store);
+  }
+}
+
 /** Test seam: forget this session's answer. Never called by product code. */
 export function resetDurabilityForTest(): void {
   announced = false;
