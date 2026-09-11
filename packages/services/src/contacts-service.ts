@@ -6,25 +6,13 @@ import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js"
 import type { ContactDTO, NoteDTO, Page } from "./dto/types.js";
 
 /**
- * THE LONGEST `?q=` THE CONTACT LIST ACCEPTS.
- *
- * `q` becomes the ILIKE pattern `'%' || q || '%'`, which is an unanchored substring match run
- * against every contact row the account owns — the pattern length is a per-row cost and the
- * caller chose it, with no bound at all.
- *
- * **320, and the number is a deliberate over-cap rather than a derivation.** Pasting a complete
- * address into the contact search is the obvious thing to do with this field, so the ceiling has
- * to clear the longest address a row can hold. RFC 5321 §4.5.3.1 makes a usable mailbox 254
- * octets (the forward path is capped at 256 including the brackets, so the 64 + 1 + 255 component
- * maxima cannot all be met at once) — but `contacts.address` is a `text` column written from
- * whatever arrived, with no such validator, so the deliverable maximum is not the storable one.
- * 320 clears both with room, and being generous here costs one bounded ILIKE pattern.
- *
- * Deliberately NOT `SEARCH_QUERY_MAX_CHARS` (200), which bounds free-text prose against a trigram
- * index and has no reason to accommodate an address.
- *
- * A 400, never a truncation: a shortened pattern silently matches MORE rows than the caller
- * asked about, which on a contact list is the wrong direction to be silently wrong in.
+ * The longest `?q=` the contact list accepts. `q` becomes the ILIKE pattern `'%' || q || '%'` —
+ * an unanchored substring match against every contact row, its length a per-row cost the caller
+ * chose. 320 is a deliberate over-cap: pasting a complete address into the search is the obvious
+ * use, so the ceiling must clear the longest address a row can hold — RFC 5321 §4.5.3.1 makes a
+ * usable mailbox 254 octets, but `contacts.address` is `text` written from whatever arrived.
+ * Deliberately NOT `SEARCH_QUERY_MAX_CHARS` (200), which bounds prose against a trigram index. A
+ * 400, never a truncation: a shortened pattern silently matches MORE rows than asked.
  */
 export const CONTACTS_QUERY_MAX_CHARS = 320;
 
@@ -59,15 +47,13 @@ function contactToDTO(row: typeof contacts.$inferSelect): ContactDTO {
 }
 
 /**
- * ContactsService (contract §5.12) — the reference/contacts surface plus the
- * free-text notes pinned to a contact card OR a thread. REST-only (no change_log,
- * RC4): clients refetch. Every query is scoped to `ctx.accountId` — a
- * cross-account id is indistinguishable from a missing one → 404. Adding a note
- * verifies the parent contact/thread belongs to the account FIRST (IDOR guard).
- *
- * `/notes/:id` (PATCH/DELETE) resolves an id that may live in EITHER note table:
- * the account-scoped UPDATE/DELETE is attempted against `contact_notes` first,
- * then `thread_notes`; only when neither matches is it a 404.
+ * ContactsService (contract §5.12) — the reference/contacts surface plus the free-text notes
+ * pinned to a contact card OR a thread. REST-only (no change_log): clients refetch. Every query
+ * is scoped to `ctx.accountId` — a cross-account id is indistinguishable from a missing one, a
+ * 404. Adding a note verifies the parent contact/thread belongs to the account FIRST (the IDOR
+ * guard). `/notes/:id` (PATCH/DELETE) resolves an id that may live in EITHER note table: the
+ * account-scoped UPDATE/DELETE tries `contact_notes` first, then `thread_notes`; only when
+ * neither matches is it a 404.
  */
 export class ContactsService {
   async list(ctx: ServiceContext, opts: ListContactsOptions = {}): Promise<Page<ContactDTO>> {

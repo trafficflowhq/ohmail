@@ -58,24 +58,14 @@ export interface DraftFromMessageDeps {
 }
 
 /**
- * DraftingService — the AI draft-from-history flow. It assembles a
- * SENSITIVITY-SAFE context, calls the injected DraftPort, and STORES the result as
- * a `drafts` row (never sent). The three binding invariants:
- *
- *  - REFUSAL: if the TARGET message is `no_ai` OR sensitive
- *    (`sensitivityCategory != null`) it THROWS 422 `sensitive_no_ai` BEFORE any
- *    context is assembled — the target body is never read and the drafter is never
- *    called (its call-count stays 0).
- *  - CONTEXT: the draft context = KB retrieval (`KbService.retrieve`) + the target
- *    thread's OTHER messages as redacted snippets. No sent-mail voice corpus (that
- *    corpus is not populated; deferred).
- *  - SENSITIVITY EXCLUSION: the thread-context retrieval carries it
- *    STRUCTURALLY in the SQL WHERE (`no_kb = false AND no_ai = false AND
- *    sensitivity_category IS NULL`), so a `no_kb`/`no_ai`/sensitive sibling can
- *    never reach the DraftPort input — not a post-filter that could be forgotten.
- *
- * Storing goes through `DraftsService.create` so the `draft` change_log row is
- * emitted in-tx (no tombstone) and the mailbox ownership re-checked.
+ * DraftingService — the AI draft-from-history flow: assemble a SENSITIVITY-SAFE context, call the
+ * injected DraftPort, STORE the result as a `drafts` row (never sent). REFUSAL: a `no_ai` or
+ * sensitive TARGET throws 422 `sensitive_no_ai` BEFORE any context is assembled — the target body
+ * is never read, the drafter's call-count stays 0. CONTEXT: KB retrieval plus the target thread's
+ * OTHER messages as redacted snippets. SENSITIVITY EXCLUSION: carried STRUCTURALLY in the SQL
+ * WHERE (`no_kb = false AND no_ai = false AND sensitivity_category IS NULL`) — never a
+ * post-filter that could be forgotten. Storing goes through `DraftsService.create`, so the
+ * `draft` change row is emitted in-tx and mailbox ownership re-checked.
  */
 export class DraftingService {
   constructor(
@@ -119,19 +109,12 @@ export class DraftingService {
     //    calls occurred — a charge the ledger could never explain. Nothing here spends a token,
     //    so nothing here needs to be paid for first.
     /**
-     * THE RETRIEVAL HINT IS BUDGETED, because one half of it is sender-chosen and unbounded.
-     *
-     * `target.snippet` is cut to 200 characters at ingest; `target.subject` is whatever `Subject:`
-     * header the sending server delivered and is capped nowhere. Concatenated and then truncated
-     * downstream, a long subject consumed the WHOLE retained prefix and silently discarded the
-     * snippet — so a stranger's header decided which half of the grounding survived, which is a
-     * different answer rather than a narrower one.
-     *
-     * Each half therefore gets its own share, and the shares have to SUM to the downstream
-     * ceiling or the backstop still decides which half survives — the first version gave the
-     * subject half of `SEARCH_QUERY_MAX_CHARS` and left the snippet's own 200 characters beside
-     * it, so a 100-character subject plus a full snippet was 301 and `KbService.retrieve` sliced
-     * the tail off anyway. The budget is stated as a subtraction for that reason: whatever the
+     * The retrieval hint is BUDGETED, because one half is sender-chosen and unbounded.
+     * `target.snippet` is cut to 200 characters at ingest; `target.subject` is whatever
+     * `Subject:` header arrived, capped nowhere. Concatenated then truncated downstream, a long
+     * subject consumed the whole retained prefix and silently discarded the snippet — a
+     * stranger's header decided which half of the grounding survived. Each half gets its own
+     * share, and the shares SUM to the downstream ceiling, stated as a subtraction: whatever the
      * snippet is allowed, the subject gets the rest, and the total is the ceiling exactly.
      */
     const snippet = target.snippet.slice(0, KB_HINT_SNIPPET_CHARS);
@@ -157,23 +140,16 @@ export class DraftingService {
       },
     };
 
-    // 4. CHARGE, immediately before the model and nowhere earlier.
-    //
-    //    Order matters three times over. It is AFTER the refusal check, so a `no_ai` /
-    //    sensitive target 422s without ever touching the ledger (zero rows,
-    //    asserted against the ledger itself and not against the drafter's call count). It is
-    //    AFTER context assembly, so only fallible work that actually costs tokens sits behind
-    //    the charge. And it is BEFORE the drafter, because "revenue precedes token spend" is
-    //    only structural if an empty balance stops the request before it costs us a token —
-    //    which is also what turns the out-of-credits case into a clean 402 instead of a 500
-    //    from three frames down inside a model client.
-    //
-    //    `spend`, not `tryDebit`: on a REQUEST path the difference between "you are out of
-    //    credits", "your subscription may not spend" and "our ledger is unreachable" is the
-    //    difference between three different answers, and collapsing them into one boolean is
-    //    what made a funded customer receive `402 out_of_credits` for a dropped connection.
-    // The BARE key — the message plus the client's own intent token. The ledger source is
-    // composed by whoever answers, through the one composer, so this path cannot double-prefix it.
+    // 4. CHARGE, immediately before the model and nowhere earlier. Order matters three times:
+    // AFTER the refusal check, so a `no_ai`/sensitive target 422s without touching the ledger
+    // (zero rows, asserted against the ledger itself); AFTER context assembly, so only fallible
+    // work that costs tokens sits behind the charge; BEFORE the drafter, because "revenue
+    // precedes token spend" is only structural if an empty balance stops the request first —
+    // which also turns out-of-credits into a clean 402 instead of a 500 from inside a model
+    // client. `spend`, not `tryDebit`: "out of credits", "subscription may not spend" and "ledger
+    // unreachable" are three different answers, and collapsing them into a boolean is what made a
+    // funded customer receive 402 for a dropped connection. The BARE key — the ledger source is
+    // composed by whoever answers, so this path cannot double-prefix it.
     const attemptKey = deps.credits ? this.debitKey(target.id, deps) : null;
     /** The attempt THIS request charged, or null. The port's `attempt` is the refund memory. */
     let chargedAttempt: string | null = null;
@@ -190,19 +166,15 @@ export class DraftingService {
         );
       }
       if (outcome.verdict === "inflight") {
-        // ANOTHER CALLER HOLDS THIS DRAFT'S CLAIM. 503 for the same reason a fault
-        // is 503 and emphatically not 402: this account is fully funded and nothing is wrong with
-        // it, so a demand for money would be a bill for someone else's concurrency. Retryable,
-        // and the retry is free — the holder's charge is what pays for it.
-        //
-        // Unreachable today: the gate this service is handed does not ask for exclusivity. The
-        // case it would close is two same-key requests both missing the stored-response lookup
-        // (which runs in autocommit, before either transaction opens) and both calling the model.
-        // Switching it on is one option at whichever host constructs the gate, and it is
-        // deliberately not switched on here: the loser of that race is a person waiting on a
-        // draft, and that answer deserves designing rather than inheriting from a change made for
-        // a different call site. This branch exists so that the day it IS switched on is not also
-        // the day a concurrency overlap starts answering 402.
+        // Another caller holds this draft's claim. 503, emphatically not 402: this account is
+        // fully funded, so a demand for money would be a bill for someone else's concurrency; the
+        // retry is free — the holder's charge pays for it. Unreachable today: the gate this
+        // service is handed does not ask for exclusivity. The case it would close is two same-key
+        // requests both missing the stored-response lookup and both calling the model. Switching
+        // that on is a host decision, deliberately not made here — the loser of that race is a
+        // person waiting on a draft, and that answer deserves designing. This branch exists so
+        // the day it IS switched on is not also the day a concurrency overlap starts answering
+        // 402.
         throw new ServiceError(
           "ai_unavailable", 503, "AI drafting is temporarily unavailable; please retry",
         );
@@ -260,33 +232,15 @@ export class DraftingService {
       throw err;
     }
 
-    // 6. STORE as a `drafts` row (status 'draft') via DraftsService — emits the
-    //    `draft` change_log row in-tx. NEVER sent (the gated send is a separate path). When the
-    //    route supplied an idempotency handle, the verbatim 202 response is claimed in that SAME
-    //    transaction, so a same-key retry replays it instead of storing a second draft.
-    //
-    //    A failure HERE — a lost idempotency claim, a crash before commit — leaves the charge
-    //    standing with no draft delivered, and that is deliberately not refunded: the attempt
-    //    stays OPEN, so the client's same-key retry is free and delivers the draft the charge
-    //    already paid for. The gate bounds that free window to `IDEMPOTENCY_TTL_MS`, i.e. to
-    //    exactly as long as the HTTP layer still honours the key, so it cannot become a
-    //    permanent licence to re-draft.
-    //
-    //    The model answers in PROSE, and a stored draft has room for two halves. Promoting the
-    //    words into the outbound grammar here is what makes the eventual send a genuine
-    //    `multipart/alternative` instead of `text/plain` — the reply is composed in a rich
-    //    editor either way, so a plain-only send was the one shape nobody chose.
-    //
-    //    ONLY the html is passed. `DraftsService.create` refuses a `body` sent alongside it and
-    //    derives the text half from the SANITIZED markup itself, which is the rule that makes
-    //    the two parts unable to disagree; a caller exempting itself from it because it happens
-    //    to know both halves agree is how the next caller comes to know wrongly. The promotion
-    //    normalizes whitespace, so the stored text is what a reader of the markup will see
-    //    rather than the model's raw bytes — for an ordinary reply the two are the same string.
-    //
-    //    An empty promotion means the model returned nothing but whitespace. That stores as a
-    //    plain draft exactly as before: an empty paragraph is not an improvement on an empty
-    //    body, and the compose surface has always been able to hold one.
+    // 6. STORE as a `drafts` row (status 'draft') via DraftsService — the `draft` change row
+    // in-tx; never sent. With an idempotency handle, the verbatim 202 is claimed in the SAME
+    // transaction, so a same-key retry replays it instead of storing a second draft. A failure
+    // here leaves the charge standing with no draft, deliberately not refunded: the attempt stays
+    // OPEN, so the retry is free — bounded to `IDEMPOTENCY_TTL_MS`, never a permanent licence.
+    // The model answers in PROSE; promotion into the outbound grammar makes the eventual send a
+    // genuine `multipart/alternative`. ONLY the html is passed: `DraftsService.create` refuses a
+    // `body` alongside it and derives the text half from the SANITIZED markup — the rule that
+    // makes the two parts unable to disagree. An empty promotion stores a plain draft.
     const promoted = plainTextToOutboundBody(result.body);
     const { draft, seq } = await this.drafts.create(ctx, {
       mailboxId: target.mailboxId,
@@ -301,20 +255,14 @@ export class DraftingService {
   }
 
   /**
-   * The ledger identity of ONE AI draft attempt — `draft:<target message id>:<hashed
-   * Idempotency-Key>`.
-   *
-   * Two notes on the idempotency registry, both forced by the shipped route rather than chosen:
-   *
-   *  · the first component is the TARGET message, not a draft row id. `POST /messages/:id/draft`
-   *    creates the draft from the model's answer, so at charge time — which must be before the
-   *    model runs — no draft row exists. The message being replied to is the only identity
-   *    available, and it is the right one: it is what the user pointed at.
-   *  · the attempt key does all of the idempotency work, and it is the CLIENT's. That is why
-   *    a missing key with metering enabled is a programmer error here (the route rejects the
-   *    request long before this) rather than a server-minted uuid: minting one would charge a
-   *    retry of a lost response a second time, which is the exact failure the branded
-   *    {@link IdempotencyKey} exists to make unrepresentable.
+   * The ledger identity of one AI draft attempt — `draft:<target message id>:<hashed
+   * Idempotency-Key>`. Two notes, both forced by the shipped route: the first component is the
+   * TARGET message, not a draft row id — at charge time, before the model runs, no draft row
+   * exists, and the message being replied to is what the user pointed at. And the attempt key is
+   * the CLIENT's: a missing key with metering enabled is a programmer error (the route rejects
+   * long before this), never a server-minted uuid — minting one would charge a retry of a lost
+   * response a second time, the exact failure the branded {@link IdempotencyKey} makes
+   * unrepresentable.
    */
   private debitKey(messageId: string, deps: DraftFromMessageDeps): string {
     if (!deps.attemptKey) {
