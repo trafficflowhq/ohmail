@@ -509,8 +509,8 @@ export function OhboxView({
   const hasOwnSent = displayPrev.some(isOwnSent);
 
   /**
-   * The list is a window over `[New for you, Earlier]`: a mirror window still holds thousands
-   * of rows, and grouped `.map(row)` mounted every accepted row — the unbounded cost
+   * The list is a window over `[New for you, Earlier]`: a standalone desktop mirror is the
+   * whole mailbox, and grouped `.map(row)` mounted every accepted row — the unbounded cost
    * History was windowed for. The two groups keep their own `role="listbox"` containers, each
    * rendering its share of the window with reserved height above and below; the Older tail is
    * server-paged and stays whole. The Ohbox writes no `\Seen` on scroll (read-state is the
@@ -2060,15 +2060,17 @@ export function OhboxView({
             are entirely outside the window renders neither its label nor an empty listbox — the
             heading-over-nothing rule, kept as the window slides. */}
         {/* Resurfaced — pinned at the very top under its own quiet label, whole and outside the
-            window (a scheduled set is small): not "this arrived" but "you asked to see this
-            again now", so it earns its own heading. Every row here is drawn unread whatever its
-            stored flag says (owner ruling 2026-08-31 — `presentsUnread`, with `effUnread` above
-            keeping the armed read off it). A DELIBERATE read clears the pin server-side
-            (`MessageService.markSeen` without the glance label) and the row slides to "Earlier"
-            — once the selector actually files it there, why the slide keys on section
-            membership rather than the read flag (see `earlierIds`). A GLANCE — the two-second
-            dwell — records the reading and spends no pin, so the row does not move or change:
-            the fix for the reported flip-flop. Each row carries "Done" — see `doneFor`. */}
+            window (a scheduled set is small). A different claim from "New for you": not "this
+            arrived" but "you asked to see this again now", so it earns its own heading. Every
+            row here is drawn unread whatever its stored flag says (owner ruling 2026-08-31 —
+            `presentsUnread`, with `effUnread` above keeping the armed read off it). A
+            DELIBERATE read clears the pin server-side (`MessageService.markSeen` without the
+            glance label) and the row slides down to "Earlier" — but only once the selector
+            actually files it there, which is why the slide keys on section membership rather
+            than the read flag (see `earlierIds`). A GLANCE — the two-second dwell — records the
+            reading and spends no pin, so the row does not move or change: that non-event is the
+            fix for the flip-flop this group was reported for. Each pinned row carries the
+            "Done" release control — see `doneFor`. */}
         {displayResurfaced.length > 0 ? (
           <>
             <ListGroupLabel>{t("resurfacedGroup")}</ListGroupLabel>
@@ -2117,16 +2119,17 @@ export function OhboxView({
           </>
         ) : null}
         {/* The tail says three true things by client. The demo keeps its own sentence (no
-            server behind Mila's fixtures); a client whose list ends where its mail ends gets
-            nothing (`older.available === false`, read from the ENGINE, never guessed from the
-            mode — which is why the desktop needed no change here when its mirror became a
-            window); a windowed client gets the control and a sentence once shipped
-            unconditionally when it was FALSE. Every message is
-            a real row — never an "N more" count. `settled` gates the windowed arm: "this device
-            keeps your recent mail" has no referent before the first drain (reported on first
-            open, for up to a minute), and `olderAction` was a wrong INSTRUCTION, pointing
-            backwards past mail still in flight. The cost — a returning tab loses the tail for
-            one drain — is cheap: `SyncBar` narrates, and both return with the drained mirror. */}
+            server behind Mila's fixtures); the whole-mailbox desktop gets nothing — its list
+            ends where its mail ends (`older.available === false`, read from the engine); a
+            windowed client gets the control and a sentence once shipped unconditionally when it
+            was FALSE (the mirror held every message), true now of this client. Every message is
+            a real row — never an "N more" count. `settled` gates the windowed arm: "this
+            device keeps your recent mail" says where the reader's mail IS, which before the
+            first drain has no referent (reported on first open, for up to a minute), and
+            `olderAction` was a wrong INSTRUCTION — pointing backwards past mail still in
+            flight. The cost — a returning tab loses the tail for one drain — is the cheap side;
+            `SyncBar` narrates throughout, and sentence and control return with the drained
+            mirror. */}
         {demo ? <div className="tail-row">{t("tail")}</div> : null}
         {!demo && older.available && settled ? (
           <div className="tail-row" role="status">
@@ -2229,40 +2232,66 @@ export function OhboxView({
 }
 
 /**
- * The selection's action bar — which IS the message's action bar. The requirement — a selection must offer more than
- * read, unread and Escape — was first answered with a STRIP: an accent-soft wash in the list head with its own
- * classes and none of the pill's behaviour. That was a THIRD control shape for one job (beside the Screener's pile
- * capsules and the message pill), with its own container rungs derived from label widths in one reference font,
- * English only — it overflowed its box in German by 20px at 390 and 23px at 1440, More chevron cut off, and wrapped
- * to three lines, 142px tall on a phone. So the selection's verbs ARE the message pill now: the same element,
- * `.msg-actions > .abar`, same float, `--lift-3`, grouping, `bar-density` measurement and `MoreMenu` — every rule in
- * `action-bar.css` applies with no branch, and the two mounts cannot drift because there is nothing to drift.
- */
-
-/**
- * Where it stands: the FOOT of the list column (`ListPane`'s `foot` slot), taking the key-hint strip's place while a
- * selection exists — the verbs on the thing you are looking at stand at its foot everywhere else in this product, and
- * on a phone the foot is where the thumb is; on a 1440 split its bottom edge and the reading pill's sit on one line
- * (both 12px off their panel's floor). Not sticky inside the scroller, which was measured: a pill stuck there lands
- * at y 787–798 and the toast band is y 790–828, so a refusal toast raised by the pill's own verb covered its
- * Read/Unread pair.
- */
-
-/**
- * Two deliberate divergences from a message's bar: no Reply, Reply all or Forward — there is no such act over eleven
- * messages, and a pick of ONE is still a pick (the cursor's message keeps those verbs in the reading column); and the
- * leading slot holds the COUNT, where a message holds Reply — pressing it clears the selection (see `rowGroups`).
- */
-
-/**
- * Screening still gets a ceremony the others do not. Everything else here is a mail operation on the messages you
- * picked; screening is a decision about SENDERS — for a sender still at the gate it promotes a rule governing all
- * their future mail and moves every message that sender has in the mirror, not only the selection. So it is two
- * steps: pick a destination, then a row stating the senders, messages and rules before anything is dispatched. There
- * is no undo, and that is why the confirm row exists — `POST /screener/:id` has no inverse, so an Undo would either
- * do nothing or move the mail back while the rule it created stood. Delete is the opposite case and gets the opposite
- * ceremony: reversible for as long as the toast is up (`delete-undo.ts` holds the request rather than sending it), so
- * the ask is cheap and the Undo is real.
+ * ═══ THE SELECTION'S ACTION BAR — WHICH IS THE MESSAGE'S ACTION BAR ════════════════════
+ *
+ * The requirement was that a selection must offer more than mark read, mark unread and
+ * Escape. It was answered once with a STRIP: an accent-soft wash in the list head, the count
+ * on the left, a Clear on a line of its own, the verbs between them, and a "More" that swapped
+ * the row for another row. That answer is retired, and the reason is worth keeping because it
+ * is not a matter of taste.
+ *
+ * ── WHY A THIRD SHAPE WAS THE DEFECT ──────────────────────────────────────────────────
+ *
+ * The product had three control shapes for one job. The Screener's `.scn-bulk` capsules act on
+ * a whole PILE ("Apply all", "Mark all spam"). The message pill (`.msg-actions > .abar`) acts
+ * on the message in front of you. The strip acted on a SELECTION — with the message pill's own
+ * verbs, its own classes, and none of its behaviour: its own two container rungs at 456px and
+ * 601px derived from label widths in one reference font, in English only, so the row overflowed
+ * its box in German by 20px at 390 and by 23px at 1440 with the More chevron cut off at the
+ * wash's edge. It wrapped to three lines, 142px tall on a phone, above the rows it spoke about.
+ *
+ * So the selection's verbs ARE the message pill now: the same element, the same float and
+ * `--lift-3`, the same grouping, the same `bar-density` measurement, the same `MoreMenu`. Not a
+ * pill-like thing — `.msg-actions > .abar`, so every rule in `action-bar.css` applies with no
+ * selector and no branch, and the two mounts cannot drift because there is nothing to drift.
+ *
+ * ── WHERE IT STANDS, AND WHY NOT WHERE THE STRIP STOOD ────────────────────────────────
+ *
+ * In the FOOT of the list column (`ListPane`'s `foot` slot), taking the key-hint strip's place
+ * while a selection exists. The verbs on the thing you are looking at stand at its foot
+ * everywhere else in this product — the reading column, the reader sheet, the Reads card — and
+ * on a phone the foot is where the thumb is. On a 1440 split its bottom edge and the reading
+ * column's pill's sit on one line, because both are 12px off their panel's floor.
+ *
+ * Not sticky inside the scroller, which was the other candidate and was measured: a pill stuck
+ * there lands at y 787–798, and the toast band is y 790–828 — so a refusal toast raised BY the
+ * pill's own verb covered its Read/Unread pair. Below the scroller there is no overlap.
+ *
+ * ── THE TWO DELIBERATE DIVERGENCES FROM A MESSAGE'S BAR ───────────────────────────────
+ *
+ *   · **No Reply, Reply all or Forward.** There is no such act over eleven messages, and a
+ *     pick of ONE is still a pick — switching to the single-message vocabulary at count 1
+ *     would be the app changing its mind about what you selected. The cursor's message keeps
+ *     those verbs in the reading column, where they mean something.
+ *   · **The leading slot holds the COUNT**, where a message holds Reply, and pressing it clears
+ *     the selection. See `rowGroups`.
+ *
+ * ── AND SCREENING STILL GETS A CEREMONY THE OTHERS DO NOT ─────────────────────────────
+ *
+ * Everything else here is a mail operation on the messages you picked. Screening is a decision
+ * about SENDERS: for a sender still waiting at the gate it promotes a rule that governs all
+ * their future mail, and it moves every message that sender has in the mirror, not only the
+ * ones in the selection. So it is two steps — pick a destination, then a row that states the
+ * senders, the messages and the rules before anything is dispatched.
+ *
+ * **There is no undo, and that is why the confirm row exists.** `POST /screener/:id` has no
+ * inverse, so an Undo affordance would either do nothing or move the mail back while the rule
+ * it created stood — a control that lies about what it reversed. Stating the counts before
+ * committing is the honest version of the same protection.
+ *
+ * DELETE IS THE OPPOSITE CASE and gets the opposite ceremony: it is reversible for as long as
+ * the toast is up, because `delete-undo.ts` holds the request rather than sending it. So the
+ * ask is cheap (the count, the note, two buttons) and the Undo is real.
  */
 function SelectionPill({
   ids,
@@ -2573,15 +2602,20 @@ function SelectionPill({
 
       <div className="abar-g abar-read-g">
         {/*
-            Two directions, never a toggle — `BulkAction`'s own rule, and the reason is the set: `role="switch"`
-            reports a current state and a selection has a MIXED one, so a toggle would mark six read and five unread
-            in a gesture that reads as one decision. The dots are the message pill's and mean the same thing: the dot
-            previews what the press LEAVES BEHIND — hollow on Read, filled on Unread, the same mark the list row uses,
-            so "there is a dot" says one thing everywhere. Neither label folds: these carry no `.abar-read-lab`,
-            deliberately — the compact floor drops one word, and dropping these two would leave bare dots saying
-            nothing about direction; "Read" and "Unread" are already the shortest labels on the row, and it is the
-            COUNT's word that folds (`bar-density.ts`).
-          */}
+         * TWO DIRECTIONS, NEVER A TOGGLE — `BulkAction`'s own rule, and the reason is the set:
+         * `role="switch"` reports a current state and a selection has a MIXED one, so a toggle
+         * over it would mark six read and five unread in a gesture that reads as one decision.
+         *
+         * The dots are the message pill's, and they mean the same thing here: the dot previews
+         * what the press LEAVES BEHIND — hollow on Read (no dot on the row afterwards), filled
+         * on Unread (a dot). The same mark the list row uses for unread, so "there is a dot"
+         * says one thing everywhere.
+         *
+         * NEITHER LABEL FOLDS. These carry no `.abar-read-lab`, deliberately: the compact floor
+         * drops one word, and dropping these two would leave a pair of bare dots, which say
+         * nothing about direction. "Read" and "Unread" are already the shortest labels on the
+         * row — it is the COUNT's word that folds here (`bar-density.ts`).
+         */}
         <span className="abar-g abar-seg" role="group" aria-label={t("groupRead")}>
           <button type="button" className="abar-b" onClick={onMarkSeen}>
             <span className="abar-dot abar-dot-off" aria-hidden="true" />
@@ -2638,46 +2672,71 @@ function SelectionPill({
 }
 
 /**
- * Why an empty Ohbox is empty — the one answer that is this VIEW's to give. A live count used to sit here ("Syncing
- * your mailbox · 3 messages so far") gated on `SyncStatus.bootstrapping`, and that gate is the defect:
- * `bootstrapping` means "this TAB's first drain has not completed", which on a fresh account finishes in seconds
- * against an empty server-side mirror, while the WORKER's first import runs minutes to tens of minutes. The counter
- * switched itself off in seconds and the pane said nothing for the entire import. It MOVED, and moved UP: it is
- * `SyncBar`'s `importing` state now, keyed on the mirror actually growing (`shell/mail-state.ts`) and visible above
- * the deck in every pile — a view can only speak about itself, and "your mail is arriving" is not a fact about the
- * Ohbox.
- */
-
-/**
- * What is left here: an empty Ohbox that is CORRECT. A fresh account is mostly Screener by design, so the true
- * sentence is "nothing has reached the Ohbox because every sender so far is new" — a statement about THIS list, which
- * no shell-level strip may make (above the deck it would tell somebody standing in the Screener that everything is in
- * the Screener). The split: `mail-state.ts` derives `screenerCandidate` once, for everybody; this pane contributes
- * the only fact it owns — its own list is empty — and renders. It does not re-derive: it reads {@link
- * MailState.settled}, derived from `bootstrapping` and the ladder's verdict up in `mail-state.ts`. Progress still
- * keys on the mirror growing and still lives in the strip; seconds is exactly the right length for the different
- * question asked here.
- */
-
-/**
- * The third state this pane used to collapse: "empty" and "not looked yet" were one rendering,
- * so a slow connection showed "Nothing in your Ohbox." about mail the app had simply not read
- * yet. Before the mirror has been read there is no emptiness to report, so the pane reports
- * what is happening instead — after {@link LOADING_GRACE_MS}, so a fast connection keeps its
- * silent frame. It says the app is loading, never what it will find: a placeholder row, an
- * invented count or a skeleton shaped like mail would answer this defect by creating the one
- * this product treats as unforgivable.
- */
-
-/**
- * The line that rule draws is about CONTENT, not shape: a bar as long as a real subject line is
- * a claim about that subject, a row carrying a name is a claim about a sender, an invented
- * count is the worst of the three — all forbidden. `BootSkeleton` below is on the other side by
- * construction: zero text nodes, `aria-hidden`, a fixed-width table derived from nothing, so
- * nothing in it can be mistaken for this mailbox. `test/boot-skeleton.test.tsx` holds that
- * boundary structurally. The demo and the Desktop never reach the `screenerCandidate` arms —
- * the derivation returns the resting value for a fixtures engine — and `settled` is true for
- * them for the same reason: a fixtures engine is permanently settled.
+ * WHY AN EMPTY OHBOX IS EMPTY — the one answer that is this VIEW's to give.
+ *
+ * ── WHAT THIS PANE USED TO DO, AND WHY IT WAS SILENT FOR HALF AN HOUR ────────────────────
+ *
+ * A live count was put here — "Syncing your mailbox · 3 messages so far" — gated on
+ * `SyncStatus.bootstrapping`. That gate is the defect. `bootstrapping` means "this TAB's first
+ * drain has not completed", and a fresh account's first drain completes in seconds against an
+ * empty server-side mirror. The WORKER's first import is a different clock entirely: minutes
+ * on a mailbox of any size, and tens of minutes on a full one. So the counter switched itself off within
+ * seconds and the pane then said nothing at all for the entire import — which is exactly the
+ * half hour a first import spends saying "Waiting for first sync" somewhere else.
+ *
+ * The counter therefore MOVED, and moved UP: it is `SyncBar`'s `importing` state now, keyed on
+ * the mirror actually growing (`shell/mail-state.ts`) rather than on a tab-local boolean, and
+ * rendered above the deck so it is visible in Reads, Receipts and the Screener too. This is
+ * the same lesson a second time — a view can only speak about itself, and "your mail is arriving"
+ * is not a fact about the Ohbox.
+ *
+ * ── WHAT IS LEFT HERE, AND WHY IT BELONGS HERE ──────────────────────────────────────────
+ *
+ * One thing: an empty Ohbox that is CORRECT. A fresh account is mostly Screener by design, so
+ * the true sentence is "nothing has reached the Ohbox because every sender so far is new" —
+ * and that is a statement about THIS list, which no shell-level strip may make. Rendered above
+ * the deck it would tell somebody standing in the Screener that everything is in the Screener.
+ *
+ * The split is: `mail-state.ts` derives `screenerCandidate` (mail landed, mirror settled,
+ * nothing wrong), ONCE, for everybody. This pane contributes the only fact it owns — that its
+ * own list is empty — and renders. **It does not re-derive.**
+ *
+ * That last rule is why this pane reads no `SyncStatus` field itself. It used to say
+ * "`bootstrapping`, `failures` and `terminal` are deliberately no longer read here", which
+ * described the mechanism rather than the rule and is no longer true of the second half of what
+ * this pane says. It reads {@link MailState.settled}, which is derived from `bootstrapping` and
+ * from the ladder's own verdict, ONCE, up in `mail-state.ts`. The argument is untouched: what
+ * was wrong was a COUNTER gated on a tab-local boolean that goes false in seconds while the
+ * worker's import runs for minutes. Progress still keys on the mirror growing and still lives in
+ * the strip. Seconds is exactly the right length for the different question asked here.
+ *
+ * ── AND THE THIRD STATE THIS PANE USED TO COLLAPSE ──────────────────────────────────────
+ *
+ * "Empty" and "not looked yet" were one rendering, so a slow connection showed "no messages".
+ * The mirror persists in IndexedDB and the client's own first drain had not finished, so
+ * `Nothing in your Ohbox.` was a statement about mail the app had simply not read yet. Before the mirror has been read there is no emptiness to report, so this pane reports
+ * what is actually happening instead — after {@link LOADING_GRACE_MS}, so a fast connection
+ * still gets the silent frame it always had rather than a sub-second flash.
+ *
+ * **It says the app is loading, never what it will find.** A placeholder row, an invented count
+ * or a skeleton shaped like mail would answer this defect by creating the one this product
+ * treats as unforgivable.
+ *
+ * ── AND THE LINE THAT RULE ACTUALLY DRAWS ───────────────────────────────────────────────
+ *
+ * It is about CONTENT, not about shape, and the difference is the whole of what may be added
+ * here. A bar as long as a real subject line is a claim about that subject; a row carrying a
+ * name is a claim about a sender; a count invented to fill a slot is the worst of the three. All
+ * three remain forbidden. `BootSkeleton` below is on the other side of that line by
+ * construction: zero text nodes, `aria-hidden`, and a fixed width table that is derived from
+ * nothing — so there is nothing in it that could be mistaken for this mailbox, because there is
+ * nothing in it at all. It draws where the list is about to be, and the sentence above it stays
+ * the only thing on this pane that says anything. `test/boot-skeleton.test.tsx` holds that boundary
+ * as a structural assertion rather than as this paragraph.
+ *
+ * The demo and the Desktop never reach the `screenerCandidate` arms — the derivation returns the
+ * resting value for a fixtures engine before it looks at anything else — and `settled` is true
+ * for them for the same reason: a fixtures engine is permanently settled.
  */
 function SyncState({ waiting, settled }: { waiting: number; settled: boolean }) {
   const t = useTranslations("ohbox");
