@@ -32,6 +32,7 @@ import {
   type ScreeningAnswer,
 } from "../net/consent";
 import { readMailboxes, type PhoneMailbox } from "../net/mailboxes";
+import { readScreenerWaiting, type ServerWaitingSender } from "../net/screener";
 import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
 /* THE DOOR ANSWERING FOR ITSELF, with no request — `organizer-session.ts` holds the one engine
    this process runs and `standaloneHere` is its read. The state module reaches into `engine/`
@@ -78,6 +79,7 @@ import {
   type WorldMail,
   type WorldPile,
   type WorldScheduled,
+  type WorldScreener,
   type WorldTag,
   type WorldView,
   type ConnectionSay,
@@ -86,7 +88,7 @@ import type { Scope } from "./model";
 
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
-  WorldPile, WorldScheduled, WorldTag,
+  WorldPile, WorldScheduled, WorldScreener, WorldTag,
 } from "./live";
 
 export interface World {
@@ -205,7 +207,7 @@ export interface World {
     newCount: number;
     meta: string;
   };
-  screener: { waiting: ScreenerRow[]; screened: ScreenerRow[]; spam: ScreenerRow[]; meta: string };
+  screener: WorldScreener & { meta: string };
   /**
    * History — mail from senders nobody ever decided about, who then went quiet. The other arm
    * of the partition that fills `screener.waiting`, derived from the same `presentedWorld`
@@ -403,7 +405,7 @@ function emptyWorld(actions: WorldActions): World {
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, waterLabel: Copy.waterline, newCount: 0, meta: "" },
     receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, newCount: 0, meta: "" },
-    screener: { waiting: [], screened: [], spam: [], meta: "" },
+    screener: { waiting: [], screened: [], spam: [], meta: "", source: "device" },
     history: { items: [], total: 0, meta: "" },
     piles: [],
     pilesMeta: "",
@@ -528,6 +530,18 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const [mailboxes, setMailboxes] = useState<readonly PhoneMailbox[] | null>(null);
   /**
+   * THE WAITING QUEUE AS THE SERVER HOLDS IT (`GET /screener`), or `null` until a read succeeds
+   * this session — and `null` for the whole life of a STANDALONE session, where this phone is the
+   * engine and there is no second answer to ask for.
+   *
+   * `null` is "nobody answered", and `liveScreener` then shows the partition's own list and says
+   * so on the surface. Never an empty list on a failure, for `readMailboxes`' reason exactly: an
+   * empty queue is a real answer, and reading a refusal as one would empty the Screener on a
+   * flaky request. Reset on a session swap beside the mailboxes — account A's waiting senders
+   * must never be account B's queue.
+   */
+  const [screenerServer, setScreenerServer] = useState<readonly ServerWaitingSender[] | null>(null);
+  /**
    * THE ACCOUNT'S FACE, and a write in flight. `null` is "the account has no preference", which
    * is also where a fresh session starts — account A's face must never skin account B, the same
    * rule the signatures keep one field up.
@@ -632,6 +646,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const boxRead = freshestRead<readonly PhoneMailbox[]>((ans) => {
       if (current.current === m) setMailboxes(ans);
     });
+    /* THE QUEUE READ, beside the mailbox read and on the same identity and cadence: the two go
+       stale together, because the drain this fires after is the one that landed the moves the
+       queue is derived from. Its own route, its own epoch — a refused queue read must not hold
+       up the folders answer or the roster, and each keeps the last thing it knew. */
+    const queueRead = freshestRead<readonly ServerWaitingSender[]>((ans) => {
+      if (current.current === m) setScreenerServer(ans);
+    });
     const m = foldersFlag({
       read: () => {
         /* Fired from the flag's read so there is ONE cadence to reason about and one place that
@@ -639,6 +660,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            read that is slow or refused must not hold up the folders answer, which has its own
            epoch and its own correctness. */
         void boxRead(() => readMailboxes(session));
+        /* ONLY A PAIRED DOOR HAS A SERVER TO ASK. On the standalone door this app IS the engine:
+           the partition is the only authority that exists there, and a request for a route this
+           session does not dial would refuse on every cadence for ever. */
+        if (!session.standalone) void queueRead(() => readScreenerWaiting(session));
         /* Stamped BEFORE the request leaves — the whole point of the two-phase read. */
         const applyFace = faces.beginRead();
         return sigRead(async () => {
@@ -674,6 +699,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // account A's addresses must not make account B's reader recognisable, and its holder must
     // not name a banner over B's mail.
     setMailboxes(null);
+    // And the queue, for the mailboxes' reason exactly: account A's waiting senders are not
+    // account B's, and a stale set would name senders whose mail this mirror does not hold.
+    setScreenerServer(null);
     /* And the FACE, for the same reason and one more: an account's appearance choice is that
        account's state, so the next session starts with none and the device's own pin (which
        outranks it either way) is deliberately left alone — it belongs to the phone, not to
@@ -931,7 +959,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const ohbox = liveOhbox(pres, v);
     const reads = liveReads(pres, v);
     const receipts = liveReceipts(pres, v);
-    const screener = liveScreener(pres, v, scopes);
+    /* THE PAIRED DOOR'S QUEUE IS THE SERVER'S SET — see `liveScreener`. `null` here is the
+       standalone door and a paired door that has not been answered yet; the derived list then
+       stands and the meta below says the count was worked out on this phone. */
+    const screener = liveScreener(pres, v, scopes, screenerServer);
     /* The RAW mirror, not `pres`: the projection deletes History's rows, which is what makes
        History a presentation rather than a folder. See `liveHistory`. */
     const history = liveHistory(engine.read(), world.history, v);
@@ -1008,7 +1039,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       },
       screener: {
         ...screener,
-        meta: Copy.metaWaiting(screener.waiting.length),
+        // A number this phone derived is never shown as the mailbox's own.
+        meta: screener.source === "server"
+          ? Copy.metaWaiting(screener.waiting.length)
+          : Copy.metaWaitingOnDevice(screener.waiting.length),
       },
       history: { ...history, meta: Copy.historyMeta(history.total) },
       piles,
@@ -1069,7 +1103,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // failure sentence is part of what an unsettled screen renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, locale, actions, version, outcomeSeq, outcomeOf, freshBeat,
-    foldersOn, foldersPending, setFoldersEnabled, signatures, screening, conn.syncing,
+    foldersOn, foldersPending, setFoldersEnabled, signatures, screening, screenerServer, conn.syncing,
     conn.syncError, accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
 
   /**

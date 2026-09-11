@@ -59,6 +59,7 @@ import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 import type { ScreeningAnswer } from "../net/consent";
+import type { ServerWaitingSender } from "../net/screener";
 import {
   destDone,
   domainOf,
@@ -277,6 +278,11 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     // A message in one of the user's OWN folders (no view owns its path) names itself by its
     // leaf — see {@link WorldMail.folderLeaf}.
     ...(VIEW_OF_FOLDER[physical as Folder] === undefined ? { folderLeaf: folderLeafOf(physical) } : {}),
+    // HELD AT THE GATE — see {@link Mail.gateHeld}. Off the PHYSICAL folder, because the place
+    // is exactly what cannot say it: `Place` has three values and none of them is the Screener,
+    // so every message the server holds at the gate fell to the ohbox default and the reading
+    // screen titled it Ohbox — nine of nine, measured on a device.
+    ...(physical === FOLDER_OF_VIEW.screener ? { gateHeld: true as const } : {}),
     id: m.id,
     place: placeOfFolder(m.folder),
     // The PHYSICAL folder, not the presented one: this reader is the projection, which
@@ -724,6 +730,13 @@ export interface WorldScreener {
   waiting: ScreenerRow[];
   screened: ScreenerRow[];
   spam: ScreenerRow[];
+  /**
+   * WHERE THE WAITING LIST CAME FROM — `"server"` when `GET /screener` answered this session,
+   * `"device"` when this phone had to work it out for itself (the standalone door, an unread
+   * route, a refusal). Only the waiting shelf has two sources; the other two are the mirror's
+   * alone. The surface states `"device"` rather than passing a count off as the mailbox's.
+   */
+  source: "server" | "device";
 }
 
 const AI_DESTS = new Set<string>(["ohbox", "reads", "receipts", "screened", "spam"]);
@@ -763,24 +776,131 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
 }
 
 /**
+ * A READER IN WHICH THE SERVER'S WAITING SENDERS ARE AT THE GATE.
+ *
+ * `screenerSegments` groups by folder over the PROJECTION, and the projection re-homes a
+ * DECIDED sender's gate mail to the rule's destination ("a ruled sender presents in the rule's
+ * destination", `consent-cutline.ts`). That is the right answer for the Ohbox and the wrong one
+ * for this queue: the mail is still physically in `ohmail/Screener`, the server still asks about
+ * that sender, and the phone was answering a question the server had not asked. Measured on a
+ * device at 4 against the route's 9, the five missing each carrying an enabled rule written
+ * weeks before their mail arrived.
+ *
+ * So for the queue alone, a message whose PHYSICAL folder is the gate and whose sender the route
+ * names is read at the gate. Nothing else moves: the same projection still feeds the Ohbox, the
+ * piles and the folders, so this changes which senders the Screener asks about and nothing about
+ * where any other list shows their mail.
+ */
+function gateReader(pres: EntityReader, waiting: ReadonlySet<string>): EntityReader {
+  const atGate = (m: EngineMessage): EngineMessage => {
+    const physical = physicalFolderOf(m);
+    if (physical !== FOLDER_OF_VIEW.screener || m.folder === physical) return m;
+    return waiting.has(senderKey(m.from.address)) ? { ...m, folder: physical as Folder } : m;
+  };
+  return {
+    version: () => pres.version(),
+    get<T = unknown>(type: string, id: string): T | undefined {
+      const v = pres.get<T>(type, id);
+      if (type !== "message" || v === undefined) return v;
+      return atGate(v as unknown as EngineMessage) as unknown as T;
+    },
+    list<T = unknown>(type: string): T[] {
+      const rows = pres.list<T>(type);
+      return type === "message"
+        ? rows.map((r) => atGate(r as unknown as EngineMessage) as unknown as T)
+        : rows;
+    },
+    entries<T = unknown>(type: string): Array<{ id: string; entity: T }> {
+      const rows = pres.entries<T>(type);
+      return type === "message"
+        ? rows.map((r) => ({ id: r.id, entity: atGate(r.entity as unknown as EngineMessage) as unknown as T }))
+        : rows;
+    },
+  };
+}
+
+/**
+ * A ROW FOR A SENDER THE ROUTE NAMES AND THIS MIRROR CANNOT BACK.
+ *
+ * The mirror is WINDOWED (90 days, a floor of rows) while the queue is not, so the route can
+ * name a sender whose mail this phone does not hold. Such a sender still gets a row — dropping
+ * them would put the phone back to showing fewer senders than the server, which is the whole
+ * defect — built from what the route itself states. `held` carries the one message the route
+ * named, at its own stamp; the sender screen hydrates nothing further, because there is nothing
+ * on this device to hydrate from.
+ */
+function rowOfServer(s: ServerWaitingSender, v: WorldView, scope: Scope | undefined): ScreenerRow {
+  const name = s.name || s.address;
+  const time = messageDisplayTime({ date: s.receivedAt }, v.now, v.zone, v.locale ?? "en");
+  return {
+    id: s.messageId,
+    routeKey: senderKey(s.address),
+    name,
+    address: s.address,
+    initial: (name.trim()[0] ?? "?").toUpperCase(),
+    time,
+    newestSubject: s.subject,
+    dull: false,
+    scope: scope ?? "sender",
+    ai: null,
+    held: [{ id: s.messageId, subject: s.subject, time, body: s.snippet, bodyState: "snippet", seen: false }],
+    screenedOn: "",
+    detection: "",
+    // The route only ever names mail it is holding at the gate.
+    gatePhysical: true,
+  };
+}
+
+/**
  * The three shelves — `screenerSegments` over the projection (the queue the webapp renders),
  * reshaped. `scopes` carries the reader's per-sender scope choice (this sender / whole
  * domain), which is view state on a live account rather than a mirror fact — keyed by the
  * STABLE {@link ScreenerRow.routeKey}, never the representative id a drain re-mints.
+ *
+ * ON A PAIRED DOOR THE WAITING SHELF IS THE SERVER'S SET, EXACTLY. `server` is `GET /screener`'s
+ * answer ({@link readScreenerWaiting}); when it is present the shelf holds one row per sender it
+ * names, in its order, and no others — the mirror supplies each row's held mail, and a sender it
+ * cannot back is carried on the route's own words. `null` is "nobody answered": the standalone
+ * door, where this phone IS the engine and the partition is the only authority there is, and a
+ * paired door whose read has not landed or was refused. Then the derived list stands and
+ * {@link WorldScreener.source} says so.
  */
 export function liveScreener(
   pres: EntityReader, v: WorldView, scopes: Readonly<Record<string, Scope>> = {},
+  server: readonly ServerWaitingSender[] | null = null,
 ): WorldScreener {
+  const waitingKeys = new Set((server ?? []).map((s) => senderKey(s.address)));
   // `v.ownAddresses` rides in for the reason it rides into `presentedWorld`: the projection keeps
   // an own-address row in its own place, so without it a self-addressed message in the Screener
   // folder is a waiting row and the reader queues in their own queue.
-  const segments = screenerSegments(pres, v.now, v.locale ?? "en", v.zone, v.ownAddresses);
+  const queueReader = server === null ? pres : gateReader(pres, waitingKeys);
+  const segments = screenerSegments(queueReader, v.now, v.locale ?? "en", v.zone, v.ownAddresses);
   const map = (rows: ScreenerSenderDTO[]) =>
     rows.map((dto) => rowOf(dto, scopes[senderKey(dto.from.address)]));
+  if (server === null) {
+    return {
+      waiting: map(segments.waiting),
+      screened: map(segments.screenedOut),
+      spam: map(segments.spam),
+      source: "device",
+    };
+  }
+  /* THE ROUTE'S SET, IN THE ROUTE'S ORDER — a join, never a union. The derived rows are matched
+     in by sender key for their held mail; a derived sender the route does not name is dropped
+     (decided on another door, or outside the server's own cutline), and a named sender the
+     mirror cannot back is minted. So the count on screen is the number the route answered, and
+     the two ends cannot disagree about who is waiting. */
+  const derived = new Map(segments.waiting.map((dto) => [senderKey(dto.from.address), dto]));
+  const waiting = server.map((s) => {
+    const key = senderKey(s.address);
+    const dto = derived.get(key);
+    return dto ? rowOf(dto, scopes[key]) : rowOfServer(s, v, scopes[key]);
+  });
   return {
-    waiting: map(segments.waiting),
+    waiting,
     screened: map(segments.screenedOut),
     spam: map(segments.spam),
+    source: "server",
   };
 }
 

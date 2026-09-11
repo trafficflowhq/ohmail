@@ -644,6 +644,13 @@ const TABLE = {
   metaNew: (n: number) => `${n} new`,
   metaWaiting: (n: number) =>
     `${n} first-time sender${n === 1 ? "" : "s"} waiting`,
+  /**
+   * The same count, WORKED OUT HERE. On a paired mailbox the queue is the server's answer; this
+   * is what the phone says when it could not ask — the standalone door, or a refused read — so a
+   * number this phone derived is never shown as the mailbox's own.
+   */
+  metaWaitingOnDevice: (n: number) =>
+    `${n} first-time sender${n === 1 ? "" : "s"} waiting, counted on this phone`,
   metaItems: (n: number) => `${n} item${n === 1 ? "" : "s"}`,
   /** A mail row, spoken. The trailing state is a clause rather than a word glued to a stop. */
   mailRowAria: (from: string, subject: string, time: string, unread: boolean) =>

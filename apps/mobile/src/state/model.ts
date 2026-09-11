@@ -68,6 +68,17 @@ export interface Mail {
    */
   historyPlace?: string;
   /**
+   * THE SERVER IS HOLDING THIS AT THE GATE — set exactly when the message's physical folder is
+   * `ohmail/Screener`, whatever place it is being presented in.
+   *
+   * {@link Place} has three values and the Screener is not one of them, so gate-held mail fell
+   * to the ohbox default and the reading screen titled it "Ohbox" — about mail the person is
+   * being asked to make a decision on. The correction {@link historyPlace} makes for History,
+   * this makes for the gate: the two are the only surfaces that show mail somewhere other than
+   * where it lives, and both have to say so.
+   */
+  gateHeld?: true;
+  /**
    * The rest of the conversation, oldest → newest, excluding this message.
    * Rendered in full in the reading view — never summarised into a count.
    */

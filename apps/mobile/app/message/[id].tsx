@@ -86,8 +86,14 @@ function MessageBody() {
           place-name fallback would say "Ohbox" about mail that is not there. A History message
           is titled History for the same reason: it presents in no pile, so `place` falls to the
           Ohbox default and would name a place this mail is not in. The row's own chip states
-          where it actually is (`MailRow`, off `historyPlace`). */}
-      <DetailBar title={m.historyPlace ? Copy.history : m.folderLeaf ?? placeName(m.place)} />
+          where it actually is (`MailRow`, off `historyPlace`). Mail the server is HOLDING AT THE
+          GATE is the third: `Place` has no Screener value, so it fell to the same Ohbox default
+          over the very mail the reader is being asked to decide about (`gateHeld`). History
+          first — a dormant sender's held mail is in both, and History is the surface it was
+          opened from. */}
+      <DetailBar
+        title={m.historyPlace ? Copy.history : m.gateHeld ? Copy.screener : m.folderLeaf ?? placeName(m.place)}
+      />
       {/* `.msg{padding:20px 20px 40px}` in the ≤900px block — the message needs
           air above the from-line, or the back bar reads as part of the mail. */}
       <Scroller contentStyle={{ paddingHorizontal: 0 }}>
