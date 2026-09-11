@@ -1,36 +1,14 @@
 "use client";
 
 /**
- * THE WEB HOST'S INTL PROVIDER, and the client half of the locale.
- *
- * `(product)/layout.tsx` resolved the locale from the cookie on the server and loaded the catalogue
- * for it, so the FIRST PAINT is already in the right language — no flash, nothing to correct after
- * hydration. What it cannot do is change: a server component re-renders only on a navigation, and
- * the Settings selector has to take effect while somebody is looking at it. That is this file.
- *
- * ── NO RELOAD, AND THE COST OF THAT IS ONE LAZY CHUNK ──────────────────────────────────────────
- *
- * The switch swaps `messages` on the provider in place. Every `useTranslations` below re-renders
- * with the new catalogue and the mail client keeps its state: the mirror stays open, the engine
- * keeps syncing, the open message stays open, the scroll position holds. A `location.reload()` — or
- * a `router.refresh()`, which would have worked too — would have thrown away an IndexedDB-backed
- * shell mid-sync to change a display preference, which is a bad trade on a slow connection and a
- * worse one on a mailbox that is still importing.
- *
- * The German catalogue arrives through `loadCatalog`'s dynamic import, so an English session never
- * downloads it and the switch pays one chunk fetch once. `busy` is true for the length of that
- * fetch, which is why the selector disables itself rather than queueing a second switch.
- *
- * ── WHAT IS PERSISTED HERE, AND WHAT IS NOT ────────────────────────────────────────────────────
- *
- * Here: `localStorage` and the host-only cookie ({@link rememberLocale}) — the LOCAL preference,
- * which is what the pre-auth surface has. `/login` and `/join` render inside this layout and have
- * no account yet, so a reader who switches to German on the sign-in screen stays in German through
- * the sign-in and into the app.
- *
- * Not here: the ACCOUNT. This file is above the mail client and above the credential screens
- * alike, and it may not assume a session exists. `(product)/mailbox/AccountLocale.tsx` decorates
- * these controls with the account write, inside the shell where a session is proven.
+ * The web host's intl provider, and the client half of the locale. The layout resolved the locale on the server
+ * so the first paint is already right; what it cannot do is change, and the Settings selector must take effect
+ * while somebody is looking at it. The switch swaps `messages` on the provider in place — the mirror stays
+ * open, the engine keeps syncing, the open message holds; a reload would throw away an IndexedDB-backed shell
+ * mid-sync for a display preference. The German catalogue arrives through `loadCatalog`'s dynamic import;
+ * `busy` disables the selector for that one fetch. Persisted here: `localStorage` and the host-only cookie
+ * ({@link rememberLocale}) — the LOCAL preference, all the pre-auth surface has. Not here: the ACCOUNT —
+ * `AccountLocale.tsx` decorates these controls inside the shell, where a session is proven.
  */
 
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
@@ -55,19 +33,14 @@ export function LocaleShell({
   const [busy, setBusy] = useState(false);
 
   /**
-   * THE NON-HOOK REGISTER, SET DURING RENDER AND NOT IN AN EFFECT.
-   *
-   * `format.ts` reads it synchronously while the tree below is rendering — `placeName(dest)` inside
-   * a reducer, `resurfaceLabel(when)` inside a toast callback — so it has to hold the same
-   * catalogue the provider is about to render with, on the SAME pass. An effect runs after children
-   * have already committed, which would paint one frame of English place names on every switch and,
-   * on the very first paint of a German session, would paint them in English before correcting.
-   *
-   * Writing during render is a side effect on a module, which React tolerates only because it is
-   * IDEMPOTENT and derived entirely from the rendered state: the same `state.locale` produces the
-   * same register, so a double invoke under StrictMode and a discarded concurrent render both leave
-   * it exactly where the committed render wants it. The guard on `last` keeps it from rebuilding
-   * translators on every unrelated re-render.
+   * The non-hook register, set during render and not in an effect. `format.ts` reads it
+   * synchronously while the tree below is rendering — `placeName(dest)` inside a reducer,
+   * `resurfaceLabel(when)` inside a toast callback — so it must hold the same catalogue the
+   * provider is about to render with, on the SAME pass; an effect runs after children commit, which
+   * would paint a frame of English place names on every switch. Writing during render is a side
+   * effect React tolerates only because it is IDEMPOTENT and derived from rendered state: a
+   * StrictMode double invoke and a discarded concurrent render both leave it where the committed
+   * render wants it. The `last` guard keeps it from rebuilding translators per re-render.
    */
   const last = useRef<Messages | null>(null);
   if (last.current !== state.messages) {
@@ -76,21 +49,14 @@ export function LocaleShell({
   }
 
   /**
-   * `<html lang>` MOVES ON THE SAME PASS AS THE CATALOGUE, for the reason stated above and one
-   * more that arrived later.
-   *
-   * It is what a screen reader picks a voice from and what the browser offers to translate
-   * against — and it is now also a LAYOUT INPUT: the action bar's density ladder
-   * (`shell/action-bar.css`) carries one set of breakpoints per measured locale and selects
-   * between them on `:root[lang]`, because the German labels are 30-45% wider than the English
-   * ones. In a passive effect this attribute lands one commit AFTER the labels it describes, so
-   * a switch into German painted German words against the English rungs for a frame — a row far
-   * wider than the capsule that holds it. The desktop shell has no server render to make the
-   * first paint agree, so there it was the launch frame, not just the switch.
-   *
-   * Same discipline as the register above: written during render, idempotent, derived entirely
-   * from the rendered state, guarded so it touches the DOM only when the value changes. Guarded
-   * on `document` too — this component renders on the server, where there is none.
+   * `<html lang>` moves on the same pass as the catalogue. It is what a screen reader picks a voice
+   * from and what the browser offers to translate — and it is now a LAYOUT INPUT: the action bar's
+   * density ladder (`shell/action-bar.css`) carries one set of breakpoints per measured locale and
+   * selects on `:root[lang]`, because German labels are 30-45% wider. In a passive effect this
+   * attribute lands one commit AFTER the labels it describes — a switch into German painted German
+   * words against the English rungs for a frame, and on the desktop (no server render) that was the
+   * launch frame. Same discipline as the register above: written during render, idempotent, guarded
+   * so it touches the DOM only when the value changes, and guarded on `document` (SSR has none).
    */
   const lastLang = useRef<string | null>(null);
   if (typeof document !== "undefined" && lastLang.current !== state.locale) {

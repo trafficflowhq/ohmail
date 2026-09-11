@@ -1,81 +1,36 @@
 "use client";
 
 /**
- * THE ACTION PILL'S RUNTIME DENSITY — fold on ACTUAL overflow, not on a reference font's idea
- * of it.
- *
- * ── WHY STATIC WIDTHS WERE WRONG ON SOME MACHINES ───────────────────────────────────────────
- *
- * This bar used to fold its verb groups behind More at static container widths, each derived
- * from label widths measured in one reference font. That font does not resolve everywhere, and
- * on a system whose UI font renders NARROWER every such width fires early: the pill folds verbs
- * behind More with visible room left beside them. Reported from real use on exactly such a
- * machine. That failure direction (fold early, never overflow) was the benign one; the cost was
- * verbs a wider row could have carried. The direction it could NOT survive was a font that
- * renders WIDER than the reference — then the static width admits a group the row cannot hold.
- *
- * So the pill measures ITS OWN row: a hidden copy of every verb the message could stand
- * (same markup, same classes, same font — rendered invisibly inside the pill) gives each
- * verb's REAL width, and verbs are admitted greedily, in row order, while they actually fit.
- *
- * THIS IS THE ONLY MECHANISM. The static widths are gone from `action-bar.css` — two mechanisms
- * deciding one question disagreed, and the static rule outranked the measurement's on the menu
- * twin, so a folded group stood in NEITHER place: Later, Park and Resurface were reachable from
- * nowhere on the messages where the two disagreed. Until the first measurement lands,
- * `data-admit` is absent and the row is its floor (Reply, the read switch, More) with every
- * verb behind More; the measurement runs in the commit that mounts the copy, before the
- * browser paints.
- *
- * ── THE LAWS, KEPT ──────────────────────────────────────────────────────────────────────────
- *
- *  · ROW ORDER IS FOLD ORDER, AND THE UNIT IS ONE VERB. Admission is a greedy PREFIX over the
- *    verbs in row order (Reply all · Forward · Later · Park · Resurface · Tag · Screening ·
- *    Move): the walk stops at the first verb that does not fit, so a later verb can never
- *    stand while an earlier one is folded. Pinned as a property over random rows in
- *    `bar-density.test.ts`.
- *
- *    IT USED TO BE ONE GROUP, and that is the defect this granularity closes. The horizons
- *    were admitted as a block of three and filing as a block of two, so a row with room for
- *    Later and Park folded both of them along with Resurface: measured on the shipped bar at
- *    1440 in the widest reading column the product has, 150px of the pill's own room stood
- *    empty while eight verbs sat behind More. Reported from real use — *"the pill shows Reply ·
- *    Reply all · Forward · Mark unread · ▾ while the row has room for several more"*. A verb
- *    that fits is seated; the reading that refuses the old rule is THE SLACK CANNOT SEAT THE
- *    NEXT FOLDED VERB, held per width in `scripts/fit-render.mjs`.
- *
- *    A SEGMENT PAYS ITS ROW GAP ONCE. The horizons and filing are segmented controls with no
- *    gap between their members, so a verb continuing the segment its predecessor opened costs
- *    its own width and nothing more. Admission being a prefix is what makes the segment's
- *    visible members a prefix too, which is what lets the stylesheet put the trailing cap on
- *    the last one that stands.
- *  · NO OVERFLOW. The admitted row's width — base + every admitted verb + the gaps between —
- *    is never allowed past the width the pill actually has. Folding too early is the benign
- *    direction; painting a control outside the pill is the defect this measurement exists to
- *    prevent.
- *  · IN THE ROW OR BEHIND MORE, NEVER BOTH. The `data-admit` CSS (foot of `action-bar.css`)
- *    switches each verb's row form and its `mm-*` menu row in the same rule pair — the only
- *    rules that touch either half. The two segment WRAPPERS follow their first member, which is
- *    a consequence of the prefix law rather than a rule of their own.
- *  · THE FLOOR YIELDS ITS WORDS ONCE. When even the floor does not fit, ONE label in the floor
- *    is dropped (`compact` in `data-admit`) and the floor is re-measured without it; the glyph
- *    and the keycap beside it stay, and the verb moves to the button's name. Nothing below the
- *    compact floor can fold — the measurement reports that state rather than hiding a control.
- *
- * ── THE SELECTION BAR IS THIS BAR NOW ───────────────────────────────────────────────────────
- *
- * This used to end "the SELECTION bar (`.pick-bar`) is deliberately untouched: its verbs are a
- * different label set with its own geometry and its own two container rungs". That strip is
- * retired. A selection's verbs wear the message pill — the same element under the same
- * `.msg-actions`, in the list column's foot — so they fold through this hook, with the same
- * `data-admit` tokens and the same CSS. Nothing here branches on which of the two is mounted,
- * and that is the point: two folding mechanisms for one row is how the two came apart before.
- *
- * The one generalisation the second mount needed is in the compact floor. A message's floor
- * gives up the READ SWITCH's words; a selection's floor gives up the COUNT capsule's word
- * ("× 7 selected" → "× 7"). Both are `abar-*-lab`-shaped spans inside a base button, so the
- * floor drops THE WIDEST ONE PRESENT rather than a named one. Widest and not both: the floor
- * yields its words once, and a row that still overflows after one concession is a column that
- * is too narrow — which the measurement reports rather than papers over.
+ * The action pill's runtime density — fold on ACTUAL overflow, not a reference font's idea of it.
+ * Static widths derived from one font folded early on machines whose UI font renders narrower and
+ * could not survive a wider one (a group admitted that the row cannot hold). So the pill measures
+ * ITS OWN row: a hidden copy of every verb the message could stand — same markup, classes, font —
+ * gives each verb's real width, and verbs are admitted greedily, in row order, while they fit. THIS
+ * IS THE ONLY MECHANISM: the static widths are gone from `action-bar.css` — two mechanisms deciding
+ * one question disagreed, and a folded group stood in NEITHER place. Until the first measurement,
+ * `data-admit` is absent and the row is its floor; the measurement runs in the commit, before paint.
+ */
+
+/**
+ * The laws. ROW ORDER IS FOLD ORDER, THE UNIT IS ONE VERB: admission is a greedy prefix over the
+ * verbs in row order, so a later verb never stands while an earlier one is folded (pinned as a
+ * property in `bar-density.test.ts`). It used to be one GROUP — a row with room for Later and Park
+ * folded both with Resurface, 150px standing empty; the refusing reading is THE SLACK CANNOT SEAT
+ * THE NEXT FOLDED VERB (`scripts/fit-render.mjs`). A segment pays its row gap once. NO OVERFLOW:
+ * folding early is benign, painting outside the pill is the defect. IN THE ROW OR BEHIND MORE,
+ * NEVER BOTH: `data-admit` switches each verb's row form and its `mm-*` menu row in one rule pair.
+ * THE FLOOR YIELDS ITS WORDS ONCE: one label drops (`compact`); nothing below the compact floor folds.
+ */
+
+/**
+ * The selection bar is this bar now. The old `.pick-bar` strip is retired: a selection's verbs wear
+ * the message pill — the same element under the same `.msg-actions` — so they fold through this
+ * hook with the same `data-admit` tokens and CSS; nothing branches on which mount, which is the
+ * point — two folding mechanisms for one row is how the two came apart before. The one
+ * generalisation is in the compact floor: a message's floor gives up the read switch's words, a
+ * selection's the count capsule's ("× 7 selected" → "× 7"); both are `abar-*-lab` spans, so the
+ * floor drops THE WIDEST ONE PRESENT — widest and not both, because the floor yields its words
+ * once, and a row that still overflows is a column that is too narrow, which is reported.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -84,22 +39,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export const PILL_PADDING_PX = 12;
 
 /**
- * THE ROW'S ROOM IS THE READING PANE, NOT THE READING COLUMN.
- *
- * Ruled 2026-09-10: the body keeps its 640px column; the bar uses the width the pane has. The
- * pane's centre and the column's centre are the SAME POINT — `.msg` is `margin: 0 auto` inside
- * `.read-col` (measured at 1440: column box 640 at left 56, content centre 376; pane centre 376)
- * — so widening the row symmetrically cannot move the pill off the text's centre.
- *
- * WHY THE WIDTH IS PUBLISHED FROM HERE rather than written in CSS: reaching an ancestor's width
- * from a stylesheet needs a container query, and `container-type: inline-size` makes that
- * ancestor a containing block for `position: fixed` descendants — which would place the
- * resurface date picker against the pane instead of the window, the exact defect the reads
- * slice had to undo for `content-visibility: auto`. This hook already measures and already
- * publishes an attribute, so the room rides beside it as a custom property.
- *
- * `.read-col` ONLY, never `.reader`: the phone/overlay mount is already the full pane, so a
- * phone-width row admits exactly what it admits today.
+ * The row's room is the reading pane, not the reading column. Ruled 2026-09-10: the body keeps its 640px
+ * column; the bar uses the width the pane has. The pane's centre and the column's centre are the same point
+ * (`.msg` is `margin: 0 auto` inside `.read-col`; measured at 1440), so widening the row symmetrically cannot
+ * move the pill off the text's centre. The width is published from HERE rather than CSS: reaching an ancestor's
+ * width needs a container query, and `container-type: inline-size` makes that ancestor a containing block for
+ * `position: fixed` descendants — which would place the resurface date picker against the pane instead of the
+ * window. This hook already measures and publishes an attribute, so the room rides beside it as a custom
+ * property. `.read-col` only, never `.reader`: the phone/overlay mount is already the full pane.
  */
 export const ROOM_VAR = "--abar-room";
 const PANE_SELECTOR = ".read-col";
@@ -195,16 +142,12 @@ export function admitVerbs(
 }
 
 /**
- * A MEASURED WIDTH, AS A FLOAT.
- *
- * `offsetWidth` rounds to the nearest integer, so a walk that sums ten of them lands up to ~5px
- * away from the width the layout actually uses. That was harmless while the row sat inside a
- * column wider than the row could ever need; it stopped being harmless when the row became
- * exactly the room it is given, where one pixel of understatement is one pixel of clipping — the
- * overflow direction this measurement exists to prevent. Measured: a German 1600px reply-all bar
- * admitted a set summing to 912 whose real width was 913.1, and the row clipped by 1px.
- *
- * The rect is the same number the layout used, so the walk and the row cannot disagree.
+ * A measured width, as a float. `offsetWidth` rounds to the nearest integer, so a walk summing ten
+ * of them lands up to ~5px away from the width the layout uses — harmless while the row sat inside
+ * a wider column, not harmless once the row became exactly the room it is given, where one pixel of
+ * understatement is one pixel of clipping (the overflow direction this measurement exists to
+ * prevent). Measured: a German 1600px reply-all bar admitted a set summing to 912 whose real width
+ * was 913.1, and the row clipped by 1px. The rect is the same number the layout used.
  */
 function widthOf(el: Element): number {
   return el.getBoundingClientRect().width;

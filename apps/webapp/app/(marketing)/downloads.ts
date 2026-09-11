@@ -1,35 +1,12 @@
 /**
- * THE DOWNLOAD MANIFEST — the contract between this page and the release pipeline.
- *
- * The landing page links these URLs directly, so a visitor's click starts the download
- * instead of landing them on a releases index to guess from. That only works if the
- * published assets carry EXACTLY the names below, which makes this file the source of
- * truth for the release procedure, not a description of it.
- *
- * ── WHAT THE RELEASE MUST DO ─────────────────────────────────────────────────────────
- *
- *  1. **Publish under these exact filenames.** The bundlers emit version-bearing names
- *     (`ohmail_0.6.1_x64-setup.exe`, `ohmail_0.6.1_amd64.AppImage`, …). A version in the
- *     filename cannot be linked from a static page, so the release step renames each
- *     artifact to its stable name BEFORE attaching it. Rename in place — never attach
- *     both a versioned and a stable copy of the same artifact.
- *  2. **Publish as a full release, not a pre-release.** `/releases/latest/download/…`
- *     resolves through GitHub's "latest stable release", which does not exist while every
- *     published release is a pre-release; the whole set of links below 404s at once. The
- *     v0.1–v0.4 tags were pre-releases and this is exactly what broke then.
- *  3. **Keep the suffixes.** The update-feed job selects payloads by glob — `*-setup.exe`,
- *     `*.AppImage`, `*.app.zip` — and takes the first match. Renaming is safe because it
- *     happens before the signature is computed, but dropping a suffix breaks the feed, and
- *     two files matching one glob makes the pick arbitrary.
- *
- * Names NOT in this manifest that the release also attaches, and which must not collide
- * with the ones here: `latest.json` and `appcast-macos.xml` (the update feeds),
- * `ohmail.app.zip` (the macOS update payload, not a download a person wants), and the
- * Windows `.msi`, which stays a deployment-tooling artifact rather than a button here.
- *
- * `ohmail.dmg` keeps the name it already ships under. It carries no version today because
- * the macOS packaging script hardcodes it, so it is the one asset that needs no rename —
- * and it is the name the public README already points people at.
+ * The download manifest — the contract between this page and the release pipeline. The landing links
+ * these URLs directly, which only works if the published assets carry EXACTLY these names. The
+ * release must: (1) publish under these exact filenames — the bundlers emit version-bearing names,
+ * renamed in place before attaching, never both copies; (2) publish as a full release, not a
+ * pre-release — `/releases/latest/download/…` resolves through "latest stable", and the v0.1–v0.4
+ * pre-release tags 404'd the whole set; (3) keep the suffixes — the update-feed job selects by glob
+ * and takes the first match. Also attached, must not collide: `latest.json`, `appcast-macos.xml`,
+ * `ohmail.app.zip`, the Windows `.msi`. `ohmail.dmg` keeps its unversioned name.
  */
 
 /** Where a released asset lives. `latest` = the most recent NON-pre-release. */
@@ -56,21 +33,14 @@ export type PlatformId = "apple" | "linux" | "windows";
 export type MobileId = "android" | "ios";
 
 /**
- * ── THE ANDROID APK — the desktop row's mechanism, now that the APK is a release asset ──
- *
- * This used to read the newest `android-v*` tag once per build and link that tag's page,
- * on the premise that `latest` could never reach the APK: Android ships its own tag family
- * as GitHub PRE-releases, and `/releases/latest` resolves only to a stable `v*`. That
- * premise died when the release began attaching the signed APK to the stable release as
- * well, and a tag baked at build time then went stale the way a pinned one does — the site
- * is rebuilt when the site changes, the APK is published when the app ships, so the button
- * sat on `android-v0.15.0` two releases after it was current.
- *
- * So the phone uses the same indirection and the same asset contract as the three desktop
- * buttons: one published name under {@link RELEASE_BASE}, asserted in
- * `download-assets.test.ts` and allow-listed in `no-third-party.test.ts`. GitHub resolves
- * `latest` per request, so this link cannot fall behind a release. The notes for the build
- * it hands out are the current release's own, linked under the buttons already.
+ * The Android APK — the desktop row's mechanism, now that the APK is a release asset. This used to
+ * read the newest `android-v*` tag once per build and link that tag's page, on the premise that
+ * `latest` could never reach the APK (Android tags are pre-releases); the premise died when the
+ * release began attaching the signed APK to the stable release, and a tag baked at build time went
+ * stale — the button sat on `android-v0.15.0` two releases later. So the phone uses the same
+ * indirection and asset contract as the three desktop buttons: one published name under
+ * {@link RELEASE_BASE}, asserted in `download-assets.test.ts` and allow-listed in
+ * `no-third-party.test.ts`. GitHub resolves `latest` per request, so this link cannot fall behind.
  */
 export const ANDROID_APK_ASSET = "ohmail-android.apk";
 
@@ -166,33 +136,14 @@ export const DOWNLOADS: readonly PlatformDownload[] = [
 ] as const;
 
 /**
- * ── THE BUILD-STAGE ORACLE ────────────────────────────────────────────────────────────
- *
- * WHICH PLATFORMS SHIP AN INTERFACE PREVIEW RATHER THAN THE COMPLETE APP, TODAY.
- *
- * The three downloads above all resolve and all install. They are not all the same
- * program: the macOS build carries the mail engine and connects to your own IMAP server,
- * while the Windows and Linux builds are the interface running against a sample mailbox
- * with no engine behind it. A page that says "one app, three platforms, on the mailboxes
- * you already own" is therefore true of one of the three and false of the other two, which
- * is exactly the kind of statement this project treats as a contract: site copy is judged
- * against the code.
- *
- * This constant is the single place that fact is written down. It drives BOTH:
- *
- *  · the caption the download section prints under each button (`Downloads.tsx`), and
- *  · a published-claims guard, which fails the build when any string in
- *    `messages/en.json` makes a working-local-client claim, names a platform listed here,
- *    and does not carry the "interface preview" disclosure alongside it.
- *
- * ── WHEN THE ENGINE SHIPS EVERYWHERE (0.7.0) ──────────────────────────────────────────
- *
- * Empty this array — `= []` — and nothing else here. That one edit removes the captions
- * from the page and, in the same motion, flips the guard: with no preview platforms left,
- * that same guard asserts the site carries NO preview disclosure
- * anywhere, so every hedged sentence has to be written back to the full three-platform
- * claim before the suite is green again. The oracle cannot be flipped quietly and the copy
- * cannot be un-hedged early; each half forces the other.
+ * The build-stage oracle: which platforms ship an interface preview rather than the complete app.
+ * The macOS build carries the mail engine; Windows and Linux run the interface against a sample
+ * mailbox — "one app, three platforms" would be false of two, and site copy is judged against the
+ * code. This constant drives the caption under each button (`Downloads.tsx`) AND a published-claims
+ * guard that fails the build when a `messages/en.json` string makes a working-local-client claim
+ * about a platform listed here without the disclosure. When the engine ships everywhere: empty this
+ * array and nothing else — the captions leave and the same guard flips to assert NO preview
+ * disclosure remains; the oracle cannot flip quietly and the copy cannot un-hedge early.
  */
 export const PREVIEW_PLATFORMS: readonly PlatformId[] = [];
 
