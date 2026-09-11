@@ -1331,7 +1331,7 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   //    is read as `reader` by `readOrganizerRole` (which fails safe), but nothing stops a
   //    hand-run UPDATE or an importer writing one, and the CHECK is the layer that holds when
   //    the code does not.
-  //  · `mailboxes_organized_by_kind_closed` closes the same three kinds `disabled_reason` does,
+  //  · `mailboxes_organized_by_kind_closed` closes the same kinds `disabled_reason` does,
   //    for `disabled_reason`'s own reason: the value is derived from ANOTHER INSTALL'S CLAIM —
   //    a header a foreign writer chose — and it is read by the account's own user. The write
   //    site is allowlisted; the constraint is the half that survives a call site nobody has
@@ -1510,6 +1510,15 @@ export type FunctionDefinitionMarker = readonly [proname: string, bodySubstring:
 export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
   ["away_responders_piles_closed", "ohmail/Screener"],
   ["mailboxes_sync_blocked_reason_closed", "read_limited"],
+  /* Mail 0103 — `mobile` joins the organizer kinds. TWO entries, because the kind reaches this
+     table twice and the migration replaces BOTH constraints under their existing names, so a
+     name-presence probe cannot tell an 0102 database from an 0103 one. What a missing entry costs
+     here is the loud direction rather than the silent one, and it is worse for it: certified
+     healthy against an 0102 database, an install reads a live phone's claim and the write that
+     records it is REFUSED by the old CHECK — on a mailbox somebody is using. The needles are the
+     vocabulary each definition gains and its predecessor cannot contain. */
+  ["mailboxes_organized_by_kind_closed", "mobile"],
+  ["mailboxes_disabled_reason_closed", "organized_elsewhere:mobile"],
 ];
 
 export const MAIL_EXPECTED_MARKERS =
@@ -2010,7 +2019,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0102_sync_blocked_reason_read_limited";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0103_organizer_kind_mobile";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

@@ -559,76 +559,24 @@ export const CLAIM_PROTOCOL = 1;
 export const DEFAULT_STALE_AFTER_MS = 10 * 60 * 1000;
 
 /**
- * Who is holding a claim, AS THIS BUILD CAN RANK ONE. A closed set — an unrecognised value is
- * foreign-and-unknown ({@link readClaim}'s parse arm answers `"unknown"` for anything else).
+ * Who is holding a claim. A closed set — an unrecognised value is foreign-and-unknown
+ * ({@link readClaim}'s parse arm answers `"unknown"` for anything else).
  *
- * Deliberately NARROWER than {@link OrganizerKindWritten}: see that type for the asymmetry.
+ * ── `mobile` IS A MEMBER, AND WHAT THAT COST TO GET WRONG ─────────────────────────────────
+ *
+ * A standalone phone stamps `mobile`, and for one release this set did not carry it: a writable
+ * set held the member and the read set did not. That asymmetry was written as the safe direction
+ * and it was safe in every direction but one. A renew APPENDS its new claim and expunges the old
+ * copy afterwards, so the folder briefly holds two of this install's claims at different nonces —
+ * and `decideLease`'s rules 1/2 exclude only `rawOurs` (install id AND the armed nonce), so the
+ * phone's own older copy was a LIVE claim it could not rank. It stood down from its own mailbox
+ * every cycle. A phone is the one install whose own kind it cannot rank, which is why nothing
+ * else in the fleet met it. Both halves are one set now.
+ *
+ * The database carries the member too (`ORGANIZER_KINDS`, `packages/db/src/organizer-role.ts`,
+ * behind `mailboxes_organized_by_kind_closed`), so a reader may store what it parses.
  */
-export type OrganizerKind = "local" | "cloud";
-
-/**
- * WHAT A CLAIM WRITER MAY STAMP into `X-Ohmail-Organizer-Kind` — the read set plus `mobile`.
- *
- * ── A SEPARATE TYPE, BECAUSE WRITING A KIND AND RANKING ONE ARE DIFFERENT QUESTIONS ──────────
- *
- * The phone's engine composition stamps `mobile`, so the value has to be spellable before a phone
- * can claim at all. Everything that READS a kind must go on refusing it, and that is what makes
- * the two halves shippable apart:
- *
- *  · the parse arm still admits only `local` and `cloud`, so a `mobile` claim reads as `unknown`;
- *  · `reasonFor` falls through to `organized_elsewhere:unknown`;
- *  · the database's own closed set (`ORGANIZER_KINDS`, `packages/db/src/organizer-role.ts`, with
- *    `mailboxes_organized_by_kind_closed` behind it) does not carry `mobile` either.
- *
- * So an install carrying this change reads a phone's claim exactly as an install without it does —
- * a LIVE claim by a peer it cannot rank, which stands down and refuses an authorized takeover.
- * That is the safe direction, and it is why the reader-side admission is a protocol change with a
- * migration attached that lands on desktop and Cloud BEFORE any phone is allowed to claim.
- *
- * WIDENING {@link OrganizerKind} ITSELF WAS TRIED FIRST AND IS THE WRONG SHAPE: the parse result
- * flows into the database's narrower column type and into `OrganizerHolderDTO`, so four reader
- * sites in `apps/worker` and `packages/api` stopped compiling — a type error standing in for the
- * fact that those sites are the protocol change, not this one. Keeping the read type narrow means
- * a reader CANNOT be handed `mobile` by the type system, so nothing downstream can quietly start
- * admitting it ahead of the migration.
- *
- * The consequence to state rather than discover: until that lands, a desktop looking at a mailbox
- * a phone is organizing shows `organized_elsewhere: unknown` rather than naming the phone.
- */
-export type OrganizerKindWritten = OrganizerKind | "mobile";
-
-/**
- * THE DIFFERENCE BETWEEN THE TWO SETS IS EXACTLY `"mobile"`, ASSERTED AT COMPILE TIME — AND THIS
- * ASSERTION IS WRITTEN TO STOP COMPILING THE DAY THE PROTOCOL SLICE LANDS.
- *
- * It lives in `src` rather than in a test on purpose. This package's tsconfig includes `src` only,
- * so a type-level claim parked in `packages/core/test` is never compiled and never guards anything
- * — a guard that silently does not guard, which this project has paid for before, and why one
- * package here carries a second compiler program whose only job is to compile its type-level
- * claims. Here it is part of the build instead.
- *
- * What it pins: adding a THIRD writable kind, or widening the readable set by anything other than
- * `mobile`, fails the build with a type error at this line rather than passing quietly and letting
- * a reader be handed a value its parse arm answers `"unknown"` for.
- *
- * ── AND IT IS THE INSTRUCTION TO DELETE ITSELF ────────────────────────────────────────────
- *
- * When the protocol slice teaches {@link OrganizerKind} the `mobile` member — the migration, the
- * database's `ORGANIZER_KINDS`, the `mailboxes_organized_by_kind_closed` CHECK and the parse arm,
- * all together — `Exclude<OrganizerKindWritten, OrganizerKind>` collapses to `never`, this
- * assignment stops compiling, and that failure is the instruction: the two names have become one
- * set, so delete {@link OrganizerKindWritten}, put `OrganizerKind` back on `LeaseSelf.kind` and
- * `ClaimInput.kind`, and delete this block. A guard that has to be removed by hand is a guard
- * nobody removes; this one asks.
- */
-type WritableOnlyKinds = Exclude<OrganizerKindWritten, OrganizerKind>;
-type OnlyMobileIsWriteOnly = "mobile" extends WritableOnlyKinds
-  ? WritableOnlyKinds extends "mobile"
-    ? true
-    : { error: "a writable organizer kind exists that no reader can rank"; found: WritableOnlyKinds }
-  : { error: "OrganizerKind has learned `mobile` — collapse OrganizerKindWritten and delete this" };
-const _onlyMobileIsWriteOnly: OnlyMobileIsWriteOnly = true;
-void _onlyMobileIsWriteOnly;
+export type OrganizerKind = "local" | "cloud" | "mobile";
 
 /**
  * A HUMAN ASKED FOR THIS INSTALL, AND WHEN.
@@ -728,8 +676,8 @@ export function isMalformed(c: ClaimRecord): c is MalformedClaim {
  */
 export interface LeaseSelf {
   installId: string;
-  /** WRITTEN, not ranked — see {@link OrganizerKindWritten}. */
-  kind: OrganizerKindWritten;
+  /** What this install stamps into its own claim. One set with the read set. */
+  kind: OrganizerKind;
   displayName: string;
   /** The nonce of our last write this process, or `null` on a fresh start. */
   lastNonce: string | null;
@@ -739,6 +687,7 @@ export interface LeaseSelf {
 export type StandDownReason =
   | "organized_elsewhere:cloud"
   | "organized_elsewhere:local"
+  | "organized_elsewhere:mobile"
   | "organized_elsewhere:unknown";
 
 /** Organize this mailbox, and renew our claim while doing so. */
@@ -874,8 +823,8 @@ function headerSafe(v: string): string {
 
 export interface ClaimInput {
   installId: string;
-  /** WRITTEN, not ranked — see {@link OrganizerKindWritten}. */
-  kind: OrganizerKindWritten;
+  /** What this install stamps into its own claim. One set with the read set. */
+  kind: OrganizerKind;
   displayName: string;
   heartbeat: Date;
   claimedAt: Date;
@@ -1017,8 +966,15 @@ export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
   const claimedAtRaw = get(H.claimedAt);
   const claimedAt = claimedAtRaw ? new Date(claimedAtRaw) : heartbeat;
 
+  /* THE READ SET, AND IT HAS TO MATCH THE WRITE SET EXACTLY. A kind this build writes but does
+     not admit here parses as `unknown`, which rules 1/2 read as a live unrankable peer — and for
+     `mobile` that peer was the install's own renew residue, so a phone stood down from itself.
+     `isOrganizerKind` in `@trafficflow/db` carries the same members; this package cannot import
+     it (the engine tier may not depend on the private half) and `organizer-lease-reasons.test.ts`
+     reconciles the two. */
   const kindRaw = (get(H.kind) ?? "").toLowerCase();
-  const kind: OrganizerKind | "unknown" = kindRaw === "local" || kindRaw === "cloud" ? kindRaw : "unknown";
+  const kind: OrganizerKind | "unknown" =
+    kindRaw === "local" || kindRaw === "cloud" || kindRaw === "mobile" ? kindRaw : "unknown";
 
   /* ── AN ABSENT PRESS IS `null`; AN UNREADABLE ONE IS MALFORMED ──────────────────────────────
    *
@@ -1883,11 +1839,18 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   return { verdict: "available", by: winner };
 }
 
-/** The winning claim's kind, as the closed reason set spells it. */
+/**
+ * The winning claim's kind, as the closed reason set spells it.
+ *
+ * EVERY MEMBER ON ITS OWN ARM. `mobile` falling through to `:unknown` would tell a person
+ * "another ohmail organizer" about a mailbox a phone holds — true but useless, and the answer
+ * they need is the one a phone makes different: it organizes only while it is open.
+ */
 function reasonFor(c: OrganizerClaim): StandDownReason {
   return c.kind === "cloud" ? "organized_elsewhere:cloud"
     : c.kind === "local" ? "organized_elsewhere:local"
-      : "organized_elsewhere:unknown";
+      : c.kind === "mobile" ? "organized_elsewhere:mobile"
+        : "organized_elsewhere:unknown";
 }
 
 
@@ -1925,7 +1888,7 @@ export interface LeaseHolder {
    * `X-Ohmail-Install-Id` — WHICH install wrote this claim, as opposed to which KIND of one.
    *
    * On the preview because the row that mirrors it has to answer "is this claim ours", and `kind`
-   * cannot: it is one of three words, and the Cloud id is scoped by environment precisely so that
+   * cannot: it is one of a few words, and the Cloud id is scoped by environment precisely so that
    * two Cloud deployments over one mailbox are different organizers. The claim removal already
    * matches on this id, so exposing it here is what lets the row and the removal use one unit.
    */
@@ -4933,17 +4896,11 @@ export interface RequestInput {
   /**
    * This install's own kind, so the organizer's drain can log who asked without a second lookup.
    *
-   * WRITTEN, not ranked — {@link OrganizerKindWritten}, the same asymmetry the claim header has and
-   * for the same reason. `RequestEnvelope.organizerKind` (the PARSED side, below) stays narrow and
-   * still answers `"unknown"` for anything its arm does not admit, so a phone's request reads on an
-   * older install exactly as it does today.
-   *
-   * Widened here as well as on the claim because the two are ONE change seen twice: a composition
-   * that stamps `mobile` into the claim it renews also stamps it into every request it appends, and
-   * a version of this that widened only the claim would compile — the request path takes its kind
-   * from the same variable — and then refuse the phone at this field alone.
+   * The SAME set the claim header carries, and the request parse arm below admits the same three:
+   * a composition that stamps `mobile` into the claim it renews stamps it into every request it
+   * appends, so widening one without the other refuses the phone at this field alone.
    */
-  organizerKind: OrganizerKindWritten;
+  organizerKind: OrganizerKind;
   /** WHEN THE PERSON DECIDED, by the deciding door's clock — the drain applies in this order. */
   decidedAt: Date;
   protocol?: number;
@@ -5179,9 +5136,12 @@ export function parseRequestEnvelope(raw: string, ref?: unknown): RequestEnvelop
   const installId = get(RH.installId);
   if (!installId || installId.length > 256) return malformed("no or oversized install id");
 
+  /* The claim arm's set, spelled once more because the request header is a second door onto the
+     same vocabulary — widening one and not the other refuses a phone's requests alone. */
   const organizerKindRaw = (get(RH.organizerKind) ?? "").toLowerCase();
   const organizerKind: OrganizerKind | "unknown" =
-    organizerKindRaw === "local" || organizerKindRaw === "cloud" ? organizerKindRaw : "unknown";
+    organizerKindRaw === "local" || organizerKindRaw === "cloud" || organizerKindRaw === "mobile"
+      ? organizerKindRaw : "unknown";
 
   const protocolRaw = get(RH.protocol);
   const protocol = Number(protocolRaw);

@@ -722,6 +722,13 @@
       "when": 1791601600011,
       "tag": "0102_sync_blocked_reason_read_limited",
       "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1791601800011,
+      "tag": "0103_organizer_kind_mobile",
+      "breakpoints": true
     }
   ]
 }

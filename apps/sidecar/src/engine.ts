@@ -112,7 +112,7 @@ import {
 // the mailbox (its empty-folder arm claims). One method, no way to write. See
 // `notePeekedHolder`.
 import {
-  readLeasePeek, deriveRequestKey, type LeasePeekIo, type OrganizerKindWritten,
+  readLeasePeek, deriveRequestKey, type LeasePeekIo, type OrganizerKind,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
 import { OrganizerProfileSync, syncProfileMirror } from "@trafficflow/worker/profile";
@@ -372,7 +372,7 @@ export interface SidecarConfig {
    * list names this shape — "`organizerKind` defaulted to `local` ⇒ the phone claims as a desktop
    * and the holder line lies".
    */
-  organizerKind?: OrganizerKindWritten;
+  organizerKind?: OrganizerKind;
   /**
    * WHO THIS INSTALL IS TO THE ORGANIZER LEASE — the local `accounts` row unless the shell knows
    * better, and on a phone it does.
@@ -2052,7 +2052,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           "process has no machine name of its own to fall back to",
       );
     }
-    const organizerKind: OrganizerKindWritten = config.organizerKind ?? "local";
+    const organizerKind: OrganizerKind = config.organizerKind ?? "local";
     const machineName = config.machineName ?? hostname();
     /** Every mailbox this install runs, oldest first. See `roster.ts`. */
     const runtimes = new LocalRoster();

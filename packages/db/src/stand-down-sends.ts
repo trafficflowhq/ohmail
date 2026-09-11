@@ -87,10 +87,10 @@ import { dialect } from "./dialect/index.js";
  * `scheduleFailedNote` ("This message wasn't sent at its scheduled time: {reason}") and the
  * phone's identical one. So these say the CAUSE and the ACTION and never restate the failure.
  *
- * Keyed on the stand-down reason because the three CAUSES genuinely differ and the product
- * already distinguishes them in the mailbox strip (`standDown_organized_elsewhere_*`).
+ * Keyed on the stand-down reason because the CAUSES genuinely differ and the product already
+ * distinguishes them in the mailbox strip (`standDown_organized_elsewhere_*`).
  *
- * The ACTION clause is deliberately the same in all three and names no destination. A destination
+ * The ACTION clause is deliberately the same in every member and names no destination. A destination
  * would go stale: the mailbox can come back to this install afterwards ("Organize from this
  * machine"), and a stored sentence saying "schedule it again on ohmail Cloud" would then be
  * standing advice to go somewhere the mailbox no longer is. The cause is written in the past
@@ -104,6 +104,14 @@ export const STAND_DOWN_SEND_SENTENCES: Record<MailboxDisabledReason, string> = 
   "organized_elsewhere:local":
     "ohmail on another machine took over organizing this mailbox, so the scheduled send was not "
     + "made here. Schedule it again where the mailbox is organized now.",
+  /* NOT "a phone does not send scheduled mail" — that was the first draft of this line and it is
+     FALSE. The phone runs the same engine composition as the desktop and nothing gates the
+     scheduled-send pass on the organizer kind, so a phone sends due mail exactly while it is
+     open. What is true is the bound, and the bound is the detail a person needs. */
+  "organized_elsewhere:mobile":
+    "A phone took over organizing this mailbox, so the scheduled send was not made here. A phone "
+    + "sends scheduled mail only while ohmail is open on it. Schedule it again where the mailbox "
+    + "is organized now.",
   "organized_elsewhere:unknown":
     "Another ohmail organizer took over this mailbox, so the scheduled send was not made here. "
     + "Schedule it again where the mailbox is organized now.",

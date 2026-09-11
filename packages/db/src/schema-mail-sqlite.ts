@@ -159,7 +159,7 @@ export const mailboxes = sqliteTable("mailboxes", {
   // ── Mail 0027 — the organizer lease ──
   //
   // `disabledReason` is WHY this mailbox is `status='disabled'`, when the reason is the lease
-  // rather than a person. A CLOSED set of three (`MAILBOX_DISABLED_REASONS`, mailbox-errors.ts)
+  // rather than a person. A CLOSED set (`MAILBOX_DISABLED_REASONS`, mailbox-errors.ts)
   // and a CHECK constraint behind it, because it is read by the account's own user and must
   // never be able to hold a string a mail server chose — the same finding that closed
   // `error_detail`, applied before it can happen here. NULL for every non-lease disable, which
@@ -202,8 +202,9 @@ export const mailboxes = sqliteTable("mailboxes", {
   // WHO holds the lease when we do not — the three columns a banner needs, written from
   // `StandDownVerdict.by` at the stand-down and refreshed each reader cycle.
   //
-  // `organizedByKind` is the same closed three as `disabledReason`'s suffix ('cloud' | 'local' |
-  // 'unknown'), behind `mailboxes_organized_by_kind_closed`, for `disabledReason`'s own reason:
+  // `organizedByKind` is the same closed set as `disabledReason`'s suffix ('cloud' | 'local' |
+  // 'mobile' | 'unknown'), behind `mailboxes_organized_by_kind_closed`, for `disabledReason`'s own
+  // reason:
   // it is read by the account's own user and must never be able to hold a string a mail server
   // chose.
   //
@@ -217,7 +218,7 @@ export const mailboxes = sqliteTable("mailboxes", {
   // {@link organizerState}.
   organizedByKind: text("organized_by_kind"),
   organizedByName: text("organized_by_name"),
-  /* WHICH INSTALL, not which kind. `organized_by_kind` is one of three words and answers "what
+  /* WHICH INSTALL, not which kind. `organized_by_kind` is one word about a CATEGORY and answers "what
      sort of thing holds this", which is only the same question as "is this us" when there is one
      install per kind — and the Cloud id is scoped by environment precisely so that two Cloud
      deployments over one mailbox is a designed-for state. NULL means "we cannot say it is ours",
@@ -674,7 +675,7 @@ export const mailboxes = sqliteTable("mailboxes", {
   // Declared here to keep the TS schema honest; the constraint is created by the migration.
   ckDisabledReason: check(
     "mailboxes_disabled_reason_closed",
-    sql`${t.disabledReason} is null or ${t.disabledReason} in ('organized_elsewhere:cloud', 'organized_elsewhere:local', 'organized_elsewhere:unknown')`,
+    sql`${t.disabledReason} is null or ${t.disabledReason} in ('organized_elsewhere:cloud', 'organized_elsewhere:local', 'organized_elsewhere:mobile', 'organized_elsewhere:unknown')`,
   ),
   // THE SECOND CLOSED SET, AT REST (mail 0029). Members are `MAILBOX_SYNC_BLOCK_REASONS`, and a
   // Postgres test reconciles the two the way the set above is reconciled: insert every member plus
@@ -696,7 +697,7 @@ export const mailboxes = sqliteTable("mailboxes", {
   ),
   ckOrganizedByKind: check(
     "mailboxes_organized_by_kind_closed",
-    sql`${t.organizedByKind} is null or ${t.organizedByKind} in ('cloud', 'local', 'unknown')`,
+    sql`${t.organizedByKind} is null or ${t.organizedByKind} in ('cloud', 'local', 'mobile', 'unknown')`,
   ),
   // THE FIFTH . `organizerState` is the lease's occupancy as a reader cycle last saw
   // it; NULL is "we have not looked", which is every row until its first cycle.

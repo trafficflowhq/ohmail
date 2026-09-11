@@ -41,7 +41,7 @@
 import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
-import type { OrganizerKindWritten } from "@trafficflow/core/adapters/organizer-lease";
+import type { OrganizerKind } from "@trafficflow/core/adapters/organizer-lease";
 /* THE WORKER'S SOCKET PROFILE, not a third one. See {@link startPhoneEngine}. */
 import { WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -161,7 +161,7 @@ export interface PhoneEngineDeps {
    */
   keks?: Record<number, string>;
   /** What the phone calls itself in the claim's kind. `mobile`, and the default is not `local`. */
-  organizerKind?: OrganizerKindWritten;
+  organizerKind?: OrganizerKind;
   now?: () => Date;
   log?: Diagnostic;
   /**

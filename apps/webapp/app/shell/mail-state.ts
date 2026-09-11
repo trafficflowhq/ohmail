@@ -125,7 +125,7 @@ export function isSyncBlockReason(v: unknown): v is SyncBlockReason {
  * THE ORGANIZER LEASE'S VERDICT, AS COPY TOKENS.
  *
  * `mailboxes.disabled_reason` is the other closed set on this row: `MAILBOX_DISABLED_REASONS`,
- * three members, its own CHECK constraint, owned server-side. It says why a
+ * one member per organizer kind, its own CHECK constraint, owned server-side. It says why a
  * mailbox is `disabled` when the LEASE decided it rather than a person — and it used to be on
  * no wire at all, which is how a mailbox could read "disconnected", "No mail yet — added 3
  * minutes ago" and "No mailbox connected, so nothing can arrive" at the same moment.
@@ -144,6 +144,7 @@ export function isSyncBlockReason(v: unknown): v is SyncBlockReason {
 export const STAND_DOWN_REASONS = [
   "organized_elsewhere_cloud",
   "organized_elsewhere_local",
+  "organized_elsewhere_mobile",
   "organized_elsewhere_unknown",
 ] as const;
 export type StandDownReason = (typeof STAND_DOWN_REASONS)[number];
@@ -165,6 +166,7 @@ export function standDownToken(wire: string | null): StandDownReason | null {
   if (wire === null) return null;
   if (wire === "organized_elsewhere:cloud") return "organized_elsewhere_cloud";
   if (wire === "organized_elsewhere:local") return "organized_elsewhere_local";
+  if (wire === "organized_elsewhere:mobile") return "organized_elsewhere_mobile";
   return "organized_elsewhere_unknown";
 }
 
@@ -201,8 +203,8 @@ export function standDownToken(wire: string | null): StandDownReason | null {
  *
  * ── AND WHY `released` IS A FOURTH ANSWER RATHER THAN A FOURTH `STAND_DOWN_REASONS` ───────────
  *
- * {@link STAND_DOWN_REASONS} is the WIRE vocabulary: three members reconciled against the
- * server-owned `disabled_reason` set by the suite, one copy key each. `released` is on no wire
+ * {@link STAND_DOWN_REASONS} is the WIRE vocabulary: one member per organizer kind, reconciled
+ * against the server-owned `disabled_reason` set by the suite, one copy key each. `released` is on no wire
  * and never will be — it is DERIVED here from the role row (a reader with nobody holding it and
  * a release marker on it), which is a fact no `disabled_reason` can carry because those rows
  * predate the role entirely. Adding it to the array would break the reconciliation for a token

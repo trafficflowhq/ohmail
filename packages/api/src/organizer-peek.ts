@@ -1,4 +1,6 @@
-import { LeaseUnavailableError, readLeasePeek } from "@trafficflow/core/adapters/organizer-lease";
+import {
+  LeaseUnavailableError, readLeasePeek, type OrganizerKind,
+} from "@trafficflow/core/adapters/organizer-lease";
 import { ServiceError } from "@trafficflow/services/mail";
 import type { OpenAdapterOptions } from "./attachments-adapter.js";
 import { isImapDoorTimeout, withinDoorBudget } from "./imap-door.js";
@@ -36,8 +38,15 @@ import type { ApiDeps } from "./deps.js";
 
 /** One organizer, as the wire carries it. */
 export interface OrganizerHolderDTO {
-  /** `local` — an ohmail install on a machine of the user's. `cloud` — a hosted service. */
-  kind: "local" | "cloud" | "unknown";
+  /**
+   * `local` — an ohmail install on a machine of the user's. `cloud` — a hosted service.
+   * `mobile` — a phone, which organizes only while the app is open on it.
+   *
+   * `OrganizerKind` itself, so this cannot fall behind the set the engine parses: spelled as
+   * literals here it went a release without `mobile`, and a phone's claim then reached the pane
+   * as `unknown`.
+   */
+  kind: OrganizerKind | "unknown";
   /**
    * The machine, as its own install named itself, or `null` when the claim carried no name.
    *

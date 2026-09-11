@@ -48,15 +48,16 @@ export function isMailboxErrorCode(v: unknown): v is MailboxErrorCode {
  * than {@link MAILBOX_ERROR_CODES} is open.
  *
  * `error_code` is a failure taxonomy and taxonomies grow, which is why migration 0023 kept it out
- * of a Postgres enum. This set does not grow: it is the fixed set of organizer kinds
- * — `cloud`, `local`, and `unknown` for a peer whose kind or protocol we cannot rank — and
- * `unknown` is the catch-all that makes it closed rather than merely short. So mail 0027 backs
- * it with a CHECK constraint as well, and a test against real Postgres watches it refuse.
+ * of a Postgres enum. This set tracks the organizer kinds — `cloud`, `local`, `mobile` (a
+ * standalone phone) and `unknown` for a peer whose kind or protocol we cannot rank — and
+ * `unknown` is the catch-all that makes it closed rather than merely short. It grows only when
+ * `ORGANIZER_KINDS` does, by a migration in the same slice. So mail 0027 backs it with a CHECK
+ * constraint as well, and a test against real Postgres watches it refuse.
  *
  * It lives HERE and not in a second list. The failure taxonomy's three copies were collapsed into
  * this module because the taxonomy is the domain of a database column; the same argument applies
  * verbatim to this one. `packages/core`'s `StandDownReason` is the ENGINE's own union of the same
- * three strings and cannot import this package (the engine tier may not depend on the private
+ * strings and cannot import this package (the engine tier may not depend on the private
  * half) — so the two are reconciled by assignment at the one place they meet, the worker's gate,
  * plus a test that fails if either side gains a member the other lacks.
  *
@@ -68,6 +69,7 @@ export function isMailboxErrorCode(v: unknown): v is MailboxErrorCode {
 export const MAILBOX_DISABLED_REASONS = [
   "organized_elsewhere:cloud",
   "organized_elsewhere:local",
+  "organized_elsewhere:mobile",
   "organized_elsewhere:unknown",
 ] as const;
 

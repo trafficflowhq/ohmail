@@ -120,11 +120,16 @@ export function isOrganizerRole(v: unknown): v is OrganizerRole {
 }
 
 /**
- * The three organizer kinds — the same closed set `disabled_reason`'s suffix carries, and
- * `'unknown'` is what makes it closed rather than merely small (a peer this build cannot rank).
+ * The organizer kinds — the same closed set `disabled_reason`'s suffix carries, and `'unknown'`
+ * is what makes it closed rather than merely small (a peer this build cannot rank).
  * Closed by `mailboxes_organized_by_kind_closed`.
+ *
+ * `'mobile'` is a standalone phone, which organizes only while the app is open. It arrived a
+ * release after the phone started WRITING it: a reader that could not rank the value read it as
+ * `unknown`, and the phone read its own renew residue that way and stood down from its own
+ * mailbox. The engine's own set (`packages/core`, `OrganizerKind`) carries the same members.
  */
-export const ORGANIZER_KINDS = ["cloud", "local", "unknown"] as const;
+export const ORGANIZER_KINDS = ["cloud", "local", "mobile", "unknown"] as const;
 export type OrganizerKind = (typeof ORGANIZER_KINDS)[number];
 
 export function isOrganizerKind(v: unknown): v is OrganizerKind {

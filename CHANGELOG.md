@@ -13,6 +13,14 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A phone that organizes its own mailbox keeps it
+
+A phone can be the install that organizes a mailbox. Every install writes a record into the mailbox
+saying it holds it, and a phone could write the word for itself that no install could read back —
+so a phone read its own record as another organizer's, handed the mailbox back, and did it again
+every pass. It keeps it now. A computer or ohmail Cloud still takes a mailbox over from a phone when
+you ask, and the row that says so names a phone instead of "another organizer".
+
 ### Your piles travel again between your computers
 
 A computer that reads a mailbox another of your computers organizes gets its settings — your rules,

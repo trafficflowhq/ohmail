@@ -356,7 +356,7 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
  * ── THE TWO UNIONS MEET HERE, AND THE COMPILER IS THE PROOF ────────────────────────────────
  *
  * `StandDownReason` (`packages/core`) and `MailboxDisabledReason` (`@trafficflow/db`) are the
- * same three strings written twice, and they have to be: the engine tier may not import the
+ * same strings written twice, and they have to be: the engine tier may not import the
  * private half, so a single definition is not available. The argument for collapsing a taxonomy
  * into one definition still holds wherever it CAN be one — this is the case where it cannot, so
  * the reconciliation is a typed assignment at the one place the two meet (a member on either side
@@ -374,10 +374,14 @@ function standDownReason(verdict: Exclude<LeaseVerdict, { verdict: "organize" }>
     const reason: MailboxDisabledReason = verdict.reason;
     return reason;
   }
+  // EVERY KIND ON ITS OWN ARM, `reasonFor`'s rule one tier over: a `mobile` holder folded into
+  // `:unknown` would tell a person "another ohmail organizer" about a phone, and the phone is the
+  // holder whose answer differs — it organizes only while it is open.
   const kind = verdict.by?.kind;
   return kind === "cloud" ? "organized_elsewhere:cloud"
     : kind === "local" ? "organized_elsewhere:local"
-      : "organized_elsewhere:unknown";
+      : kind === "mobile" ? "organized_elsewhere:mobile"
+        : "organized_elsewhere:unknown";
 }
 
 function byOf(verdict: Exclude<LeaseVerdict, { verdict: "organize" }>): OrganizerClaim | null {

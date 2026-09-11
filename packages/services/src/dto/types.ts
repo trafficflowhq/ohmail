@@ -472,9 +472,9 @@ export interface MailboxFolderSummary {
  * mailbox. Re-exported, because `MailboxErrorCode` is part of this module's public DTO surface.
  */
 import type {
-  MailboxDisabledReason, MailboxErrorCode, MailboxSyncBlockReason,
+  MailboxDisabledReason, MailboxErrorCode, MailboxSyncBlockReason, OrganizerKind,
 } from "@trafficflow/db";
-export type { MailboxDisabledReason, MailboxErrorCode, MailboxSyncBlockReason };
+export type { MailboxDisabledReason, MailboxErrorCode, MailboxSyncBlockReason, OrganizerKind };
 
 export interface MailboxDTO {
   /**
@@ -495,13 +495,15 @@ export interface MailboxDTO {
    * WHO ORGANIZES IT, when this install does not — `null` when this install does, or when nobody
    * has ever claimed it (a mailbox connected and not yet consented to).
    *
-   * `kind` is a closed set with a CHECK behind it. `name` is the holder's own machine name, which
+   * `kind` is `ORGANIZER_KINDS` ITSELF rather than a second spelling of it, with a CHECK behind the
+   * column — the three literals written here instead went a whole release without `mobile`, so a
+   * phone's claim reached this field as a value the wire could not name. `name` is the holder's own machine name, which
    * is why it is on the ADMIN DTO's deny-list: an account's own user may see what named their
    * laptop, staff may not. `since` is when that install BECAME the organizer, not when it was
    * last seen — a banner says "since Tuesday", never "last seen 40 seconds ago", because a
    * heartbeat on a screen invites a person to watch it.
    */
-  organizedBy: { kind: "cloud" | "local" | "unknown" | null; name: string | null; since: string | null } | null;
+  organizedBy: { kind: OrganizerKind | null; name: string | null; since: string | null } | null;
   /**
    * Whether that organizer is still RENEWING — `'held'` — or stopped and left its claim behind
    * (`'stopped'`). `null` is "this install has not looked", which is every reader's row until its
@@ -737,7 +739,7 @@ export interface MailboxDTO {
    * as "the user disconnected this", which is the original defect wearing a different hat. The
    * closed set ships its own catch-all for exactly this, and `toDTO` uses it.
    *
-   * A CLOSED set of three (`MAILBOX_DISABLED_REASONS`, `@trafficflow/db`) with a CHECK
+   * A CLOSED set (`MAILBOX_DISABLED_REASONS`, `@trafficflow/db`) with a CHECK
    * constraint behind it, so — like `syncBlockedReason` and unlike `errorDetail` — no value a
    * mail server chose can reach it. A stable key, never a sentence: the client owns the wording.
    */
