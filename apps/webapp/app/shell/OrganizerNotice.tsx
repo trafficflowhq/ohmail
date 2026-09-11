@@ -1,36 +1,14 @@
 "use client";
 
 /**
- * ═══ WHO ORGANIZES THIS MAILBOX CHANGED — SAID ONCE, THEN GONE ════════════════════════════
- *
- * Exactly one install organizes a mailbox at a time; every other install that has it connected
- * reads it. Which install holds it can change — somebody presses "Organize here" on a laptop, a
- * server is stopped, a mailbox is released — and when it does, the same person may be sitting in
- * front of a window whose Screener has quietly stopped filing, or started.
- *
- * This is the line that says so. It appears when a change has not been acknowledged, carries one
- * action that acknowledges it, and then never appears again for that change.
- *
- * ── WHY ONCE, AND NOT A STANDING BANNER ───────────────────────────────────────────────────────
- *
- * Because reading a mailbox somebody else organizes is a NORMAL, often deliberate state — a phone
- * and a laptop on one mailbox is the ordinary shape of the product — and a banner that says so on
- * every visit is a warning about a decision the person already made. The durable record belongs
- * on the pane that holds durable records: Settings → Mailboxes keeps the state line and the
- * controls, permanently, and this says only what CHANGED.
- *
- * ── WHY IT IS DERIVED FROM TWO INSTANTS RATHER THAN A DISMISSED FLAG ──────────────────────────
- *
- * `organizerNotices` in `mail-state.ts` owns that argument in full. The short of it: the pair
- * lives on the mailbox row, so a phone, a browser and a desktop window agree about whether a
- * change has been seen, and acknowledging on one of them clears it on the others.
- *
- * ── THE ONE GATE THIS COMPONENT MAKES FOR ITSELF ──────────────────────────────────────────────
- *
- * No transport, no notice. A line that cannot be acknowledged is exactly the repeated warning the
- * whole design refuses to be — it would stand on every visit for ever, with a button that does
- * nothing or no button at all. The shell passes a transport only on a door that serves the route,
- * so the honest degraded state is silence plus the permanent line in Settings.
+ * Who organizes this mailbox changed — said once, then gone. Exactly one install organizes a mailbox; which one can
+ * change ("Organize here" on a laptop, a stopped server, a release), and the same person may sit in front of a window
+ * whose Screener quietly stopped filing, or started. This line appears while a change is unacknowledged, carries one
+ * action, then never again for that change. Once and not a standing banner: reading a mailbox somebody else organizes
+ * is a normal, often deliberate state, and the durable record lives in Settings → Mailboxes. Derived from two
+ * instants rather than a dismissed flag (`organizerNotices` in `mail-state.ts` owns the argument): the pair lives on
+ * the mailbox row, so acknowledging on one device clears it on the others. The one gate this component makes for
+ * itself: no transport, no notice — a line that cannot be acknowledged would stand on every visit for ever.
  */
 
 import { useState, type ReactNode } from "react";
@@ -40,16 +18,12 @@ import type { OrganizerNotice as OrganizerNoticeFact } from "./mail-state";
 import { goSettings } from "./routing";
 
 /**
- * HOW "Mark read" REACHES THE ROW.
- *
- * Injected rather than imported, on the seam rule the away responder and the profile card already
- * follow: the browser reaches a hosted API, the desktop window reaches an engine on the same
- * machine over a pipe, and the sentence, the gate and the once-per-change rule have exactly one
- * implementation between them.
- *
- * MUST REJECT on failure. A resolved promise is read as "acknowledged" and the line leaves the
- * screen on this door until the next poll agrees; a rejection puts it back, which is the truthful
- * outcome for a stamp that was not written.
+ * How "Mark read" reaches the row. Injected rather than imported, on the seam rule the away
+ * responder and the profile card follow: the browser reaches a hosted API, the desktop window
+ * reaches an engine on the same machine over a pipe, and the sentence, the gate and the
+ * once-per-change rule have exactly one implementation between them. MUST REJECT on failure: a
+ * resolved promise is read as "acknowledged" and the line leaves the screen until the next poll
+ * agrees; a rejection puts it back — the truthful outcome for a stamp that was not written.
  */
 export type OrganizerNoticeTransport = (mailboxId: string) => Promise<unknown>;
 
@@ -63,15 +37,12 @@ export function OrganizerNotice({
 }) {
   const t = useTranslations("mailboxes");
   /**
-   * MAILBOXES ACKNOWLEDGED IN THIS SESSION, so the line leaves on the press rather than on the
-   * poller's slower clock.
-   *
-   * Optimistic and NOT authoritative: the row is what decides, and the next poll brings the
-   * stamped instant back and keeps this line gone on its own. This exists because the poll is
-   * seconds away and a person who presses "Mark read" and watches nothing happen presses again.
-   *
-   * A FAILED write is removed from here again, so the line comes back rather than being silently
-   * swallowed — the acknowledgement did not happen, and the surface must not claim it did.
+   * Mailboxes acknowledged in this session, so the line leaves on the press rather than on the
+   * poller's slower clock. Optimistic and NOT authoritative: the row decides, and the next poll
+   * brings the stamped instant back and keeps the line gone on its own — this exists because the
+   * poll is seconds away and a person who presses "Mark read" and watches nothing happen presses
+   * again. A FAILED write is removed from here again, so the line comes back: the acknowledgement
+   * did not happen, and the surface must not claim it did.
    */
   const [acknowledged, setAcknowledged] = useState<ReadonlySet<string>>(() => new Set());
   const live = notices.filter((n) => !acknowledged.has(n.id));

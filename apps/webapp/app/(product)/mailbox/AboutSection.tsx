@@ -1,43 +1,14 @@
 "use client";
 
 /**
- * SETTINGS → ABOUT OHMAIL.
- *
- * It was the (i) panel: a floating dock button opening a dialog over the mail. The content
- * was right and the container was not — these are facts about the installation, and facts
- * are what a settings screen is. The dialog is gone; this is the pane it became.
- *
- * ── WHAT GOES HERE ──────────────────────────────────────────────────────────────────────
- *
- * Which mailbox is connected and when it last synced; which build is running; who publishes
- * this and where to read what they do with your mail. Those are the things a person cannot
- * find out any other way. Nothing else — not a description of the sync engine, not a summary
- * of what the app does, not reassurance.
- *
- * `lastSyncAt` is the load-bearing one and it is reported exactly as the server states it,
- * including `null`. A mailbox connected thirty seconds ago has genuinely never synced; the
- * worker runs on its own cycle, and "waiting for the first sync" is the true sentence there.
- * Rendering it as "just now" would be the same class of lie this pane was first fixed for.
- *
- * ── THE PUBLISHER FACTS ARE NOT TRANSLATED, AND THAT IS THE EXISTING RULE ───────────────
- *
- * `app/(marketing)/imprint/page.tsx` states it: *"Legal content is intentionally NOT routed
- * through i18n — it is the binding legal text of the Swiss operator and changes only
- * deliberately."* The same facts appear here, so they are written the same way and taken
- * from that page rather than re-worded. Two renderings of one imprint that can drift is
- * exactly what a translated copy would be.
- *
- * The rule covers the FACTS — the company name, the address, the register entry — and only
- * them. The headings above the facts and the labels on the policy links are this pane's own
- * chrome, and a German session was showing them in English ("Published by" over a German
- * page), so they read the catalogue like every other sentence here. The link labels come from
- * the `footer` namespace rather than a second copy in `about`: they name the same three
- * documents the marketing footer names, and two label sets for one set of documents is the
- * same drift argument as the imprint's, one level up.
- *
- * It also has to live in THIS file rather than in the shared `SettingsView`: the company
- * named is the operator of the hosted service, and a standalone Desktop install has no such
- * operator. Desktop passes no `aboutSection` and gets no pane.
+ * Settings → About ohmail. It was the (i) panel — a floating dialog over the mail; the content was right and
+ * the container was not: these are facts about the installation, and facts are what a settings screen is. Here:
+ * which mailbox is connected and when it last synced, which build runs, who publishes this — nothing else.
+ * `lastSyncAt` is reported exactly as the server states it, including `null`: a mailbox connected thirty
+ * seconds ago has genuinely never synced, and "just now" would be a lie. Publisher facts are not translated
+ * (the imprint's rule: binding legal text, taken from that page, never re-worded); headings and link labels are
+ * this pane's own chrome and read the catalogue — labels from the `footer` namespace, one label set for one set
+ * of documents. In THIS file, not `SettingsView`: a standalone install passes no `aboutSection`, gets no pane.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -50,15 +21,12 @@ import { SELF_HOST_BUILD, serverHello } from "../../hello";
 /** Inlined by `next.config.mjs` from the commit sha — see `buildIdentity` there. */
 const BUILD = process.env.NEXT_PUBLIC_BUILD ?? "dev";
 /**
- * The RELEASE, inlined by `next.config.mjs` from the workspace's `package.json` — see
- * `appVersion` there.
- *
- * NO `?? "dev"`, and the difference from the line above is the whole reason this comment exists.
- * The build sha genuinely IS "dev" when there is no commit to name, so a fallback there states a
- * true fact. A version has no such honest default: the number exists in the source of every build
- * and is read from it, so a fallback here could only ever fire when the inlining broke — and it
- * would then print a version that is not this one, in the one place a person looks to find out
- * which release they are running.
+ * The RELEASE, inlined by `next.config.mjs` from the workspace's `package.json` (`appVersion`). No
+ * `?? "dev"`, and the difference from the line above is the whole reason this comment exists: the
+ * build sha genuinely IS "dev" when there is no commit to name, so a fallback there states a true
+ * fact; a version has no honest default — the number exists in the source of every build, so a
+ * fallback could only fire when the inlining broke, and would then print a version that is not
+ * this one, in the one place a person looks to find out which release they are running.
  */
 const VERSION = process.env.NEXT_PUBLIC_APP_VERSION;
 
@@ -87,18 +55,14 @@ export function AboutSection() {
         if (alive.current) { setItems(got); setFailure(null); }
       } catch (err) {
         /**
-         * ── A FAILED READ IS NOT AN EMPTY RESULT — THIS COMMENT WAS THE CLAIM UNDER TEST, AND IT WAS FALSE ─────────
-         *
-         * It said *"The panel says 'could not read' rather than showing nothing"*. There is
-         * no such sentence in the `about` namespace and there never was; what `setItems([])`
-         * actually produced is `mailboxLine`'s **"No mailbox connected. Settings →
-         * Mailboxes."** — which is not "could not read", it is the opposite claim stated as
-         * fact, and it points the reader at a pane to fix a problem they do not have.
-         *
-         * The sentence is the SERVER'S, not one invented here, for the reason `api-client.ts`
-         * gives: a second copy of the taxonomy in the client is how somebody is told the
-         * wrong thing about why. That also keeps this fix inside `app/**` — the `about`
-         * namespace in `messages/en.json` is not this change's to add a key to.
+         * A failed read is not an empty result — this comment was the claim under test, and it was
+         * false: it said "The panel says 'could not read' rather than showing nothing", but no such
+         * sentence exists in the `about` namespace, and `setItems([])` actually produced
+         * `mailboxLine`'s "No mailbox connected. Settings → Mailboxes." — the opposite claim
+         * stated as fact, pointing the reader at a pane to fix a problem they do not have. The
+         * sentence is the SERVER'S, not one invented here (`api-client.ts`: a second copy of the
+         * taxonomy is how somebody is told the wrong thing about why), which also keeps the fix
+         * inside `app/**` — the `about` namespace is not this change's to add a key to.
          */
         if (alive.current) { setItems(null); setFailure(messageOf(err)); }
       }

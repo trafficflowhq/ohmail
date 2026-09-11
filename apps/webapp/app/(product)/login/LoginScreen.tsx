@@ -1,36 +1,14 @@
 "use client";
 
 /**
- * SIGN-IN, wired.
- *
- * Until this landed it was a visual: a passkey button that raised a toast saying accounts
- * were not open yet. It now drives the real two-step flow.
- *
- * ── THE TWO OUTCOMES OF `POST /auth/login` ──────────────────────────────────────────────
- *
- * Login is a UNION (`LoginResult`), and both arms matter here:
- *
- *  · `twofa_required` — the ordinary path. A single-use login token plus the list of
- *    methods the user actually enrolled, and the second factor completes the session.
- *  · `enrollment` — the RE-ENTRY path. A user with ZERO enrolled factors gets the
- *    same enrollment session `register` hands out, because for them the password IS the
- *    only factor in existence and the alternative is a permanently unusable account. This
- *    screen routes that straight to `/join`, which resumes at the passkey step.
- *
- * ── THE PASSWORD FIELD IS NOT A REGRESSION ──────────────────────────────────────────────
- *
- * The earlier visual implied passkey-only sign-in. The server has never worked that way:
- * the password is the FIRST factor and the passkey is the second (`AuthService.login`
- * verifies a password hash before it mints a login token). A UI that hid the first factor
- * could not have signed anyone in. What the product does promise — "no password to leak" —
- * is about the second factor being a passkey and about `credentials` storing a scrypt hash,
- * and both remain true.
- *
- * ── WHAT THIS FILE MUST NOT DO ──────────────────────────────────────────────────────────
- *
- * Store anything. The session is three `HttpOnly` cookies set by the server; the login
- * token lives in a local variable for the duration of one ceremony and is single-use. There
- * is no "remember me", because that would mean a credential this code could read.
+ * Sign-in, wired. `POST /auth/login` is a union (`LoginResult`) and both arms matter: `twofa_required` — the ordinary
+ * path, a single-use login token plus the enrolled methods; `enrollment` — the RE-ENTRY path: a user with zero
+ * enrolled factors gets the same enrollment session `register` hands out, because for them the password IS the only
+ * factor and the alternative is a permanently unusable account — routed straight to `/join`, which resumes at the
+ * passkey step. The password field is not a regression: the password has always been the FIRST factor and the passkey
+ * the second (`AuthService.login` verifies a hash before minting a token); "no password to leak" is about the second
+ * factor and the scrypt hash, both still true. This file must not store anything: the session is three `HttpOnly`
+ * cookies, the login token lives in a local variable for one ceremony, and there is no "remember me".
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -50,16 +28,13 @@ import { resolveOwnerOutcome } from "../session-outcome";
 type Stage = "password" | "twofa";
 
 /**
- * ── THE REFUSALS A PERSON MEETS AT THIS FORM GET THIS FORM'S OWN SENTENCES ────────────────────
- *
- * `messageOf` renders the server's message verbatim, which is right for the refusal taxonomy the
- * services write for humans ("that invite is already used", the lockout sentence with its
- * minutes) and wrong for the auth ceremony's bare 401s: `AuthService` answers those with
- * lowercase wire strings — "invalid email or password", "two-factor verification failed" —
- * written as diagnostics, not as copy. They rendered raw on this screen. So a 401 here is mapped
- * to a sentence in the catalogue, keyed by WHICH factor was being tried (the caller knows;
+ * The refusals a person meets at this form get this form's own sentences. `messageOf` renders the
+ * server's message verbatim — right for the refusal taxonomy the services write for humans, wrong
+ * for the auth ceremony's bare 401s: `AuthService` answers those with lowercase wire strings
+ * ("invalid email or password") written as diagnostics, and they rendered raw on this screen. So a
+ * 401 here maps to a catalogue sentence keyed by WHICH factor was being tried (the caller knows;
  * the status alone does not say), and everything that is not a bare 401 keeps the server's own
- * sentence exactly as before — this maps presentation, it re-derives no taxonomy.
+ * sentence — this maps presentation, it re-derives no taxonomy.
  */
 type FactorTried = "password" | "code" | "passkey";
 
@@ -107,44 +82,25 @@ export function LoginScreen() {
   const submittedRef = useRef(false);
 
   /**
-   * ALREADY SIGNED IN? THEN THIS PAGE IS NOT WHAT YOU WANTED.
-   *
-   * `/login` is a plain credential page — middleware does not gate it, so a visitor with a
-   * perfectly live session was shown a sign-in form and had to sign in again to reach a
-   * mailbox they were already signed in to. Reported from live use, exactly this way.
-   *
-   * `api()` refreshes and retries on a 401 (`app/session-refresh.ts`), so this also covers the
-   * lapsed-but-resumable case: a browser whose access cookie died an hour ago silently gets a
-   * new one here and goes straight through. Only a session that cannot be recovered at all
-   * falls through to the form.
-   *
-   * `replace`, not `push`: signing in should not leave the login page in the back stack. The
-   * fragment rides along so a link to `/login#/settings` lands on Settings.
-   *
-   * ── IT RETRIES, AND THAT IS THE OTHER HALF OF A REPORTED DEFECT ──────────────────────────
-   *
-   * The catch here was empty, and its comment said "no session, or unreachable — the form
-   * below is the right answer". The form IS the right answer for both — but only once the
-   * question has actually been asked. While the shell was rendering "You are signed out." on a single
-   * `503 db_busy` (`AUTH-FLICKER-DIAGNOSIS.md`), a person who pressed Sign in during the same
-   * burst met this effect's own 503 and got the form; a person who pressed it ten seconds
-   * later was forwarded straight into their mailbox. Same session, same minute, two answers —
-   * which reads as the product not knowing whether you are signed in, because it did not.
-   *
-   * So the ladder is the same ladder, from the same module, on the same schedule as the
-   * shell's confirm: `unknown` retries up to {@link CONFIRM_ATTEMPTS}, `none` stops, and a
-   * confirmed `owner` forwards. The FORM RENDERS THROUGHOUT — a form is not a verdict, and
-   * making somebody wait behind a spinner to be told they may type their password would be a
-   * worse trade than the one this fixes. It just stops contradicting the shell.
-   *
-   * Cancelled on unmount AND on the first submit — and cancelled means ABORTED, not ignored.
-   * A confirm still in flight when a password is submitted does not merely arrive too late to
-   * navigate: if it 401s it sends `POST /auth/refresh` with the OLD account's refresh cookie,
-   * and that response rewrites the whole jar. Landing after the new session's cookies are set,
-   * a success overwrites them with the previous account's and a failure clears them — so the
-   * person is switched back, or signed straight out, seconds after completing a sign-in.
-   * Suppressing the promise continuation cannot undo a `Set-Cookie`; only stopping the request
-   * before it becomes a refresh can. The ladder made that window wider, so it carries the fix.
+   * Already signed in? Then this page is not what you wanted. `/login` is a plain credential page —
+   * middleware does not gate it — so a visitor with a live session was shown a sign-in form
+   * (reported from live use). `api()` refreshes and retries on a 401, so the lapsed-but-resumable
+   * case goes straight through; only an unrecoverable session falls to the form. `replace`, not
+   * `push`, and the fragment rides along so `/login#/settings` lands on Settings. It retries on the
+   * same ladder and schedule as the shell's confirm: `unknown` retries up to
+   * {@link CONFIRM_ATTEMPTS}, `none` stops, a confirmed `owner` forwards — one 503 no longer
+   * produces the form while the shell says "signed out". The form renders throughout.
+   */
+
+  /*
+   * Cancelled on unmount AND on the first submit — and cancelled means ABORTED, not ignored. A
+   * confirm still in flight when a password is submitted does not merely arrive too late: if it
+   * 401s it sends `POST /auth/refresh` with the OLD account's refresh cookie, and that response
+   * rewrites the whole jar — landing after the new session's cookies are set, a success overwrites
+   * them with the previous account's and a failure clears them, so the person is switched back or
+   * signed out seconds after completing a sign-in. Suppressing the promise continuation cannot undo
+   * a `Set-Cookie`; only stopping the request before it becomes a refresh can. The ladder made that
+   * window wider, so it carries the fix.
    */
   useEffect(() => {
     if (!configured) return;

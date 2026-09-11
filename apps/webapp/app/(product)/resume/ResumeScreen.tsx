@@ -1,50 +1,14 @@
 "use client";
 
 /**
- * THE RESUME SPLASH — the half-second that turns a 15-minute session into a 90-day one.
- *
- * A signed-in customer's `tf_session` cookie lives fifteen minutes. Their `tf_refresh` cookie
- * lives ninety days — rolling, so every rotation re-issues it — but is scoped `Path=/auth/refresh`,
- * so it is invisible to a request for `/` and the edge gate cannot see it. The result, seen
- * live: an account created the day before, entirely intact, and its holder served the
- * marketing page with no way back in.
- *
- * `tf_resume` (a `Lax`, credential-free marker — `packages/api/src/cookies.ts`) is what lets
- * the gate notice such a browser and send it here instead. This page does the one thing the
- * edge cannot: a same-origin `POST /auth/refresh`, which IS a request to the path the refresh
- * cookie is scoped to, so the browser finally attaches it.
- *
- * ── WHY A PAGE AND NOT A REDIRECT ───────────────────────────────────────────────────────
- *
- * Because only a browser can make this request. Middleware runs at the edge with the cookies
- * the browser chose to send, and `tf_refresh` is not among them for `/`. Widening its Path so
- * the edge could read it is forbidden (`next.config.mjs`) and would put a live credential on
- * every request to every page — precisely the exposure the narrow path exists to prevent.
- *
- * ── IT MUST NEVER LOOP ──────────────────────────────────────────────────────────────────
- *
- * Two independent guards, because a loop here is an unusable product:
- *
- *  1. The SERVER clears the whole cookie jar — marker included — when a cookie refresh fails
- *     (`packages/api/src/routes/core.ts`). A revoked or already-rotated family therefore stops
- *     being resumable at the source, on the first attempt.
- *  2. This page keeps a one-shot flag in `sessionStorage` for the case guard 1 cannot cover:
- *     a refresh that neither succeeds nor cleanly fails (a 5xx, an offline tab). Without it a
- *     browser could bounce `/` → resume → `/` → resume for as long as the marker lives.
- *
- * ── THE HASH IS THE VIEW, AND `reload()` IS WHAT KEEPS IT ───────────────────────────────
- *
- * `app/shell/routing.ts` routes the client on the URL FRAGMENT — `/#/settings`, `/#/screener`.
- * A fragment is never sent to the server, so the edge gate cannot see it: the browser is
- * ALREADY at the right URL, and the only thing that needs to change is the server's answer,
- * now that the cookie jar has a live session in it.
- *
- * So this reloads rather than navigating, and that is a correction of a real bug rather than a
- * stylistic choice. `location.replace("/" + hash)` looks right and does nothing: the URL it
- * computes is byte-identical to the current one, so the browser treats it as a fragment change
- * and never re-requests the document. Observed live — the refresh succeeded, fresh
- * cookies arrived, and the page sat on this splash for ever because no second `GET /` was ever
- * made. `reload()` re-runs the gate and preserves the fragment by definition.
+ * The resume splash — the half-second that turns a 15-minute session into a 90-day one. `tf_session` lives
+ * fifteen minutes; `tf_refresh` lives ninety days but is scoped `Path=/auth/refresh`, invisible to a request
+ * for `/` — seen live: an intact day-old account served the marketing page with no way back in. `tf_resume`
+ * lets the gate send such a browser here, and this page does the one thing the edge cannot: a same-origin `POST
+ * /auth/refresh` (widening the cookie's Path is forbidden). It must never loop: the server clears the whole jar
+ * when a refresh fails, and a one-shot `sessionStorage` flag covers the 5xx/offline case. It RELOADS rather
+ * than navigating: `location.replace("/" + hash)` computes a byte-identical URL, treated as a fragment change
+ * and never re-requested (observed live — the splash sat for ever).
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -96,31 +60,24 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
     }
 
     /*
-     * ── THE ACCOUNT THIS SPLASH WAS CHOSEN FOR ────────────────────────────────────────────
-     *
-     * `initialOwner` is the marker as the EDGE saw it, when it decided to serve this page. The
-     * jar can have changed hands since — this effect runs after the document was delivered and
-     * hydrated, and the lock inside the refresh adds a second wait. A refresh under a jar that
-     * has become somebody else's rotates THEIR session from a window that is not theirs.
-     *
-     * `null` means the edge saw no marker, which is the ordinary shape of a cross-site
-     * navigation that withheld the cookies (the case this splash exists for). There is nothing
-     * to compare then, so nothing is refused — the predicate answers true and the resume runs
-     * exactly as it always has.
+     * The account this splash was chosen for. `initialOwner` is the marker as the EDGE saw it when
+     * it decided to serve this page; the jar can have changed hands since — this effect runs after
+     * hydration, and the lock inside the refresh adds a second wait. A refresh under a jar that has
+     * become somebody else's rotates THEIR session from a window that is not theirs. `null` means
+     * the edge saw no marker — the ordinary shape of a cross-site navigation that withheld the
+     * cookies — so nothing is compared and the resume runs exactly as it always has.
      */
     const stillMine = (): boolean => initialOwner === null || readOwner() === initialOwner;
 
     void (async () => {
       /*
-       * NO SECOND CHECK BEFORE THIS CALL, and its absence is deliberate. One stood here and was
-       * removed when its mutation could not be made to bite: `resumeSession` consults the same
-       * predicate inside the lock, so an early copy changed no outcome in any reachable
-       * sequence — it only made the guard look like two guards. A check nothing can watch fail
-       * is not defence in depth, it is decoration that a later reader will trust.
-       *
-       * The one gap the predicate does NOT cover is `resumeSession`'s own `inFlight` dedupe: a
-       * refresh already running when this effect starts is returned as-is, predicate and all
-       * skipped. An early check would not have helped there either — the request has left.
+       * No second check before this call, deliberately. One stood here and was removed when its
+       * mutation could not be made to bite: `resumeSession` consults the same predicate inside the
+       * lock, so an early copy changed no outcome in any reachable sequence — a check nothing can
+       * watch fail is not defence in depth, it is decoration a later reader will trust. The one gap
+       * the predicate does not cover is `resumeSession`'s own `inFlight` dedupe: a refresh already
+       * running when this effect starts is returned as-is — an early check would not help there
+       * either, the request has left.
        */
       const ok = await resumeSession({ mayProceed: stillMine });
       if (!ok) {
