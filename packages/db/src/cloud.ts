@@ -1,28 +1,12 @@
 /**
  * `@trafficflow/db/cloud` — the HOSTED half: billing, credits, alerts, the AI spend gate, the
- * admin database handle and its staff grants, plus the Cloud schema.
- *
- * ## Why this is its own entry point
- *
- * The desktop engine is a real consumer of this package and it is SHIPPED — the .app conveys
- * whatever the engine's bundle contains. While these lived on the root barrel, every module
- * that imported `@trafficflow/db` for a mail table also received billing, Stripe, the staff
- * tables and the Cloud schema, because `index.ts` re-exported them and `./schema.js` (the
- * barrel) rather than `./schema-mail.js`. That is not a weight argument: the first engine
- * bundle ever built failed its own artifact census on exactly this, counting `password_hash`
- * x4, `token_hash` x7, `credit_ledger` x10, `staff_users` x6, `stripe` x24 and the database
- * provider's name x3 in something a stranger would download.
- *
- * The root barrel now carries the MAIL schema and the primitives both halves share. A module
- * that genuinely needs a hosted symbol imports it from here and says so by importing it; the
- * ~280 that never referenced one simply stop receiving it.
- *
- * ## The rule
- *
- * Nothing that ships in the desktop engine may import this. `test/desktop-engine-closure.test.ts`
- * guards the migration entry point the same way, and `scripts/build-engine.mjs` censuses the
- * built artifact — a closure test reads imports, an artifact is what ships, and both exist
- * because neither alone caught this.
+ * admin handle and its staff grants, plus the Cloud schema. Its own entry point because the
+ * desktop engine consumes this package and SHIPS: on the root barrel, every mail-table import
+ * also received billing and staff tables, and the first engine bundle failed its artifact census
+ * on exactly that. The root barrel now carries the MAIL schema and shared primitives. The rule:
+ * nothing that ships in the desktop engine may import this —
+ * `test/desktop-engine-closure.test.ts` reads imports, `scripts/build-engine.mjs` censuses the
+ * artifact; neither alone caught this.
  */
 
 /* The Cloud TABLES themselves. They were reaching consumers through the root barrel's
@@ -30,17 +14,13 @@
 export * from "./schema-cloud.js";
 
 /**
- * `schema` — the COMBINED object — and the postgres CLIENTS built over it, on THIS entry point
- * rather than the root.
- *
- * Drizzle's query builder is typed on the schema its handle was constructed with, so a handle
- * that genuinely spans both halves — the hosted API's, the worker's — needs the whole object.
- * That is a hosted need by definition: the desktop engine builds its own handle from `mailSchema`
- * against a database the mail journal alone created (`apps/sidecar/src/db.ts`), and every one of
- * these functions dials a `postgres://` URL, which is not a thing a local install has.
- *
- * They are here and not on the root because a re-export is a RUNTIME edge even when no consumer
- * calls the function and every consumer writes only `typeof schema`. See the closure rule at the
+ * `schema` — the COMBINED object — and the postgres clients built over it, on THIS entry point
+ * rather than the root. Drizzle's query builder is typed on the schema its handle was constructed
+ * with, so a handle spanning both halves — the hosted API's, the worker's — needs the whole
+ * object. That is a hosted need by definition: the desktop engine builds its own handle from
+ * `mailSchema` (`apps/sidecar/src/db.ts`), and every one of these functions dials a `postgres://`
+ * URL, which a local install does not have. Here and not on the root because a re-export is a
+ * RUNTIME edge even when every consumer writes only `typeof schema` — see the closure rule at the
  * top of `index.ts`.
  */
 export { schema } from "./schema.js";
@@ -214,20 +194,14 @@ export {
 } from "./kek-rewrap.js";
 
 /**
- * ATTACHMENT STAGING — the hosted send's direct-upload transport (cloud 0015): the rows, the
- * bucket, and the retention sweep over both.
- *
- * HOSTED-ONLY by construction and not only by convention: a local install runs the send handler in
- * the same process as its own SMTP dial, so there is no request body to stage around and no object
- * storage to stage into. The table is created by the cloud journal, so a desktop database has no
- * such table to write into however the imports are arranged.
- *
- * THE OBJECT HALF IS HERE AND NOT IN `packages/services`, and this entry point is why it can be:
- * the sweep runs in the WORKER's maintenance slot, and the worker's runtime closure is `core` +
- * `db` and nothing else (pinned by the worker's dependency test). A storage client on a `/cloud`
- * entry point is also nothing new — `webhookAlertSink` above is a runtime `fetch` sink the worker
- * already composes. The send-facing half of the transport, which maps a failed read onto an HTTP
- * status, stays in `packages/services` where a service error means something.
+ * Attachment staging — the hosted send's direct-upload transport (cloud 0015): the rows, the
+ * bucket, and the retention sweep over both. HOSTED-ONLY by construction, not convention: a local
+ * install runs the send handler beside its own SMTP dial, so there is nothing to stage around,
+ * and the table is created by the cloud journal, so a desktop database has no such table however
+ * the imports are arranged. The object half is here and not in `packages/services` because the
+ * sweep runs in the WORKER's maintenance slot and the worker's runtime closure is `core` + `db`
+ * (pinned by its dependency test). The send-facing half — mapping a failed read onto an HTTP
+ * status — stays in `packages/services`.
  */
 export {
   createStagingTicket, createStagingTicketWithinQuota, outstandingStagingUsage, stagingTicketId,

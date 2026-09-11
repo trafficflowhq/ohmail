@@ -3,41 +3,14 @@ import { CHANGE_LOG_CHANNEL, parseChangeWake } from "./change-log.js";
 import { onNotice } from "./notices.js";
 
 /**
- * ONE LISTEN CONNECTION PER PROCESS/INSTANCE, fanned out to that process's `/events` streams.
- *
- * Extracted verbatim from `apps/api-vercel/src/wake-hub.ts` (which now re-exports it), because a
- * second long-running host composes the same hub over its own connection string and the invariant
- * below must stay ONE implementation: two hand-kept copies of "streams : connections = N : 1"
- * is how one of them quietly becomes N : N. It lives on the CLOUD entry point — it dials a
- * `postgres://` URL, which no shipped local engine has.
- *
- * ── THE CONNECTION ECONOMICS, WHICH ARE THE WHOLE DESIGN ──────────────────────────────────
- *
- * A LISTEN must sit on a session-mode connection (on the managed host `DATABASE_URL_SESSION` —
- * the pooler pins one backend per client there; transaction mode multiplexes and the LISTEN
- * silently subscribes a backend the next statement has already left; a standalone server's plain
- * Postgres URL is session-mode by nature). Session-mode slots are the scarce resource: they are
- * real pinned backends, budgeted in the tens, not the hundreds. So the invariant this module
- * exists to hold is **streams : connections = N : 1 per instance** —
- *
- *  · never one LISTEN per stream (a hundred tabs would hold a hundred pinned backends, which
- *    is the pooler-exhaustion shape `events.ts` was written against);
- *  · lazily dialed — an instance that has served no `/events` stream holds nothing;
- *  · released when idle — {@link IDLE_CLOSE_MS} after the last unsubscribe, the connection is
- *    ended, so a fleet of warm-but-quiet instances converges back to zero held slots.
- *
- * ── FAILURE IS DEGRADATION, NEVER AN ERROR THE STREAM SEES ────────────────────────────────
- *
- * `subscribe` never throws and never blocks: a hub whose LISTEN cannot be established (bad
- * URL, exhausted pool, provider hiccup) registers the callback anyway and keeps trying to dial
- * on later subscribes, one attempt per {@link RETRY_AFTER_MS}. Streams notice nothing — their
- * own poll loop is the reliability floor, and a missed wake is indistinguishable from quiet.
- * postgres-js re-dials a dropped listen connection itself (and re-issues the LISTEN on
- * reconnect); the retry here covers the attempt that failed outright.
- *
- * The payload is parsed by `parseChangeWake` and anything malformed is dropped: this channel
- * is shared infrastructure, and a foreign writer on it must not become an exception inside a
- * notification callback.
+ * One LISTEN connection per process/instance, fanned out to that process's `/events` streams.
+ * `apps/api-vercel/src/wake-hub.ts` re-exports this; a second long-running host composes the same
+ * hub, and "streams : connections = N : 1" must stay ONE implementation. On the CLOUD entry point
+ * — it dials a `postgres://` URL. A LISTEN needs a session-mode connection, and session slots are
+ * scarce. So: never one LISTEN per stream, lazily dialed, released {@link IDLE_CLOSE_MS} after
+ * the last unsubscribe. Failure is degradation: `subscribe` never throws — a failed LISTEN
+ * registers the callback and retries on later subscribes, one attempt per {@link RETRY_AFTER_MS};
+ * the stream's own poll loop is the reliability floor. Malformed payloads are dropped.
  */
 export const IDLE_CLOSE_MS = 60_000;
 export const RETRY_AFTER_MS = 30_000;
@@ -47,17 +20,13 @@ interface HubLog {
 }
 
 /**
- * The hub's own interface, declared HERE structurally identical to `ChangeWakeHub` in
- * `@trafficflow/api` — this package sits BELOW the API package in the dependency order, so it
- * cannot import the type it satisfies. `deps-parity`: the API's `ChangeWakeHub` has exactly
- * `subscribe`, and structural typing is what lets every host assign this without a cast.
- *
- * `end()` is IN ADDITION to that contract and exists for the long-running host: a standalone
- * server's SIGTERM must be able to release the LISTEN connection NOW rather than waiting out
- * {@link IDLE_CLOSE_MS} with a socket holding the event loop open. The serverless host never
- * calls it (its instances are reaped by the platform), so its behavior is byte-identical to the
- * pre-extraction module. `end()` is idempotent; a subscribe arriving after it may re-dial, which
- * is harmless — shutdown closes the server before the hub, so nothing subscribes after.
+ * The hub's own interface, structurally identical to `ChangeWakeHub` in `@trafficflow/api` — this
+ * package sits BELOW the API in the dependency order, so it cannot import the type it satisfies;
+ * structural typing lets every host assign it without a cast. `end()` is in ADDITION to that
+ * contract, for the long-running host: a standalone server's SIGTERM must release the LISTEN
+ * connection NOW rather than waiting out {@link IDLE_CLOSE_MS} with a socket holding the event
+ * loop open. The serverless host never calls it. `end()` is idempotent; a subscribe arriving
+ * after it may re-dial, which is harmless — shutdown closes the server before the hub.
  */
 export interface ChangeWakeFanout {
   subscribe(accountId: string, onWake: (seq: bigint) => void): () => void;
@@ -204,20 +173,14 @@ export function makeChangeWakeHub(
       ensureListening();
 
       /**
-       * ── THIS SUBSCRIBER NEEDS ITS OWN RETRY, AND THAT IS A REAL ASYMMETRY WITH `subscribe` ────
-       *
-       * The retry this module documents — "keeps trying to dial on later subscribes, one attempt
-       * per RETRY_AFTER_MS" — is driven entirely by NEW SUBSCRIBERS calling `ensureListening`. For
-       * `/events` that is self-driving: streams come and go constantly, and every reconnect is
-       * another attempt. `subscribeAll` has exactly one consumer, which subscribes ONCE at process
-       * start and never again. So a LISTEN that failed at boot — a pooler at its limit during a
-       * rolling deploy is the ordinary way — stayed failed for the life of the process, and the
-       * startup path's claim that it retries was false for precisely this subscriber.
-       *
-       * A timer rather than a hook on the failed dial, because `ensureListening` is already
-       * idempotent and already respects `retryAt`: an attempt that is not due is free, and one that
-       * is due is exactly the retry that was missing. Unref'd, so it never keeps a process alive,
-       * and cleared on unsubscribe so a stopped sender leaves nothing behind.
+       * This subscriber needs its own retry — a real asymmetry with `subscribe`. The module's
+       * retry ("one attempt per RETRY_AFTER_MS") is driven by NEW subscribers calling
+       * `ensureListening`; for `/events` that is self-driving, but `subscribeAll` has exactly one
+       * consumer, which subscribes ONCE at process start. A LISTEN that failed at boot — a pooler
+       * at its limit during a rolling deploy is the ordinary way — stayed failed for the life of
+       * the process. A timer rather than a hook on the failed dial: `ensureListening` is
+       * idempotent and respects `retryAt`, so an attempt not due is free. Unref'd so it never
+       * keeps a process alive; cleared on unsubscribe.
        */
       const retry = setInterval(() => { ensureListening(); }, retryAfterMs);
       (retry as { unref?: () => void }).unref?.();
@@ -237,31 +200,14 @@ export function makeChangeWakeHub(
       };
     },
     /**
-     * The prompt release for a long-running host's shutdown. Idempotent: `teardown` nulls the
-     * handle, so a second call awaits nothing.
-     *
-     * ── EVERY AUTOMATIC RE-DIAL IS DISARMED FIRST, AND THE RETRY MADE THAT LOAD-BEARING ───────
-     *
-     * `teardown` nulls `listening` and does NOT touch `total` — correctly, because `total` counts
-     * subscribers and shutting the socket does not unsubscribe anyone. But that combination is
-     * exactly what `ensureListening` reads as "no LISTEN and someone wants one", so the
-     * `subscribeAll` retry interval's next tick opened a FRESH connection moments after this
-     * method had closed one. `end()` then meant "release the LISTEN for up to one retry interval",
-     * which is not what a SIGTERM path is asking for.
-     *
-     * Note it is not limited to the failure path, which is how it reads at first: `retryAt` is
-     * only set when a dial FAILS, so on a healthy hub it is in the past and the re-dial happens on
-     * the very next tick. A perfectly working hub that was told to shut down re-opened a socket.
-     *
-     * The worker's own shutdown happens to be safe today because `clearTimers()` stops the sender
-     * (which unsubscribes, clearing its interval) BEFORE calling `end()`. That ordering is worth
-     * keeping and is a bad thing to depend on: this is a property of the hub, and a caller should
-     * not have to know the order to get a release that lasts. Disarming here makes it one.
-     *
-     * `idleTimer` was already cleared for the same reason. What is deliberately NOT done is
-     * poisoning the hub: a later `subscribe`/`subscribeAll` may re-dial and re-arm, exactly as the
-     * interface's docblock says, because "a subscribe arriving after `end()` is harmless" stays
-     * true. Only the AUTOMATIC paths are stopped.
+     * The prompt release for a long-running host's shutdown. Idempotent. Every automatic re-dial
+     * is disarmed FIRST: `teardown` nulls `listening` and does not touch `total` (shutting the
+     * socket unsubscribes nobody), and that combination is what `ensureListening` reads as "no
+     * LISTEN and someone wants one" — the `subscribeAll` retry's next tick re-opened a fresh
+     * connection moments after `end()` closed one, even on a healthy hub. A caller must not need
+     * to know shutdown ordering to get a release that lasts. The hub is deliberately NOT
+     * poisoned: a later subscribe may re-dial and re-arm — "a subscribe arriving after `end()` is
+     * harmless" stays true. Only the AUTOMATIC paths are stopped.
      */
     async end() {
       if (idleTimer) {
