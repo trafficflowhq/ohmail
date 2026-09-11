@@ -2,17 +2,12 @@ import type { Diagnostic } from "./log.js";
 import type { SyncStamps } from "./sync-stamp.js";
 
 /**
- * ═══ HOW LONG A FIRST SYNC TOOK ════════════════════════════════════════════════════════════
- *
- * Three invariants the code below depends on:
- *
- *  · the FINISH fires on {@link SyncStamps.importStamped} — the `IS NULL`-guarded write's own
- *    `RETURNING` — so it is once ever per mailbox, across relaunches. A process flag would
- *    re-announce on every launch after a restart mid-import.
- *  · the START is once per mailbox per LAUNCH. The import is open on every drain until it ends,
- *    so a line per drain is four a minute for as long as it lasts.
- *  · durations are `performance.now()` deltas: a 38-minute import spans NTP steps and suspends,
- *    over which a wall-clock delta can run backwards.
+ * How long a first sync took — three invariants the code depends on: the FINISH fires on {@link
+ * SyncStamps.importStamped} (the `IS NULL`-guarded write's own `RETURNING`), so once ever per
+ * mailbox across relaunches — a process flag would re-announce after a restart mid-import; the START
+ * is once per mailbox per LAUNCH (the import is open on every drain until it ends, so a line per
+ * drain is four a minute); and durations are `performance.now()` deltas, because a 38-minute import
+ * spans NTP steps and suspends over which a wall-clock delta can run backwards.
  */
 
 /** What the doors call once per pass, after that pass's stamps are written. */

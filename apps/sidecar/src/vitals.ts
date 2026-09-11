@@ -1,18 +1,12 @@
 import type { Diagnostic } from "./log.js";
 
 /**
- * ═══ THE ENGINE'S OWN MEMORY ═══════════════════════════════════════════════════════════════
- *
- * ── WHY THIS IS A MODULE AND NOT THREE LINES IN `log.ts` ──────────────────────────────────
- *
- * It was three lines in `log.ts`, and that was wrong for a reason worth writing down: `log.ts`
- * is the ONE file `log-census.test.ts` excludes from its scan. It is the funnel — its two
- * `logger.info` / `logger.error` calls forward whatever the caller passed — so there is nothing
- * there to census, and a call site that emitted a literal event name from inside it would have
- * its field names checked against `ALLOWED_FIELDS` by nothing at all. The census caught it: the
- * roster said 146 events and the scanner found 145.
- *
- * So the emitter lives where every other emitter lives, in a file the scanner reads.
+ * The engine's own memory. Why a module and not three lines in `log.ts`: `log.ts` is the ONE file
+ * `log-census.test.ts` excludes from its scan — it is the funnel, forwarding whatever the caller
+ * passed, so there is nothing to census there, and a call site emitting a literal event name from
+ * inside it would have its field names checked against `ALLOWED_FIELDS` by nothing at all. The census
+ * caught it: the roster said 146 events and the scanner found 145. So the emitter lives where every
+ * other emitter lives, in a file the scanner reads.
  */
 
 /**
@@ -28,37 +22,14 @@ import type { Diagnostic } from "./log.js";
 export const ENGINE_VITALS_INTERVAL_MS = 5 * 60_000;
 
 /**
- * THE ENGINE'S MEMORY, ON A TIMER — the first half of a question nothing here can answer today.
- *
- * There is no `memoryUsage()` call anywhere in this repository and no RSS figure in any of its
- * documents. The only number that exists for this engine came from a throwaway build, and it was
- * large enough to matter: roughly half a gigabyte with a mailbox of five thousand messages, plus
- * a drift of tens of megabytes over ten idle minutes. Whether that drift is a plateau or a climb
- * decides whether this is a footnote or a lane, and it cannot be decided in a test — PGlite's
- * WASM heap in vitest is not the shipped build's, and a laptop is not a phone.
- *
- * So this ships the INSTRUMENT and nothing else. No threshold, no warning arm, no `_failed`
- * sibling: a bar chosen before the first measurement would be a number somebody invented, and
- * every later reading would be judged against it instead of against reality.
- *
- * ── WHY FOUR NUMBERS AND NOT ONE ──────────────────────────────────────────────────────────
- *
- * `heapUsed` is the JavaScript heap, and this process keeps a DATABASE outside it — a WASM
- * heap that `heapUsed` cannot see and `external` can. `rss` is what the operating system charges the
- * process and is what a person's activity monitor shows, but on its own it cannot say which half
- * grew. `storeBytes` names the database half exactly, read from the runtime rather than inferred,
- * so a rise in `rss` can be attributed instead of argued about. Together they are the only way a
- * reading distinguishes "the mirror is holding more mail" from "something is not being released".
- *
- * ── AND WHY IT IS A SEPARATE TIMER FROM EVERY OTHER ONE HERE ──────────────────────────────
- *
- * A sample folded into the poll would stop the moment the poll did, which is exactly the state
- * worth measuring: an idle install, or one whose connection has died. `unref` so it never keeps
- * the process alive on its own — a quit must not wait for a memory reading.
- *
- * @returns the stop function. It has to be called from the engine's own `stop()`: an interval
- *   that outlives its engine is a closure holding a logger, and two engines in one test process
- *   would interleave their readings under one event name.
+ * The engine's memory, on a timer — the first half of a question nothing here can answer today.
+ * There is no `memoryUsage()` call anywhere in this repository and no RSS figure in its documents;
+ * the only number came from a throwaway build (~half a gigabyte with five thousand messages, plus a
+ * drift of tens of megabytes over ten idle minutes), and whether that is a plateau or a climb cannot
+ * be decided in a test (PGlite's WASM heap in vitest is not the shipped build's). So this ships the
+ * INSTRUMENT and nothing else — no threshold, because a bar chosen before the first measurement is a
+ * number somebody invented. Four numbers not one, because a WASM heap outside `heapUsed` (`external`,
+ * `storeBytes`) is the only way to tell "holding more mail" from "not releasing". A separate `unref`'d timer keeps an idle install measured; @returns the stop function.
  */
 export function startEngineVitals(
   log: Diagnostic,
@@ -81,19 +52,14 @@ export function startEngineVitals(
   const bootedAt = performance.now();
   const emit = (): void => {
     /**
-     * A RUNTIME MAY NOT HAVE A MEMORY READING, AND THIS IS THE ONE THING AT BOOT THAT ASSUMED ONE.
-     *
-     * `createSidecar` starts this sampler on every launch. On a phone the engine runs inside the
-     * app rather than in a Node process, and its `process` stand-in deliberately defines only what
-     * it can answer truthfully — so this call was `undefined is not a function`, and it took the
-     * whole launch down after a successful load, a successful migration and a successful
-     * credential seal. An instrument must never be the thing that stops the engine it measures.
-     *
-     * The stand-in is NOT given a `memoryUsage` instead: a fabricated number would enter a series
-     * whose only job is to tell a plateau from a climb, and a made-up point in that series is
-     * worse than a missing one. So the reading is absent and SAYS it is absent — the three numbers
-     * are null and `memoryReading` names why, which is a state a reader can act on rather than
-     * three zeroes that look like a very small process.
+     * A runtime may not have a memory reading, and this is the one thing at boot that assumed one.
+     * `createSidecar` starts this sampler every launch, and on a phone the engine runs inside the app
+     * whose `process` stand-in defines only what it can answer — so this call was `undefined is not a
+     * function` and took the whole launch down after a successful load, migration and credential seal.
+     * An instrument must never stop the engine it measures. The stand-in is NOT given a fabricated
+     * `memoryUsage`: a made-up point in a series whose job is to tell a plateau from a climb is worse
+     * than a missing one, so the reading is absent and SAYS so — the numbers are null and
+     * `memoryReading` names why, a state a reader can act on rather than three misleading zeroes.
      */
     const m = typeof process.memoryUsage === "function" ? process.memoryUsage() : null;
     log("engine_vitals", {

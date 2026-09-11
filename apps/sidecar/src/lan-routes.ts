@@ -2,28 +2,14 @@ import { networkInterfaces } from "node:os";
 import { jsonResponse, type Route } from "@trafficflow/api/local";
 
 /**
- * THE ONE ROUTE THE LAN CEREMONY NEEDS — which addresses this computer could serve on.
- *
- *   GET /local/lan/candidates   the IPv4 addresses of this machine's real network interfaces
- *
- * The rule is "an explicit second bind to a CHOSEN LAN interface, never `0.0.0.0` blindly" —
- * which means the window must be able to OFFER the choice, and the process that owns the sockets
- * is the one that can enumerate them (`os.networkInterfaces()`; the webview has no Node and the
- * shell has no interface API without a new dependency). Window-only, stdio door only: this is
- * mounted beside `localAiRoutes` and never enters `desktopHostRoutes`, so a paired device can
- * never enumerate the host machine's interfaces. It is mounted UNARMED too, deliberately — the
- * enable ceremony offers the LAN option before host mode exists, so the list has to be readable
- * first.
- *
- * What is filtered, and why each line:
- *  · internal / non-IPv4 — the LAN door itself is IPv4-only in v1 (`resolveLanBind`), and
- *    loopback is the host door's own bind.
- *  · 169.254.0.0/16 — link-local: an address the machine assigned itself when nothing answered,
- *    which is exactly the network state where handing it to another device helps nobody.
- *  · 100.64.0.0/10 — the CGNAT range Tailscale numbers its interfaces from: reachable only over
- *    the tailnet anyway, where the real Tailscale path (HTTPS, browser-capable) already exists —
- *    offering it here as "same-network" would be the pane recommending the worse spelling of a
- *    path it already serves properly.
+ * The one route the LAN ceremony needs — which addresses this computer could serve on
+ * (`GET /local/lan/candidates`, the IPv4 addresses of real interfaces). The rule is "an explicit
+ * second bind to a CHOSEN interface, never `0.0.0.0` blindly", so the window must OFFER the choice,
+ * and the process that owns the sockets can enumerate them (`os.networkInterfaces()`). Window-only,
+ * stdio door only — mounted beside `localAiRoutes`, never in `desktopHostRoutes`, so a paired device
+ * cannot enumerate the host's interfaces — and mounted UNARMED, since the ceremony offers LAN before
+ * host mode exists. Filtered: internal/non-IPv4 (loopback is the host door's bind), 169.254/16
+ * link-local, and 100.64/10 (Tailscale's CGNAT, where the real HTTPS path already exists).
  */
 
 /** One offerable interface address. */
@@ -55,21 +41,14 @@ export function lanCandidates(
 }
 
 /**
- * The two routes the LAN ceremony needs.
- *
- * `candidates` is closed over nothing — the answer is the machine's, read fresh per request.
- * `pin` is closed over a THUNK rather than a value, so the window always reads the identity the
- * engine actually holds; a captured value would let a route mounted before the identity resolved
- * answer `null` for the life of the process.
- *
- * ── WHY THE FINGERPRINT IS NOT A SECRET, AND WHY THE ROUTE IS STILL WINDOW-ONLY ──────────────
- *
- * A public key's hash is public by construction — anything that completes a handshake with the
- * door learns it. So this route protects nothing by being narrow, and it is narrow anyway, for
- * the same reason `candidates` is: `desktopHostRoutes` is the surface a PAIRED DEVICE can reach,
- * and adding to it anything a paired device does not need is how that surface grows one
- * reasonable-looking route at a time. The window needs it (to compose the pairing link); a
- * paired phone already has it (it pinned it).
+ * The two routes the LAN ceremony needs. `candidates` is closed over nothing — the answer is the
+ * machine's, read fresh per request. `pin` is closed over a THUNK, not a value, so the window always
+ * reads the identity the engine actually holds; a captured value would let a route mounted before the
+ * identity resolved answer `null` for the life of the process. The fingerprint is not a secret (a
+ * public key's hash is public — anything completing a handshake learns it), so the route protects
+ * nothing by being narrow; it is narrow anyway for `candidates`' reason — `desktopHostRoutes` is what
+ * a paired device reaches, and adding anything it does not need is how that surface grows one
+ * reasonable-looking route at a time.
  */
 export function localLanRoutes(fingerprint: () => string | null): Route[] {
   return [

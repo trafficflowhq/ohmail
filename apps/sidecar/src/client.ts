@@ -3,23 +3,14 @@ import { FrameDecoder, FrameWriter, MAX_BODY_BYTES, PROTOCOL_VERSION, type Frame
 import { decodeResponse, encodeRequest, type ReadyHeader, type ResponseHeader } from "./protocol.js";
 
 /**
- * THE UI SIDE OF THE BRIDGE — a `fetch` that goes down a pipe.
- *
- * The dual-mode design's rule for the UI: it keeps `HttpAdapter`, given a `fetch` that marshals
- * `Request`/`Response` over the sidecar's stdin/stdout. This is that `fetch`. The client engine
- * is unchanged and unaware: `new HttpAdapter({ baseUrl, fetch: client.fetch })` is the whole
- * integration — the same seam the client engine's contract suite already proves against an
- * in-process `app.handle`.
- *
- * Same rule as the host: the read loop never awaits anything. It resolves pending promises and
- * returns to the stream.
- *
- * ── WHAT HAPPENS WHEN THE SIDECAR DIES ────────────────────────────────────────────────────
- *
- * Every in-flight request rejects with a clear error, and so does every later call. A promise that
- * silently never settles is the worst failure a bridge can have — the UI shows a spinner forever
- * and no log says why. `HttpAdapter` turns a thrown fetch into a retryable
- * `MutationRejectedError`, which is exactly the right shape here.
+ * The UI side of the bridge — a `fetch` that goes down a pipe. The dual-mode design keeps
+ * `HttpAdapter` on the UI, given a `fetch` that marshals `Request`/`Response` over the sidecar's
+ * stdin/stdout; this is that `fetch`, and the client engine is unchanged and unaware (`new
+ * HttpAdapter({ baseUrl, fetch: client.fetch })` is the whole integration). Same rule as the host:
+ * the read loop never awaits anything — it resolves pending promises and returns to the stream. When
+ * the sidecar dies, every in-flight request rejects with a clear error and so does every later call:
+ * a promise that silently never settles is the worst failure a bridge can have (a spinner for ever,
+ * no log). `HttpAdapter` turns a thrown fetch into a retryable `MutationRejectedError`.
  */
 
 export interface StdioClientOptions {

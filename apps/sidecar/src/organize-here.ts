@@ -8,55 +8,14 @@ import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/ma
 import { openLocalDb, type LocalDb } from "./db.js";
 
 /**
- * "ORGANIZE THIS MAILBOX FROM THIS MACHINE" — the one action that ends a stand-down.
- *
- * ── THE INVARIANT THIS SITS INSIDE ────────────────────────────────────────────────────────
- *
- * **Exactly one active organizer per mailbox, ever.** A mailbox may be organized by this
- * install, or by a hosted service, or by another machine of the user's — never by two at once,
- * because two organizers means two engines classifying the same new message and issuing
- * competing moves against one server.
- *
- * The mailbox itself carries the claim, in an unsubscribed `ohmail/_meta` folder, because it is
- * the only medium every organizer can read. Reading that claim is what makes an install stand
- * down. But standing down has to OUTLIVE the process, and the claim cannot express that: once
- * the other organizer releases, `ohmail/_meta` is empty, and an empty folder honestly reads as
- * "nobody has ever organized this mailbox" — which is the state that organizes. So the local
- * database records the stand-down on the mailbox row, and that record is what stops a relaunch
- * from silently resuming.
- *
- * ── WHY THAT NEEDS AN EXIT, AND WHY THE EXIT IS NOT JUST "CLEAR THE ROW" ──────────────────
- *
- * A record only a human can clear is correct, and it is also a dead end until something can
- * clear it. This function is that something.
- *
- * Clearing the reason is not sufficient on its own, for two independent reasons:
- *
- *  1. **A quiet claim is not an absent claim.** If the previous organizer stopped without
- *     releasing — a crashed machine, a laptop that never woke — its claim is still in
- *     `ohmail/_meta`, merely stale. The lease reports that mailbox as *available* and refuses to
- *     take it, because "nobody is renewing this" and "the user chose this machine" are different
- *     facts and only the second authorizes a takeover. Without the stamp written below, clearing
- *     the reason produces an install that stands down again on its very next cycle: an action
- *     that appears to do nothing, at exactly the moment somebody chose to use this machine.
- *  2. **A disabled row with no reason means something else entirely.** The reason column is what
- *     distinguishes a mailbox that is *paused* from a mailbox the user *removed*; a removal is a
- *     tombstone, and re-adding the address is deliberately allowed to create a new mailbox.
- *     Clearing only the reason turns a pause into a tombstone, and the next launch then mints a
- *     SECOND mailbox row for the same address, with none of the first one's history. So the
- *     status and the reason move together, in one write.
- *
- * ── AND WHY THE AUTHORIZATION IS ONE-SHOT ─────────────────────────────────────────────────
- *
- * The stamp authorizes one becoming, not a standing right. It is cleared the moment it is spent
- * (see the engine), and standing down clears it too. A permanent grant would mean an install
- * that is stood down today silently seizes the mailbox back months later — after a human has
- * deliberately moved it somewhere else — which is the failure the whole mechanism exists to
- * prevent, arriving by a different door.
- *
- * This is deliberately a separate command rather than a launch flag. An environment variable is
- * ambient: set it once in a launcher script and every restart re-authorizes, which is precisely
- * the automatic resumption that must not exist. An imperative action cannot be sticky.
+ * "Organize this mailbox from this machine" — the one action that ends a stand-down, inside the
+ * invariant EXACTLY ONE ACTIVE ORGANIZER PER MAILBOX (two would classify one message and issue
+ * competing moves). The claim lives in `ohmail/_meta`, but standing down must OUTLIVE the process,
+ * and once the other organizer releases that folder is empty and reads as "nobody has ever organized
+ * this" (which organizes) — so the local row records the stand-down and this is its exit. Clearing
+ * the reason alone is not enough: a QUIET claim is not absent (the lease refuses it, so without the
+ * stamp the install stands down again), and a reason-less disabled row is a TOMBSTONE (a second row
+ * on re-add). So status, reason and stamp move in one write; the authorization is ONE-SHOT.
  */
 
 /** What {@link authorizeOrganizerTakeover} found, and therefore what it did. */
@@ -65,14 +24,12 @@ export type TakeoverAuthorizationOutcome =
   | "authorized"
   /**
    * The mailbox is not stood down; this install already organizes it, so no stamp is written and
-   * none may be — a second press is not a second becoming.
-   *
-   * WHAT IT MEANS DIFFERS BY CALLER, and it used to read "Nothing was written" for both.
-   * {@link authorizeOrganizerTakeover} (the CLI) writes nothing on this outcome and its message
-   * still says so. {@link requestOrganizerTakeover} (the button, and the setup flow) DOES write
-   * when a `screening` answer rides along: the window and the scope are the answer the person
-   * just gave, and a re-run of setup is the ordinary way to reach this branch. It can also throw
-   * a `LocalConsentRefusal` from that write, on the same bounds as the first-consent path.
+   * none may be — a second press is not a second becoming. What it MEANS differs by caller:
+   * {@link authorizeOrganizerTakeover} (the CLI) writes nothing and its message says so, while
+   * {@link requestOrganizerTakeover} (the button and setup flow) DOES write when a `screening` answer
+   * rides along — the window and scope are the answer just given, and a re-run of setup is the
+   * ordinary way here. It can throw a `LocalConsentRefusal` from that write, on the first-consent
+   * path's bounds.
    */
   | "already_organizing"
   /** The mailbox was REMOVED from this install, which is not a stand-down. Nothing was written. */
@@ -104,15 +61,12 @@ export interface AuthorizeTakeoverInput {
 }
 
 /**
- * Record that a human has asked this install to organize this mailbox.
- *
- * Writes nothing unless there is a stand-down to end, so running it twice is harmless and
- * running it on a healthy mailbox is a no-op rather than a fresh authorization left lying around.
- *
- * It does NOT decide whether the takeover succeeds. The mailbox is still the authority: on the
- * next launch the lease is read first, and an organizer that is still actively renewing its claim
- * keeps the mailbox regardless of what was authorized here. That ordering is the point — this
- * grants permission to *ask*, never permission to *win*.
+ * Record that a human has asked this install to organize this mailbox. Writes nothing unless there
+ * is a stand-down to end, so running it twice is harmless and running it on a healthy mailbox is a
+ * no-op rather than a fresh authorization left lying around. It does NOT decide whether the takeover
+ * succeeds: the mailbox is still the authority — the next launch reads the lease first, and an
+ * organizer still actively renewing its claim keeps the mailbox regardless of what was authorized
+ * here. That ordering is the point — this grants permission to ASK, never permission to WIN.
  */
 export async function authorizeOrganizerTakeover(
   db: LocalDb,
@@ -166,26 +120,15 @@ export async function authorizeOrganizerTakeover(
   // Already the organizer AND already consented ⇒ nothing to ask for. Both terms: a mailbox that
   // is nominally an organizer but has never been consented to is exactly the FIRST-consent case
   // this ceremony now serves, and refusing it here would leave that case with no door.
-  /* ── A PENDING RELEASE IS CLAIM-BACK-ELIGIBLE, AND WITHOUT THIS "I CHANGED MY MIND" HAD NO DOOR ──
-   *
-   * The hosted door already rules this and argues it at length
-   * (`packages/services/src/mailbox-service.ts`, `releasePending`): *"press 'Stop organizing here';
-   * change your mind two seconds later and press 'Organize here' → 200 `already_organizing`, no
-   * stamp written, and the gate releases the mailbox a minute later anyway … The person is told the
-   * opposite of what happens, and there is no second press that helps"*, and *"they are
-   * contradictory instructions about one mailbox, and the LATER press is the one a person meant"*.
-   * That exemption was never ported to this door, so on the desktop and the standalone install the
-   * countermand was impossible: the row is still `organizer` and still consented while the release
-   * is pending, both terms below held, and the press wrote nothing.
-   *
-   * It matters more since the release stopped recording itself when the mail server would not
-   * confirm the record is gone: the request then stands until a pass can read `ohmail/_meta`, and
-   * on a server where that read keeps failing this press is the ONLY way out. Refusing it left a
-   * person unable either to stop organizing or to cancel the attempt.
-   *
-   * The precondition's own purpose is untouched: on a healthy organizer row with no request
-   * standing, a second press is still not a second becoming and still leaves no spendable stamp.
-   */
+  /* A pending release is claim-back-eligible, and without this "I changed my mind" had no door. The
+   * hosted door already rules this (`mailbox-service.ts`, `releasePending`): press "Stop organizing
+   * here", change your mind, press "Organize here" → `already_organizing`, no stamp, and the gate
+   * releases the mailbox a minute later anyway — contradictory instructions where the LATER press is
+   * the one meant. That exemption was never ported here, so the row is still `organizer` and consented
+   * while the release is pending, both terms below held, and the press wrote nothing. It matters more
+   * since a release that the server would not confirm stands until a pass can read `ohmail/_meta`, so
+   * on a failing server this press is the only way out. A healthy organizer row with no request
+   * standing is untouched — a second press is still not a second becoming. */
   if (
     row.releaseRequestedAt === null
     && row.organizerRole !== "reader" && row.organizeConsentedAt !== null
@@ -233,62 +176,24 @@ export async function authorizeOrganizerTakeover(
 }
 
 /**
- * THE SAME REQUEST, MADE WHILE THE ENGINE IS RUNNING — the Settings action's half.
- *
- * ── WHY IT CANNOT BE {@link authorizeOrganizerTakeover} ───────────────────────────────────
- *
- * That function moves status, reason and the stamp together, and its header explains why: any
- * two without the third leave a row meaning something the user did not ask for. That is right
- * FOR THE CLI, which "needs the database to itself — stop ohmail, run this, start ohmail". The
- * engine is not running when it lands, so the row goes from `disabled` to `connected` and the
- * next process to read it is the one that also reads the lease.
- *
- * From a button it is wrong, and the window is the reason. This process keeps serving after the
- * press: it is stood down, `stopped` is set, the poll timer is cleared and the IMAP login is
- * closed, and none of that can be undone from a request handler without restarting a poll loop
- * beside a queue already told this install organizes nothing. So a row flipped to `connected`
- * here would advertise a mailbox that nothing is organizing — the mailbox strip would stop
- * saying "not organized here", and `ScheduleService` and `SendService` (which refuse on
- * `status = 'disabled'` and on nothing else) would start accepting work for it. The row would be
- * making a claim about this install that is not true until the next launch.
- *
- * ── SO THE STAMP TRAVELS ALONE, AND THE ENGINE SPENDS IT AT ASSEMBLY ──────────────────────
- *
- * `takeover_authorized_at` alone means exactly what the press means: a human asked for this
- * machine, once. The row stays `disabled` with its reason, so every surface goes on telling the
- * truth and no send or schedule is accepted, and the ENGINE clears the stand-down on its next
- * launch — before it reads the lease, which is the CLI's timing exactly, with no process serving
- * in between. The lease is still the authority: an organizer that is still renewing keeps the
- * mailbox and this install stands down again, which also voids the stamp.
- *
- * Idempotent, and writes nothing unless there is a stand-down to end — so a second press is not
- * a second becoming, and a press on a healthy or removed mailbox is a no-op that says so.
+ * The same request, made while the engine is running — the Settings action's half. It cannot be
+ * {@link authorizeOrganizerTakeover}, which moves status, reason and stamp together: right for the
+ * CLI (the engine is not running when it lands), but from a button this process keeps serving after
+ * the press — stood down, `stopped` set, poll timer cleared, login closed — and a row flipped to
+ * `connected` here would advertise a mailbox nothing organizes, and `ScheduleService`/`SendService`
+ * (refusing only on `status = 'disabled'`) would accept work for it. So the STAMP travels alone: the
+ * row stays `disabled`, and the ENGINE spends it at its next assembly before it reads the lease —
+ * the CLI's timing, no serving process between. Idempotent; the lease is still the authority.
  */
 /**
- * THE SCREENING ANSWER THE CONSENT CARRIES — the half this door was missing entirely.
- *
- * ── WHAT WENT WRONG WITHOUT IT ────────────────────────────────────────────────────────────
- *
- * This function wrote `organize_consented_at` and `takeover_authorized_at` and NOTHING else, on
- * the door that is the standalone install's whole onboarding. `account_settings` was never
- * touched, so `screening_baseline_at` stayed NULL — and the cutline reads
- * `(screeningBaselineAt ?? now()) - dormancyDays`. With no baseline the window is measured from
- * the moment of the read rather than from the moment the person agreed, so a mailbox with two
- * years of history has its ENTIRE backlog fall outside the window and move to `ohmail/Screener`
- * — whatever window the person chose, and whether they chose `all_time` or not. The window
- * control was decorative on this door.
- *
- * The hosted door has always written all four in one transaction
- * (`MailboxService.organizeHere`), and this block is that shape brought across rather than a
- * second design: same COALESCE on the baseline, same "never store the default" rule for the
- * dial, same validation bounds.
- *
- * ── AND WHY IT CANNOT BE A SECOND REQUEST ─────────────────────────────────────────────────
- *
- * `FirstRunHost.organize` says it: the baseline is what the window is measured from and the
- * consent is what writes it, so a separate "set the window" call leaves a gap in which the
- * consent exists and the window does not — and during that gap the cutoff is the product
- * default, not the answer the person just gave. One write, or the control lies.
+ * The screening answer the consent carries — the half this door was missing. This wrote
+ * `organize_consented_at` and `takeover_authorized_at` and nothing else, so `account_settings` was
+ * never touched and `screening_baseline_at` stayed NULL — and the cutline reads
+ * `(screeningBaselineAt ?? now()) - dormancyDays`, so the window is measured from the read, not from
+ * consent: a mailbox with years of history has its ENTIRE backlog fall outside it and move to
+ * `ohmail/Screener`, whatever window was chosen. The hosted door always wrote all four in one
+ * transaction (`MailboxService.organizeHere`), and this is that shape brought across. It cannot be a
+ * second request — the gap in which consent exists and the window does not applies the default.
  */
 export interface LocalScreeningConsent {
   /** 1–365. Absent means "the person did not move the dial" and the default is stored as NULL. */
@@ -309,18 +214,13 @@ export class LocalConsentRefusal extends Error {
 type LocalTx = Parameters<Parameters<LocalDb["transaction"]>[0]>[0];
 
 /**
- * THE SCREENING ANSWER, WRITTEN — extracted because it has TWO callers and they are the two
- * states a person can press "Agree and start organizing" in.
- *
- * The first consent writes it beside the mailbox row, in one transaction, because the baseline is
- * what the window is measured from. A RE-RUN of setup on a mailbox this install already organizes
- * writes only this half: the mailbox row must not be re-stamped (a second press is not a second
- * becoming) and the dials must still be stored, because they are the answer the person just gave.
- * Until 2026-09-02 that second path wrote nothing at all and the window control was decorative on
- * every re-run.
- *
- * The bounds are the caller's — they are checked before any transaction opens, so a refusal
- * writes nothing on either path.
+ * The screening answer, written — extracted because it has TWO callers, the two states a person can
+ * press "Agree and start organizing" in. The first consent writes it beside the mailbox row in one
+ * transaction (the baseline is what the window is measured from); a RE-RUN of setup on a mailbox
+ * this install already organizes writes only this half — the mailbox row must not be re-stamped (a
+ * second press is not a second becoming) but the dials must still be stored, being the answer just
+ * given. Until 2026-09-02 that second path wrote nothing and the window control was decorative on
+ * every re-run. The bounds are the caller's, checked before any transaction opens.
  */
 async function upsertScreeningAnswer(
   tx: LocalTx,
@@ -348,20 +248,14 @@ async function upsertScreeningAnswer(
         // The two dials ARE the answer the person just gave, so they are overwritten.
         dormancyDays: stored,
         screeningScope: o.scope,
-        /* -- THE BASELINE IS WRITTEN ONLY WHILE NULL, AND IN SQL -----------------------
-         *
-         * It is the instant the account's screening history begins. Moving it forward on a
-         * re-run would slide a live install's cutline: every message between the original
-         * baseline and now would fall outside the window on the next pass and the backlog
-         * would move — the same damage as having no baseline at all, arriving later and
-         * looking like a sync bug. It is also what makes the re-run path above safe: that
-         * path writes the dials on an account that already has a baseline, and this
-         * `coalesce` is the reason it cannot disturb it.
-         *
-         * `coalesce` in SQL rather than a read-then-write so two consents racing (the flow
-         * and a Settings press, or two windows of the same install) produce ONE baseline
-         * without this transaction having to read the row first.
-         */
+        /* The baseline is written only while NULL, and in SQL. It is the instant the account's
+         * screening history begins; moving it forward on a re-run would slide a live install's
+         * cutline — every message between the original baseline and now falls outside the window and
+         * the backlog moves, the same damage as no baseline, arriving later and looking like a sync
+         * bug. It also makes the re-run path safe: that path writes the dials on an account that
+         * already has a baseline, and this `coalesce` is why it cannot disturb it. `coalesce` in SQL
+         * rather than read-then-write so two racing consents produce ONE baseline without reading
+         * the row first. */
         screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${d.ts(o.now)})`,
         updatedAt: o.now,
       },
@@ -438,48 +332,27 @@ export async function requestOrganizerTakeover(
   if (row.status === "disabled") {
     return { outcome: "removed", previousReason: null, mailboxId: row.id };
   }
-  /* ── A PENDING RELEASE IS CLAIM-BACK-ELIGIBLE, AND WITHOUT THIS "I CHANGED MY MIND" HAD NO DOOR ──
-   *
-   * The hosted door already rules this and argues it at length
-   * (`packages/services/src/mailbox-service.ts`, `releasePending`): *"press 'Stop organizing here';
-   * change your mind two seconds later and press 'Organize here' → 200 `already_organizing`, no
-   * stamp written, and the gate releases the mailbox a minute later anyway … The person is told the
-   * opposite of what happens, and there is no second press that helps"*, and *"they are
-   * contradictory instructions about one mailbox, and the LATER press is the one a person meant"*.
-   * That exemption was never ported to this door, so on the desktop and the standalone install the
-   * countermand was impossible: the row is still `organizer` and still consented while the release
-   * is pending, both terms below held, and the press wrote nothing.
-   *
-   * It matters more since the release stopped recording itself when the mail server would not
-   * confirm the record is gone: the request then stands until a pass can read `ohmail/_meta`, and
-   * on a server where that read keeps failing this press is the ONLY way out. Refusing it left a
-   * person unable either to stop organizing or to cancel the attempt.
-   *
-   * The precondition's own purpose is untouched: on a healthy organizer row with no request
-   * standing, a second press is still not a second becoming and still leaves no spendable stamp.
-   */
+  /* A pending release is claim-back-eligible, and without this "I changed my mind" had no door. The
+   * hosted door already rules this (`mailbox-service.ts`, `releasePending`): press "Stop organizing
+   * here", change your mind, press "Organize here" → `already_organizing`, no stamp, and the gate
+   * releases the mailbox a minute later anyway — contradictory instructions where the LATER press is
+   * the one meant. That exemption was never ported here, so the row is still `organizer` and consented
+   * while the release is pending, both terms below held, and the press wrote nothing. It matters more
+   * since a release that the server would not confirm stands until a pass can read `ohmail/_meta`, so
+   * on a failing server this press is the only way out. A healthy organizer row with no request
+   * standing is untouched — a second press is still not a second becoming. */
   if (
     row.releaseRequestedAt === null
     && row.organizerRole !== "reader" && row.organizeConsentedAt !== null
   ) {
-    /* -- ALREADY ORGANIZING, AND THE WINDOW STILL HAS TO LAND ------------------------------
-     *
-     * This returned here and wrote nothing, which made "How far back" DECORATIVE on every
-     * re-run of setup: somebody who came back through "Run setup again" to widen their history
-     * to all time pressed "Agree and start organizing", got a 200, and the install kept the
-     * window it already had. Nothing failed and nothing was stored.
-     *
-     * The precondition is about the MAILBOX ROW — it exists so a second press is not a second
-     * becoming and leaves no spendable takeover stamp on a healthy mailbox. That is not an
-     * argument about `account_settings`. The window and the scope ARE the answer the person
-     * just gave, and they are the whole reason the screen has a button.
-     *
-     * The stamp stays refused and the dials are written. The baseline cannot move: its upsert
-     * is a `coalesce`, so a re-run never slides a live install's cutline forward — which is the
-     * damage the single-write rule protects against.
-     *
-     * Its own transaction, because there is no mailbox write here to share one with.
-     */
+    /* Already organizing, and the window still has to land. This returned here and wrote nothing,
+     * making "How far back" DECORATIVE on every re-run: somebody widening their history to all time
+     * pressed "Agree and start organizing", got a 200, and kept the window they had. The precondition
+     * is about the MAILBOX ROW — so a second press is not a second becoming and leaves no spendable
+     * takeover stamp — which is not an argument about `account_settings`. The window and scope ARE
+     * the answer just given and the whole reason the screen has a button, so the stamp stays refused
+     * and the dials are written; the baseline cannot move (its upsert is a `coalesce`). Its own
+     * transaction, because there is no mailbox write here to share one with. */
     if (input.screening) {
       await db.transaction(async (tx) => {
         await upsertScreeningAnswer(tx, dialect(db), {

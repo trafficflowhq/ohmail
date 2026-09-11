@@ -10,73 +10,27 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import type { Diagnostic } from "./log.js";
 
 /**
- * THE LOCAL MIRROR: PGlite ON DISK, migrated by the SAME sequence production runs — over the
- * MAIL HALF, and only the mail half.
- *
- * PGlite is the sidecar's store precisely because it takes the same Drizzle journal, so it gets
- * the same schema. That is what makes the "one pipeline implementation" argument true — here
- * **narrowed to the half a mailbox is made of.**
- * The same MAIL journal, the same MAIL schema; the Cloud half never runs here and never ships.
- *
- * ── WHY THE CLOUD PASS WAS REMOVED, AND WHY NOTHING CAUGHT IT ─────────────────────────────
- *
- * This loop used to walk `JOURNALS` — mail then cloud — because that is what production does.
- * Two consequences, both invisible to every test in the repository:
- *
- *  1. **Every desktop install minted the Cloud schema locally.** The hosted credential store, the
- *     billing ledger, the subscription table, the staff directory and fifteen more, created in a
- *     database belonging to somebody who has no account with us, cannot log in, is not billed and
- *     has no operator. A table nobody writes is not harmless when its NAME is the disclosure.
- *  2. **It put the Cloud journal's SQL inside the shipped application.** The migrator reads
- *     `.sql` files off disk at runtime, so `drizzle-cloud/`'s eight files — the identity ceremony,
- *     Stripe, the credit ledger, the admin console's staff tables — would have had to be packaged
- *     beside the engine to make this line work at all. Readable text, the private half, in a
- *     public download.
- *
- * **A bundler cannot see either one.** Both journals are read through `node:path` at runtime, so
- * they are not esbuild inputs: a bundle-input census of the engine reports the private half at
- * zero while the artifact still has to carry it. That is why this is stated here, in the loop,
- * rather than trusted to a measurement.
- *
- * The mail journal is closed under itself by construction — a test over the journal asserts that
- * no mail statement names an object belonging to the Cloud half — so mail-alone, first, against an
- * empty database is exactly the case it was designed for.
- *
- * `adoptBaseline` is a no-op for a brand-new local database (it hits the `fresh` cell of its truth
- * table) and it is still called rather than skipped, for the same reason `testing.ts` calls it: a
- * code path only production takes is a code path nothing checks.
- *
- * Re-running this against a directory that already has the schema applies nothing. That is the
- * upgrade path for an installed desktop app — a new release ships new migrations and the first
- * launch replays only what is missing.
- *
- * ── CAVEAT WORTH WRITING DOWN NOW ──────────────────────────────────────────────────────────
- *
- * The on-disk format belongs to PGlite, not to us. A future PGlite major that changes it turns
- * every installed local mirror into a migration problem that no SQL journal can express. The
- * dependency is therefore pinned in `package.json`, and the honest answer if it ever moves is to
- * rebuild the mirror by re-syncing. Everything in the local database is reconstructible from IMAP
- * EXCEPT the decisions that have no representation on the server — rules, triage state and
- * Resurface timers, Screener verdicts, contacts and notes, snippets, workflows. Those are the only
- * rows a rebuild would actually lose, and preserving them across such a move is not handled here.
+ * The local mirror: PGlite on disk, migrated by the SAME sequence production runs — over the MAIL
+ * half, and only the mail half. PGlite is the store because it takes the same Drizzle journal, so
+ * the "one pipeline" argument holds, narrowed to the half a mailbox is made of. The Cloud pass was
+ * removed because it minted the Cloud schema locally (a credential store, billing ledger and staff
+ * directory in a database belonging to somebody with no account) AND put the Cloud journal's `.sql`
+ * inside the shipped app. A bundler cannot see either — both journals are read through `node:path` —
+ * so this is stated in the loop, not trusted to a census. The mail journal is closed under itself (a
+ * test asserts no mail statement names a Cloud object); re-running applies only what is missing.
  */
 
 export type LocalDb = PgliteDatabase<typeof mailSchema>;
 
 /**
- * WHAT OPENING THE MIRROR COST, in wall-clock milliseconds, split by phase.
- *
- * Returned rather than logged, because {@link openLocalDb} has no logger and giving it one would
- * put a second diagnostic seam in a function whose whole job is a database handle. The two
- * constructors that call it own the line — see `engine.ts` and `cloud-engine.ts`'s `boot_phases`.
- *
- * `Date.now()` and not `performance.now()`, matching the drain timing in `engine.ts` and the
- * mailbox-attach phases the server-side sync reports: these are multi-second quantities read by a
- * human, and one clock across the codebase is worth more here than sub-millisecond resolution.
- *
- * The three sum to slightly less than the whole call — `mkdirSync`, the lock and the `drizzle()`
- * wrapper sit between them and are sub-millisecond — which is why the constructors also report
- * their own total rather than adding these up.
+ * What opening the mirror cost, in wall-clock milliseconds, split by phase. Returned rather than
+ * logged, because {@link openLocalDb} has no logger and giving it one would put a second diagnostic
+ * seam in a function whose whole job is a database handle — the two constructors that call it own the
+ * line (`engine.ts`, `cloud-engine.ts`'s `boot_phases`). `Date.now()`, not `performance.now()`,
+ * matching the drain timing and the mailbox-attach phases: these are multi-second quantities read by
+ * a human, and one clock across the codebase is worth more than sub-millisecond resolution. The
+ * three sum to slightly less than the whole call (mkdir, the lock and the `drizzle()` wrapper sit
+ * between them), which is why the constructors report their own total.
  */
 export interface OpenTimings {
   /**
@@ -136,19 +90,13 @@ function storeHeapBytes(client: PGlite): number {
 }
 
 /**
- * WHAT THE OPEN IS ABOUT TO SPEND ITS TIME ON, named before the work starts.
- *
- * `boot_phases` (the timings above) answers "where did the seconds GO" after the fact, for a log.
- * This answers "what is happening NOW", for a person watching the window — the two consumers want
- * the same facts at opposite ends of the wait, which is why both exist.
- *
- *  · `creating_store`  — no database yet. A first launch: initdb, then the full schema.
- *  · `replaying_wal`   — there is a database and a write-ahead log big enough that Postgres'
- *    recovery replay is the wait (a previous run ended without a checkpoint — a crash, a kill,
- *    a power loss). Bounded by the log's size, not the mailbox's.
- *  · `opening_store`   — the ordinary launch: an established database, nothing notable to replay.
- *  · `migrating`       — the schema ledger is being brought up to date. Sub-second except on the
- *    first launch after an upgrade that ships new migrations.
+ * What the open is about to spend its time on, named before the work starts. `boot_phases` (the
+ * timings above) answers "where did the seconds GO" after the fact for a log; this answers "what is
+ * happening NOW" for a person watching the window. `creating_store` — no database yet (a first
+ * launch: initdb then the full schema); `replaying_wal` — a write-ahead log big enough that
+ * Postgres' recovery replay is the wait (a previous run ended without a checkpoint), bounded by the
+ * log's size not the mailbox's; `opening_store` — the ordinary launch; `migrating` — the schema
+ * ledger being brought up to date, sub-second except on the first launch after an upgrade.
  */
 export type LocalDbOpenPhase =
   | "creating_store" | "replaying_wal" | "opening_store" | "migrating"
@@ -239,42 +187,14 @@ export const BLOAT_COMPACT_MIN_BYTES = 1024 * 1024 * 1024;
 export const BLOAT_SAMPLE_ROWS = 64;
 
 /**
- * RECLAIM THE BODY TABLE'S DEAD SPACE, when — and only when — it dominates the table.
- *
- * ── THE PATHOLOGY THIS EXISTS FOR, measured on a real install (2026-08-21) ──────────────────
- *
- * A long-running desktop mirror held tens of thousands of message bodies whose actual content
- * summed to ~1.6 GB (204 MB text + 1,438 MB html) — and `message_bodies` occupied **21 GB** on
- * disk, thirteen times its data. The dead tuples were the residue of a since-fixed defect (the
- * body walk once re-upserted every body per poll, and each upsert of a TOASTed row is a whole
- * new row version), and PGlite runs as a single-user backend: no autovacuum daemon ever ran, so
- * the space was never reclaimed and never reused at that scale. The user-visible cost was a
- * mirror that answered like molasses — one measured launch spent **80.8 seconds** inside
- * `new PGlite()` alone (`boot_phases`, 2026-08-12) — on a mailbox whose data would fit in RAM.
- *
- * Plain `VACUUM` cannot give the space back (it frees tuples for reuse; the files keep their
- * high-water mark), so the repair is `VACUUM FULL`: a table rewrite, exclusive-locked, minutes
- * for gigabytes — which is why it runs at BOOT, behind its own phase sentence, and only when the
- * gate above says the table is mostly dead space. A healthy launch pays one `ANALYZE` of the
- * table (a sampled scan, milliseconds) and a catalog read.
- *
- * ── WHY THE ESTIMATE IS SOUND ENOUGH FOR A 4× GATE ──────────────────────────────────────────
- *
- * Live bytes are estimated as `reltuples × (sampled avg octet_length of the content + header)`
- * — an UPPER bound of the live disk bytes, since compression only shrinks what the sample
- * measured (the in-function comment records why `pg_stats.avg_width` was tried first and
- * re-fired). The decision needs one bit, not a percentage: the measured pathology sits at 13×
- * over even the generous estimate, ordinary churn under 2×, and the gate at 4× with a 1 GB
- * floor. A wrong "no" costs what today costs; a wrong "yes" costs one bounded rewrite that ends
- * in a smaller table either way — which is the WRONG WAY ROUND for a rewrite that is minutes of
- * exclusive lock on somebody's only copy, so the arithmetic below refuses to run on a statistic
- * it does not have: a page sample that hits nothing falls back to a bounded exact read
- * ({@link BLOAT_SAMPLE_ROWS} rows), and if even that cannot answer, nothing happens. Reading an
- * absent average as zero is how a HEALTHY table gets rewritten — a few large TOASTed bodies put
- * megabytes behind a heap of a handful of pages, which a 1 % sample routinely misses.
- *
- * Failure is swallowed into the log: a mirror that cannot compact still serves, and every launch
- * retries the check.
+ * Reclaim the body table's dead space, when — and only when — it dominates the table. On a real
+ * install (2026-08-21) `message_bodies` held ~1.6 GB of content in 21 GB on disk: dead tuples from a
+ * since-fixed defect (the body walk re-upserted every body per poll), and PGlite runs single-user
+ * with no autovacuum, so the space was never reclaimed — one launch spent 80.8 s inside `new
+ * PGlite()` alone. Plain `VACUUM` cannot return the space, so the repair is `VACUUM FULL`: a rewrite,
+ * exclusive-locked, minutes for gigabytes, run at BOOT behind its own phase and only when the gate
+ * says the table is mostly dead. Live bytes are an UPPER-bound estimate, the gate a 4× ratio with a
+ * 1 GB floor, and it refuses to run on a statistic it lacks — a wrong "yes" is minutes of lock.
  */
 export async function reclaimBodyBloat(
   client: PGlite,
@@ -302,40 +222,25 @@ export async function reclaimBodyBloat(
     // The cheap short-circuit FIRST: below the floor no estimate is worth computing, and this is
     // what keeps a healthy launch at one ANALYZE plus one catalog read.
     if (before.bytes < minBytes) return { ...none, beforeBytes: before.bytes, afterBytes: before.bytes };
-    /*
-     * ── THE LIVE ESTIMATE IS A SAMPLED `octet_length`, NOT `pg_stats.avg_width` ──────────────
-     *
-     * `avg_width` was the first implementation and it RE-FIRED: on the measured store it
-     * answered 72.9 MB for 1.6 GB of TOASTed content (the statistic reflects the datum header,
-     * not the out-of-line bytes), so the freshly compacted ~1.0 GiB table still read as 14×
-     * "bloated" and the rewrite would have run again on every launch — a one-time repair turned
-     * into a sixty-second boot tax. A 1 % page sample of the actual `octet_length` sums is the
-     * UNCOMPRESSED content per row; disk-after-compression is at or below it, so
-     * `reltuples × avg` is an upper bound of the live bytes and the ratio gate compares dead
-     * space against something that cannot undercount. Verified against the pathological copy:
-     * 21.0 GiB → fires (21 GiB > 4 × ~1.7 GiB); its 0.96 GiB rewrite → never fires again.
-     */
+    /* The live estimate is a sampled `octet_length`, not `pg_stats.avg_width`. `avg_width` was first
+     * and RE-FIRED: on the measured store it answered 72.9 MB for 1.6 GB of TOASTed content (the
+     * statistic reflects the datum header, not the out-of-line bytes), so a freshly compacted ~1.0
+     * GiB table read as 14× bloated and the rewrite would run every launch — a one-time repair turned
+     * into a sixty-second boot tax. A 1% page sample of the actual `octet_length` is the uncompressed
+     * content per row, so `reltuples × avg` is an upper bound of the live bytes and the ratio cannot
+     * undercount. Verified: 21.0 GiB fires (> 4 × ~1.7 GiB); its 0.96 GiB rewrite never fires again. */
     const sampled = await client.query<{ avg: string | null }>(
       `SELECT avg(octet_length(text) + coalesce(octet_length(html), 0))::bigint::text AS avg
        FROM message_bodies TABLESAMPLE SYSTEM (1)`,
     );
-    /*
-     * ── A SAMPLE THAT HIT NO ROWS IS NOT A MEASUREMENT OF ZERO, AND THE DIFFERENCE IS A REWRITE ──
-     *
-     * `avg` is NULL when the 1 % page sample landed on no live tuple, and reading that as 0 turns
-     * the estimate into `128 × reltuples` — small enough that any table past the floor looks
-     * mostly dead. The case is not exotic, it is the HEALTHY shape of this exact table: the bodies
-     * are TOASTed, so a few hundred megabytes of content can sit behind a heap of a handful of
-     * pages, and a 1 % sample of a handful of pages routinely returns nothing.
-     *
-     * `reltuples <= 0` is the same failure from the other side — an ANALYZE that did not land
-     * leaves -1, and a negative estimate clamps to 1 and authorises everything.
-     *
-     * Both DECLINE, which is the only safe direction: the cost of a wrong "no" is what today
-     * already costs, and the cost of a wrong "yes" is a minutes-long exclusive rewrite of the
-     * user's only copy of their mail — repeated on every launch, because a table whose live
-     * content is past the floor keeps qualifying. The next boot samples again.
-     */
+    /* A sample that hit no rows is not a measurement of zero, and the difference is a rewrite. `avg`
+     * is NULL when the 1% page sample landed on no live tuple, and reading that as 0 makes the
+     * estimate `128 × reltuples` — small enough that any table past the floor looks mostly dead. It
+     * is not exotic, it is the HEALTHY shape of this table: TOASTed bodies put hundreds of megabytes
+     * behind a handful of heap pages, which a 1% sample routinely misses. `reltuples <= 0` is the
+     * same failure from the other side (an ANALYZE that did not land leaves -1). Both DECLINE, the
+     * only safe direction — a wrong "yes" is a minutes-long exclusive rewrite of the only copy,
+     * repeated every launch. The next boot samples again. */
     let avgRaw = sampled.rows[0]?.avg;
     if (avgRaw == null) {
       /* THE BOUNDED EXACT READ, for the table shape a page sample cannot see. Capped at
@@ -419,39 +324,14 @@ export function openPhaseFor(dataDir: string): Exclude<LocalDbOpenPhase, "migrat
 }
 
 /**
- * CHECKPOINT, BECAUSE NOTHING ELSE WILL WHILE THE APP IS RUNNING.
- *
- * PGlite runs Postgres as a SINGLE-USER STANDALONE BACKEND — `pg_stat_activity.backend_type` says
- * so in as many words — and standalone means no postmaster, which means none of the background
- * processes exist: no checkpointer, no bgwriter, no autovacuum launcher. Both settings that are
- * supposed to bound `pg_wal` are instructions TO THE CHECKPOINTER: `max_wal_size` is the threshold
- * at which the WAL writer asks it for one, and `checkpoint_timeout` is the interval it wakes on.
- * With nobody to receive either, **no checkpoint is taken for as long as the process lives**, and
- * every segment ever written stays on disk. Measured: 200 MB of churn against a fresh PGlite left
- * `pg_control_checkpoint()` still naming initdb's redo segment, one 1 MB file per megabyte written.
- *
- * ── WHAT ALREADY WORKS, AND SO IS NOT DONE HERE ───────────────────────────────────────────────
- *
- * Two paths do checkpoint, and both were measured before this was written, because a redundant
- * checkpoint dressed up as a fix is worse than none. A clean `close()` runs Postgres's shutdown
- * checkpoint (170 segments → 64), and a start over a directory left by a CRASH runs the
- * end-of-recovery one (170 → 64 again). So the boundaries of a run are covered by Postgres itself
- * and there is deliberately no checkpoint at open or at close here.
- *
- * What neither covers is the MIDDLE of a run, and a desktop mail app is open for days. That is the
- * whole exposure: an install whose engine had been up for hours held tens of gigabytes of `pg_wal`
- * beside a database of a fraction the size, because nothing between the first write and the last
- * would ever reclaim a segment. So the interval is what is added, and nothing else.
- *
- * ── COST ──────────────────────────────────────────────────────────────────────────────────────
- *
- * An explicit `CHECKPOINT` is performed inline when there is no postmaster to hand it to, and it
- * does the whole job: the redo pointer advances and `RemoveOldXlogFiles` unlinks everything below
- * it beyond the `min_wal_size` pool. Measured at 77 ms to reclaim 131 MB, and near-instant when
- * there is nothing to reclaim, against a queue this shares with the app's own reads.
- *
- * It never throws at the caller. A database that cannot checkpoint is still a database that serves
- * mail, and the boundary checkpoints above remain as the backstop.
+ * Checkpoint, because nothing else will while the app is running. PGlite runs Postgres SINGLE-USER
+ * standalone — no postmaster, so no checkpointer, bgwriter or autovacuum — and both settings that
+ * bound `pg_wal` are instructions TO THE CHECKPOINTER, so with nobody to receive them NO checkpoint
+ * is taken for the life of the process and every segment stays (measured: 200 MB of churn left
+ * `pg_control_checkpoint()` still naming initdb's redo segment). The boundaries are covered —
+ * `close()` runs the shutdown checkpoint, a crash-start the end-of-recovery one — so what remains is
+ * the MIDDLE of a run, and a mail app is open for days (an install up for hours held tens of GB of
+ * `pg_wal`). So only the interval is added; an explicit `CHECKPOINT` (77 ms/131 MB) never throws.
  */
 async function checkpointWal(
   client: PGlite,
@@ -501,21 +381,14 @@ function alive(pid: number): boolean {
 }
 
 /**
- * WHICH PROCESS, NOT MERELY WHICH NUMBER — the identity written into the lock file.
- *
- * A pid on its own is not an identity. Pids are recycled: the counter wraps, and a machine that
- * lost power and came back hands the same numbers out again from the start. A lock left behind by
- * a crash therefore names a number that some UNRELATED process is now using, `kill(pid, 0)` says
- * "alive", and the engine refuses to open a mailbox it is the only owner of — permanently, until
- * somebody is told to delete a file. That is the failure this record closes.
- *
- * ── EVERY FIELD IS OPTIONAL, BECAUSE THE PLATFORMS DISAGREE AND THE ANSWER MUST NOT ───────────
- *
- * `startTicks` and `bootId` come from `/proc`, so they are Linux-only. The rule below is written
- * so that ABSENCE never decides anything: a missing field falls back to the behaviour this
- * function has always had, and only a POSITIVE mismatch takes a lock away. Getting that backwards
- * would open a second engine on a live PGlite directory, which corrupts it — a far worse outcome
- * than the refusal being fixed.
+ * Which process, not merely which number — the identity written into the lock file. A pid on its own
+ * is not an identity: pids are recycled (the counter wraps, a machine that lost power hands the same
+ * numbers out again), so a lock left by a crash names a number some UNRELATED process now uses,
+ * `kill(pid, 0)` says "alive", and the engine refuses to open a mailbox it alone owns — permanently,
+ * until somebody deletes a file. Every field is OPTIONAL because the platforms disagree: `startTicks`
+ * and `bootId` come from `/proc` (Linux-only), and the rule is written so ABSENCE never decides
+ * anything — a missing field falls back to the old behaviour and only a POSITIVE mismatch takes a
+ * lock away. Getting that backwards opens a second engine on a live PGlite directory, which corrupts it.
  */
 interface LockRecord {
   pid: number;
@@ -577,32 +450,14 @@ function processStartTicks(pid: number): number | null {
  * from a running engine, so it is returned only on evidence.
  */
 function lockStillOurs(rec: LockRecord, nowBoot: { bootId?: string; bootAtMs: number }): boolean {
-  /* ── A DIFFERENT BOOT ID IS EVIDENCE. A DIFFERENT WALL CLOCK IS NOT. ──────────────────────
-   *
-   * `bootId` is a fresh UUID per boot, read from the kernel: if it differs, the machine has
-   * rebooted and whatever holds this pid now is not the process that wrote the file. That is a
-   * fact, and acting on it is safe.
-   *
-   * `bootAtMs` is `Date.now() - os.uptime()`, and this function used to release the lock when it
-   * had moved by more than ten minutes. That was WRONG, and it was wrong in the one direction
-   * that corrupts: the value moves with every clock adjustment — an NTP step after a long
-   * suspend, a machine whose RTC battery is dead, a VM resuming, a user correcting the date — and
-   * on a host with no `/proc` (macOS, Windows) that arithmetic was the ONLY test being applied.
-   * A clock correction while an engine was live therefore let the next launch unlink a live
-   * lock and open a second PGlite instance on the same directory, which is exactly the
-   * corruption the lock exists to prevent.
-   *
-   * The comment above this function already stated the rule — "answers true whenever it cannot
-   * tell" — and this branch was the one place that broke it. A clock that moved is not a machine
-   * that rebooted. With only `bootAtMs` to go on, the answer is I CANNOT TELL, and the launcher
-   * refuses rather than unlinks.
-   *
-   * The cost is stated rather than hidden: on a host without `/proc`, a genuine reboot that
-   * hands the old pid to an unrelated live process still leaves a lock that must be removed by
-   * hand. That is the pre-existing behaviour, it is the safe direction, and `DataDirLockedError`
-   * already tells the person which file to delete. `bootAtMs` is kept in the record because it
-   * is a useful thing to read when diagnosing one — it is simply not evidence to act on.
-   */
+  /* A different boot id is evidence. A different wall clock is not. `bootId` is a fresh UUID per
+   * boot from the kernel: if it differs the machine rebooted and whatever holds this pid is not the
+   * writer — safe to act on. `bootAtMs` is `Date.now() - os.uptime()`, and releasing the lock when it
+   * moved by ten minutes was WRONG in the one direction that corrupts: the value moves with every
+   * clock adjustment (NTP step, dead RTC, a resuming VM, a user correcting the date), and on a host
+   * with no `/proc` it was the ONLY test — so a clock correction let the next launch unlink a live
+   * lock and open a second PGlite on the directory. With only `bootAtMs`, the answer is I CANNOT TELL
+   * and the launcher refuses; it is kept in the record as a diagnostic, not evidence to act on. */
   if (rec.bootId !== undefined && nowBoot.bootId !== undefined && rec.bootId !== nowBoot.bootId) {
     return false;
   }
@@ -655,20 +510,14 @@ function parseLockRecord(raw: string): LockRecord | null {
 }
 
 /**
- * Take an exclusive lock on the data directory, or refuse.
- *
- * `wx` is `O_CREAT|O_EXCL`, which is atomic: two processes racing here cannot both win. A lock
- * left behind by a crash names a pid, and a pid that is gone releases it — the alternative, a
- * lock that outlives the crash, means a user whose laptop lost power cannot open their mail.
- *
- * ── AND A PID THAT IS *BACK* RELEASES IT TOO, WHICH IS THE HALF THAT WAS MISSING ─────────────
- *
- * "A pid that is gone releases it" was only half the rule, and the other half is the case a
- * laptop actually produces: power is lost, the machine reboots, the pid counter starts again, and
- * some unrelated process is issued the number the dead engine had written down. `kill(pid, 0)`
- * answers "alive" for it, so the lock was held by a process that has never heard of this mailbox
- * — permanently, until somebody was told to delete a file. See {@link LockRecord}: the file now
- * records WHICH process, and a live pid whose identity does not match the record is taken over.
+ * Take an exclusive lock on the data directory, or refuse. `wx` is `O_CREAT|O_EXCL`, atomic — two
+ * processes racing cannot both win. A lock left by a crash names a pid, and a pid that is gone
+ * releases it (the alternative, a lock outliving the crash, means a laptop that lost power cannot
+ * open its mail). And a pid that is BACK releases it too, the half that was missing: after a reboot
+ * the pid counter starts again and some unrelated process is issued the dead engine's number, so
+ * `kill(pid, 0)` answers "alive" and the lock was held by a process that never heard of this mailbox
+ * — permanently, until a file was deleted. {@link LockRecord} records WHICH process, and a live pid
+ * whose identity does not match the record is taken over.
  */
 function lockDataDir(dataDir: string): () => void {
   const path = join(dataDir, LOCK_FILE);

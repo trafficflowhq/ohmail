@@ -1,42 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE PHONE'S COMPOSITION ROOT — the same engine, in the app's own runtime, over SQLite
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * `main.ts` is the desktop's composition root: it reads the environment a native shell spawned it
- * with, opens the store, builds the engine, and serves it over a stdio frame protocol. This is the
- * same job for a phone, and the differences are the whole file:
- *
- *  · there is no process to spawn, so there is no environment and no frame codec. The engine is
- *    called IN-PROCESS and `handle(req)` is the seam — `serveOverStdio` is its desktop twin.
- *  · there is no PGlite, no lock file and no filesystem module, so the store arrives already open
- *    through `SidecarConfig.store`.
- *  · there is no `hostname()`, so `machineName` is required rather than defaulted.
- *  · there is no host door and no same-network door, and this build must not contain the code for
- *    one. See `src/phone/README.md` for what each of the desktop's boot-time modules answers here
- *    and why none of the three that are CALLED at boot may be a thrower.
- *
- * ── WHAT THIS FILE IS NOT ─────────────────────────────────────────────────────────────────
- *
- * It is not a second engine. `createSidecar` is imported and called, once, with a config — the
- * drain loop, the lease gate, the reconnect, the services and `runSyncCycle` are the desktop's, not
- * a phone-shaped copy of them. A fork would be two implementations of "organize a mailbox" and the
- * one thing that must never differ between them is which install may move a message.
- *
- * ── THE ONE CAST, AND WHY IT IS HERE ──────────────────────────────────────────────────────
- *
- * The services are typed against the server's handle and stay that way; the device store is a
- * `SqliteRemoteDatabase` that renders the same statements through the dialect seam. Exactly one
- * place hands one where the other is expected, and it is {@link openPhoneStore} below — the same
- * arrangement `packages/db/src/testing.ts` uses for the test harness, for the same reason: three
- * thousand call sites must not each be told there is a second dialect.
- *
- * ── HOST-MODE KNOBS ARE REFUSED, NOT IGNORED ──────────────────────────────────────────────
- *
- * A config carrying `hostMode`, `hostOrigin`, `hostPort`, `hostAssetsDir` or `lanBind` is refused
- * by name before anything is composed. The substitutes would disarm it anyway, and that is exactly
- * why the refusal is here: a caller that asked for a host door and got a silently disarmed one
- * would believe it had a door. The census over this refusal is `phone-engine-boot.test.ts`.
+ * The phone's composition root — the same engine, in the app's own runtime, over SQLite. `main.ts`
+ * is the desktop twin; the differences are the file: no process to spawn (so no environment and no
+ * frame codec — the engine is called IN-PROCESS and `handle(req)` is the seam), no PGlite or lock
+ * file (the store arrives open through `SidecarConfig.store`), no `hostname()` (so `machineName` is
+ * required), and no host or same-network door (this build must not contain the code for one). It is
+ * NOT a second engine: `createSidecar` is imported and called once, so the drain loop, lease gate,
+ * reconnect and `runSyncCycle` are the desktop's — a fork would be two implementations of "may this
+ * install move a message". Host-mode knobs are REFUSED by name, not ignored (`phone-engine-boot.test.ts`).
  */
 /**
  * `net` — THE ALIAS, and under Node the builtin, which is why the call below is optional.
@@ -81,48 +51,14 @@ import { createSidecarLog, type Diagnostic } from "./log.js";
 import type { LogFields, Logger, LogLevel, LogSink } from "@trafficflow/core/mail";
 
 /**
- * ONE STATEMENT AT A TIME, ONE HANDLE, AND ROWS AS ARRAYS IN THE STATEMENT'S COLUMN ORDER.
- *
- * The shape the phone's platform half implements and the node-side suite doubles. Three of its four
- * members carry a rule the device measured rather than a rule of taste:
- *
- *  · **`all` returns rows as ARRAYS, ordered by the STATEMENT's columns.** `drizzle-orm/sqlite-proxy`
- *    maps positionally. Both platform halves return row OBJECTS, and two columns of one name
- *    collapse to a single key — which fills both positions from one value and produces a row of the
- *    right length carrying the wrong data. That is worse than a short row, because nothing errors.
- *    So the conversion belongs to the implementation, which is the only thing that can ask the
- *    statement what its columns are, and this contract states the obligation.
- *  · **`batch` runs its statements in one transaction, in one call.** A drain page written
- *    statement by statement is a commit and a bridge crossing per row: measured at roughly 90 ms
- *    per single-row insert on a device, which turned a 3.6 s drain pass into 17–22 s. Used by
- *    `db.batch([...])`.
- *  · **Every call is SERIALIZED against every other.** Not an optimisation: the device's driver is
- *    asynchronous, so two overlapping read-modify-writes lose one.
- *
- * ── AND SERIALIZING EACH CALL IS NOT ENOUGH, WHICH IS WHY {@link oneTransactionAtATime} EXISTS ──
- *
- * The ruling's amendment says to wrap a drain page in one `batch` transaction "through the
- * executor's seam; `drizzle-orm/sqlite-proxy` supports it (`sqlite-proxy/session.js:40`)". Line 40
- * of that file is `transaction()`, and READ RATHER THAN ASSUMED it is precisely the method that
- * does NOT use the batch callback: it issues `begin`, the body's statements and `commit` as
- * SEPARATE calls through the ordinary one, and the batch callback serves only `db.batch([...])`,
- * an API the services never call. Measured on this composition's own boot: 132 executor calls,
- * one `begin`, one `commit`, and ZERO batch calls.
- *
- * So the amendment's citation supports the opposite of its conclusion, and the hazard it was
- * written to close is live: with `begin` and `commit` in different queue slots, another
- * transaction's `begin` lands between them and the store REFUSES it — "cannot start a transaction
- * within a transaction" — with one writer's work lost and a message naming nothing the caller was
- * doing.
- *
- * An executor cannot fix this by itself. It sees a flat stream of statements with no idea which
- * caller each belongs to, so "hold the queue after `begin`" would block the transaction's own
- * body and deadlock. The place that HAS the caller is the handle's `transaction` method, and that
- * is where the mutex goes — see {@link oneTransactionAtATime}.
- *
- * The harness's own executor must YIELD between calls. A synchronous double cannot express any of
- * this: with `node:sqlite`'s synchronous driver, removing the serialization changes nothing and the
- * suite stays green while the device path is broken.
+ * One statement at a time, one handle, rows as ARRAYS in the statement's column order — the shape
+ * the phone's platform half implements and the node suite doubles. Three members carry a measured
+ * rule: `all` returns rows as ARRAYS (`drizzle-orm/sqlite-proxy` maps positionally, and row OBJECTS
+ * collapse two same-named columns into one key, filling both positions from one value with nothing
+ * erroring); `batch` runs its statements in one transaction in one call (statement-by-statement is
+ * ~90 ms/row, turning a 3.6 s drain into 17–22 s); and every call is SERIALIZED (the async driver
+ * loses one of two overlapping read-modify-writes). Serializing each call is not enough — a
+ * transaction spans separate `begin`/`commit` — so {@link oneTransactionAtATime} holds the mutex.
  */
 export interface PhoneSqlRows {
   /**
@@ -185,22 +121,13 @@ export interface PhoneEngineDeps {
   now?: () => Date;
   log?: Diagnostic;
   /**
-   * ══ WHERE A DIAGNOSTIC LINE GOES ON THIS PHONE — the bytes' destination, and nothing else ══
-   *
-   * A phone's engine wrote NOTHING anywhere, because the app had no way to give it a channel:
-   * {@link log} is a `Diagnostic`, which means composing `detail` objects, and the app composing
-   * them would be a second logger outside every control `log.ts` exists for. Measured on a device:
-   * two `ReactNativeJS` lines in a whole run, neither from the engine — so three device-only
-   * defects had to be read off the mail server's wire instead, and the ones that never reach the
-   * wire could not be read at all.
-   *
-   * So the app supplies a SINK — one finished line in, nowhere out — and this file builds
-   * {@link createSidecarLog} over it. The field allowlist, the name-keyed redaction, the value
-   * grammars, the string bounds and `err` collapsing to a class and a code all come with it, and
-   * the line is byte-identical in shape to the one the desktop writes to stderr.
-   *
-   * {@link log} still WINS where a caller passes one: the suite reads structured events rather
-   * than parsing lines, and a composition that passes both gets the structured channel.
+   * Where a diagnostic line goes on this phone — the bytes' destination, and nothing else. A
+   * phone's engine wrote NOTHING anywhere, because the app had no way to give it a channel: {@link
+   * log} is a `Diagnostic` (composing `detail` objects), and the app composing them would be a
+   * second logger outside every control `log.ts` exists for. So the app supplies a SINK — one
+   * finished line in, nowhere out — and this builds {@link createSidecarLog} over it, with the field
+   * allowlist, name-keyed redaction, value grammars, string bounds and `err` collapsing all carried,
+   * byte-identical to the desktop's stderr line. {@link log} still WINS where a caller passes one.
    */
   logSink?: LogSink;
   /**
@@ -325,32 +252,22 @@ export interface PhoneEngine {
    */
   wake(): Promise<void>;
   /**
-   * HAND THE MAILBOX BACK — call this when the app leaves the foreground and cannot keep running.
-   *
-   * The claim is removed from `ohmail/_meta`; the row is not touched. So a desktop or Cloud asked
-   * to take the mailbox while this phone is suspended gets it honestly and immediately, and the
-   * phone claims it back on the next gated cycle after it returns — unless somebody took it, in
-   * which case the same gate stands this install down. Neither half needs a press.
-   *
-   * One entry per mailbox: a count of claims removed, `0` for "none of ours were there", `null`
-   * for "could not look", where this install may still hold the claim and nothing may report the
-   * mailbox as handed back.
-   *
-   * NOT {@link stop}. Stop closes the store and ends the engine, and it leaves the claim to age
-   * out — twelve minutes in which a person's other machine refuses the mailbox it was just told
-   * to take. This is the act "it hands the mailbox back when you leave the app" names.
+   * Hand the mailbox back — call this when the app leaves the foreground and cannot keep running.
+   * The claim is removed from `ohmail/_meta`; the row is not touched, so a desktop or Cloud asked to
+   * take the mailbox gets it honestly and at once, and this phone claims it back on the next gated
+   * cycle after it returns (or stands down if somebody took it — neither half needs a press). One
+   * entry per mailbox: a count of claims removed, `0` for "none of ours", `null` for "could not
+   * look". NOT {@link stop}, which closes the store and leaves the claim to age out — twelve minutes
+   * in which another machine refuses a mailbox it was just told to take.
    */
   handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
   /**
-   * TAKE IT BACK — call this when the app returns to the foreground after a {@link handBack}.
-   *
-   * It asks the mailbox who holds it: free, and this install claims it again; held by a computer or
-   * by Cloud, and this install stands down and reads instead. Neither needs a press, and a resume
-   * can never take a mailbox from a machine that has it.
-   *
-   * NOT {@link wake}, which restores a dead SOCKET and deliberately runs no cycle. A hand-back left
-   * no socket problem to fix — it gave up a claim — so a wake would find nothing to do and the
-   * mailbox would stay unclaimed until the next poll tick, which `handBack` has cleared.
+   * Take it back — call this when the app returns to the foreground after a {@link handBack}. It
+   * asks the mailbox who holds it: free, and this install claims it again; held by a computer or
+   * Cloud, and this install stands down and reads instead. Neither needs a press, and a resume can
+   * never take a mailbox from a machine that has it. NOT {@link wake}, which restores a dead SOCKET
+   * and runs no cycle — a hand-back left no socket problem, so a wake would find nothing to do and
+   * the mailbox would stay unclaimed until the next poll tick, which `handBack` has cleared.
    */
   resume(): Promise<void>;
   /**
@@ -388,31 +305,14 @@ export interface PhoneEngine {
 }
 
 /**
- * ONE-CLICK UNSUBSCRIBE, REFUSED BY NAME — because on this build it cannot work, and the way it
- * fails today is a module error.
- *
- * The chain, read end to end: `UnsubscribeService` posts through `pinnedHttpRequest`, which reaches
- * `node:http`/`node:https`, which on a phone are thrower stubs. The engine's own comment says
- * production "passes nothing and gets `nodeOneClickPost`" — so without this arm a person tapping
- * unsubscribe on a standalone phone gets a sentence about a Node process rather than an answer about
- * their mail.
- *
- * ── A REFUSAL, NOT A HALF-WIRED IMPLEMENTATION ────────────────────────────────────────────
- *
- * The platform HAS a working HTTP client, so a pass-through looks like a one-line fix. It is not.
- * The URL a `List-Unsubscribe` header names is the SENDER's choice, and the desktop refuses one
- * pointing at a LAN address for a reason that applies here more strongly rather than less: a phone
- * sits inside somebody's home network. That refusal is enforced by an SSRF gate that resolves DNS,
- * and DNS on this build is a thrower too — so honouring the header safely needs a device resolver
- * and a ruling about what the gate means on a device. Both belong to the door's own slice.
- *
- * Until then the honest answer is a refusal that says so. It THROWS rather than answering a status,
- * and the service's own error path is what makes that correct: it records the attempt as `failed`,
- * does NOT retry it (at-most-once, because nothing can tell whether the sender received it), and
- * re-throws. So the bookkeeping is right and the sentence reaches the person.
- *
- * NOTHING LEAVES THE DEVICE. No client is constructed, no address is resolved, no request is made —
- * asserted by a control rather than by this paragraph.
+ * One-click unsubscribe, refused by name — because on this build it cannot work and today fails as
+ * a module error. The chain: `UnsubscribeService` posts through `pinnedHttpRequest` → `node:http`/
+ * `node:https`, which on a phone are thrower stubs, so without this arm a tap gets a sentence about
+ * a Node process. A refusal, NOT a half-wired pass-through: the `List-Unsubscribe` URL is the
+ * SENDER's choice, the desktop refuses a LAN address, and its SSRF gate resolves DNS — also a
+ * thrower here — so honouring the header safely needs a device resolver and a ruling, both the
+ * door's own slice. It THROWS so the service records the attempt `failed`, does NOT retry
+ * (at-most-once), and re-throws; NOTHING leaves the device, asserted by a control.
  */
 export const phoneOneClickPost = {
   async post(_url: string, _pin: readonly string[]): Promise<{ status: number }> {
@@ -440,42 +340,14 @@ const KEK_HEX_RE = /^[0-9a-f]{64}$/i;
 export const TRANSACTION_WAIT_MS = 30_000;
 
 /**
- * NO TWO TRANSACTIONS IN FLIGHT ON THIS STORE, EVER — an install-wide mutex on `transaction`.
- *
- * ── THE FAILURE, MEASURED ON THE DEVICE'S BINDING RATHER THAN ARGUED ──────────────────────
- *
- * Two transactions started in the same tick end with the first committed and the second DEAD:
- * "cannot start a transaction within a transaction", and the row carries one writer's work. The
- * store does not order the second one, it refuses it. And it is reachable without a second
- * connection existing, because the proxy issues `begin`, the statements and `commit` as separate
- * calls — so a queue that serializes each STATEMENT does not make a TRANSACTION atomic.
- *
- * ── WHY HERE AND NOT IN THE EXECUTOR, AND NOT IN THE ENGINE ───────────────────────────────
- *
- * The executor cannot: it has no idea which caller a statement belongs to, so holding the queue
- * after `begin` would block that transaction's own body for ever. The engine's passes are already
- * serialized PER MAILBOX by the roster's queue — and per mailbox is the wrong granularity here,
- * for the reason the roster's own comment gives: it lets different mailboxes' drains overlap
- * because the desktop's store serializes transactions on its own mutex. This one does not. An API
- * request arriving during a drain is the same overlap from the other direction.
- *
- * So it goes at the one place every transaction on this store funnels through, whoever started it:
- * the handle's own `transaction` method.
- *
- * ── AND A MUTEX ON A RE-ENTRANT CALL IS A DEADLOCK, SO THE WAIT IS BOUNDED AND NAMED ──────
- *
- * Drizzle renders a NESTED transaction as a savepoint on the transaction OBJECT (`tx.transaction`),
- * which never reaches this method and is correct as it stands. But a caller that reaches for the
- * outer HANDLE from inside a transaction body — `db.transaction(...)` within `db.transaction(...)`
- * — would queue behind a transaction that cannot finish until the inner one returns. That is a
- * hang, and a hang is the worst of the three possible outcomes: it is indistinguishable from a slow
- * mail server, it holds the store for every later caller, and it names nothing.
- *
- * So the queue wait is bounded by {@link TRANSACTION_WAIT_MS} and the refusal SAYS WHAT TO LOOK
- * FOR. The entry stays in the chain rather than being dropped — dropping it would let the next
- * transaction start while the one ahead is still running, which is the invariant this whole
- * function exists for — so the outer transaction proceeds, its body receives the named rejection,
- * and its rollback releases the queue. Bounded, diagnosable, and self-healing rather than fatal.
+ * No two transactions in flight on this store, ever — an install-wide mutex on `transaction`. Two
+ * started in the same tick end with the first committed and the second DEAD ("cannot start a
+ * transaction within a transaction"), carrying one writer's work, and it is reachable without a
+ * second connection because the proxy issues `begin`, statements and `commit` as separate calls — a
+ * per-STATEMENT queue does not make a TRANSACTION atomic. Not in the executor (it cannot see which
+ * caller a statement belongs to) and not per-mailbox (an API request during a drain is the same
+ * overlap), so it goes where every transaction funnels: the handle's `transaction` method. A
+ * re-entrant `db.transaction` would deadlock, so the wait is bounded by {@link TRANSACTION_WAIT_MS}.
  */
 export function oneTransactionAtATime<T extends object>(db: T, waitMs = TRANSACTION_WAIT_MS): T {
   const handle = db as T & {
@@ -583,34 +455,14 @@ export async function openPhoneStore(
 }
 
 /**
- * A `Logger` OVER THE PHONE'S ONE DIAGNOSTIC — the inverse of `log.ts#diagnosticFor`.
- *
- * `SidecarConfig` carries two faces of the same channel and they are not interchangeable:
- * {@link Diagnostic} is `(event, detail) => void` with the level derived from the event name, and
- * `Logger` states its level per line. The desktop builds ONE `createSidecarLogger()` and passes
- * both faces of it (`main.ts:311-312`, `main.ts:364`); this composition passed only the
- * `Diagnostic`, so `config.logger` was absent on a phone and every `log?.warn` / `log?.error` in
- * the shared sync loop optional-chained into nothing. What was lost is exactly the set of lines
- * that describe a write the mail server did NOT accept — a refused `STORE`, a `STORE` whose
- * bookkeeping did not commit, a read-state intent with nowhere to go. On the one install where the
- * local store is the only other witness, "your mailbox did not take this" was discarded.
- *
- * A phone has no second sink to build one against, so this DERIVES the second face from the one
- * the caller supplied rather than constructing a logger of its own. The consequence is that both
- * faces reach the same place — which is the desktop's arrangement too, one indirection earlier.
- *
- * ── WHAT EACH MEMBER ANSWERS, AND WHY IT IS NOT MORE ──────────────────────────────────────
- *
- *  · `child(fields)` MERGES and returns another of these. `withRequestId` calls it
- *    (`packages/api/src/middleware.ts:145`), so a stub returning itself would silently drop the
- *    bindings, and one that threw would take a request down.
- *  · `level` says `info`, and `debug()` is therefore a no-op rather than an `info` line. A logger
- *    that names a level and then emits below it is lying about its own filter, and the field is
- *    read by callers deciding whether to build an expensive detail object.
- *  · `warn` and `error` both go to the `Diagnostic`. It re-derives a level from the event name
- *    (`ERROR_EVENT` — `_failed`, `_fatal`, `_unavailable`), so a warning about `store_refused`
- *    lands as `info` on the phone's own sink. That is the existing vocabulary rule and this does
- *    not fork it; `level` rides in the FIELDS so the original severity survives in the line.
+ * A `Logger` over the phone's one Diagnostic — the inverse of `log.ts#diagnosticFor`.
+ * `SidecarConfig` carries two faces of one channel: {@link Diagnostic} `(event, detail) => void`
+ * with the level derived from the event, and `Logger` stating its level per line. The desktop
+ * passes both faces of one logger; this composition passed only the `Diagnostic`, so `config.logger`
+ * was absent and every `log?.warn`/`log?.error` in the shared sync loop optional-chained into
+ * nothing — losing the lines that describe a write the mail server did NOT accept. With no second
+ * sink this DERIVES the `Logger` face from the supplied `Diagnostic`; `child` MERGES (a returning
+ * stub drops bindings), `level` is `info`, and `warn`/`error` carry the level in the FIELDS.
  */
 export function loggerOver(log: Diagnostic, bound: LogFields = {}): Logger {
   const emit = (level: LogLevel, event: string, fields?: LogFields): void => {
@@ -654,18 +506,15 @@ export type SealedStart =
 /** A sealed start's deps: every one of {@link PhoneEngineDeps} except the mailbox's own config. */
 export type SealedPhoneDeps = Omit<PhoneEngineDeps, "imap" | "address">;
 
-/**
- * START FROM WHAT THE LAST LAUNCH SEALED — the phone's relaunch, and the desktop's own shape.
- *
- * The form that took the password exists once. Every later launch has only the store, and the store
- * holds both halves: the sealed password, which `resolveLogin` reads and decrypts for itself, and
- * the coordinates it was proved against. So this reads the COORDINATES — host, port, secure, user —
- * and supplies no password at all; nothing here decrypts anything, and the secret never becomes a
- * value in this function.
- *
- * A store with no credential row answers `no-credential` rather than starting: an engine given an
- * empty dial would come up, report a mailbox, and authenticate to nothing.
- */
+  /**
+   * Start from what the last launch sealed — the phone's relaunch, and the desktop's shape. The form
+   * that took the password exists once; every later launch has only the store, which holds both
+   * halves: the sealed password (`resolveLogin` reads and decrypts it) and the coordinates it was
+   * proved against. So this reads the COORDINATES — host, port, secure, user — and supplies no
+   * password; nothing here decrypts anything. A store with no credential row answers `no-credential`
+   * rather than starting, since an engine given an empty dial would come up, report a mailbox, and
+   * authenticate to nothing.
+   */
 export async function startPhoneEngineFromSealed(deps: SealedPhoneDeps): Promise<SealedStart> {
   return composePhoneEngine(deps, null);
 }
@@ -740,21 +589,13 @@ async function composePhoneEngine(
   const sidecar = await createSidecar({
     dataDir: deps.dataDir ?? "",
     /**
-     * THE PHONE'S SOCKET DEADLINE IS THE COMPOSITION'S, AND IT IS THE WORKER'S NUMBER.
-     *
-     * The engine's default profile documents itself as chosen against a sixty-second serverless
-     * invocation ceiling — a 25 s socket deadline for a connection that is opened, used and thrown
-     * away inside one request. This connection is nothing like that: it is held for as long as the
-     * app is in the foreground, and a single fetch pass over a couple of hundred messages was
-     * measured at 42 s on a device. Under the serverless profile that pass is a dead socket, and
-     * what a person sees is a mailbox that never finishes opening.
-     *
-     * `WORKER_NET_TIMEOUTS` is the profile that already exists for exactly this shape, with
-     * exactly this reason written on it, and the worker passes it the same way — INSIDE the config
-     * object, which flows through the seed mailbox's dial to the adapter with no engine change at
-     * all. A third profile would be a third number to keep in step with two others.
-     *
-     * A caller that supplies its own timeouts WINS, so this is a default rather than an override.
+     * The phone's socket deadline is the composition's, and it is the WORKER's number. The engine's
+     * default profile is chosen against a 60 s serverless ceiling — a 25 s deadline for a connection
+     * opened, used and thrown away in one request. This connection is held for as long as the app is
+     * foregrounded, and one fetch pass over a couple of hundred messages was measured at 42 s, so
+     * under the serverless profile that pass is a dead socket and a mailbox that never finishes
+     * opening. `WORKER_NET_TIMEOUTS` already exists for exactly this shape, passed INSIDE the config
+     * object with no engine change. A caller that supplies its own timeouts WINS — a default, not an override.
      */
     imap: { ...dial, timeouts: dial.timeouts ?? WORKER_NET_TIMEOUTS },
     ...(deps.address !== undefined ? { address: deps.address } : {}),
@@ -784,32 +625,14 @@ async function composePhoneEngine(
   });
 
   /**
-   * THE ENGINE STARTS ITSELF. Nobody outside has to remember to.
-   *
-   * `main.ts` is the desktop's composition root and it does exactly this, on the line after the
-   * engine is built. This file did not, and it exposed no way to do it either — so a phone booted,
-   * answered its door, reported `organizing: true`, and synchronised nothing for ever, with no
-   * diagnostic anywhere. Every part worked; the launch was simply never made.
-   *
-   * NOT a `start()` member on {@link PhoneEngine}. A door that must remember to call something is
-   * the built-tested-unreachable shape this whole composition exists to close, and it would have
-   * put "does this install organize its mailbox?" in the app rather than in the engine.
-   *
-   * ── A LAUNCH THE SERVER ANSWERED WITH A NO IS NOT HANDED BACK AS AN ENGINE ──────────────
-   *
-   * This was `void sidecar.start().catch(...)` and the catch was UNREACHABLE: `start()` settles
-   * every mailbox with `allSettled` and logs, so it never rejects for one that could not be
-   * opened. Measured on a device: Connect was pressed, the server refused the dial, and the door
-   * reported the mailbox open and navigated away — nothing authenticated, nothing said.
-   *
-   * So the launch is awaited, bounded, and exactly two outcomes are refusals: the server rejected
-   * the sign-in, or it refused the encrypted way in. Both are choices a poll cannot heal. An
-   * OUTAGE is not a refusal — a refused socket, a timeout, a server that is down — because
-   * offline is a property of this mode and the poll re-dials.
-   *
-   * The bound is the dial's own connect + greeting, from the timeouts this composition already
-   * hands the adapter; a first drain still running is a healthy engine, so the bound elapsing is
-   * a yes. On a refusal the engine is STOPPED rather than returned.
+   * The engine starts itself — nobody outside has to remember to. `main.ts` does exactly this on the
+   * line after the engine is built; this file did not and exposed no way to, so a phone booted,
+   * reported `organizing: true`, and synchronised nothing for ever with no diagnostic. NOT a
+   * `start()` member (a door that must remember to call something is the built-tested-unreachable
+   * shape this closes). And a launch the server answered NO is not handed back as an engine: this
+   * was `void sidecar.start().catch(...)` whose catch was UNREACHABLE (`start()` settles with
+   * `allSettled`). So the launch is awaited and bounded, and exactly two outcomes refuse — the
+   * sign-in and the encrypted way in; an OUTAGE is not a refusal, and on a refusal the engine STOPS.
    */
   /* MERGED THE WAY `imapFlowOptions` MERGES IT — `timeouts` on a config is PARTIAL, and a caller
      that overrode only `socketMs` would otherwise leave the two halves of this bound undefined. */
@@ -828,20 +651,14 @@ async function composePhoneEngine(
     }),
   ]);
   /**
-   * ══ A REFUSED LAUNCH DOES NOT LEAVE THE CREDENTIAL IT SEALED ON THE WAY IN ═════════════════
-   *
-   * `attachLocal` seals the supplied password at ATTACH, which is before anything dials. So a
-   * first press with the wrong password — or the wrong host — writes the row and is then refused,
-   * and the next press composes from the form again and is ignored: `resolveLogin` lets the STORE
-   * win, so the wrong password is what dials; and where the HOST was corrected the row reads
-   * FOREIGN, the runtime's `start()` returns without dialling at all, and this function used to
-   * hand back an engine over a door that never authenticated. Measured on a release build: the
-   * Ohbox mounted in under six seconds with zero bytes reaching the mail server.
-   *
-   * Only where THIS start SUPPLIED A PASSWORD — a person at the form. Neither a sealed start nor
-   * a coordinates-only relaunch carries a second copy of it, so removing their row would destroy
-   * the one credential this phone has; and a relaunch over an `unreadable` row is the documented
-   * dial-with-nothing state the form recovers from, not a row to delete.
+   * A refused launch does not leave the credential it sealed on the way in. `attachLocal` seals the
+   * supplied password at ATTACH, before anything dials, so a first press with the wrong password —
+   * or the wrong host — writes the row and is refused, and the next press is ignored: `resolveLogin`
+   * lets the STORE win, and a corrected HOST leaves the row FOREIGN so `start()` returns without
+   * dialling and this used to hand back an engine over a door that never authenticated (measured: an
+   * Ohbox in under six seconds, zero bytes on the wire). Only where THIS start SUPPLIED a password —
+   * a sealed start or coordinates-only relaunch carries no second copy, and an `unreadable` row is
+   * the dial-with-nothing state the form recovers from, not a row to delete.
    */
   const typed = imap === null ? undefined : (imap.auth as { pass?: string } | undefined)?.pass;
   const suppliedPassword = typeof typed === "string" && typed !== "";
@@ -880,22 +697,14 @@ async function composePhoneEngine(
   }
 
   /**
-   * ══ AND AN ENGINE THAT DIALLED NOTHING IS NOT AN OPENED MAILBOX ════════════════════════════
-   *
-   * The runtime's `start()` returns without dialling whenever the login does not resolve to a
-   * usable password — `foreign-host` (the row names another server), `unreadable` (this install's
-   * key does not open its own row), `absent`. It reports no failure doing so, correctly: on the
-   * desktop that is the documented no-password state and the shell shows a password field.
-   *
-   * A CONFIGURED start has no such field to fall back to. The person has just typed a password,
-   * and an engine handed back here is an Ohbox over a door that never authenticated — the state
-   * the door's own refusals exist to make impossible, reached one press later. So the row that
-   * could not be used is removed and the launch refuses; pressing Connect again seals what is on
-   * the form. Reachable independently of the arm above: a keystore that minted a new ring leaves
-   * a row this install cannot open, with nothing refused by any server.
-   *
-   * A start with NO password of its own is deliberately untouched — that is the relaunch, whose
-   * `unreadable` row dials with nothing and whose recovery is the form, not a deletion.
+   * And an engine that dialled nothing is not an opened mailbox. The runtime's `start()` returns
+   * without dialling whenever the login does not resolve to a usable password — `foreign-host`,
+   * `unreadable` (this install's key does not open its own row), `absent` — reporting no failure,
+   * correct on the desktop where the shell shows a password field. A CONFIGURED start has no such
+   * field: the person just typed a password, and an engine handed back here is an Ohbox over a door
+   * that never authenticated. So the unusable row is removed and the launch refuses; pressing Connect
+   * again seals the form. Reachable independently: a keystore that minted a new ring leaves a row
+   * this install cannot open. A start with NO password of its own is untouched (that is the relaunch).
    */
   if (suppliedPassword) {
     const credential = await sidecar.credentialState().then(
@@ -1113,17 +922,13 @@ async function composePhoneEngine(
 }
 
 /**
- * THE MAILBOX THIS STORE SERVES AND THE SERVER IT WAS PROVED AGAINST — or `null`.
- *
- * `engine.ts` seals `host/port/secure/user` beside the ciphertext, which is what makes a relaunch
- * possible without the app holding a secret of its own. Read here in the SAME order
- * `ensureLocalWorld` picks the seed — the oldest live row — so the engine that follows serves the
- * mailbox whose credential this dial came from.
- *
+ * The mailbox this store serves and the server it was proved against — or `null`. `engine.ts` seals
+ * `host/port/secure/user` beside the ciphertext, which is what makes a relaunch possible without the
+ * app holding a secret. Read here in the SAME order `ensureLocalWorld` picks the seed — the oldest
+ * live row — so the engine that follows serves the mailbox whose credential this dial came from.
  * `null` for every shape that is not a dial: no mailbox, no credential row, or a row whose meta
- * does not name a host. The last one is the row shape sealed before the probe recorded coordinates;
- * treating it as a dial would mean starting with an empty host, and the honest answer is that this
- * store cannot say where the mailbox is.
+ * names no host (the shape sealed before the probe recorded coordinates) — treating that as a dial
+ * would start with an empty host, and the honest answer is that this store cannot say where it is.
  */
 async function sealedDial(db: LocalDb): Promise<SidecarImapConfig | null> {
   const rows = await db

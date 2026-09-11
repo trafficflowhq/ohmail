@@ -3944,17 +3944,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              * on sending on its own behalf while `detach()` waits for the pass to end. */
             cancelled: () => stopped || gen !== generation || conn !== adapter,
             openSendAdapter: openLocalSend,
-            /* ── THIS MAILBOX'S APPOINTMENTS, AND NO OTHER MAILBOX'S ──────────────────────
-             *
-             * The pass scans the whole store, which was the same thing as "this mailbox" while
-             * an install held one. It is not any more, and the difference is not a tidiness
-             * question: this call is reached only when THIS mailbox organizes, and without the
-             * narrowing an organizing mailbox would claim and SEND an appointment belonging to a
-             * mailbox this install merely READS — mail leaving from an install the real organizer
-             * knows nothing about, at a time nobody re-chose.
-             *
-             * The gate above is per runtime, so each organizing mailbox keeps exactly its own
-             * appointments, and a reader's are left standing for whoever does organize it. */
+            /* This mailbox's appointments only. The pass scans the whole store, which equalled
+             * "this mailbox" when an install held one; with several, an unnarrowed scan would let
+             * an organizing mailbox claim and SEND an appointment belonging to a mailbox this
+             * install merely reads. The gate is per runtime, so each organizing mailbox keeps its
+             * own and a reader's are left for whoever organizes it. */
             mailboxIds: [mb.id],
             resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
             now,
@@ -4026,44 +4020,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
-       * SETTLE A SEND THIS INSTALL STARTED AND NEVER FINISHED.
-       *
-       * The same ONE implementation the hosted API host and the self-host clock run. On those two
-       * a stranded `pending` reservation is drained by a cron and a timer; on THIS door there was
-       * nothing at all — the pass shipped with its route and its tick and no standalone hook, so a
-       * send interrupted by a quit or a crash stayed `pending` for ever and its draft went on
-       * saying "Sending…" with no process anywhere that would ever look at it again.
-       *
-       * It could not simply be added, either, which is worth recording because it is the second
-       * time this exact shape has cost a door a feature: `runSendReconcilePass` was exported from
-       * `@trafficflow/services` only, and this file imports the MAIL entry point, so the hook
-       * would not have compiled. A pass is only as reachable as the entry point its host actually
-       * imports, and a barrel omission fails SILENTLY — no error, no red test, just a door quietly
-       * doing less than the others. The mail-barrel export lands with this hook.
-       *
-       * ── AND IT IS DELIBERATELY *NOT* GATED ON ORGANIZING ────────────────────────────────────
-       *
-       * It sits between two hooks that ARE gated, so the difference has to be stated here or it
-       * reads as an oversight and gets "fixed". The two above SEND: an appointment and an away
-       * reply are mail leaving this mailbox, and a reader must not do that on behalf of an
-       * organizer it cannot see. This one RESOLVES — the subject is THIS INSTALL'S OWN
-       * reservation, written by a send this very process started, and the work is a READ (a Sent
-       * folder probe, or a single indexed lookup in this account's own mirror) plus a
-       * compare-and-swap on a row nobody else owns.
-       *
-       * Gating it would strand exactly the person it exists for: somebody whose install was
-       * demoted to reader between pressing send and the process dying would keep a draft that says
-       * "Sending…" for ever, because the organizer's install has no reservation of theirs to find.
-       * `send-reconcile-drain.test.ts` holds that as a case rather than as a sentence.
-       *
-       * No account filter is passed, and none is available on the pass's own options: it scans the
-       * store, exactly as the scheduled sender does. That is the right shape on this door for a
-       * reason the hosted host does not have — a standalone store holds ONE account, so store-wide
-       * IS this install's own reservations.
-       *
-       * The adapter it is handed cannot send: the pass wraps whatever factory it gets so that
-       * `send` throws. That is a structural proof rather than a promise made here — this hook could
-       * not deliver a second copy of an already-sent message even if its logic were wrong.
+       * Settle a send this install started and never finished — the same implementation the
+       * hosted host and self-host clock run. Deliberately NOT gated on organizing: it resolves
+       * THIS install's own `pending` reservation (a Sent-folder read plus a compare-and-swap on a
+       * row nobody else owns), so gating would strand someone demoted to reader between send and a
+       * crash with a draft stuck "Sending…" (`send-reconcile-drain.test.ts`). No account filter —
+       * a standalone store holds one account. The adapter is wrapped so `send` throws: a
+       * structural proof this hook cannot deliver a second copy.
        */
       const reconcileStrandedSends = async (): Promise<void> => {
         try {
@@ -4105,23 +4068,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        *   mail: the pipeline writes to the connection whose lease this pass read, or it fails.
        */
       const drain = async (maxCycles: number, gen: number, conn: MailboxAdapter): Promise<number> => {
-        // ── THE MARKER-SURFACING PREFLIGHT, AT THE TOP OF THE ONE DRAIN BOTH DOORS SHARE ──────
-        //
-        // Routing no longer depends on this — `importDecisionOpenNow` below evaluates the question
-        // from the folder each cycle — but the CONFIRM SURFACE does: the hold it
-        // must offer for answering is readable only through the durable marker this preflight (or
-        // the seed, which `start()`'s door reaches only after the whole drain) writes. Without it
-        // a local takeover could route in hold mode for its entire launch with no candidate on
-        // screen and no way to release. Self-guarding: one folder read per pre-seed drain entry,
-        // nothing once seeded or held.
-        //
-        // ORGANIZER ONLY, and it has to be said here now that a reader reaches this line. The hold
-        // exists so an INCOMING organizer does not re-screen what it is inheriting; an install that
-        // is not the incoming organizer has nothing to inherit.
-        // `profile-import-service.ts` states the invariant as a fact about this file — *"its cycle
-        // never arms the hold (`engine.ts`, `index.ts` — both skip `armHoldFromFolder` for a
-        // reader)"* — and while the whole drain was gated that was true by accident. It is true on
-        // purpose now.
+        // The marker-surfacing preflight, at the top of the drain both doors share. Routing no
+        // longer depends on it (`importDecisionOpenNow` re-evaluates each cycle) but the confirm
+        // surface does: the hold it offers is readable only through the durable marker this
+        // preflight writes; without it a takeover could route in hold mode with no candidate on
+        // screen and no release. One folder read per pre-seed entry, nothing once seeded or held.
+        // ORGANIZER ONLY — a reader has nothing to inherit and never arms the hold.
         /* THE CONNECTION CHECK SITS ABOVE THE ROLE CHECK, on its own line, and both of those
            facts matter. Above, because a pass whose connection has been replaced is stale
            whatever role it holds — a reader cycling over a dead socket is the wedge too. On its
@@ -4136,23 +4088,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         /* THE INSTALL'S OWN WORK, ONCE. See {@link onceForTheAccount}: another mailbox's drain that
          is already doing this is doing it for everybody. */
       await onceForTheAccount(resurfaceDue);
-        // Due appointments next, still ahead of the cycles: a send somebody scheduled has a clock
-        // on it, and it must not wait out a hundred-cycle backlog drain — nor be skipped because
-        // an inbound cycle threw on a dead connection (its own SMTP dial fails independently and
-        // the pass re-arms the row).
-        //
-        // ── ORGANIZER ONLY, and it is `SyncDeps.role`'s own list that says so ──────────────────
-        //
-        // *"A reader cycle SKIPS … the user-commanded folder-ops pass … and — at the composition
-        // roots above this file — `ensureFolders`, `sendScheduled`, the kickstart, every retro pass
-        // and the organizer profile publish."* This IS one of those composition roots, and while
-        // the whole drain was gated the rule held by accident.
-        //
-        // It is not merely tidy. A stand-down CLOSES the appointments it can no longer keep, but
-        // that close is best-effort and explicitly may fail — so a due appointment can survive into
-        // a reader launch, and an ungated pass here would claim and SEND it, from an install the
-        // mailbox's organizer knows nothing about, at a time nobody re-chose. The gate makes the
-        // close's failure cost a delay rather than a delivery.
+        // Due appointments next, ahead of the cycles: a scheduled send has a clock and must not
+        // wait out a backlog drain nor be skipped by an inbound cycle's throw (its SMTP dial fails
+        // independently and the pass re-arms the row). ORGANIZER ONLY, per `SyncDeps.role`: a
+        // stand-down's close of appointments it can no longer keep is best-effort, so a due one
+        // can survive into a reader launch, and an ungated pass would claim and SEND it from an
+        // install the mailbox's organizer knows nothing about, at a time nobody re-chose.
         assertSameConnection(gen, conn);
         if (organizer.organizing) await sendScheduled(gen, conn);
         // The away responder, directly after the appointment clock and gated the same way. AFTER
@@ -4202,38 +4143,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              already running either. */
           assertSameConnection(gen, conn);
           const cycleStart = Date.now();
-          // ── THE MODEL IS RESOLVED ONCE PER CYCLE AND NEVER HELD ───────────────────────────
-          //
-          // `classifierForCycle()` answers `undefined` when this install has no verified model AND
-          // when repeated faults have made it stop asking — a revoked key, a sleeping laptop, a
-          // model server somebody quit. `planChange`'s `classifier &&` then short-circuits and the
-          // mail files on rules, which is the product's floor and the difference between "a
-          // suggestion is missing" and "mail stopped arriving".
-          //
-          // Holding the port across that transition would defeat the whole arrangement: the loop
-          // would keep calling a model that is not answering, and the pipeline rethrows a
-          // classifier fault by design — so the cursor would never advance and the mailbox would
-          // stall behind the first message the rules could not settle.
-          // BOTH halves of "is there more to do": `hasBacklog` is inbound mail the adapter still
-          // owes, `owesFiling` is outbound intent the reconciler still owes — filing that hit the
-          // per-cycle budget, or a completion that RE-OPENED its own row (a delete whose park
-          // promoted a surviving copy files that copy on the next pass). A drain that stopped on
-          // backlog alone declared itself quiet with a move still pending, and a caller trusting
-          // `syncUntilQuiet()` then stopped with the delete unfinished until the next poll.
-          /* ── ACCOUNTED PER CYCLE, NOT PER DRAIN ─────────────────────────────────────────
-           *
-           * The bound used to be recorded once around the whole `drainPass`, and a drain is up to
-           * a hundred cycles. A flapping socket therefore produced this: seven drains fail with
-           * connection-class errors; the socket recovers; a backlog drain serves several real
-           * cycles — clearing nothing, because the drain had not finished; the socket dies again
-           * on a later inner cycle; the drain rejects, the streak advances 7 → 8 and the
-           * connection is declared dead at once. The served cycles should have ended the old
-           * outage and the new failure should have been streak one.
-           *
-           * So a cycle that COMPLETES clears the streak before the next begins, and a
-           * connection-class failure inside the loop starts its own. The wrapper around
-           * `drainPass` still exists for the failures that happen OUTSIDE the loop — the gate
-           * itself, most of all, which is where a dead socket usually surfaces first. */
+          // The model is resolved once per cycle and never held: `classifierForCycle()` answers
+          // `undefined` with no verified model or after repeated faults, so `planChange`'s
+          // `classifier &&` short-circuits to rules — the floor between "a suggestion is missing"
+          // and "mail stopped arriving". Holding the port across that transition would stall the
+          // mailbox behind the first message rules could not settle. `hasBacklog` (inbound the
+          // adapter owes) and `owesFiling` (outbound the reconciler owes — budgeted filing, or a
+          // delete whose park re-opened a row) are BOTH "is there more to do": stopping on backlog
+          // alone declared quiet with a move pending and left a delete unfinished until next poll.
+          /* Accounted per cycle, not per drain. The bound was once recorded around the whole
+           * `drainPass` (up to a hundred cycles), so a flapping socket miscounted: served cycles
+           * that should have ended an outage did not, and a later death advanced the streak from
+           * where it stood rather than from one. So a COMPLETED cycle clears the streak and a
+           * connection-class failure inside the loop starts its own; the wrapper around `drainPass`
+           * still covers failures OUTSIDE the loop — the gate most of all. */
           let cycleServed = false;
           let hasBacklog: boolean;
           let owesFiling: boolean;
@@ -4376,41 +4299,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              pays nothing for it; see `first-sync.ts`. */
           await firstSync.report(mb.id, stamps, () => mirroredMessageCount(db, mb.id));
         }
-        /* ── CHECKPOINT BEHIND EVERY DRAIN THAT WROTE, so the log never holds more than one drain. ──
-
-           The periodic checkpointer (`db.ts`) bounds the write-ahead log to five MINUTES of churn,
-           and five minutes of a first import is gigabytes — a drain is up to a hundred cycles of up
-           to 32 MB each. The exposure is the quit that lands in that window: the shell kills an
-           engine that has not left within its grace period, a kill skips the shutdown checkpoint,
-           and the NEXT launch replays everything since the last one — measured at ~160 MB/s, so a
-           couple of gigabytes is ten-plus seconds of "Opening your mailbox" that this line makes
-           a checkpoint instead, at ~80 ms per hundred megabytes, off any request's path.
-
-           AWAITED, deliberately: the next drain cannot start until this one's log is folded in, and
-           `checkpoint()` never throws (see `checkpointWal`). A drain of zero cycles wrote nothing
-           and skips it, so a settled mailbox costs nothing every poll. */
+        /* Checkpoint behind every drain that wrote, so the WAL never holds more than one drain.
+           The periodic checkpointer (`db.ts`) bounds the log to five minutes of churn, and five
+           minutes of a first import is gigabytes — the exposure is a quit in that window, whose
+           next launch replays it as ten-plus seconds of "Opening your mailbox". AWAITED: the next
+           drain cannot start until this one's log folds in, and `checkpoint()` never throws
+           (`checkpointWal`). A zero-cycle drain wrote nothing and skips it. */
         if (cycles > 0) await opened.checkpoint();
         return cycles;
       };
 
       const drainPass = async (maxCycles = 100): Promise<number> =>
         serialize(async () => {
-          // ── THE GATE, IMMEDIATELY BEFORE `runSyncCycle` ────────────────────────────────────
-          //
-          // Once per DRAIN and not once per inner cycle: the loop is one logical pass over a
-          // backlog the adapter hands over in bounded batches, and re-reading the lease between
-          // two batches of the same drain would be an APPEND and an EXPUNGE per batch against the
-          // user's own mailbox for a claim nothing could have changed. The poll timer re-enters
-          // here, so the re-verification interval is a poll interval.
-          //
-          // It is on the PUBLIC entry point rather than only in `start()`, because `Sidecar`
-          // exposes this method: a gate the caller can skip by calling the other function is not a
-          // gate.
-          //
-          // `stopped` FIRST, and this is a defect the sidecar test found rather than a precaution:
-          // a stand-down closes the IMAP login, so a later `syncUntilQuiet()` would read the lease
-          // over a dead connection and throw `LeaseUnavailableError` out of a public method whose
-          // honest answer is "this install organizes nothing". `stop()` reaches the same state.
+          // The gate, immediately before `runSyncCycle`, once per DRAIN not per inner cycle:
+          // re-reading the lease between batches of one drain would be an append and an expunge
+          // per batch for a claim nothing could have changed; the poll timer re-enters here, so
+          // the re-verification interval is the poll interval. On the PUBLIC entry point, not only
+          // `start()`, because `Sidecar` exposes this method and a skippable gate is no gate.
+          // `stopped` FIRST: a stand-down closed the login, so reading the lease over a dead
+          // connection would throw `LeaseUnavailableError` out of a method whose honest answer is
+          // "this install organizes nothing" (`stop()` reaches the same state).
           if (stopped) return 0;
           /* ── WHICH CONNECTION THIS PASS IS ABOUT, CAPTURED BEFORE THE GATE READS IT ─────────
            *
@@ -4421,58 +4329,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * gate actually asked, rather than to whatever the binding holds by then. */
           const gen = generation;
           const conn = adapter;
-          /* -- THE GATE ANSWERS A ROLE. IT USED TO ANSWER ADMISSION, AND THAT WAS THE BUG ------
-           *
-           * This line was `if (!(await mayOrganize())) return 0;`, which made a stood-down install
-           * do NOTHING -- and it contradicted, in this same file, both the sentence the stand-down
-           * logs (*"its mirror goes on growing, it can mark mail read and send"*) and the comment
-           * inside `drain` that spreads `role: organizer.organizing ? "organizer" : "reader"` and
-           * says *"a demoted install keeps draining"*. The reader half of the cycle was written and
-           * was unreachable: `drain` is the only path to `runSyncCycle` on this door, so a reader's
-           * mirror never grew by one message and `reconcileFlags` -- `\Seen`, the reader's ONE IMAP
-           * write verb -- never ran at all.
-           *
-           * MEASURED, against a real IMAP account whose lease another install holds
-           * (`scripts/read-writeback-live.ts`): the install stood down, `syncUntilQuiet()` returned,
-           * and the mirror stayed EMPTY -- not one message of a mailbox that had plenty. That is
-           * also the whole of the reported symptom *"I marked it read on the desktop and my mailbox
-           * never saw it"* for anybody whose desktop is a reader -- the intent is written locally
-           * and the pass that would carry it to the server is never entered.
-           *
-           * `mayOrganize()` is therefore called for its DECISION and its side effects, and only the
-           * arm that genuinely means "do nothing" still stops the drain: the removed-mailbox arm,
-           * which sets `stopped` (and clears the timer and closes the login) before returning false.
-           * The stand-down arm sets neither, which is exactly the distinction it was rewritten to
-           * make.
-           */
+          /* The gate answers a ROLE, not admission. It was `if (!(await mayOrganize())) return 0`,
+           * which made a stood-down install do NOTHING and contradicted the reader half of this
+           * file: a demoted install keeps draining — its mirror grows, it marks read (`\Seen`, the
+           * reader's one IMAP write) and sends. `drain` is the only path to `runSyncCycle`, so the
+           * reader's cycle was unreachable and `reconcileFlags` never ran (`read-writeback-live.ts`
+           * measured an empty mirror). Now `mayOrganize()` runs for its decision AND side effects;
+           * only the removed-mailbox arm, which sets `stopped`, stops the drain. The stand-down arm
+           * sets neither, which is the distinction. */
           const organizing = await mayOrganize();
           if (stopped) return 0;
-          /* -- THE `ohmail/*` TREE, AT THE MOMENT THIS INSTALL BECOMES THE ORGANIZER ------------
-           *
-           * `start()` calls `ensureFolders` behind its own `permitted` gate, which is right and was
-           * the ONLY call: a launch that came up already organizing made the folders and every later
-           * pass had them. A promotion that happens MID-LIFE reached none of it, and mid-life
-           * promotion is now the ordinary path rather than an edge — a fresh install comes up as a
-           * consent-less reader, and "Agree and start organizing" promotes it on the very next pass.
-           *
-           * Without this, that pass routed into folders the server did not have. The comment on the
-           * special-folder discovery forty lines below `start()`'s own call already states the
-           * standard this has to meet — *"the knowledge is what makes a promotion take effect on the
-           * next poll rather than on the next launch"* — and the folder tree was the half of that
-           * knowledge nothing refreshed. The symptom is the one this whole area keeps producing: the
-           * person agrees, the row says organizer, and nothing visible happens until they quit and
-           * reopen.
-           *
-           * ONCE PER PROCESS, not once per pass. `ensureFolders` is idempotent but it is a round
-           * trip per cycle otherwise, and this runs on the poll. The flag is armed by whichever of
-           * the two paths gets there first — `start()`'s call sets it too — so an install that came
-           * up organizing does not make a second one.
-           *
-           * A FAILURE IS NOT FATAL. The drain that follows can still mirror, `\Seen` still ships,
-           * and the next pass tries again; throwing here would turn a transient IMAP fault into a
-           * launch with no mail on screen. It is deliberately NOT set on the failure path, so the
-           * retry is real.
-           */
+          /* Create the `ohmail/*` tree at the moment this install becomes the organizer. `start()`
+           * calls `ensureFolders` behind its own `permitted` gate, which was the ONLY call; a
+           * MID-LIFE promotion — now the ordinary path, since a fresh install comes up a reader and
+           * "Agree and start organizing" promotes on the next pass — reached none of it and routed
+           * into folders the server did not have. ONCE PER PROCESS: the flag is armed by whichever
+           * path arrives first. A failure is NOT fatal and the flag is NOT set on it, so the drain
+           * still mirrors and the next pass retries. */
           if (organizing && !foldersEnsured) {
             try {
               /* THE MAILBOX WRITE THIS WHOLE ORDERING PROTECTS — creating somebody else's
@@ -4490,29 +4363,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             }
           }
           /**
-           * ── THE REQUEST DRAIN / THE READER'S OWN CYCLE (0.14.1) ──────────────────
-           *
-           * ONCE PER `syncUntilQuiet()`, not once per inner `drain()` cycle — `ensure_folders`'s
-           * own reasoning applies verbatim: this reads or writes `ohmail/_meta` and doing so once
-           * per DRAIN is a round trip per poll, not a round trip per batch.
-           *
-           * ORGANIZING → `applyMetaRequests` (apply a reader's decision, expunge it); otherwise
-           * → `driveOutstandingRequests` (append this install's own pending decisions, observe
-           * what the organizer took). See `@trafficflow/worker/request-drain`'s own header for
-           * why neither performs a physical IMAP move of its own — `drain()`'s own `runSyncCycle`
-           * call, right after this, reconciles the `folder_state` rows either one writes.
+           * The request drain / the reader's own cycle (0.14.1). ONCE per `syncUntilQuiet()`, not
+           * per inner `drain()` cycle — it reads or writes `ohmail/_meta`, a round trip per poll.
+           * Organizing → `applyMetaRequests` (apply a reader's decision, expunge it); otherwise →
+           * `driveOutstandingRequests` (append this install's decisions, observe what the organizer
+           * took). Neither performs a physical IMAP move — `drain()`'s `runSyncCycle`, right after,
+           * reconciles the `folder_state` rows either writes (see `@trafficflow/worker`'s header).
            */
           //
-          // ── WHY THE DRAIN'S LOG IS TRANSLATED HERE AND NOT FORWARDED ────────────────────
-          //
-          // `(event, detail) => log(event, { ...detail })` is the obvious wiring and this door
-          // may not use it. `log-census.test.ts` requires every call site in this package to
-          // carry a LITERAL event name and a readable field set, because this is the published
-          // desktop payload: a forwarded name is a name nobody can enumerate, and a spread
-          // detail is a field set nobody can audit for what it might carry. The census caught
-          // exactly that here. So the drain's outcomes are translated into three literal lines
-          // with explicit fields, and anything else it reports is counted under a fourth rather
-          // than echoed verbatim.
+          // Why the drain's log is translated here and NOT forwarded: `(event, detail) =>
+          // log(event, { ...detail })` is the obvious wiring and this door may not use it.
+          // `log-census.test.ts` requires every call site here to carry a LITERAL event name and a
+          // readable field set, because this is the published desktop payload — a forwarded name is
+          // unenumerable, a spread detail unauditable. So the drain's outcomes become three literal
+          // lines with explicit fields, and anything else is counted under a fourth.
           const noteRequestEvent = (event: string, detail: Record<string, unknown>): void => {
             const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
             if (event === "organizer_requests_drained") {
@@ -4554,48 +4418,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             cycleError = err;
           }
 
-          // ── THE REQUEST CHANNEL, AFTER THE MAIL ──────────────────────────────────────────
-          //
-          // Ordered deliberately, and the reason is not tidiness: `ohmail/_meta` is a folder any
-          // process with append rights on the mailbox can write to, so a drain that ran BEFORE the
-          // cycles would let a flood of records delay the pass that reads somebody's mail. A
-          // queued decision landing one pass later is not a regression anybody can perceive; mail
-          // arriving late is. The drain is bounded on both axes inside `request-drain.ts`.
-          //
-          // ── AND IT RUNS WHEN THE MAIL PASS FAILED, WHICH IS WHY THE FAILURE IS HELD ABOVE ──
-          //
-          // A cycle that THROWS used to escape this block entirely, so a mailbox with a
-          // PERSISTENT sync fault drained nothing for as long as the fault lasted — and a
-          // decision made on another install expired reporting that NOBODY TOOK IT, while an
-          // organizer was live and connected the whole time. Telling somebody their decision was
-          // dropped when it was merely never looked at is worse than telling them to wait.
-          //
-          // So the throw is held, this block runs, and the failure is rethrown below with nothing
-          // else having happened. One call site, deliberately: a second copy inside a catch is how
-          // a decision gets applied twice.
-          //
-          // ONE FAILURE IS EXCLUDED, and it is not the one the hosted twin excludes for. That one
-          // can lose the shard it leads; this door leads nothing and shares nothing — one process,
-          // one store, one mailbox — so a fence has no meaning here.
-          //
-          // What this door CAN lose is the lease itself. The mailbox is the master, and a mailbox
-          // this install organizes today can be taken over from elsewhere: the takeover is written
-          // into the shared folder, and this install discovers it and stands down on a later pass.
-          // So "may this install write" is only ever as fresh as the last lease read that
-          // SUCCEEDED.
-          //
-          // `LeaseUnavailableError` is that read failing. It does not say another organizer holds
-          // the mailbox; it says this pass could not find out. The channel below appends
-          // acknowledgements and expunges records, and its standing to do either comes from the
-          // lease and nothing else — so it is exactly the work that must not proceed on an
-          // unanswered question. Skipping costs a delay: the records stay where they are and the
-          // next pass drains them once the lease can be read again.
-          //
-          // This is not the same rule as the one the bounded folder read follows one layer down,
-          // where a partial read is acted on rather than refused. That is a read deciding what it
-          // knows; this is a write claiming standing it failed to establish, and being wrong costs
-          // opposite things — a refused read strands a mailbox nobody organizes, an unproven write
-          // puts two organizers on one.
+          // The request channel, after the mail. Ordered so a flood of `ohmail/_meta` records
+          // cannot delay reading someone's mail (bounded on both axes in `request-drain.ts`). It
+          // runs even when the mail pass FAILED: a persistent sync fault used to drain nothing, so
+          // a decision made elsewhere expired reporting NOBODY TOOK IT while an organizer was live.
+          // The throw is held, this block runs once, then rethrown below — a second copy in a catch
+          // applies a decision twice. ONE failure is excluded: `LeaseUnavailableError`, the lease
+          // read failing (not "another organizer holds it"). This channel appends acks and expunges
+          // records, and its standing comes only from the lease, so it must not proceed on an
+          // unanswered question; skipping costs a delay, the next pass drains once the lease reads.
           const cycleMayStillWrite = !(cycleError instanceof LeaseUnavailableError
             || cycleError instanceof ConnectionReplacedError);
           if (cycleMayStillWrite) try {
@@ -4649,18 +4480,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // is the tail of a pass that COMPLETED and must not run for one that did not.
           if (cycleError !== null) throw cycleError;
 
-          // ── THE PORTABLE PROFILE'S WRITE-BEHIND TICK, BEHIND THE GATE IT RIDES ────────────
-          //
-          // After the drain and not inside it: the tick reads the store the cycles just wrote, so
-          // a burst of screener verdicts in one drain is one comparison. Reachable only when
-          // `mayOrganize()` said yes — a stood-down install reads and writes nothing here, which
-          // is the single-writer property the lease already enforces. Runs on a zero-cycle drain
-          // too, deliberately: settings change without mail arriving. Never throws.
-          //
-          // EXPLICIT NOW, because the line above no longer returns for a reader: this used to be
-          // organizer-only by being unreachable, and the property has to survive that stopping being
-          // true. Publishing the portable profile is a write into somebody else's `ohmail/_meta`,
-          // and it is the single-writer rule rather than an optimisation.
+          // The portable profile's write-behind tick, behind the gate it rides. After the drain,
+          // it reads the store the cycles just wrote, so a burst of verdicts is one comparison.
+          // Reachable only when `mayOrganize()` said yes — publishing into someone's `ohmail/_meta`
+          // is the single-writer rule, not an optimisation. Runs on a zero-cycle drain too
+          // (settings change without mail), never throws. EXPLICIT now the line above no longer
+          // returns for a reader: this used to be organizer-only by being unreachable.
           /* THE PROFILE PUBLISH IS A MAILBOX WRITE TOO — an append and an expunge in
              `ohmail/_meta` — and it read the LIVE getter, so a stale pass published this
              install's settings over a connection it had never gated. Checked here; the sync
@@ -4672,23 +4497,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         });
 
       /**
-       * ONE DRAIN, WITH THE CONNECTION'S HEALTH ACCOUNTED FOR EITHER WAY.
-       *
-       * The wrapper is the whole of the SECOND detector, and it exists because the first one is
-       * not reachable from everywhere: `ImapAdapter#guardAsyncErrors` returns early for any
-       * client with no event surface, so an injected double bypasses the `close` listener
-       * entirely — which is exactly what the adapter's own comment says of it, and exactly why
-       * the hosted worker bounds the same arm by duration rather than trusting the event. An
-       * event-driven-only heal would be this repository's named `failure-looks-like-healthy`
-       * shape: a mechanism whose only tested path is the one production does not always take.
-       *
-       * It also covers a connection death that genuinely emits nothing — a socket that answers
-       * TCP and never completes another IMAP command, the half-open case a `close` event never
-       * describes.
-       *
-       * ON THE PUBLIC ENTRY POINT and not inside `serialize`, so the accounting sees the drain's
-       * OUTCOME rather than one step of it, and so a caller reaching this method directly (the
-       * shell's "sync now", `syncMailbox`) feeds the same bound the poll timer does.
+       * One drain, with the connection's health accounted for either way. This wrapper is the
+       * SECOND detector, because the first is not reachable everywhere: `guardAsyncErrors` returns
+       * early for a client with no event surface, so an injected double bypasses the `close`
+       * listener — an event-only heal would be the `failure-looks-like-healthy` shape. It also
+       * covers a half-open death that emits nothing. On the PUBLIC entry point, not inside
+       * `serialize`, so the accounting sees the drain's OUTCOME and a direct caller ("sync now",
+       * `syncMailbox`) feeds the same bound the poll timer does.
        */
       const syncUntilQuiet = async (
         maxCycles = 100,
@@ -4722,18 +4537,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               // A failed cycle is a bad network or a sleeping laptop, not a reason to stop being a
               // mail app. Offline is a property of this mode: the organizer pauses and the viewer
               // stays complete — the API keeps serving the mirror over the bridge either way.
-              /* ── EXCEPT WHEN WHAT FAILED WAS THE LEASE, WHICH IS NOT A PASSING CONDITION ────
-               *
-               * A cycle that died because `ohmail/_meta` could not be read is the organizer half
-               * of the reader case beside it, and it was the louder of the two: the gate throws,
-               * this handler logged, and the next tick tried again behind an ordinary connected
-               * state. When the cause is a folder over the ceiling that does not clear by itself,
-               * so the install organizes nothing for as long as it lasts and says nothing about
-               * it.
-               *
-               * Narrowed BY CLASS deliberately. Arming this mark for every cycle failure would
-               * make a dropped connection look like an unreadable lease, and the field would stop
-               * meaning anything. Cleared by the next successful gate, like the other paths. */
+              /* Except when what failed was the LEASE, which is not a passing condition. A cycle
+               * that died because `ohmail/_meta` could not be read is the organizer half of the
+               * reader case beside it: the install organizes nothing until it clears and says so.
+               * Narrowed BY CLASS — arming this for every cycle failure would make a dropped
+               * connection look like an unreadable lease and the field would stop meaning anything.
+               * Cleared by the next successful gate, like the other paths. */
               if (err instanceof LeaseUnavailableError) {
                 organizer = {
                   ...organizer,
@@ -4758,25 +4567,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * the map's view and the gate's view the same view.
        */
       /**
-       * DIAL, THEN LEARN, THEN ACT — the ONE sequence a launch and a re-dial both run.
-       *
-       * This was the body of `start()`, and extracting it is the whole of what makes reconnect
-       * safe rather than merely present. A re-dial that resumed the drain over a fresh socket
-       * WITHOUT re-reading the organizer lease would dual-organize for one cycle against a claim
-       * that arrived during the outage — and reconnect-after-sleep is precisely when a mailbox is
-       * most likely to have changed hands. "Exactly one active organizer per mailbox" is the
-       * invariant, and a SECOND implementation of this sequence is how it would be broken: two
-       * copies drift, and the copy that drifts is the one nobody launches.
-       *
-       * So there is one copy, and the order inside it is the rule already written above the gate
-       * below — the lease is read BEFORE the first move, and `ensureFolders` IS a move. Creating
-       * the `ohmail/*` tree in a mailbox Cloud is organizing is a write this install has no
-       * business making.
-       *
-       * IT DOES NOT ARM THE POLL TIMER, and that is the one edit the extraction made. `start()`
-       * calls `schedule()` after it; a re-dial runs inside a drain whose own chain already ends
-       * in `schedule()`. Leaving the call in here would give a re-dialled mailbox TWO timers —
-       * two overlapping drains, and an append to `ohmail/_meta` per timer per interval.
+       * Dial, then learn, then act — the ONE sequence a launch and a re-dial both run. Extracting
+       * it from `start()` is what makes reconnect safe: resuming a drain over a fresh socket
+       * WITHOUT re-reading the organizer lease would dual-organize against a claim that arrived
+       * during the outage, and reconnect-after-sleep is when a mailbox most likely changed hands.
+       * "Exactly one active organizer per mailbox" — a second copy of this sequence is how it
+       * breaks. The lease is read BEFORE the first move, and `ensureFolders` IS a move. It does NOT
+       * arm the poll timer: `start()` calls `schedule()` after it, and a re-dial's chain already
+       * ends in one — two would give the mailbox two overlapping drains.
        */
       const dialAndGate = async (): Promise<{ leaseRead: boolean }> => {
         await adapter.connect();
@@ -4796,45 +4594,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           await conn.close().catch(() => { /* already going away */ });
           return { leaseRead: false };
         }
-        // ── EVERYTHING BELOW RUNS ON AN AUTHENTICATED SOCKET, SO IT IS WRAPPED ──────────────
-        //
-        // `connect()` LOGS IN and then LISTs, and `apps/sidecar/src/main.ts` answers a rejected
-        // `start()` by LOGGING it and continuing to serve the mirror — deliberately, because a
-        // first sync of a real mailbox takes minutes and a UI that waits for it looks broken. The
-        // two compose into a leak: before this `catch`, a throw from the lease gate, from
-        // `ensureFolders` or from the first drain left an authenticated login open with no handle
-        // anywhere that could close it, for the life of the process.
-        //
-        // iCloud caps concurrent connections per account, and a laptop shares that budget with
-        // Apple Mail and the user's phone — so a leaked login is not merely untidy, it is the
-        // mailbox eventually refusing to connect, in somebody else's app.
-        //
-        // A `catch` and NOT a `finally`: the whole point of a healthy launch is that the login
-        // survives it. The poll timer, `syncUntilQuiet()` and the organizer claim all run on this
-        // connection. Tests assert both directions — the login released when `start()` throws,
-        // and the login still open when it returns.
-        //
-        // The shape is the one used everywhere else this codebase holds an IMAP login across work
-        // that can fail — `packages/api/src/send-adapter.ts:68-71`,
-        // `packages/api/src/attachments-adapter.ts:36-41` and the hosted sync worker all
-        // close-then-rethrow the ORIGINAL error around exactly this window.
+        // Everything below runs on an AUTHENTICATED socket, so it is wrapped. `connect()` logs in
+        // then LISTs, and `main.ts` answers a rejected `start()` by logging and serving the mirror
+        // anyway — so a throw from the lease gate, `ensureFolders` or the first drain left an
+        // authenticated login open with no handle to close it, for the life of the process. iCloud
+        // caps concurrent connections per account, so a leaked login eventually refuses connects in
+        // another app. A `catch` and NOT a `finally`: a healthy launch keeps the login (the poll
+        // timer and organizer claim run on it); tests assert both directions. Same close-then-
+        // rethrow shape as `send-adapter.ts` and `attachments-adapter.ts`.
         try {
-          // ── THE LEASE IS READ BEFORE THE FIRST MOVE, AND `ensureFolders` IS A MOVE ────────
-          //
-          // Reconnect is learn-then-act: the local engine reads the organizer lease BEFORE its
-          // first move. Creating the `ohmail/*` tree in a mailbox Cloud is organizing is a write
-          // this install has no business making, and reconnect-after-sleep is exactly when a
-          // mailbox is most likely to have changed hands. Gated here and drained through the
-          // already-gated inner `drain`, so a launch reads the lease ONCE rather than claiming
-          // twice before it has done any work.
-          //
-          // A lease we could not READ is not a lease we lost. Offline is a property of both modes,
-          // so an unreachable `ohmail/_meta` must leave a usable app rather than a failed launch:
-          // the organizer is paused, the viewer is complete, and the poll timer asks again. It is
-          // exempted BY CLASS, the same way the hosted sync worker exempts it — never by
-          // inspecting a message. The login is deliberately KEPT here: it is the connection the
-          // next poll asks over, and it is the one non-throwing exit from this window that has
-          // further work to do.
+          // The lease is read BEFORE the first move, and `ensureFolders` IS a move: creating the
+          // `ohmail/*` tree in a mailbox Cloud organizes is a write this install has no business
+          // making, and reconnect-after-sleep is when a mailbox most likely changed hands. Gated
+          // here, drained through the already-gated inner `drain`, so a launch reads the lease ONCE.
+          // A lease we could not READ is not one we lost: an unreachable `ohmail/_meta` leaves the
+          // organizer paused and the viewer complete rather than a failed launch, exempted BY CLASS
+          // as the hosted worker does. The login is KEPT — it is the connection the next poll asks
+          // over and the one non-throwing exit here with further work to do.
           let permitted: boolean;
           try {
             permitted = await serialize(mayOrganize);
@@ -4875,41 +4651,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // was healthy while nothing was being filed.
             return { leaseRead: false };
           }
-          /* -- `!permitted` IS "NOT THE ORGANIZER", NOT "STOP" — THE LAUNCH HALF  --
-           *
-           * This branch used to `return` here, and what it returned before is the whole first
-           * drain, the special-folder discovery AND `schedule()` — so a stood-down install came up
-           * with no poll timer at all. On `priorStandDown` it also closed the login, under a
-           * comment whose first sentence was the pre-0083 doctrine verbatim: *"A stood-down
-           * install STOPS SYNCING ENTIRELY — it does not keep passively mirroring, and it must not
-           * keep burning a connection either."*
-           *
-           * That is no longer what a stand-down means, and TWO other comments in this same file
-           * already say so. The stand-down logs *"it keeps its login and its poll timer, its
-           * mirror goes on growing"*; and the takeover route's own header says *"A demoted install
-           * is now a READER — it keeps its login and its poll timer and goes on cycling — so the
-           * gate runs again on the very next poll, reads the stamp, and promotes. No relaunch."*
-           * Neither could be true while this line returned: there was no next poll to read the
-           * stamp on, so "Organize from this machine" did nothing at all until the app was
-           * restarted — and that button is the whole of how a person takes a mailbox back onto a
-           * machine that has stood down, so "it needs a relaunch" was not a small caveat.
-           *
-           * So a reader falls through: it drains, it schedules, and it keeps the connection the
-           * next poll asks over. The ONE thing it does not do is below.
-           */
-          /* ── STOPPED IS CHECKED WHATEVER THE GATE ANSWERED ──────────────────────────────
-           *
-           * This read `if (!permitted && stopped)`, so a gate that said YES walked straight past
-           * it — and `mayOrganize` is the longest await in the sequence, which makes it the most
-           * likely place for `detach()` to land. A removal or a shutdown overlapping a slow lease
-           * read therefore continued into `ensureFolders`, special-folder discovery and a full
-           * drain on a runtime that had been told it was finished, having already appended a fresh
-           * claim to the mailbox on the way through. `detach()` waited for all of it: it bounded
-           * the damage's duration and prevented none of it.
-           *
-           * The permitted arm STANDS DOWN rather than merely returning. The gate has just renewed
-           * this install's claim on a mailbox it is letting go of, and leaving that behind makes
-           * the next install wait out a claim nobody is honouring. */
+          /* `!permitted` is "NOT THE ORGANIZER", not "stop" — the launch half. This used to
+           * `return`, taking the first drain, special-folder discovery AND `schedule()` with it,
+           * so a stood-down install came up with no poll timer (and closed the login on
+           * `priorStandDown`). A stand-down no longer means stop: a demoted install is a READER —
+           * it keeps its login and poll timer and goes on cycling, so the gate re-runs next poll,
+           * reads the stamp and promotes with no relaunch (without which "Organize from this
+           * machine" did nothing until restart). So a reader falls through — drains, schedules,
+           * keeps the connection — and the one thing it does not do is below. */
+          /* `stopped` is checked whatever the gate answered. This read `if (!permitted && stopped)`,
+           * so a gate that said YES walked past it — and `mayOrganize` is the longest await, the
+           * likeliest place for `detach()` to land. A removal or shutdown overlapping a slow lease
+           * read then continued into `ensureFolders`, discovery and a full drain on a runtime told
+           * it was finished, having already appended a fresh claim. `detach()` waited for all of it:
+           * it bounded the damage's duration and prevented none. The permitted arm STANDS DOWN
+           * rather than returning — the gate just renewed a claim on a mailbox it is letting go, and
+           * leaving it makes the next install wait out a claim nobody honours. */
           if (stopped) {
             if (permitted) {
               const released = await releaseOwnClaim(
@@ -4965,18 +4722,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // See {@link foldersEnsured}: the poll's own call must not repeat what this just did.
             foldersEnsured = true;
           }
-          // ── Mail 0065: DISCOVER THE PROVIDER'S OWN \Junk AND \Trash, AND WRITE THEM DOWN ──
-          //
-          // The hosted worker's attach hook, mirrored here because the LOCAL engine is its own
-          // attach path: without this, a local install's `mailboxes.trash_folder` stays NULL for
-          // ever, so its own API refuses every delete (`no_trash_folder`) and its spam verdicts
-          // never reach the provider's Junk. Read-only (one LIST), re-written every attach so a
-          // renamed folder heals, best-effort: a discovery failure keeps the stored answer and
-          // the fallbacks are never destructive. imap-types.ts carries the product rule.
-          //
-          // A READER RUNS THIS TOO, deliberately. It is one LIST and a write to this install's own
-          // row — no mailbox write of any kind — and the knowledge is what makes a promotion take
-          // effect on the next poll rather than on the next launch.
+          // Mail 0065: discover the provider's own \Junk and \Trash and write them down. The
+          // hosted worker's attach hook, mirrored here because the LOCAL engine is its own attach
+          // path — without it `mailboxes.trash_folder` stays NULL, so delete refuses
+          // (`no_trash_folder`) and spam verdicts never reach Junk. Read-only (one LIST), re-written
+          // every attach so a renamed folder heals, best-effort (`imap-types.ts` carries the rule).
+          // A READER runs it too: one LIST and a write to this install's own row, and the knowledge
+          // makes a promotion take effect on the next poll rather than the next launch.
           if (typeof conn.findSpecialFolders === "function"
             && typeof repo.setMailboxSpecialFolders === "function") {
             try {
@@ -5004,39 +4756,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
-       * RE-DIAL A CONNECTION THAT IS KNOWN DEAD — the heal, and where it may run from.
-       *
-       * ── IT MUST NOT BE CALLED FROM INSIDE THE SERIAL QUEUE, AND THAT IS A DEADLOCK ─────────
-       *
-       * The obvious place for this is the head of the drain, after the `stopped` check. It is
-       * the wrong place: `serialize` chains onto `tail`, so a `serialize` call made from inside a
-       * serialized function waits for the function that is waiting for it. `dialAndGate` takes
-       * the queue twice (the gate, then the first drain), so a re-dial from inside `drainPass`
-       * hangs the mailbox for ever with no error anywhere — the failure this whole lane is about,
-       * reached by the fix for it. So it runs on the PUBLIC entry point, immediately before the
-       * drain it is healing for, and the drain itself is untouched.
-       *
-       * ── A FRESH ADAPTER, NOT A RE-OPENED ONE ──────────────────────────────────────────────
-       *
-       * `ImapAdapter.connect()` does reset its own lifecycle flags, so re-dialling in place would
-       * work for the socket. It is still wrong here for two reasons that are not about the
-       * socket: an adapter RETIRED by a bound breach refuses every call for ever by design
-       * (`assertUsable`), and a fresh dial is the only shape in which "this install opened a new
-       * connection" is observable from outside — which is what a test can hold and a log can
-       * report. The hosted worker's re-attach builds a new one for the same reason.
-       *
-       * ── IT NEVER THROWS ───────────────────────────────────────────────────────────────────
-       *
-       * A re-dial that fails must leave the drain to fail in its own words. Rethrowing here would
-       * replace `LeaseUnavailableError` — the class the bound counts and every failure counter
-       * exempts — with a dial error, so a server that is simply still down would start looking
-       * like a broken mailbox.
-       *
-       * ── AND A FAILED ATTEMPT DOES NOT RESET THE CLOCK ─────────────────────────────────────
-       *
-       * `connectionDeadSince` keeps its first observation across any number of failed re-dials.
-       * It is what Settings renders as "unreachable since", and a number that restarted every
-       * time the app tried again would report a two-hour outage as fifteen seconds old.
+       * Re-dial a connection known dead. It must NOT be called from inside the serial queue:
+       * `serialize` chains onto `tail` and `dialAndGate` takes the queue twice, so a re-dial from
+       * inside `drainPass` waits for itself — the deadlock this lane is about. So it runs on the
+       * PUBLIC entry point, before the drain it heals. A FRESH adapter, not a re-opened one: a
+       * bound-retired adapter refuses every call by design (`assertUsable`) and a fresh dial is the
+       * only externally observable "opened a new connection". It NEVER throws (a dial error would
+       * replace the `LeaseUnavailableError` the bound exempts), and a failed attempt does NOT reset
+       * `connectionDeadSince` — Settings renders it as "unreachable since".
        */
       let redialling = false;
       /**
@@ -5092,25 +4819,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            {@link forcedNotBefore}: a forced dial that failed a moment ago has not become worth
            repeating because somebody pressed again. */
         if (force ? Date.now() < forcedNotBefore : Date.now() < redialNotBefore) return;
-        /* ── THE RE-DIAL JOINS `tail`, SO `detach()` WAITS FOR IT ────────────────────────────
-         *
-         * It cannot QUEUE behind `tail` — `dialAndGate` takes the queue twice and a queued
-         * re-dial would wait for itself, which is the deadlock this lane already met once. But
-         * `detach()` awaits `tail` and then closes the adapter, so a re-dial outside it could
-         * resume AFTERWARDS: install a fresh connection, renew the organizer claim and create
-         * folders for a mailbox that has just been removed, or leave an authenticated login with
-         * no handle anywhere that can close it.
-         *
-         * AND IT IS NOT PUT INTO `tail`. That was the first attempt and it deadlocks for the
-         * reason the paragraph above names, one step further out: `serialize` CHAINS onto `tail`,
-         * so folding the re-dial into it makes every later queued step wait for the re-dial —
-         * including `dialAndGate`'s own gate, which the re-dial is waiting for. Measured: the
-         * first connection came up, drained and served; the re-dial connected and then hung for
-         * ever on its own gate. Two different failures reached from the same wrong instinct, that
-         * one promise chain can express both "run in order" and "wait for this".
-         *
-         * So the wait gets its OWN handle. `detach()` awaits the queue AND this, and this chains
-         * onto nothing — a re-dial can therefore be waited FOR without being waited BEHIND. */
+          /* The re-dial joins `tail` so `detach()` waits FOR it, but is not put INTO it. It cannot
+           * queue behind `tail` — `dialAndGate` takes the queue twice, so a queued re-dial waits
+           * for itself (this lane's deadlock). But `detach()` awaits `tail` then closes the adapter,
+           * so a re-dial outside it could resume afterwards: a fresh connection, a renewed claim and
+           * folders for a just-removed mailbox, or a login with no handle to close it. Folding it
+           * INTO `tail` deadlocks the other way (every later step, including the gate it waits for,
+           * waits for it). So the wait gets its OWN handle: `detach()` awaits the queue AND this,
+           * and this chains onto nothing. */
         redialling = true;
         let settle: () => void = () => {};
         redialInFlight = new Promise<void>((resolve) => { settle = resolve; });
@@ -5159,35 +4875,24 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             await adapter.close().catch(() => { /* already going away */ });
             return;
           }
-          /* ── THE SOCKET IS UP. THAT IS NOT THE SAME AS THE MAILBOX BEING SERVED ────────────
-           *
-           * `connectionDeadSince` clears either way, and it has to: it is what makes the next
-           * poll re-dial, and re-dialling every fifteen seconds over a server that is answering
-           * would churn logins on a provider that counts them.
-           *
-           * `outageSince` clears only when a cycle is actually SERVED, which is
-           * `noteCycleServed`'s job and not this one. So a re-dial that reached a live server and
-           * an unreadable `ohmail/_meta` leaves the Settings row saying "unreachable since" the
-           * ORIGINAL instant — the outage is not over, and neither the person's clock nor the
-           * word "reconnected" may pretend it is. */
+          /* The socket is up. That is not the same as the mailbox being served.
+           * `connectionDeadSince` clears either way — it is what makes the next poll re-dial, and
+           * re-dialling over an answering server would churn logins a provider counts. `outageSince`
+           * clears only when a cycle is actually SERVED (`noteCycleServed`'s job, not this one), so
+           * a re-dial that reached a live server but an unreadable `ohmail/_meta` leaves Settings
+           * saying "unreachable since" the ORIGINAL instant — the outage is not over. */
           connectionDeadSince = null;
           connectionDeadBy = null;
           redialAttempts = 0;
           redialNotBefore = 0;
-          /* THE PRESS'S FLOOR GOES WITH THE LADDER, and NO TEST WATCHES THIS LINE — said here
-             because the alternative is a later reader taking it for a guarantee.
-             Its contrary state is unreachable: a FORCED dial only runs once the floor has
-             passed, so after one the floor is a past instant whether or not this clears it, and
-             a later press is admitted either way. The one path that could see a difference — the
-             POLL succeeding INSIDE the floor's window — needs the ladder's jitter pinned and the
-             clock frozen across a 13-second jump, and a fixture doing that loses the organizer
-             lease (`lease_lost_race`, then `organizer_stand_down`), after which the resync route
-             refuses and the press dials nothing for a reason that is not this line. A case built
-             on it passed only by asserting before the stand-down landed, which is a race, not
-             evidence; it was removed rather than left looking like a guard.
-             The line stays because it is correct hygiene — a floor outliving the condition it
-             rations is a bug waiting for the next caller — but it is DEFENCE, not a watched
-             invariant, and the mutation table says so by leaving it out. */
+          /* The press's floor goes with the ladder — DEFENCE, not a watched invariant, said here
+           * so a later reader does not take it for a guarantee. Its contrary state is unreachable:
+           * a FORCED dial runs only once the floor has passed, so a later press is admitted whether
+           * or not this clears it. The one path that could differ (a poll succeeding inside the
+           * window) needs pinned jitter and a frozen clock and loses the lease
+           * (`lease_lost_race`), so a case on it was a race, not evidence, and was removed. Kept as
+           * hygiene — a floor outliving the condition it rations is a bug for the next caller — and
+           * the mutation table leaves it out. */
           forcedNotBefore = 0;
           if (outcome.leaseRead) {
             leaseUnavailableSince = null;
@@ -5357,24 +5062,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           try {
             await dialAndGate();
           } catch (err) {
-            /* ── A LAUNCH THAT COULD NOT DIAL IS AN OUTAGE, NOT A DEAD MAILBOX ───────────────
-             *
-             * `connect()` can reject without the adapter ever emitting anything: a refused TCP
-             * connection, a TLS failure, a server that never answers the greeting. Nothing had
-             * observed a connection to lose, so no detector fired — and `start()` threw before
-             * arming the poll, so there was no timer either. The result was a mailbox reported
-             * REACHABLE for ever with no path that could ever heal it, which is the same
-             * failure-looks-healthy shape this lane exists to close, reached from the one
-             * direction nothing was watching.
-             *
-             * So the death is recorded and the timer IS armed. `main.ts` still learns the launch
-             * failed — the error is rethrown — but the mailbox now has a poll that will re-dial
-             * it, and Settings says it is unreachable until one succeeds.
-             *
-             * `null` for the adapter, because `dialAndGate`'s own catch has ALREADY closed it —
-             * that is the whole of what `connection-release.e2e.test.ts` holds, and queueing a
-             * second close here made a failed launch close its login twice. Recording the death
-             * and releasing the socket are two jobs; this call site only needs the first. */
+            /* A launch that could not dial is an OUTAGE, not a dead mailbox. `connect()` can reject
+             * with the adapter emitting nothing (refused TCP, TLS failure, no greeting), so no
+             * detector fired and `start()` threw before arming the poll — a mailbox reported
+             * reachable for ever with no path to heal, the failure-looks-healthy shape from the one
+             * direction nothing watched. So the death is recorded and the timer IS armed; `main.ts`
+             * still learns the launch failed (rethrown). `null` for the adapter: `dialAndGate`'s
+             * catch has ALREADY closed it (`connection-release.e2e.test.ts`), and a second close
+             * here closed the login twice. */
             noteConnectionDead(err, generation, null);
             if (credentialsRefused(err)) {
               signInRefused = true;
@@ -5477,18 +5172,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           });
         },
         /**
-         * THE CLAIM GOES BACK; THE ROW DOES NOT MOVE. See `LocalMailboxRuntime.handBack`.
-         *
-         * Inside `serialize`, so it cannot land between a gate's claim and the drain that claim
-         * authorises — the window `detach()` documents as the most likely place for a teardown to
-         * arrive. `releaseOwnClaim` is the SAME function the detach arm and the release route call:
-         * this adds a caller, not a second way to give a claim up.
-         *
-         * `organizing` goes false whatever the release answered, and that is deliberate rather
-         * than sloppy. `drain` decides organizer-only work from that field, and the caller of this
-         * is an app about to be suspended: a state saying "organizing" over a process that is not
-         * running is the two-organizers reading. What the ANSWER decides is whether the caller may
-         * say the mailbox was handed back — `null` means it may not.
+         * The claim goes back; the row does not move (see `LocalMailboxRuntime.handBack`). Inside
+         * `serialize`, so it cannot land between a gate's claim and the drain that claim authorises.
+         * `releaseOwnClaim` is the same function the detach arm and release route call — a caller,
+         * not a second way to give a claim up. `organizing` goes false whatever the release
+         * answered: `drain` decides organizer-only work from it and the caller is an app about to
+         * suspend, so "organizing" over a stopped process is the two-organizers reading. The ANSWER
+         * only decides whether the caller may report the mailbox handed back — `null` means it may not.
          */
         async handBack() {
           return serialize(async () => {
@@ -5527,19 +5217,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           });
         },
         /**
-         * TAKE THE MAILBOX BACK IF NOBODY ELSE HAS IT — the other half of `handBack`.
-         *
-         * It clears the hand-back and runs ONE forced cycle, which is the ordinary gated cycle: the
-         * gate reads `ohmail/_meta` and either claims a free mailbox or stands this install down
-         * against a holder. No press, no row write, and no way to displace anybody — a resume that
-         * could take a mailbox from another machine would be the press without the person.
-         *
-         * `force` for the resync route's reason: this is somebody opening the app, so the re-dial
-         * backoff wait must not hold the first cycle behind it. The cycle re-arms the poll timer on
-         * its way out, which is what `handBack` cleared.
-         *
-         * Answers how many cycles ran — `0` means the cycle could not be served, and the caller
-         * must not report the mailbox as taken back.
+         * Take the mailbox back if nobody else has it — the other half of `handBack`. It clears the
+         * hand-back and runs ONE forced, ordinary gated cycle: the gate reads `ohmail/_meta` and
+         * either claims a free mailbox or stands this install down against a holder. No press, no
+         * row write, no way to displace anybody — a resume that could take a mailbox from another
+         * machine would be the press without the person. `force` for the resync route's reason (the
+         * re-dial wait must not hold the first cycle). The cycle re-arms the poll timer `handBack`
+         * cleared; `0` cycles means it could not be served, so the caller must not report it taken.
          */
         async resume() {
           handedBack = false;
@@ -5551,17 +5235,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     };
 
     /**
-     * ══ A PAUSE AN OLDER BUILD LEFT IS ENDED BEFORE THE ROSTER IS READ ═══════════════════════
-     *
-     * The FOURTH write of the in-place upgrade below, and the one that cannot sit with the other
-     * three: they repair a credential the ATTACH seals, so they run after it, and this one decides
-     * WHICH ROWS THE ATTACH SEES. Placed after the loop it would attach nothing this launch and the
-     * mailbox would come back one restart later — a person pressing "Organize here instead" twice
-     * and being answered by neither press.
-     *
-     * {@link endLegacyOrganizerPauses} carries what the shape is and why the rewrite is a reader.
-     * One line per row, so an install with no such row says nothing extra; the id and the reason,
-     * never the address.
+     * A pause an older build left is ended BEFORE the roster is read. The fourth write of the
+     * in-place upgrade below, and the one that cannot sit with the other three: they repair a
+     * credential the ATTACH seals (so they run after it), while this decides WHICH ROWS THE ATTACH
+     * SEES. After the loop it would attach nothing this launch, so the mailbox returns one restart
+     * later. {@link endLegacyOrganizerPauses} carries the shape and why the rewrite is a reader.
+     * One line per row; the id and the reason, never the address.
      */
     try {
       for (const ended of await endLegacyOrganizerPauses(db, world.accountId, now())) {
@@ -5589,55 +5268,36 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     }
 
     /**
-     * ATTACH EVERY LIVE MAILBOX.
-     *
-     * Read once, here, and never on a timer — the only writers of this table are this engine's own
-     * routes, so attach and detach are EVENTS rather than something to discover. The seed is
-     * whichever row the configured address names; every other row is a mailbox somebody added
-     * through the door, and the difference matters for exactly two things — the environment
-     * password and the process's submission server, both of which are facts about the seed.
-     *
-     * SEQUENTIALLY, deliberately, and this is the one place the concurrency rule elsewhere in this
-     * file is inverted. Each attach reads and may WRITE the credential table for its own mailbox,
-     * and a first launch's seal is one of those writes; running them in parallel would put several
-     * such writes into one PGlite backend at once for no gain, since attaching does not dial —
-     * `start()` is what opens connections, and that is concurrent.
+     * Attach every live mailbox. Read ONCE, never on a timer — the only writers of this table are
+     * this engine's own routes, so attach and detach are EVENTS. The seed is the row the configured
+     * address names; every other is a mailbox added through the door, and the difference matters for
+     * two things — the environment password and the process's submission server, both facts about
+     * the seed. SEQUENTIALLY, inverting the concurrency rule elsewhere: each attach may WRITE the
+     * credential table (a first launch's seal is one such write), and parallel writes into one
+     * PGlite backend gain nothing since attaching does not dial — `start()` opens connections.
      */
     for (const row of await loadLocalRoster(db, world.accountId)) {
       await attachLocal(row, isSeedRow(row.address));
     }
     log("local_roster_attached", {
       count: runtimes.size,
-      /* ── IT COUNTS RUNTIMES, AND IT USED TO CLAIM THEY HELD CLAIMS ────────────────────────
-       *
-       * The sentence ended "…and its own organizer claim", and attaching does not dial — `start()`
-       * is what opens connections, as the block above this loop says. So the count is runtimes, and
-       * the clause was printed verbatim for a mailbox this install is a READER of: one that has no
-       * claim in `ohmail/_meta` and, while its row says `reader`, never will.
-       *
-       * It cost a release investigation. An empty `ohmail/_meta` beside `count: 1` was read as this
-       * install believing it held a claim, because this line said so, and the search went looking
-       * for a gate that had refused to write rather than for the row that says who organizes. A log
-       * line that overstates is the same fault as a comment that overstates, and dearer, because it
-       * is what somebody reads at three in the morning with no code in front of them.
-       *
-       * Whether this install organizes a mailbox is the lease's answer, per mailbox, and it has its
-       * own lines. */
+      /* It counts RUNTIMES, and used to claim they held claims. The sentence ended "…and its own
+       * organizer claim", but attaching does not dial (`start()` does), so the count is runtimes
+       * and the clause printed verbatim for a mailbox this install merely READS — one with no claim
+       * in `ohmail/_meta`. It cost a release investigation: an empty `ohmail/_meta` beside
+       * `count: 1` read as this install believing it held a claim. A log line that overstates is
+       * the same fault as a comment that overstates, and dearer. Whether this install organizes a
+       * mailbox is the lease's answer, per mailbox, with its own lines. */
       reason: "every mailbox this install holds has a runtime: its own connection and its own poll "
         + "timer; whether it also organizes that mailbox is the lease's answer, logged per mailbox",
     });
-    /* ── AND THE ROWS THE ROSTER READ LEFT OUT, BY NAME ─────────────────────────────────────
-     *
-     * The count above says how many mailboxes this install RUNS and cannot say which ones, and
-     * `loadLocalRoster` leaves out every `disabled` row — a paused one (stood down, with a reason)
-     * and a tombstone (removed, reason NULL) alike. Neither had a line, so a mailbox this install
-     * holds and does not run was absent from the boot record entirely: no skip line, no row state,
-     * nothing. Worse, `ensureLocalWorld`'s lookup is WIDER than the roster's, so a paused row can
-     * be the seed — and the `serving` line then prints the id of the one mailbox with no runtime.
-     * An incident on that shape reads backwards from the log, which is how it was read.
-     *
-     * One line per left-out row, so the ordinary install (none) says nothing extra. The id and the
-     * reason, never the address. */
+    /* And the rows the roster read left out, by name. The count above says how many mailboxes this
+     * install RUNS, not which, and `loadLocalRoster` omits every `disabled` row — a paused one and
+     * a tombstone alike — so a mailbox this install holds but does not run was absent from the boot
+     * record entirely. `ensureLocalWorld`'s lookup is WIDER than the roster's, so a paused row can
+     * be the seed and the `serving` line then prints the id of the one mailbox with no runtime — an
+     * incident that reads backwards from the log. One line per left-out row (the ordinary install
+     * says nothing extra); the id and the reason, never the address. */
     for (const row of await loadUnattachedLocalRoster(db, world.accountId)) {
       log("local_mailbox_not_attached", {
         mailboxId: row.id,
@@ -5656,46 +5316,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        silently acquired the ability on its second launch, which is the shape of defect that gets
        reported as "it started working on its own". */
     /**
-     * ══ THE IN-PLACE UPGRADE, AND THE ROSTER IT LEAVES ════════════════════════════════════════
-     *
-     * Nothing moves. The store, the account row, the mailbox row, the credential and the claim in
-     * `ohmail/_meta` are byte-identical across this change; what is different is the READER. An
-     * install that ran one mailbox comes up running a roster that happens to hold one.
-     *
-     * Four writes make that true, and each is keyed on a predicate that is false once it has
-     * been done — no marker, no journal entry, nothing to migrate. A third launch writes nothing.
-     * The FOURTH is above the attach loop rather than here, and its block says why: it decides
-     * which rows the attach sees, where these three repair what the attach sealed.
-     *
-     *  1. THE SEED ROW, which `ensureLocalWorld` has already decided about above: it exists on a
-     *     fresh install and is found on every later one. Its predicate is the one that stops a
-     *     removed mailbox coming back.
-     *  2. THE INCOMING SERVER, backfilled onto the seed's `imap` credential when the row does not
-     *     record one. Rows sealed after the probe started recording `host/port/secure/user`
-     *     already carry them and are skipped.
-     *  3. THE SUBMISSION CREDENTIAL, when this launch is configured with an outgoing server and
-     *     the seed has no `smtp` row.
-     *
-     * Two and three exist because the reader changed: every mailbox now dials from its own
-     * credential row rather than from the process environment, so a seed whose row predates that
-     * would come up with no server at all — a working install that stopped working on upgrade.
+     * The in-place upgrade and the roster it leaves. Nothing moves — store, rows, credential and
+     * the `ohmail/_meta` claim are byte-identical; only the READER changed (an install that ran one
+     * mailbox now runs a roster of one). Four writes make it true, each keyed on a predicate false
+     * once done (no marker, no journal). The FOURTH is above the attach loop (it decides which rows
+     * the attach sees); the three below repair what the attach sealed — the seed row, the incoming
+     * server backfilled onto the seed's `imap`, and the submission credential — because every
+     * mailbox now dials from its own row, so a seed predating that would come up with no server.
      */
     const seedRow = world.mailboxId ? runtimeRosterRow(await loadLocalRoster(db, world.accountId), world.mailboxId) : null;
     if (seedRow) {
-      /* ── 2. THE INCOMING SERVER ─────────────────────────────────────────────────────────────
-       *
-       * `sealedHost(meta) === null` is the whole predicate — the row does not say which server it
-       * was proved against. That is the shape of every credential sealed before the probe recorded
-       * one, and it is exactly the shape the new reader cannot dial from.
-       *
-       * It writes what THIS launch is configured with, which is the only evidence available and is
-       * the same pair the old reader would have dialled — so the upgrade dials precisely where the
-       * previous version dialled, and a rollback finds a `meta.host` its own
-       * `credentialIsForeign` agrees with.
-       *
-       * MERGED, never replaced: the blob may already carry `smtpHost` (the outgoing witness) or an
-       * OAuth block, and a whole-value write would silently drop them.
-       */
+      /* 2. The incoming server. `sealedHost(meta) === null` is the whole predicate — the row does
+       * not record which server it was proved against, the shape of every credential sealed before
+       * the probe recorded one, and exactly what the new reader cannot dial from. It writes what
+       * THIS launch is configured with — the only evidence, and the same pair the old reader
+       * dialled, so a rollback finds a `meta.host` its `credentialIsForeign` agrees with. MERGED,
+       * never replaced: the blob may already carry `smtpHost` or an OAuth block. */
       try {
         const [row] = await db
           .select({ meta: mailboxCredentials.meta })
@@ -5736,22 +5372,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         });
       }
 
-      /* ── 3. THE SUBMISSION CREDENTIAL ───────────────────────────────────────────────────────
-       *
-       * The send path reads a mailbox's `smtp` credential row, and a seed that has never had one
-       * would lose the ability to send on upgrade — its submission server was a process setting,
-       * and process settings are no longer consulted.
-       *
-       * THE SECRET IS COPIED, NEVER DECRYPTED. `secretEnc` and `keyVersion` are taken from the
-       * `imap` row verbatim: it is the same password for the same mailbox, sealed under the same
-       * key, so the ciphertext is already exactly what an `smtp` row should hold. Decrypting to
-       * re-encrypt would put the plaintext in this process for no reason at all, and would fail
-       * outright on an install whose key cannot open its own row — which is a state that must
-       * stay recoverable by re-entering the password, not one that breaks a boot.
-       *
-       * The `meta` is the coordinates the person typed beside that password, which is the same
-       * authorization the outgoing witness already recorded.
-       */
+      /* 3. The submission credential. The send path reads a mailbox's `smtp` row, so a seed that
+       * never had one loses the ability to send on upgrade (its submission server was a process
+       * setting, no longer consulted). THE SECRET IS COPIED, NEVER DECRYPTED: `secretEnc` and
+       * `keyVersion` come from the `imap` row verbatim — same password, same mailbox, same key, so
+       * the ciphertext is already what an `smtp` row should hold. Re-encrypting would put plaintext
+       * in this process for nothing and break a boot whose key cannot open its own row. The `meta`
+       * is the coordinates typed beside that password. */
       try {
         const rows = await db
           .select({
@@ -5765,55 +5392,24 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const imapRow = rows.find((r) => r.transport === "imap");
         const hasSmtp = rows.some((r) => r.transport === "smtp");
         /**
-         * ══ WHICH SUBMISSION SERVER THIS ROW IS FOR, AND IT IS NOT SIMPLY "THE CONFIGURED ONE" ══
-         *
-         * This read `config.imap.smtp` and nothing else, and that was wrong in the one direction
-         * that matters. The credential already RECORDS the submission host it was saved for —
-         * `meta.smtpHost`, written by the door because the person who typed the password typed
-         * both servers into the same form — and that record is an AUTHORIZATION. Taking the
-         * process's current setting instead would let an install acquire a submission server
-         * nobody ever saved the password for, simply by being relaunched with a different
-         * setting: exactly the defect the send path's own outgoing refusal used to catch, walked
-         * back in through the upgrade.
-         *
-         * {@link sealedSmtpHost}'s three answers are the three cases, and they are genuinely
-         * different:
-         *
-         *  · A HOSTNAME — the person authorized that server. Use it, whatever this launch is
-         *    configured with. A configuration that disagrees is a change they have not completed;
-         *    the send goes where they said, and re-entering the password is what moves it.
-         *  · NOTHING (the key is absent) — the credential predates the record. There is no
-         *    authorization to honour and no disagreement to detect, so the process's setting is
-         *    the honest answer: it is precisely where the previous build would have submitted,
-         *    which is the whole promise of an in-place upgrade. This is the same tolerance the
-         *    shared comparison already grants such a row.
-         *  · THE EMPTY STRING — the person saved the password for a pair with NO submission
-         *    server. Writing a row here would hand that password to a server that appeared
-         *    afterwards, which is the same defect by the third route. Write nothing.
+         * Which submission server this row is for — not simply "the configured one". This read
+         * `config.imap.smtp`, which would let an install acquire a submission server nobody saved
+         * the password for, just by relaunching with a different setting. The credential RECORDS
+         * the host it was saved for (`meta.smtpHost`), and that is an authorization.
+         * {@link sealedSmtpHost}'s three answers are the cases: a HOSTNAME — use it whatever this
+         * launch configures; NOTHING (key absent) — predates the record, so the process setting is
+         * honest; the EMPTY STRING — saved for a pair with NO submission server, so write nothing.
          */
         const witness = sealedSmtpHost(imapRow?.meta ?? null);
         const configured = config.imap.smtp;
         /**
-         * ── AND THE PORT HAS TO COME FROM THE SAME SERVER AS THE HOST ────────────────────────
-         *
-         * The witness records a HOSTNAME and nothing else — the door writes `meta.smtpHost` as a
-         * flat string, deliberately, so that a merge cannot erase a stored port. So when the
-         * witness DISAGREES with this launch's configuration there is no port to pair it with:
-         * taking the configured one would build the row out of two different servers, and an
-         * install whose password was saved for an implicit-TLS server on 465 and which is now
-         * configured for 587 would get a permanent row saying `{465-server, 587, cleartext}`.
-         * Written once, `hasSmtp` true from then on, and it never heals.
-         *
-         * So a DISAGREEING witness writes NO ROW AT ALL, and that is the old behaviour restored
-         * rather than a new refusal: this is exactly the state the send path's outgoing arm used
-         * to refuse, and refusing is right — the person is part-way through changing their
-         * submission server, and finishing it (re-entering the password, which re-records both)
-         * is what completes the move. Guessing a port on their behalf would send their mail
-         * somewhere they never authorized, or downgrade the connection it goes over.
-         *
-         * The two agreeing cases are unchanged: a witness that MATCHES the configuration takes
-         * that configuration's port and TLS mode, and a witness that says NOTHING falls back to
-         * the configuration entire — which is where the previous build submitted.
+         * And the port must come from the same server as the host. The witness records a HOSTNAME
+         * only (a flat `meta.smtpHost`, so a merge cannot erase a stored port), so when it
+         * DISAGREES with this launch's configuration there is no port to pair it with — taking the
+         * configured one builds the row from two different servers (e.g. `{465-server, 587,
+         * cleartext}`), written once and never healing. So a disagreeing witness writes NO ROW —
+         * the old behaviour the send path's outgoing arm used to refuse, right because the person is
+         * mid-change. The two agreeing cases (a match, or nothing recorded) are unchanged.
          */
         const witnessAgrees = witness !== null && witness !== ""
           && witness === (configured?.host ?? "").trim().toLowerCase();
@@ -5858,19 +5454,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       }
     }
 
-    // ── WHERE THE "OPENING YOUR MAILBOX" SECONDS WENT ─────────────────────────────────────
-    //
-    // Measurement only: nothing above this line behaves differently for its sake. The four named
-    // phases are the awaited work this constructor is made of, and `totalReadyMs` brackets all of
-    // it, so `totalReadyMs` minus the four is the unnamed remainder — the AI assembly, the key
-    // ring, the credential resolution and the route table. Naming the phases rather than folding
-    // them into one duration is the whole point: `mailbox_attached` in the worker exists because a
-    // single start-to-finish number could not say which phase dominated.
-    //
-    // Emitted at constructor exit rather than per phase, deliberately. A phase line written as
-    // each phase completes would report progress on a launch that never finishes, but it would
-    // also put four more lines on every ordinary launch, and the question this answers — which
-    // phase owns the wait — is only answerable once all of them have a number.
+    // Where the "Opening your mailbox" seconds went — measurement only; nothing above behaves
+    // differently for it. The four named phases are the awaited work this constructor is made of,
+    // and `totalReadyMs` brackets all of it, so `totalReadyMs` minus the four is the unnamed
+    // remainder (AI assembly, key ring, credential resolution, route table). Naming the phases is
+    // the point — like `mailbox_attached` in the worker, a single number could not say which phase
+    // dominated. Emitted at constructor EXIT, not per phase, so an ordinary launch gets one line.
 
 
     log("boot_phases", {
@@ -5915,144 +5504,67 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       world,
       sessionToken: session.token,
       handle: async (req) => {
-        // ── TWO ROUTES AHEAD OF THE TABLE, AND WHY THEY ARE NOT IN IT ──────────────────────
-        //
-        // `DELETE /local/stored-login` is a DESKTOP-ONLY action: forget the password sealed on
-        // THIS machine. `packages/api`'s route table is shared with the hosted service, where the
-        // idea has no meaning — there is no per-install key and no local store to forget from — so
-        // adding it there would be hosted surface invented for a desktop lifecycle.
-        //
-        // `POST /local/organizer/takeover` is the second, on the identical argument: it authorizes
-        // ONE becoming on THIS install's own mailbox row, which is a fact about a local store the
-        // hosted service does not have. The hosted equivalent is `POST /mailboxes/:id/takeover`
-        // on an account, and it is a different ceremony with a different authority — this one is
-        // the machine's own login, which is the boundary on this door.
-        //
-        // Both carry the same gate every other request on this transport carries: the per-launch
-        // bearer, resolved by the same `resolveSession` the middleware chain runs. The bearer is
-        // added shell-side and never reaches the window, so a page cannot compose these calls
-        // itself. The Cloud door (`cloud-engine.ts`) is a different composition and serves
-        // neither, which is what keeps "organize from this machine" off a mirror this install
-        // does not own — structurally, rather than by a check.
-        //
-        // AND THEY ARE ON `handle` ALONE, NEVER `handleHost` OR `handleLan`. Those two serve a
-        // PAIRED DEVICE over the network, and both of these actions are statements about THIS
-        // COMPUTER — forget the password sealed on this disk; make this machine the organizer of
-        // a mailbox. A phone on the same network asserting either would be a remote device
-        // deciding something whose whole authority is that somebody is sitting at the machine.
-        // The separation is the route table's: `desktopHostRoutes` has never heard of these
-        // paths, so both doors fall through to their static handler.
+        // Two routes ahead of the shared table, and why they are not in it. `DELETE
+        // /local/stored-login` (forget the password sealed on THIS machine) and `POST
+        // /local/organizer/takeover` (make THIS install the organizer of its own mailbox row) are
+        // facts about a local store `packages/api`'s hosted-shared table has no meaning for — the
+        // hosted takeover is `POST /mailboxes/:id/takeover`, a different authority. Both carry the
+        // per-launch bearer (`resolveSession`), added shell-side and never reaching the window, so
+        // a page cannot compose them; the Cloud door (`cloud-engine.ts`) serves neither. On
+        // `handle` ALONE, never `handleHost`/`handleLan`: those serve a PAIRED DEVICE, and both are
+        // statements about THIS COMPUTER. The separation is structural — `desktopHostRoutes` has
+        // never heard of these paths, so both network doors fall through to the static handler.
         const url = new URL(req.url);
         const localRemoveMatch = req.method === "DELETE"
           ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})$/.exec(url.pathname)
           : null;
-        /* -- `POST /local/mailboxes/:id/organize` — THE FIRST-RUN CONSENT, ON THIS DOOR -------
-         *
-         * The shared table's `POST /mailboxes/:id/organize` is `stepUp: true`, which on THIS door
-         * is not a guard but a permanent refusal: the launch session's second-factor stamp is
-         * written once at boot (`identity.ts#mintLaunchSession`, "there is no second factor on a
-         * local install"), so `withStepUp` refuses from five minutes after launch for the life of
-         * the process — which is every machine that has been open longer than a coffee. That is
-         * the same shape `DELETE /local/mailboxes/:id` was added for, and it is recorded in its
-         * note below; here it would strand the standalone install's ONLY onboarding path, so the
-         * flow could never be completed on the door the flow exists for.
-         *
-         * The per-launch bearer is the authority, exactly as it is for the three routes beside
-         * this one: minted at boot, added shell-side, never reaching the window, impossible for a
-         * page to compose. Holding it IS being the person sitting at this machine.
-         *
-         * `stepUpWindowMs` is NOT widened. The window is right for the door it was written for;
-         * what is wrong is applying a second factor to a tier that has none. */
+        /* `POST /local/mailboxes/:id/organize` — the first-run consent, on this door. The shared
+         * `POST /mailboxes/:id/organize` is `stepUp: true`, which HERE is a permanent refusal: the
+         * launch session's second-factor stamp is written once at boot (`identity.ts`), so
+         * `withStepUp` refuses from five minutes after launch for the life of the process — and
+         * this is the standalone install's only onboarding path. The authority is the per-launch
+         * bearer (minted at boot, added shell-side, never reaching the window). `stepUpWindowMs` is
+         * NOT widened: the fault is applying a second factor to a tier that has none. */
         const localOrganizeMatch = req.method === "POST"
           ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})\/organize$/.exec(url.pathname)
           : null;
-        /* -- `PATCH /local/mailboxes/:id` — SEALING THE MAILBOX PASSWORD, ON THIS DOOR --------
-         *
-         * The fourth route in this family and it is here for the family's reason, measured on a
-         * released build: re-connecting a mailbox thirty-five minutes after launch answered
-         * **"recent two-factor authentication required"** — on a door that has no second factor
-         * and no way to acquire one. The only cure a person had was to quit and reopen the app.
-         *
-         * The shared `PATCH /mailboxes/:id` is `stepUp: true` (correctly — its body carries a
-         * mailbox password), and the launch session's second-factor stamp is written ONCE at boot,
-         * so on this door that flag refuses everything from five minutes after launch for the life
-         * of the process.
-         *
-         * IT LOOKED LIKE IT WORKED, and that is what kept it hidden. The FIRST connect seals
-         * seconds after `engine_configure` replaces the engine, inside the one window where the
-         * launch stamp is fresh — so the door's own happy path passed by luck of timing rather
-         * than by design, and only the RE-connect (over an engine that has been up a while) ever
-         * met the refusal. Routing both through here makes the first connect's success structural
-         * too, which is the point: `doors.ts` calls one function for both.
-         *
-         * The SERVICE is `MailboxService.update`, with the same probes the shared route injects —
-         * so a password that cannot log in is refused HERE, on the form, exactly as it is on the
-         * hosted door. This handler is the transport and the authority, never a second
-         * implementation of the credential write. */
+        /* `PATCH /local/mailboxes/:id` — sealing the mailbox password, on this door. The shared
+         * `PATCH /mailboxes/:id` is `stepUp: true` (correctly — its body carries a password), but
+         * the launch session's second-factor stamp is written ONCE at boot, so on this door it
+         * refuses from five minutes after launch: a measured "recent two-factor authentication
+         * required" on re-connect. It LOOKED like it worked because the first connect seals inside
+         * that fresh-stamp window; only the re-connect met the refusal, so routing both here makes
+         * the first's success structural. The SERVICE is `MailboxService.update` with the shared
+         * route's probes — transport and authority, never a second credential write. */
         const localSealMatch = req.method === "PATCH"
           ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})$/.exec(url.pathname)
           : null;
-        /* -- `POST /local/mailboxes` — ADDING A MAILBOX, ON THIS DOOR ----------------------
-         *
-         * The fifth member of the ahead-of-table family, and it is here for the family's one
-         * reason: the shared `POST /mailboxes` is not `stepUp: true`, but every other verb this
-         * flow needs is, and a door that could add a mailbox and then not seal, remove or organize
-         * it would be worse than one that could not add at all. The authority is the same for all
-         * five — the per-launch bearer, minted at boot, added shell-side, never reaching the
-         * window, impossible for a page to compose. Holding it IS being the person at this
-         * machine.
-         *
-         * On `handle` ALONE, never `handleHost` or `handleLan`. Adding a mailbox to somebody's
-         * computer is a statement about THIS COMPUTER, and a phone on the same network must not
-         * be able to make it. The separation is structural: those doors route through
-         * `desktopHostRoutes`, which has never heard of this path. */
+        /* `POST /local/mailboxes` — adding a mailbox, on this door. The shared `POST /mailboxes` is
+         * not `stepUp: true`, but every other verb this flow needs is, and a door that could add a
+         * mailbox but not seal, remove or organize it would be worse than one that could not add.
+         * The authority is the per-launch bearer (minted at boot, added shell-side, never reaching
+         * the window), as for all five. On `handle` ALONE: adding a mailbox to someone's computer is
+         * a statement about THIS COMPUTER, and the separation is structural — `desktopHostRoutes`,
+         * which the network doors route through, has never heard of this path. */
         const localAddMatch = req.method === "POST" && url.pathname === "/local/mailboxes";
-        /* -- `POST /local/mailboxes/probe` — TESTING A CONNECTION, ON THIS DOOR --------------
-         *
-         * The sixth member, and the reason it exists is the family's reason arriving through a
-         * door that was not open until this release. The shared `POST /mailboxes/probe` is
-         * `stepUp: true` — correctly, its body carries a mailbox password — and on this door the
-         * launch session's second-factor stamp is written ONCE at boot, so the flag refuses
-         * everything from five minutes after launch for the life of the process.
-         *
-         * IT USED TO BE SATISFIABLE BY ACCIDENT, and the accident is over. The flow's connect
-         * form is withheld the moment a mailbox exists, so the only state in which "Test
-         * connection" could be pressed was one where the engine had just come up — the same
-         * window in which the launch stamp is fresh. `local-first-run.ts` said so in as many
-         * words and was right at the time. Settings → Add mailbox makes the form reachable at any
-         * point in a launch, and the flow's primary is DISABLED until a verdict exists — so
-         * without this route "Add mailbox" is a dead end on every window that has been open
-         * longer than a coffee.
-         *
-         * MEASURED rather than reasoned: against a real sidecar, the shared route answered the
-         * mail server's own refusal at 170 s after boot and `403 step_up_required` at 330 s.
-         *
-         * The SERVICE is `MailboxService.probeConnection`, with the same prober the shared route
-         * builds and the same `countFolders: true` — this is the one call site that pays a LIST
-         * for a number a screen reads. It writes NOTHING: no row, no credential, no folder. The
-         * authority is the per-launch bearer, as it is for the other five.
-         *
-         * On `handle` ALONE. A probe opens a socket to a host named in its body, so a phone on
-         * the same network must not be able to ask this computer to make one. */
+        /* `POST /local/mailboxes/probe` — testing a connection, on this door. The shared
+         * `POST /mailboxes/probe` is `stepUp: true` (its body carries a password), so on this door
+         * it refuses from five minutes after boot (measured: the mail server's own refusal at 170 s,
+         * `403 step_up_required` at 330 s). It used to be satisfiable only by accident — the connect
+         * form was withheld once a mailbox existed — but Settings → Add mailbox makes the form
+         * reachable any time with its primary disabled until a verdict, so without this route "Add
+         * mailbox" is a dead end. The SERVICE is `MailboxService.probeConnection` with
+         * `countFolders: true`; it writes NOTHING. The authority is the per-launch bearer, on
+         * `handle` ALONE — a probe opens a socket to a host in its body. */
         const localProbeMatch = req.method === "POST" && url.pathname === "/local/mailboxes/probe";
-        /* -- `GET /local/mailboxes/connections` — CAN THIS MACHINE REACH THEM RIGHT NOW ---------
-         *
-         * A THIRD route ahead of the shared table, on the identical argument the two above it
-         * carry: it reports the liveness of sockets THIS PROCESS holds. The hosted service has no
-         * such thing to report — its mailboxes are attached by a worker on a shard, and a
-         * connection there is a fact about a machine no user is sitting at — so adding it to
-         * `packages/api`'s table would be hosted surface invented for a desktop lifecycle.
-         *
-         * AND IT IS NOT A COLUMN, which is the other reason it is here rather than on
-         * `GET /mailboxes`. A dead connection does not survive a restart: a relaunch dials a
-         * fresh one. Recording it durably would make every first boot after an outage report a
-         * mailbox as unreachable that is already connected.
-         *
-         * ON `handle` ALONE, like its two neighbours: `handleHost` and `handleLan` serve a PAIRED
-         * DEVICE, and whether THIS COMPUTER's socket is up is a question for somebody sitting at
-         * this computer. A phone's own view of its host is the pairing layer's answer, not this
-         * one.
-         */
+        /* `GET /local/mailboxes/connections` — can this machine reach them right now. A third route
+         * ahead of the shared table: it reports the liveness of sockets THIS PROCESS holds, which
+         * the hosted service (mailboxes attached by a worker on a shard) has nothing to report, so
+         * adding it there would be hosted surface invented for a desktop lifecycle. NOT a column: a
+         * dead connection does not survive a restart, and recording it durably would make every
+         * first boot after an outage report a connected mailbox as unreachable. On `handle` ALONE,
+         * like its neighbours — whether THIS COMPUTER's socket is up is a question for the person at
+         * it, and a phone's view of its host is the pairing layer's answer. */
         const localConnectionsMatch = req.method === "GET"
           && url.pathname === "/local/mailboxes/connections";
         const localAction = localConnectionsMatch
@@ -6083,17 +5595,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const localActionMailboxId =
           (localRemoveMatch ?? localOrganizeMatch ?? localSealMatch)?.[1] ?? "";
         if (localAction) {
-          /* ── THE RECEIPT, BEFORE ANY BRANCH ─────────────────────────────────────────────
-           *
-           * With only a verdict logged, "the press never reached the door" and "the door took it
-           * and dropped it" leave identical evidence. It sits ABOVE the credential read because
-           * that read is this block's first branch, and the refusal under it is one of the two
-           * that answered in silence.
-           *
-           * The route PATTERN, never the request's path; `mailboxId` is empty where the path
-           * carries none, and for the takeover, whose id is in a body not read yet. The
-           * connections GET is excluded — it is a read Settings makes four times a minute, and
-           * what it needs is a rate floor rather than a receipt. */
+          /* The receipt, before any branch. With only a verdict logged, "the press never reached
+           * the door" and "the door took it and dropped it" leave identical evidence, so this sits
+           * ABOVE the credential read — that read is the first branch, and its refusal answered in
+           * silence. The route PATTERN, never the request's path; `mailboxId` is empty where the
+           * path carries none, and for the takeover whose id is in an unread body. The connections
+           * GET is excluded — Settings reads it four times a minute, and it needs a rate floor
+           * rather than a receipt. */
           if (!localConnectionsMatch) {
             log("local_action_received", {
               method: req.method,
@@ -6124,21 +5632,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             );
           }
           if (localOrganizeMatch) {
-            /* -- AGREE AND START ORGANIZING, WITH THE WINDOW IN THE SAME WRITE ---------------
-             *
-             * The ceremony is `requestOrganizerTakeover`'s and is NOT re-implemented here — this
-             * handler is the transport and the outcome, the same division the takeover route
-             * below keeps. What is new is that the SCREENING ANSWER travels with the consent:
-             * `screening_baseline_at`, `dormancy_days` and `screening_scope` are written in the
-             * same transaction as `organize_consented_at`, because the baseline is what the
-             * window is measured from. Written separately, there is a gap in which the consent
-             * exists and the window does not, and in that gap the cutoff is the product default
-             * rather than the answer the person just gave.
-             *
-             * The account is the LAUNCH SESSION's, never a value from the body. This install
-             * serves one account and `core` is the session just resolved above; taking it from
-             * the request would let a body name a different account's settings row.
-             */
+              /* Agree and start organizing, with the window in the SAME write. The ceremony is
+               * `requestOrganizerTakeover`'s and is not re-implemented here — transport and outcome.
+               * What is new is that the screening answer travels with the consent:
+               * `screening_baseline_at`, `dormancy_days` and `screening_scope` are written in the
+               * same transaction as `organize_consented_at`, because the baseline is what the window
+               * is measured from — written separately, there is a gap in which the cutoff is the
+               * default. The account is the LAUNCH SESSION's, never a value from the body. */
             const mailboxId = localOrganizeMatch[1]!;
             let body: { screening?: { dormancyDays?: unknown; scope?: unknown } } = {};
             try {
@@ -6285,22 +5785,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             }
           }
           if (localAddMatch) {
-            /* -- THE SERVICE IS THE SHARED ONE, WITH BOTH PROBES ---------------------------
-             *
-             * `MailboxService.create` writes the row and the credential in ONE transaction and
-             * refuses a password it could not log in with, because the probes are injected — the
-             * same pair the shared `PATCH /mailboxes/:id` and this door's own seal route inject.
-             * Anything less would make this the second door into `mailbox_credentials`, and the
-             * one that stores a secret nothing has tried.
-             *
-             * The allowance is already `UNMETERED` on this door (the free tier's limit is the
-             * user's own disk), so the mailbox count is not gated here; that is a fact about the
-             * tier and it is declared in `localServices`, not re-decided in this handler.
-             *
-             * The account is the LAUNCH SESSION's and never a value from the body. This install
-             * serves exactly one account, so there is nothing a body could name that would not be
-             * a way of naming another.
-             */
+              /* The service is the shared one, with both probes. `MailboxService.create` writes the
+               * row and credential in ONE transaction and refuses a password it could not log in
+               * with, because the probes are injected — the same pair the shared `PATCH` and the
+               * seal route inject. Anything less makes this a second door into `mailbox_credentials`,
+               * storing a secret nothing has tried. The mailbox count is not gated here: the tier is
+               * `UNMETERED` (the limit is the user's own disk), declared in `localServices`. The
+               * account is the LAUNCH SESSION's, never a value from the body. */
             try {
               const body = (await req.json()) as Record<string, unknown>;
               const deps = depsFor();
@@ -6309,31 +5800,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 now, requestId: "", sessionId: core.sessionId ?? null,
               };
 
-              /* ── THE SAME-LOGIN REFUSAL, AHEAD OF THE WRITE ─────────────────────────────
-               *
-               * TWO ROWS ON ONE PHYSICAL MAILBOX IS THE ONE STATE THIS DOOR MUST NOT REACH.
-               *
-               * The address index already forbids two live rows with the same ADDRESS, and that
-               * is not the same question: a person can reach one mailbox under two addresses —
-               * an alias, a plus-tag, the bare login as against the full address — and every one
-               * of those passes the index. What decides whether two rows are the same MAILBOX is
-               * the pair the server answered to: host and user.
-               *
-               * Why it matters more here than on the hosted door: this install writes ONE claim
-               * per mailbox into `ohmail/_meta`, all of them carrying this install's id. Two rows
-               * over one physical mailbox would write TWO claims with ONE id into ONE folder, and
-               * the lease's clone defence reads a second claim bearing its own id as evidence
-               * that a copy of this install is running — so the two rows would stand each other
-               * down, alternately, for as long as they both existed. Nothing errors; the mailbox
-               * simply stops being organized by anybody.
-               *
-               * COMPARED ON WHAT THE PROBE PROVED, not on what was typed. The body's host may be
-               * absent (the probe walks the ladder) or spelled differently from the row's; the
-               * credential's `meta` records what actually answered. So the create runs first —
-               * it is the only thing that can prove a pair — and the refusal is a read of the
-               * result against the rows that were already there. The row it just wrote is removed
-               * again on refusal, so a 409 leaves the store exactly as it found it.
-               */
+                /* The same-login refusal, ahead of the write. TWO ROWS ON ONE PHYSICAL MAILBOX is
+                 * the one state this door must not reach. The address index forbids two live rows
+                 * with the same ADDRESS, but a person reaches one mailbox under several (alias,
+                 * plus-tag, bare login); what decides the same MAILBOX is the host/user pair the
+                 * server answered to. It matters here because this install writes ONE claim per
+                 * mailbox under its id, so two rows would write two claims with one id and the
+                 * lease's clone defence would stand them down alternately for ever. Compared on what
+                 * the probe PROVED (the create is the dial), and the row is removed on refusal so a
+                 * 409 leaves the store as it found it. */
               const before = await db
                 .select({ id: mailboxes.id, meta: mailboxCredentials.meta })
                 .from(mailboxCredentials)
@@ -6370,21 +5845,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               };
               const clash = before.find((r) => same(proven?.meta, r.meta));
               if (clash) {
-                /* UNDO THE WRITE. The service committed a row and a credential; leaving them and
-                   answering 409 would be a refusal that added a mailbox. Removed through the same
-                   shared service that removes any other, so the tombstone, the credential and the
-                   appointments are one implementation.
-
-                   WHY THE PROOF COMES AFTER THE WRITE RATHER THAN BEFORE IT: only a dial can say
-                   which mailbox a login opens, and the create IS the dial. Probing first to decide,
-                   and then creating, would dial the person's own server TWICE for one submit — and
-                   the per-address probe admission is two, so the second attempt of somebody who
-                   mistyped would be refused by our own budget rather than by their server.
-
-                   WHAT IT LEAVES: a tombstone for an address that was never really connected. That
-                   is untidy and inert. A tombstone means "removed, and may be re-added", which is
-                   exactly the right thing to say about an address whose add was refused, and there
-                   are no mirror rows to wipe because nothing ever synced. */
+                /* Undo the write. The service committed a row and a credential; answering 409 and
+                   leaving them would be a refusal that added a mailbox. Removed through the same
+                   shared service, so the tombstone, credential and appointments are one path. The
+                   proof comes AFTER the write because only a dial can say which mailbox a login
+                   opens, and the create IS that dial — probing first then creating would dial the
+                   server twice, and the per-address probe admission is two. It leaves a tombstone
+                   for an address never connected: inert, meaning "removed, may be re-added", with no
+                   mirror rows because nothing ever synced. */
                 try {
                   await deps.services!.mailbox.delete(ctx, dto.id);
                 } catch (undoErr) {
@@ -6413,24 +5881,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 );
               }
 
-              /* ── AND THE ENGINE BESIDE THE ROW ──────────────────────────────────────────
-               *
-               * The shared service knows about ROWS. It has no idea that on THIS door a process
-               * has to open a connection, hold a lease and run a poll timer for what it just
-               * wrote. Attaching here is what makes the answer true: by the time the 201 is
-               * returned the mailbox is running, so the pane's first poll finds a live row rather
-               * than one that starts working at the next launch.
-               *
-               * NOT the seed — the seed is the address this process was configured with, and this
-               * mailbox is by definition another one. It gets no environment password and no
-               * process submission server; its credential is the one the probe just proved.
-               *
-               * `start()` is deliberately NOT awaited: it connects, may ensure folders and runs a
-               * first drain, which on a real mailbox is minutes. The person is waiting on a form.
-               * A failure there is logged by the same path a launch failure takes and leaves a
-               * connected row whose next poll tries again — which is the documented state for a
-               * mailbox that cannot be reached, not a failed add.
-               */
+                /* And the engine beside the row. The shared service knows about ROWS; it has no idea
+                 * that on THIS door a process must open a connection, hold a lease and run a poll
+                 * timer for what it wrote. Attaching here makes the answer true — by the 201 the
+                 * mailbox is running, so the pane's first poll finds a live row. NOT the seed (the
+                 * seed is the configured address; this is another): no environment password, no
+                 * process submission server, only the credential the probe proved. `start()` is not
+                 * awaited — connect, folders and a first drain are minutes and the person waits on a
+                 * form — and a failure leaves a connected row whose next poll retries. */
               /* THE ROW AS THE STORE HOLDS IT, not a hand-built one. A freshly created mailbox has
                  no stand-down and no stamp, so asserting nulls happens to be right today — and it
                  is the kind of right that stops being right the moment `create` grows a column.
@@ -6449,26 +5907,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     id: dto.id, address: dto.address, displayName: dto.displayName ?? null,
                     standDownReason: null, takeoverAuthorizedAt: null,
                   },
-                  /* ── NEVER THE SEED, AND THIS WAS `isSeedRow(dto.address)` FOR ONE ROUND ────
-                   *
-                   * The reasoning for asking the predicate was that a mailbox being added cannot
-                   * be the configured address because the same-login refusal would have caught it.
-                   * IT IS WRONG, and the case is one `identity.ts` documents as expected (its case
-                   * 5, "re-add of a removed address through Add mailbox"): the refusal scans rows
-                   * with `status <> 'disabled'`, so a TOMBSTONED seed is invisible to it. Remove
-                   * the seed while another mailbox remains — no sign-out, so `config.json` keeps
-                   * naming it — then add that address again, and `isSeedRow` answered true for a
-                   * row whose credential had just been proved against whatever host the person
-                   * typed. The runtime would then dial `config.imap`, the STALE settings file, and
-                   * `credentialIsForeign` would compare the freshly proven host against it and
-                   * withhold the password: a mailbox that had just passed a live probe coming up
-                   * dialling nothing, at this launch and every one after it.
-                   *
-                   * The two answers differ because the two questions do. At BOOT the question is
-                   * "which row does the settings file describe", and `isSeedRow` answers it. HERE
-                   * the row was made by a request that deliberately does not touch the settings
-                   * file, so it is not the seed whatever its address says — and its credential,
-                   * which was just proven, is the only honest source for its dial. */
+                   /* Never the seed — this was `isSeedRow(dto.address)` for one round, on the
+                    * reasoning that an added mailbox cannot be the configured address because the
+                    * same-login refusal would catch it. It is WRONG (`identity.ts` case 5): the
+                    * refusal scans `status <> 'disabled'`, so a TOMBSTONED seed is invisible, and
+                    * re-adding it made `isSeedRow` answer true for a just-proved row, after which the
+                    * runtime dialled the stale `config.imap` and `credentialIsForeign` withheld the
+                    * password. At boot the question is "which row does the settings file describe"
+                    * (`isSeedRow`); here the row deliberately does not touch the settings file, so
+                    * its proven credential is the only honest dial source. */
                   false,
                 );
               } catch (attachErr) {
@@ -6507,20 +5954,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             }
           }
           if (localSealMatch) {
-            /* -- SEALING THE MAILBOX PASSWORD, ON THE LAUNCH BEARER ------------------------
-             *
-             * The SERVICE is `MailboxService.update` and the PROBES are the ones the shared
-             * `PATCH /mailboxes/:id` injects — `makeImapProbe`/`makeSmtpProbe` over this
-             * request's own deps, so they inherit the deadline, the tightened client timeouts
-             * and the IMAP admission counter exactly as the hosted door's do. A password that
-             * cannot log in is refused HERE, on the form. Anything less would make this the
-             * second door into `mailbox_credentials`, and the one that stores a secret nothing
-             * has tried.
-             *
-             * The account comes from the resolved launch session and NEVER from the body — the
-             * same rule the consent route states. This install serves exactly one account, so
-             * there is nothing for a body to name that would not be a way of naming another.
-             */
+              /* Sealing the mailbox password, on the launch bearer. The SERVICE is
+               * `MailboxService.update` and the PROBES are the shared `PATCH /mailboxes/:id`'s —
+               * `makeImapProbe`/`makeSmtpProbe` over this request's deps, inheriting the deadline,
+               * timeouts and IMAP admission counter. A password that cannot log in is refused HERE;
+               * anything less makes this a second door into `mailbox_credentials`, storing a secret
+               * nothing has tried. The account comes from the resolved launch session, never the
+               * body. */
             const mailboxId = localSealMatch[1]!;
             try {
               const deps = depsFor();
@@ -6534,40 +5974,25 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 b as never,
                 { probe: makeImapProbe(deps, probeOpts), smtpProbe: makeSmtpProbe(deps, smtpProbeOpts) },
               ));
-              /* ── AND THE RUNNING MAILBOX IS RE-POINTED, NOT LEFT FOR THE NEXT LAUNCH ─────
-               *
-               * "A password entered AFTER the process is up takes effect on the next launch" was
-               * true, and it was tolerable for exactly one reason: the shell REPLACES the engine
-               * when the seed's door is reconfigured, so the next launch was seconds away. There
-               * is no such gesture for mailbox two. Leaving it would mean a person fixing that
-               * mailbox's password watched it stay broken until they quit the app — with the
-               * form having told them it was saved, because it was.
-               *
-               * A detach and a fresh attach is the whole mechanism, and it is deliberately not a
-               * mutation of the live runtime: the credential decides the connection, the lease
-               * identity, the folder cursors and the sync bag, and re-pointing those underneath a
-               * poll that may be mid-cycle is how two connections come to disagree about one
-               * mailbox. Detach waits for the in-flight cycle, closes the login and drops the
-               * runtime; attach reads the row again from scratch.
-               *
-               * THE SEED IS LEFT ALONE. Its door still replaces the engine, and doing both would
-               * mean an engine tearing down a mailbox a new engine is already starting.
-               */
+                /* And the running mailbox is re-pointed, not left for the next launch. "Takes effect
+                 * on next launch" was tolerable for the SEED only because the shell replaces the
+                 * engine (the next launch seconds away); there is no such gesture for mailbox two,
+                 * so a person fixing its password would watch it stay broken until they quit. A
+                 * detach and a fresh attach — not a live mutation, since the credential decides the
+                 * connection, lease identity, cursors and sync bag, and re-pointing those under a
+                 * mid-cycle poll is how two connections disagree. The SEED is left alone: its door
+                 * already replaces the engine, and doing both tears down a mailbox a new one starts. */
               const live = runtimes.get(mailboxId);
               if (live && mailboxId !== world.mailboxId) {
                 try {
-                  /* DETACH FIRST, and then the attach may THROW — which used to leave the mailbox
-                     with no runtime at all while the log said it "goes on using the connection it
-                     already had". It does not: the login is closed and the timer is cleared. The
-                     sharper half is that `DELETE /local/mailboxes/:id` now keys on the roster, so a
-                     mailbox missing from it is removed WITHOUT releasing its organizer claim or
-                     wiping its mail — the phantom organizer and the doubled mailbox, arrived at
-                     through a failed password change.
-
-                     The old runtime cannot be revived (its adapter is closed), so the roster entry
-                     is restored on failure and the next launch re-attaches it properly. What is
-                     lost is the poll until then; what is kept is the roster telling the truth
-                     about which mailboxes this install holds. */
+                   /* Detach first, then the attach may THROW. The login is closed and the timer
+                      cleared, so the mailbox is not left with no runtime while the log claims it
+                      still uses its connection. It matters because `DELETE /local/mailboxes/:id`
+                      keys on the roster: a mailbox missing from it is removed WITHOUT releasing its
+                      claim or wiping its mail — the phantom organizer and doubled mailbox, reached
+                      through a failed password change. The old runtime cannot be revived (its
+                      adapter is closed), so the roster entry is restored on failure and the next
+                      launch re-attaches; what is lost is the poll until then. */
                   await live.detach();
                   runtimes.delete(mailboxId);
                   /* THE ROW AS IT NOW STANDS — a re-point must not erase this mailbox's own
@@ -6623,35 +6048,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             }
           }
           if (localRemoveMatch) {
-            /* -- REMOVING A MAILBOX ON A STANDALONE INSTALL
-             *
-             * `DELETE /mailboxes/:id` is in the shared route table and is `stepUp: true`, and on
-             * THIS door that makes it permanently unusable rather than merely guarded. The
-             * launch session's second-factor stamp (`lastTwofaAt`) is written ONCE at boot —
-             * `identity.ts#mintLaunchSession`, "there is no second factor on a local install" —
-             * so `withStepUp` refuses every call from `stepUpWindowMs` (five minutes) after
-             * launch for the rest of the process's life. `host-pair-routes.ts` names exactly this
-             * shape as the reason its own mints are not `stepUp: true`. The measured consequence
-             * was a Settings pane whose Remove button answered 403 forever on a machine that had
-             * been open more than five minutes, which is every machine.
-             *
-             * WHAT PROTECTS IT INSTEAD, and it is the same protection the two routes beside it
-             * have: THE PER-LAUNCH BEARER, which is minted at boot, added shell-side, never
-             * reaches the window, and cannot be composed by any page. Holding it IS being the
-             * person sitting at this machine — which is what a second factor would be evidence
-             * of anyway, and is why `mintLaunchSession` says the machine's own login is the
-             * step-up on this tier. The bearer is resolved by the same `resolveSession` above,
-             * before this branch is reached.
-             *
-             * ON `handle` ALONE, never `handleHost` or `handleLan`. A phone on the same network
-             * must not be able to remove a mailbox from somebody's computer; the separation is
-             * structural (those doors route through `desktopHostRoutes`, which has never heard of
-             * this path) rather than a check that could be forgotten.
-             *
-             * The SERVICE is `MailboxService.delete` — the same method the hosted door calls, so
-             * the tombstone, the credential deletion and the appointment close are one
-             * implementation and not two. This handler is the transport and the outcome.
-             */
+              /* Removing a mailbox on a standalone install. The shared `DELETE /mailboxes/:id` is
+               * `stepUp: true`, which on this door is permanent: the launch session's stamp is
+               * written once at boot, so `withStepUp` refuses from five minutes after launch (a
+               * measured Remove button answering 403 for ever). `host-pair-routes.ts` names this
+               * shape. What protects it instead is the per-launch bearer — minted at boot, added
+               * shell-side, never reaching the window, uncomposable by a page. On `handle` ALONE
+               * (structural via `desktopHostRoutes`): a phone must not remove a mailbox from a
+               * computer. The SERVICE is `MailboxService.delete`, the hosted door's method. */
             const mailboxId = localRemoveMatch[1]!;
             try {
               // The SHARED service, through the same `services` factory every other route on this
@@ -6668,68 +6072,32 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 },
                 mailboxId,
               );
-              /* -- AND THE ENGINE BESIDE THE ROW, WHICH THE SHARED SERVICE CANNOT REACH ------
-               *
-               * `MailboxService.delete` is the hosted door's method too. It knows about ROWS: the
-               * tombstone, the credential, the appointments. It has no idea that on THIS door a
-               * process is holding an open IMAP login to that mailbox, renewing an organizer
-               * claim in it every poll, and serving its mirror to the window.
-               *
-               * All three were measured still running after a removal. The claim was renewed at
-               * 08:35:41, 08:36:58 and 08:38:45 after a removal at 08:33:41, by an install whose
-               * own status bar said "No mailbox connected, so nothing can arrive" — a phantom
-               * organizer, which stands any OTHER install down for the length of the staleness
-               * window when the person tries to connect that mailbox somewhere else. The mirror
-               * stayed too, and re-adding the same address (a tombstone is correctly not reused)
-               * put a second row beside it, after which every message was served twice.
-               *
-               * ORDER: release, wipe, then stop. The release needs the login the stop closes, and
-               * the wipe needs the poll not to be mid-cycle writing rows back in. `serialize` is
-               * not taken because `stopped` is what the drain checks and the removal has already
-               * committed — a cycle already in flight finishes against a tombstoned row, which
-               * every write door refuses on its own.
-               *
-               * BEST EFFORT, INDIVIDUALLY. The removal has already happened as far as the person
-               * is concerned; none of these three may turn it into an error they cannot get past.
-               * A failed release costs the next install one staleness window, a failed wipe leaves
-               * mail that another removal clears, and both say so on the line.
-               */
-              /* ── "IF THE ROSTER HOLDS IT", NOT "IF IT IS THE ONE MAILBOX" ────────────────
-               *
-               * This read `if (mailboxId === world.mailboxId)`, which was the same statement
-               * while an install ran exactly one mailbox and is a silent hole the moment it runs
-               * two. Removing the SECOND mailbox would match nothing: its claim would go on being
-               * renewed in somebody's `ohmail/_meta` by a poll timer nobody stopped, its login
-               * would stay open, and its mail would stay in the store — so re-adding the address
-               * would serve every message twice, which is the doubling `local-mirror.ts` exists
-               * to describe, reached by a different route.
-               *
-               * The roster is the authority on what this install is actually running, so it is
-               * what the question asks. Each act below uses THAT runtime's adapter rather than a
-               * captured one: releasing mailbox two's claim over mailbox one's connection would
-               * expunge from the wrong mailbox.
-               */
+               /* And the engine beside the row, which the shared service cannot reach.
+                * `MailboxService.delete` knows about ROWS; not that this door holds an open IMAP
+                * login, renews an organizer claim each poll and serves the mirror. All three were
+                * measured still running after a removal — a phantom organizer that stands other
+                * installs down, and a mirror that made a re-added address serve every message twice.
+                * ORDER: release, wipe, then stop (release needs the login the stop closes; the wipe
+                * needs the poll not mid-cycle). `serialize` is not taken — `stopped` is what the
+                * drain checks, and an in-flight cycle finishes against a tombstoned row every write
+                * refuses. BEST EFFORT, individually: the removal has happened for the person. */
+               /* "If the roster holds it", not "if it is the one mailbox". This read
+                * `if (mailboxId === world.mailboxId)`, the same statement while an install ran one
+                * mailbox and a silent hole the moment it runs two: removing the SECOND matched
+                * nothing, so its claim kept being renewed, its login stayed open and its mail stayed,
+                * and re-adding the address served every message twice (the doubling `local-mirror.ts`
+                * describes). The roster is the authority on what this install runs, so it is what the
+                * question asks; each act uses THAT runtime's adapter, or a release would expunge from
+                * the wrong mailbox. */
               const removed = runtimes.get(mailboxId);
-              /* ── WHETHER THE CLAIM IS ACTUALLY OFF THE MAILBOX, CARRIED OUT TO THE PERSON ───
-               *
-               * `false` means one thing and only one: a release was ATTEMPTED for this mailbox
-               * and could not be completed, so this install's claim may still be standing in
-               * `ohmail/_meta`. The removal itself has happened either way — it is not abortable
-               * by bookkeeping, and none of the three acts below may turn it into an error
-               * somebody cannot get past — but "the mailbox is gone from this computer" and
-               * "nothing of ours is left holding it against your other machine" are two
-               * statements, and only the first was ever made here.
-               *
-               * That silence is the whole cost of the defect. The person's other install then
-               * refuses the mailbox for the length of the staleness window and says only that
-               * somebody else organizes it, which is a sentence about a machine that no longer
-               * exists. Told, it is a wait with a reason; untold, it is the product being wrong.
-               *
-               * A mailbox with NO runtime in the roster is not this state: this install is not
-               * organizing it, there is no login here to expunge over, and there is therefore no
-               * attempt to report the outcome of. That reads `true` — nothing of ours is being
-               * left behind by THIS removal — and it is the ordinary case for an already-detached
-               * or never-dialled row. */
+               /* Whether the claim is actually off the mailbox, carried out to the person. `false`
+                * means one thing: a release was ATTEMPTED and could not complete, so this install's
+                * claim may still stand in `ohmail/_meta`. The removal happened either way, but
+                * "the mailbox is gone from this computer" and "nothing of ours is left holding it
+                * against your other machine" are two statements — untold, the other install refuses
+                * the mailbox for the staleness window, blaming a machine that no longer exists. A
+                * mailbox with NO runtime in the roster is not this state (no login to expunge over),
+                * so it reads `true`. */
               let claimReleased = true;
               if (removed) {
                 const released = await releaseOwnClaim(
@@ -6807,21 +6175,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             }
           }
           if (req.method === "DELETE") {
-            /* ── SIGNING OUT FORGETS EVERY MAILBOX'S PASSWORD, NOT THE FIRST ONE'S ───────────
-             *
-             * This route is the shell signing out of the LOCAL DOOR, and its own contract is that
-             * "the credential is the only thing on this machine that a person signing out is
-             * asking to be gone". With one mailbox, forgetting the seed's was that. With several,
-             * forgetting one leaves the others' sealed passwords on the disk of somebody who just
-             * asked to be signed out — and worse: the seed accessor falls back to the OLDEST live
-             * runtime when the configured address matches no row, so on an install whose first
-             * mailbox was removed it would have deleted a DIFFERENT mailbox's credential and
-             * reported a sign-out.
-             *
-             * So every runtime forgets its own. Answers true if ANY password was there to forget,
-             * which is what the shell renders; a failure on one mailbox is not swallowed — the
-             * route's own error arm carries it, because a sign-out that half-happened must not
-             * report success. */
+              /* Signing out forgets EVERY mailbox's password, not the first one's. This route is
+               * the shell signing out of the local door, whose contract is that the credential is
+               * the only thing on this machine a sign-out asks to be gone. Forgetting one would
+               * leave the others' sealed passwords on the disk — worse, the seed accessor falls back
+               * to the oldest live runtime when the configured address matches no row, so it could
+               * delete a DIFFERENT mailbox's credential and report success. So every runtime forgets
+               * its own; it answers true if ANY password was there, and a failure on one is not
+               * swallowed — a half-happened sign-out must not report success. */
             const forgotten = await Promise.all(runtimes.all().map((r) => r.forgetStoredLogin()));
             const cleared = forgotten.some(Boolean);
             return new Response(JSON.stringify({ cleared }), {
@@ -6829,41 +6190,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               headers: { "content-type": "application/json" },
             });
           }
-          // ── "ORGANIZE FROM THIS MACHINE", THE ROUTE ──────────────────────────────────────
-          //
-          // The ceremony is `requestOrganizerTakeover`'s and is NOT re-implemented here. This
-          // handler is the transport and the outcome, nothing more.
-          //
-          // IT RECORDS A REQUEST; IT DOES NOT SEIZE. The mailbox is still the authority — the
-          // next launch reads the lease first, and an organizer that is actively renewing its
-          // claim keeps the mailbox whatever was asked here. That ordering is the reason this
-          // can be a button at all: it cannot produce two organizers, only a request to become
-          // one.
-          //
-          // AND IT LEAVES THE ROW STOOD DOWN, WHICH IS THE DIFFERENCE FROM THE CLI. A stand-down
-          // set `stopped`, cleared the poll timer and closed the IMAP login; `priorStandDown` was
-          // read once at assembly. Undoing all of that from a request handler would mean
-          // re-opening a login and restarting the poll loop beside a `serialize` queue already
-          // told this install organizes nothing — the shape that produces two organizers on one
-          // mailbox. So this process goes on organizing nothing, and the row goes on SAYING so:
-          // marking the mailbox `connected` here would advertise one that nothing is organizing,
-          // and `ScheduleService`/`SendService` refuse on `status = 'disabled'` and on nothing
-          // else, so they would start accepting sends for it in that window. The stamp alone is
-          // durable and means exactly what the press means; the engine spends it at its next
-          // assembly, which is the CLI's own timing.
-          //
-          // ── AND SINCE MAIL 0083 THE STAMP IS SPENT ON THE NEXT TICK, NOT THE NEXT LAUNCH ──
-          //
-          // Every sentence above about "the engine spends it at its next assembly" and "the pane
-          // says to quit and reopen" was true of an install that STOPPED when it stood down: the
-          // timer was cleared and the login closed, so there was no next tick to spend anything
-          // on. A demoted install is now a READER — it keeps its login and its poll timer and
-          // goes on cycling — so the gate runs again on the very next poll, reads the stamp, and
-          // promotes. No relaunch, and the "quit and reopen" copy is gone from the pane.
-          //
-          // The rest of the argument stands unchanged and is the reason this still writes only
-          // the stamp: the ROW must not claim this install organizes the mailbox before the lease
-          // has agreed, because `ScheduleService` and `SendService` read the row.
+          // "Organize from this machine", the route. The ceremony is `requestOrganizerTakeover`'s,
+          // not re-implemented here — transport and outcome. It RECORDS a request; it does not
+          // seize: the mailbox is still the authority (the next launch reads the lease first), so
+          // this can be a button at all — it cannot produce two organizers, only a request to
+          // become one. It leaves the row STOOD DOWN and writes only the stamp: marking the mailbox
+          // `connected` would advertise one nothing is organizing, and `ScheduleService`/
+          // `SendService` refuse only on `status = 'disabled'`, so they would accept sends for it.
+          // Since Mail 0083 the stamp is spent on the next TICK, not the next launch: a demoted
+          // install is a READER that keeps its login and poll timer, so the gate re-runs, reads the
+          // stamp and promotes with no relaunch. The row must not claim organizing before the lease agrees.
           let body: { mailboxId?: unknown } = {};
           try {
             body = (await req.json()) as { mailboxId?: unknown };
@@ -6945,22 +6281,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       lanState: lan,
       lanIdentity,
       /**
-       * DRAIN EVERY MAILBOX, and answer the TOTAL number of cycles.
-       *
-       * Summed rather than maxed or first-wins, because the number's one consumer is the
-       * question *"did anything happen"* — a caller that ran this and got zero has a settled
-       * install, and one that got a number knows work was done somewhere. A per-mailbox answer
-       * is `syncMailbox`.
-       *
-       * The drains run CONCURRENTLY. Each mailbox has its own serial queue, so no two cycles of
-       * one mailbox overlap; across mailboxes they may, and the store is built for it — the
-       * window is already served during a drain, and the driver runs each transaction through
-       * PGlite's own mutex. Running them in series would make a slow mailbox hold up every
-       * other mailbox's mail for as long as its backlog takes.
-       *
-       * `allSettled`, so one mailbox that throws — an expired password, a server that went
-       * away — cannot stop the others from draining. The throw is already logged where it
-       * happened; what matters here is that the rest of the install keeps working.
+       * Drain every mailbox and answer the TOTAL number of cycles — summed, because the one
+       * consumer is "did anything happen" (a per-mailbox answer is `syncMailbox`). The drains run
+       * CONCURRENTLY: each mailbox has its own serial queue so its cycles never overlap, but across
+       * mailboxes they may, and the store is built for it (the window is served during a drain and
+       * PGlite runs each transaction through its own mutex). In series a slow mailbox would hold up
+       * every other's mail. `allSettled`, so one mailbox that throws — an expired password, a
+       * server gone away — cannot stop the others; the throw is already logged where it happened.
        */
       async syncUntilQuiet(maxCycles = 100) {
         const runs = await Promise.allSettled(runtimes.all().map((r) => r.syncUntilQuiet(maxCycles)));

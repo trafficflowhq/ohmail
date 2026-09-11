@@ -1,50 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE AI PROVIDER A PHONE HAS — none, said in the engine's own vocabulary
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * `createSidecar` builds a local AI provider unconditionally, before it knows whether anything
- * will ask for one. The real one opens a store file — `join(dataDir, AI_STORE_FILE)` — at the top
- * of that call, which on a phone reaches a `path` module that is not there. So the engine failed
- * during composition, on a build where the feature it was composing is not offered at all.
- *
- * ── A SUBSTITUTED MODULE, NOT A CONFIGURATION SWITCH ──────────────────────────────────────
- *
- * The engine is deliberately unaware that there is such a thing as a phone. Which modules exist in
- * this build is the composition's question and the alias table is where it is answered — the same
- * place that decides the phone has no host door and no local Postgres. A knob inside the engine
- * would be a second place that has to agree with this one.
- *
- * ── IT ANSWERS, AND ONLY THE WRITES REFUSE ────────────────────────────────────────────────
- *
- * The rule every substitute here is held to: a module the engine CALLS at boot answers, and only
- * an unreachable one refuses. `createLocalAi` is called at boot, so it returns a provider.
- *
- * `status()` reports the state the engine already has a name for — nothing configured, which is
- * the product's floor and explicitly not a fault. `drafter()`, `classifier()` and
- * `classifierForCycle()` return `undefined`, which is the engine's own vocabulary for "this
- * install has no model": the route table answers `503 drafter_unconfigured` for an absent drafter,
- * so a phone lands on exactly the sentence a desktop with no provider lands on. A port that
- * existed and threw would give one state two names.
- *
- * The three WRITES refuse, because they are the only members whose whole purpose is to persist or
- * to reach a vendor and there is nothing here to do either with. They refuse as a typed service
- * error rather than a bare throw, and that is load-bearing: the route pipeline turns a typed error
- * into its own status and sentence, and anything else into `500 internal error` with the message
- * discarded. A person tapping Save would have been shown "internal error".
- *
- * ── NOTHING IN THIS FILE REACHES A NETWORK OR A DISK, AND THAT IS WHY IT DOES NOT IMPORT THE
- *    REAL MODULE'S DEFAULTS ──────────────────────────────────────────────────────────────
- *
- * The three model-name defaults live beside the three vendor transports. Importing them for their
- * strings would bring `fetch`-carrying transport modules for Anthropic, OpenAI and a local model
- * server back into a build whose whole claim is that they are not in it — three vendor endpoints
- * in an artifact for the sake of five words.
- *
- * So they are stated here, and a cross-file pin in `phone-engine-substitutes.test.ts` asserts they
- * are still the same values the real modules export. A test may import them; the shipped closure
- * may not. That is the same arrangement, for the same reason, that the request pipeline uses for
- * the two error classes it matches by name rather than by import.
+ * The AI provider a phone has — none, said in the engine's own vocabulary. `createSidecar` builds a
+ * local AI provider unconditionally, and the real one opens a store file, which on a phone reaches a
+ * `path` module that is not there — so the engine failed during composition on a build where the
+ * feature is not offered. A substituted module, not a config switch: which modules exist is answered
+ * in the alias table. It ANSWERS and only the WRITES refuse: `createLocalAi` returns a provider,
+ * `status()` reports "nothing configured" (the floor, not a fault) and the ports return `undefined`,
+ * so a phone lands on the same sentence a desktop with no provider does; the three writes refuse as
+ * typed service errors. The model-name defaults are stated here, pinned to the real modules by test.
  */
 import { ServiceError } from "@trafficflow/services/mail";
 

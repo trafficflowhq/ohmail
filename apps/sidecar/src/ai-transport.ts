@@ -3,23 +3,14 @@ import type {
 } from "@trafficflow/core/mail";
 
 /**
- * WHAT A PROVIDER HAS TO BE ABLE TO DO, AND NOTHING ELSE.
- *
- * Four methods. The two features — and routing is TWO QUESTIONS rather than one, see
- * {@link AiTransport.screen} — plus the question "can you actually do them?", which is separate on
- * purpose: a capability is offered only once it has been asked, never because a settings form was
- * filled in. Everything about WHAT is asked — the taxonomy, the screening question, the reply
- * policy, the response schemas and the two sinks that refuse — lives in `@trafficflow/core/mail`
- * and is shared with every other implementation; a provider here decides only how the request
- * travels and how the answer is unwrapped.
- *
- * ── NO SDK, ON PURPOSE ───────────────────────────────────────────────────────────────────────
- *
- * Both providers speak their endpoint's HTTP API through the platform's own `fetch`. This is the
- * engine that ships inside the app, so every package it pulls in is a package a person
- * downloading a binary is trusting; two well-documented JSON endpoints do not justify a
- * dependency, and not having one means there is no vendor client sitting between a message and
- * the wire deciding what to retry, buffer or log.
+ * What a provider has to be able to do, and nothing else. Four methods: the two features (routing is
+ * TWO questions — see {@link AiTransport.screen}) plus "can you actually do them?", separate on
+ * purpose because a capability is offered only once it has been asked, never because a form was
+ * filled in. Everything about WHAT is asked — taxonomy, screening question, reply policy, response
+ * schemas and the two refusing sinks — lives in `@trafficflow/core/mail` and is shared; a provider
+ * here decides only how the request travels and how the answer is unwrapped. No SDK, on purpose:
+ * both providers speak HTTP through the platform's `fetch`, because every package this shipped-in-app
+ * engine pulls in is one a person downloading a binary is trusting, and two JSON endpoints do not justify one.
  */
 
 /** The failure classes a verification can report. Rendered by the interface; never free text. */
@@ -40,15 +31,11 @@ export type ProbeFailure =
   | "internal";
 
 /**
- * What a verification found.
- *
- * `detail` is a short sentence a person can act on, taken from the endpoint's own error body
- * where it has one. It is shown in the settings pane and is deliberately NOT logged: an error
- * body quotes the request that produced it, and on one of these two paths the request carries an
- * API key header.
- *
- * `models` is what the endpoint said it has. It populates the model pickers, so a person chooses
- * from what is actually installed rather than typing a name and finding out later.
+ * What a verification found. `detail` is a short sentence a person can act on, taken from the
+ * endpoint's own error body — shown in the settings pane and deliberately NOT logged, because an
+ * error body quotes the request that produced it and one of these paths carries an API key header.
+ * `models` is what the endpoint said it has; it populates the model pickers, so a person chooses
+ * from what is installed rather than typing a name and finding out later.
  */
 export interface ProbeOutcome {
   ok: boolean;
@@ -61,28 +48,14 @@ export interface AiTransport {
   /** THE ROUTING QUESTION — "which folder does this belong in". Asked of live mail, per message. */
   classify(input: ClassifierInput): Promise<ClassifierResult>;
   /**
-   * THE SCREENING QUESTION — "what should happen to this first-contact sender".
-   *
-   * A different question over a different answer set, asked only when a person presses a button
-   * about senders already waiting at the gate. Live mail routing never reaches it.
-   *
-   * ── REQUIRED HERE, THOUGH IT IS OPTIONAL ON `ClassifierPort` ────────────────────────────────
-   *
-   * The port in `@trafficflow/core` declares `screen?` optional, and has to: a `ClassifierPort` is
-   * implemented outside the package that declares it, so a required method would have been a
-   * compile break in every implementation for a capability only the Screener uses. Callers
-   * therefore fall back to {@link classify} when it is absent.
-   *
-   * That fallback is what made this method's absence invisible here for a release. It degrades the
-   * advice without endangering anything — the routing question's answer for a first-contact sender
-   * is the gate itself, which every consumer reads as "hold" — so a standalone install went on
-   * answering the wrong question, correctly, and nothing failed. The person just got told, at high
-   * confidence, that the mail was where it already was.
-   *
-   * `AiTransport` is an INTERNAL interface with both of its implementations in this directory, so
-   * there is no compatibility to buy and nothing to be gained by making it optional. Required means
-   * a third provider added here does not compile until it has been taught the second question —
-   * which is the guarantee the optional port cannot offer.
+   * The screening question — "what should happen to this first-contact sender". A different question
+   * over a different answer set, asked only when a person presses a button about senders waiting at
+   * the gate; live mail routing never reaches it. Required here though OPTIONAL on `ClassifierPort`:
+   * that port is implemented outside the package that declares it, so a required method would break
+   * every implementation for a capability only the Screener uses, and callers fall back to {@link
+   * classify} when it is absent — which made this method's absence invisible here for a release
+   * (the fallback degrades the advice without endangering anything). `AiTransport` is INTERNAL with
+   * both implementations here, so required means a third provider does not compile until taught it.
    */
   screen(input: ClassifierInput): Promise<ClassifierResult>;
   draft(input: DraftInput): Promise<DraftResult>;

@@ -1,35 +1,12 @@
 /**
- * ═══ ONE RUNTIME PER MAILBOX ═══════════════════════════════════════════════════════════════════
- *
- * The standalone install used to serve exactly one mailbox, and the whole of that mailbox's
- * running state lived as thirteen `let`s in `createSidecar`'s closure — the adapter, the poll
- * timer, the serial queue, the lease nonce, whether this install had been stood down, whether it
- * had been consented to, whether its `ohmail/*` tree had been made. One mailbox, one closure, and
- * the two were the same thing.
- *
- * With N mailboxes those thirteen become thirteen fields of THIS record, held in a
- * `Map<mailboxId, runtime>`. That is the hosted sync worker's own shape (`apps/worker/src/index.ts`
- * keeps a `MailboxRuntime` per attached mailbox in exactly such a map), and taking it here rather
- * than inventing a second arrangement is the point: the two hosts already run one pipeline, and
- * they should hold one runtime the same way.
- *
- * ── WHAT IS PER-MAILBOX AND WHAT IS NOT, BECAUSE THE ANSWER IS NOT "EVERYTHING" ────────────────
- *
- * Per MAILBOX: the IMAP connection, the lease claim, the organizer role, the poll timer, the
- * folder cursors, the credential. Each of those is a fact about one server and one login.
- *
- * Per INSTALL (and therefore NOT here): the store, the account row, the key ring, the AI settings,
- * the screening window, the rules, the tags, the change-log sequence and the launch session.
- * `local-mirror.ts`'s header already names the account-scoped tables; the window is
- * `account_settings`; the AI file is "a property of the install". A second copy of any of those
- * per mailbox would be two answers to a question the install only asks once.
- *
- * The maintenance passes are the case worth stating, because they LOOK per-mailbox and are not.
- * `bubbleUpPass`, `screenerAutoSuggestPass`, `runSenderNameBackfill`, `threadJoinHealPass` and
- * `inboundQuietPass` all take an ACCOUNT and no mailbox. Their gates and cursors therefore stay in
- * the engine's own scope rather than moving here: two runtimes draining share one six-hour heal
- * gate and one name-backfill walk, which is one pass per install per interval — where a copy per
- * runtime would run the same account-wide scan N times per poll for the same rows.
+ * One runtime per mailbox. The standalone install used to serve one mailbox, and its running state
+ * lived as thirteen `let`s in `createSidecar`'s closure (adapter, poll timer, serial queue, lease
+ * nonce, stand-down and consent flags, the `ohmail/*` mark). With N mailboxes those become thirteen
+ * fields of THIS record in a `Map<mailboxId, runtime>` — the hosted worker's own shape, so the two
+ * hosts hold one runtime the same way. Per MAILBOX: the connection, lease claim, organizer role, poll
+ * timer, cursors, credential. Per INSTALL (and NOT here): the store, account row, key ring, AI
+ * settings, screening window, rules, tags, change-log sequence, launch session. The account-wide
+ * maintenance passes (`bubbleUpPass`, `screenerAutoSuggestPass`, …) look per-mailbox and are NOT — their gates stay in the engine's scope.
  */
 
 import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -64,20 +41,15 @@ export type CredentialState =
    */
   | "foreign-host";
 
-/**
- * WHETHER THIS INSTALL CAN REACH ONE MAILBOX'S SERVER RIGHT NOW.
- *
- * It is not on {@link OrganizerState} and must not be folded into it, because the two answer
- * different questions and the pane needs both. "Who organizes this mailbox" is a fact about the
- * LEASE and survives an outage untouched — this install is still the organizer of a mailbox it
- * cannot currently reach, and saying otherwise would invite a person to take a mailbox back that
- * was never taken from them. "Can I reach it" is a fact about a SOCKET, and it is the one that
- * decides whether "On this machine" is presently true in any useful sense.
- *
- * IN MEMORY ONLY, deliberately. A dead connection does not survive a restart — a relaunch dials
- * a fresh one — so a column recording it would be a durable statement about a transient fact,
- * wrong from the first boot after every outage.
- */
+  /**
+   * Whether this install can reach one mailbox's server right now. Not on {@link OrganizerState} and
+   * must not be folded in, because the two answer different questions the pane needs both: "who
+   * organizes this mailbox" is a fact about the LEASE and survives an outage untouched (saying
+   * otherwise would invite taking back a mailbox never taken away), while "can I reach it" is a fact
+   * about a SOCKET and decides whether "On this machine" is presently true in any useful sense. In
+   * memory only: a dead connection does not survive a restart (a relaunch dials fresh), so a column
+   * recording it would be a durable statement about a transient fact.
+   */
 export interface MailboxConnectionState {
   /** False from the first observation of death until a re-dial completes. */
   reachable: boolean;
@@ -108,19 +80,13 @@ export interface OrganizerState {
   /** The other organizer's display name, so the UI can say WHICH machine. */
   heldBy: string | null;
   /**
-   * SINCE WHEN THE LEASE COULD NOT BE READ AT ALL — ISO 8601, or `null` when it reads fine.
-   *
-   * On the hosted side an unreadable lease is already visible within about four minutes: the
-   * failure is exempt from the sync counter BY CLASS, the mailbox detaches, re-attaches, and the
-   * block is written to the row where the web app renders it.
-   *
-   * On a LOCAL install the same condition was a LOG LINE and nothing else. Nobody reads a desktop
-   * log. So a folder anyone with append rights can fill would leave a person's mail quietly
-   * unorganized with the app showing an ordinary connected state — which is the "reliability
-   * feature that renders as its own healthy state" shape this codebase has been bitten by before.
-   *
-   * Set where the lease read throws, cleared the moment it resolves. The shell renders the
-   * `blocked_lease_unreadable` string that already exists in both catalogues.
+   * Since when the lease could not be read at all — ISO 8601, or `null` when it reads fine. On the
+   * hosted side an unreadable lease is visible within about four minutes (exempt from the sync
+   * counter by class, the mailbox detaches and re-attaches, the block written to the row). On a LOCAL
+   * install the same condition was a LOG LINE and nothing else, and nobody reads a desktop log — so a
+   * folder anyone with append rights can fill would leave a person's mail quietly unorganized with an
+   * ordinary connected state, the "reliability feature that renders as its own healthy state" shape.
+   * Set where the lease read throws, cleared when it resolves; the shell renders `blocked_lease_unreadable`.
    */
   unreadableSince: string | null;
 }
@@ -206,14 +172,11 @@ export interface LocalMailboxRuntime {
   // ── THE FOURTEENTH ───────────────────────────────────────────────────────────────────────────
   /**
    * Can this install reach this mailbox's server right now — see {@link MailboxConnectionState}.
-   *
-   * READ-ONLY, and that is the difference from the thirteen above. Those are what the GATE
-   * writes; this is what the CONNECTION does, and the only writers are the adapter's own death
-   * report and the bound over failing cycles. A setter would let a caller assert a socket is
-   * healthy, which is the one thing no caller can know.
-   *
-   * An accessor rather than a copy for the same reason the thirteen are: the pane reads it a poll
-   * after the gate wrote it, and a frozen record would render a two-hour-old outage as current.
+   * READ-ONLY, the difference from the thirteen above: those are what the GATE writes, this is what
+   * the CONNECTION does, and the only writers are the adapter's own death report and the bound over
+   * failing cycles. A setter would let a caller assert a socket is healthy, the one thing no caller
+   * can know. An accessor rather than a copy for the same reason the thirteen are: the pane reads it a
+   * poll after the gate wrote it, and a frozen record would render a two-hour-old outage as current.
    */
   readonly connection: MailboxConnectionState;
 
@@ -234,43 +197,25 @@ export interface LocalMailboxRuntime {
    *  store alone — the store is the install's, not this row's. */
   detach(): Promise<void>;
   /**
-   * RE-DIAL NOW IF THIS MAILBOX'S CONNECTION IS DEAD — the foreground wake, exposed.
-   *
-   * The engine already re-dials a dead connection, at the top of its own poll. That is the right
-   * cadence for a desktop, whose socket dies rarely. It is the wrong one for a phone, where the
-   * socket dies on EVERY background: coming back to the foreground, the phone would show
-   * "organizing" and file nothing until the next poll tick came round and the re-dial inside it
-   * finished — measured on the desktop's own bound at up to 120 s and eight cycles.
-   *
-   * So the same function gets a caller. This does NOT drain and does NOT organize: it restores a
-   * connection and lets the ordinary gated cycle decide what may happen on it, which is the
-   * learn-then-act rule. A wake that called the drain instead would be organizing over a
-   * connection whose lease it had never read — the two-organizers failure, reached through the
-   * front door.
-   *
-   * Idempotent and cheap: a live connection, a stopped runtime, a re-dial already in flight, a
-   * mailbox with no usable password, a refused sign-in, or a backoff window not yet elapsed all
-   * return without doing anything.
+   * Re-dial now if this mailbox's connection is dead — the foreground wake, exposed. The engine
+   * already re-dials a dead connection at the top of its poll, the right cadence for a desktop whose
+   * socket dies rarely, and the wrong one for a phone whose socket dies on EVERY background: coming
+   * back, the phone would show "organizing" and file nothing until the next poll tick's re-dial
+   * finished (up to 120 s, eight cycles). So the same function gets a caller. It does NOT drain and
+   * does NOT organize — it restores a connection and lets the ordinary gated cycle decide (the
+   * learn-then-act rule; a wake that drained would organize over an unread lease, the two-organizers
+   * failure). Idempotent and cheap: a live connection, stopped runtime or in-flight re-dial returns.
    */
   redial(): Promise<void>;
   /**
-   * GIVE THE CLAIM BACK AND STAY THE ORGANIZER OF RECORD — the phone's leave-the-app hand-back.
-   *
-   * Neither of the two acts that already exist. `detach()` closes the login and leaves the claim
-   * standing in `ohmail/_meta` to age out, so a desktop asked to take the mailbox stands itself
-   * down against a claim nobody is honouring for the length of the staleness window. The release
-   * ROUTE removes the claim and writes the row to `reader`, and a reader never re-enters the gate
-   * without a human press — which is right for "stop organizing here" and wrong for an iPhone
-   * that is being put in a pocket.
-   *
+   * Give the claim back and stay the organizer of record — the phone's leave-the-app hand-back.
+   * Neither existing act: `detach()` closes the login and leaves the claim to age out (a desktop
+   * asked to take the mailbox stands down for the staleness window against a claim nobody honours),
+   * and the release ROUTE removes the claim and writes the row to `reader` (a reader never re-enters
+   * the gate without a human press — right for "stop organizing here", wrong for a pocketed iPhone).
    * So this removes the CLAIM and writes no row: the next gated cycle reads the lease and either
-   * claims it back (nobody took it) or stands down (somebody did). That is what makes the
-   * resume automatic and what keeps it from ever displacing whoever took the mailbox meanwhile.
-   *
-   * Answers {@link releaseMailboxClaim}'s own three outcomes, unflattened: a count of this
-   * install's records removed, `0` for a complete read that found none of ours, and `null` for
-   * "could not look" — where this install may still hold the claim and the caller must not say
-   * the mailbox was handed back.
+   * claims it back or stands down, which makes the resume automatic and never displaces whoever took
+   * it. Answers {@link releaseMailboxClaim}'s three outcomes unflattened (a count, `0`, or `null`).
    */
   handBack(): Promise<number | null>;
   /**
@@ -289,21 +234,14 @@ export interface LocalMailboxRuntime {
 }
 
 /**
- * The roster: every mailbox this install currently runs, keyed by row id.
- *
- * A class rather than a bare `Map` for one reason — the ORDER. `organizerStates()` and the shell's
- * `ready.mailboxId` fallback both mean "oldest first", and a `Map` preserves insertion order, so
- * the guarantee holds only while every insertion goes through one place that inserts in
- * `created_at` order. Making that one place a method is what keeps it true; a bare map would put
- * the ordering contract in each caller's head.
- *
- * ── NO INTERVAL, AND THAT IS A DIFFERENCE FROM THE WORKER ─────────────────────────────────────
- *
- * The hosted worker re-reads its roster on a timer because OTHER processes write its `mailboxes`
- * table — the API adds one, an operator disables one, and the worker has no way to be told. On
- * this door the only writers of `mailboxes` are this engine's own routes, so attach and detach are
- * EVENTS (`POST /local/mailboxes`, `DELETE /local/mailboxes/:id`, and the boot's one read) and a
- * poll would be this process asking itself a question it already knows the answer to.
+ * The roster: every mailbox this install currently runs, keyed by row id. A class rather than a bare
+ * `Map` for one reason — the ORDER: `organizerStates()` and the shell's `ready.mailboxId` fallback
+ * both mean "oldest first", and a `Map` preserves insertion order only while every insertion goes
+ * through one place that inserts in `created_at` order, which making that place a method keeps true.
+ * NO INTERVAL, unlike the worker: the hosted worker re-reads its roster on a timer because OTHER
+ * processes write its `mailboxes` table, but here the only writers are this engine's own routes, so
+ * attach and detach are EVENTS (`POST /local/mailboxes`, `DELETE /local/mailboxes/:id`, the boot's
+ * one read) and a poll would be this process asking itself something it already knows.
  */
 export class LocalRoster {
   private readonly byId = new Map<string, LocalMailboxRuntime>();

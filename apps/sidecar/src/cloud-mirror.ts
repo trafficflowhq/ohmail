@@ -30,7 +30,7 @@ import type { LocalWorld } from "./identity.js";
 import type { CloudAuth } from "./cloud-auth.js";
 import { stampSynced } from "./sync-stamp.js";
 import { createFirstSyncReporter } from "./first-sync.js";
-import { deleteMailboxRows, mirroredMessageCount } from "./local-mirror.js";
+import { mirroredMessageCount } from "./local-mirror.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -66,16 +66,6 @@ export const CLOUD_SYNC_TYPES = [
    * nothing, because its next `GET /consent` answers from the account itself.
    */
   "settings",
-  /**
-   * A MAILBOX THE HOSTED ACCOUNT ERASED. One row, `op: "delete"` only, and it stands for every
-   * message, body, draft and folder that mailbox had (`change-log.ts`, the `"mailbox"` member of
-   * `EntityType`). Asked for here because the failure without it is this door's own version of
-   * the standalone one: the hosted store erases the mail, this mirror never hears, and the window
-   * goes on rendering a mailbox that is gone. `applyDelete` runs the same table walk the
-   * standalone removal runs (`local-mirror.ts#deleteMailboxRows`) and the loop re-emits the
-   * receipt on the LOCAL log, so the window's own mirror drops it by the same rule.
-   */
-  "mailbox",
 ] as const satisfies readonly EntityType[];
 
 /**
@@ -106,11 +96,6 @@ void cloudSyncTypesAreComplete;
  * the time the message carrying the assignment is applied.
  */
 const APPLY_ORDER: readonly EntityType[] = [
-  /* `mailbox` is FIRST so that in the REVERSED delete pass it is LAST: the mailbox receipt takes
-     everything keyed by that mailbox, and running it after the page's own per-row deletes leaves
-     them nothing to find rather than the other way round. It never appears as a non-delete — the
-     feed emits this type only as a delete — so its place in the upsert order is inert. */
-  "mailbox",
   "settings", "folder", "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
 ];
 
@@ -654,11 +639,6 @@ async function messagePresent(tx: Tx, id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-async function draftPresent(tx: Tx, id: string): Promise<boolean> {
-  const rows = await tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.id, id)).limit(1);
-  return rows.length > 0;
-}
-
 async function threadPresent(tx: Tx, id: string): Promise<boolean> {
   const rows = await tx.select({ id: threads.id }).from(threads).where(eq(threads.id, id)).limit(1);
   return rows.length > 0;
@@ -729,11 +709,6 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
     organizedByCapabilities: m.organizerAcceptsRequests === true ? CAPABILITY_REQUESTS : null,
     organizeConsentedAt: asDate(m.organizeConsentedAt),
     smtpMaxSizeBytes: m.smtpMaxSizeBytes ?? null,
-    // The provider's own Junk folder (mail 0065). Mirrored rather than discovered: on a Cloud
-    // account this install never attaches IMAP, so its own column would stay NULL for ever and
-    // the rail and search would never name the folder junked mail went to. `?? null` on this
-    // upsert's rule — a path cleared on Cloud must clear here too.
-    junkFolder: m.junkFolder ?? null,
     // NOT decoration: `compose-from.ts` orders the From options by `createdAt` ascending and calls
     // the first sendable one the default sender. A mirror that stamped its own clock here would
     // pick a different default from the browser tab looking at the same account.
@@ -1143,18 +1118,6 @@ async function applyUpsert(
       const inReplyTo = d.inReplyToMessageId && (await messagePresent(tx, d.inReplyToMessageId))
         ? d.inReplyToMessageId
         : null;
-      /* ── THE ONE FIELD A PAGE MAY LEAVE OUT, AND `?? ""` WAS THE WAY TO LOSE MAIL ─────────
-         `DraftDTO.body` is `null` when a bounded page would not carry it (a stored body past
-         `DRAFT_BODY_MAX_BYTES`). Coalescing that to `""` wrote an EMPTY body over the mirror's
-         copy, and `drafts.body` is `NOT NULL` here, so this store cannot say "unknown" the way
-         the browser mirror can — the compose surface would then open an empty editor on a
-         message that is not empty and autosave the blank back to the account. So the body is
-         left out of the write entirely: a row we already hold keeps its text and lands
-         `"partial"` (the ledger must not read it as the entity's full state), and a row we have
-         never seen is not created at all, which is the arm an unknown mailbox already takes.
-         The next single-row read or edit carries the body and settles it. */
-      const bodyCarried = typeof d.body === "string";
-      if (!bodyCarried && !(await draftPresent(tx, d.id))) return false;
       const body = {
         accountId: world.accountId,
         // The draft's OWN sending mailbox — see the message branch. A draft written against the
@@ -1164,7 +1127,7 @@ async function applyUpsert(
         threadId: d.threadId ?? null,
         inReplyToMessageId: inReplyTo,
         subject: d.subject ?? "",
-        ...(bodyCarried ? { body: d.body as string } : {}),
+        body: d.body ?? "",
         html: d.html ?? null,
         to: d.to ?? [],
         cc: d.cc ?? [],
@@ -1172,18 +1135,11 @@ async function applyUpsert(
         status: d.status,
         updatedAt: asDate(d.updatedAt) ?? now,
       };
-      if (bodyCarried) {
-        await tx.insert(drafts).values({ id: d.id, ...body, body: d.body as string })
-          .onConflictDoUpdate({ target: drafts.id, set: body });
-      } else {
-        // UPDATE, never an upsert: an insert would need a `body` value, and the only one
-        // available is the empty string this branch exists to refuse. The row was present a
-        // statement ago; if it has since gone, nothing is written and nothing is invented.
-        await tx.update(drafts).set(body).where(eq(drafts.id, d.id));
-      }
+      await tx.insert(drafts).values({ id: d.id, ...body })
+        .onConflictDoUpdate({ target: drafts.id, set: body });
       gen?.draft.add(d.id);
       if (d.threadId) gen?.thread.add(d.threadId);   // the thread stub this draft pinned
-      return !bodyCarried || (wantsReplyParent && inReplyTo === null) ? "partial" : true;
+      return wantsReplyParent && inReplyTo === null ? "partial" : true;
     }
     case "approval": {
       const a = ch.entity as ApprovalDTO | undefined;
@@ -1267,17 +1223,6 @@ async function recordDetached(tx: Tx, world: LocalWorld, detached: readonly Deta
 
 async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]): Promise<boolean> {
   switch (ch.type) {
-    case "mailbox": {
-      /* THE HOSTED ACCOUNT ERASED A MAILBOX. The same table walk the standalone removal runs, in
-         THIS page's transaction — one spelling of "what a mailbox's mail is", so a table added to
-         one door cannot be forgotten on the other. The local `mailboxes` row is left to
-         `makeMailboxRefresh`, which mirrors its status from the hosted row like every other
-         mailbox fact; this takes the MAIL. Unconditionally `true`: a receipt for a mailbox this
-         mirror never held deletes nothing and still has to be recorded on the local log, because
-         the window's mirror may hold rows this database no longer does. */
-      await deleteMailboxRows(tx, ch.id);
-      return true;
-    }
     case "message": {
       if (!(await messagePresent(tx, ch.id))) return false;
       const replying = await tx.select({ id: drafts.id }).from(drafts)
@@ -2595,10 +2540,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // repair. Never fatal to the pull — the mirror is exactly as correct as it was before.
       cfg.log?.("cloud_cap_marker_repair_deferred", {
         reason: "a bodies page failed; the mirror is unaffected and the next launch retries",
-        // The THROWN value, as the two deferral lines above it pass it: `String(err)` collapses
-        // every failure to `errorClass: "String"` with no code and no cause, which is the whole
-        // record this line is. Held by the `err` census at the foot of `log-census.test.ts`.
-        err,
+        err: String(err),
       });
       return written;
     }
@@ -2635,11 +2577,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   const runPull = async (): Promise<number> => {
-    /* WHEN THIS PULL BEGAN, for the first-import clock below. A pull walks the whole feed before it
-       can stamp anything, so the pull that finds a first import open is where a large mirror's
-       first pages land; handing the reporter the moment it reported would leave that pull outside
-       the duration it announces. See `first-sync.ts`. */
-    const pullStartedAt = performance.now();
     try {
       /* THE MAILBOXES FIRST, ALWAYS. A message's `mailbox_id` is a foreign key and the drain writes
          it verbatim from the feed, so the rows it points at have to exist before the first page is
@@ -2733,7 +2670,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           removed mailbox has no import to report finishing. */
       for (const row of await activeMirroredMailboxes()) {
         const stamps = await stampSynced(cfg.db, row.id, now(), cursor.bodies.phase === "complete");
-        await firstSync.report(row.id, stamps, () => mirroredMessageCount(cfg.db, row.id), pullStartedAt);
+        await firstSync.report(row.id, stamps, () => mirroredMessageCount(cfg.db, row.id));
       }
       // THE PULL'S LAST WORD — this mirror drained the hosted feed to its horizon at this
       // moment, on this process's own clock. Written at COMPLETION and nowhere earlier, exactly

@@ -1,14 +1,11 @@
 /**
- * SAME-NETWORK ACCESS, ON A BUILD THAT SERVES NOBODY — the phone's answer to `resolveLanBind`.
- *
- * Substituted for `../host-lan.js`. The desktop's module validates an interface literal, binds a
- * TLS listener on it and serves a script-free explainer to anything that is not the API. This build
- * has no listener and no second door, so LAN is off with no reason: the field means "asked for and
- * refused", and `startPhoneEngine` refuses a `lanBind` before this is reached.
- *
- * ANSWERS RATHER THAN THROWS — `resolveLanBind(config)` is called unconditionally at composition.
- * `serveLanFallback` is the opposite case and refuses by name: it is reachable only from the LAN
- * door's request path, and there is no LAN door here.
+ * Same-network access, on a build that serves nobody — the phone's answer to `resolveLanBind`,
+ * substituted for `../host-lan.js`. The desktop's module validates an interface literal, binds a TLS
+ * listener and serves a script-free explainer; this build has no listener and no second door, so LAN
+ * is off with no reason (the field means "asked for and refused", and `startPhoneEngine` refuses a
+ * `lanBind` before this is reached). ANSWERS rather than throws — `resolveLanBind(config)` is called
+ * unconditionally at composition — while `serveLanFallback` is the opposite case and refuses by name:
+ * it is reachable only from the LAN door's request path, and there is no LAN door here.
  */
 import type { LanState } from "../host-lan.js";
 
