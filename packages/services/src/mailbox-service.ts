@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
@@ -2958,16 +2958,17 @@ export class MailboxService {
         // were gone, and `loadMailboxCreds` then handed the worker a config that had never been
         // tried — a mailbox that was working before somebody corrected its hostname.
         //
-        // `||` is jsonb concatenation, right-hand side wins, so the patch's fields overwrite and
-        // the rest survive. Done in SQL rather than by read-modify-write because this runs inside
-        // the transaction that already holds the row lock, and a second round trip to merge in
-        // application code would be both slower and a place for two writers to interleave.
-        // `coalesce` covers the row whose meta is NULL.
+        // A SHALLOW MERGE, patch's fields winning and the rest surviving. Done in SQL rather
+        // than by read-modify-write because this runs inside the transaction that already holds
+        // the row lock, and a second round trip to merge in application code would be both
+        // slower and a place for two writers to interleave.
+        //
+        // THROUGH THE SEAM, and this was the defect: the server's `||` is the merge and on the
+        // device store `||` is string CONCATENATION, so the same spelling would have written two
+        // JSON documents stuck end to end into the column — a row that parses as nothing, with
+        // no error at the write. A NULL meta reads as `{}` inside the member.
         ...(meta
-          ? {
-            meta: sql`coalesce(${mailboxCredentials.meta}, ${dialect(ctx.db).castJsonb(sql`'{}'`)}) `
-              .append(sql`|| ${dialect(ctx.db).castJsonb(JSON.stringify(meta))}`),
-          }
+          ? { meta: dialect(ctx.db).jsonMergeShallow(mailboxCredentials.meta, sql`${JSON.stringify(meta)}`) }
           : {}),
       },
     });
@@ -3141,41 +3142,58 @@ export class MailboxService {
     // decides — and adds the three facts a sentence needs to be true about them.
     //
     // ONE STATEMENT, filtered aggregates over one join, so the split costs the same round trip
-    // the bare count did. `to_char` and never a bare `::text` cast, for the reason `requestPull`
-    // records at its own timestamps: the bare cast renders at the server's DateStyle, which
-    // `Date.parse` is not required to accept, and this is millisecond ISO-8601 UTC matching
-    // `toISOString()` everywhere else on this DTO.
+    // the bare count did. `FILTER` itself is standard and both stores have it; what needed the
+    // seam is the integer cast, the label and the ordered pick below.
+    //
+    // THE LABEL IS BUILT IN TYPESCRIPT and no longer by `to_char`, which the device store does
+    // not have. The instant comes back as a `Date` through the column's own decoder — a server
+    // timestamp on one store, epoch milliseconds on the other — and `toISOString()` is the same
+    // millisecond ISO-8601 UTC string `to_char(… at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.
+    // MS"Z"')` rendered, byte for byte, which is the pairing `mailbox-filing-report` pins. It
+    // is also how every other timestamp on this DTO is already produced.
     const now = ctx.now();
-    const ISO = 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"';
+    const d = dialect(ctx.db);
     const [pending] = await ctx.db.select({
-      n: sql<number>`count(*) filter (where ${ourOutstandingFiling()})::int`,
-      due: sql<number>`count(*) filter (where ${filingDue(now)})::int`,
-      deferred: sql<number>`count(*) filter (where ${filingDeferred(now)})::int`,
+      n: d.castInt(sql`count(*) filter (where ${ourOutstandingFiling()})`).mapWith(Number) as unknown as SQL<number>,
+      due: d.castInt(sql`count(*) filter (where ${filingDue(now)})`).mapWith(Number) as unknown as SQL<number>,
+      deferred: d.castInt(sql`count(*) filter (where ${filingDeferred(now)})`).mapWith(Number) as unknown as SQL<number>,
       // MIN over `updated_at`, which is the reconciler's OWN queue order (`listPendingFolderStates`
       // orders by it) and the honest "waiting since": the intent writers stamp it and
       // `deferFolderReconcile` deliberately does not, because "a refusal is not a re-filing".
       // A `created_at` would have been wrong here — `folder_state` is upserted per message, so a
       // creation stamp dates the message's FIRST filing and would report weeks of waiting over a
       // decision made a second ago.
-      oldestPendingAt: sql<string | null>`
-        to_char(min(${folderState.updatedAt}) filter (where ${ourOutstandingFiling()})
-                at time zone 'utc', ${ISO})`,
+      oldestPendingAt: sql<Date | null>`
+        min(${folderState.updatedAt}) filter (where ${ourOutstandingFiling()})`
+        .mapWith(folderState.updatedAt) as unknown as SQL<Date | null>,
       // MIN, not max: the SOONEST is when something will next happen, which is what a sentence
       // promising a retry has to name. Over the deferred rows alone — a due row's NULL means "now"
       // and has no instant to quote.
-      nextAttemptAt: sql<string | null>`
-        to_char(min(${folderState.nextAttemptAt}) filter (where ${filingDeferred(now)})
-                at time zone 'utc', ${ISO})`,
-      attempts: sql<number>`
-        coalesce(max(${folderState.attempts}) filter (where ${ourOutstandingFiling()}), 0)::int`,
+      nextAttemptAt: sql<Date | null>`
+        min(${folderState.nextAttemptAt}) filter (where ${filingDeferred(now)})`
+        .mapWith(folderState.nextAttemptAt) as unknown as SQL<Date | null>,
+      attempts: d.castInt(sql`
+        coalesce(max(${folderState.attempts}) filter (where ${ourOutstandingFiling()}), 0)`)
+        .mapWith(Number) as unknown as SQL<number>,
       // THE CLASS OF THE ROW `attempts` CAME FROM, so the two halves of one sentence are about
       // one message. Ordered by `attempts` (then by the widest schedule) rather than by
       // `updated_at`: the deferral does not stamp `updated_at`, so ordering by it would pair the
       // reported attempt count with a different row's reason.
-      lastRefusalClass: sql<string | null>`
-        (array_agg(${folderState.lastErrorClass}
-                   order by ${folderState.attempts} desc, ${folderState.nextAttemptAt} desc)
-         filter (where ${ourOutstandingFiling()} and ${folderState.lastErrorClass} is not null))[1]`,
+      // THE ORDERED PICK, as a subquery rather than as the first element of an ordered
+      // `array_agg` — which is a Postgres aggregate with no counterpart on the device store, and
+      // which sorted EVERY outstanding row to read one of them. Same predicate, same order, same
+      // value, and uncorrelated, so it is one round trip and one evaluation on both stores.
+      lastRefusalClass: sql<string | null>`(${ctx.db
+        .select({ c: folderState.lastErrorClass })
+        .from(folderState)
+        .innerJoin(messages, eq(messages.id, folderState.messageId))
+        .where(and(
+          eq(messages.mailboxId, m.id),
+          ourOutstandingFiling(),
+          isNotNull(folderState.lastErrorClass),
+        ))
+        .orderBy(desc(folderState.attempts), desc(folderState.nextAttemptAt))
+        .limit(1)})`,
     })
       .from(folderState)
       .innerJoin(messages, eq(messages.id, folderState.messageId))
@@ -3261,8 +3279,8 @@ export class MailboxService {
       filing: {
         due: pending?.due ?? 0,
         deferred: pending?.deferred ?? 0,
-        oldestPendingAt: pending?.oldestPendingAt ?? null,
-        nextAttemptAt: pending?.nextAttemptAt ?? null,
+        oldestPendingAt: pending?.oldestPendingAt?.toISOString() ?? null,
+        nextAttemptAt: pending?.nextAttemptAt?.toISOString() ?? null,
         attempts: pending?.attempts ?? 0,
         lastRefusalClass: isFilingRefusalClass(pending?.lastRefusalClass)
           ? pending!.lastRefusalClass!

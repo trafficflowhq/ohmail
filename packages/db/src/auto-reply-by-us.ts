@@ -1,5 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import { awayReplies, mailboxes, messageBodies } from "./schema-mail.js";
+import { SQL_TRIM_BLANK, type Dialect } from "./dialect/index.js";
 
 /**
  * IS THIS ROW A REPLY THE AWAY RESPONDER SENT ON OUR BEHALF — the predicate, stated ONCE, in SQL.
@@ -29,7 +30,11 @@ import { awayReplies, mailboxes, messageBodies } from "./schema-mail.js";
  *      rows only the ledger recognises AND rows only the headers do, so dropping either one
  *      leaves messages that are plainly auto-replies looking like the person's own.
  *
- * ── `btrim` IS ON THE LEDGER SIDE, AND THAT IS DELIBERATE ───────────────────────────────────
+ * ── THE TRIM IS ON THE LEDGER SIDE, AND THAT IS DELIBERATE ──────────────────────────────────
+ *
+ * Spelled `trim(col, '<>')` rather than `btrim(col, '<>')`: the two are the same function on the
+ * server — it resolves the two-argument `trim` to `btrim` — and `btrim` does not exist on the
+ * device store at all, so the server's name would have taken every DTO read down there.
  *
  * The two columns store the same id in two shapes: `minted_message_id` keeps the RFC 5322 angle
  * brackets (the send path searches the Sent folder for that exact header, so the stored form has
@@ -54,7 +59,7 @@ import { awayReplies, mailboxes, messageBodies } from "./schema-mail.js";
  * because a predicate that depends on its caller having asked half the question is the drift
  * this file exists to prevent.
  */
-export function autoReplyByUsWhere(row: {
+export function autoReplyByUsWhere(d: Dialect, row: {
   /** The row's `account_id` — scopes both the ledger and the own-address lookup. */
   accountId: SQL;
   /** The row's `id`, for the body join the header belt needs. */
@@ -73,12 +78,12 @@ export function autoReplyByUsWhere(row: {
         select 1 from ${awayReplies} ar
          where ar.account_id = ${row.accountId}
            and ar.minted_message_id is not null
-           and btrim(ar.minted_message_id, '<>') = ${row.messageIdHeader}
+           and trim(ar.minted_message_id, '<>') = ${row.messageIdHeader}
       )
       or exists (
         select 1 from ${messageBodies} mb
          where mb.message_id = ${row.id}
-           and (${machineSentHeadersWhere(sql`mb.headers`)})
+           and (${machineSentHeadersWhere(d, sql`mb.headers`)})
       )
     )
   )`;
@@ -104,34 +109,56 @@ export function autoReplyByUsWhere(row: {
  *
  *   1. NON-STRING MEMBERS. The TS filters the array to strings before testing
  *      (`v.filter((x) => typeof x === "string")`), so `["auto-submitted": [5]]` is NOT machine-
- *      sent. `jsonb_array_elements_text` would render that `5` as `'5'`, which is not `no`, and
- *      the arm would fire. Hence `jsonb_array_elements` plus an explicit
- *      `jsonb_typeof(e) = 'string'` — the filter, not a coincidence.
- *   2. THE TRIM. The TS is `!/^no$/i.test(v.trim())`. `btrim(v)` strips SPACES only, so a
- *      tab-padded ` no` would diverge; `^[[:space:]]*no[[:space:]]*$` is the ASCII whitespace set
+ *      sent. A text-flattening element reader would render that `5` as `'5'`, which is not `no`,
+ *      and the arm would fire. Hence the seam's element relation plus its explicit `isString` —
+ *      the filter, not a coincidence.
+ *   2. THE TRIM. The TS is `!/^no$/i.test(v.trim())`. Stripping SPACES only would diverge on a
+ *      tab-padded ` no`, so the set trimmed is {@link SQL_TRIM_BLANK} — the ASCII whitespace set
  *      `String.prototype.trim` strips, which is what the parity test pins.
  *
  * NAMED RESIDUAL, not parity: `trim()` also strips Unicode whitespace (U+00A0 and friends) and
- * POSIX `[[:space:]]` does not, so `Auto-Submitted: <NBSP>no<NBSP>` is `no` to the TS and a
- * marker to the SQL. No mail system produces that shape; it is written down here and pinned as a
- * known divergence in the parity test rather than left as a silent hole in a claim of agreement.
+ * this set does not, so `Auto-Submitted: <NBSP>no<NBSP>` is `no` to the TS and a marker to the
+ * SQL. No mail system produces that shape; it is written down here and pinned as a known
+ * divergence in the parity test rather than left as a silent hole in a claim of agreement.
  *
- * A jsonb value that is not an array — or a key that is absent — yields the empty array, which is
+ * A JSON value that is not an array — or a key that is absent — yields the empty array, which is
  * the TS's `[]` for the same two cases.
+ *
+ * ── AND WHY THERE IS NO REGULAR EXPRESSION LEFT ─────────────────────────────────────────────
+ *
+ * This was `!~*` and `~*` — Postgres regex operators the device store has no equivalent for at
+ * all, so a DTO read there answered a syntax error rather than a wrong flag. Both are rewritten
+ * to the SAME question in constructs both stores have, and the pair is pinned value by value:
+ * `^[[:space:]]*no[[:space:]]*$` is `lower(trim(v)) = 'no'`, and the `bulk|auto_?reply|junk|list`
+ * alternation is five substring searches through the seam's `strpos` — where `auto_?reply` is the
+ * two literals it can match, because `_` is a LIKE wildcard and `autoxreply` must stay out.
  */
-function machineSentHeadersWhere(headers: SQL): SQL {
-  const members = (name: string): SQL => sql`jsonb_array_elements(
-    case when jsonb_typeof(${headers} -> ${name}) = 'array'
-         then ${headers} -> ${name} else '[]'::jsonb end
-  )`;
+function machineSentHeadersWhere(d: Dialect, headers: SQL): SQL {
+  /* The array at one header name, or the empty array — the seam's element relation over it, so
+     the element's type test and its text come from the store that produced it. */
+  const members = (name: string) => d.jsonArrayElements(
+    sql`case when ${d.jsonIsArray(d.jsonGet(headers, name))}
+              then ${d.jsonGet(headers, name)} else ${d.castJsonb(sql`'[]'`)} end`,
+    // ONE alias for all three, because each sits in its own `exists` subquery and resolves there.
+    // It is also the shape `test/auto-reply-engagement-census.test.ts` reads the header names out
+    // of — a second argument here makes that census see none of them and report zero asked.
+    "e",
+  );
+  const submitted = members("auto-submitted");
+  const precedence = members("precedence");
+  const suppress = members("x-auto-response-suppress");
+  /** Lowercased and trimmed of the blanks `String.prototype.trim` strips. See residual above. */
+  const folded = (text: SQL): SQL => sql`lower(trim(${text}, ${SQL_TRIM_BLANK}))`;
+  const holds = (text: SQL, needle: string): SQL => sql`${d.strpos(text, sql`${needle}`)} > 0`;
   return sql`
-    exists (select 1 from ${members("auto-submitted")} e
-             where jsonb_typeof(e) = 'string'
-               and (e #>> '{}') !~* '^[[:space:]]*no[[:space:]]*$')
-    or exists (select 1 from ${members("precedence")} e
-                where jsonb_typeof(e) = 'string'
-                  and (e #>> '{}') ~* 'bulk|auto_?reply|junk|list')
-    or exists (select 1 from ${members("x-auto-response-suppress")} e
-                where jsonb_typeof(e) = 'string')
+    exists (select 1 from ${submitted.from}
+             where ${submitted.isString} and ${folded(submitted.text)} <> 'no')
+    or exists (select 1 from ${precedence.from}
+                where ${precedence.isString}
+                  and (${sql.join(
+    ["bulk", "autoreply", "auto_reply", "junk", "list"].map((n) => holds(folded(precedence.text), n)),
+    sql` or `,
+  )}))
+    or exists (select 1 from ${suppress.from} where ${suppress.isString})
   `;
 }

@@ -375,7 +375,7 @@ async function expireEndedResponders(
     .where(and(
       eq(awayResponders.enabled, true),
       isNotNull(awayResponders.endsAt),
-      sql`${awayResponders.endsAt} < ${at.toISOString()}::timestamptz`,
+      sql`${awayResponders.endsAt} < ${dialect(db).ts(at)}`,
       ...(mailboxIds === undefined ? [] : [exists(
         (db as unknown as Tx).select({ one: sql`1` }).from(mailboxes).where(and(
           eq(mailboxes.accountId, awayResponders.accountId),
@@ -788,7 +788,7 @@ async function readCandidates(
     senderUndeliverable: sql<boolean>`EXISTS (
       SELECT 1 FROM ${awaySenderState} AS ss
        WHERE ss.account_id = ${messages.accountId}
-         AND ss.sender = lower(btrim(${messages.fromAddress}))
+         AND ss.sender = lower(trim(${messages.fromAddress}))
          AND ss.undeliverable_at IS NOT NULL
     )`.as("sender_undeliverable"),
     /**

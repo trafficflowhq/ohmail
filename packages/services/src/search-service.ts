@@ -396,10 +396,11 @@ export class SearchService {
      * body scan is a different cost argument; the query length is already bounded by
      * {@link SEARCH_QUERY_MAX_CHARS}, which is what keeps the `ILIKE` itself cheap per row.
      */
-    // Restored with main's spelling: the verbatim arm below is the only reader left, the seam
-    // having taken the fuzzy ILIKE degrade that used to share it.
+    // THROUGH THE SEAM, like the fuzzy degrade that used to share this line: `ilike` is the
+    // server's word for it and the device store has no such operator — it folds both sides
+    // instead, ASCII only, which is a narrower comparison and the one that store can make.
     const like = `%${q}%`;
-    const verbatimPred = holdsPunctuation(q) ? sql`m.subject ilike ${like}` : null;
+    const verbatimPred = holdsPunctuation(q) ? d.ilike(sql`m.subject`, like) : null;
     const exactPred = verbatimPred === null ? lexPred : sql`(${lexPred} or ${verbatimPred})`;
     const exactRank = verbatimPred === null
       ? lexRank

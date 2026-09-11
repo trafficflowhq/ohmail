@@ -1944,13 +1944,14 @@ export class SendService {
         // or inserts if it aborted. So reaching this line means a committed claim exists — two
         // simultaneous sends of one message cannot both get here, and the loser is decided by
         // Postgres rather than by a read-then-write nothing serializes.
-        const [held] = await tx.select().from(outboundSendFingerprints)
-          .where(and(
-            eq(outboundSendFingerprints.accountId, ctx.accountId),
-            eq(outboundSendFingerprints.mailboxId, d.mailboxId),
-            eq(outboundSendFingerprints.fingerprint, fingerprint),
-          ))
-          .for("update").limit(1);
+        const [held] = await dialect(ctx.db).forUpdate(
+          tx.select().from(outboundSendFingerprints)
+            .where(and(
+              eq(outboundSendFingerprints.accountId, ctx.accountId),
+              eq(outboundSendFingerprints.mailboxId, d.mailboxId),
+              eq(outboundSendFingerprints.fingerprint, fingerprint),
+            ))
+            .limit(1));
         if (!held) {
           // The claim was deleted between the blocked INSERT and this read. The maintenance prune
           // is the only thing that deletes one, so this is the 24-hour sweep landing in the

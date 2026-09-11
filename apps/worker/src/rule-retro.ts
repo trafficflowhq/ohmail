@@ -8,7 +8,7 @@ import {
   silentLogger, type Logger, type NormalizedMessage, type Rule,
 } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { carryDialect } from "@trafficflow/db/dialect";
+import { carryDialect, dialect } from "@trafficflow/db/dialect";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    APPLYING A NEW RULE TO MAIL THAT IS ALREADY FILED
@@ -874,7 +874,7 @@ async function selectCandidates(
          and sent.thread_id = ${messages.threadId}
          and ${messages.threadId} is not null
          and lower(sent.from_address) in ${sql`(${sql.join(opts.ownAddresses.map((a) => sql`${a}`), sql`, `)})`}
-         and not ${autoReplyByUsWhere({
+         and not ${autoReplyByUsWhere(dialect(t), {
            accountId: sql`sent.account_id`,
            id: sql`sent.id`,
            fromAddress: sql`sent.from_address`,

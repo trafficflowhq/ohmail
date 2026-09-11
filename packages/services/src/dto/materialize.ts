@@ -7,6 +7,7 @@ import {
   tags, messageTags,
   type EntityType,
 } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import type { Db } from "../context.js";
 import type {
   FolderDTO, SettingsDTO,
@@ -335,7 +336,7 @@ export async function materializeMessages(
     .where(and(
       inArray(messages.id, owned),
       eq(messages.accountId, accountId),
-      autoReplyByUsWhere({
+      autoReplyByUsWhere(dialect(db), {
         accountId: sql`${messages.accountId}`,
         id: sql`${messages.id}`,
         fromAddress: sql`${messages.fromAddress}`,

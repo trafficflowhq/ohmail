@@ -1,5 +1,6 @@
 import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
 import { autoReplyByUsWhere, messages, recordChanges, type Tx } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import { silentLogger, type Logger } from "@trafficflow/core/mail";
 
 /**
@@ -185,7 +186,7 @@ export async function awayReplyFlagRedeliverPass(
         // turns that absence into a tombstone, so an update change for one would ask every
         // mirror to re-tombstone mail it has already discarded.
         isNull(messages.deletedAt),
-        autoReplyByUsWhere({
+        autoReplyByUsWhere(dialect(db), {
           accountId: sql`${messages.accountId}`,
           id: sql`${messages.id}`,
           fromAddress: sql`${messages.fromAddress}`,

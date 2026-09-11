@@ -142,7 +142,7 @@ import { runSenderNameBackfill } from "@trafficflow/worker/sender-name-backfill"
 import { createLocalAi, type LocalAi } from "./ai-provider.js";
 import { localAiRoutes } from "./ai-routes.js";
 import { localAutoSuggestRoutes } from "./auto-suggest-routes.js";
-import { dialectOf } from "@trafficflow/db/dialect";
+import { dialect, dialectOf } from "@trafficflow/db/dialect";
 import { openLocalDb, type LocalDb, type LocalDbOpenPhase, type OpenLocalDb } from "./db.js";
 
 /**
@@ -2731,12 +2731,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * sign-out, on a single-user desktop.
          */
         const had = await db.transaction(async (tx) => {
-          const before = await tx.select({ mailboxId: mailboxCredentials.mailboxId }).from(mailboxCredentials)
-            .where(and(
-              eq(mailboxCredentials.mailboxId, mb.id),
-              eq(mailboxCredentials.transport, "imap"),
-            ))
-            .for("update");
+          const before = await dialect(tx).forUpdate(
+            tx.select({ mailboxId: mailboxCredentials.mailboxId }).from(mailboxCredentials)
+              .where(and(
+                eq(mailboxCredentials.mailboxId, mb.id),
+                eq(mailboxCredentials.transport, "imap"),
+              )));
           await tx.delete(mailboxCredentials).where(and(
             eq(mailboxCredentials.mailboxId, mb.id),
             eq(mailboxCredentials.transport, "imap"),
@@ -6588,10 +6588,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (row && sealedHost(row.meta) === null && config.imap.host) {
           await db.update(mailboxCredentials)
             .set({
-              meta: sql`coalesce(${mailboxCredentials.meta}, '{}'::jsonb) || ${JSON.stringify({
+              /* Through the seam: the server's `||` is the shallow merge and on the device store
+                 `||` concatenates STRINGS, so this spelling would have written two JSON documents
+                 end to end into the column with nothing failing at the write. */
+              meta: dialect(db).jsonMergeShallow(mailboxCredentials.meta, sql`${JSON.stringify({
                 host: config.imap.host, port: config.imap.port,
                 secure: config.imap.secure, user: config.imap.auth.user,
-              })}::jsonb`,
+              })}`),
             })
             .where(and(
               eq(mailboxCredentials.mailboxId, seedRow.id),

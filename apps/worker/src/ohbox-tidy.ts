@@ -10,7 +10,7 @@ import {
   type RuleDecision,
 } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { carryDialect } from "@trafficflow/db/dialect";
+import { carryDialect, dialect, type Dialect } from "@trafficflow/db/dialect";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    RE-ROUTING THE OHBOX BACKLOG — the automated mail `people_only` was turned on too late to catch
@@ -715,7 +715,7 @@ async function selectCandidates(
   t: Tx,
   opts: { accountId: string; ownAddresses: readonly string[]; limit: number; afterId: string | null },
 ): Promise<TidyRow[]> {
-  const filters = candidateFilters(opts);
+  const filters = candidateFilters(dialect(t), opts);
   if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
 
   const rows = await t.select({
@@ -760,7 +760,7 @@ async function selectCandidates(
  * placement being overridden, so the exclusions live here and nowhere else. `afterId` is deliberately
  * NOT part of it: the cursor bounds the walk, it is not a statement about a message.
  */
-function candidateFilters(opts: { accountId: string; ownAddresses: readonly string[] }) {
+function candidateFilters(d: Dialect, opts: { accountId: string; ownAddresses: readonly string[] }) {
   const filters = [
     eq(messages.accountId, opts.accountId),
     eq(folderState.desiredFolder, OHBOX),
@@ -822,7 +822,7 @@ function candidateFilters(opts: { accountId: string; ownAddresses: readonly stri
          and sent.thread_id = ${messages.threadId}
          and ${messages.threadId} is not null
          and lower(sent.from_address) in ${sql`(${sql.join(opts.ownAddresses.map((a) => sql`${a}`), sql`, `)})`}
-         and not ${autoReplyByUsWhere({
+         and not ${autoReplyByUsWhere(d, {
            accountId: sql`sent.account_id`,
            id: sql`sent.id`,
            fromAddress: sql`sent.from_address`,
@@ -858,7 +858,7 @@ async function stillCandidates(
   const rows = await t.select({ messageId: messages.id })
     .from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))
-    .where(and(...candidateFilters(opts), inArray(messages.id, [...ids])));
+    .where(and(...candidateFilters(dialect(t), opts), inArray(messages.id, [...ids])));
   return new Set(rows.map((r) => r.messageId));
 }
 

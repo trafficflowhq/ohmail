@@ -708,11 +708,15 @@ function dueNow(col: AnyPgColumn): SQL | undefined {
 const RENAME_CHANGE_CHUNK = 2000;
 
 function inSubtree(col: unknown, path: string) {
-  // `char_length(${path})` and never a JS `path.length`: PostgreSQL's left/substr count Unicode
-  // CHARACTERS while `String.length` counts UTF-16 code units, so any astral character in a
-  // folder name (an emoji is one PG character and two JS units) would shear the prefix
-  // arithmetic and leave descendants under the old path.
-  return sql`(${col} = ${path} or left(${col}, char_length(${path}) + 1) = ${path + "/"})`;
+  // `length(${path})` in SQL and never a JS `path.length`: both stores count CHARACTERS here while
+  // `String.length` counts UTF-16 code units, so any astral character in a folder name (an emoji is
+  // one character and two JS units) would shear the prefix arithmetic and leave descendants under
+  // the old path.
+  //
+  // `substr(x, 1, n)` and `length(x)` rather than `left(x, n)` and `char_length(x)`: the pairs are
+  // the same functions, and only the second spelling of each exists on the device store — where
+  // this ran as written it would have answered `no such function: left`.
+  return sql`(${col} = ${path} or substr(${col}, 1, length(${path}) + 1) = ${path + "/"})`;
 }
 
 export class DrizzleRepo implements WorkerRepo, RoutingPort {
@@ -2389,7 +2393,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * Driven by `apps/worker/src/folder-ops.ts` inside the mailbox's serial cycle, fenced. Two
    * string-prefix idioms recur below and both are deliberate:
    *
-   *  · SUBTREE membership is `col = path OR left(col, len+1) = path || '/'` — exact string
+   *  · SUBTREE membership is `col = path OR substr(col, 1, len+1) = path || '/'` — exact string
    *    functions, never LIKE: a folder name may contain `_` (the validator only refuses the
    *    LIST wildcards `%`/`*`), and an unescaped LIKE pattern would let `a_b` claim `axb/...`.
    *  · The SWAP is `to || substr(col, len(from)+1)` — the subject maps to `to` exactly
@@ -2454,8 +2458,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     op: Pick<FolderOpRow, "id" | "accountId" | "mailboxId" | "folder"> & { toFolder: string },
   ): Promise<{ folders: number; messages: number }> {
     const { accountId, mailboxId, folder: from, toFolder: to } = op;
-    // char_length, not JS .length — inSubtree's argument, one screen up.
-    const swap = (col: unknown) => sql`${to} || substr(${col}, char_length(${from}) + 1)`;
+    // SQL `length`, not JS `.length` — inSubtree's argument, one screen up. `||` here is string
+    // concatenation, which both stores spell that way.
+    const swap = (col: unknown) => sql`${to} || substr(${col}, length(${from}) + 1)`;
     const now = new Date();
     const changes: ChangeInput[] = [];
 
@@ -2505,7 +2510,17 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .where(and(ofThisMailbox, inSubtree(folderState.observedFolder, from)));
     await this.db.update(messages)
       .set({
-        nativeLocator: sql`jsonb_set(${messages.nativeLocator}, '{folder}', to_jsonb(${to} || substr(${messages.nativeLocator}->>'folder', char_length(${from}) + 1)))` as unknown as NativeLocator,
+        /* ONE TOP-LEVEL KEY, through the seam. `jsonb_set(doc, '{folder}', to_jsonb(v))` is the
+           server's single-key setter and the device store has no such function; a shallow merge of
+           a one-key object is the same write, and the `is not null` below is what keeps it the
+           same on a NULL locator — the server's setter answers NULL there and the merge would
+           create a row. */
+        nativeLocator: this.d.jsonMergeShallow(
+          messages.nativeLocator,
+          this.d.jsonObject({
+            folder: sql`${to} || substr(${messages.nativeLocator}->>'folder', length(${from}) + 1)`,
+          }),
+        ) as unknown as NativeLocator,
         updatedAt: now,
       })
       .where(and(

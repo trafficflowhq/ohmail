@@ -8,7 +8,7 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { type LockMode, assertComparable, assertDistinct, type Dialect, type LockOptions, type SearchArm, type SearchCorpus } from "./index.js";
+import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus } from "./index.js";
 
 // Re-exported because it was defined here first and the server arm's tests import it by this
 // path; the refusal itself belongs to both arms and now lives in the contract.
@@ -90,11 +90,32 @@ export function pgDialect(): Dialect {
 
     /* The element is the aliased relation's single column, which is why the alias is written with
        a column list. `sql.raw` for the alias because it is a fixed identifier chosen by the
-       statement's author, never a value. */
-    jsonArrayElements: (source, alias) => ({
-      from: sql`jsonb_array_elements(${source}) as ${sql.raw(alias)}(value)`,
-      value: sql.raw(`${alias}.value`),
-    }),
+       statement's author, never a value. `text` is `#>> '{}'` — the whole-document path, which is
+       how this store unwraps a JSON scalar without quoting it. */
+    jsonArrayElements: (source, alias) => {
+      const value = sql.raw(`${alias}.value`);
+      return {
+        from: sql`jsonb_array_elements(${source}) as ${sql.raw(alias)}(value)`,
+        value,
+        isString: sql`jsonb_typeof(${value}) = 'string'`,
+        text: sql`(${value} #>> '{}')`,
+      };
+    },
+
+    jsonGet: (document, key) => sql`(${document} -> ${assertJsonKey(key)})`,
+    jsonIsArray: (value) => sql`jsonb_typeof(${value}) = 'array'`,
+
+    /* `||` between two jsonb objects IS the shallow merge, right-hand side winning. The device
+       arm has to spell it out; the contract says why neither of that store's two candidates is
+       this. */
+    jsonMergeShallow: (document, patch) =>
+      sql`(coalesce(${document}, '{}'::jsonb) || (${patch})::jsonb)`,
+
+    /* THE KEY IS CAST, and it is not decoration: this function takes `VARIADIC "any"`, so a bound
+       parameter in that position has nothing to resolve against and the server answers `could not
+       determine data type of parameter` for the whole statement. */
+    jsonObject: (entries) => sql`jsonb_build_object(${sql.join(
+      Object.entries(entries).flatMap(([k, v]) => [sql`${k}::text`, sql`${v}`]), sql`, `)})`,
 
     greatest: (...values) => {
       assertComparable(values.length);

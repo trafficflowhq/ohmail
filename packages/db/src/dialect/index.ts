@@ -136,6 +136,26 @@ export function assertDistinct(names: readonly string[]): void {
  * mistake, which is exactly why it has to be refused in the shared contract rather than on the
  * arm that suffers it.
  */
+/**
+ * Refuse a JSON key this seam cannot address on both stores.
+ *
+ * The server takes the key as a value; this store takes a quoted PATH, and a key holding `"` or a
+ * backslash cannot be quoted into one — the path would parse as something else, or not at all, and
+ * the read would answer NULL for a key that is there. No header name or metadata key in this
+ * schema holds either character, so refusing is the honest answer rather than an escape scheme
+ * nobody can check.
+ */
+export function assertJsonKey(key: string): string {
+  if (/["\\]/.test(key)) {
+    throw new Error(
+      `a JSON key addressed through this seam may not hold a quote or a backslash and this one ` +
+      `holds ${JSON.stringify(key.replace(/[^"\\]/g, ""))}: the device store addresses a key by ` +
+      "quoted path, where either character means something else.",
+    );
+  }
+  return key;
+}
+
 export function assertComparable(count: number): void {
   if (count < 2) {
     throw new Error(
@@ -203,6 +223,33 @@ export interface LockOptions {
 
 /** The two text-search arms, each as the predicate that selects and the expression that ranks. */
 export interface SearchArm { readonly pred: SQL; readonly rank: SQL }
+
+/**
+ * One JSON array's elements as a joinable relation — see {@link Dialect.jsonArrayElements}.
+ *
+ * Four fragments rather than one because the element is a different KIND of thing on each store,
+ * and a caller deriving the last two from `value` would be correct on one of them.
+ */
+export interface JsonElements {
+  /** The relation to join, aliased. */
+  readonly from: SQL;
+  /** One element, in whatever the store's own terms are. */
+  readonly value: SQL;
+  /** TRUE when the element is a JSON string. */
+  readonly isString: SQL;
+  /** The element as SQL text — unquoted, so it compares against ordinary strings. */
+  readonly text: SQL;
+}
+
+/**
+ * The whitespace `String.prototype.trim` strips that both stores can also strip, as a BOUND value.
+ *
+ * Bound rather than written into the SQL: the server reads backslash escapes in a string literal
+ * and this store does not, so one literal spelling cannot mean the same set in both. The set is
+ * the server's `[[:space:]]` in the C locale, which is the class the away-responder predicate was
+ * written against — Unicode whitespace is outside it on purpose and is a named residual there.
+ */
+export const SQL_TRIM_BLANK = " \t\n\r\f\v";
 
 /**
  * WHICH BODY OF TEXT A SEARCH IS OVER — named, because neither store can be told in columns.
@@ -332,11 +379,55 @@ export interface Dialect {
    * table whose element is a NAMED column of it. A member returning one fragment would have made
    * the caller spell the difference, which is the thing it exists to remove.
    *
+   * `isString` and `text` are here for the same reason and are NOT derivable from `value`: the
+   * server's element is a JSON value, so its type comes from `jsonb_typeof` and its text from
+   * `#>> '{}'`; this store's element is already an SQL value, so `json_type` over it is a
+   * malformed-JSON error and the text is the value itself. The element's TYPE is `json_each`'s own
+   * column here. A caller composing either from `value` would be right on one store only.
+   *
    * NO ORDINALITY. Both stores can produce a position, and they spell it differently enough that a
    * caller wanting one is a second member and its own decision — so a statement that needs element
    * ORDER must not use this.
    */
-  jsonArrayElements(source: SQL | unknown, alias: string): { from: SQL; value: SQL };
+  jsonArrayElements(source: SQL | unknown, alias: string): JsonElements;
+
+  /**
+   * The value at one top-level KEY of a JSON document, as this store's JSON type.
+   *
+   * The server takes the key itself; this store takes a path, so the key is quoted into one here
+   * rather than at the caller — a key holding `.` or `[` is an ordinary key and a silently
+   * different path. A key that cannot be quoted is refused rather than composed.
+   *
+   * Feeds {@link jsonIsArray} and {@link jsonArrayElements}; a MISSING key yields SQL NULL on both,
+   * which every predicate over it then reads as false.
+   */
+  jsonGet(document: SQL | unknown, key: string): SQL;
+
+  /** Is this JSON value an array? Asked of {@link jsonGet}'s answer, never of an SQL value. */
+  jsonIsArray(value: SQL | unknown): SQL;
+
+  /**
+   * `patch`'s top-level keys written over `document`'s, the rest of `document` surviving.
+   *
+   * The server's `||` is this by construction. This store has no such operator — `||` there is
+   * string CONCATENATION, so the server's spelling would run and produce two JSON documents stuck
+   * end to end — and its `json_patch` is RFC 7396, which merges nested objects instead of
+   * replacing them and DELETES a key whose patch value is null. Neither is what the callers mean,
+   * so the arm is spelled out. Key ORDER differs (the server sorts, this store keeps insertion
+   * order); the value is read back through a JSON parse on both, so nothing depends on it.
+   *
+   * A NULL `document` reads as `{}`, which is what every caller's `coalesce` used to say.
+   */
+  jsonMergeShallow(document: SQL | unknown, patch: SQL | unknown): SQL;
+
+  /**
+   * A JSON object built from named expressions — the patch side of {@link jsonMergeShallow}.
+   *
+   * The two stores spell the constructor differently and nothing else about it differs: a text
+   * value becomes a JSON string on both. It exists so a caller setting ONE key of a document does
+   * not have to name the store's single-key setter, which only one of them has.
+   */
+  jsonObject(entries: Readonly<Record<string, SQL | unknown>>): SQL;
 
   /**
    * The largest of two or more values, in each store's own name for it.

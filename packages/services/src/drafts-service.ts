@@ -402,9 +402,9 @@ export class DraftsService {
        * `remove`'s reason: `SendService.reserve` takes `FOR KEY SHARE` on this row, and only
        * `FOR UPDATE` serializes against it.
        */
-      const [locked] = await tx.select({ id: drafts.id }).from(drafts)
+      const [locked] = await dialect(ctx.db).forUpdate(tx.select({ id: drafts.id }).from(drafts)
         .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
-        .for("update").limit(1);
+        .limit(1));
       if (locked && await this.sendOnRecord(tx, ctx.accountId, id)) {
         throw new ServiceError(
           "send_recorded", 409,
@@ -536,9 +536,9 @@ export class DraftsService {
     const seq = await asTx(ctx).transaction(async (tx) => {
       // The draft first — see the header: this is the row a concurrent reservation takes
       // `FOR KEY SHARE` on, and `FOR UPDATE` is the mode that conflicts with it.
-      const [row] = await tx.select({ status: drafts.status }).from(drafts)
+      const [row] = await dialect(ctx.db).forUpdate(tx.select({ status: drafts.status }).from(drafts)
         .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
-        .for("update").limit(1);
+        .limit(1));
       if (!row) throw new ServiceError("not_found", 404, "draft not found");
 
       const ledgerStatus = outcome === "arrived" ? "sent" : "failed";
@@ -637,9 +637,10 @@ export class DraftsService {
        * first would swap the two answers and tell somebody their scheduled message "has a send on
        * record" instead of how to stop it.
        */
-      const [held] = await tx.select({ status: drafts.status, sendKey: drafts.sendKey }).from(drafts)
-        .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
-        .for("update").limit(1);
+      const [held] = await dialect(ctx.db).forUpdate(
+        tx.select({ status: drafts.status, sendKey: drafts.sendKey }).from(drafts)
+          .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
+          .limit(1));
       if (held && held.status !== "scheduled" && held.sendKey === null) {
         if (await this.sendOnRecord(tx, ctx.accountId, id)) {
           throw new ServiceError(

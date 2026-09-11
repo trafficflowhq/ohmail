@@ -13,7 +13,7 @@
  * is folded explicitly because this dialect's own `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { assertComparable } from "./index.js";
+import { assertComparable, assertJsonKey } from "./index.js";
 import type { Dialect, LockOptions, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -149,12 +149,48 @@ export function sqliteDialect(): Dialect {
     lockClause: () => sql.raw(""),
 
     /* This store's version yields a TABLE, whose element is its `value` column — so the alias
-       carries no column list and the element is named through it. Same two fragments, different
-       shapes behind them, which is the whole reason the member hands back both. */
-    jsonArrayElements: (source, alias) => ({
-      from: sql`json_each(${source}) as ${sql.raw(alias)}`,
-      value: sql.raw(`${alias}.value`),
-    }),
+       carries no column list and the element is named through it. Same fragments, different shapes
+       behind them, which is the whole reason the member hands back all four.
+
+       `value` here is already an SQL value, so the element's type comes from `json_each`'s own
+       `type` column — `json_type(value)` over a bare string is a malformed-JSON error — and its
+       text is the value itself. `'text'` is this store's word for the server's `'string'`. */
+    jsonArrayElements: (source, alias) => {
+      const value = sql.raw(`${alias}.value`);
+      return {
+        from: sql`json_each(${source}) as ${sql.raw(alias)}`,
+        value,
+        isString: sql`${sql.raw(`${alias}.type`)} = 'text'`,
+        text: value,
+      };
+    },
+
+    /* A quoted PATH, not a key: this store's `->` takes `$."<key>"`, and the bare shorthand would
+       read a key holding `.` or `[` as a path into something else. The quote-and-backslash refusal
+       is the contract's, one level up. */
+    jsonGet: (document, key) => sql`(${document} -> ${`$."${assertJsonKey(key)}"`})`,
+    jsonIsArray: (value) => sql`json_type(${value}) = 'array'`,
+
+    /**
+     * The shallow merge, spelled out — neither of this store's two candidates is it.
+     *
+     * `||` is string CONCATENATION here, so the server's operator would produce two documents stuck
+     * end to end. `json_patch` is RFC 7396: it merges a nested object instead of replacing it and
+     * DELETES a key whose patch value is null. So the keys are taken apart and put back: the
+     * document's keys the patch does not mention, then all of the patch's. `-> fullkey` re-encodes
+     * each value as JSON (a bare `value` would re-quote a string), and `json()` puts it back as
+     * structure rather than as text.
+     */
+    jsonMergeShallow: (document, patch) => sql`(select json_group_object(k, json(v)) from (
+      select je.key as k, (coalesce(${document}, '{}') -> je.fullkey) as v
+        from json_each(coalesce(${document}, '{}')) je
+       where je.key not in (select key from json_each(${patch}))
+      union all
+      select je.key as k, (${patch} -> je.fullkey) as v from json_each(${patch}) je
+    ))`,
+
+    jsonObject: (entries) => sql`json_object(${sql.join(
+      Object.entries(entries).flatMap(([k, v]) => [sql`${k}`, sql`${v}`]), sql`, `)})`,
 
     /**
      * `max`, and the argument count is load-bearing.

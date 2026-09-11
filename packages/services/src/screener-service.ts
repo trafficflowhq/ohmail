@@ -44,6 +44,9 @@ import { LearningService } from "./learning-service.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import type { Folder, Page, ScreenerItem } from "./dto/types.js";
 
+/** The sort floor for a message with no date — the same instant `to_timestamp(0)` named. */
+const EPOCH = new Date(0);
+
 /**
  * Where a best-effort filing doorbell reports a throw. Module scope and not injected: it is a
  * single warn line on a path whose failure costs one rotation, and nothing reads it back.
@@ -1621,7 +1624,7 @@ export class ScreenerReadService {
    * the cursor, and the ties that truncation can create are broken by `id`, which the cursor
    * also carries.
    *
-   * `coalesce(…, to_timestamp(0))` and not `DESC NULLS LAST`: it is the literal translation of
+   * `coalesce(…, the epoch)` and not `DESC NULLS LAST`: it is the literal translation of
    * the `?? 0` the JavaScript used, it matches what {@link encodeScreenerCursor} writes for an
    * undated row, and it keeps undated mail at the END of the queue. Postgres sorts NULLs FIRST
    * under `DESC`, so the naive spelling would let a sender who simply omits a `Date:` header —
@@ -1650,7 +1653,9 @@ export class ScreenerReadService {
     },
   ): Promise<ScreenerRow[]> {
     const d = dialect(ctx.db);
-    const sortKey = d.truncMs(sql`coalesce(${messages.date}, to_timestamp(0))`) as SQL<Date>;
+    // THE EPOCH THROUGH THE SEAM: `to_timestamp(0)` is the server's name for it and the device
+    // store has no such function — there the instant IS the number, which is what `d.ts` knows.
+    const sortKey = d.truncMs(sql`coalesce(${messages.date}, ${d.ts(EPOCH)})`) as SQL<Date>;
     const sender = sql`lower(${messages.fromAddress})`;
 
     /* ONE HELD MESSAGE PER SENDER, AS A WINDOW ─────────────────────────────────────────────

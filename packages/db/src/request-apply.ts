@@ -4,6 +4,7 @@ import {
   rules as rulesTbl,
 } from "./schema-mail.js";
 import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
+import { dialect } from "./dialect/index.js";
 import { insertOrganizerRequest, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
 
 /**
@@ -1065,9 +1066,9 @@ export async function exportPendingMovesOnStandDown(
    * It is also why the walk terminates: nothing can add to the pending set while the lock is
    * held, so a strictly advancing cursor exhausts a fixed set.
    */
-  const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
-    .where(and(eq(mailboxes.id, input.mailboxId), eq(mailboxes.accountId, input.accountId)))
-    .for("update");
+  const d = dialect(tx);
+  const [mb] = await d.forUpdate(tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
+    .where(and(eq(mailboxes.id, input.mailboxId), eq(mailboxes.accountId, input.accountId))));
   const trash = mb?.trashFolder ?? null;
 
   /* Everything already travelling for this mailbox, by the name both installs share — and
@@ -1099,10 +1100,11 @@ export async function exportPendingMovesOnStandDown(
      refuses (TS7022) rather than a type it resolves. */
   const after = (c: { updatedAt: Date; id: string } | null): SQL[] => (c === null
     ? []
-    /* BOUND AS TEXT AND CAST, never as a JS `Date` in a bare fragment: a value interpolated into
-       raw SQL has no column to take its type from, and the two drivers this runs under disagree
-       about what to do with that. */
-    : [sql`(${folderState.updatedAt}, ${messages.id}) > (${c.updatedAt.toISOString()}::timestamptz, ${c.id}::uuid)`]);
+    /* THROUGH THE SEAM, never as a JS `Date` in a bare fragment: a value interpolated into raw
+       SQL has no column to take its type from, so each store has to be handed the literal its own
+       timestamp columns compare against — a server timestamp on one, epoch milliseconds on the
+       other. Row-value comparison itself is standard and needs no arm. */
+    : [sql`(${folderState.updatedAt}, ${messages.id}) > (${d.ts(c.updatedAt)}, ${d.castUuid(sql`${c.id}`)})`]);
   for (;;) {
     /* ANNOTATED for the same TS7022 reason `after` is: the page read mentions the cursor and the
        cursor is assigned out of the page's last row, so an inferred type here closes a cycle. */

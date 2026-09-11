@@ -9,6 +9,9 @@ import {
 } from "@trafficflow/db";
 import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } from "@trafficflow/core/mail";
 
+/** The sort floor for a message with no date — the same instant `to_timestamp(0)` named. */
+const EPOCH = new Date(0);
+
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    SCREENER AUTO-SUGGEST — buy the model's advice about INCOMING held senders, while the
    account's opt-in is on
@@ -581,7 +584,9 @@ async function selectCandidates(
   db: Tx, opts: { accountId: string; watermark: Date; limit: number; cutline?: ResolvedCutline },
 ): Promise<Candidate[]> {
   const d = dialect(db);
-  const sortKey = d.truncMs(sql`coalesce(${messages.date}, to_timestamp(0))`) as SQL<Date>;
+  // THE EPOCH THROUGH THE SEAM: `to_timestamp(0)` is the server's name for it and the device
+    // store has no such function — there the instant IS the number, which is what `d.ts` knows.
+    const sortKey = d.truncMs(sql`coalesce(${messages.date}, ${d.ts(EPOCH)})`) as SQL<Date>;
   const sender = sql`lower(${messages.fromAddress})`;
 
   /* ONE HELD MESSAGE PER SENDER, AS A WINDOW — the same row `distinct on (k) … order by k, o`
