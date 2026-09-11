@@ -3,30 +3,14 @@ import { auditLog } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
 /**
- * THE PORTABLE PROFILE'S IMPORT MARKERS — the durable conversation between the organizer that
- * FINDS a travelling settings document and the surface that asks the user about it.
- *
- * The document itself lives in the mailbox (`ohmail/_meta`; the format is
- * `packages/core/src/adapters/organizer-profile.ts`). What lives HERE is the bookkeeping around
- * the one decision the organizer refuses to make on its own — *shall these found settings be
- * applied?* — recorded in `audit_log` because that is the one generic, account-scoped marker
- * table every deployment already carries in its mail half.
- *
- * Two actions, two writers, one reader each:
- *
- *  · {@link PROFILE_FOUND_AUDIT_ACTION} — written by the ORGANIZER when it meets a document it
- *    will not silently adopt or overwrite (`apps/worker/src/profile.ts`), read by the import
- *    surface to know whether there is anything to ask about.
- *  · {@link PROFILE_IMPORT_RESOLVED_AUDIT_ACTION} — written by the IMPORT SURFACE when the user
- *    answers (applied, or declined), read back by the organizer to release the hold that was
- *    keeping it from writing over the document while the question was open.
- *
- * ── ON THE ROOT BARREL, FOR THE `screener-suggestion.ts` REASON ────────────────────────────
- *
- * The callers straddle the deployment: the answer-side helpers are called from
- * `@trafficflow/services`, and the organizer-side read runs in the worker, which may import
- * core and db and nothing else from the workspace. This module reaches `schema-mail.js` alone,
- * so it is inside the root barrel's closure rule.
+ * The portable profile's import markers — the durable conversation between the organizer that
+ * FINDS a travelling settings document and the surface that asks the user about it. The document
+ * lives in the mailbox (`ohmail/_meta`); HERE is the bookkeeping around the one decision the
+ * organizer refuses to make alone — shall these found settings be applied? — recorded in
+ * `audit_log`. Two actions: {@link PROFILE_FOUND_AUDIT_ACTION}, written when the organizer meets
+ * a document it will not silently adopt; {@link PROFILE_IMPORT_RESOLVED_AUDIT_ACTION}, written
+ * when the user answers, read back to release the hold. On the root barrel: the worker may import
+ * core and db only, and this module reaches `schema-mail.js` alone.
  */
 
 /**

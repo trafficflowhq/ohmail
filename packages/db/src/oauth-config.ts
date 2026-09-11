@@ -114,21 +114,14 @@ export function msOAuthEnv(env: Record<string, string | undefined>): {
 }
 
 /**
- * The default scope list a registration is created with — identity, mail, and `offline_access`.
- *
- * `openid` + `email` are here because the callback reads the mailbox address from the `id_token`'s
- * `preferred_username` / `email` claim and the user never types it: without them the ceremony
- * completes, the tokens are valid, and there is no address to store.
- *
- * The scope HOST is `outlook.office.com` — Microsoft's canonical resource identifier, and what the
- * Entra application registration lists. `outlook.office365.com` is the legacy alias; it is still the
- * IMAP HOSTNAME the dialler connects to, and the two are deliberately different strings. See
- * `MS_MAIL_SCOPE` in `packages/core/src/oauth/microsoft.ts`.
- *
- * This DUPLICATES `MS_AUTHORIZE_SCOPES` in that file rather than importing it, because
- * `packages/db` does not depend on `packages/core` and adding the edge for one array would put the
- * crypto module into every consumer's closure. `test/oauth-config.test.ts` asserts the
- * two lists are equal, so the copy cannot drift silently.
+ * The default scope list a registration is created with — identity, mail, `offline_access`.
+ * `openid` + `email` are here because the callback reads the mailbox address from the `id_token`
+ * claim and the user never types it: without them the ceremony completes and there is no address
+ * to store. The scope HOST is `outlook.office.com`, Microsoft's canonical resource identifier;
+ * `outlook.office365.com` is the legacy alias and still the IMAP HOSTNAME the dialler connects to
+ * — deliberately different strings. This DUPLICATES `MS_AUTHORIZE_SCOPES` in
+ * `packages/core/src/oauth/microsoft.ts` — `packages/db` does not depend on core — and
+ * `test/oauth-config.test.ts` asserts the lists are equal, so the copy cannot drift.
  */
 export const MS_DEFAULT_SCOPES: readonly string[] = [
   "openid",
