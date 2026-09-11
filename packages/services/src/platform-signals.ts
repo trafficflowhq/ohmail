@@ -3,61 +3,14 @@ import { platformSignals } from "@trafficflow/db/cloud";
 import type { Db } from "./context.js";
 
 /**
- * THE 5xx POLLER — what the hosting platform served, brought into this database so a rule can
- * read it.
- *
- * ## The blind spot this exists for, stated exactly
- *
- * The API host's error rate is invisible from inside the API host. A serverless invocation that
- * returns a 502 and dies writes nothing here: no row, no log line the database can query, no
- * counter that survives the invocation. The one surface that knows is the platform's own request
- * log, and it is reachable only over the network with a token.
- *
- * That was measured rather than assumed. On the 2026-08-31 incident the function's own captured
- * output was EMPTY on every failing row — the route returned a 502 `Response` instead of throwing,
- * so nothing on that path logged — and the whole diagnosis came from the platform's log store.
- * `scripts/vercel-errors.mjs` was written for that incident; this module is the same endpoint,
- * polled on a clock instead of by a person after the fact.
- *
- * ## THREE OUTCOMES, AND THE MIDDLE ONE IS THE POINT
- *
- * {@link PlatformSignalFetch} is `rows | unconfigured | failed`, which is `PlatformCostPort`'s
- * union next door and is here for the identical reason. A two-armed version — rows, or nothing —
- * collapses "we have no token, so nobody has ever measured this" into the same answer as "we
- * measured, and nothing failed". The first must render as **"5xx: not measured"** and must not
- * arm the rule; the second is a real zero.
- *
- * The failure that shape prevents is specific and is the ruling's second ranked risk: a board
- * showing `0` for a deployment that has never once asked. Nobody reads a zero as a question.
- *
- * The mechanism is that an unconfigured pass WRITES NO ROW. `platformSignalWindow` in `alerts.ts`
- * then returns an empty array for that project, and both the rule and the panel go through that
- * one function — so the pager and the screen cannot disagree about whether a figure exists.
- *
- * ## ONE WALK, CLASSIFIED LOCALLY — the numerator and the denominator from one pass
- *
- * The rule needs both `errors_5xx` and `requests`. Two filtered queries would give two counts over
- * two independently-truncated populations, and dividing one by the other would be arithmetic over
- * mismatched samples. So this makes ONE unfiltered walk and classifies each row by its own
- * `statusCode`: whatever the walk covers, it covers for both numbers.
- *
- * ## THE BUDGET, AND WHY TRUNCATION IS SAFE IN BOTH TERMS
- *
- * The endpoint pages at fifty rows and its `page` parameter is INERT (measured — see
- * `vercel-errors.mjs`), so a walk moves a cursor backwards through time. The length of that walk
- * is a property of TRAFFIC, not of the window: a busy five minutes is many laps. An unbounded loop
- * does not fail, it simply never finishes — which in a cron invocation means it is killed and
- * reports nothing at all.
- *
- * So the walk is bounded and a row that hit the bound is marked {@link PlatformSignalRow.truncated}.
- * Both counts are then LOWER BOUNDS over the window's most recent, contiguous slice — and that is
- * the safe direction in both terms of the rule:
- *
- *  · `errors_5xx ≥ 10` — an undercounted numerator can only fail to reach the floor.
- *  · `≥ 2%` — the ratio is measured over a real sub-window rather than extrapolated.
- *
- * A truncated window therefore cannot manufacture a page. It can miss one, which is the direction
- * to be wrong in, and the board says "sampled" rather than implying a count it does not have.
+ * THE 5xx POLLER — what the hosting platform served, read into this database for the rule. An
+ * invocation that 502s and dies writes nothing here; the platform's request log is the surface
+ * that knows (`scripts/vercel-errors.mjs` reads the same endpoint). THREE outcomes — `rows |
+ * unconfigured | failed`: two arms would collapse "never measured" into "measured zero".
+ * Unconfigured WRITES NO ROW; rule and panel both read `platformSignalWindow`, so "not measured"
+ * and a real zero cannot blur. ONE unfiltered walk classifies rows by `statusCode`, so numerator
+ * and denominator cover the same population; the walk is bounded and marked `truncated`, both
+ * counts LOWER BOUNDS — safe for `errors_5xx ≥ 10` and the ≥ 2% ratio.
  */
 
 /** The platforms `platform_signals.provider` admits. A second is an adapter and a review. */
@@ -65,17 +18,12 @@ export type SignalProvider = "vercel";
 
 /** One window's traffic for one project, as counted. */
 /**
- * WHY a bucket is a sample. Seven values, closed, and the panel's sentence table is keyed on
- * this exact set — a cause with no sentence fails a test rather than rendering an empty line.
- *
- * `truncated` began meaning one of these (`page_budget`) and grew the others while the console
- * went on describing the first, so every other sample was reported to an operator as page-budget
- * exhaustion and sent them to a limit that was not involved.
- *
- * THE SET IS ALSO CLOSED IN THE DATABASE — cloud 0030 CHECK-constrains `sample_cause` to exactly
- * these words, and a test reads that migration and compares it to this array rather than
- * trusting the two to be edited together. Add a cause here without adding it there and the poll
- * throws at the write, losing the window and reporting nothing that names the cause.
+ * WHY a bucket is a sample. Seven values, closed; the panel's sentence table is keyed on this
+ * exact set, so a cause with no sentence fails a test rather than rendering an empty line.
+ * `truncated` began meaning only `page_budget` and grew the others, so every other sample read as
+ * page-budget exhaustion. THE SET IS ALSO CLOSED IN THE DATABASE — cloud 0030 CHECK-constrains
+ * `sample_cause` to exactly these words, and a test reads that migration and compares it to this
+ * array. Add a cause here without there and the poll throws at the write, losing the window.
  */
 export const SAMPLE_CAUSES = [
   /** The walk stopped after its maximum number of pages. */
@@ -164,23 +112,14 @@ export interface PlatformSignalEnv {
 export const VERCEL_REQUEST_LOGS_URL = "https://vercel.com/api/logs/request-logs";
 
 /**
- * Where a project NAME is exchanged for the id the log endpoint actually wants.
- *
- * THE POLL NEVER WORKED WITHOUT THIS. `projectId` on the request-log endpoint is Vercel's
- * internal project id, not the name — and this port was passing the configured name
- * (`ohmail-api`) straight into it, so every poll either failed or matched nothing. The table
- * stayed empty, the board read "5xx: not measured", and that is indistinguishable from the
- * expected state of a deployment with no token, which is why nothing noticed.
- *
- * `scripts/vercel-errors.mjs` has always done this correctly — it resolves the name and passes
- * `proj.id` — so this is that call, in the port that needed it.
- *
- * TWO DIFFERENT HOSTS, which is easy to get wrong and was: the versioned REST API lives on
- * `api.vercel.com`, while the request-log endpoint above is on the DASHBOARD origin
- * (`vercel.com/api/logs/...`). The reference script keeps them as two constants for exactly this
- * reason. Resolving against the dashboard origin fails before any log is read, which lands in
- * the same indistinguishable place as every other failure in this file — an empty table and a
- * board that says "not measured".
+ * Where a project NAME is exchanged for the id the log endpoint wants. `projectId` on the
+ * request-log endpoint is the platform's internal id, not the name — passing the configured name
+ * (`ohmail-api`) matched nothing, the table stayed empty, and the board's "5xx: not measured" is
+ * indistinguishable from a deployment with no token, which is why nothing noticed.
+ * `scripts/vercel-errors.mjs` resolves the name to `proj.id`; this is that call, in the port that
+ * needed it. TWO HOSTS: the versioned REST API is `api.vercel.com`; the request-log endpoint is
+ * the DASHBOARD origin (`vercel.com/api/logs/...`). Resolving against the wrong one fails before
+ * any log is read — same empty table, same "not measured".
  */
 export const VERCEL_PROJECT_URL = "https://api.vercel.com/v9/projects";
 
@@ -199,22 +138,14 @@ export const DEFAULT_SIGNAL_PROJECTS: readonly string[] = ["ohmail-api"];
 export const SIGNAL_PAGE_BUDGET = 20;
 
 /**
- * THE WALL-CLOCK BUDGET FOR ONE POLL, and it is a SEPARATE guard from the page budget.
- *
- * The page budget bounds how many laps the walk may take; it does not bound how LONG they take,
- * and those are different questions once each lap has its own 15 s timeout. Twenty laps against a
- * slow log endpoint is 300 s for ONE project, and `VERCEL_SIGNAL_PROJECTS` may name several — all
- * of it inside a cron target that declares 60 s and a platform that kills the invocation anyway.
- *
- * The failure that produces is the quiet one. The invocation dies mid-walk, `runPlatformSignalPass`
- * never reaches its upsert, NO row is written for that window, and the board reports "not
- * measured" — which is indistinguishable from having no token at all. So a slow endpoint would
- * take the rule dark and look like a configuration state.
- *
- * 40 s leaves room inside the declared 60 s for the prune and the upsert that follow the walk.
- * Crossing it stops the walk and marks the row `truncated`, which is the outcome the design
- * already treats as safe: a partial count over the newest slice, honest about being partial, and
- * a lower bound in the only direction a rate rule can be wrong in.
+ * THE WALL-CLOCK BUDGET FOR ONE POLL — separate from the page budget, which bounds laps but not
+ * their DURATION: each lap has its own 15 s timeout, so twenty laps against a slow endpoint is
+ * 300 s for one project, inside a cron target that declares 60 s and a platform that kills the
+ * invocation. Dying mid-walk writes NO row, and the board's "not measured" is indistinguishable
+ * from having no token — a slow endpoint would take the rule dark and look like configuration. 40
+ * s leaves room inside the 60 for the prune and upsert that follow. Crossing it stops the walk
+ * and marks the row `truncated` — a partial count over the newest slice, honest about being
+ * partial.
  */
 export const SIGNAL_WALL_CLOCK_MS = 40_000;
 
@@ -232,25 +163,14 @@ export const SIGNAL_BACKFILL_BUCKETS = 3;
 export const SIGNAL_WINDOW_MS = 5 * 60 * 1000;
 
 /**
- * How long after a bucket CLOSES before a read of it may be called complete.
- *
- * ── A CLOSED WINDOW IS NOT AN INDEXED WINDOW ─────────────────────────────────────────────
- *
- * The poll already waits for the bucket to close, which is what stops a short window being
- * reported as a full one. It did not wait for the platform to finish INDEXING that bucket, and
- * those are different clocks. A pass firing seconds after the boundary gets a perfectly
- * well-formed, non-truncated page that is simply missing the requests still on their way into
- * the log store — and this file already records which ones those are: "the rows that arrive late
- * are the slow and failing ones".
- *
- * The consequence was permanent, not transient. A row written non-truncated is HELD, held
- * buckets are never re-polled, so the late 5xx never entered the numerator for that bucket and
- * never could. The rate came out systematically low, on a population that looked complete.
- *
- * So a read taken inside this margin is recorded as a SAMPLE. That is not a new mechanism: a
- * sampled bucket is excluded from the rule's arithmetic AND excluded from `held`, so the next
- * pass re-polls it and overwrites it with a settled read. The margin costs one pass of latency
- * on a fresh bucket and buys a population that is actually finished.
+ * How long after a bucket CLOSES before a read may be called complete. A closed window is not an
+ * INDEXED window: a pass firing seconds after the boundary gets a well-formed, non-truncated page
+ * missing the requests still entering the log store — and the late arrivals are the slow and
+ * failing ones. The consequence was permanent: a non-truncated row is HELD, held buckets are
+ * never re-polled, so the late 5xx never entered that bucket's numerator and the rate ran
+ * systematically low. A read inside this margin is recorded as a SAMPLE — excluded from the
+ * arithmetic AND from `held`, so the next pass re-polls and overwrites it with a settled read.
+ * Costs one pass of latency; buys a finished population.
  */
 export const SIGNAL_SETTLE_MS = 90 * 1000;
 
@@ -265,18 +185,14 @@ export const SIGNAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const trimmed = (v: string | undefined): string => (v ?? "").trim();
 
 /**
- * One log row's timestamp, in epoch milliseconds, or null when it cannot be read.
- *
- * THE CURSOR IS BUILT OUT OF THIS VALUE, which is why it is a shared helper with a refusal
- * rather than an inline `Number()`. The log endpoint returns ISO-8601 STRINGS — `vercel-errors.mjs`
- * has always read them with `Date.parse` and refuses outright when one will not parse, saying
- * "the time cursor cannot advance", which is exactly the failure. `Number("2026-09-04T…")` is
- * `NaN`, `NaN < oldest` is false, so `oldest` would never move: every window needing more than
- * one page stopped after the first and reported the first page's counts as a truncated whole
- * window. A busy deployment's 5xx rate would have been computed over fifty requests.
- *
- * A number is still accepted, because epoch millis are what the tests and any future shape of
- * this endpoint would most plausibly send, and accepting both costs one branch.
+ * One log row's timestamp in epoch milliseconds, or null when unreadable. THE CURSOR IS BUILT
+ * FROM THIS, which is why it is a shared helper with a refusal, not an inline `Number()`. The
+ * endpoint returns ISO-8601 STRINGS; `Number("2026-09-04T…")` is NaN, `NaN < oldest` is false, so
+ * `oldest` never moves — every window needing more than one page stopped after the first and
+ * reported page one's counts as a truncated whole window. `vercel-errors.mjs` refuses an
+ * unparseable stamp for the same reason ("the time cursor cannot advance"). A number is still
+ * accepted: epoch millis are what tests and a future endpoint shape would plausibly send, one
+ * branch.
  */
 function parseStamp(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -457,39 +373,23 @@ export function makePlatformSignalPort(
             // because that is what an operator recognises on the board and what the config sets.
             projectId: ids.get(project) ?? project,
             ownerId: team,
-            // ── PRODUCTION ONLY ───────────────────────────────────────────────────────
-            //
-            // The query was project-wide, and a project's log store holds its PREVIEW traffic
-            // too. So a preview deployment poked by CI or opened by hand contributed its 5xx to
-            // the population this rule pages on, and its successes diluted a real production
-            // outage in the same denominator. Neither direction is acceptable: the alert names
-            // the API customers are using.
-            //
-            // Sent as a server-side filter AND enforced locally on every row below, because this
-            // endpoint has never been exercised against the live service (see the standing gap)
-            // and an unverified parameter that the API quietly ignores would leave the defect in
-            // place while reading as fixed — which is this subsystem's signature failure.
+            // PRODUCTION ONLY. The query was project-wide, and a project's log store holds
+            // PREVIEW traffic too: a preview deployment poked by CI contributed its 5xx to the
+            // paged population, and its successes diluted a real outage in the same denominator.
+            // The alert names the API customers are using. Sent as a server-side filter AND
+            // enforced locally on every row below — this endpoint has not been exercised against
+            // the live service (see the standing gap), and a parameter the API quietly ignores
+            // would leave the defect in place while reading as fixed.
             environment: "production",
             startDate: String(window.start.getTime()),
-            // ── THIS API'S `endDate` IS INCLUSIVE, AND OUR BUCKETS ARE HALF-OPEN ──────
-            //
-            // A request stamped exactly on a five-minute boundary therefore satisfies BOTH the
-            // older bucket (whose end equals that timestamp) and the newer one (whose start
-            // does), and the de-duplication set is per bucket, so it is counted twice inside one
-            // fifteen-minute window. Nine distinct errors can be read as ten, which moves a rate
-            // across a threshold that was calibrated on the true count.
-            //
-            // Made half-open here, at the one place the foreign convention is visible: one
-            // millisecond off the end, so the boundary instant belongs to exactly one bucket —
-            // the newer one, whose start it is.
-            // ── HALF-OPEN AT THE WINDOW'S END, NOT AT EVERY LAP'S ────────────────────
-            //
-            // The `- 1` is about THIS API's inclusive `endDate` versus our half-open buckets, so
-            // it belongs to the window boundary and nowhere else. Applying it to `cursor` on
-            // every lap made the walk skip rows stamped exactly at the previous lap's oldest
-            // timestamp — the cursor is inclusive precisely so those rows are re-read and
-            // de-duplicated — and the row was still stored `truncated: false`, so a bucket
-            // missing a second of traffic was reported as a complete population.
+            // THIS API'S `endDate` IS INCLUSIVE AND OUR BUCKETS ARE HALF-OPEN: a request stamped
+            // exactly on a five-minute boundary satisfies both adjacent buckets, and the dedupe
+            // set is per bucket, so it counted twice in one fifteen-minute window — nine errors
+            // read as ten. Made half-open HERE, the one place the foreign convention is visible:
+            // one millisecond off the WINDOW'S end, so the boundary instant belongs to the newer
+            // bucket. Never applied to `cursor` per lap — the cursor is inclusive precisely so
+            // boundary rows are re-read and de-duplicated; a per-lap `- 1` skipped them while
+            // still storing `truncated: false`.
             endDate: String(pages === 1 ? window.end.getTime() - 1 : cursor),
           });
           let res: Response;
@@ -499,18 +399,13 @@ export function makePlatformSignalPort(
               signal: AbortSignal.timeout(budgetFor()),
             });
           } catch (err) {
-            // ── A TIMEOUT AFTER A COMPLETED PAGE IS A PARTIAL WALK, NOT A FAILED ONE ──────
-            //
-            // Two paths end a walk early and they had two different answers. The budget/deadline
-            // check above persisted what it had counted; this catch — reached when the NEXT
-            // fetch times out — returned a failure and discarded it. A slow endpoint that
-            // answers one page and then stalls therefore wrote no row at all, and the rule went
-            // dark on a window it had partly measured.
-            //
-            // ONE EXIT for both, so they cannot diverge again: `partial()` is the only way a
-            // shortened walk leaves this function, and the only decision left here is which
-            // cause to name. A timeout with NOTHING counted is still a failure — an unread
-            // window must never be written as a zero.
+            // A TIMEOUT AFTER A COMPLETED PAGE IS A PARTIAL WALK, NOT A FAILED ONE. Two paths end
+            // a walk early and they had different answers: the budget check persisted its counts;
+            // this catch — the NEXT fetch timing out — discarded them, so an endpoint that
+            // answers one page then stalls wrote no row and the rule went dark on a window it had
+            // partly measured. ONE EXIT for both: `partial()` is the only way a shortened walk
+            // leaves, and the only decision here is which cause to name. A timeout with NOTHING
+            // counted is still a failure — an unread window must never be written as a zero.
             const name = String((err as Error)?.name ?? "unknown");
             if (completed > 0 && (name === "TimeoutError" || name === "AbortError")) {
               return partial("deadline");
@@ -536,59 +431,36 @@ export function makePlatformSignalPort(
 
           const batch = data.rows as Array<Record<string, unknown>>;
           // A NON-EMPTY PAGE THAT YIELDS NOTHING COUNTABLE IS A REFUSAL, not a quiet zero.
-          //
-          // `requestId` IS the dedupe key. When every row on a page lacks one, each is skipped,
-          // the walk returns 0 requests and 0 errors, and — with `hasMoreRows: false` — stores
-          // that as a COMPLETE bucket: measured health, manufactured out of rows nobody could
-          // read. The reference script refuses exactly this case for exactly this reason
-          // ("they cannot be de-duplicated"), and skipping individual blank ids remains right:
-          // an approximate count over five minutes is still a usable rate. What is not right is
-          // treating a page NONE of whose rows are usable as evidence of a quiet deployment.
-          // TRIMMED, because `" " !== ""`. A whitespace-only id passes an empty-string check,
-          // cannot de-duplicate anything, and would be counted as a distinct request on every
-          // lap that re-reads the boundary — inflating the denominator with one row seen twice.
+          // `requestId` IS the dedupe key: a page where every row lacks one walks to 0 requests,
+          // 0 errors, and — with `hasMoreRows: false` — a COMPLETE bucket of measured health
+          // built from unreadable rows. Skipping individual blank ids stays right (an approximate
+          // count is a usable rate); a page NONE of whose rows are usable is not evidence of a
+          // quiet deployment. TRIMMED, because `" " !== ""`: a whitespace-only id passes an empty
+          // check, de-duplicates nothing, and counts as a distinct request on every boundary
+          // re-read.
           const usable = batch.filter(
             (r) => typeof r.requestId === "string" && r.requestId.trim() !== "");
           if (batch.length > 0 && usable.length === 0) {
             return { failed: "page_without_request_ids" };
           }
-          // ── A PAGE THAT IS PART UNREADABLE MAKES THE BUCKET A SAMPLE ────────────────────
-          //
-          // The all-blank case above is refused. The MIXED case used to pass silently: the
-          // readable rows were counted, the blank ones dropped, and the bucket was still stored
-          // as complete. That is the sampled-bucket defect with the marking removed — the rows
-          // that went missing may have been the successes, so the surviving quotient can cross a
-          // rate threshold the true population never approaches, and it does it on a bucket the
-          // rule believes it measured in full.
-          //
-          // The counts stay (a lower bound is still worth recording); what changes is the claim
-          // made about them. `truncated` already means exactly "these numbers are a floor, do not
-          // divide them", and the window read already excludes such buckets from its sums, so the
-          // honest fix is to say so rather than to invent a second kind of doubt.
+          // A PAGE THAT IS PART UNREADABLE MAKES THE BUCKET A SAMPLE. The all-blank case is
+          // refused above; the MIXED case used to pass silently — readable rows counted, blanks
+          // dropped, bucket stored complete. The missing rows may have been the successes, so the
+          // surviving quotient can cross a threshold the true population never approaches, on a
+          // bucket the rule believes it measured in full. The counts stay (a lower bound is worth
+          // recording); the CLAIM changes: `truncated` already means "these numbers are a floor,
+          // do not divide them", and the window read already excludes such buckets.
           if (usable.length < batch.length) sampled = "unreadable_request_id";
           let oldest = cursor;
           for (const r of batch) {
-            // ── PROVENANCE: PRODUCTION, OR NOT COUNTED AT ALL ────────────────────────
-            //
-            // The first version of this counted a row with NO provenance field as production,
-            // and wrote into the commit message that it was the backstop making the unverified
-            // `environment=production` parameter safe. It was the opposite: if the API ignores
-            // that parameter, every preview row arrives with no field at all on some shapes, and
-            // "no field means production" waves all of them through. The backstop justified the
-            // risk it was failing to cover.
-            //
-            // Three cases, and only one of them is a request this rule may divide:
-            //
-            //  · NAMED PRODUCTION — counted.
-            //  · NAMED SOMETHING ELSE — the API ignored the filter, which means this window's
-            //    population is not the one asked for. Refuse the whole window rather than count
-            //    the part that happens to be labelled: a filtered population read as complete is
-            //    the defect, and one preview row proves the filter is not being applied.
-            //  · NAMED NOTHING — unmeasured. Not counted, and the bucket becomes a SAMPLE, so it
-            //    is excluded from the rate and re-polled instead of standing as a whole
-            //    population. On a deployment whose logs genuinely carry no such field the rule
-            //    stays dark and says so, which is the honest answer for a population that cannot
-            //    be shown to be the production one.
+            // PROVENANCE: PRODUCTION, OR NOT COUNTED AT ALL. "No field means production" waves
+            // every preview row through on any shape where the API ignores the
+            // `environment=production` parameter — a backstop justifying the risk it fails to
+            // cover. Three cases: NAMED PRODUCTION — counted. NAMED SOMETHING ELSE — refuse the
+            // whole window: one preview row proves the filter is not applied, and a filtered
+            // population read as complete is the defect. NAMED NOTHING — not counted, and the
+            // bucket becomes a SAMPLE: excluded from the rate and re-polled. On logs that
+            // genuinely carry no such field the rule stays dark and says so.
             const env = typeof (r as { environment?: unknown }).environment === "string"
               ? (r as { environment: string }).environment
               : typeof (r as { target?: unknown }).target === "string"
@@ -617,27 +489,15 @@ export function makePlatformSignalPort(
             if (id.length === 0 || seen.has(id)) continue;
             seen.add(id);
             requests++;
-            // AN UNREADABLE STATUS FAILS THE WALK, on the timestamp's exact argument one line
-            // down. This is the field the entire rule is about: counting a row whose status
-            // cannot be read as a REQUEST and implicitly as a non-error means a response shape
-            // we do not understand is recorded as measured health. A schema change touching
-            // every row would then persist a confident healthy zero and silently disable the
-            // detector — the failure this file exists to make unrepresentable. One malformed
-            // row taking a single window to "not measured" is the safe direction, and the next
-            // window recovers on its own.
-            // STRICT ABOUT THE SHAPE BEFORE COERCING IT, because `Number` is generous in
-            // exactly the directions that fabricate health: `Number(null)` is 0, `Number("")` is
-            // 0, `Number(false)` is 0 and `Number(true)` is 1 — all finite, all passing a
-            // `Number.isFinite` check, and all recorded as a successful non-5xx request. A
-            // private API that changed this field's shape would be logged as a healthy
-            // deployment rather than as a failure to measure one.
-            // A BLANK STRING IS NOT A STATUS, and the type check alone let one through.
-            // `Number("")` and `Number("  ")` are both 0 — finite, past the guard below, and
-            // counted as a served non-5xx response. A schema wobble that emptied this field
-            // would therefore DILUTE the error rate with fabricated successes, or suppress the
-            // alert outright once enough of them landed in the denominator. This is the same
-            // omission the timestamp parser already carries a guard for; the status field needed
-            // its own and did not have it.
+            // AN UNREADABLE STATUS FAILS THE WALK — this is the field the rule is about: counting
+            // a row whose status cannot be read as a non-error records a schema change as
+            // measured health and silently disables the detector. One malformed row taking one
+            // window to "not measured" is the safe direction; the next window recovers. STRICT
+            // BEFORE COERCING: `Number(null)`, `Number("")`, `Number(false)` are all 0 — finite,
+            // past an `isFinite` check, recorded as successful non-5xx requests. A BLANK STRING
+            // IS NOT A STATUS: `Number(" ")` is 0 too, and a schema wobble emptying this field
+            // would dilute the error rate with fabricated successes or suppress the alert
+            // outright.
             if (typeof r.statusCode === "string" && r.statusCode.trim().length === 0) {
               return { failed: "unreadable_status" };
             }
@@ -673,17 +533,13 @@ export function makePlatformSignalPort(
           }
 
           if (data.hasMoreRows === false) break;
-          // A lap that advanced the cursor by NOTHING is a hard stop rather than an infinite
-          // loop — fifty requests inside one millisecond would otherwise spin until the
-          // invocation is killed. Marked truncated, because it is: the rest of the window is
-          // genuinely unread.
-          //
-          // AN EMPTY BATCH WITH `hasMoreRows: true` LANDS HERE, AND `truncated` IS THE RIGHT
-          // ANSWER FOR IT — stated because it reads at first like a false positive and is not.
-          // The endpoint has said more rows exist and then handed back none, so the cursor cannot
-          // advance and everything older in the window stays unread. Reporting that as a complete
-          // count would be the actual defect: it would put a confident total on a board for a
-          // window the poll never finished reading.
+          // A lap that advanced the cursor by NOTHING is a hard stop, not an infinite loop —
+          // fifty requests inside one millisecond would spin until the invocation is killed.
+          // Marked truncated, because it is: the rest of the window is genuinely unread. AN EMPTY
+          // BATCH WITH `hasMoreRows: true` LANDS HERE TOO, and `truncated` is right for it — the
+          // endpoint said more rows exist and handed back none, so the cursor cannot advance and
+          // everything older stays unread; a complete count here would put a confident total on a
+          // board for a window the poll never finished.
           if (oldest >= cursor) {
             return partial("stalled_cursor");
           }
@@ -730,27 +586,14 @@ export interface PlatformSignalPassOptions {
 }
 
 /**
- * One poll: read the window that just closed, upsert it, prune what is past retention.
- *
- * ── THE WINDOW IS THE ONE THAT JUST CLOSED, NOT THE ONE IN PROGRESS ────────────────────────
- *
- * Rounded DOWN to the window size and then stepped back one. Two reasons, and both are about the
- * rate being a fact rather than an artefact:
- *
- *  · A window still in progress is short. Polling `[now - 5min, now]` at a moment two minutes
- *    into a window counts two minutes of traffic and stores it as five minutes' worth, so a
- *    quiet slice inflates the error RATE for everything summed with it.
- *  · The platform's log store is not instantaneous. A request served a second ago may not be
- *    queryable yet, and the rows that arrive late are exactly the slow and failing ones — which
- *    would systematically undercount 5xx in the newest window, on the one rule where undercounting
- *    is the thing that loses a page.
- *
- * ALIGNED TO THE CLOCK rather than to the poll time, so two poll cadences that drift never write
- * two overlapping windows: the primary key is `(provider, project, window_start)` and an aligned
- * start makes a re-poll an UPSERT of the same row rather than a second row for the same traffic.
- *
- * NEVER THROWS FOR A FETCH FAILURE — the pass reports it. A database failure does propagate,
- * because a pass that cannot write has not measured anything and must not report success.
+ * One poll: read the window that just closed, upsert it, prune past retention. The window is the
+ * one that JUST CLOSED, not the one in progress: an in-progress window is short (two minutes of
+ * traffic stored as five inflates the summed rate), and the log store lags — the late rows are
+ * exactly the slow and failing ones, undercounting 5xx where undercounting loses a page. ALIGNED
+ * TO THE CLOCK, not the poll time, so drifting cadences never write overlapping windows: the key
+ * is `(provider, project, window_start)` and a re-poll is an UPSERT of the same row. NEVER THROWS
+ * for a fetch failure — the pass reports it; a database failure propagates, because a pass that
+ * cannot write has measured nothing and must not report success.
  */
 export async function runPlatformSignalPass(
   db: Db, opts: PlatformSignalPassOptions,
@@ -759,24 +602,14 @@ export async function runPlatformSignalPass(
   const windowMs = opts.windowMs ?? SIGNAL_WINDOW_MS;
   const retentionMs = opts.retentionMs ?? SIGNAL_RETENTION_MS;
 
-  // ── ONE BUCKET PER PASS: THE NEWEST THAT IS NOT COMPLETE ─────────────────────────────
-  //
-  // Polling only `floor(now)` and never looking back drifts: the clock is cadence + jitter +
-  // the walk's own duration, so the aligned end advances by more than one bucket whenever that
-  // sum crosses a boundary — 12:04:59 becomes 12:10:20 — and the skipped bucket is skipped for
-  // ever, because nothing ever looked at a closed bucket twice. The rule then divides a
-  // numerator formed over two buckets by a window it advertises as three.
-  //
-  // ONE FETCH, NOT A LOOP, and that is the correction that matters. Filling every missing bucket
-  // in one pass gave each `fetch` its OWN wall-clock budget, so three slow buckets could spend
-  // three times the budget inside an invocation the platform kills at sixty seconds — and none
-  // of the writes happen until every fetch returns, so the whole pass produced nothing. It also
-  // hid failures: only the first answer was inspected, so an older bucket failing was silently
-  // dropped while the pass reported success over an incomplete window.
-  //
-  // The NEWEST incomplete bucket is chosen so the rule always gets the freshest data first; an
-  // older gap fills on the following passes. A three-bucket hole closes in fifteen minutes,
-  // which is the width of the window it is repairing.
+  // ONE BUCKET PER PASS: THE NEWEST THAT IS NOT COMPLETE. Polling only `floor(now)` drifts —
+  // cadence + jitter + walk duration crosses a boundary, 12:04:59 becomes 12:10:20, and the
+  // skipped bucket is skipped for ever, so the rule divides a two-bucket numerator by a window it
+  // advertises as three. ONE FETCH, NOT A LOOP: filling every missing bucket in one pass gave
+  // each fetch its OWN wall-clock budget (three slow buckets, three budgets, inside a 60 s
+  // invocation), no writes until every fetch returned, and only the first answer inspected.
+  // Newest incomplete first, so the rule gets the freshest data; an older gap fills on following
+  // passes — a three-bucket hole closes in fifteen minutes.
   const newestEnd = Math.floor(now.getTime() / windowMs) * windowMs;
   const candidates: number[] = [];
   for (let i = 0; i < SIGNAL_BACKFILL_BUCKETS; i++) candidates.push(newestEnd - i * windowMs);
@@ -809,21 +642,14 @@ export async function runPlatformSignalPass(
   const missing = candidates.filter(
     (end) => !expected.every((p) => held.has(`${p}@${end - windowMs}`)));
 
-  // ── EVERY MISSING BUCKET, NEWEST FIRST, UNDER THE PORT'S ONE SHARED DEADLINE ──────────
-  //
-  // One fetch per pass could not CATCH UP. The cron rearms after completion, so every
-  // invocation finds a newly closed bucket; a newest-first single fetch spent the pass on that
-  // one and an older gap was never reached, ageing out of the fifteen-minute window without
-  // ever being repaired. The rule then undercounted for ever, quietly.
-  //
-  // Looping is safe NOW and was not before: the earlier version gave each bucket its own
-  // wall-clock budget, so three slow buckets could spend three times the invocation's. The
-  // port's deadline is established once per `fetch` and every request inside it is capped by
-  // what remains, so a walk that runs long simply returns fewer buckets rather than overrunning
-  // the host. Newest first, so the freshest data lands even when the budget stops the loop
-  // early; the remaining gaps are the next pass's work.
-  // ONE deadline for the whole backfill, created here and handed to every bucket — see the
-  // port's `deadlineMs`. Created by the pass because the pass is what the invocation kills.
+  // EVERY MISSING BUCKET, NEWEST FIRST, UNDER THE PORT'S ONE SHARED DEADLINE. One fetch per pass
+  // could not CATCH UP: the cron rearms after completion, every invocation finds a newly closed
+  // bucket, and an older gap aged out of the fifteen-minute window without repair — the rule
+  // undercounted for ever, quietly. Looping is safe NOW: the deadline is established once per
+  // pass and every request is capped by what remains, so a long walk returns fewer buckets rather
+  // than overrunning the host. Newest first, so the freshest data lands even when the budget
+  // stops the loop; the rest is the next pass's work. ONE deadline, created here, because the
+  // pass is what the invocation kills.
   const passDeadline = Date.now() + (opts.wallClockMs ?? SIGNAL_WALL_CLOCK_MS);
   const answers: PlatformSignalFetch[] = [];
   for (const end of missing) {
@@ -850,17 +676,13 @@ export async function runPlatformSignalPass(
 
   if (answer === null) return { outcome: "written", rows: 0, pruned };
 
-  // ── WHAT SUCCEEDED IS PERSISTED FIRST, AND ONLY THEN IS THE FAILURE REPORTED ──────────
-  //
-  // Returning the failure before the upserts threw away every measurement the pass HAD made.
-  // The shape that makes it bite: the newest bucket succeeds and an older gap keeps failing, so
-  // each run discarded a fresh, complete reading on account of a stale one — and the detector
-  // stayed dark for as long as the old gap persisted, which is exactly the state a persistent
-  // failure produces. A measurement that was taken is evidence; another bucket's refusal does
-  // not un-take it.
-  //
-  // The pass's OUTCOME is still the failure, so the caller's cron target goes red and the log
-  // carries the code. What changes is that the rows already read are kept.
+  // WHAT SUCCEEDED IS PERSISTED FIRST; ONLY THEN IS THE FAILURE REPORTED. Returning the failure
+  // before the upserts threw away every measurement the pass HAD made: with the newest bucket
+  // succeeding and an older gap failing persistently, each run discarded a fresh complete reading
+  // on account of a stale one, and the detector stayed dark as long as the gap did. A measurement
+  // taken is evidence; another bucket's refusal does not un-take it. The pass's OUTCOME is still
+  // the failure — the cron target goes red and the log carries the code — but the rows already
+  // read are kept.
   const failed = answers.find((a) => "failed" in a) as { failed: string } | undefined;
   const unconfigured = answers.some((a) => "unconfigured" in a);
   const written: PlatformSignalRow[] = [];
@@ -916,29 +738,15 @@ export async function runPlatformSignalPass(
           sampleCause: row.sampleCause,
           fetchedAt: sql`${now.toISOString()}::timestamptz`,
         },
-        // ── AND A COMPLETE ROW NEVER REGRESSES TO A SAMPLE ──────────────────────────────
-        //
-        // The same invariant as the skip above, stated where the write happens: a sampled answer
-        // may only overwrite a sample, while a complete one may always overwrite.
-        //
-        // MEASURED, BECAUSE THE FIRST DESCRIPTION OF THIS WAS WRONG: this clause and the skip
-        // above are REDUNDANT — either one alone keeps a complete row complete, and the
-        // cross-project test only goes red when BOTH are removed. It was first written up here
-        // as unreachable dead weight on the reasoning that the skip gets there first; the
-        // mutation says otherwise, which is why mutations and not reasoning decide these
-        // sentences. Both are kept: the skip states the invariant where the pass decides what to
-        // write, this states it where the row is written, and a caller that does not come
-        // through the pass has only the second.
-        // ── AND ONLY A NEWER READ OVERWRITES ────────────────────────────────────────────
-        //
-        // "A re-poll is a better read" holds only if it is a LATER read. Two passes can overlap
-        // — the API arm's scheduler retries into a running call, and a leader takeover pokes a
-        // second one — and the slower of them can answer last with an EARLIER view of the log
-        // store. Unfenced, that older answer overwrote the newer counts and rewound `fetched_at`;
-        // and if the stale answer happened to be non-truncated, the bucket was then held as
-        // complete on the poorer of the two reads and never repaired.
-        //
-        // The row's own stamp is the fence, the same shape the alert row and the pass row use.
+        // A COMPLETE ROW NEVER REGRESSES TO A SAMPLE — the skip above states the invariant where
+        // the pass decides; this states it where the row is written. The two are REDUNDANT (the
+        // cross-project test goes red only when BOTH are removed — measured by mutation, which is
+        // why mutations and not reasoning decide these sentences); both stay, because a caller
+        // not coming through the pass has only this one. AND ONLY A NEWER READ OVERWRITES: two
+        // passes can overlap, and the slower can answer last with an EARLIER view — unfenced, it
+        // rewound counts and `fetched_at`, and a stale non-truncated answer held the bucket
+        // complete on the poorer read. The row's own stamp is the fence, the same shape the alert
+        // row and the pass row use.
         setWhere: sql`${platformSignals.fetchedAt} <= ${now.toISOString()}::timestamptz
           and (${row.truncated ? sql`${platformSignals.truncated}` : sql`true`})`,
       });
