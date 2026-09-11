@@ -1,20 +1,12 @@
 /**
- * Receipts — orders, invoices and tickets, grouped by day.
- *
- * The one list where a number is the point, so amounts get their own column,
- * right-aligned and tabular. Nothing else on the row competes with it.
- * Scrolling past marks seen here too, on the same read line as Reads — and on
- * a live account leaving the screen commits this stream's OWN waterline
- * (`feedPartition` keeps the two views' lines independent by construction),
- * which renders here exactly as Reads' does.
- *
- * THE SWEEP MEASURES IN SCROLL-CONTENT COORDINATES. `onLayout` answers a view's
- * offset inside its DIRECT PARENT, and these rows sit four levels deep (content
- * → panel → day group → rows container → row) — read raw, the first row of
- * every day group is `y ≈ 0` and the sweep marked mail in entirely off-screen
- * days as read the moment the top row passed the line. The
- * {@link GroupedSweepLedger} records each level's own offset and answers only
- * rows whose absolute foot has really cleared the line.
+ * Receipts — orders, invoices and tickets, grouped by day. The one list where
+ * a number is the point: amounts get their own right-aligned tabular column.
+ * Scrolling past marks seen on the same read line as Reads; leaving commits
+ * this stream's own waterline (`feedPartition` keeps the two views' lines
+ * independent). The sweep measures in scroll-content coordinates: `onLayout`
+ * answers a view's offset inside its direct parent and these rows sit four
+ * levels deep, so {@link GroupedSweepLedger} sums each level's own offset and
+ * answers only rows whose absolute foot has really cleared the line.
  */
 import { useCallback, useEffect, useRef } from "react";
 import { AppState, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";

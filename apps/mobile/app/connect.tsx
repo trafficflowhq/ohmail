@@ -1,26 +1,12 @@
 /**
- * PAIR BY HAND — the manual fallback behind the QR scan, and the whole entry path for the
- * desktop's LAN door (whose pane offers a COPY LINK, not a QR — its own copy says it:
- * browsers use Tailscale, the mobile app uses LAN).
- *
- * Two fields: the server address and the pairing token — or the whole `${origin}/pair#${fragment}`
- * link pasted into the token field, which the parser splits (and whose query-borne impostor it
- * refuses). Either way the ceremony is the SAME three steps the scanner drives: probe /hello
- * spending nothing, confirm, then spend the token once in the redeem body, learn the
- * server-verified account, boot the mirror. This screen replaced the early hand-typed trio
- * (origin + bearer + account id): nobody types a bearer or an account id anymore — the redeem
- * mints the one and the server names the other.
- *
- * ── THE CONFIRMATION IS HERE TOO, AND THE PASTED LINK IS WHY ──────────────────────────────────
- *
- * A TYPED address is a host somebody named themselves; that is the decision the confirmation
- * exists to obtain, already made. A PASTED LINK is the same unreadable string a QR carries, and
- * it wins over the fields — so a link from a web page, a message or a mail would otherwise reach
- * a redeem here while the scanner refused it. One ceremony, both entrances: every path through
- * this screen renders {@link PairConfirm} before the code is spent.
- *
- * The token field renders as a secret and is never echoed into any error sentence; failures
- * show the ceremony's words, success lands on the Servers screen showing the live mirror.
+ * Pair by hand — the manual fallback behind the QR scan, and the entry path
+ * for the desktop's LAN door. Two fields: server address and pairing token —
+ * or the whole `${origin}/pair#${fragment}` link pasted into the token field,
+ * which the parser splits (refusing its query-borne impostor). The ceremony is
+ * the scanner's own three steps: probe /hello spending nothing, confirm, then
+ * spend the token once in the redeem body and boot the mirror. A pasted link
+ * wins over the fields, so every path here renders {@link PairConfirm} before
+ * the code is spent. The token renders as a secret, never echoed into errors.
  */
 import { useCallback, useState } from "react";
 import { type Refusal } from "../src/refusal";

@@ -1,25 +1,12 @@
 /**
- * One sender in the Screener: their actual mail, and the decision.
- *
- * TWO THINGS THIS SCREEN PROMISES.
- *
- *  1. **You never decide about a sender you cannot see.** Every held message
- *     renders here in full — subject, time, body, blocked trackers — and the
- *     caption states the count *and* that all of it is shown. There is no "and
- *     3 more"; a collapsed count is banned here. On a live account a held body starts
- *     as its snippet and hydrates; the caption under a truncation says so
- *     rather than presenting a preview as the mail.
- *  2. **"& read" means one thing at all five destinations.** Each capsule is
- *     split: the label files the mail, the attached ✓ files it *and* marks
- *     every held message seen first. Filing as read therefore does not move
- *     any unread count — it files mail, it does not announce it.
- *
- * The decision and the releases go through the world's actions — `engine.mutate`
- * with the optimistic overlay and the watched rollback (including the
- * rule-rewriting release family).
- *
- * Layout note: the decision bar is pinned to the bottom, because that is where
- * the thumb is and because the mail should be the thing under the eye.
+ * One sender in the Screener: their actual mail, and the decision. You never
+ * decide about a sender you cannot see: every held message renders in full and
+ * the caption states the count and that all of it is shown — no "and 3 more".
+ * A live held body starts as its snippet and hydrates; the caption says so
+ * under a truncation. "& read" means one thing at all five destinations: the
+ * label files the mail, the attached ✓ files it and marks every held message
+ * seen first — filing as read moves no unread count. Decisions and releases go
+ * through `engine.mutate` with the optimistic overlay and watched rollback.
  */
 import { useEffect, useState } from "react";
 import { View } from "react-native";

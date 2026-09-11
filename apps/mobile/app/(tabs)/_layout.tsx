@@ -2,14 +2,11 @@
  * The tab bar — the desktop dock, adapted to a thumb.
  *
  * Blanc's dock is a floating capsule held up by `lift-3`, not a bar welded to
- * the bottom edge; keeping that shape is what stops the app reading like a
- * default RN template. It floats above the home indicator, the canvas runs
- * underneath it, and every scroller reserves `space.tabClearance` so a panel's
- * shadow falloff is never sheared by it.
- *
- * Five destinations, because five is what the product has: the three mail
- * places, the Screener, and the route out to everything the desktop rail holds
- * below the fold (piles, tags, search, settings).
+ * the bottom edge. It floats above the home indicator, the canvas runs under
+ * it, and every scroller reserves `space.tabClearance` so a panel's shadow
+ * falloff is never sheared by it. Five destinations: the three mail places,
+ * the Screener, and the route out to everything the desktop rail holds below
+ * the fold.
  */
 import { Tabs } from "expo-router";
 import { View } from "react-native";
@@ -81,17 +78,14 @@ function Dock({ state, navigation }: DockProps) {
   const w = useWorld();
 
   /**
-   * The world's own numbers — the engine's counts over the mirror, and NOT a third derivation
-   * computed here.
-   *
-   * The two streams read `newCount`, which is `FeedPartition`'s own field (above this device's
-   * waterline AND still unread on the server) — the same number the browser and desktop rails
-   * show, so one account cannot report two different counts for the same pile. Counting
-   * `items.filter(unread)` here, as this used to, was a third answer: it took every unread row
-   * in the stream whether or not the line had already carried it, and once a resurfaced row is
-   * DRAWN unread (`presentsUnread`, which `toMail` applies) it would have counted pins as new
-   * mail as well. What is drawn and what is counted are different questions; `WorldMail.unread`
-   * answers the first, these fields answer the second.
+   * The engine's counts over the mirror, not a third derivation computed here.
+   * Both streams read `newCount`, `FeedPartition`'s own field (above this
+   * device's waterline and still unread on the server) — the same number the
+   * browser and desktop rails show, so one account cannot report two counts
+   * for one pile. Counting `items.filter(unread)` here was a third answer, and
+   * once a resurfaced row is drawn unread (`presentsUnread`, via `toMail`) it
+   * counted pins as new mail. What is drawn and what is counted are different
+   * questions; `WorldMail.unread` answers the first, these fields the second.
    */
   const badgeOf: Record<string, number> = {
     index: w.ohbox.unread,

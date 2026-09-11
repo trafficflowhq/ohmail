@@ -1,30 +1,12 @@
 /**
- * THE QR SCAN — `${origin}/pair#${fragment}` through the camera, a PROBE, the confirmation, and
- * only then the redeem.
- *
- * ── A SCAN IS NOT A DECISION, AND IT USED TO BE ONE ───────────────────────────────────────────
- *
- * This screen parsed the code and called the redeem inside the camera's own frame callback. So
- * whatever answered the address in a QR became this phone's server — with its key pinned for the
- * life of the pairing — before anybody had seen an address. A QR is a string nobody can read, and
- * the desktop's Devices pane has claimed the opposite in every shipped release: "a device pairing
- * over your network shows these characters before it pairs."
- *
- * The ceremony is three steps now. `conn.probePair` asks the address what it is, spending nothing
- * and passing no token; {@link PairConfirm} renders what it measured; `conn.pairConfirmed` spends
- * the code, and it cannot be reached without the probe's admission (`net/pairing.ts`).
- *
- * The token never leaves this screen except into that last call (whose one request carries it in
- * the redeem body); it is never logged, never rendered, never put in a route param — which is why
- * the confirmation is a COMPONENT rendered here and not a route of its own. A code that is not an
- * ohmail pairing link gets a sentence and the camera keeps scanning. The scanner is armed through
- * a ref so the camera's per-frame callback cannot fire a second probe while the first is in
- * flight, and it stays disarmed for the whole confirmation — the token is single-use and a
- * double-fire would burn it against itself.
- *
- * Camera permission is a real state, not a precondition: denied, the screen says so and offers
- * BOTH the ask-again button and the by-hand path — the flow never dead-ends on a phone that
- * keeps the camera off.
+ * The QR scan — `${origin}/pair#${fragment}` through the camera: probe, then
+ * confirmation, only then the redeem. `conn.probePair` asks the address what
+ * it is (spending nothing), {@link PairConfirm} renders what it measured, and
+ * `conn.pairConfirmed` spends the code — unreachable without the probe's
+ * admission (`net/pairing.ts`), so nothing becomes this phone's pinned server
+ * unseen. The token leaves this screen only in the redeem body: never logged,
+ * rendered or put in a route param. A ref disarms per-frame double probes (the
+ * token is single-use); a denied camera offers ask-again and the by-hand path.
  */
 import { useCallback, useRef, useState } from "react";
 import { type Refusal } from "../src/refusal";

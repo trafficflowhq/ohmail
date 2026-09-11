@@ -1,17 +1,12 @@
 /**
- * Settings — appearance, new mail, and what this build is.
- *
- * Every control here is real, and every claim is one this build can keep: the
- * theme switch is the app's own preference, the New mail block registers with
- * the server this phone is paired with, and the About block states what is live
- * and names what is not. The remaining per-server settings (rules, mailboxes)
- * arrive with later updates — until then they are absent, not mocked. The
- * pairing itself is managed on the Servers screen.
- *
- * The New mail block is the reason this header no longer says notifications are
- * absent: it now shows a real choice when the phone has distributors installed,
- * and one sentence with no control when it does not. Which of the two appears is
- * a fact read from the device, never a build-time assumption.
+ * Settings — appearance, new mail, and what this build is. Every control here
+ * is real and every claim one this build can keep: the theme switch is the
+ * app's own preference, the New mail block registers with the paired server,
+ * and the About block states what is live and names what is not. Remaining
+ * per-server settings (rules, mailboxes) arrive with later updates — absent,
+ * not mocked; the pairing lives on the Servers screen. The New mail block shows
+ * a real choice when the phone has distributors installed and one sentence with
+ * no control when it does not — read from the device, never a build assumption.
  */
 import Constants from "expo-constants";
 import { useState } from "react";
@@ -197,16 +192,14 @@ function SettingsBody() {
         </Panel>
 
         {/*
-          NEW MAIL — a real control when there is a real choice, and a sentence otherwise.
-
-          The list comes from the DEVICE (`listDistributors()`), so this block shows rows only when
-          the phone actually has distributors installed. On a phone with none — and on every iPhone,
-          where UnifiedPush cannot exist — `wake.choices` is empty and the pane is one sentence with
-          no control, which is the rule this screen was built on: a toggle that cannot move is worse
-          than a paragraph saying why.
-
-          The `None` row is last and separated, because it is the only destructive option here: it
-          drops the registration from the server as well as forgetting the distributor.
+          New mail — a real control when there is a real choice, a sentence
+          otherwise. The list comes from the device (`listDistributors()`), so
+          rows show only when the phone has distributors installed. With none —
+          and on every iPhone, where UnifiedPush cannot exist — `wake.choices`
+          is empty and the pane is one sentence with no control: a toggle that
+          cannot move is worse than a paragraph saying why. The `None` row is
+          last and separated — the only destructive option: it drops the server
+          registration as well as forgetting the distributor.
         */}
         <Panel style={{ paddingVertical: 18, marginBottom: 14 }}>
           <View style={{ paddingHorizontal: 20, gap: 6 }}>
@@ -298,45 +291,24 @@ function SettingsBody() {
 }
 
 /**
- * THE FACE, AND ITS TWO SCOPES — the phone's half of OHMARCHY-PLAN.md §3a.
- *
- * The segmented control is "only this device": it writes the DEVICE PIN, instantly, with no
- * server involved — which is why it works with the radio off, on a phone that has never been
- * paired, and while a sync is failing. The quiet line under it is "apply on all devices": one
- * press PATCHes the account (`{themeFace}` alone — the one axis this control owns), adopts the
- * ECHO, and clears the pin, so the account governs this device too, which is what the press
- * asked for. A pinned device deliberately ignores an account change made on a laptop, and the
- * scope line says which of the two states this device is in.
- *
- * The apply-all affordance is WITHHELD, not disabled, where no account can hold a face — the
- * webapp `FaceRow`'s rule, expressed the same way: a control that cannot control is never drawn.
- * TWO conditions withhold it, and the second is the subtle one (review-caught):
- *
- *  · nothing is connected, so there is no account row to store a shared choice in;
- *  · the account's face has not been READ yet ({@link World.face.known}). While it is unknown,
- *    `account` is null, the control shows paper, and pressing apply-all would PATCH paper over an
- *    ohmarchy the account really holds whose read was slow or failed. The webapp gates the same
- *    affordance on `themeFaceKnown` for the same reason.
- *
- * The failure is said and the control does not move wrongly: the device flip cannot fail (it is
- * local), and a refused account write leaves the segmented control on this device's real face
- * with one sentence under it.
+ * The face and its two scopes — the phone's half of OHMARCHY-PLAN.md §3a. The
+ * segmented control is "only this device": it writes the device pin instantly,
+ * no server involved. The quiet line, "apply on all devices", PATCHes the
+ * account (`{themeFace}` alone), adopts the echo and clears the pin; a pinned
+ * device ignores account changes. Apply-all is withheld, not disabled, when
+ * nothing is connected or the face is not yet read ({@link World.face.known}):
+ * pressing while unknown would PATCH paper over a real ohmarchy (the webapp
+ * gates on `themeFaceKnown` too). A refused write leaves the real face shown.
  */
 /**
- * ═══ SETTINGS → THIS PHONE ═════════════════════════════════════════════════════════════════════
- *
- * One card per mailbox: its address, the claim state as a chip, the platform rule line, and — where
- * there is a claim of ours to give up — the hand-back. The MAILBOXES-COMPACT idiom, in the phone's
- * own primitives.
- *
- * ── IT RENDERS ONLY WHERE THIS PHONE COULD ORGANIZE, AND ONLY OVER A READ ──────────────────────
- *
- * `standaloneAvailable` is the build's answer and `known` is the read's. A phone with no engine has
- * nothing to say here; a phone that has not read yet must say nothing about who organizes anything,
- * which is the rule `world.mailboxes.known` exists for. Both absences are silence, not a placeholder.
- *
- * The five chip states are the desktop's own keys, and the verb is plain: the consequence and the
- * danger-styled confirm are in the sheet, where a press is deliberate.
+ * Settings → This phone. One card per mailbox: address, claim-state chip, the
+ * platform rule line, and — where there is a claim of ours to give up — the
+ * hand-back. The MAILBOXES-COMPACT idiom in the phone's own primitives. It
+ * renders only where this phone could organize, and only over a read:
+ * `standaloneAvailable` is the build's answer, `known` the read's; a phone with
+ * no engine has nothing to say, one that has not read yet says nothing about
+ * who organizes (`world.mailboxes.known`) — both absences are silence. The five
+ * chip states are the desktop's keys; the confirm lives in the sheet.
  */
 /**
  * THE STANDALONE CARD'S ROW KEY — a constant, and deliberately NOT a mailbox id.
@@ -359,21 +331,14 @@ function ThisPhonePanel() {
   if (!standaloneAvailable({ startEngine: phoneEngineStart() })) return null;
 
   /**
-   * ── WHERE THE CARDS COME FROM, AND WHY THE DOOR ANSWERS FIRST ────────────────────────────
-   *
-   * This panel used to be derived from `world.mailboxes` alone — a loopback `GET /mailboxes`
-   * whose three outcomes (never asked, asked and refused, answered empty) all arrive as one
-   * `known: false`. So on a phone that had opened its own mailbox the panel rendered NOTHING,
-   * with an engine running behind it and no sentence anywhere: measured on a device across three
-   * release builds, and the roster read is not even needed there.
-   *
-   * `standaloneHere()` is the engine in this process answering for itself, with no request:
-   * the address it serves and whether this install organizes it. A PAIRED session has no such
-   * door and keeps the roster exactly as before — the arm beside the one that moved.
-   *
-   * The standalone card's key is a constant and NOT a mailbox id, because it is not one: it
-   * names the `asked` entry and React's row, and the standalone stop needs no id at all (the
-   * engine's `handBack` releases every mailbox it holds).
+   * Where the cards come from, and why the door answers first. Deriving this
+   * panel from `world.mailboxes` alone folded three outcomes (never asked,
+   * refused, answered empty) into one `known: false`, so a phone that had opened
+   * its own mailbox rendered nothing with an engine running behind it.
+   * `standaloneHere()` is the engine in this process answering for itself, no
+   * request; a paired session has no such door and keeps the roster as before.
+   * The standalone card's key is a constant, not a mailbox id: it names the
+   * `asked` entry and React's row; the engine's `handBack` releases every mailbox.
    */
   const here = standaloneHere();
   /* Only where there is a door to have asked — a paired session's panel says nothing of it. */

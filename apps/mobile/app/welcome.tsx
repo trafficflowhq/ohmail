@@ -1,19 +1,12 @@
 /**
- * FIRST RUN — the one screen a phone with no pairing sees, and it asks the product's own question.
- *
- * ── IT WAS A SCAN BUTTON; IT IS THE THREE DOORS NOW ─────────────────────────────────────────
- *
- * This screen used to lead with "Scan the pairing QR" and hide everything else behind "Other ways
- * to connect". That was true of the mechanism and wrong about the decision: a person opening this
- * app has not yet chosen WHICH machine organizes their mail, and the scan is the last step of an
- * answer, not the question. The desktop's chooser asks "which mailbox is this?" and offers three
- * machines; this asks the same thing, with the phone's own three answers — see `ui/Doors.tsx` for
- * why they are not the desktop's three and why they are in this order.
- *
- * No sample data, no tour: the app is empty until it is connected, and this screen says so.
- *
- * The screen exists only while nothing is paired: the tabs gate routes here, and the redirect
- * below hands the screen back the moment a session goes live.
+ * First run — the one screen a phone with no pairing sees, and it asks the
+ * product's own question: which machine organizes this mail? The scan is the
+ * last step of an answer, not the question, so the desktop chooser's shape
+ * holds here — the phone's own three doors (`ui/Doors.tsx` says why they are
+ * not the desktop's three, and why this order). No sample data, no tour: the
+ * app is empty until connected. The screen exists only while nothing is
+ * paired: the tabs gate routes here; the redirect below hands the screen back
+ * the moment a session goes live.
  */
 import { View } from "react-native";
 import { Redirect, router } from "expo-router";

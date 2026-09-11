@@ -1,30 +1,12 @@
 /**
- * The reading view.
- *
- * Three things this screen states as fact rather than decoration:
- *
- *  · **Why it landed here.** Every message carries its routing rationale as a
- *    chip — the rule that filed it, or the Yes you gave the sender. Nothing is
- *    sorted invisibly. (A live row that has no recorded rationale shows none.)
- *  · **What was blocked.** The spy-pixel chip names the count, on the message
- *    it belongs to.
- *  · **What is protected.** A verification mail has no body to show, because
- *    none was stored. The block says so and shows redaction dots — it is not a
- *    hidden field with a reveal button, because there is nothing behind it.
- *    (Structural, not policy: never sent to AI, never forwarded, stored
- *    redacted.)
- *
- * The whole conversation renders. `earlier` is listed in full under the
- * message, never summarised into a badge. Opening the message marks it read
- * through the engine (the optimistic overlay; a rejection rolls back with a
- * sentence), asks for the full body — the pane says honestly when it is still
- * showing the preview — and the attachment strip carries the engine's own
- * names, nameless-ICS fallback included.
- *
- * THE VERBS ARE THE WEBAPP'S — see `src/ui/MessageActions.tsx` (the bar and its sheets) and
- * `test/action-parity.test.ts` (the guard that derives the verb list from the webapp's own
- * source). Every action files through `engine.mutate`; the one webapp verb with no engine
- * path (the AI drafter) renders no control — a screen offers no control it cannot perform.
+ * The reading view states facts: why the message landed here (the routing
+ * rationale chip — the rule that filed it or the Yes you gave; no recorded
+ * rationale, no chip), what was blocked (the spy-pixel count chip), and what
+ * is protected (a verification mail has no stored body; redaction dots,
+ * nothing behind them). The conversation renders whole. Opening marks read
+ * through the engine (optimistic overlay; rejections roll back) and asks the
+ * full body. The verbs are the webapp's (`src/ui/MessageActions.tsx`, with
+ * `test/action-parity.test.ts` deriving the list); no engine path, no control.
  */
 import { useEffect } from "react";
 import { View } from "react-native";

@@ -1,14 +1,12 @@
 /**
- * THE FOURTH DOOR — what this phone is as the organizer, then the mailbox's credentials.
- *
- * Two steps, in this order, and the first cannot be skipped: the limitations are read BEFORE any
- * password field exists. A person who presses Continue has been told what the door costs; a person
- * who presses "Choose differently" goes back to the chooser with nothing typed.
- *
- * Every decision on both steps lives in `src/ui/standalone-form.ts` — which sentence the platform
- * shows, whether Connect is offered, what the server fields hold for a typed address — because this
- * workspace has no React Native renderer and a rule written inside a component is a rule no test can
- * drive. This file renders those answers.
+ * The fourth door — what this phone is as the organizer, then the mailbox's
+ * credentials. Two steps in this order, and the first cannot be skipped: the
+ * limitations are read before any password field exists. Continue means the
+ * cost was shown; "Choose differently" returns to the chooser with nothing
+ * typed. Every decision on both steps lives in `src/ui/standalone-form.ts` —
+ * which sentence the platform shows, whether Connect is offered, what the
+ * server fields hold — because this workspace has no React Native renderer
+ * and a rule written inside a component is a rule no test can drive.
  */
 import { useCallback, useRef, useState } from "react";
 import { Platform, TextInput, View } from "react-native";
@@ -143,31 +141,26 @@ function Credentials() {
       logSink: consoleEngineLogSink(),
     });
     if (outcome.ok) {
-      /* ══ AND THE APP GOES LIVE ON IT, THROUGH THE PATH A PAIRED CONNECT TAKES ══════════════
-       *
-       * `holdStandaloneDoor` first, because the connection layer's standalone arm reads the door
-       * from there — the engine has no address on a network, so a session over it cannot be built
-       * from a stored row alone. Then `openStandalone`, which writes the profile row and adopts the
-       * session; the navigation below is what `welcome.tsx` redirects through, and it only means
-       * anything once `conn.state.k === "live"`.
-       *
-       * The engine was left running by the arm that returned it, so an adoption that FAILS is said
-       * on this screen rather than navigated past: landing on the chooser with a running engine and
-       * no sentence is the defect this whole change closes.
+      /* The app goes live through the path a paired connect takes:
+       * `holdStandaloneDoor` first, because the connection layer's standalone
+       * arm reads the door from there — the engine has no network address, so
+       * a session cannot be built from a stored row alone. Then
+       * `openStandalone`, which writes the profile row and adopts the session;
+       * the navigation below is what `welcome.tsx` redirects through and only
+       * means anything once `conn.state.k === "live"`. The engine was left
+       * running by the arm that returned it, so a failed adoption is said on
+       * this screen rather than navigated past.
        */
       holdStandaloneDoor(outcome.door);
-      /* ══ THE ENGINE IS NOW WIRED TO THE APP'S OWN LIFECYCLE ═══════════════════════════════
-       *
-       * This is the line `background.ts` was written for and had no call site for. Without it
-       * every arm in that file is unreachable: nothing subscribes to `AppState`, so an Android
-       * phone posts no notification and keeps no service, and an iPhone leaves its claim standing
-       * in `ohmail/_meta` for the whole staleness window while it is suspended — which is the
-       * double-organizer state the fourth door's own sentences promise it avoids.
-       *
-       * The session is MODULE SCOPE and not this component's, because the navigation on the next
-       * line unmounts this screen: a session owned here would be disposed by its own success.
-       * Native for `local-engine-native.ts`'s reason — `AppState` is not loadable under vitest —
-       * and `void`, because a mailbox that is open must not wait on a notification.
+      /* The engine is wired to the app's lifecycle here — the call site
+       * `background.ts` was written for; without it nothing subscribes to
+       * `AppState`, so Android posts no notification and keeps no service and
+       * a suspended iPhone leaves its claim in `ohmail/_meta` for the whole
+       * staleness window — the double-organizer state the fourth door promises
+       * to avoid. The session is module scope: the navigation on the next line
+       * unmounts this screen, so a session owned here would be disposed by its
+       * own success. Native for `local-engine-native.ts`'s reason (`AppState`
+       * not loadable under vitest); `void` — an open mailbox must not wait.
        */
       const address = fields.address.trim();
       void import("../src/engine/organizer-session-native")

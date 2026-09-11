@@ -1,23 +1,12 @@
 /**
- * HISTORY — mail from people nobody ever decided about, who then went quiet.
- *
- * The phone's half of the browser's own place (`apps/webapp/app/views/HistoryView.tsx`, which
- * carries the whole argument). Three of its facts decide this screen:
- *
- *  · **Nothing here has moved.** History is a presentation over the mailbox, never a folder, so
- *    every row states the server folder it is still sitting in (`MailRow`'s place chip off
- *    `historyPlace`). A place the product invented must not be mistaken for a place mail was put.
- *  · **Everything here is read**, and by construction rather than by arrangement: a sender with
- *    any unread mail is ACTIVE whatever its age, so an unread message pulls its sender into the
- *    Screener queue instead. So there is no unread state, no badge and no NEW group — one list.
- *  · **It is not called Archive.** "Archive" is a verb in every other mail client, an action this
- *    mail never received, and a mailbox with a real server-side Archive folder would be shown a
- *    view by that name whose contents are not that folder's.
- *
- * The explainer stands ABOVE the list and is not dismissible: "History" is a word this product
- * uses in a way no other mail client does, and the sentence is as true on the hundredth visit as
- * the first. The other two sentences — all read, nothing moved — sit behind the disclosure, the
- * browser's own split, because as a block of three they push the first row off a phone window.
+ * History — mail from people nobody ever decided about, who then went quiet;
+ * the phone's half of the webapp's `HistoryView.tsx`. Nothing has moved:
+ * History is a presentation over the mailbox, never a folder — every row
+ * states the server folder it still sits in (`MailRow`'s place chip off
+ * `historyPlace`). Everything is read by construction (unread mail queues its
+ * sender in the Screener), so one list, no badge. Not called Archive: that
+ * verb never happened to this mail. The explainer stands above the list, not
+ * dismissible; the other two sentences sit behind the browser's disclosure.
  */
 import { useState } from "react";
 import { View } from "react-native";

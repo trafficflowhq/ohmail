@@ -3,11 +3,10 @@
  *
  * On the phone this is the list half only: three shelves (waiting, screened
  * out, spam) of senders. Tapping a sender opens the mail itself plus the
- * decision bar, full screen, because you never decide about a sender you
- * cannot see.
- *
- * A row's AI suggestion badge renders only where the server sent one — no
- * classifier runs client-side, and a row without a suggestion honestly has none.
+ * decision bar, full screen — you never decide about a sender you cannot see.
+ * A row's AI suggestion badge renders only where the server sent one: no
+ * classifier runs client-side, and a row without a suggestion honestly has
+ * none.
  */
 import { useState } from "react";
 import { View } from "react-native";

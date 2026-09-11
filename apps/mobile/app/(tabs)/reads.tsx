@@ -1,19 +1,12 @@
 /**
- * Reads — the skim stream.
- *
- * Newsletters are not rows to open, they are issues to skim, so the stream *is*
- * the view: every issue is a card carrying its own text, clamped to about a
- * screenful with the one functional fade, and tapping opens the rest in place.
- *
- * SCROLLING PAST MARKS SEEN. The waterline is a marker, not a sort key: when a
- * card passes the read line its dot fades **in place**, the "new" count ticks
- * down by one, and nothing moves. A list that re-sorted under the thumb would
- * be the opposite of a skim stream. On a live account the sweep rides the
- * engine's `feed_mark_seen` (this stream's folder only), and LEAVING the screen
- * commits the waterline above the newest issue the reader passed — "new since
- * last visit" holds still for the whole visit and moves exactly once.
- *
- * Every issue the world answers renders. There is no "and 9 more".
+ * Reads — the skim stream. Issues are cards carrying their own text, clamped
+ * to about a screenful, and tapping opens the rest in place.
+ * Scrolling past marks seen. The waterline is a marker, not a sort key: when
+ * a card passes the read line its dot fades in place, the "new" count ticks
+ * down, and nothing moves. On a live account the sweep rides the engine's
+ * `feed_mark_seen` (this stream's folder only), and leaving the screen commits
+ * the waterline above the newest issue the reader passed — it moves exactly
+ * once per visit. Every issue the world answers renders; no "and 9 more".
  */
 import { useCallback, useRef, useState } from "react";
 import { AppState, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";

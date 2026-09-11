@@ -1,19 +1,12 @@
 /**
- * SCHEDULED — the messages waiting for their appointment (Send later, mail 0077).
- *
- * The webapp puts this group above its Drafts list, because there it is one of two things a
- * message can be while it is not sent. This app composes only replies and forwards and has no
- * Drafts view to put it above, so the appointments get their own destination in the More tab's
- * idiom — a place with real numbers, reached from the rail-shaped list, never a tile.
- *
- * The row's whole content is a promise about time, so the time is the row's stamp: when it
- * SENDS, in the reader's own clock, not when it was written. One verb — Cancel send — and one
- * ceremony around it: the ask is the row's own control, the answer is the SERVER's, and only a
- * confirmed cancellation says "cancelled" (`live.ts#cancelSchedule` holds the three outcomes).
- *
- * WHAT IS DELIBERATELY ABSENT: the webapp's Edit, which is cancel-then-open. There is no draft
- * editor on this phone to open a cancelled row into, so the screen says where the message goes
- * instead of offering a verb that leads nowhere (`Copy.scheduledEditNote`).
+ * Scheduled — messages waiting for their appointment (Send later, mail 0077).
+ * This app composes only replies and forwards and has no Drafts view, so the
+ * appointments get their own destination in the More tab's idiom. The row's
+ * stamp is when it sends, in the reader's own clock, not when it was written.
+ * One verb — Cancel send — and only a confirmed cancellation says "cancelled"
+ * (`live.ts#cancelSchedule` holds the three outcomes). The webapp's Edit
+ * (cancel-then-open) is absent: no draft editor to open a cancelled row into,
+ * so the screen says where the message goes instead (`Copy.scheduledEditNote`).
  */
 import { useState } from "react";
 import { View } from "react-native";

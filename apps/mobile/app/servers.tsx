@@ -1,19 +1,12 @@
 /**
- * THE SERVERS SCREEN — the pairings this phone holds, and the door chooser for adding one.
- *
- * The pairings half is this file's own: switch, forget, and the live session's numbers (the
- * mirror's, straight off the engine's reader). The adding half is `ui/Doors.tsx`, shared with the
- * first-run screen, so one decision has one vocabulary — see the note above where it renders.
- *
- * ── WHAT THIS HEADER USED TO CLAIM, AND WHY IT WAS WRONG ────────────────────────────────────────
- *
- * It said *"today the hosted service answers `pairing: false` because it mounts no redeem"*. That
- * was true when it was written and is not now: measured 2026-09-01, `GET /hello` on the hosted
- * service answers `features.pairing: true` and its redeem is mounted.
- * The mechanism was built exactly so that change needed no client edit and it did not — the
- * negotiation started offering the pair step on its own. What did NOT self-correct was the prose
- * and the copy deck around it, which went on describing a state the server had left, which is the
- * quiet way a comment becomes a false claim.
+ * The Servers screen — the pairings this phone holds, and the door chooser
+ * for adding one. The pairings half is this file's own: switch, forget, and
+ * the live session's numbers (the mirror's, straight off the engine's
+ * reader). The adding half is `ui/Doors.tsx`, shared with the first-run
+ * screen, so one decision has one vocabulary. The hosted service answers
+ * `features.pairing: true` and mounts its redeem (measured 2026-09-01); the
+ * negotiation offers the pair step on its own, so no client edit was needed
+ * when that changed.
  */
 import { useCallback, useState, useSyncExternalStore } from "react";
 import { sayArg, sayRefusal, type Refusal } from "../src/refusal";

@@ -1,26 +1,12 @@
 /**
- * The shell. Providers, then a stack of screens on the Blanc canvas.
- *
- * Theme preference lives in the prefs store, so it has to be read *inside* that
- * provider and handed to the theme provider — hence the small `Shell` split.
- *
- * The LANGUAGE sits outermost, above everything that draws a word. It has to: the copy deck is
- * reached through a module import rather than through React, so the provider's job is to resolve
- * which deck that is (the phone's own language, or an override stored on this device) before any
- * screen renders — and to publish a switch afterwards. Screens subscribe with `useLocale()`.
- *
- * The FACE (paper / ohmarchy) is resolved in the same place and for the same reason, from the
- * two scopes that decide it: this device's pin (the prefs store) and the account's synced
- * answer (the world layer's consent read). `resolveFace` is the whole of the order and lives in
- * `src/theme/face.ts`, where the node suite can drive it — the provider only receives the
- * verdict. That is also why `Shell` sits INSIDE `WorldProvider`: the account half of the
- * appearance comes off the mirror's own consent read.
- *
- * THE PHONE'S ENGINE REGISTERS HERE, at module scope, above the router. `engine-artifact.ts` makes
- * that a requirement rather than a preference: the chooser reads the registry at render time and
- * holds no subscription, so an engine registered after the door list is drawn leaves a build that
- * HAS an engine showing three doors until something else re-renders. Module scope is the only place
- * that cannot be late.
+ * The shell: providers, then a stack of screens on the Blanc canvas. Theme
+ * preference lives in the prefs store, read inside that provider — hence the
+ * `Shell` split. The language sits outermost: the copy deck is a module
+ * import, so the provider resolves the deck before any screen renders
+ * (`useLocale()` subscribes). The face resolves there too via `resolveFace`
+ * (`src/theme/face.ts`), device pin + synced consent read — why `Shell` sits
+ * inside `WorldProvider`. The engine registers at module scope: the chooser
+ * reads the registry at render time, so a later registration shows three doors.
  */
 import { useMemo } from "react";
 import { Stack } from "expo-router";

@@ -1,17 +1,12 @@
 /**
- * FOLDER — one of the mailbox's OWN folders, opened from the More screen's Folders group
- * (FOLDERS-SPEC.md §3: "a user folder opens as a parameterized view — a list filtered on
- * `m.folder`"; the webapp's `FolderView.tsx` is the reference).
- *
- * The list wears the standard NEW / EARLIER grouping the other lists wear, and it is
- * READ-ONLY at this stage exactly like the webapp's foundation: no move verb, no menu — a
- * row opens its message, whose action bar carries the ordinary verbs.
- *
- * WHAT THIS SCREEN MAY NOT CLAIM: this build has no reach-past on any screen — the phone's
- * mirror is a window over the server — so an empty list here is "no mail from this folder on
- * this phone", never "nothing in this folder" (the webapp earns that sentence by asking the
- * server past the mirror; see `Copy.folderEmptyTitle`'s header). The tail states the same
- * boundary under a populated list.
+ * Folder — one of the mailbox's own folders, opened from the More screen's
+ * Folders group (FOLDERS-SPEC.md §3; the webapp's `FolderView.tsx` is the
+ * reference). The list wears the standard new / earlier grouping and is
+ * read-only like the webapp's foundation: no move verb, no menu — a row
+ * opens its message. This build has no reach-past — the phone's mirror is a
+ * window over the server — so an empty list means "no mail from this folder
+ * on this phone", never "nothing in this folder" (`Copy.folderEmptyTitle`).
+ * The tail states the same boundary under a populated list.
  */
 import { router, useLocalSearchParams } from "expo-router";
 import { View } from "react-native";
