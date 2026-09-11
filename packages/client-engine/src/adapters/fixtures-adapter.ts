@@ -140,11 +140,9 @@ export class FixturesAdapter implements EngineAdapter {
         return out;
       },
       entries: <T,>(type: string) => {
-        const out: Array<{ id: string; entity: T; seq: number }> = [];
+        const out: Array<{ id: string; entity: T }> = [];
         for (const rec of world.values()) {
-          if (rec.type === type && rec.entity !== null) {
-            out.push({ id: rec.id, entity: rec.entity as T, seq: rec.seq });
-          }
+          if (rec.type === type && rec.entity !== null) out.push({ id: rec.id, entity: rec.entity as T });
         }
         return out;
       },

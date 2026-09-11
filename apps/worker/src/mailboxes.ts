@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
+  organizerKindColumn, closedSetValue,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
   rules,
 } from "@trafficflow/db";
@@ -11,6 +12,7 @@ import {
   buildImapAuth, oauthSmtpEndpoint, type ImapAuth, type CredMetaAuth,
 } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import { asDatabaseFault, markDatabaseFaults } from "./db-fault.js";
 import type { SyncWriteFence } from "./sync.js";
 import { carryDialect } from "@trafficflow/db/dialect";
@@ -64,6 +66,14 @@ export interface EnabledMailbox {
    */
   takeoverAuthorizedAt: Date | null;
   /**
+   * Mail 0104. WHAT that press asked for. `takeover` asks for the mailbox whoever holds it;
+   * `join` asks only for one nobody is organizing and yields at the fence to a live foreign
+   * claim. Cloud's own door writes `takeover`, so every press made here reads that; the field
+   * exists because the fence is shared with an install that has no takeover verb. On the roster
+   * row for `takeoverAuthorizedAt`'s reason exactly — another process writes the pair.
+   */
+  takeoverIntent: OrganizerIntent;
+  /**
    * Mail 0027. A lease reason left over from a previous stand-down that a human has since
    * re-enabled past. Read only so the gate knows there is something to CLEAR — nothing decides
    * on it. **It gains no new writer in the mailbox-removal design**: a stand-down now writes the ROLE, and
@@ -72,16 +82,13 @@ export interface EnabledMailbox {
    */
   disabledReason: string | null;
   /**
-   * Mail 0083. ORGANIZER OR READER — and this is the field the whole roster now turns on.
-   *
-   * A reader is CONNECTED and SYNCING, so it is on this roster exactly like an organizer and the
-   * `status <> 'disabled'` predicate admits it with no change (the migration's backfill is what
-   * put the existing stood-down population here). What branches on it is the attach — a reader
-   * creates no folders, runs no kickstart and publishes no profile — and the cycle, which passes
-   * it to `runSyncCycle` as `SyncDeps.role`.
-   *
-   * COERCED at the read, not trusted: an unrecognised value reads as `reader`, because the
-   * direction an unreachable state must fail in is "do not organize somebody else's mailbox".
+   * Mail 0083. ORGANIZER OR READER — the field the whole roster now turns on. A reader is CONNECTED
+   * and SYNCING, so it is on this roster like an organizer and the `status <> 'disabled'` predicate
+   * admits it with no change (the migration's backfill put the existing stood-down population here).
+   * What branches on it is the attach (a reader creates no folders, runs no kickstart and publishes
+   * no profile) and the cycle, which passes it to `runSyncCycle` as `SyncDeps.role`. COERCED at the
+   * read, not trusted: an unrecognised value reads as `reader`, because the direction an unreachable
+   * state must fail in is "do not organize somebody else's mailbox".
    */
   organizerRole: OrganizerRole;
   /**
@@ -100,16 +107,13 @@ export interface EnabledMailbox {
    */
   organizedByCapabilities: string | null;
   /**
-   * Mail 0092. WHICH install holds it — the sixth holder column, and it is on the roster for a
-   * reason the other five are not: the reader peek writes only on a CHANGE, and the change is
-   * detected by comparing this snapshot against what the folder says. A column the snapshot does
-   * not carry cannot be compared, so it cannot be found stale, so it is never written.
-   *
-   * That is not hypothetical — it is how this column shipped. Every row that existed before 0092
-   * ran had a NULL id and five holder columns that already agreed with the folder, so the compare
-   * returned early on every cycle and the id stayed NULL for ever. NULL fails closed in the
-   * release arm, so the hand-back was refused permanently on exactly the mailboxes the feature
-   * was built for, while a freshly claimed row worked and every guard built from one stayed green.
+   * Mail 0092. WHICH install holds it — the sixth holder column, on the roster because the reader
+   * peek writes only on a CHANGE detected by comparing this snapshot against the folder. A column the
+   * snapshot does not carry cannot be compared, so cannot be found stale, so is never written — which
+   * is how it shipped: every row before 0092 had a NULL id and five holder columns already agreeing
+   * with the folder, so the compare returned early every cycle and the id stayed NULL for ever. NULL
+   * fails closed in the release arm, so the hand-back was refused permanently on exactly the mailboxes
+   * the feature was built for, while a freshly claimed row worked and every guard stayed green.
    */
   organizedByInstallId: string | null;
   /**
@@ -128,15 +132,13 @@ export interface EnabledMailbox {
    */
   releaseRequestedAt: Date | null;
   /**
-   * Mail 0029. What the row currently says about why this mailbox is not being synced.
-   *
-   * READ SO THE WORKER KNOWS WHETHER THERE IS ANYTHING TO CLEAR, and for no other purpose —
-   * nothing decides on it, exactly like `disabledReason` above. It is in this narrow projection
-   * rather than re-read on demand because of the trap the alternative walks into: `attach` ends
-   * with `if (mb.status !== "connected") await markRecovered(mb)`, and in the whole sync-blocked
-   * scenario `status` IS `connected`, so `markRecovered` never runs and never clears. Without this
-   * column here the worker could only either issue a clear for every healthy mailbox on every
-   * roster pass, or never clear at all.
+   * Mail 0029. What the row currently says about why this mailbox is not being synced. READ SO THE
+   * WORKER KNOWS WHETHER THERE IS ANYTHING TO CLEAR, and for no other purpose — nothing decides on it,
+   * like `disabledReason` above. It is in this narrow projection rather than re-read on demand because
+   * of the trap the alternative walks into: `attach` ends with `if (mb.status !== "connected") await
+   * markRecovered(mb)`, and in the whole sync-blocked scenario `status` IS `connected`, so
+   * `markRecovered` never runs and never clears. Without this column the worker could only clear for
+   * every healthy mailbox on every pass, or never clear at all.
    */
   syncBlockedReason: string | null;
   /**
@@ -148,15 +150,13 @@ export interface EnabledMailbox {
    */
   smtpMaxSizeBytes: number | null;
   /**
-   * Mail 0039. WHEN the leader may next attach this mailbox, or NULL for "no backoff is in
-   * force". THIS ONE IS DECIDED ON, unlike the two above it, and it is the only column in this
-   * projection that is.
-   *
-   * It is what makes a quarantine survive a restart and — the point of the whole column —
-   * releasable by somebody who is not this process. The in-memory `quarantine` map is still the
-   * ladder; this is its durable mirror, and the roster gate prefers it whenever the durable write
-   * for that mailbox actually landed. A worker that reads NULL here for a mailbox it believes it
-   * quarantined has been told by an operator to try again now.
+   * Mail 0039. WHEN the leader may next attach this mailbox, or NULL for "no backoff in force". THIS
+   * ONE IS DECIDED ON, unlike the two above, and it is the only column in this projection that is. It
+   * makes a quarantine survive a restart and — the point of the whole column — releasable by somebody
+   * who is not this process. The in-memory `quarantine` map is still the ladder; this is its durable
+   * mirror, and the roster gate prefers it whenever the durable write for that mailbox actually
+   * landed. A worker that reads NULL here for a mailbox it believes it quarantined has been told by an
+   * operator to try again now.
    */
   retryAfter: Date | null;
   /**
@@ -171,20 +171,14 @@ export interface EnabledMailbox {
 }
 
 /**
- * Which mailboxes THIS process is responsible for.
- *
- * There is DELIBERATELY no account filter. `TF_ACCOUNT_ID` used to narrow this selection,
- * which meant a value left in the production environment silently un-synced every OTHER
- * account — the silently-unsynced-second-account defect with extra steps, and a loud log line
- * does not remediate it. The roster is
- * now, by construction, the shard's full duty; `TF_ACCOUNT_ID` is bootstrap-only (it pairs
- * with `TF_MAILBOX_ID` to seed the legacy env mailbox's credentials, and scopes the
- * single-mailbox reconcile backstop) and cannot shrink what the worker serves.
- *
- * `shards` / `shardIndex` are the shard SEAM, shipped as `shards = 1`. With `shards > 1`
- * each process serves a DISJOINT slice of accounts, hashed on `account_id`, so the
- * per-account seq row-lock and the per-shard leader lock still serialize one account to
- * exactly one process.
+ * Which mailboxes THIS process is responsible for. There is DELIBERATELY no account filter.
+ * `TF_ACCOUNT_ID` used to narrow this, so a value left in the production environment silently
+ * un-synced every OTHER account — the silently-unsynced-second-account defect, which a loud log line
+ * does not remediate. The roster is now, by construction, the shard's full duty; `TF_ACCOUNT_ID` is
+ * bootstrap-only (it pairs with `TF_MAILBOX_ID` to seed the legacy env mailbox and scopes the
+ * single-mailbox reconcile backstop). `shards`/`shardIndex` are the shard SEAM (shipped `shards = 1`):
+ * with `shards > 1` each process serves a DISJOINT slice hashed on `account_id`, so the per-account
+ * seq row-lock and the per-shard leader lock still serialize one account to one process.
  */
 export interface MailboxSelection {
   shards?: number;
@@ -202,47 +196,38 @@ function validateShard(selection: MailboxSelection): { shards: number; shardInde
 }
 
 /**
- * `hashtext` is int4 and CAN be negative, so `%` alone would never match a positive
- * shardIndex for half the accounts — normalize into [0, shards). Postgres-internal
- * and stable within a major version: re-sharding is a deploy decision, not runtime.
- *
- * PERFORMANCE NOTE (for when shards > 1 actually ships): this predicate is not
- * index-supported, so a sharded deployment seq-scans `mailboxes` once per roster pass.
- * At beta scale (hundreds of rows, one pass per `TF_ROSTER_INTERVAL_MS`) that is free;
- * before shards > 1 ships, add an expression index on
- * `((hashtext(account_id::text) % n + n) % n) WHERE status <> 'disabled'` for the
- * deployed `n`, or materialize a `shard` column maintained by the mailbox writer.
+ * `hashtext` is int4 and CAN be negative, so `%` alone would never match a positive shardIndex for
+ * half the accounts — normalize into [0, shards). Postgres-internal and stable within a major
+ * version: re-sharding is a deploy decision, not runtime. PERFORMANCE NOTE (for when shards > 1
+ * ships): this predicate is not index-supported, so a sharded deployment seq-scans `mailboxes` once
+ * per roster pass — free at beta scale, but before shards > 1 ships add an expression index on
+ * `((hashtext(account_id::text) % n + n) % n) WHERE status <> 'disabled'` for the deployed `n`, or
+ * materialize a `shard` column maintained by the mailbox writer.
  */
 function shardPredicate(shards: number, shardIndex: number): SQL {
   return sql`((hashtext(${mailboxes.accountId}::text) % ${shards}) + ${shards}) % ${shards} = ${shardIndex}`;
 }
 
 /**
- * WHICH ACCOUNTS THE ROSTER MUST SKIP — composed by the host, absent on a deployment that meters
- * nothing.
- *
- * It used to be one query over this database's own subscription and suspension rows, shared with
- * the API side so the two could not disagree about which row is an account's current one. Those
- * rows belong to whoever operates metering now, and the entitlements port answers per account
- * rather than in bulk — so the reader is a parameter, and ABSENT means NO ACCOUNT IS PARKED:
- * every enabled mailbox syncs, which is a self-hosted install's truth and the fail-open
- * direction, since a missing reader can only sync more and never drop a customer.
+ * Which accounts the roster must skip — composed by the host, absent on a deployment that meters
+ * nothing. It used to be one query over this database's own subscription and suspension rows, shared
+ * with the API side so the two could not disagree about which row is an account's current one. Those
+ * rows belong to whoever operates metering now, and the entitlements port answers per account rather
+ * than in bulk — so the reader is a parameter, and ABSENT means NO ACCOUNT IS PARKED: every enabled
+ * mailbox syncs, which is a self-hosted install's truth and the fail-open direction, since a missing
+ * reader can only sync more and never drop a customer.
  */
 export type ParkedAccountsReader =
   (accountIds: readonly string[], now: Date) => Promise<Set<string>>;
 
 /**
- * Every syncable mailbox in the selection: anything not soft-disabled
- * (status != 'disabled') whose account is not parked, oldest first so the
- * `maxMailboxes` cap truncates DETERMINISTICALLY (the same processes keep the same
- * mailboxes across restarts).
- *
- * A quarantined mailbox (status='error') IS returned — quarantine is a retry state, not a
- * terminal one; the worker's per-mailbox backoff decides when to try it again.
- *
- * The parking gate is {@link ParkedAccountsReader}, supplied by the host. Dropping an account
- * here is not destructive: `reconcileRoster` detaches its runtimes and leaves the rows alone, so
- * an account that comes back is straight on the next pass with nothing to migrate.
+ * Every syncable mailbox in the selection: anything not soft-disabled (`status != 'disabled'`) whose
+ * account is not parked, oldest first so the `maxMailboxes` cap truncates DETERMINISTICALLY (the same
+ * processes keep the same mailboxes across restarts). A quarantined mailbox (`status='error'`) IS
+ * returned — quarantine is a retry state, not a terminal one; the worker's per-mailbox backoff
+ * decides when to try it again. The parking gate is {@link ParkedAccountsReader}, supplied by the
+ * host. Dropping an account here is not destructive: `reconcileRoster` detaches its runtimes and
+ * leaves the rows alone, so an account that comes back is straight on the next pass with nothing to migrate.
  */
 export async function loadEnabledMailboxes(
   db: WorkerDb, selection: MailboxSelection = {}, now: Date = new Date(),
@@ -258,6 +243,8 @@ export async function loadEnabledMailboxes(
       id: mailboxes.id, accountId: mailboxes.accountId,
       provider: mailboxes.provider, address: mailboxes.address, status: mailboxes.status,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
+      // Mail 0104 — the VERB behind the stamp, in the same statement as the stamp.
+      takeoverIntent: mailboxes.takeoverIntent,
       disabledReason: mailboxes.disabledReason,
       organizerRole: mailboxes.organizerRole,
       organizedByKind: mailboxes.organizedByKind,
@@ -286,6 +273,8 @@ export async function loadEnabledMailboxes(
     .map((r) => ({
       accountId: r.accountId, mailboxId: r.id, provider: r.provider, address: r.address, status: r.status,
       takeoverAuthorizedAt: r.takeoverAuthorizedAt ?? null,
+      // COERCED, never trusted — `join` is the safe direction, as `reader` is below.
+      takeoverIntent: r.takeoverIntent === "takeover" ? "takeover" : "join",
       disabledReason: r.disabledReason ?? null,
       // COERCED, never trusted — see the field. `reader` is the safe direction.
       organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader",
@@ -336,6 +325,8 @@ export async function loadMailboxById(
 ): Promise<
   {
     accountId: string; status: string; takeoverAuthorizedAt: Date | null;
+    /** Mail 0104 — the VERB behind the stamp; the backstop runs the same gate the roster does. */
+    takeoverIntent: OrganizerIntent;
     disabledReason: string | null;
     /**
      * Mail 0090. The SALT of the request key's derivation, so the backstop derives the same key
@@ -358,6 +349,7 @@ export async function loadMailboxById(
     .select({
       accountId: mailboxes.accountId, status: mailboxes.status,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
+      takeoverIntent: mailboxes.takeoverIntent,
       disabledReason: mailboxes.disabledReason,
       organizerRole: mailboxes.organizerRole,
       releaseRequestedAt: mailboxes.releaseRequestedAt,
@@ -367,7 +359,11 @@ export async function loadMailboxById(
   const r = rows[0];
   if (!r) return null;
   // COERCED, `reader` on anything unrecognised — see `EnabledMailbox.organizerRole`.
-  return { ...r, organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader" };
+  return {
+    ...r,
+    organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader",
+    takeoverIntent: r.takeoverIntent === "takeover" ? "takeover" : "join",
+  };
 }
 
 /** The DISTINCT accounts of a mailbox set, in selection order (the per-account cron loop). */
@@ -430,18 +426,14 @@ export async function loadMailboxCreds(
   const imap = await toTransport(imapRow, "imap", keyProvider, makeFetcher);
 
   const smtpRow = byTransport.get("smtp");
-  // ── AN OAUTH MAILBOX HAS NO `smtp` ROW, AND IT STILL HAS A SUBMISSION ENDPOINT ─────────────
-  //
-  // One refresh token covers both transports, so the connect flow stores no second row and the
-  // submission host/port/secure live in the imap row's `meta.smtp`. Returning `undefined` for
-  // `smtp` here — which is what this did — told every caller "this mailbox cannot submit", and the
-  // one caller that believed it was the `SIZE` back-fill: an oauth mailbox was reported as having
-  // no SMTP credentials and therefore never learned what its server accepts, on ANY host.
-  //
-  // The `auth` handed back is `imap.auth` ITSELF, not a second assembly of it: the same token
-  // callback, so the same per-mailbox access-token cache and the same rotated-refresh-token write.
-  // This is `makeSendAdapter`'s resolution on the API host, and the coordinates come from the
-  // shared `oauthSmtpEndpoint` so the two cannot drift about a default port.
+  // An oauth mailbox has no `smtp` row, and it still has a submission endpoint. One refresh token
+  // covers both transports, so the connect flow stores no second row and the submission
+  // host/port/secure live in the imap row's `meta.smtp`. Returning `undefined` for `smtp` — which is
+  // what this did — told every caller "this mailbox cannot submit", and the one caller that believed
+  // it was the `SIZE` back-fill: an oauth mailbox was reported as having no SMTP credentials and never
+  // learned what its server accepts, on ANY host. The `auth` handed back is `imap.auth` ITSELF, not a
+  // second assembly of it (same token callback, same access-token cache, same rotated-refresh write) —
+  // `makeSendAdapter`'s resolution on the API host, with coordinates from the shared `oauthSmtpEndpoint`.
   const smtp = smtpRow
     ? await toTransport(smtpRow, "smtp", keyProvider, makeFetcher)
     : oauthSmtpFor(imapRow.meta, imap);
@@ -509,21 +501,14 @@ export async function bootstrapEnvCreds(
   }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   WHY A MAILBOX FAILED (mail migration 0023)
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   `status` used to be the ENTIRE record of a failure. In one disk-full incident the fault
-   quarantined a real production mailbox and the only thing anyone could read afterwards was
-   `status='error'` — the diagnostic lived in the worker's memory and in a log line, and the
-   process had since restarted. Settings → Mailboxes said "Sync failed" and the admin console's
-   `lastError` was a hardcoded `null` with a comment apologising for it.
-
-   These two functions are now the ONLY way the worker writes `mailboxes.status`. The former
-   `setMailboxStatus(db, id, status)` is deliberately gone rather than kept beside them: a
-   generic status setter is a call site that can flip a mailbox to `error` and forget the
-   reason, and the whole point of this slice is that such a call site should not exist.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/* Why a mailbox failed (mail 0023). `status` used to be the ENTIRE record of a failure. In one
+   disk-full incident the fault quarantined a real production mailbox and the only thing anyone could
+   read afterwards was `status='error'` — the diagnostic lived in the worker's memory and a log line,
+   and the process had since restarted; Settings said "Sync failed" and the admin console's
+   `lastError` was a hardcoded `null` with a comment apologising. These two functions are now the
+   ONLY way the worker writes `mailboxes.status`. The former `setMailboxStatus(db, id, status)` is
+   deliberately gone: a generic status setter is a call site that can flip a mailbox to `error` and
+   forget the reason, and the whole point of this slice is that such a call site should not exist. */
 
 /**
  * The failure taxonomy is defined ONCE, in `@trafficflow/db` beside the column it constrains
@@ -534,125 +519,22 @@ export async function bootstrapEnvCreds(
 import type { MailboxErrorCode } from "@trafficflow/db";
 export type { MailboxErrorCode };
 
+/**
+ * The evidence sets and the `error_detail` allowlist moved to `@trafficflow/db` for one reason:
+ * the ADMIN PROJECTION has to ask the same set the write door asks, and a set that lives in the
+ * worker is unreachable from `@trafficflow/services`. Classification stays here — which errno
+ * means `connect` is IMAP judgement — and re-exports keep this module's importers unchanged.
+ */
+import {
+  CONNECT_ERRNOS, SERVER_UNAVAILABLE_CODES, SERVER_UNAVAILABLE_RESPONSE_CODES,
+  TIMEOUT_ERRNOS, STORAGE_SQLSTATES, CERT_CODES,
+  MAILBOX_ERROR_DETAIL_MAX, MAILBOX_ERROR_DETAIL_TOKENS, isSafeMailboxErrorDetail,
+  staffChannelValue,
+} from "@trafficflow/db";
+export { MAILBOX_ERROR_DETAIL_MAX, MAILBOX_ERROR_DETAIL_TOKENS, isSafeMailboxErrorDetail };
+
 /** Where the throw came from. It decides only the FALLBACK, never a positive classification. */
 export type MailboxErrorPhase = "attach" | "sync";
-
-const CONNECT_ERRNOS: ReadonlySet<string> = new Set([
-  "ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH", "EHOSTDOWN", "ENETUNREACH", "ENETDOWN",
-  "ECONNRESET", "EPIPE", "EAI_AGAIN", "EADDRNOTAVAIL",
-]);
-
-/* ── THE MAIL SERVER IS NOT AVAILABLE, WHICH IS NOT A REJECTED PASSWORD ─────────────────────
-
-   Two sets, one per channel, because a provider that will not serve us says so in two different
-   places and the worker recognised neither.
-
-   A provider at its per-account connection cap answers `* BYE [UNAVAILABLE] Maximum number of
-   connections…` and closes. `serverBye` (`imapflow@1.5.0`, `imap-flow.js:1553-1566`) keeps only
-   the TEXT attributes of that reply as `byeReason` — a bracket atom is a SECTION, not TEXT — so
-   THE BRACKET ATOM NEVER BECOMES `serverResponseCode` on this shape. The pending LOGIN is
-   rejected by `createNoConnectionError` (`:1987-1994`) carrying `code` and nothing else, and
-   `commands/login.js:38` then stamps `authenticationFailed = true` onto whatever it caught.
-
-   That is why the fix is BOTH sets rather than the response code alone: reordering the response-
-   code probe fixes the tagged `A1 NO [LIMIT] …` variant and leaves the commoner one untouched.
-
-   NEITHER SET WIDENS WHAT CAN BE STORED. Every member below is already in {@link IMAPFLOW_CODES}
-   or {@link IMAP_RESPONSE_CODES}, so all of them were already legal `error_detail` values while
-   being unclassifiable — the failure had a name in the row and no name in the taxonomy. They are
-   spread into {@link MAILBOX_ERROR_DETAIL_TOKENS} anyway, so that Set's stated coupling ("nothing
-   becomes storable without appearing in one of these lists") keeps being literally true. */
-
-/**
- * The INSTALLED client's own words for a server that did not serve us. Not errnos — hence a set
- * of their own rather than four more members of {@link CONNECT_ERRNOS}.
- *
- * `NoConnection` (`imap-flow.js:1987-1994`, and `:486`/`:628`/`:3756`), `EConnectionClosed`
- * (`:636`/`:3097`) and the two `ClosedAfterConnect*` (`:2032`, a close landing while the connect
- * promise is still pending — that one never reaches the LOGIN catch, so it carries no flag and
- * used to fall all the way to the phase fallback and report `unknown`).
- *
- * `ETHROTTLE` (`:862`) is the fifth for a reason worth stating: it is set when a server answers
- * a tagged failure with *"Request is throttled. Suggested Backoff Time: N"* — Office 365's rate
- * limit — and that handler is the GENERIC tagged-response path, so it fires for LOGIN like any
- * other command and `login.js` stamps the flag on it too. Leaving it out would knowingly ship the
- * identical sentence about the identical mechanism, one provider over.
- *
- * The throttle carries `err.throttleReset`, the server's own suggested backoff, and this worker's
- * retry ladder ignores it. That is a real gap and it is not this one: the ladder lives in the
- * worker's main loop, not here.
- */
-const SERVER_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
-  "NoConnection", "EConnectionClosed", "ClosedAfterConnectText", "ClosedAfterConnectTLS",
-  "ETHROTTLE",
-]);
-
-/**
- * RFC 5530 response codes that mean THE SERVER WILL NOT SERVE US RIGHT NOW.
- *
- * `UNAVAILABLE` is "a subsystem is temporarily down"; `LIMIT` is "an implementation limit was
- * reached", which is what a per-account connection cap is. A server that answers either has
- * received and parsed our LOGIN, so neither is a statement about credentials.
- *
- * CLOSED AND NAMED, never "an atom that looks like a refusal". The forged-token rule applies to reading a
- * server-chosen token as much as to storing one: an atom this set does not contain must fall
- * THROUGH to the evidence below it, so a hostile endpoint answering `NO [SECRETPASSWORD123]`
- * cannot suppress the auth verdict by handing us a word we do not know.
- */
-const SERVER_UNAVAILABLE_RESPONSE_CODES: ReadonlySet<string> = new Set(["UNAVAILABLE", "LIMIT"]);
-
-/**
- * OAuth token-refresh codes that are safe to STORE in `error_detail`.
- *
- * Only `OAUTH_INVALID_GRANT` — the re-auth verdict a user acts on ("reconnect this mailbox"). It is
- * a constant this codebase chose, not a server-supplied atom, so echoing it back to the account
- * owner tells them what happened without letting anyone else pick the words (the whole point of the
- * closed allowlist below). The provider-unavailable and config-missing codes are deliberately NOT
- * here: their `error_code` (`connect`/`unknown`) is what a human acts on, and a null detail is a
- * fine answer.
- */
-const OAUTH_ERROR_DETAIL_CODES: ReadonlySet<string> = new Set(["OAUTH_INVALID_GRANT"]);
-
-/**
- * Timeouts — Node's errnos AND the ones the INSTALLED IMAP client actually emits.
- *
- * The four imapflow codes were missing, and their absence was not theoretical: `imapflow@1.5.0`
- * sets `err.code = 'CONNECT_TIMEOUT'` (imap-flow.js:1853), `'GREETING_TIMEOUT'` (:1879),
- * `'UPGRADE_TIMEOUT'` (:1330) and `'ETIMEOUT'` (:967) — which are, between them, EVERY way a
- * provider that accepts the TCP connection and then stops answering is reported. All four were
- * classified `unknown` (or `sync`), so the single most common shape of a flaky provider was
- * indistinguishable from "we have no idea", and the UI could not say "the server did not
- * answer in time" about the failure it says it most.
- */
-const TIMEOUT_ERRNOS: ReadonlySet<string> = new Set([
-  "ETIMEDOUT", "ESOCKETTIMEDOUT", "ERR_SOCKET_CONNECTION_TIMEOUT", "UND_ERR_CONNECT_TIMEOUT",
-  "UND_ERR_HEADERS_TIMEOUT", "57014",   // 57014 = query_canceled, i.e. our own statement_timeout
-  // imapflow@1.5.0's own timeout constants — see the note above.
-  "CONNECT_TIMEOUT", "GREETING_TIMEOUT", "UPGRADE_TIMEOUT", "ETIMEOUT",
-]);
-
-/**
- * SQLSTATEs that mean OUR storage failed, not the customer's mailbox.
- *
- * This is the class that produced the outage this slice comes from: Postgres answered
- * `53100 disk_full`, every ingest threw, and each mailbox in turn hit `maxSyncFailures` and was
- * quarantined — so the database being full was rendered to the user as "your mailbox is
- * broken". A distinct code is what lets the UI say the true thing instead.
- */
-const STORAGE_SQLSTATES: ReadonlySet<string> = new Set([
-  "53100",  // disk_full
-  "53200",  // out_of_memory
-  "54000",  // program_limit_exceeded (a row that cannot be stored at all)
-  "22001",  // string_data_right_truncation
-  "23514",  // check_violation — `message_bodies_html_cap` is the one that fires here
-]);
-
-/** The OpenSSL / Node verification constants imapflow surfaces verbatim. */
-const CERT_CODES: ReadonlySet<string> = new Set([
-  "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID", "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "ERR_TLS_CERT_ALTNAME_INVALID", "EPROTO",
-]);
 
 function isTlsCode(code: string): boolean {
   return code.startsWith("ERR_TLS_") || code.startsWith("ERR_SSL_") || CERT_CODES.has(code);
@@ -675,61 +557,14 @@ const responseCodeOf = (err: unknown): string =>
     ? String((err as ErrorShape).serverResponseCode) : "";
 
 /**
- * Classify a throw into {@link MailboxErrorCode}.
- *
- * ── IT MAY READ THE MESSAGE. IT MAY NOT STORE IT. ───────────────────────────────────────
- *
- * Everything structural is preferred — `err.code`, imapflow's `authenticationFailed` and
- * `serverResponseCode` — and one narrow message probe remains for authentication, because a
- * rejected password is the single most common real failure and several IMAP servers report it
- * with no structured marker at all. That probe is safe precisely because its OUTPUT is a
- * seven-value enum: the message informs the classification and never leaves this function.
- * {@link mailboxErrorDetail} is where the storage rule lives.
- *
- * ── WHERE THE `authenticationFailed` FLAG SITS IS THE WHOLE OF THE RECLASSIFICATION ──────
- *
- * It used to be read FIRST, and it is the weakest evidence in this function. `imapflow@1.5.0`
- * sets it in the `catch` around the LOGIN command, unconditionally and after it has already
- * assigned `serverResponseCode` (`lib/commands/login.js:33-41`; identically in
- * `lib/commands/authenticate.js:12-23` for the SASL/OAuth path). It therefore means "the LOGIN
- * command did not succeed" — NOT "the server rejected these credentials" — and that same `catch`
- * swallows a socket the server hung up on, a connection the client had already closed, a server
- * at its per-account connection cap, and a provider throttling us.
- *
- * Reading it first made every structural probe below it unreachable for LOGIN errors, and a login
- * error is what `attach()` sees. A provider having a busy minute was rendered to the mailbox's
- * owner as *"the mailbox rejected the password"* — and the worker's main loop quarantines an
- * attach failure on its FIRST occurrence, so it took one refused dial, not three.
- *
- * So the two NAMED refusal sets and the errno probe now sit above the flag, and the flag keeps
- * exactly the job it can do honestly: a server answering a bare `A1 NO Login failed.` with no
- * bracket atom and no errno leaves it as the only evidence there is, and `auth` is then right.
- *
- * ── WHAT DID *NOT* MOVE, AND WHY THAT IS NOT TIDINESS DEFERRED ──────────────────────────
- *
- * The `AUTHENTICATIONFAILED` / `AUTHORIZATIONFAILED` / `OVERQUOTA` probe stays BELOW the flag,
- * deliberately, so that this slice reclassifies only what it names.
- *
- * The two auth atoms are inert either way — they answer `auth` and so does the flag. `OVERQUOTA`
- * is not: promoting it would move a LOGIN answered `NO [OVERQUOTA]` from `auth` to `storage`, and
- * the copy for `storage` says ohmail could not store the mail and *"this one is on us"*. That
- * would have this worker apologise for a full mailbox on somebody else's server — a false claim
- * shipped by the deploy that fixes a false claim. Left alone, that case keeps whatever answer it
- * had, and `OVERQUOTA` from a non-login command keeps reaching `storage` exactly as before.
- *
- * The errno probe DID move above the flag as a block. Three of its four arms are the same defect
- * as the one this slice is about — a LOGIN that timed out, or died on TLS, is not a rejected
- * password either — and the fourth, {@link STORAGE_SQLSTATES}, is inert here for a structural
- * reason: a SQLSTATE arrives on a database driver's error and `authenticationFailed` is stamped
- * by an IMAP client, so no value can carry both.
- *
- * ── AND THE ASYMMETRY WITH `mailboxErrorDetail`, WHICH IS ALSO DELIBERATE ────────────────
- *
- * Reading a server-chosen token to CLASSIFY is safe because the output is a closed enum; STORING
- * one is not, which is why {@link MAILBOX_ERROR_DETAIL_TOKENS} exists. Both refusal sets above
- * are closed and named for the same reason in the other direction: an atom or code they do not
- * contain falls THROUGH rather than being swallowed, so no server can talk this function out of
- * an `auth` verdict by handing it a word nobody knows.
+ * Classify a throw into {@link MailboxErrorCode}. IT MAY READ THE MESSAGE. IT MAY NOT STORE IT.
+ * Everything structural is preferred (`err.code`, imapflow's `authenticationFailed` and
+ * `serverResponseCode`) and one narrow message probe remains for authentication, because a rejected
+ * password is the commonest real failure and several servers report it with no structured marker; that
+ * probe is safe because its OUTPUT is a seven-value enum ({@link mailboxErrorDetail} is where the
+ * storage rule lives). The `authenticationFailed` flag now sits BELOW the two named refusal sets and
+ * the errno probe, not above them: imapflow stamps it in the LOGIN catch unconditionally, so it means
+ * "LOGIN did not succeed", not "credentials rejected", and reading it first rendered a provider's busy minute as "the mailbox rejected the password" and quarantined on the first dial. `OVERQUOTA` stays below it, deliberately.
  */
 export function classifyMailboxError(err: unknown, phase: MailboxErrorPhase): MailboxErrorCode {
   const e = err as ErrorShape | null;
@@ -774,158 +609,15 @@ export function classifyMailboxError(err: unknown, phase: MailboxErrorPhase): Ma
   return phase === "sync" ? "sync" : "unknown";
 }
 
-/** Bound on `mailboxes.error_detail`. Every allowlist member below is far shorter. */
-export const MAILBOX_ERROR_DETAIL_MAX = 200;
-
-/* ── THE CLOSED ALLOWLIST ─────────────────────────────────────────────────────────────────
-
-   This replaced a SHAPE test (`/^[A-Z][A-Z0-9_-]{0,63}$|^[0-9A-Z]{5}$/`), and the difference
-   is the whole finding. A shape test asks "does this look like a response code"; it never asks
-   WHO CHOSE IT. imapflow derives `err.serverResponseCode` by uppercasing the first bracket atom
-   of the server's own reply (`tools.js:272-281`, `getStatusCode`), so a hostile endpoint that
-   accepts LOGIN and answers
-
-       * NO [SECRETPASSWORD123] authentication failed
-
-   hands us `serverResponseCode = "SECRETPASSWORD123"`. It passed the regex, and it landed in a
-   column the account owner reads in Settings → Mailboxes AND the admin console reads as
-   `lastError` — an account-isolation breach chosen entirely by an attacker who controls a mail server the
-   user was tricked into adding, or by any provider having a bad day with a verbose NO.
-
-   Membership is the fix, because membership cannot be forged: a token is storable only if it is
-   a name WE already knew. Anything else is NULL, and NULL is a perfectly good answer —
-   `error_code` carries the part a human acts on. */
-
 /**
- * IMAP response codes: RFC 3501 §7.1, RFC 5530 (the enhanced set), and the extension codes a
- * CONDSTORE/QRESYNC/quota-aware client can actually be handed.
- *
- * Nothing here is free-text. Each is a protocol constant, so echoing one back to the mailbox
- * owner tells them what the server said WITHOUT letting the server choose the words.
- */
-const IMAP_RESPONSE_CODES: readonly string[] = [
-  // RFC 3501 §7.1
-  "ALERT", "BADCHARSET", "CAPABILITY", "PARSE", "PERMANENTFLAGS", "READ-ONLY", "READ-WRITE",
-  "TRYCREATE", "UIDNEXT", "UIDVALIDITY", "UNSEEN",
-  // RFC 5530 — the ones that make a failure legible
-  "UNAVAILABLE", "AUTHENTICATIONFAILED", "AUTHORIZATIONFAILED", "EXPIRED", "PRIVACYREQUIRED",
-  "CONTACTADMIN", "NOPERM", "INUSE", "EXPUNGEISSUED", "CORRUPTION", "SERVERBUG", "CLIENTBUG",
-  "CANNOT", "LIMIT", "OVERQUOTA", "ALREADYEXISTS", "NONEXISTENT",
-  // Extensions this client speaks or can be answered with
-  "UIDNOTSTICKY", "APPENDUID", "COPYUID",                    // RFC 4315
-  "CLOSED", "MODIFIED", "NOMODSEQ", "HIGHESTMODSEQ",         // RFC 7162 (CONDSTORE/QRESYNC)
-  "COMPRESSIONACTIVE",                                       // RFC 4978
-  "USEATTR", "HASCHILDREN",                                  // RFC 6154 / RFC 5258
-  "METADATA", "TOOMANY", "LONGENTRIES", "MAXSIZE", "NOPRIVATE", // RFC 5464
-  "UNKNOWN-CTE", "TOOBIG", "REFERRAL", "NOTSAVED",           // RFC 3516 / 4469 / 2193 / 5182
-  "NOTIFICATIONOVERFLOW", "BADEVENT",                        // RFC 5465
-  "MAILBOXID",                                               // RFC 8474
-  "WEBALERT",                                                // Gmail; the atom only, never its URL
-];
-
-/**
- * imapflow@1.5.0's OWN `err.code` constants, read out of the installed package rather than
- * remembered. Grepped from `lib/imap-flow.js`; the timeout four also live in
- * {@link TIMEOUT_ERRNOS} because they carry a classification as well as a detail.
- */
-const IMAPFLOW_CODES: readonly string[] = [
-  "NoConnection", "StateLogout", "EConnectionClosed", "ClosedAfterConnectTLS",
-  "ClosedAfterConnectText", "InvalidResponse", "ETHROTTLE", "LockTimeout", "ProxyError",
-  "STARTTLS_INJECTION",
-];
-
-/**
- * TLS/OpenSSL constants, ENUMERATED rather than prefix-matched.
- *
- * {@link isTlsCode} still uses `startsWith("ERR_TLS_")` for CLASSIFICATION, and that is fine —
- * its output is a seven-value enum. Storage may not use a prefix rule: a prefix is a shape, and
- * a shape is what the forged-token finding walked through. An OpenSSL constant we did not list stores NULL and still
- * reports `error_code: "tls"`.
- */
-const TLS_DETAIL_CODES: readonly string[] = [
-  "ERR_TLS_CERT_ALTNAME_INVALID", "ERR_TLS_HANDSHAKE_TIMEOUT", "ERR_TLS_INVALID_PROTOCOL_VERSION",
-  "ERR_TLS_PROTOCOL_VERSION_CONFLICT", "ERR_TLS_REQUIRED_SERVER_NAME", "ERR_TLS_SNI_FROM_IP",
-  "ERR_TLS_DH_PARAM_SIZE", "ERR_TLS_RENEGOTIATION_DISABLED", "ERR_TLS_INVALID_CONTEXT",
-  "ERR_TLS_INVALID_STATE", "ERR_TLS_SESSION_ATTACK",
-  "ERR_SSL_WRONG_VERSION_NUMBER", "ERR_SSL_UNEXPECTED_MESSAGE", "ERR_SSL_NO_PROTOCOLS_AVAILABLE",
-  "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION", "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
-  "ERR_SSL_PACKET_LENGTH_TOO_LONG", "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
-  "ERR_SSL_CERTIFICATE_VERIFY_FAILED", "ERR_SSL_UNSUPPORTED_PROTOCOL", "ERR_SSL_BAD_LENGTH",
-];
-
-/** Node errnos that are not connect/timeout but still name a real, non-secret condition. */
-const NODE_ERRNOS: readonly string[] = [
-  "EACCES", "EPERM", "EADDRINUSE", "ECONNABORTED", "EMFILE", "ENFILE", "ENOMEM", "ENOSPC",
-  "EIO", "ERR_STREAM_PREMATURE_CLOSE", "ERR_SOCKET_CLOSED", "ABORT_ERR",
-];
-
-/**
- * SQLSTATEs. OUR storage's vocabulary, not the customer's mailbox — and the reason the old
- * `^[0-9A-Z]{5}$` alternative existed at all. Enumerated for the same reason as the TLS set:
- * five uppercase characters is a shape, and `53100` is a fact.
- */
-const SQLSTATE_DETAILS: readonly string[] = [
-  "53100", "53200", "54000", "22001", "23514",   // the storage set, verbatim
-  "23503", "23505", "22P02", "42P01", "42703",   // FK / unique / bad text / missing relation or column
-  "40001", "40P01", "57014", "57P01", "57P03",   // serialization, deadlock, cancel, admin shutdown, starting up
-  "08000", "08003", "08006", "08P01", "53300",   // connection family + too_many_connections
-];
-
-/**
- * THE ONLY VALUES `mailboxes.error_detail` MAY HOLD. Closed, by membership.
- *
- * Frozen at module load from the sets the classifier already keeps, so the taxonomy and the
- * storage rule cannot drift apart: adding an errno to {@link CONNECT_ERRNOS} makes it storable
- * in the same commit, and nothing becomes storable without appearing in one of these lists.
- */
-export const MAILBOX_ERROR_DETAIL_TOKENS: ReadonlySet<string> = new Set<string>([
-  ...IMAP_RESPONSE_CODES,
-  ...IMAPFLOW_CODES,
-  ...TLS_DETAIL_CODES,
-  ...NODE_ERRNOS,
-  ...SQLSTATE_DETAILS,
-  ...CONNECT_ERRNOS,
-  ...TIMEOUT_ERRNOS,
-  ...STORAGE_SQLSTATES,
-  ...CERT_CODES,
-  // The reclassification's two sets. Every member is ALREADY reachable through the two lists above them
-  // — that is the finding, not an oversight: the tokens were storable while being unclassifiable
-  // — so these two spreads widen nothing. They are here so the sentence above stays literally
-  // true rather than true by coincidence, and so the next classifier set is added the same way.
-  ...SERVER_UNAVAILABLE_CODES,
-  ...SERVER_UNAVAILABLE_RESPONSE_CODES,
-  // OAuth's one storable detail. Added WITH the classifier arm that emits it (see
-  // classifyMailboxError's OAUTH_INVALID_GRANT → 'auth'), so the taxonomy and the storage rule stay
-  // in step — the same discipline every set above this line follows.
-  ...OAUTH_ERROR_DETAIL_CODES,
-]);
-
-/**
- * Is this a value `mailboxes.error_detail` is allowed to hold?
- *
- * Exported because it is the guard at BOTH ends of the pipe: {@link mailboxErrorDetail} builds
- * with it, and {@link markMailboxFailed} re-checks with it at the write site — so "the single
- * safe write site" is enforced rather than merely conventional. A caller that hands
- * `{ detail: err.message }` typechecks (the parameter is a `string | null`) and stores NULL.
- */
-export function isSafeMailboxErrorDetail(value: unknown): value is string {
-  return typeof value === "string" && MAILBOX_ERROR_DETAIL_TOKENS.has(value);
-}
-
-/**
- * The ONLY value that may be written to `mailboxes.error_detail`.
- *
- * ── NEVER `err.message`, `err.stack`, OR SERVER FREE-TEXT ────────────────────────────────
- *
- * This column is read by the account's own user AND by the admin console, so what goes in it
- * is an account-isolation question before it is a usability one. A throw out of `runSyncCycle` can be a
- * parse or constraint error that embeds RFC822 header bytes — a sender, a subject — and a
- * failed login's server text can echo the login argument. `packages/core/src/log.ts` already
- * settled the same question for every log line ("`err` is serialised to CLASS + CODE, never
- * message + stack"); this inherits that contract rather than inventing a weaker one.
- *
- * The detail is a MEMBERSHIP test against {@link MAILBOX_ERROR_DETAIL_TOKENS}, never a shape
- * test — read the block above that Set for the attacker-chosen token a shape test admits.
+ * The ONLY value that may be written to `mailboxes.error_detail`. NEVER `err.message`, `err.stack`,
+ * or server free-text. This column is read by the account's own user AND the admin console, so what
+ * goes in it is an account-isolation question before a usability one: a throw out of `runSyncCycle`
+ * can embed RFC822 header bytes (a sender, a subject), and a failed login's server text can echo the
+ * login argument. `packages/core/src/log.ts` already settled the same question for every log line
+ * (`err` serialised to CLASS + CODE, never message + stack); this inherits that contract. The detail
+ * is a MEMBERSHIP test against {@link MAILBOX_ERROR_DETAIL_TOKENS}, never a shape test — see the
+ * block above that Set for the attacker-chosen token a shape test admits.
  */
 export function mailboxErrorDetail(err: unknown): string | null {
   for (const candidate of [responseCodeOf(err), codeOf(err)]) {
@@ -934,36 +626,16 @@ export function mailboxErrorDetail(err: unknown): string | null {
   return null;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   FENCING THE TWO LIFECYCLE WRITES
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   Both writes used to be `WHERE id = ?` and nothing else — last-writer-wins across two
-   boundaries the worker does not control:
-
-   · **A LEADER HANDOFF.** Worker A loses its session advisory lock with an attach or a sync
-     still in flight; worker B acquires the shard and starts serving the same mailbox. A's write
-     lands afterwards, and completion ORDER decides the persisted truth. B can record a verified
-     recovery while A then records the failure it saw four minutes ago, or the reverse: a healthy
-     mailbox quarantined, or a dead one reported connected.
-
-   · **THE USER'S OWN DISCONNECT.** A quarantined mailbox begins a long recovery from an `error`
-     snapshot; the user disconnects it (`status='disabled'`, credentials deleted); the recovery
-     lands, writes `connected`, and the mailbox is back on the roster — `loadEnabledMailboxes`
-     selects everything that is not `disabled`. The user's most consequential action on this
-     screen, silently undone by a write that started before it.
-
-   Both are closed with a predicate IN the statement rather than a check before it:
-
-   · `status <> 'disabled'` — the worker never has authority to un-disable. Only the account's
-     own PATCH re-enables a mailbox.
-   · an EXISTS against `worker_heartbeats` for (shard, instance, leader) — the leader epoch,
-     already durable and already claimed atomically by `writeHeartbeat` on takeover. This is the
-     same guard `refreshHeartbeat` uses to refuse a surrendered leader's late pulse; reusing it
-     means there is one definition of "am I still the leader of this shard", not two.
-
-   `.returning()` rather than a driver-specific row count, so "was I fenced out?" is answerable
-   through PGlite and postgres-js alike, and the caller can log it. */
+/* Fencing the two lifecycle writes. Both used to be `WHERE id = ?` and nothing else —
+   last-writer-wins across two boundaries the worker does not control. A LEADER HANDOFF: worker A
+   loses its lock mid-flight, worker B acquires the shard, and A's late write lands, so completion
+   ORDER decides the persisted truth (a healthy mailbox quarantined, or a dead one reported
+   connected). THE USER'S OWN DISCONNECT: a recovery from an `error` snapshot lands after the user
+   disconnected the mailbox and writes `connected`, putting it back on the roster — the user's most
+   consequential action silently undone. Both are closed with a predicate IN the statement:
+   `status <> 'disabled'` (the worker never has authority to un-disable) and an EXISTS against
+   `worker_heartbeats` for (shard, instance, leader) — the leader epoch, one definition, not two.
+   `.returning()` rather than a driver row count, so "was I fenced out?" is answerable everywhere. */
 
 /** Who is claiming to write: this shard, and this process. Absent ⇒ unfenced (tests, backstops). */
 export interface LeaderFence {
@@ -992,38 +664,14 @@ function lifecycleWhere(mailboxId: string, fence?: LeaderFence): SQL {
 }
 
 /**
- * RUN A FENCED LIFECYCLE WRITE — the row is CLAIMED first, and only then is the fence asked.
- *
- * ── WHY THE PREDICATE ALONE WAS NOT ENOUGH ────────────────────────────────────────────────
- *
- * `leaderStillOurs` is an UNCORRELATED `EXISTS` over another table, and READ COMMITTED has an
- * explicit rule about what such a subquery sees when the statement carrying it has to WAIT: an
- * updating command *"can see the effects of concurrent updating commands on the same rows it is
- * trying to update, but it does not see effects of those commands on other rows in the
- * database."* `worker_heartbeats` is another row. So a single fenced `UPDATE` that blocks on the
- * mailbox row is answered — whether the planner hoists the subquery to an `InitPlan` or leaves
- * it as a qual for EvalPlanQual to re-evaluate — with the LEADERSHIP THE STATEMENT BEGAN WITH.
- *
- * That window is not exotic; it is the shape of every handoff. Worker A issues its write, blocks
- * behind somebody else's lock on that mailbox row, worker B takes the shard over and commits, the
- * lock goes, and A's write lands anyway. The fence FAILS OPEN in exactly the case it exists for.
- * Measured against real Postgres by a suite that drives the interleave with a parked lock —
- * and had A quarantine a mailbox it no longer led.
- *
- * ── THE FIX IS TO MOVE THE WAIT OFF THE FENCED STATEMENT ──────────────────────────────────
- *
- * One transaction, two statements. The first is a bare `SELECT … FOR UPDATE` that asserts nothing
- * — its whole job is to absorb the lock wait and come back holding the row. The second is the
- * fenced `UPDATE`, and in READ COMMITTED it takes a FRESH snapshot at its own start: after the
- * wait, so it sees a takeover that committed during it. It cannot block, because we already hold
- * the only row it names, so there is no second wait for a stale snapshot to hide behind.
- *
- * A takeover that commits after that second snapshot is a different thing and is not a defect:
- * the leader was the leader at the moment it decided. That race is inherent to a lease and is the
- * one the heartbeat's own staleness window covers.
- *
- * UNFENCED CALLERS ARE UNCHANGED — one statement, no transaction. Tests and backstops pass no
- * fence, and there is nothing for them to be raced out of.
+ * Run a fenced lifecycle write — the row is CLAIMED first, and only then is the fence asked.
+ * `leaderStillOurs` is an UNCORRELATED `EXISTS` over another table, and READ COMMITTED answers such a
+ * subquery, when the statement carrying it has to WAIT, with the leadership the statement BEGAN with —
+ * `worker_heartbeats` is another row. So a single fenced `UPDATE` that blocks on the mailbox row is
+ * answered with stale leadership: the fence FAILS OPEN in exactly the handover it exists for (measured
+ * against real Postgres). The fix is one transaction, two statements: a bare `SELECT … FOR UPDATE`
+ * absorbs the lock wait and asserts nothing, then the fenced `UPDATE` takes a FRESH snapshot at its
+ * own start (after the wait) and cannot block, because we already hold the only row it names. Unfenced callers are unchanged — one statement, no transaction, nothing to be raced out of.
  */
 async function applyFenced(
   db: WorkerDb, mailboxId: string, fence: LeaderFence | undefined,
@@ -1058,36 +706,14 @@ async function applyFenced(
 }
 
 /**
- * A PROMOTION RE-OPENS EVERY OWED RETRO WALK ON THE ACCOUNT — one statement, at the event.
- *
- * `rules.retro_cursor` is the resume point of "apply this rule to existing mail": the last
- * `messages.id` of the last committed page. `messages.id` is a RANDOM uuid, so that cursor is not
- * a point in time — it is a fence across the id space, and it is only trustworthy for the set of
- * mailboxes the walk was allowed to look at when it was written.
- *
- * A promotion changes that set. `rule-retro.ts`'s candidate query skips every mailbox this install
- * does not organize, so a walk that ran while this mailbox was a READER laid its fence down having
- * never offered a single row of it. Promote the mailbox and the rows become candidates — but the
- * ones sorting BELOW the fence are already behind the walk, so the next pass reads a short page as
- * the end of the backlog, stamps `retro_done_at`, and the older half of that mailbox's matching
- * mail is never filed. Nothing errors and nobody is told.
- *
- * So the fence comes down HERE, where the set actually changes, rather than being second-guessed
- * by the pass: at this moment we know exactly which mailbox joined and that every owed walk on its
- * account predates it. `retro_requested_at IS NOT NULL AND retro_done_at IS NULL` is the one
- * definition of owed work in the system (`schema-mail.ts`), and a rule that is not owed has no
- * walk to re-open — a finished rule's cursor is spent and stays as it is.
- *
- * The account comes from the mailbox in the statement itself: one round trip, and no window in
- * which a caller could pass an account that no longer owns this mailbox.
- *
- * ── WHAT IS DELIBERATELY NOT HERE: CONNECTING A NEW MAILBOX ────────────────────────────────
- *
- * A mailbox created after the rule (`organizer_role` defaults to `'organizer'`) also joins the
- * candidate set, and its below-fence mail is skipped in exactly the same way — but its mail is
- * routed by that rule AT ARRIVAL, because ingest consults the rules for every mailbox this
- * install organizes. A promoted mailbox's existing mail is the case with no second chance: it
- * arrived while this install was a reader, which decides nothing.
+ * A promotion re-opens every owed retro walk on the account — one statement, at the event.
+ * `rules.retro_cursor` is the resume point of "apply this rule to existing mail" (the last committed
+ * page's `messages.id`), and `messages.id` is a RANDOM uuid, so that cursor is a fence across the id
+ * space, trustworthy only for the set of mailboxes the walk could see when it was written. A promotion
+ * changes that set: a walk that ran while this mailbox was a READER offered none of its rows, so the
+ * ones sorting BELOW the fence stay behind the walk and the next pass reads a short page as the end,
+ * stamps `retro_done_at`, and never files the older half. So the fence comes down HERE, where the set
+ * changes — `retro_requested_at IS NOT NULL AND retro_done_at IS NULL` is the one definition of owed work. A newly CONNECTED mailbox is deliberately not here: its mail is routed by the rule at arrival.
  */
 export async function clearOwedRetroFences(db: WorkerDb, mailboxId: string): Promise<void> {
   await db.update(rules)
@@ -1100,41 +726,14 @@ export async function clearOwedRetroFences(db: WorkerDb, mailboxId: string): Pro
 }
 
 /**
- * THE SAME FENCE, OVER THE MAIL-BEARING WRITES — `SyncDeps.fence` for one mailbox.
- *
- * `applyFenced` above covers the two mailbox LIFECYCLE writes; this covers everything
- * `runSyncCycle` persists — `messages` (and its instances), `mailbox_folders` cursors,
- * `change_log`, `folder_state`/`flag_state`, `message_failures`, `audit_log` — with the SAME
- * definition of leadership (`worker_heartbeats` naming this shard + instance with
- * `leader = true`) and the SAME two-statement shape, for the same EvalPlanQual reason spelled
- * out in the block above `applyFenced`:
- *
- *   1. a bare `SELECT … FOR UPDATE` on the MAILBOX row absorbs any lock wait and asserts
- *      nothing. The mailbox row is the anchor every fenced writer of this mailbox claims
- *      first, so two workers contending for one mailbox meet HERE — at a statement that is
- *      allowed to wait — and never at a fenced statement whose subquery would be answered
- *      from the snapshot it began with;
- *   2. the leadership check is its OWN statement after the claim. Under READ COMMITTED it
- *      takes a fresh snapshot at its own start — after the wait — so a takeover that
- *      committed while this transaction was parked is seen, and the whole group is refused
- *      with nothing written. A `SELECT` cannot block, so there is no second wait for a stale
- *      snapshot to hide behind.
- *
- * A takeover that commits AFTER that check, while the group's writes run, is the lease's
- * inherent race (the leader was the leader at the moment it decided) — the same residual
- * `applyFenced` documents and accepts.
- *
- * The row's DISABLED status is deliberately NOT part of this fence, unlike `lifecycleWhere`:
- * a refusal here is read by the worker as proof of lost shard leadership and quiesces the
- * whole instance, which is the right response to a heartbeat naming somebody else and the
- * wrong response to one mailbox being switched off. Disablement is enforced where it always
- * was — the roster excludes the mailbox, the organizer lease gate stands the worker down, and
- * the lifecycle fence refuses the un-disable. A mailbox row that has VANISHED does refuse
- * (its writes could only fail on foreign keys anyway).
- *
- * `lost` is the worker's synchronous lock-loss tripwire (`() => lockLost`): once the process
- * has observed losing the advisory lock it must not even open the transaction, because the
- * heartbeat row may still name it for the moment between the loss and the successor's claim.
+ * The same fence, over the mail-bearing writes — `SyncDeps.fence` for one mailbox. `applyFenced`
+ * covers the two LIFECYCLE writes; this covers everything `runSyncCycle` persists (`messages` and
+ * instances, folder cursors, `change_log`, `folder_state`/`flag_state`, `message_failures`,
+ * `audit_log`) with the SAME leadership definition and the SAME two-statement shape, for the same
+ * EvalPlanQual reason: a bare `SELECT … FOR UPDATE` on the MAILBOX row absorbs the lock wait (two
+ * workers contending for one mailbox meet HERE, at a statement allowed to wait), then the leadership
+ * check is its own statement with a fresh snapshot. The row's DISABLED status is deliberately NOT part
+ * of this fence, unlike `lifecycleWhere`: a refusal here quiesces the whole instance (the right response to a lost shard, the wrong one to one mailbox switched off). `lost` is the synchronous tripwire.
  */
 export function makeSyncWriteFence(
   db: WorkerDb, mailboxId: string, fence: LeaderFence, lost: () => boolean = () => false,
@@ -1160,17 +759,14 @@ export function makeSyncWriteFence(
       fn: (repo: DrizzleRepo) => Promise<T>,
     ): Promise<{ fenced: true } | { fenced: false; result: T }> {
       if (lost()) return { fenced: true };
-      // ── THE OTHER HALF OF THE SYNC LOOP'S DATABASE SURFACE ─────────────────────────────
-      //
-      // `SyncDeps.repo` is wrapped where the worker builds it; this is the seam that does not go
-      // through it — the fence's own `BEGIN`, its two guard statements, and the `COMMIT`. A
-      // connection that dies between the claim and the commit throws from HERE, and untagged it
-      // was indistinguishable from a mailbox fault: `rt.failures++`, and at `maxSyncFailures` a
-      // customer's row saying `status='error'` because our pooler dropped a connection.
-      //
-      // The callback's own throws are already tagged (it is handed a wrapped repo below) and the
-      // tag is idempotent, so a per-message `23505` still arrives as itself under one wrapper and
-      // still classifies to the message domain.
+      // The other half of the sync loop's database surface. `SyncDeps.repo` is wrapped where the
+      // worker builds it; this is the seam that does not go through it — the fence's own `BEGIN`, its
+      // two guard statements, and the `COMMIT`. A connection that dies between the claim and the
+      // commit throws from HERE, and untagged it was indistinguishable from a mailbox fault
+      // (`rt.failures++`, and at `maxSyncFailures` a customer's row saying `error` because our pooler
+      // dropped a connection). The callback's own throws are already tagged (it is handed a wrapped
+      // repo) and the tag is idempotent, so a per-message `23505` still arrives as itself under one
+      // wrapper and classifies to the message domain.
       return asDatabaseFault("fence.transaction", () => db.transaction(async (tx) => {
         const w = tx as unknown as WorkerDb;
         const held = await w.select({ id: mailboxes.id }).from(mailboxes)
@@ -1198,27 +794,14 @@ export function makeSyncWriteFence(
 }
 
 /**
- * Record that a mailbox is quarantined AND why — one statement, so `status` and its reason can
- * never disagree. Returns false when the write was FENCED OUT (see the block above): the row is
- * disabled, or this process is no longer the shard's leader.
- *
- * `failed_at` uses `COALESCE`, so it holds the start of the CURRENT outage: a mailbox failing
- * for three days reports three days rather than "just now, again" on every retry.
- * `retry_count` increments IN SQL for the same reason — it is the size of this outage, and it
- * must survive the worker restart that resets the in-memory backoff map. Those two counters
- * answer different questions ("how long has this been broken" vs "when do I retry next") and
- * are ALLOWED to disagree after a deploy; making the column mirror the map would tell a user
- * "attempt 1" about a three-day outage.
- *
- * ── THE DETAIL IS RE-CHECKED HERE, NOT TRUSTED ─────────────────────────────────────────────
- *
- * The header above this section calls these "the ONLY way the worker writes `mailboxes.status`",
- * and that was true of the STATUS and false of the reason: `detail` is a `string | null`, so
- * `{ detail: err.message }` typechecked and was stored verbatim into a column the account owner
- * and the admin console both read. There is no database constraint behind it either. So the
- * allowlist is applied AT THE WRITE, and safety stops depending on every caller remembering to
- * route through {@link mailboxErrorDetail} first. An unrecognised detail is dropped to NULL
- * rather than refused — a mailbox must never stay un-quarantined because its reason was unsafe.
+ * Record that a mailbox is quarantined AND why — one statement, so `status` and its reason can never
+ * disagree. Returns false when the write was FENCED OUT. `failed_at` uses `COALESCE`, so it holds the
+ * start of the CURRENT outage (three days rather than "just now, again" on every retry), and
+ * `retry_count` increments IN SQL for the same reason — it is the size of this outage and must survive
+ * the restart that resets the in-memory backoff map. Those two counters answer different questions and
+ * are ALLOWED to disagree after a deploy. THE DETAIL IS RE-CHECKED HERE: `detail` is `string | null`,
+ * so `{ detail: err.message }` typechecked and was stored verbatim into a column both the account
+ * owner and admin console read, with no database constraint behind it — so the allowlist is applied AT THE WRITE, and an unrecognised detail is dropped to NULL rather than refused.
  */
 export async function markMailboxFailed(
   db: WorkerDb, mailboxId: string,
@@ -1228,7 +811,13 @@ export async function markMailboxFailed(
   const now = opts.now ?? new Date();
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     status: "error",
-    errorCode: failure.code,
+    // The column is TEXT with no CHECK, so `MailboxErrorCode` is a compiler claim and a cast
+    // ends it. The door REFUSES a non-member rather than coercing: a code we did not choose
+    // means the caller has a defect, and writing `unknown` over it would hide that.
+    errorCode: staffChannelValue("mailboxes.error_code", failure.code),
+    // COERCES, and it is the one channel in the registry that does — see `staffChannelValue`'s
+    // block. The candidate comes off the wire, so refusing would let a mail server fail the
+    // quarantine write by answering with a word we do not know.
     errorDetail: isSafeMailboxErrorDetail(failure.detail) ? failure.detail : null,
     // Mail 0039 — WHEN the leader may next attach this mailbox, in the SAME statement as the
     // status, for the reason the whole of this function is one statement: a row that says
@@ -1281,62 +870,39 @@ export async function markMailboxConnected(
   }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }));
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   STANDING DOWN IS NOT FAILING (mail migration 0027)
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   A mailbox another organizer holds is a mailbox in perfect health that we must stop touching.
-   It therefore gets its own write site rather than a `markMailboxFailed` with a creative code:
-   `status='error'` would put it in the retry rotation with an exponential backoff, page nobody's
-   attention at the right thing, and tell the account's own user their mailbox is broken. It is
-   `status='disabled'`, which `loadEnabledMailboxes` already excludes and which `reconcileRoster`
-   already detaches — no new teardown machinery, exactly as `ORGANIZER-LEASE-RESUME.md` §2.6 said.
-
-   THE FOUR FAILURE COLUMNS ARE CLEARED IN THE SAME STATEMENT, for the reason
-   `markMailboxConnected` clears them: a row that says "organized elsewhere" beside a stale
-   "the mailbox rejected the password" is the half-truth 0023 exists to remove.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/* Standing down is not failing (mail 0027). A mailbox another organizer holds is a mailbox in perfect
+   health that we must stop touching. It gets its own write site rather than a `markMailboxFailed`
+   with a creative code: `status='error'` would put it in the retry rotation with an exponential
+   backoff, page nobody's attention, and tell the account's user their mailbox is broken. It is
+   `status='disabled'`, which `loadEnabledMailboxes` already excludes and `reconcileRoster` already
+   detaches — no new teardown machinery. THE FOUR FAILURE COLUMNS ARE CLEARED IN THE SAME STATEMENT,
+   for the reason `markMailboxConnected` clears them: a row that says "organized elsewhere" beside a
+   stale "the mailbox rejected the password" is the half-truth 0023 exists to remove. */
 
 import { type MailboxDisabledReason, isMailboxDisabledReason } from "@trafficflow/db";
 export type { MailboxDisabledReason };
 
 /**
- * Stand a mailbox down: `organizer_role='reader'` plus the holder columns, atomically. Returns
- * false when the write was FENCED OUT — the mailbox is already disabled, or this instance no
- * longer leads.
- *
- * This line used to read "`disabled`, with the lease reason". Mail 0083 moved the decision onto
- * the role and left `disabled_reason` with no writer here — see the block inside the statement —
- * so the summary was describing the write this function used to perform.
- *
- * ── AN UNRECOGNISED REASON IS COERCED, NEVER DROPPED AND NEVER THROWN ──────────────────────
- *
- * `markMailboxFailed` drops an unsafe `error_detail` to NULL, because a mailbox must never stay
- * un-quarantined over a bookkeeping value. The same principle points the other way here. A
- * mailbox must never keep ORGANIZING because its stand-down reason was unrecognised, so the
- * status flip cannot be allowed to fail — and it must not land with `disabled_reason` NULL
- * either, because NULL on this column means "disabled for a reason that is not the lease", which
- * would be a lie the UI reads. So an unrecognised value becomes `organized_elsewhere:unknown`:
- * imprecise, true, and inside the CHECK constraint mail 0027 puts behind the column.
- *
- * The parameter is already a `MailboxDisabledReason`, so this is unreachable from today's tree —
- * it is the guard for the call site nobody has written yet, and it is the reason the constraint
- * can never be the thing that fires.
+ * Stand a mailbox down: `organizer_role='reader'` plus the holder columns, atomically. Returns false
+ * when FENCED OUT. This used to write `disabled` with the lease reason; mail 0083 moved the decision
+ * onto the role and left `disabled_reason` with no writer here. An unrecognised reason is COERCED,
+ * never dropped and never thrown: `markMailboxFailed` drops an unsafe `error_detail` to NULL because a
+ * mailbox must never stay un-quarantined over a bookkeeping value, and the same principle points the
+ * other way — a mailbox must never keep ORGANIZING because its stand-down reason was unrecognised, and
+ * it must not land with `disabled_reason` NULL (which means "disabled for a non-lease reason", a lie
+ * the UI reads). So an unrecognised value becomes `organized_elsewhere:unknown`: imprecise, true, and inside mail 0027's CHECK constraint. The parameter is already a `MailboxDisabledReason`, so this guards a call site nobody has written.
  */
 export interface StandDownHolder {
   /** The winning claim's kind. `null` when the claim was malformed — 'unknown' is then written. */
   kind?: OrganizerKind | null;
   /**
-   * `X-Ohmail-Install-Id` — WHICH install, as opposed to which KIND of one.
-   *
-   * The kind is one of three words and answers "what sort of thing holds this mailbox"; it was
-   * read as "is this us", which is only the same question when there is one install per kind.
-   * `lease.ts` scopes the Cloud id by environment precisely so that it is not — two Cloud
-   * deployments over one mailbox is a designed-for state — and the claim removal matches on this
-   * id, so this is the unit the row has to carry for the API tier to decide on the same one.
-   *
-   * `null` when the claim was malformed or carried none; that writes NULL, which every caller
-   * must read as NOT ours.
+   * `X-Ohmail-Install-Id` — WHICH install, as opposed to which KIND of one. The kind is one of three
+   * words and answers "what sort of thing holds this mailbox"; it was read as "is this us", which is
+   * only the same question when there is one install per kind. `lease.ts` scopes the Cloud id by
+   * environment precisely so that it is not (two Cloud deployments over one mailbox is a designed-for
+   * state), and the claim removal matches on this id, so this is the unit the row must carry for the
+   * API tier to decide on the same one. `null` when the claim was malformed or carried none; that
+   * writes NULL, which every caller must read as NOT ours.
    */
   installId?: string | null;
   /** `X-Ohmail-Display-Name`, header-safe and capped at the write. */
@@ -1372,33 +938,29 @@ export async function markMailboxStoodDown(
 ): Promise<boolean> {
   const safe: MailboxDisabledReason =
     isMailboxDisabledReason(reason) ? reason : "organized_elsewhere:unknown";
-  // The kind, from the CLAIM where there is one and from the reason otherwise. The fallback is
-  // what keeps the column populated for a malformed claim, whose reason is the honest
-  // `organized_elsewhere:unknown`.
-  //
-  // THEY DO NOT ALWAYS AGREE, and this comment used to say they did ("by construction, because
-  // `readMailboxLease` derives the reason from the same claim"). The unrankable arm is the
-  // counter-example: a claim from a FUTURE PROTOCOL parses its `X-Ohmail-Organizer-Kind` header
-  // perfectly — `cloud`, say — while the verdict is `organized_elsewhere:unknown`, because what
-  // could not be ranked was the protocol and not the kind. The row is better for the
-  // disagreement: the banner names "ohmail Cloud (next)" rather than "something". What is not
-  // acceptable is a comment asserting an equality the code does not maintain, so it is stated as
-  // a preference for the claim's own answer, which is what the expression actually encodes.
-  const kind = (opts.by?.kind ?? safe.split(":")[1] ?? "unknown") as OrganizerKind;
+  // The kind, from the CLAIM where there is one and from the reason otherwise. The fallback keeps the
+  // column populated for a malformed claim, whose reason is the honest `organized_elsewhere:unknown`.
+  // THEY DO NOT ALWAYS AGREE, and this used to say they did ("`readMailboxLease` derives the reason
+  // from the same claim"). The unrankable arm is the counter-example: a claim from a FUTURE PROTOCOL
+  // parses its `X-Ohmail-Organizer-Kind` header perfectly (`cloud`, say) while the verdict is
+  // `organized_elsewhere:unknown`, because what could not be ranked was the protocol, not the kind —
+  // and the row is better for the disagreement (the banner names "ohmail Cloud (next)"). What is not
+  // acceptable is a comment asserting an equality the code does not maintain, so it is stated as a
+  // preference for the claim's own answer, which is what the expression encodes.
+  // THROUGH THE WRITE DOOR, not a cast: the middle term is a word cut out of a reason string,
+  // so the assertion was making a claim the expression cannot keep. `organized_by_kind` is a
+  // widenable set, which the device store carries no CHECK for at all — this is the refusal on
+  // both dialects, and an unrankable peer becomes `unknown` exactly as it did.
+  const kind = organizerKindColumn(opts.by?.kind ?? safe.split(":")[1]);
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
-    // ── MAIL 0083: THE ROLE, NOT THE STATUS ───────────────────────────────────────────────
-    //
-    // This used to write `status: "disabled"` plus the reason, and the mailbox left the roster.
-    // A loser is now a READER — connected, syncing, mirroring — so the status is untouched and
-    // the role carries the whole decision. Four consequences worth stating because each of them
-    // used to be handled by the status flip and is now handled by this column:
-    //
-    //  · `loadEnabledMailboxes` keeps returning the row, so the mirror keeps growing;
-    //  · `closeStoodDownAppointments` keys on `organizer_role = 'reader'` (it used to key on
-    //    `disabled` + a reason, which nothing writes any more);
-    //  · `disabled` goes back to meaning tombstone or plan-disable, with no second reading;
-    //  · `disabled_reason` gains NO writer here. The column stays for the rows that carry it and
-    //    for the clear; nothing new is written to it, ever.
+    // Mail 0083: the role, not the status. This used to write `status: "disabled"` plus the reason,
+    // and the mailbox left the roster. A loser is now a READER — connected, syncing, mirroring — so
+    // the status is untouched and the role carries the whole decision. Four consequences, each once
+    // handled by the status flip and now by this column: `loadEnabledMailboxes` keeps returning the
+    // row, so the mirror keeps growing; `closeStoodDownAppointments` keys on `organizer_role =
+    // 'reader'` (it used to key on `disabled` + a reason, which nothing writes now); `disabled` goes
+    // back to meaning tombstone or plan-disable, with no second reading; and `disabled_reason` gains
+    // NO writer here — the column stays for the rows that carry it and for the clear, nothing new.
     organizerRole: "reader",
     /* ── THE ASK GOES WITH THE ROLE IT WAS MADE UNDER ──────────────────────────────────────
      *
@@ -1444,55 +1006,27 @@ export async function markMailboxStoodDown(
     // quieter of the two events to a person whose mailbox somebody else has just taken, and the
     // claim-back screen would name no previous holder on the one occasion there is one.
     organizerReleasedAt: null,
-    // ── MAIL 0088: THE ORGANIZING SITUATION JUST CHANGED, SO SAY WHEN ────────────────────────
-    //
-    // One of the five writers of the (role, state, holder) triple, and every one of them stamps
-    // this in the SAME statement as the fact it is announcing. Not in a second write, for the
-    // reason the holder columns ride this statement: a row that says `reader` while its event
-    // instant still describes the previous situation is a client rendering yesterday's sentence,
-    // and there would be nothing anywhere to notice it.
-    //
-    // `organizer_event_seen_at` is deliberately NOT cleared. The notice is `event_at > seen_at`,
-    // so advancing `event_at` is already the whole of "show this again" — and clearing the
-    // acknowledgement as well would lose the record of an older dismissal for no gain.
+    // Mail 0088: the organizing situation just changed, so say when. One of the five writers of the
+    // (role, state, holder) triple, and every one stamps this in the SAME statement as the fact it is
+    // announcing — not a second write, for the reason the holder columns ride this statement: a row
+    // that says `reader` while its event instant still describes the previous situation is a client
+    // rendering yesterday's sentence, with nothing anywhere to notice it. `organizer_event_seen_at` is
+    // deliberately NOT cleared — the notice is `event_at > seen_at`, so advancing `event_at` is the
+    // whole of "show this again", and clearing the acknowledgement would lose the record of an older
+    // dismissal for no gain.
     organizerEventAt: opts.now ?? new Date(),
   }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }), opts.also);
 }
 
 /**
- * THE PERSON ASKED THIS INSTALL TO STOP ORGANIZING THIS MAILBOX, AND KEEP THE MAIL (0.14.1).
- *
- * The third way a row stops being an organizer, and the first one nobody else caused.
- *
- *  · {@link markMailboxStoodDown} — somebody else won the mailbox. The row NAMES them.
- *  · `MailboxService.delete` — the row is retired. Credentials go, the mirror stops.
- *  · this — nobody won it and nothing is retired. The row keeps its credentials, its consent and
- *    its mirror, and the next cycle is a READER cycle whose peek reports whoever claims it later.
- *
- * ── EVERY HOLDER COLUMN IS CLEARED, AND THAT IS THE DIFFERENCE FROM A STAND-DOWN ───────────
- *
- * A stand-down writes the winner into `organized_by_*` because there IS a winner. Here there is
- * none: this install has released its own claim and `ohmail/_meta` is empty as far as anyone knows.
- * Leaving the columns populated would put "organized by ohmail Cloud" on a mailbox nothing is
- * organizing, which is the banner lying in the most confusing possible direction — the person just
- * pressed the button that makes it stop.
- *
- * `organizer_state` goes to NULL for the same reason and it is load-bearing beyond cosmetics:
- * `standDownMemory` reads exactly this shape — reader, consented, no holder, no state — as the
- * RELEASED arm and answers `null`, so nothing downstream treats a deliberate release as a
- * stand-down it should offer to reverse.
- *
- * ── AND THE RELEASE REQUEST IS SPENT HERE ─────────────────────────────────────────────────
- *
- * `release_requested_at` authorizes one ceasing, exactly as `takeover_authorized_at` authorizes one
- * becoming. Left standing it would answer the next cycle's gate too, and every cycle after it —
- * so an install that had been asked to stop once could never be asked to start again: the press
- * would write a takeover stamp and this arm, which runs first, would release it before the lease
- * was ever consulted.
- *
- * FENCED like every other lifecycle write. A fenced-out release still happened IN THIS PROCESS —
- * the claim is already out of the mailbox by the time this is called — and a successor leader
- * reads a row with the request still on it and performs the same release on its own next pass.
+ * The person asked this install to stop organizing this mailbox, and keep the mail (0.14.1) — the
+ * third way a row stops being an organizer, and the first nobody else caused (`markMailboxStoodDown`
+ * names a winner; `MailboxService.delete` retires the row; this keeps credentials, consent and mirror
+ * and the next cycle is a READER cycle). EVERY HOLDER COLUMN IS CLEARED, the difference from a
+ * stand-down: there is no winner, so leaving them would put "organized by ohmail Cloud" on a mailbox
+ * nothing is organizing — the banner lying just as the person pressed the button that stops it.
+ * `organizer_state` goes to NULL so `standDownMemory` reads reader/consented/no-holder/no-state as the
+ * RELEASED arm and answers `null`. The release request is SPENT here (like `takeover_authorized_at`), or it would answer every later gate and an install asked to stop could never be asked to start. FENCED like every lifecycle write.
  */
 export async function markMailboxReleased(
   db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence; now?: Date } = {},
@@ -1540,68 +1074,42 @@ export async function markMailboxReleased(
   )).returning({ id: mailboxes.id }));
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   DECLINING TO SERVE IS NEITHER FAILING NOR STANDING DOWN (mail migration 0029)
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   A third state, and it needed its own pair of writes for the same reason standing down did.
-
-   The founding incident: the first real production mailbox did not sync for half an hour while its
-   row said `status='connected'`, `error_code = NULL`, `last_sync_at = NULL`. The worker knew the
-   answer the whole time — `attach_lease_unavailable`, once every 30 s — and the only place it
-   wrote it was stdout. Three branches behave this way, and the reason none of them may reuse an
-   existing write site is the same in all three:
-
-   · `markMailboxFailed` would be WRONG, not merely imprecise. `status='error'` puts the mailbox
-     into the retry rotation with an exponential backoff, tells the account's own user their
-     mailbox is broken, and shows an operator a fault that is ours. "An infrastructure fault can
-     never quarantine a mailbox" is a property `index.ts` maintains by CLASS at four catch sites;
-     this write is what lets it stay true and still be legible.
-   · `markMailboxStoodDown` would be worse: `disabled` is STICKY (only an explicit human PATCH
-     re-enables it), so a transient IMAP hiccup would permanently disconnect a mailbox nobody else
-     wants.
-
-   So: `status` IS NOT TOUCHED, and neither are the four failure columns. These two functions write
-   exactly two columns and read none, which is what makes them safe to call on a mailbox that is
-   `connected`, `error`, mid-quarantine or mid-recovery — the state machine above them is
-   untouched, and the four sites that DO own `status` each clear these two in their own statement.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/* Declining to serve is neither failing nor standing down (mail 0029). A third state, needing its
+   own pair of writes. The founding incident: the first real production mailbox did not sync for half
+   an hour while its row said `connected`, `error_code = NULL`, `last_sync_at = NULL` — the worker knew
+   the answer (`attach_lease_unavailable`, every 30 s) and wrote it only to stdout. Three branches
+   behave this way, and none may reuse an existing write site: `markMailboxFailed` would be WRONG
+   (`status='error'` puts the mailbox into the retry rotation and tells the user it is broken — "an
+   infrastructure fault can never quarantine a mailbox"), and `markMailboxStoodDown` would be worse
+   (`disabled` is STICKY, so a transient hiccup would permanently disconnect). So `status` IS NOT
+   TOUCHED and neither are the four failure columns: these functions write exactly two columns and read
+   none, safe on a mailbox in any state, and the four sites that own `status` each clear these two. */
 
 import { type MailboxSyncBlockReason, isMailboxSyncBlockReason } from "@trafficflow/db";
 export type { MailboxSyncBlockReason };
 export { isMailboxSyncBlockReason };
 
 /**
- * Record that this process is NOT SERVING a mailbox it knows is expected, and why.
- *
- * Returns false when the write was FENCED OUT — same predicate as every other lifecycle write, so
- * a disabled mailbox and a surrendered leader are both refused. Fenced deliberately even though
- * this touches no lifecycle column: the two columns describe THIS process's relationship to the
- * mailbox, and a surrendered leader's late note about a mailbox somebody else is now serving is
- * exactly as stale as its late failure write would be.
- *
- * ── IDEMPOTENT BY `COALESCE`, AND THAT IS WHY THE CALLER MAY REPEAT IT ─────────────────────
- *
- * `reconcileRoster` calls this on EVERY pass while the block lasts, and the `coalesce` is what
- * makes that free of consequence: `sync_blocked_since` holds the start of the CURRENT block, so a
- * mailbox unserved for three days reports three days instead of "just now, again" every 30
- * seconds. The repeat is not laziness — it is what converges the row when ANOTHER writer clears
- * the columns (a `PATCH /mailboxes/:id` that moves the status does exactly that) while the block
- * is still in force. A write-once design would leave that row silent for the life of the process,
- * which is the bug, restored.
- *
- * `.toISOString()` plus an EXPLICIT CAST, copied verbatim from `markMailboxFailed`: inside a raw
- * `sql` fragment there is no column type to coerce a bare `Date` against, postgres-js binds it as
- * TEXT, and PGlite accepts it happily so the unit suite stays green while production throws.
- * `packages/db/src/alerts.ts:307-317` records that this has bitten twice.
+ * Record that this process is NOT SERVING a mailbox it knows is expected, and why. Returns false when
+ * FENCED OUT — deliberately fenced even though it touches no lifecycle column, because the two columns
+ * describe THIS process's relationship to the mailbox and a surrendered leader's late note is as stale
+ * as its late failure write. Idempotent by `COALESCE`, which is why the caller may repeat it:
+ * `reconcileRoster` calls this every pass while the block lasts, `sync_blocked_since` holds the start
+ * of the CURRENT block, and the repeat is what converges the row when ANOTHER writer clears the columns
+ * (a `PATCH /mailboxes/:id`) while the block is still in force. `.toISOString()` plus an EXPLICIT CAST,
+ * copied from `markMailboxFailed`: inside a raw `sql` fragment postgres-js binds a bare `Date` as TEXT while PGlite accepts it, so the unit suite stays green while production throws (bitten twice).
  */
 export async function markMailboxSyncBlocked(
   db: WorkerDb, mailboxId: string, reason: MailboxSyncBlockReason,
   opts: { fence?: LeaderFence; now?: Date } = {},
 ): Promise<boolean> {
   const now = opts.now ?? new Date();
+  // THE WRITE DOOR for a widenable set (mail 0029 opened it, mail 0102 widened it). The device
+  // store carries no CHECK for it, so the membership test is the refusal on both dialects — and
+  // the typed parameter is not one: this function is reachable from code the compiler never saw.
+  const member = closedSetValue("mailboxes_sync_blocked_reason_closed", reason);
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
-    syncBlockedReason: reason,
+    syncBlockedReason: member,
     syncBlockedSince: sql`coalesce(${mailboxes.syncBlockedSince}, ${now.toISOString()}::timestamptz)`,
     // NOTHING ELSE. Not `status`, not `error_code`, not `error_detail`, not `failed_at`, not
     // `retry_count`. The absence is the design — see the block above this function.
@@ -1609,26 +1117,14 @@ export async function markMailboxSyncBlocked(
 }
 
 /**
- * A CEILING WE SET ENDED THE CYCLE — the soft block, with its backoff, and nothing else.
- *
- * `markMailboxFailed` was wrong here rather than merely imprecise: an `ImapBoundExceeded` means
- * the mailbox authenticated, answered, and sent more than one pass takes, and `status='error'`
- * tells its owner their mailbox failed. So this writes the mail-0029 pair — the honest "our own
- * infrastructure is not serving this mailbox right now" — and leaves `status`, `error_code`,
- * `error_detail`, `failed_at` and `retry_count` exactly as they were.
- *
- * ── WHY IT IS NOT `markMailboxSyncBlocked` WITH A THIRD COLUMN ────────────────────────────
- *
- * That function's docblock says "NOTHING ELSE … The absence is the design", and it is right: its
- * three callers are roster-pass arms about mailboxes nobody is serving, and none of them has a
- * next-attempt instant to record. This caller does — the bound breach happened inside a cycle and
- * the quarantine ladder computed when to come back — and mail 0039 exists so that instant survives
- * a restart. Widening the other function would put a column two thirds of its callers cannot fill
- * behind a comment promising they do not.
- *
- * `retry_count` is deliberately NOT incremented. It counts FAILURES and `markMailboxConnected`
- * resets it; a cap hit is not one, and inflating it would lengthen the ladder for a mailbox whose
- * only problem is its size.
+ * A ceiling we set ended the cycle — the soft block, with its backoff, and nothing else.
+ * `markMailboxFailed` was wrong here rather than imprecise: an `ImapBoundExceeded` means the mailbox
+ * authenticated, answered, and sent more than one pass takes, and `status='error'` tells its owner it
+ * failed. So this writes the mail-0029 pair (the honest "our own infrastructure is not serving this
+ * right now") and leaves `status`, `error_code`, `error_detail`, `failed_at` and `retry_count` as they
+ * were. Not `markMailboxSyncBlocked` with a third column: that function's three callers have no
+ * next-attempt instant to record, this one does (mail 0039 makes it survive a restart). `retry_count`
+ * is NOT incremented — it counts FAILURES and `markMailboxConnected` resets it; a cap hit is not one, and inflating it would lengthen the ladder for a mailbox whose only problem is its size.
  */
 export async function markMailboxReadLimited(
   db: WorkerDb, mailboxId: string,
@@ -1648,16 +1144,13 @@ export async function markMailboxReadLimited(
 }
 
 /**
- * The mailbox is being served again (or is no longer ours to serve): drop the note.
- *
- * Called by `reconcileRoster` only when the row it just read ACTUALLY CARRIES a reason, so the
- * steady state for a healthy mailbox is zero writes per pass rather than one UPDATE per mailbox
- * per 30 seconds.
- *
- * It cannot be folded into `markMailboxConnected`. `attach` ends with
- * `if (mb.status !== "connected") await markRecovered(mb)` — and in this entire scenario `status`
- * IS `connected`, because a declined mailbox was never marked failed. So `markRecovered` never
- * runs, and a clear that lived only inside it would never fire.
+ * The mailbox is being served again (or is no longer ours to serve): drop the note. Called by
+ * `reconcileRoster` only when the row it just read ACTUALLY CARRIES a reason, so the steady state for
+ * a healthy mailbox is zero writes per pass rather than one UPDATE per mailbox per 30 seconds. It
+ * cannot be folded into `markMailboxConnected`: `attach` ends with `if (mb.status !== "connected")
+ * await markRecovered(mb)`, and in this entire scenario `status` IS `connected` (a declined mailbox
+ * was never marked failed), so `markRecovered` never runs and a clear living only inside it would
+ * never fire.
  */
 export async function clearMailboxSyncBlock(
   db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence } = {},
@@ -1669,16 +1162,13 @@ export async function clearMailboxSyncBlock(
 }
 
 /**
- * Spend the one-shot takeover authorization, and record that this mailbox is ours again.
- *
- * Called after a gate returns `organize`. `takeover_authorized_at` authorizes ONE becoming, not
- * a standing right: leaving it set would mean a lapse-then-resubscribe months later silently
- * seizes the mailbox back from whatever a human deliberately moved it to, which is exactly the
- * seize-back §4 forbids. `disabled_reason` is cleared with it, so a mailbox a user re-enabled
- * after a stand-down does not carry the old reason while it is being organized again.
- *
- * A no-op UPDATE every cycle would be a write per mailbox per minute for nothing, so the caller
- * only invokes this when there is something to clear.
+ * Spend the one-shot takeover authorization, and record that this mailbox is ours again. Called after
+ * a gate returns `organize`. `takeover_authorized_at` authorizes ONE becoming, not a standing right:
+ * leaving it set would mean a lapse-then-resubscribe months later silently seizes the mailbox back
+ * from whatever a human deliberately moved it to — the seize-back §4 forbids. `disabled_reason` is
+ * cleared with it, so a mailbox a user re-enabled after a stand-down does not carry the old reason
+ * while it is being organized again. A no-op UPDATE every cycle would be a write per mailbox per
+ * minute for nothing, so the caller only invokes this when there is something to clear.
  */
 export async function clearOrganizerStandDown(
   db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence; now?: Date } = {},
@@ -1736,17 +1226,13 @@ export async function clearOrganizerStandDown(
 }
 
 /**
- * REFRESH WHAT A READER'S LAST LOOK SAW — the four holder columns, from a `peekLease` read.
- *
- * A reader stays on the roster and cycles, which is what makes these columns maintainable at all
- * (see `schema-mail.ts#organizerState` for the premise that moved). One write per reader cycle,
- * and only when something CHANGED: the steady state of a reader whose organizer is quietly
- * renewing is zero writes, exactly like `clearMailboxSyncBlock`'s.
- *
- * FENCED, like every other write that describes this process's relationship to a mailbox: a
- * surrendered leader's late note about a mailbox somebody else now serves is as stale as its late
- * failure write would be. It does NOT touch `organizerRole` — a peek is a look, never a decision,
- * and the only two writers of the role are the stand-down and the promotion above.
+ * Refresh what a reader's last look saw — the four holder columns, from a `peekLease` read. A reader
+ * stays on the roster and cycles, which is what makes these columns maintainable at all (see
+ * `schema-mail.ts#organizerState`). One write per reader cycle, and only when something CHANGED: the
+ * steady state of a reader whose organizer is quietly renewing is zero writes, like
+ * `clearMailboxSyncBlock`'s. FENCED, like every write that describes this process's relationship to a
+ * mailbox. It does NOT touch `organizerRole` — a peek is a look, never a decision, and the only two
+ * writers of the role are the stand-down and the promotion above.
  */
 export async function refreshOrganizerHolder(
   db: WorkerDb, mailboxId: string, by: StandDownHolder,
@@ -1766,24 +1252,15 @@ export async function refreshOrganizerHolder(
       // while occupancy does not (a holder's build upgrading mid-tenure) is not the notice's
       // business, the same argument `organizedSince` shifting under a renewed tenure already makes.
       organizedByCapabilities: capabilitiesColumn(by.capabilities),
-      /* ── MAIL 0088: THE THIRD WRITER, AND THE ONLY ONE THAT STAMPS CONDITIONALLY ──────────
-       *
-       * It stamps `organizer_event_at` ONLY WHEN `organizer_state` FLIPS, and the narrowness is
-       * the whole point rather than a saving. This function runs once per reader cycle and writes
-       * whenever ANY of the four columns moved — including `organized_since` shifting because the
-       * holder renewed under a new tenure, or a display name changing. Those are not events in the
-       * sense the notice means: nothing about who organizes this mailbox has changed, and a person
-       * would be told the same thing again every time a peer restarted.
-       *
-       * `held` → `stopped` and `stopped` → `held` ARE events, and they are the two the reader's
-       * own surface exists for: "another install organizes this now" and "that install stopped —
-       * you can claim it". So does either direction to or from NULL, which is a holder appearing
-       * in or vanishing from a folder that had none.
-       *
-       * The caller decides, because the caller is what holds the previous value — this function
-       * takes no read of its own, deliberately: a SELECT here would be a second round trip per
-       * reader cycle to re-learn something the cycle already knows.
-       */
+      /* Mail 0088: the third writer, and the only one that stamps conditionally. It stamps
+       * `organizer_event_at` ONLY WHEN `organizer_state` FLIPS, and the narrowness is the point. This
+       * runs once per reader cycle and writes whenever ANY of the four columns moved — including
+       * `organized_since` shifting because the holder renewed under a new tenure, or a display name
+       * changing — and those are not events in the sense the notice means: nothing about who organizes
+       * the mailbox changed, and a person would be told the same thing every time a peer restarted.
+       * `held` → `stopped` and `stopped` → `held` ARE events (and either direction to or from NULL,
+       * a holder appearing or vanishing). The caller decides, because the caller holds the previous
+       * value — this function takes no read of its own, or that would be a second round trip per cycle. */
       ...(opts.stateChanged ? { organizerEventAt: opts.now ?? new Date() } : {}),
     })
     .where(lifecycleWhere(mailboxId, opts.fence))
@@ -1791,49 +1268,14 @@ export async function refreshOrganizerHolder(
 }
 
 /**
- * Record that these mailboxes completed a sync cycle. THE WRITER `last_sync_at` NEVER HAD.
- *
- * The column was read in three places and written in none:
- *
- *  · `MailboxService.toDTO` → `MailboxDTO.lastSyncAt`, which the (i) panel and Settings →
- *    Mailboxes render. Every mailbox reported "not synced yet" forever, including one
- *    demonstrably syncing.
- *  · `admin-service.ts`'s "seconds since last sync" column — wrong for every mailbox.
- *  · **`packages/db/src/alerts.ts`, and this is the one that bites operations.** The sync-lag
- *    rule measures `coalesce(last_sync_at, created_at)` against a 15-minute threshold. With
- *    the column permanently NULL every mailbox is judged by its CREATION time, so a perfectly
- *    healthy mailbox crosses the threshold 15 minutes after it is connected and stays over it
- *    for the rest of its life. The alert that exists to notice a dead worker would instead
- *    fire for everyone, forever, and be tuned out — which is worse than not having it.
- *
- * The worker already knew the answer: `cycle()` sets `rt.lastSuccessAt` in memory on every
- * successful pass and simply never persisted it. This is that value, made durable.
- *
- * ── EVERY SUCCESSFUL CYCLE, NOT EVERY INGESTED MESSAGE ──────────────────────────────────
- *
- * A cycle that finds no new mail is a SUCCESS: it proves the worker reached the mailbox,
- * authenticated, and got a clean answer. That is exactly the question the lag alert asks, and
- * stamping only on ingest would mean a quiet mailbox looked identical to an unreachable one —
- * the false alarm again, just rarer and therefore more confusing.
- *
- * ── ONE STATEMENT, AND BEST-EFFORT ──────────────────────────────────────────────────────
- *
- * Batched across the whole rotation because it runs once per `pollIntervalMs` (60 s): a single
- * `WHERE id IN (…)` per minute rather than one write per mailbox per minute. The caller
- * ignores failures for the same reason the `markMailboxConnected` recovery write does — the
- * mailboxes ARE serving, and a failed bookkeeping write must not tear that down. The next
- * cycle rewrites it a minute later.
- *
- * ── TWO CALLERS IN `cycle()`, AND THE BATCHING RULE STILL GOVERNS THE STEADY STATE ───────
- *
- * There is now a single-id call INSIDE the rotation loop as well, on a runtime's FIRST completed
- * cycle only. It exists because the loop is serial: the batched write happens after every mailbox
- * of the pass has had its bounded batch, and after `if (stopped) return;` can discard the pass
- * entirely — so a mailbox's very first stamp used to wait on unrelated mailboxes, which is
- * precisely the false `sync_lag` on a healthy first connect that the paragraphs above are about.
- * It costs one extra UPDATE per ATTACH (`attach()` mints `lastSuccessAt: null`), never one per
- * cycle, so the "not one write per mailbox per minute" rule is intact. See the comment at that
- * call site for why its `catch` may not rethrow.
+ * Record that these mailboxes completed a sync cycle. THE WRITER `last_sync_at` NEVER HAD. The column
+ * was read in three places and written in none: `MailboxDTO.lastSyncAt` (the panel and Settings said
+ * "not synced yet" forever, including for a demonstrably syncing mailbox), the admin console's "seconds
+ * since last sync", and — the one that bites operations — `alerts.ts`'s sync-lag rule, which measures
+ * `coalesce(last_sync_at, created_at)` against 15 minutes, so with the column permanently NULL every
+ * healthy mailbox crosses the threshold 15 minutes after connecting and stays over it for life, firing
+ * for everyone forever and being tuned out. This is `rt.lastSuccessAt` made durable. EVERY SUCCESSFUL
+ * CYCLE, not every ingested message (a quiet mailbox is a success). ONE STATEMENT, batched across the rotation and best-effort; a single-id call inside the loop stamps a runtime's FIRST cycle eagerly.
  */
 export async function stampMailboxSync(
   db: WorkerDb, mailboxIds: string[], now: Date,
@@ -1843,59 +1285,30 @@ export async function stampMailboxSync(
 }
 
 /**
- * {@link stampMailboxSync} at the DATABASE's own clock — `last_sync_at = now() - <elapsed>`.
- *
- * The cycle's call sites use this rather than passing `new Date()`, because the pull
- * affordance's honest settle compares this column against `sync_requested_at`, which
- * `MailboxService.requestPull` stamps with SQL `now()`. Two columns compared with each other
- * must come off ONE clock; a worker-host `Date` put the worker's wall clock into that
- * comparison, where any skew either settles a spinner before the scan it claims to report or
- * never settles it at all (2026-08-26 review, round 1 — and the very machine that ran the
- * measurement has a clock minutes off, which is all the argument this needs).
- *
- * ── `backdateMs` — THE STAMP CLAIMS THE SCAN'S START, NEVER ITS FINISH ─────────────────────
- *
- * Round 2 of the same review: a stamp written at COMPLETION claims an instant later than the
- * IMAP read it reports, so a pull request landing inside that gap — after the read, before the
- * bookkeeping — is "settled" by a scan that could not have seen its mail. The caller therefore
- * passes how long ago its scan STARTED (per-visit elapsed for the eager stamp, per-pass elapsed
- * for the batch), and the write is `now() - elapsed`: still the database's clock for the
- * instant, with only a host-measured DURATION subtracted — a duration carries no wall-clock
- * skew. Understating freshness is the safe direction on both consumers: a settle waits for a
- * scan that genuinely began after its request, and the lag alert's 15-minute threshold dwarfs
- * a pass length.
- *
- * The Date-taking form above survives for callers that mean a SPECIFIC instant — the alert
- * tests seed backdated stamps through it.
+ * {@link stampMailboxSync} at the DATABASE's own clock — `last_sync_at = now() - <elapsed>`. The
+ * cycle's call sites use this rather than passing `new Date()`, because the pull affordance's honest
+ * settle compares this column against `sync_requested_at` (stamped with SQL `now()`), and two columns
+ * compared with each other must come off ONE clock — a worker-host `Date` put the worker's wall clock
+ * into that comparison, where skew either settles a spinner before its scan or never settles it.
+ * `backdateMs` makes the stamp claim the scan's START, never its finish: a stamp at COMPLETION claims
+ * an instant later than the IMAP read it reports, so a pull landing in that gap is "settled" by a scan
+ * that could not have seen its mail — so the caller passes how long ago its scan started and the write is `now() - elapsed`. The Date-taking form survives for callers that mean a SPECIFIC instant (alert tests).
  */
 export async function stampMailboxSyncNow(
   db: WorkerDb, mailboxIds: string[], backdateMs = 0,
 ): Promise<void> {
   if (mailboxIds.length === 0) return;
   const behind = Math.max(0, Math.round(backdateMs));
-  // GREATEST: this writer only ever RAISES the column. The pass-end batch backdates to the
-  // PASS's start, and a woken visit inside that pass has already stamped its own, later,
-  // visit-start instant — an unconditional write would overwrite the newer claim with the
-  // older one, un-settling a pull the eager stamp had just honestly settled (2026-08-26
-  // review, round 3). GREATEST ignores a NULL column, so a first stamp still lands.
-  //
-  // …AND A FUTURE EXISTING VALUE IS REPLACED BY THIS WRITE'S OWN CANDIDATE, because "only ever
-  // raises" must not immortalize a lie: a host-clock writer — an older deployment, or
-  // `stampMailboxSync`'s Date form — can have planted a stamp in the DATABASE's future, and a
-  // bare GREATEST would preserve it against every honest write until the wall clock caught up,
-  // settling pulls with no scan behind them and suppressing the lag alert for the whole skew
-  // (round 4). Clamping it to `now()` instead (round 4's first cut) was still a lie with a
-  // smaller skew: `now()` claims a scan that COMPLETED this instant, which can post-date a pull
-  // baseline this write's scan never covered (round 5). The only truthful claim available for a
-  // corrupted row is this write's own scan start, so that is what replaces it. A NULL column
-  // falls to the ordinary arm, where GREATEST ignores it and the first stamp lands.
-  //
-  // `behind` is inlined via sql.raw, NOT bound: drizzle maps a bound parameter inside a
-  // `set({ lastSyncAt: … })` fragment through the COLUMN's own mapper on some query paths, and
-  // PgTimestamp calls `.toISOString()` on what is a plain number — a crash the best-effort
-  // catches would swallow into a silently-never-stamped mailbox. The value is
-  // `Math.max(0, Math.round(...))` of a host-measured duration, so the inline is a bare integer
-  // by construction.
+  // GREATEST: this writer only ever RAISES the column. The pass-end batch backdates to the PASS's
+  // start, and a woken visit inside that pass already stamped its own later visit-start instant, so an
+  // unconditional write would overwrite the newer claim with the older, un-settling a pull the eager
+  // stamp had just honestly settled. GREATEST ignores a NULL column, so a first stamp still lands. …AND
+  // A FUTURE EXISTING VALUE IS REPLACED by this write's own candidate: a host-clock writer (an older
+  // deployment, or the Date form) can plant a stamp in the DATABASE's future, and a bare GREATEST
+  // would immortalize it; clamping to `now()` was still a lie (it claims a scan that COMPLETED this
+  // instant), so the only truthful claim for a corrupted row is this write's own scan start. `behind`
+  // is inlined via sql.raw, NOT bound — drizzle maps a bound parameter through PgTimestamp's
+  // `.toISOString()` on a plain number — and is `Math.max(0, Math.round(...))`, a bare integer by construction.
   const candidate = sql`now() - interval '1 millisecond' * ${sql.raw(String(behind))}`;
   await db.update(mailboxes)
     .set({
@@ -1908,27 +1321,14 @@ export async function stampMailboxSyncNow(
 }
 
 /**
- * Stamp `initial_import_completed_at` the FIRST time this mailbox's import has genuinely drained
- * (mail migration 0038) — the per-mailbox floor the client reads as `IS NULL ⇒ still importing`.
- *
- * ── WHY NOT `stampMailboxSync`, AND WHY PER-MAILBOX ─────────────────────────────────────────
- *
- * `last_sync_at` is stamped after every successful cycle whether or not a backlog remains, and it
- * is batched across the whole rotation in one `WHERE id IN (…)`. Both are wrong for this fact.
- * This column must land ONLY once a cycle completed with `hasBacklog === false` — the import has
- * actually drained — and it is a property of ONE mailbox, so it is a single-id write and never
- * shares a statement with another mailbox's progress.
- *
- * ── `IS NULL` IS WHAT MAKES IT ONCE-PER-MAILBOX ─────────────────────────────────────────────
- *
- * The guard is the whole of "stamped once": the first no-backlog cycle sets the column, and every
- * later no-backlog cycle matches zero rows and writes nothing. No read-then-write, so two
- * concurrent cycles cannot both stamp — the WHERE decides it in one statement. Clearing the column
- * back to NULL is the supported way to make the client speak "still importing" again, and the next
- * no-backlog cycle re-stamps it.
- *
- * BEST-EFFORT at the call site, exactly like `stampMailboxSync`: the mailbox is serving, and a
- * failed bookkeeping write must not tear that down. The next no-backlog cycle re-attempts it.
+ * Stamp `initial_import_completed_at` the FIRST time this mailbox's import has genuinely drained (mail
+ * 0038) — the per-mailbox floor the client reads as `IS NULL ⇒ still importing`. Not `stampMailboxSync`:
+ * `last_sync_at` is stamped after every successful cycle whether or not a backlog remains and is
+ * batched across the rotation, both wrong here — this must land ONLY once a cycle completed with
+ * `hasBacklog === false`, and it is a property of ONE mailbox, so a single-id write. `IS NULL` is what
+ * makes it once-per-mailbox: the first no-backlog cycle sets the column and every later one matches
+ * zero rows, with no read-then-write so two concurrent cycles cannot both stamp. Clearing it back to
+ * NULL makes the client speak "still importing" again. BEST-EFFORT, like `stampMailboxSync`: the mailbox is serving, and a failed bookkeeping write must not tear that down.
  */
 export async function stampInitialImportComplete(
   db: WorkerDb, mailboxId: string, now: Date,

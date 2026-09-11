@@ -8,7 +8,6 @@
  * {@link BackgroundDeps.platform} and whether `service` is present (`background-native.ts`
  * binds Android). The release is the engine's own `handBack()` — nothing writes `ohmail/_meta`.
  */
-import type { StopOrganizingOutcome } from "./standalone-door";
 
 /** Which set of arms this install runs. `Platform.OS` in the app; a literal in the suite. */
 export type OrganizerPlatform = "android" | "ios";
@@ -108,10 +107,8 @@ export interface BackgroundEngine {
    * back with no press, which is what an app leaving the foreground needs. A person's stop must
    * survive the app being killed, so it goes through the release the row records — and a reader
    * with no press never re-enters the gate again.
-   *
-   * Three answers, not a boolean — see {@link StopOrganizingOutcome}.
    */
-  stopOrganizing(): Promise<StopOrganizingOutcome>;
+  stopOrganizing(): Promise<boolean>;
   /**
    * ASK FOR THIS PHONE — the engine's `claimHere`. `held` is a live foreign claim, refused at the
    * door; it is the ordinary answer while another machine organizes the mailbox and owes nobody a
@@ -318,15 +315,12 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
    * the claim lapses on its own.
    */
   const stopByPerson = async (): Promise<void> => {
-    let stopped: StopOrganizingOutcome = "refused";
+    let stopped = false;
     try {
       stopped = await deps.engine.stopOrganizing();
     } catch (err) {
       log("organizer_stop_by_person_failed", { err, why: "stopped_from_notification" });
     }
-    /* The WORD the engine answered, so a refused release is readable in the log rather than
-       arriving as a `false` that also means "nothing to give up". The notification still comes
-       down: this is the notification's own Stop, and the paragraph above says why. */
     log("organizer_stopped_by_person", { why: "stopped_from_notification", stopped });
     /* NOT `handedBack`. That flag is the iOS transitional state — given back, and to be taken again
        on the way in — and a person's stop is the opposite of a state something resumes from. */
@@ -593,48 +587,6 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   /**
-   * ══ A REFUSAL COSTS TICKS, AND IT IS ONE LINE PER CLASS ════════════════════════════════════
-   *
-   * Measured on a device: a holder released its claim, and this watch pressed every ten seconds
-   * for 4 min 24 s — twenty-nine presses, every one refused for the same permanent reason, every
-   * one a log line and a re-render, while nothing about the answer was going to change. The cause
-   * of that particular refusal is gone (`net/mailboxes.ts`), but a watch that answers a standing
-   * refusal by asking again immediately is the shape, not that one cause: the next permanent
-   * refusal would spend a person's battery the same way and bury the one line that says why.
-   *
-   * So a refusal doubles the number of ticks skipped before the next press, to a ceiling, and any
-   * other answer clears it. `held` clears it too — it is the ordinary state of a stood-down phone
-   * and says nothing is wrong. The line is written only where the VERDICT CHANGES CLASS, so a
-   * standing refusal is one line and the press that finally works is the next one.
-   */
-  const RECLAIM_BACKOFF_MAX_TICKS = 8;
-  /** Ticks still to skip before the next press. */
-  let reclaimSkip = 0;
-  /** Consecutive refusals, which is what the doubling is measured on. */
-  let reclaimRefusals = 0;
-  /** The last verdict this watch reached, so a repeat writes no second line. */
-  let reclaimVerdict: "claimed" | "held" | "refused" | null = null;
-
-  const reclaimSettled = (outcome: "claimed" | "held" | "refused"): void => {
-    if (outcome === "refused") {
-      reclaimRefusals += 1;
-      reclaimSkip = Math.min(2 ** (reclaimRefusals - 1), RECLAIM_BACKOFF_MAX_TICKS);
-    } else {
-      reclaimRefusals = 0;
-      reclaimSkip = 0;
-    }
-    const repeated = outcome === "refused" && reclaimVerdict === "refused";
-    reclaimVerdict = outcome;
-    /* HELD IS NOT A FAILURE and is not logged: it is the state of every stood-down phone whose
-       mailbox is still being organized, for as long as that lasts.
-       A `claimed` ALWAYS writes its line — it is a becoming, and two of them in one session are
-       two events. Only the standing refusal is collapsed, because it is one state. */
-    if (outcome === "held" || repeated) return;
-    log("organizer_reclaim", { why: "holder_left", verdict: outcome });
-    moved();
-  };
-
-  /**
    * ══ THE HOLDER LEFT, AND THIS PHONE IS THE ONE IN FRONT OF THE PERSON ══════════════════════
    *
    * A stand-down is a one-way door without this. Measured on a device: the laptop handed the
@@ -658,23 +610,18 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     /* `=== true` and not `!== false`: a read that could not answer is not a licence to ask for
        somebody else's mailbox, which is the opposite direction from the notification teardown's. */
     if (standDownNow() !== true) return;
-    if (reclaimSkip > 0) {
-      reclaimSkip -= 1;
-      return;
-    }
     let outcome: "claimed" | "held" | "refused";
     try {
       outcome = await deps.engine.claimHere();
     } catch (err) {
       log("organizer_reclaim_failed", { err, why: "holder_left" });
-      /* A THROW IS A REFUSAL FOR THE BACKOFF'S PURPOSE. It has its own line — the one above, which
-         carries the error — so it is settled without a second one. */
-      reclaimRefusals += 1;
-      reclaimSkip = Math.min(2 ** (reclaimRefusals - 1), RECLAIM_BACKOFF_MAX_TICKS);
-      reclaimVerdict = "refused";
       return;
     }
-    reclaimSettled(outcome);
+    /* HELD IS NOT A FAILURE and is not logged: it is the state of every stood-down phone whose
+       mailbox is still being organized, once per tick, for as long as that lasts. */
+    if (outcome === "held") return;
+    log("organizer_reclaim", { why: "holder_left", verdict: outcome });
+    moved();
   };
 
   const claimLostCheck = async (): Promise<void> => {

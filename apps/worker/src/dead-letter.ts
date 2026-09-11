@@ -1,48 +1,16 @@
 import { MimeParseError, MimeTooLargeError, type NativeLocator } from "@trafficflow/core/mail";
-import { parseRef } from "@trafficflow/core/adapters/imap";
+import { epochOf, parseRef, sameEpoch } from "@trafficflow/core/adapters/imap";
 
 /**
- * A throw that came out of THIS PROCESS'S DATABASE, whatever code it carries.
- *
- * ── WHY AN ORIGIN TAG EXISTS AT ALL ───────────────────────────────────────────────────────────
- *
- * {@link isDatabaseFault} below answers "is this the database's" from the error's `code`, and its
- * header records why that answer has to stay narrow. The limit is not fixable by enumerating more
- * codes. Measured against the real Postgres on :5433 while this tag was designed:
- *
- *   | injected fault                        | what postgres.js throws                        |
- *   |---------------------------------------|------------------------------------------------|
- *   | Postgres not listening                | `AggregateError`, `code: "ECONNREFUSED"`       |
- *   | pool `end()` under a live statement   | `Error`, `code: "CONNECTION_ENDED"`            |
- *   | `statement_timeout`                   | `PostgresError`, `code: "57014"`               |
- *   | dial into a blackhole                 | `Error`, `code: "EPERM"` / `"ETIMEDOUT"`       |
- *   | DNS gone                              | `Error`, `code: "ENOTFOUND"`                   |
- *   | wrong database name                   | `PostgresError`, `code: "3D000"`               |
- *
- * Rows 1, 4 and 5 are byte-identical, in `name` AND in `code`, to what a dead IMAP host throws —
- * and rows 1 and 4 are precisely "the database is down", the case the taxonomy exists for. The
- * information is not in the error; it is in WHERE THE CALL WAS MADE. So the hosted worker records
- * it there (`db-fault.ts`), and the cycle loop exempts BY CLASS.
- *
- * ── WHAT THE TAG DOES *NOT* DECIDE ────────────────────────────────────────────────────────────
- *
- * It names the ORIGIN and nothing else. "It came out of the database" is not "the database is at
- * fault": Postgres answering `23505` or `22021` is the database telling us about the VALUE this
- * mailbox's mail carried, which is per-message evidence and keeps its per-message verdict.
- * {@link classifyIngestFault} therefore unwraps this class before classifying, and
- * {@link isSharedDatabaseFault} subtracts exactly those two SQLSTATE classes back out. Tagging the
- * origin makes the domain question ANSWERABLE; it does not answer it.
- *
- * `cause` is always set and is always the original error, which is what makes the wrapper free to
- * log: `packages/core/src/log.ts#describeCause` walks the chain to the first layer carrying a
- * `code` and publishes `causeClass`/`causeCode` beside `errorClass`. An outage therefore reads
- * `errorClass: "DatabaseFaultError", causeClass: "AggregateError", causeCode: "ECONNREFUSED"` —
- * the wrapper says whose fault domain it is, the cause says what happened. That logger never
- * publishes a message, only those two grammars, which is why this one carries no detail.
- *
- * IT LIVES HERE RATHER THAN BESIDE THE WRAPPER because this module is in the desktop engine's
- * published source closure and the wrapper's module is not — see the header of `db-fault.ts`.
- */
+ * A throw that came out of THIS PROCESS'S DATABASE, whatever code it carries. {@link isDatabaseFault}
+ * answers "is this the database's" from `code`, and must stay narrow: measured against real Postgres on
+ * :5433, a down database throws `ECONNREFUSED`/`EPERM`/`ETIMEDOUT`/`ENOTFOUND` — byte-identical to a
+ * dead IMAP host — while `CONNECTION_ENDED`, `57014`, `3D000` are its own. The information is in WHERE
+ * THE CALL WAS MADE, so the worker records origin there (`db-fault.ts`) and the cycle loop exempts BY
+ * CLASS. The tag names ORIGIN only: Postgres answering `23505`/`22021` is per-message, so
+ * {@link classifyIngestFault} unwraps this class first and {@link isSharedDatabaseFault} subtracts those
+ * SQLSTATE classes back out. `cause` is always the original (`log.ts#describeCause` publishes
+ * `causeClass`/`causeCode`). Lives here because this module is in the desktop engine's published closure. */
 export class DatabaseFaultError extends Error {
   /** Which database call threw — `"repo.commitChange"`, `"fence.transaction"`. Built from our own
    *  method names, never from anything a server chose. */
@@ -56,65 +24,15 @@ export class DatabaseFaultError extends Error {
 }
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE PER-MESSAGE TERMINAL-FAILURE LEDGER
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * A batch contains ordinary message A, unprocessable message P, and later message B. Until this
- * file existed, a throw out of `planChange(P)` or `commitChange(P)` exited the ingest `for` loop:
- * no folder cursor advanced, nothing recorded that P had failed, and nothing declared it consumed.
- * The next cycle re-selected the same P and threw again, for ever. **B and every message behind it
- * were never processed** — one malformed message stopped organizing a mailbox permanently.
- *
- * THE MISSING PIECE WAS NOT A RETRY. Most of the failure paths a review of this loop examined
- * already retry; retrying is
- * precisely what turns a one-message defect into an indefinite outage. What was missing is a way
- * to record that something could not be done and MOVE PAST IT.
- *
- * ── THE RECORD IS DURABLE NOW (mail 0041), AND THAT CLOSED A MAIL-LOSS DEFECT ──────────────
- *
- * This header used to say the record was process-local, that a durable table was owed, and that a
- * restart re-attempting every skipped UID once was "a FEATURE" for five folders and "the one place
- * this design loses a message rather than delaying it" for the sixth. All three sentences were
- * true, and the last one was the bug:
- *
- *   The Sent folder's cursor is a UID WATERMARK — steady state is `UID FETCH <uidNext>:*`. A
- *   terminal skip puts the UID in the known-set, so the pass leaves nothing unknown, so the adapter
- *   publishes `mb.uidNext` PAST it. A restart empties this ledger; the UID is now below the
- *   watermark and is never enumerated again; and `own_copy` mail legitimately produces no
- *   `messages` row, so nothing else in the system can notice. A message the user actually sent left
- *   their mail client's view permanently, while the mailbox reported healthy throughout. Reproduced
- *   against a real IMAP server and a real database, not argued from the code.
- *
- * So this class is now the IN-CYCLE half of a two-part mechanism, and `message_failures` is the
- * durable half. What lives here is what must not be re-read per message: the attempt budget, the
- * per-cycle safety valve, and the known-set. What lives in the table is everything that has to
- * survive the process: the coordinate, the reason, the attempt count and when the UID is next owed
- * a look. {@link hydrate} is the join, run once at the top of every cycle.
- *
- * Two properties are worth stating because they are what make the durable half safe rather than
- * merely present:
- *
- *  · **The watermark still advances.** The retry is targeted BY UID
- *    (`MailboxAdapter.fetchByUid`), never by rescanning a folder, so the cursor is free to move and
- *    one bad message still cannot wedge a mailbox. Holding the watermark below the UID instead
- *    would re-fetch the poison body on every cycle for ever, which is the alternative that was
- *    rejected.
- *  · **The durable write is not best-effort.** `sync.ts` may only let a folder cursor cross a UID
- *    once the row is committed; a failed write turns the verdict back into `retry` (see
- *    {@link DeadLetterLedger.revoke}), which holds the cursor and fails the cycle. The `audit_log`
- *    row beside it stays best-effort, because losing evidence is not the same as losing mail.
- *
- * ── THE SKIPPED UID JOINS THE KNOWN-SET, AND THAT IS NOT AN OPTIMISATION ──────────────────
- *
- * `buildCursor` merges {@link DeadLetterLedger.knownFor} into each folder's known-set. Without it
- * the skipped UID stays "unknown" for ever, so the adapter re-FETCHES its body every cycle and
- * spends the batch budget on it; at the batch cap that sets `hasBacklog` on every pass and the
- * worker re-kicks itself in a tight loop. Joining the known-set is what makes "moved past" true
- * of the fetch as well as of the commit — and it is why hydrated rows join it too, including the
- * ones this cycle is about to retry: the targeted fetch asks for those bodies explicitly, and the
- * main batch must not ask for them again.
- */
+ * THE PER-MESSAGE TERMINAL-FAILURE LEDGER. A throw out of `planChange(P)`/`commitChange(P)` used to exit
+ * the ingest loop, so message B and everything behind P was never processed — one malformed message
+ * stopped organizing a mailbox permanently. The fix was not a retry but a way to record a failure and
+ * MOVE PAST IT, now durable (mail 0041): `message_failures` is the durable half, this class the in-cycle
+ * half, joined by {@link hydrate} once per cycle. It closed a mail-loss defect where a Sent UID watermark
+ * (`UID FETCH <uidNext>:*`) let a process-local skip advance the cursor past `own_copy` mail with no
+ * `messages` row. Two safety properties: the watermark still advances (retry is BY UID,
+ * `MailboxAdapter.fetchByUid`), and the durable write is not best-effort (a failed write becomes
+ * {@link DeadLetterLedger.revoke} `retry`; the `audit_log` row stays best-effort). The skipped UID joins {@link knownFor} via `buildCursor`, so its body leaves the batch and `hasBacklog` does not spin. */
 
 /**
  * WHY A MESSAGE COULD NOT BE INGESTED — a CLOSED set, and never free text.
@@ -249,43 +167,16 @@ export function classifyIngestFault(err: unknown): IngestFault {
 
   const code = codeOf(err);
   if (code) {
-    // ── A SERVER-CEILING BREACH IS THE HOST'S, NOT THE MESSAGE'S ─────────────────────────────
-    //
-    // `EIMAPBOUND` is the adapter's refusal when the mailbox's own IMAP server exceeds a ceiling
-    // on a value IT chose — folders in a LIST, UIDs in an enumeration, hits in a SEARCH, bytes
-    // past a declared `RFC822.SIZE`, or a wall clock. Nothing about it is evidence about a
-    // message: usually no message has been read at all, and the ones that were are fine.
-    //
-    // Without this arm it fell to the catch-all at the bottom — `domain: "message"`,
-    // `"unclassified"`, `deterministic: false`. That is retried twice and then WRITTEN OFF, so a
-    // server tripping a ceiling every cycle would earn up to {@link MAX_DEAD_LETTERS_PER_CYCLE}
-    // durable failure rows per cycle against messages that are still sitting on the server and
-    // still perfectly readable — the durable lie this module's own contract exists to prevent.
-    //
-    // The infrastructure domain is what that outcome should be, by this file's own definition: it
-    // "covers both sockets in play here — the customer's IMAP host and our own database — because
-    // neither is the message's fault", so the row is left exactly as it was and the cycle fails.
-    // Which is the correct answer: the MAILBOX is the unit of this failure, and the mailbox's
-    // ordinary quarantine cadence is what makes it visible.
-    //
-    // Duck-typed on the code rather than by importing the error class, which is why that class
-    // publishes one: this module has no business linking the IMAP adapter.
-    //
-    // ── NOT EVERY BOUND, AND THE EXCLUSION IS NOT TIDINESS ───────────────────────────────────
-    //
-    // This function ALSO backs `sync.ts`'s `isTransportFailure`, so the mapping changes
-    // RECONCILIATION as well as ingest — and the transport arm leaves a `folder_state` row
-    // immediately due with its attempt count unchanged, which is right for a host that is down
-    // and wrong for a condition that will not clear on its own.
-    //
-    // `candidate_body_probes` is exactly such a condition: the destination holds more messages
-    // sharing one Message-ID than the pre-check can disambiguate. Nothing about waiting fixes
-    // that. Routed to transport it would re-run the same SEARCH every cycle for ever, never
-    // entering the widening backoff the reconciler has for precisely this. It keeps the message
-    // domain, where it earns retries and then a durable record an operator can see.
-    //
-    // Every other bound IS the host misbehaving — a flood, an over-large body, a clock — and
-    // those are transport by the same argument the errno set above is.
+    // A SERVER-CEILING BREACH IS THE HOST'S, NOT THE MESSAGE'S. `EIMAPBOUND` is the adapter's refusal
+    // when the mailbox's IMAP server exceeds a ceiling IT chose (folders in a LIST, UIDs, SEARCH hits,
+    // `RFC822.SIZE`, a clock); usually no message was read and the ones that were are fine. Without
+    // this arm it fell to the catch-all (`domain: "message"`, `"unclassified"`), retried twice then
+    // WRITTEN OFF — up to {@link MAX_DEAD_LETTERS_PER_CYCLE} durable failure rows/cycle against readable
+    // mail. The infrastructure domain is correct (neither socket is the message's fault), so the row is
+    // left as-is and the cycle fails; the mailbox's quarantine cadence makes it visible. Duck-typed on
+    // the code, not by importing the error class. NOT every bound: this also backs `sync.ts`'s
+    // `isTransportFailure`, and `candidate_body_probes` (a Message-ID the pre-check cannot disambiguate)
+    // keeps the message domain so it enters the reconciler's widening backoff rather than re-SEARCHing.
     if (code === "EIMAPBOUND" && (err as { bound?: unknown }).bound !== "candidate_body_probes") {
       return { domain: "infrastructure" };
     }
@@ -319,32 +210,15 @@ export function classifyIngestFault(err: unknown): IngestFault {
 }
 
 /**
- * Is this throw UNAMBIGUOUSLY THE DATABASE'S — not one mailbox's provider?
- *
- * `attach()` is the consumer. The credential read now sits inside that function's
- * isolation boundary, so without an exemption one database blip would quarantine every mailbox of the
- * shard in turn and write `status='error'` on each — a measured incident's shape.
- *
- * It is deliberately NARROWER than {@link classifyIngestFault}'s infrastructure domain, and the
- * narrowness is load-bearing: SQLSTATEs and postgres.js's own code names only, never a raw errno.
- * At this seam an `ECONNREFUSED` is far more likely to be the customer's IMAP host than our
- * database, and treating it as ours would stop quarantining genuinely unreachable mailboxes.
- *
- * The residual, stated: postgres.js surfaces a bare `ECONNREFUSED` when Postgres itself is down, so
- * a total database outage at this line is still rendered as a per-mailbox connect failure. It is
- * self-clearing, and mis-blaming a reachable mailbox for our outage is strictly less harmful than
- * refusing to quarantine an unreachable one.
- *
- * THE ORIGIN-TAGGING FIX CLOSED THAT RESIDUAL ON THE CYCLE PATH AND DELIBERATELY LEFT IT HERE.
- * The cycle path's
- * database calls all go through a wrapped repo, so their origin is recorded and no code has to be
- * guessed at ({@link isSharedDatabaseFault}, `db-fault.ts`). The one call this seam makes —
- * `loadMailboxCreds` — is not wrapped, because it reads a row AND decrypts the envelope in it, and
- * a credential that will not decrypt is the most per-mailbox failure there is: tagging the whole
- * call would promote a bad envelope to a shard-wide condition, which is this defect wearing the
- * opposite sign. So this function keeps the narrow question, and this paragraph stays true of
- * `attach()` alone.
- */
+ * Is this throw UNAMBIGUOUSLY THE DATABASE'S — not one mailbox's provider? `attach()` is the consumer,
+ * and the credential read sits inside its isolation boundary, so without an exemption one database blip
+ * would quarantine every mailbox of the shard (`status='error'`). Deliberately NARROWER than
+ * {@link classifyIngestFault}: SQLSTATEs and postgres.js's own code names only, never a raw errno (at
+ * this seam an `ECONNREFUSED` is more likely the customer's IMAP host than our database). The residual:
+ * postgres.js surfaces a bare `ECONNREFUSED` when Postgres is down, so a total outage reads as a per-
+ * mailbox connect failure (self-clearing). The cycle path closed that via origin tagging
+ * ({@link isSharedDatabaseFault}, `db-fault.ts`); the one call this seam makes, `loadMailboxCreds`, is
+ * not wrapped (a credential that will not decrypt is the most per-mailbox failure there is). */
 export function isDatabaseFault(err: unknown): boolean {
   // An ORIGIN tag outranks any code, because it is the one thing a code cannot say. See
   // `db-fault.ts` for the measurement: three of the six database faults this worker can suffer
@@ -371,27 +245,15 @@ const DATA_SQLSTATE_CLASSES: readonly string[] = [
 ];
 
 /**
- * Is this throw about a dependency THE WHOLE SHARD SHARES — and therefore never about the mailbox
- * that happened to be mid-cycle when it landed?
- *
- * This is the cycle loop's question and it is deliberately not
- * {@link classifyIngestFault}'s. That one calls the customer's IMAP host "infrastructure" too,
- * which is right where it is used — neither socket is the MESSAGE's fault — and would be wrong
- * here, because a provider that will not answer is exactly what quarantine is for. Widening this
- * predicate to `classifyIngestFault(err).domain === "infrastructure"` is the inverse defect: it
- * dissolves mailbox isolation — the property quarantine exists to protect — and `connection-error.e2e.test.ts` and
- * `mailbox-failure.e2e.test.ts` are the two guards that go red when it is tried.
- *
- * Two arms, and the asymmetry between them is the conservative boundary:
- *
- *  · TAGGED — the throw came out of `SyncDeps.repo` or the fence's transaction, so the origin is
- *    settled. It is shared UNLESS Postgres named a data class, which is the database reporting on
- *    this mailbox's own mail and keeps its per-message cadence.
- *  · UNTAGGED — no origin, so back to {@link isDatabaseFault}'s NARROW code-only question, which
- *    admits SQLSTATEs and postgres.js's own names and refuses every raw errno. An ambiguous
- *    timeout therefore stays a per-mailbox fault, which is the status quo and the safe direction:
- *    a missed exemption costs a self-clearing quarantine, a wrong one costs isolation.
- */
+ * Is this throw about a dependency THE WHOLE SHARD SHARES — never about the mailbox mid-cycle when it
+ * landed? The cycle loop's question, deliberately not {@link classifyIngestFault}'s (that calls the
+ * customer's IMAP host "infrastructure", right there and wrong here — a provider that will not answer is
+ * what quarantine is for). Widening this to that domain is the inverse defect (it dissolves mailbox
+ * isolation; `connection-error.e2e.test.ts` and `mailbox-failure.e2e.test.ts` go red). Two arms: TAGGED
+ * — from `SyncDeps.repo` or the fence's transaction, so shared UNLESS Postgres named a data class
+ * (per-message cadence); UNTAGGED — back to {@link isDatabaseFault}'s narrow code-only question, so an
+ * ambiguous timeout stays a per-mailbox fault (a missed exemption costs a self-clearing quarantine, a
+ * wrong one costs isolation). */
 export function isSharedDatabaseFault(err: unknown): boolean {
   if (err instanceof DatabaseFaultError) {
     const cls = sqlStateClass(codeOf(err.cause));
@@ -411,16 +273,13 @@ export function isSharedDatabaseFault(err: unknown): boolean {
 export const DEFAULT_MAX_MESSAGE_ATTEMPTS = 2;
 
 /**
- * THE SAFETY VALVE: how many messages ONE cycle may terminally skip.
- *
- * Without it, a bug in our own pipeline that throws for every message would — after
- * {@link DEFAULT_MAX_MESSAGE_ATTEMPTS} cycles — write off the entire batch, advance the cursor,
- * and report SUCCESS. The mailbox would go green in Settings while dropping every message that
- * arrived. Beyond this cap the surplus stays deferred (not consumed), the folder cursor is held,
- * and the cycle fails — so `maxSyncFailures` quarantines the mailbox and an operator sees it.
- *
- * Five and not one, because a mailbox with a handful of genuinely poison messages must still
- * drain: the cap bounds how much a single cycle can write off, not how much ever can.
+ * THE SAFETY VALVE: how many messages ONE cycle may terminally skip. Without it a bug in our own
+ * pipeline that throws for every message would — after {@link DEFAULT_MAX_MESSAGE_ATTEMPTS} cycles —
+ * write off the whole batch, advance the cursor and report SUCCESS, the mailbox green while dropping
+ * every message. Beyond this cap the surplus stays deferred (not consumed), the folder cursor is held
+ * and the cycle fails, so `maxSyncFailures` quarantines the mailbox. Five, not one, because a mailbox
+ * with a handful of genuinely poison messages must still drain: the cap bounds how much one cycle can
+ * write off, not how much ever can.
  */
 export const MAX_DEAD_LETTERS_PER_CYCLE = 5;
 
@@ -437,34 +296,24 @@ export const MAX_MESSAGE_RETRIES_PER_CYCLE = 5;
 
 /**
  * Attempts after which a still-failing message is ESCALATED — reported rather than merely retried.
- *
- * Three, and the number is chosen against the retry schedule rather than picked: a deterministic
- * failure gets exactly one attempt per deployed build (see {@link nextAttemptAfter}), so three
- * attempts is three separate builds that could not read the message. That is the point at which
- * "the next deploy might fix it" has stopped being a plausible explanation and somebody should be
- * told. A non-deterministic one reaches it inside a day on the backoff below.
- *
- * Escalation does NOT stop the retrying, and that distinction is deliberate: a message the product
- * cannot read must become VISIBLE, not abandoned, because the deploy that fixes it may still be
- * weeks away and the cost of one targeted probe per build is a size fetch.
+ * Three, chosen against the retry schedule: a deterministic failure gets exactly one attempt per
+ * deployed build (see {@link nextAttemptAfter}), so three attempts is three separate builds that could
+ * not read the message — the point where "the next deploy might fix it" has stopped being plausible. A
+ * non-deterministic one reaches it inside a day on the backoff. Escalation does NOT stop the retrying:
+ * a message the product cannot read must become VISIBLE, not abandoned, because the deploy that fixes
+ * it may be weeks away and one targeted probe per build is a size fetch.
  */
 export const ESCALATE_AFTER_ATTEMPTS = 3;
 
 /**
- * WHEN a failed UID is next owed a CLOCK-scheduled look, or `null` for "not on a clock".
- *
- * Deterministic failures are `null`, and that is the whole schedule decision. `MimeTooLargeError`
- * and `MimeParseError` carry the contract that "the same source fails the same way every time", so
- * no instant in the future is a better time to try than now was — an hourly backoff over them would
- * re-download a body it is about to refuse, on a schedule, for the life of the account. The only
- * event that can change the answer is NEW CODE, and that is the version arm of the due predicate in
- * `claimMessageFailures`, which needs no timestamp.
- *
- * The non-deterministic pair (`constraint_violation`, `unclassified`) does get a clock, doubling
- * from an hour and capped at a day: `23505` can be a concurrent second ingest rather than a defect,
- * and `unclassified` may be our own transient bug, so both are worth re-trying without waiting for
- * a deploy. Capped at a day so a permanent one is still probed occasionally rather than
- * exponentiating into never.
+ * WHEN a failed UID is next owed a CLOCK-scheduled look, or `null` for "not on a clock". Deterministic
+ * failures are `null`: `MimeTooLargeError` and `MimeParseError` carry "the same source fails the same
+ * way every time", so no future instant is better than now — an hourly backoff would re-download a body
+ * it is about to refuse for the life of the account. The only event that changes the answer is NEW CODE,
+ * which is the version arm of the due predicate in `claimMessageFailures` (no timestamp needed). The
+ * non-deterministic pair (`constraint_violation`, `unclassified`) does get a clock, doubling from an hour
+ * and capped at a day: `23505` can be a concurrent second ingest and `unclassified` our own transient
+ * bug, both worth re-trying without a deploy; capped so a permanent one is still probed occasionally.
  */
 export function nextAttemptAfter(
   code: MessageFailureCode, attempts: number, now: Date,
@@ -477,38 +326,28 @@ export function nextAttemptAfter(
 }
 
 /**
- * The codes whose failure is a function of the MESSAGE BYTES — retrying them on a clock re-runs
- * the identical computation on identical input, so their `next_attempt_at` is NULL and their next
- * look is a NEW BUILD (the `attempted_version` arm of `claimMessageFailures`' due-predicate).
- *
- * Exported because the CLAIM needs the same list: `claimMessageFailures` stamps the next clock
- * instant in the same statement that claims the row, and for years it stamped the generic hourly
- * schedule onto every row regardless of code — so a `mime_too_large` message was size-probed once
- * an hour for ever (a production row reached 297 attempts; its comment promised "null for the
- * deterministic codes" while the code passed the hourly date unconditionally). The repo method
- * cannot import this app's types, so the caller passes this list and this is its one definition.
+ * The codes whose failure is a function of the MESSAGE BYTES — retrying on a clock re-runs the identical
+ * computation on identical input, so their `next_attempt_at` is NULL and their next look is a NEW BUILD
+ * (the `attempted_version` arm of `claimMessageFailures`' due-predicate). Exported because the CLAIM
+ * needs the same list: `claimMessageFailures` stamps the next clock instant in the statement that claims
+ * the row, and for years it stamped the generic hourly schedule regardless of code — so a
+ * `mime_too_large` message was size-probed hourly for ever (a production row reached 297 attempts). The
+ * repo method cannot import this app's types, so the caller passes this list; this is its one definition.
  */
 export const DETERMINISTIC_MESSAGE_FAILURE_CODES = [
   "mime_too_large", "mime_unparseable", "data_exception",
 ] as const satisfies readonly MessageFailureCode[];
 
 /**
- * The ledger's in-memory identity for one message coordinate — and it is DELIMITED, because the
- * three parts are variable-length and a folder name is chosen by the mail server.
- *
- * The first version was `${folder}${uidValidity}${uid}`, and concatenating variable-length parts
- * with no separator is ambiguous by construction: `("Notes1", "2", 34)` and `("Notes", "12", 34)` both
- * produce `Notes1234`. That is not a theoretical collision, because it decides whether a message is
- * SKIPPED — `has()` answers `terminal` for the colliding entry, `runSyncCycle` skips the message
- * without parsing or committing it, and on a UID-watermarked folder such as Sent nothing
- * enumerates it again. So one malformed message could make a perfectly good one at an unrelated
- * coordinate permanently invisible, and the durable failure row would describe the other message.
- *
- * `JSON.stringify` of the tuple rather than a chosen separator character: every separator that is
- * legal in an IMAP folder name is a separator an adversarial or merely unusual server can put IN
- * the folder name, and JSON escapes what it must. The key is a Map key and nothing else — it is
- * never persisted, never parsed back, and never shown — so the encoding is free to be verbose.
- */
+ * The ledger's in-memory identity for one message coordinate — DELIMITED, because the three parts are
+ * variable-length and a folder name is chosen by the mail server. The first version was
+ * `${folder}${uidValidity}${uid}`, and concatenating variable-length parts with no separator is
+ * ambiguous: `("Notes1","2",34)` and `("Notes","12",34)` both make `Notes1234`. That decides whether a
+ * message is SKIPPED — `has()` answers `terminal`, `runSyncCycle` skips it, and on a UID-watermarked
+ * folder such as Sent nothing enumerates it again — so one malformed message could make a good one
+ * permanently invisible. `JSON.stringify` of the tuple, not a chosen separator, because every separator
+ * legal in an IMAP folder name can appear IN one; a Map key only (never persisted, parsed or shown), so
+ * the encoding is free to be verbose. */
 const keyOf = (folder: string, uidValidity: string, uid: number): string =>
   JSON.stringify([folder, uidValidity, uid]);
 
@@ -532,28 +371,15 @@ export class DeadLetterLedger {
   beginCycle(): void { this.thisCycle = 0; }
 
   /**
-   * Load the DURABLE rows for this mailbox into the ledger — the join between the two halves,
-   * called once at the top of every cycle from `runSyncCycle`.
-   *
-   * Every hydrated row is `terminal: true`, because a row exists only for a UID a cursor has
-   * already been allowed to cross. That is what puts it in {@link knownFor} and keeps its body out
-   * of the main batch.
-   *
-   * ── IT NEVER LOWERS AN ATTEMPT COUNT, AND THE `max` IS THE REASON ──────────────────────────
-   *
-   * A row already held in memory keeps the higher of the two counts. The in-memory count can be
-   * ahead legitimately — a non-deterministic failure that has failed twice this process and not yet
-   * been written off has no row at all — and taking the database's number would reset a budget the
-   * process has already spent, which is how a poison message earns unlimited attempts one restart
-   * at a time.
-   *
-   * ── AND IT IS CALLED FOR ITS SIDE EFFECT ON THE KNOWN-SET, NOT FOR A RETURN VALUE ──────────
-   *
-   * The caller does not read what this loaded. `buildCursor` reads the ledger afterwards, so a
-   * hydration that silently loaded nothing looks exactly like a mailbox with no failures — which is
-   * why `runSyncCycle` lets a hydration THROW rather than catching it. A cycle that cannot read this
-   * table must not proceed to publish a watermark on the assumption that nothing is owed.
-   */
+   * Load the DURABLE rows for this mailbox into the ledger — the join between the two halves, called
+   * once at the top of every cycle from `runSyncCycle`. Every hydrated row is `terminal: true` (a row
+   * exists only for a UID a cursor was already allowed to cross), which puts it in {@link knownFor} and
+   * keeps its body out of the main batch. It NEVER lowers an attempt count — a row held in memory keeps
+   * the higher (`max`), because the in-memory count can legitimately be ahead and taking the database's
+   * number would reset a spent budget, earning a poison message unlimited attempts one restart at a
+   * time. Called for its side effect on the known-set, not a return: `buildCursor` reads the ledger
+   * afterwards, so `runSyncCycle` lets a hydration THROW rather than publish a watermark on the
+   * assumption that nothing is owed. */
   hydrate(rows: ReadonlyArray<{
     folder: string; uidValidity: string; uid: number; code: string; attempts: number;
   }>): void {
@@ -575,16 +401,13 @@ export class DeadLetterLedger {
   }
 
   /**
-   * TAKE BACK a terminal decision, because the durable record of it could not be written.
-   *
-   * The one caller is `sync.ts`, on a failed `recordMessageFailure`. Without this the ledger would
-   * hold `terminal: true` for a UID no table knows about, the folder cursor would be allowed to
-   * cross it, and the loss this durable record exists to close would be back — reachable through a
-   * database hiccup instead of through a restart.
-   *
-   * The per-cycle cap slot is returned with it: a decision that did not stick did not spend one, and
-   * charging for it would make a run of write failures silently lower the number of genuine
-   * write-offs a cycle can make.
+   * TAKE BACK a terminal decision, because the durable record of it could not be written. The one
+   * caller is `sync.ts`, on a failed `recordMessageFailure`. Without this the ledger would hold
+   * `terminal: true` for a UID no table knows about, the folder cursor would be allowed to cross it, and
+   * the loss this durable record exists to close would be back — reachable through a database hiccup
+   * instead of a restart. The per-cycle cap slot is returned with it: a decision that did not stick did
+   * not spend one, and charging for it would make a run of write failures silently lower how many
+   * genuine write-offs a cycle can make.
    */
   revoke(locator: NativeLocator): void {
     const { uidValidity, uid } = parseRef(locator.ref);
@@ -644,7 +467,7 @@ export class DeadLetterLedger {
   knownFor(folder: string, uidValidity: string): Array<{ uid: number; messageId: string | null }> {
     const out: Array<{ uid: number; messageId: string | null }> = [];
     for (const it of this.items.values()) {
-      if (it.terminal && it.folder === folder && it.uidValidity === uidValidity) {
+      if (it.terminal && it.folder === folder && sameEpoch(epochOf(it.uidValidity), epochOf(uidValidity))) {
         out.push({ uid: it.uid, messageId: null });
       }
     }

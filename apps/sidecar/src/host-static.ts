@@ -3,71 +3,24 @@ import { resolve, sep } from "node:path";
 import type { Diagnostic } from "./log.js";
 
 /**
- * THE STATIC HALF OF THE HOST DOOR — the built browser client, served to the phone (Phase 3).
- *
- * `tailscale serve` publishes one origin, and the QR sends a phone's BROWSER to it. An API alone
- * would be a tier with zero consumers, so the door serves a real client: the third desktop vite
- * arm (`apps/desktop`, `OHMAIL_HOST_CLIENT=1`) built over the shared webapp shell, handed to this
- * process at spawn as a directory path. This module is that directory on the wire, and nothing
- * more — the API routes are the app's (`engine.ts` gives them precedence by matching the route
- * table BEFORE this handler ever sees a request), and this covers the rest: the shell HTML, the
- * hashed assets, and the `/pair` fragment landing.
- *
- * ── WHAT IS DEFENDED, AND HOW ────────────────────────────────────────────────────────────────
- *
- *  · **Traversal: the resolve-and-prefix check, held on the CANONICAL path.** The decoded path
- *    is resolved UNDER the assets root and the result must still be inside it — `resolve`
- *    collapses every `..` first, so an escape of any spelling (plain, percent-encoded, mixed)
- *    lands outside the prefix and is refused as `not_found`. The check runs TWICE, and the
- *    second is the one a review earned: the lexical resolve proves nothing about SYMLINKS —
- *    `readFile` follows them, so a link planted at `assets/leak.txt → ../../secret` passed the
- *    lexical check and served bytes from outside the root. Before anything is read, the
- *    candidate is `realpath`ed and prefix-checked against the `realpath`ed ROOT (the root too,
- *    or macOS's `/tmp → /private/tmp` indirection would 404 every legitimate file). Backslashes
- *    and control bytes are refused outright before either check: on Windows `\` IS a separator,
- *    so a path carrying one must not reach `resolve` with POSIX assumptions, and no shipped
- *    asset name contains either.
- *  · **The CSP on EVERY answer** ({@link HOST_CLIENT_CSP}). `/pair` reads a device-pair
- *    token out of `location.hash` — the flow-3 fragment idiom, chosen so the credential never
- *    reaches a request line or a log — which leaves injected inline script reading the hash as
- *    THE exposure. The flow-1/3 pages mitigate that with a per-request nonce because Next
- *    inlines its own bootstrap; the vite artifact carries NO inline script at all, so this door
- *    states `script-src 'self'` flat — strictly stronger than a nonce (a nonce authorises one
- *    inline block; this authorises none), and constant, so the handler needs no per-request
- *    minting and the header can be pinned byte-for-byte by test. The rest of the policy is the
- *    web client's own product set (`apps/webapp/app/security-headers.ts`), minus
- *    `upgrade-insecure-requests` — TLS is Tailscale's termination, and the door itself serves
- *    plain HTTP on the loopback, where an upgrade directive would break the only transport the
- *    door has. EVERY answer, not every HTML answer — the second review finding: the generic
- *    branch served `.svg` (and any planted `.html`) with a renderable content-type and no
- *    policy, and an SVG navigated to directly executes its script elements on this origin. The
- *    header is inert on a script or a stylesheet, and a branch that decides "renderable or not"
- *    is a branch that can be wrong, so there is no branch.
- *  · **Caching follows the artifact's shape.** Vite emits content-hashed filenames under
- *    `assets/`, so those are immutable for a year; the shell HTML is `no-store`, because an
- *    index cached across a desktop update would reference assets the new dist no longer holds.
- *
- * ── ABSENT ASSETS ARE A DEGRADED DOOR, NEVER A CRASH ─────────────────────────────────────────
- *
- * The path arrives at spawn (`OHMAIL_HOST_ASSETS`, the `OHMAIL_DATA_DIR` idiom) and is probed
- * ONCE, at construction: the packaged dist is immutable for the life of the process, so a
- * per-request stat would buy re-checking a fact that cannot change. Unset, or set to a directory
- * with no readable `index.html`, the door serves its API exactly as before and answers app
- * routes with one plain sentence — a phone that scans a QR against such an install gets an
- * explanation, not a connection reset, and the engine logs `host_assets_missing` with a fixed
- * reason naming the variable and never the value (a path carries the OS account name).
+ * The static half of the host door — the built browser client, served to the phone (Phase 3).
+ * `tailscale serve` publishes one origin and the QR sends a phone's BROWSER there, so the door serves
+ * a real client (the third desktop vite arm), and this is that directory on the wire (the API routes
+ * take precedence). Traversal is defended by resolve-and-prefix on the CANONICAL path, run TWICE —
+ * the lexical resolve proves nothing about SYMLINKS, so the candidate is `realpath`ed and checked
+ * against the `realpath`ed root; backslashes and control bytes are refused first. The CSP is on EVERY
+ * answer, `script-src 'self'` flat (no inline script) — even a `.svg`, which executes its script on
+ * this origin. Caching follows the artifact (hashed assets immutable, the shell `no-store`).
  */
 
 /**
- * The one policy every HTML answer on this door carries. See the header for the whole argument;
- * the two lines that are DECISIONS rather than inheritance:
- *
- *  · `script-src 'self'` — no nonce, no `unsafe-inline`, because the artifact has no inline
- *    script to authorise. The suite pins both the header and the served document's freedom from
- *    inline `<script>`.
- *  · `style-src` keeps `'unsafe-inline'` for the reason the web client's does: React writes
- *    element `style` attributes throughout the shared shell, and CSP counts those as inline
- *    styles. Inline STYLE is not a code-execution primitive the way inline script is.
+ * The one policy every HTML answer on this door carries. See the header for the whole argument; the
+ * two lines that are DECISIONS rather than inheritance: `script-src 'self'` — no nonce, no
+ * `unsafe-inline`, because the artifact has no inline script to authorise (the suite pins both the
+ * header and the document's freedom from inline `<script>`); and `style-src` keeps `'unsafe-inline'`
+ * for the web client's reason — React writes element `style` attributes throughout the shared shell
+ * and CSP counts those as inline styles, which are not a code-execution primitive the way inline
+ * script is.
  */
 export const HOST_CLIENT_CSP = [
   "default-src 'self'",

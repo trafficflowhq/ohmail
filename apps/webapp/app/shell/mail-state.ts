@@ -666,21 +666,12 @@ export interface MailboxFacts {
    * The reader's question is a comparison: the numerator is {@link MailStateInputs.mirrored}, this
    * is the denominator. Two consumers, neither an alarm: the `importing` arm quotes the pair as
    * progress; the Mailboxes pane states it at rest ({@link deviceHoldings} — the `behind` strip
-   * state was removed 2026-08-30). Optional, `typeof === "number"`: absent means
+   * state was removed 2026-08-30). Not `messageCount`, which on a local engine is the MIRROR's own
+   * count — a comparison of a number against itself. Optional, `typeof === "number"`: absent means
    * "cannot tell", never `0` — a `?? 0` would make an unknowable denominator look like an emptied
    * account. The hosted client never sends it.
    */
   hostedMessageCount?: number;
-  /**
-   * MESSAGES IN THE STORE THIS IMPORT IS WRITING INTO — the local door's own `messages` table, and
-   * the import's true numerator ({@link pulledCount}). It used to be the same number as the
-   * renderer's mirror; `DESKTOP_WINDOW` ended that in 0.17.0, and the two now diverge by the size
-   * of the mailbox. THE LOCAL DOOR POPULATES IT AND NOTHING ELSE DOES: on a hosted tab the same
-   * DTO field is the SERVER's count — what this device is pulling towards, not what it has pulled.
-   * Asked for only while a mailbox is unstamped, because it costs a grouped `count(*)`. Absent
-   * means "not asked", never `0`.
-   */
-  messageCount?: number;
   /**
    * The forwarding-detection notice's evidence pair (mail 0078). `inboundQuietSince` non-null
    * is a standing quiet episode: the worker judged this connected, healthily-syncing mailbox to
@@ -740,28 +731,6 @@ export function hostedTotal(mailboxes: readonly MailboxFacts[]): number | null {
     sum += m.hostedMessageCount;
   }
   return sum;
-}
-
-/**
- * HOW MUCH MAIL THIS IMPORT HAS PULLED — the number the progress sentence states.
- *
- * Not the renderer's row count: `pruneToPolicy` pins that at the window's `minRows` over a mailbox
- * whose mail predates the window, so it stops while the import runs on. The numerator is
- * {@link MailboxFacts.messageCount} — the store the import writes into — under
- * {@link hostedTotal}'s every-or-nothing rule. Never `hostedMessageCount`: that is the DENOMINATOR
- * this pair is quoted against. `max` guards the SUMMED path only — the two early returns hand back
- * the row count itself, so this cannot promise monotonicity on its own, and the sentence that once
- * claimed it here was false at the moment an import completes. Not reading backwards is the
- * CALLER's half of the contract, and {@link wantsImportCounts} is where it is kept.
- */
-export function pulledCount(mirrored: number, mailboxes: readonly MailboxFacts[] | null): number {
-  if (mailboxes === null || mailboxes.length === 0) return mirrored;
-  let sum = 0;
-  for (const m of mailboxes) {
-    if (typeof m.messageCount !== "number") return mirrored;
-    sum += m.messageCount;
-  }
-  return Math.max(mirrored, sum);
 }
 
 /**
@@ -970,26 +939,6 @@ export function isGrowing(g: MirrorGrowth, now: number): boolean {
 export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number): boolean {
   if (g.importing) return now - g.lastRiseAt < IMPORT_END_IDLE_MS;
   return isGrowing(g, now) && bootstrapping;
-}
-
-/**
- * MAY THE NEXT POLL STOP ASKING FOR `?counts=1`? — the aggregate's one gate.
- *
- * It asks the SAME question the strip asks, because the number is quoted by the sentence the strip
- * writes: the door's completion stamp arrives while {@link isImporting} is still latched (the
- * episode outlives the stamp by {@link IMPORT_END_IDLE_MS}), and a poll that dropped the aggregate
- * in that gap left `messageCount` undefined, so {@link pulledCount} fell to its row-count arm and a
- * large import was reported as the window's floor — backwards, under a screen still saying "importing".
- * Sourced for exactly as long as it can be quoted; the clock is the CALLER's, never an effect's.
- */
-export function wantsImportCounts(
-  facts: readonly MailboxFacts[] | null,
-  growth: MirrorGrowth,
-  bootstrapping: boolean,
-  now: number,
-): boolean {
-  if ((facts ?? []).some((m) => m.initialImportCompletedAt === null)) return true;
-  return isImporting(growth, bootstrapping, now);
 }
 
 /**
@@ -1505,12 +1454,6 @@ export interface MailStateInputs {
   mailboxes: MailboxFacts[] | null;
   /** Messages in the MIRROR — every folder, not the Ohbox's rows. */
   mirrored: number;
-  /**
-   * How much the import has PULLED — {@link pulledCount}. The `importing` arms quote this and
-   * nothing else does: every other reading below is a statement about the mirror ON THIS DEVICE
-   * and stays on {@link MailStateInputs.mirrored}. Equal to it wherever no door answered a count.
-   */
-  pulled: number;
   /** The growth sampler's memory. THE progress signal. */
   growth: MirrorGrowth;
   /** `Date.now()`, injected so the ladder is pure and the tests need no clock control. */
@@ -1555,7 +1498,7 @@ export function deriveMailState(input: MailStateInputs): MailState {
  * Each step says why it outranks the next.
  */
 function climb(input: MailStateInputs): MailState {
-  const { sync, failureStreak, freshness, mailboxes, mirrored, pulled, growth, now, demo } = input;
+  const { sync, failureStreak, freshness, mailboxes, mirrored, growth, now, demo } = input;
 
   // A fixtures engine drains once from local data and is permanently settled. There is no
   // sync here to have a state, and the demo promises that nothing leaves the tab — so it gets
@@ -1753,13 +1696,13 @@ function climb(input: MailStateInputs): MailState {
   // the shell's clock, beaten by `MailStateProvider` while `state.clock` is
   // true — the reducer only runs when the mirror moves, so a stopped import
   // would otherwise never be told it had. The denominator is
-  // {@link deviceHoldings} measured against `pulled` — the same number this arm
-  // quotes — so the pair can never render a fraction already passed; `null`
-  // means no sentence may name a total.
-  const totalIfAhead = deviceHoldings(mailboxes, pulled)?.total ?? null;
+  // {@link deviceHoldings} — the same derivation the Mailboxes pane reads,
+  // so strip and pane cannot answer "how much is on this device"
+  // differently; `null` means no sentence may name a total.
+  const totalIfAhead = deviceHoldings(mailboxes, mirrored)?.total ?? null;
 
   if (isImporting(growth, sync.bootstrapping, now)) {
-    return { ...QUIET, key: "importing", clock: true, count: pulled, total: totalIfAhead };
+    return { ...QUIET, key: "importing", clock: true, count: mirrored, total: totalIfAhead };
   }
 
   /**
@@ -1802,7 +1745,7 @@ function climb(input: MailStateInputs): MailState {
   // it to the partial-mailbox case (`awaiting` owns the empty one);
   // `clock: true` is load-bearing — the release is driven by time alone.
   if (mirrored > 0 && connected.some((m) => importFloorSpeaks(m, growth, sync, now))) {
-    return { ...QUIET, key: "importing", clock: true, count: pulled, total: totalIfAhead };
+    return { ...QUIET, key: "importing", clock: true, count: mirrored, total: totalIfAhead };
   }
 
   // ── 3. THE SCREENER POINTER — a candidate, for the OHBOX to finish ─────────────────────

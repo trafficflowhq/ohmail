@@ -34,6 +34,20 @@ export function anyOf(cond: SQL): SQL {
   return sql`(max(case when ${cond} then 1 else 0 end) = 1)`;
 }
 
+/**
+ * THE INSTANT THE CUTLINE DATES A MESSAGE BY — the `Date:` header, else the arrival.
+ *
+ * `Date:` is sender-written and nullable, so any stranger can send mail this column holds NULL
+ * for; `created_at` is when the mailbox recorded the message, which nobody outside can withhold.
+ * Both readers used the header alone, as did the client engine's `messageMs`: a message filed at
+ * the gate a minute earlier presented under History — "hasn't written in a while" about mail that
+ * had just arrived. Exported so the readers share one spelling; `coalesce` needs no dialect
+ * member for {@link anyOf}'s reason, on the store's own timestamp type either side.
+ */
+export function cutlineInstant(c: { date: SQL; arrivedAt: SQL }): SQL {
+  return sql`coalesce(${c.date}, ${c.arrivedAt})`;
+}
+
 export interface CutlineFacts {
   /** `account_settings.screening_baseline_at`, or null for an account that never decided. */
   baselineAt?: Date | null;
@@ -78,10 +92,11 @@ export function resolveCutline(f: CutlineFacts): ResolvedCutline {
 /**
  * The ACTIVE test over a sender's three aggregates, which is the whole rule.
  *
- * The null test on `newest` is explicit because a message with no `Date:` header must not read as
- * recent — the client's own `messageMs` answers null for one, and this is the half that has to
- * agree with it. The comparison binds through `d.ts`, so the instant is the STORE's own timestamp
- * type on both arms.
+ * `newest` is the newest {@link cutlineInstant} in the group, so an undated message is weighed by
+ * its arrival rather than read as "not recent". The null test stays because this builder does not
+ * own the expression — a caller can hand it one that answers NULL, and a sender with no datable
+ * mail at all must not read as active on a comparison against nothing. The comparison binds
+ * through `d.ts`, so the instant is the STORE's own timestamp type on both arms.
  */
 export function activeSenderExpr(
   d: Dialect,
@@ -105,10 +120,11 @@ export function senderIsActiveSql(
   d: Dialect, accountId: string, senderExpr: SQL, c: ResolvedCutline,
 ): SQL {
   const folders = sql`(${sql.join(CUTLINE_PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
+  const at = cutlineInstant({ date: sql`mc.date`, arrivedAt: sql`mc.created_at` });
   const active = activeSenderExpr(d, c, {
     anyUnread: anyOf(sql`mc.unread`),
-    anyUnreadInWindow: anyOf(sql`mc.unread and mc.date is not null and mc.date >= ${d.ts(c.cutoff)}`),
-    newest: sql`max(mc.date)`,
+    anyUnreadInWindow: anyOf(sql`mc.unread and ${at} is not null and ${at} >= ${d.ts(c.cutoff)}`),
+    newest: sql`max(${at})`,
   });
   return sql`exists (
     select 1 from messages mc

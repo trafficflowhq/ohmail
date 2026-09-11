@@ -34,13 +34,9 @@ import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
 const NOW = new Date("2026-09-11T20:38:00.000Z");
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-function msg(id: string, i: number, daysOld?: number): EngineMessage {
-  // By default every row is older than the window, so only the `minRows` floor can hold anything
-  // back. `daysOld` puts the whole run INSIDE the window instead — the dense-mailbox case, where
-  // the floor and `days` both admit everything and only the ceiling can decide.
-  const date = daysOld === undefined
-    ? new Date(NOW.getTime() - (i + 1) * 400 * 86_400_000).toISOString()
-    : new Date(NOW.getTime() - daysOld * 86_400_000 - i * 60_000).toISOString();
+function msg(id: string, i: number): EngineMessage {
+  // Every row is older than the window, so only the `minRows` floor can hold anything back.
+  const date = new Date(NOW.getTime() - (i + 1) * 400 * 86_400_000).toISOString();
   return {
     id,
     accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
@@ -53,11 +49,7 @@ function msg(id: string, i: number, daysOld?: number): EngineMessage {
 }
 
 /** Drain `n` messages through an engine built the way the desktop window builds its own. */
-async function mirrorAfterImport(
-  n: number,
-  policy: typeof DESKTOP_WINDOW | undefined,
-  opts: { daysOld?: number } = {},
-) {
+async function mirrorAfterImport(n: number, policy: typeof DESKTOP_WINDOW | undefined) {
   let seq = 0;
   let served = 0;
   const PAGE = 2000;
@@ -66,7 +58,7 @@ async function mirrorAfterImport(
       const creates: SyncChange[] = [];
       const upto = Math.min(served + PAGE, n);
       for (let i = served; i < upto; i++) {
-        const m = msg(`m${i}`, i, opts.daysOld);
+        const m = msg(`m${i}`, i);
         creates.push({ type: "message", op: "create", id: `m${i}`, seq: ++seq, updatedAt: m.updatedAt, entity: m });
       }
       served = upto;
@@ -93,7 +85,7 @@ async function mirrorAfterImport(
 
 describe("the desktop renderer's mirror is bounded by its window", () => {
   it("is the window after an import far larger than it", async () => {
-    // The incident's mailbox was far larger; 10 000 proves the bound and keeps this quick.
+    // 74 003 is the incident's mailbox; 10 000 is enough to prove the bound and keep this quick.
     const held = await mirrorAfterImport(10_000, DESKTOP_WINDOW);
     expect(held).toBe(DESKTOP_WINDOW.minRows);
   });
@@ -119,27 +111,7 @@ describe("the desktop renderer's mirror is bounded by its window", () => {
     expect(body).toContain("storePolicy: DESKTOP_WINDOW");
   });
 
-  /**
-   * THE CEILING IS PART OF THE PIN. `days` with only a floor under it bounds the window by AGE and
-   * not by SIZE — a mailbox dense inside ninety days sat almost entirely in a "windowed" mirror,
-   * at 2.7x the floor on the rig's own large corpus. The three numbers move together or
-   * the window stops being the one the changelog describes.
-   */
-  it("the window is a real window, floor and ceiling, and the size is the browser's", () => {
-    expect(DESKTOP_WINDOW).toEqual({ mode: "windowed", days: 90, minRows: 5000, maxRows: 10000 });
-    expect(DESKTOP_WINDOW.maxRows).toBeGreaterThan(DESKTOP_WINDOW.minRows);
-  });
-
-  /**
-   * AND THE CEILING BINDS ON A MAILBOX THAT IS DENSE INSIDE THE WINDOW — the case the floor and
-   * `days` between them do not cover, driven through the same real drain as the guards above.
-   *
-   * WATCHED RED by `maxRows: 5000` (5 000 held where 10 000 is owed — the ceiling collapsing onto
-   * the floor makes `days` unable to decide anything) and by removing `maxRows` (12 000 held).
-   */
-  it("holds the ceiling, not the mailbox, when everything is inside the window", async () => {
-    const held = await mirrorAfterImport(12_000, DESKTOP_WINDOW, { daysOld: 1 });
-
-    expect(held).toBe(DESKTOP_WINDOW.maxRows);
+  it("the window is a real window, and the size is the browser's", () => {
+    expect(DESKTOP_WINDOW).toEqual({ mode: "windowed", days: 90, minRows: 5000 });
   });
 });

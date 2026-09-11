@@ -126,8 +126,8 @@ export function readerZone(): string {
  * cutline takes the account's answer, never this package's default: `screening` is
  * `GET /consent`'s three fields, `ownAddresses` is `GET /mailboxes`'. `null` is not-answered
  * and files nobody into History: every undecided sender stays at the gate until the account's
- * answer lands, so a boot shows a superset rather than a drop. (Residual: an undated message
- * cannot make its sender active even under `all_time`. Unchanged here, never a new drop.)
+ * answer lands, so a boot shows a superset rather than a drop. An undated message is dated by
+ * its arrival and `all_time` is read as a mode, so this posture retires nobody at all.
  */
 export interface PresentedWorld {
   /** The projection the pile selectors read — History's rows are absent from its `message` list. */

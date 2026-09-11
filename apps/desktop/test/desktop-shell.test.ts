@@ -1850,24 +1850,13 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/tauri_plugin_updater/);
     expect(updater).not.toMatch(/reqwest|hyper|ureq|curl|TcpStream|TcpListener|UnixStream/);
     expect(updater).not.toMatch(/std::(net|process)/);
-    /* FOUR DISK READS, AND EACH ONE IS NAMED BY ITS ARGUMENT. `install_kind` stats
-       `/.flatpak-info` for a sandboxed install, stats `$APPIMAGE` for a file there is something to
-       replace, reads `/proc/self/mountinfo` for what is mounted where, and stats the running
-       executable for the device it is served from — the last two being how a mounted AppImage is
-       told from a copy under a directory somebody named `.mount_something`. Those are the only
-       filesystem calls this module makes: an updater writing files outside the plugin would be
-       applying an update by hand, with none of the verification that lives there. Asserted as the
-       WHOLE list rather than as an allowance, so a fifth read cannot slip in beside them. */
+    /* ONE DISK READ, AND IT IS NAMED. `install_kind` stats `/.flatpak-info` to tell a sandboxed
+       install — which its software centre updates — from one this app may replace. That is the
+       only filesystem call this module makes: an updater writing files outside the plugin would
+       be applying an update by hand, with none of the verification that lives there. Asserted as
+       the WHOLE list rather than as an allowance, so a second read cannot slip in beside it. */
     const disk = [...updater.matchAll(/std::fs::[a-z_]+/g)].map((m) => m[0]);
-    expect(disk).toEqual([
-      "std::fs::metadata",
-      "std::fs::read_to_string",
-      "std::fs::metadata",
-      "std::fs::metadata",
-    ]);
-    expect(updater).toMatch(/std::fs::metadata\("\/proc\/self\/exe"\)/);
-    expect(updater).toMatch(/std::fs::read_to_string\("\/proc\/self\/mountinfo"\)/);
-    expect(updater).toMatch(/std::fs::metadata\(image\)/);
+    expect(disk).toEqual(["std::fs::metadata"]);
     expect(updater).toMatch(/std::fs::metadata\("\/\.flatpak-info"\)/);
   });
 
@@ -2560,14 +2549,10 @@ describe("the UI bundle's build config", () => {
     // imports the first and must not reach the second: anything that imports `bridge-fetch.ts`
     // puts the shell command's name into the bundle a phone is handed.
     const factsWire = read("src/mailbox-facts-wire.ts");
-    expect(read("src/local-mailbox-facts.ts")).toMatch(/readMailboxFactsVia\(retryingBridgeFetch, opts\)/);
+    expect(read("src/local-mailbox-facts.ts")).toMatch(/readMailboxFactsVia\(retryingBridgeFetch\)/);
     expect(read("src/DesktopMailboxes.tsx"), "the pane's reach poll rides the same retrying transport")
       .toMatch(/readMailboxReachVia\(retryingBridgeFetch\)/);
-    // The read goes over the INJECTED transport and asks one of two spellings: the bare list,
-    // and `?counts=1` while a first import is still open (the count is the import's numerator,
-    // which the renderer's windowed mirror cannot supply). Both are asserted, so neither the
-    // door-free rule nor the counted read can go quiet.
-    expect(factsWire).toMatch(/fetchImpl\(\s*opts\.counts === true\s*\?\s*"\/mailboxes\?counts=1"\s*:\s*"\/mailboxes"\s*\)/);
+    expect(factsWire).toMatch(/fetchImpl\("\/mailboxes"\)/);
     // A FAILED read is not an empty account. The ladder renders "No mailbox connected" for the
     // second, so collapsing the first into it would say that to somebody whose mailbox works.
     expect(factsWire).toMatch(/throw new Error/);

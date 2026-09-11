@@ -2,7 +2,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
-import { activeSenderExpr, anyOf, resolveCutline } from "@trafficflow/db";
+import { activeSenderExpr, anyOf, cutlineInstant, resolveCutline } from "@trafficflow/db";
 
 /**
  * The cutline, server-side — how many senders are still owed a decision. The client computes this
@@ -118,10 +118,11 @@ export async function cutlineCounts(
    * ALL TIME ⇒ NO DORMANCY (mail 0083). See {@link CutlineOptions.scope}.
    *
    * Expressed as the ACTIVITY predicate rather than by moving the cutoff, and the difference is
-   * not cosmetic: a cutoff pushed to epoch 0 would still be a date comparison, so a message with
-   * a NULL `date` — which every arm here treats as "not recent", deliberately — would still be
-   * read as dormant. Under this mode a sender with mail in an undecided residence is active
-   * BECAUSE they have undecided mail, full stop, and nothing about a header decides it.
+   * not cosmetic: a cutoff pushed to epoch 0 would still be a date comparison, so a row carrying
+   * no instant at all would still read as dormant. Under this mode a sender with mail in an
+   * undecided residence is active BECAUSE they have undecided mail, full stop, and nothing about
+   * a header decides it. The client engine's `cutlineFor` answers `allTime` for the same reason —
+   * its `-Infinity` cutoff was a date comparison, and it retired undated mail the server kept.
    */
   const allTime = resolved.allTime;
   const folders = sql`(${sql.join(PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
@@ -137,8 +138,9 @@ export async function cutlineCounts(
    * take keywords where this store takes commas, and `strpos` reverses the argument order.
    */
   const d = dialect(ctx.db);
-  // `anyOf` and the ACTIVE test come from `@trafficflow/db#screener-cutline`, which owns the rule
-  // for all three readers. It was a closure here while this was the only one.
+  // `anyOf`, the ACTIVE test and the INSTANT come from `@trafficflow/db#screener-cutline`, which
+  // owns the rule for all three readers. They were closures here while this was the only one.
+  const at = cutlineInstant({ date: sql`m.date`, arrivedAt: sql`m.created_at` });
   const rows = await d.exec(ctx.db, sql`
     with own as (
       select lower(address) a from mailboxes where account_id = ${d.castUuid(ctx.accountId)}
@@ -156,14 +158,15 @@ export async function cutlineCounts(
     inbound as (
       select lower(m.from_address) addr,
              ${anyOf(sql`m.unread`)} any_unread,
-             -- The BASELINED unread term: unread AND inside the window. The null test is explicit
-             -- because a message with no Date header must not count as recent here, exactly as
-             -- the client's messageMs answers null for one. (NO BACKTICKS anywhere in this
+             -- The BASELINED unread term: unread AND inside the window, weighed by cutlineInstant
+             -- -- the Date header, else the arrival -- so a message the sender left undated is
+             -- dated by the moment the mailbox recorded it and not read as pre-cutline. The null
+             -- test stays for the shared expression's own reason. (NO BACKTICKS anywhere in this
              -- template literal: one of them ends the tagged template and the file stops
              -- compiling, with the error pointing at a line some distance away.)
-             ${anyOf(sql`m.unread and m.date is not null and m.date >= ${d.ts(cutoff)}`)}
+             ${anyOf(sql`m.unread and ${at} is not null and ${at} >= ${d.ts(cutoff)}`)}
                as any_unread_in_window,
-             max(m.date) newest,
+             max(${at}) newest,
              -- Does this sender have ANY mail still sitting where no decision has been made?
              -- Activity is measured over all six presented folders (above); membership in the
              -- undecided counts is not. See UNDECIDED_RESIDENCES.

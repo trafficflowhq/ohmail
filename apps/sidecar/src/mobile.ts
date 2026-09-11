@@ -240,51 +240,13 @@ export type ClaimHereOutcome =
   | "refused";
 
 /**
- * WHAT THE PERSON'S STOP SETTLED — three answers, because a boolean collapsed two of them.
+ * `POST /mailboxes/:id/organize` — the ONE route that records a consent, matched on the path.
  *
- * `released` is the only one a caller may act on as "the mailbox has been let go": the claim is
- * out of `ohmail/_meta` and the row records the stop. Everything else leaves the mailbox
- * organized here, and a caller that tears down the notification over it is showing a false state.
+ * Anchored at both ends and with no slash inside the id, so `/mailboxes/x/organize/anything` is
+ * not this route and `/local/mailboxes/:id/organize` (the desktop shell's door, which this build
+ * does not serve) could not be mistaken for it.
  */
-export type StopOrganizingOutcome =
-  /** The claim is gone and the release is recorded. The notification may come down. */
-  | "released"
-  /** There was nothing of ours to give up — not a failure, and not a release either. */
-  | "not_organizing"
-  /** The route said no, or the cycle could not confirm the claim left the mailbox. */
-  | "refused";
-
-/**
- * THE CONSENT PATH IN BOTH SPELLINGS — the phone's 409 keys on this, and it must key on the door
- * the presses actually use.
- *
- * `/local/` is optional and the id carries no slash, so `/mailboxes/x/organize/anything` is still
- * not this route. It used to match the shared spelling alone, with a note that this build "does
- * not serve" the local one — false twice over: the composition is `createSidecar`, so the local
- * door has always been on this handle, and since {@link LOCAL_ORGANIZE_PATH} it is the only door
- * a claim goes through. A regex that named one spelling would leave the other a way past the
- * one-organizer rule, which is the whole thing this refusal exists for.
- */
-const ORGANIZE_ROUTE = /^(?:\/local)?\/mailboxes\/([^/]+)\/organize$/;
-
-/**
- * ══ THE DOOR A CLAIM PRESSES, AND WHY IT IS NOT THE SHARED ONE ═════════════════════════════
- *
- * The shared `POST /mailboxes/:id/organize` is `stepUp: true`, which on a standalone install is
- * not a guard but a permanent refusal: `mintLaunchSession` stamps `lastTwofaAt` ONCE at boot
- * ("there is no second factor on a local install"), so `withStepUp` answers 403 from five minutes
- * after launch for the life of the process. Measured on a device: a press at +44 s and one at
- * +2 m 35 s were 202, one at +6 m 06 s and one at +14 m 30 s were 403, and the claim watch's 29
- * re-claims over 4 m 24 s were all 403 while `ohmail/_meta` stayed empty and the panel named a
- * holder that had gone.
- *
- * `engine.ts` met this first and answered it the same way, for the six routes in its ahead-of-the-
- * table family: *"`stepUpWindowMs` is NOT widened. The window is right for the door it was written
- * for; what is wrong is applying a second factor to a tier that has none."* A phone is that tier —
- * the same composition, the same launch session, the same per-launch bearer as the authority.
- */
-const LOCAL_ORGANIZE_PATH = (id: string): string =>
-  `/local/mailboxes/${encodeURIComponent(id)}/organize`;
+const ORGANIZE_ROUTE = /^\/mailboxes\/([^/]+)\/organize$/;
 
 /** `POST /mailboxes/:id/release` — the person's stop, as the row records it. */
 const RELEASE_PATH = (id: string): string => `/mailboxes/${encodeURIComponent(id)}/release`;
@@ -415,22 +377,10 @@ export interface PhoneEngine {
    * writes the reader role and `organizer_released_at`. A reader with no press never re-enters the
    * gate, which is what makes the stop stick across every later launch.
    *
-   * The answer is the CYCLE's own reading and not the route's acceptance — see
-   * {@link StopOrganizingOutcome}. A boolean could not separate "the claim is gone" from "the
-   * server would not let it go", and both leave `organizing` false, so the phone reported a
-   * refused stop as a success and took its notification down over a mailbox it still organized.
+   * `true` when the release was recorded. `false` is "nothing was recorded", which is a state and
+   * not always a failure: a mailbox this install was not organizing has nothing to give up.
    */
-  stopOrganizing(): Promise<StopOrganizingOutcome>;
-  /**
-   * DISCARD THE PASSWORD THIS LAUNCH SEALED — for the refusal the APP decides, not this one.
-   *
-   * The seal is written at attach, before anything dials, and the refusals this module decides
-   * already remove it ({@link removeRefusedSeal}). A launch this module completed and the app then
-   * could not record is the same state by a different road: a credential the store will let win
-   * over the next press's corrected form. So the act is offered rather than left to a caller that
-   * has no way to reach the store.
-   */
-  forgetStoredLogin(): Promise<boolean>;
+  stopOrganizing(): Promise<boolean>;
   /** What each mailbox reports — the row's answer, not the gate's optimism. */
   runtimes(): { organizer: Record<string, OrganizerState>; connection: Record<string, MailboxConnectionState> };
   /** Flush and release. */
@@ -1050,21 +1000,6 @@ async function composePhoneEngine(
   };
 
   /**
-   * ══ THE STEP-UP'D SPELLING IS NOT ON THIS DOOR AT ALL ══════════════════════════════════════
-   *
-   * A 404, not a forward and not a rewrite. See {@link LOCAL_ORGANIZE_PATH} for the measurement:
-   * on a standalone install the shared consent route is a permanent 403 from five minutes after
-   * launch, so every caller that reaches it is a press that cannot work — and the way to stop a
-   * caller being added back is for the path to be absent rather than discouraged. `/local/` is
-   * the door this build serves for the verb, `apps/mobile/src/net/mailboxes.ts` presses it, and
-   * `claimHere` below presses it; nothing else may.
-   *
-   * Scoped to the PHONE's composition. The shared route stays where it belongs on the hosted and
-   * self-hosted tables, which have a real second factor for it to mean something.
-   */
-  const SHARED_ORGANIZE_ROUTE = /^\/mailboxes\/([^/]+)\/organize$/;
-
-  /**
    * ══ THE PHONE'S ONE DOOR — and `claimHere` goes through it, which is the whole point ════════
    *
    * Composed once and used by BOTH the app-facing `handle` and the engine's own two verbs. A
@@ -1073,25 +1008,8 @@ async function composePhoneEngine(
    * here: with `claimHere` pressing `sidecar.handle` directly, the claim watch reached the service
    * over a live foreign claim and the 409 never ran.
    */
-  const phoneHandle = async (req: Request): Promise<Response> => {
-    /* THE ONE-ORGANIZER RULE FIRST, on both spellings. A live foreign claim is the answer a
-       person's screen needs — the holder named — and it outranks "this door is not served": a
-       press aimed at the wrong spelling over somebody else's mailbox is still that mailbox's
-       answer, and answering 404 there would lose the holder the panel renders. */
-    const held = await refuseIfOrganizedElsewhere(req);
-    if (held !== null) return held;
-    if (req.method === "POST" && SHARED_ORGANIZE_ROUTE.test(new URL(req.url).pathname)) {
-      log("organizer_consent_route_absent", {
-        reason: "the shared consent route carries a second factor a standalone install can never "
-          + "produce, so it is not served here; the local door records the consent",
-      });
-      return new Response(
-        JSON.stringify({ error: { code: "not_found", message: "not found" } }),
-        { status: 404, headers: { "content-type": "application/json" } },
-      );
-    }
-    return sidecar.handle(req);
-  };
+  const phoneHandle = async (req: Request): Promise<Response> =>
+    await refuseIfOrganizedElsewhere(req) ?? sidecar.handle(req);
 
   /** The engine pressing its OWN door, with this launch's bearer. See {@link SELF_ORIGIN}. */
   const pressOwnRoute = async (path: string): Promise<Response> => phoneHandle(new Request(
@@ -1108,81 +1026,32 @@ async function composePhoneEngine(
     },
   ));
 
-  /* ══ A REFUSED PRESS SAYS WHY, AND THIS DOOR IS THE ONLY PLACE THAT KNOWS ═════════════════
-   *
-   * Both verbs had `return "refused"` exits with no line at all, and the app's own catch turns a
-   * throw into the same word — so a press a person made and watched fail left NOTHING anywhere,
-   * on the device or in the log. Measured on a device: a Start refused for over a minute after a
-   * Stop, with not one line from this door saying what the route had answered.
-   *
-   * Written out at each exit rather than through a helper taking the event as an argument: the
-   * package's log census parses these call sites for LITERAL event names, so a name reaching the
-   * logger through a variable is a line the roster cannot see. */
   const claimHere = async (): Promise<ClaimHereOutcome> => {
     const mailboxId = soleMailbox();
-    if (mailboxId === null) {
-      log("organizer_claim_here_refused", {
-        reason: "this install does not serve exactly one mailbox, so there is none to ask for",
-      });
-      return "refused";
-    }
+    if (mailboxId === null) return "refused";
     let res: Response;
     try {
-      res = await pressOwnRoute(LOCAL_ORGANIZE_PATH(mailboxId));
+      res = await pressOwnRoute(`/mailboxes/${encodeURIComponent(mailboxId)}/organize`);
     } catch (err) {
       log("organizer_claim_here_failed", { err, mailboxId });
       return "refused";
     }
     if (res.status === 409) return "held";
-    /* ── THE LOCAL DOOR ANSWERS 200 FOR EVERY OUTCOME, so the OUTCOME is what is read ────────
-     *
-     * The shared route split its answer across the status (202 authorized, 200 otherwise); this
-     * one says so in the body, because on this door every one of the four is an answer about the
-     * row rather than a refusal of the request. `authorized` is the becoming and
-     * `already_organizing` is the row already saying so — the same end state, not a second
-     * becoming. `no_mailbox` and `removed` are not claims: the person took the mailbox off this
-     * phone while the press was in flight. */
-    if (res.status !== 200) {
-      log("organizer_claim_here_refused", {
-        mailboxId,
-        status: res.status,
-        reason: "the door refused this install the mailbox and the press is recorded nowhere",
-      });
+    /* 202 is the authorization and 200 is the route's idempotent answer — `already_organizing`
+       means the row already says so, which is the same end state and not a second becoming. Any
+       other 200 outcome (`disconnected`: the person removed the mailbox) is not a claim. */
+    if (res.status === 200) {
+      const body = await res.json().then(
+        (b) => b as { outcome?: unknown },
+        () => ({ outcome: undefined }),
+      );
+      if (body.outcome !== "already_organizing") return "refused";
+    } else if (res.status !== 202) {
       return "refused";
     }
-    const body = await res.json().then(
-      (b) => b as { outcome?: unknown },
-      () => ({ outcome: undefined }),
-    );
-    if (body.outcome !== "authorized" && body.outcome !== "already_organizing") {
-      log("organizer_claim_here_refused", {
-        mailboxId,
-        status: res.status,
-        reason: "the door answered about this mailbox without making this install its organizer",
-      });
-      return "refused";
-    }
-    /* ══ THE DECISION IS WRITTEN WHERE IT IS MADE, NOT WHERE THE CYCLE ENDS ═══════════════════
-     *
-     * This line stood AFTER the forced cycle below, and that cycle queues behind whatever drain is
-     * already running — so a press measured on a device left the door silent for over a minute
-     * while the person watched `Starting`, with nothing to say the press had even been taken. The
-     * door decides here; the gate's own lines close the sequence when it runs. */
-    log("organizer_reclaimed", {
-      mailboxId,
-      status: res.status,
-      /* WHICH OF THE TWO, because the status no longer says: the local door answers 200 for both
-         the becoming and the row already saying so, and a log that cannot tell them apart cannot
-         tell a re-claim that worked from a press over a mailbox this install already held. */
-      verdict: String(body.outcome),
-      reason: "this install was asked to organize this mailbox and no other install is renewing a "
-        + "claim on it, so the consent is recorded and the gate is asked now",
-    });
     /* AND THE GATE IS ASKED NOW. The stamp alone is inert — it is spent by the next gated cycle,
        which on a phone is a poll interval away, and the person is looking at the screen. `resume`
-       is the same forced cycle the foreground path uses and it can displace nobody. It is AWAITED:
-       `claimed` raises the background session and ends the transition, so answering before the
-       engine organizes would paint an idle mailbox over a start the person was just told worked. */
+       is the same forced cycle the foreground path uses and it can displace nobody. */
     await sidecar.resume().catch((err: unknown) => {
       log("organizer_claim_here_cycle_failed", {
         err,
@@ -1190,78 +1059,39 @@ async function composePhoneEngine(
           + "on the next poll instead",
       });
     });
+    log("organizer_reclaimed", {
+      mailboxId,
+      reason: "this install was asked to organize this mailbox and no other install is renewing a "
+        + "claim on it, so the consent is recorded and the gate has been asked",
+    });
     return "claimed";
   };
 
-  const stopOrganizing = async (): Promise<StopOrganizingOutcome> => {
+  const stopOrganizing = async (): Promise<boolean> => {
     const mailboxId = soleMailbox();
-    if (mailboxId === null) {
-      log("organizer_stop_here_refused", {
-        reason: "this install does not serve exactly one mailbox, so there is none to give up",
-      });
-      return "refused";
-    }
+    if (mailboxId === null) return false;
     let res: Response;
     try {
       res = await pressOwnRoute(RELEASE_PATH(mailboxId));
     } catch (err) {
       log("organizer_stop_here_failed", { err, mailboxId });
-      return "refused";
+      return false;
     }
     /* 202 IS THE ONLY ONE THAT RECORDED ANYTHING — the route's own contract: *"the ceasing has not
        happened yet"*, so 200 is `not_organizing`/`disconnected`, both of which mean there was
        nothing of ours to give up. Neither is a failure and neither is a release. */
-    if (res.status === 200) return "not_organizing";
-    if (res.status !== 202) {
-      log("organizer_stop_here_refused", {
-        mailboxId,
-        status: res.status,
-        reason: "the door refused the stop and recorded nothing, so this install organizes the "
-          + "mailbox still",
-      });
-      return "refused";
-    }
-    /* THE DOOR'S OWN DECISION, before the cycle — the claim's reason one verb over. */
-    log("organizer_stop_here_recorded", {
-      mailboxId,
-      reason: "this install asked to stop organizing this mailbox, the request is on the row where "
-        + "a relaunch reads it, and the gate is asked now",
-    });
+    if (res.status !== 202) return false;
     /* THE GATE HONOURS THE REQUEST BEFORE IT READS THE LEASE, so this forced cycle is what takes
        the claim out of the folder and writes the reader role — the person pressed a button and the
        mailbox is free for their other machine within a cycle rather than a poll interval. */
-    let cycled = true;
     await sidecar.resume().catch((err: unknown) => {
-      cycled = false;
       log("organizer_stop_here_cycle_failed", {
         err,
         reason: "the stop is recorded on the row and the forced cycle did not run, so the claim "
           + "leaves the mailbox on the next poll instead",
       });
     });
-    /* ══ AND THE ANSWER IS THE CYCLE'S OWN READING, NOT THE ROUTE'S ACCEPTANCE ═════════════════
-     *
-     * This returned `true` for every 202. But the cycle above has three endings and only one of
-     * them is a release: it can fail to confirm the claim is out of `ohmail/_meta` (the search
-     * refused, the folder over its ceiling), and it can lose the write to a press that landed
-     * while the server was being asked. In both the mailbox is still organized here — and both
-     * leave `organizing: false`, because a pass honouring a release arranges nothing either way.
-     * So the caller read `false` as "let go", took the notification and the background work down,
-     * and the phone went on organizing with nothing anywhere saying so.
-     *
-     * `released` therefore requires the gate to have SPENT the request, which is the same write
-     * that records the release on the row. A cycle that did not run is not a reading. */
-    const settled = cycled ? sidecar.organizerStates()[mailboxId] : undefined;
-    if (settled === undefined || settled.organizing || settled.releaseRequestedAt !== null) {
-      log("organizer_stop_here_unconfirmed", {
-        mailboxId,
-        reason: "this install asked to stop organizing this mailbox and its claim is not confirmed "
-          + "out of the mailbox, so the mailbox is still organized here and the next poll asks the "
-          + "server again",
-      });
-      return "refused";
-    }
-    return "released";
+    return true;
   };
 
   return { kind: "started", engine: {
@@ -1277,7 +1107,6 @@ async function composePhoneEngine(
     resume: () => sidecar.resume(),
     claimHere,
     stopOrganizing,
-    forgetStoredLogin: () => sidecar.forgetStoredLogin(),
     runtimes: () => ({ organizer: sidecar.organizerStates(), connection: sidecar.connectionStates() }),
     stop: () => sidecar.stop(),
   } };

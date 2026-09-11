@@ -89,6 +89,16 @@ export interface MessageDTO {
   to: EmailAddress[];
   cc: EmailAddress[];
   date: ISODateTime | null;
+  /**
+   * WHEN THE MAILBOX RECORDED THIS MESSAGE — `messages.created_at`, never null.
+   *
+   * {@link date} is the sender's own `Date:` header and any stranger can omit it; this is the
+   * fact beside it that nobody outside can withhold, and the cutline dates a message by the
+   * header ELSE this (`@trafficflow/db#cutlineInstant`, and the client engine's `messageMs`).
+   * Without it on the wire the client had no arrival to fall back to, so an undated message
+   * retired its sender on a mirror the server counted active.
+   */
+  arrivedAt: ISODateTime;
   folder: Folder;
   snippet: string;
   unread: boolean;

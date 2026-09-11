@@ -298,7 +298,7 @@ export {
  * it is store-neutral — the phone runs the same engine on the device store.
  */
 export {
-  resolveCutline, senderIsActiveSql, activeSenderExpr, anyOf,
+  resolveCutline, senderIsActiveSql, activeSenderExpr, anyOf, cutlineInstant,
   CUTLINE_PRESENTED_FOLDERS, CUTLINE_DEFAULT_DORMANCY_DAYS,
   type CutlineFacts, type ResolvedCutline,
 } from "./screener-cutline.js";

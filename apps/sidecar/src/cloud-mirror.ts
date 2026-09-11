@@ -30,131 +30,18 @@ import type { LocalWorld } from "./identity.js";
 import type { CloudAuth } from "./cloud-auth.js";
 import { stampSynced } from "./sync-stamp.js";
 import { createFirstSyncReporter } from "./first-sync.js";
-import { mirroredMessageCount } from "./local-mirror.js";
+import { deleteMailboxRows, mirroredMessageCount } from "./local-mirror.js";
 import type { Diagnostic } from "./log.js";
 
 /**
- * THE CLOUD MIRROR — pull the hosted account's change feed and apply it into the local mail
- * schema, so the desktop reads a complete mirror WITHOUT ever organizing the mailbox.
- *
- * This is the CloudMirror SOURCE. It is deliberately the whole of what a Cloud-mode install does
- * to the mail store: it has no IMAP adapter, takes no organizer lease and runs no sync loop —
- * `cloud-engine.ts`'s module graph reaches none of the three, and a census
- * (`test/cloud-engine-census.test.ts`) makes that structural rather than a matter of discipline.
- * The hosted worker stays the single organizer; this process is a reader of what the worker filed.
- *
- * ── THE FIVE CONVERGENCE RULES, PORTED INTO UPSERTS ───────────────────────────────────────────
- *
- * `packages/client-engine/src/apply.ts` proves the `/sync` contract against a `Map`; the same five
- * rules hold here against SQL:
- *
- *   1. sort a page's merged buckets by ascending `seq` (the order of record);
- *   2. apply keyed on (type,id) as an idempotent upsert;
- *   3. an older-or-equal seq never overwrites — satisfied structurally, since a page is applied in
- *      ascending seq and pages are applied in cursor order, so the last write for an id wins and a
- *      replay re-applies the same or newer state;
- *   4. delete ⇒ remove the row (a later create resurrects via the upsert);
- *   5. move ⇒ the carried DTO is upserted like any other, and its folder lands in `folder_state`.
- *
- * Applying the same page twice — the crash-recovery case, since the cursor is written AFTER the
- * commit — converges, because every write is an upsert and every delete is unconditional.
- *
- * ── THE ACCOUNT IS REMAPPED. THE MAILBOX IS NOT — AND THAT ASYMMETRY IS THE POINT ─────────────
- *
- * Every DTO carries the HOSTED account's `accountId` and `mailboxId`, and the two are treated
- * completely differently.
- *
- * `accountId` IS REMAPPED to `world.accountId`. The local database is scoped by the single
- * synthetic local identity (`identity.ts`) and every read service filters on the caller's own
- * account, so a mirror keyed to the hosted account renders EMPTY — `materializeMessages` would
- * find nothing.
- *
- * `mailboxId` IS COPIED VERBATIM, and it used to be remapped the same way. That was the defect.
- * `identity.ts` mints ONE synthetic mailbox row — a random uuid, addressed with the ACCOUNT LOGIN
- * address — and every mirrored message and draft was attributed to it. Three consequences, all of
- * them visible to the user:
- *
- *  · a hosted `POST`/`PUT /drafts` carrying that id is refused `400 mailboxId does not belong to
- *    this account` (`drafts-service.ts`, `validMailbox`), so EVERY send from the Cloud door failed;
- *  · the From selector reads `GET /mailboxes` (`compose-from.ts`), which was answered from the
- *    synthetic row, so it rendered one static option whose address was the login rather than the
- *    account's actual sending addresses — and an account with two mailboxes could not pick;
- *  · a reply inherits `parent.mailboxId` (`Engine.enrich`), which named a mailbox no option list
- *    contained, so `resolveReplyFrom` announced a SUBSTITUTION on every reply.
- *
- * So the mailbox rows are mirrored too — {@link makeMailboxRefresh} pulls hosted `GET /mailboxes`
- * at the START of every pull, keyed on the HOSTED id, before a single change is drained. That
- * ordering is mandatory rather than tidy: a message can only be attributed to a mailbox row that
- * already exists (`messages.mailbox_id` has a foreign key), so the refresh has to precede the
- * drain. Entity IDs (message id, thread id, …) are the `/sync` feed's own keys and are preserved
- * unchanged, and mailbox ids now join them.
- *
- * The synthetic row is retired in the same transaction the hosted rows land in. It is never left
- * beside them: two active rows for one address violate `mailboxes_active_address_uq`, and a
- * lingering login-address row would render in Settings as a mailbox nobody has.
- *
- * ── AND ONE LOCAL `recordChange` PER APPLIED ENTITY ───────────────────────────────────────────
- *
- * The Swift projection reads the sidecar's OWN `/sync`, which is `change_log` over the local
- * database. So each applied entity appends one local change-log row inside the same transaction —
- * a LOCAL seq unrelated to the Cloud cursor — and that is what makes the projection's `/sync`
- * advance. Message bodies are the exception: they are not a `/sync` entity (the client hydrates
- * them separately), so they are upserted without a change-log row.
- *
- * ── NEWEST FIRST: A BOOTSTRAP OPENS WITH THE SNAPSHOT WINDOW, THEN REPLAYS THE FEED ───────────
- *
- * A hosted `/sync?since=0` replay is `change_log` in seq order, which is the account's history
- * OLDEST-first: on a fresh install the mail a person opened the app for — this week's — is what
- * the replay reaches LAST, hours in on a large account, and the top of the Ohbox fills from the
- * bottom of the archive. Measured on the first sync of a 73k-message account. The feed cannot be
- * asked for the other order — a seq replay is inherently oldest-first, and the resumable cursor
- * depends on it staying so.
- *
- * The newest-first door that exists is `GET /sync/snapshot` (`sync-service.ts`), the browser
- * client's own bootstrap: page 1 carries the account's live small state (every rule, message
- * state, pending decision, approval, draft, tag and folder) plus the newest page of messages, and
- * the pages after it walk the message stream newest-first through a 90-day / 5,000-row window and
- * a labeled tail. So a bootstrap here runs in TWO PHASES, and the invariant is:
- *
- *   THE WINDOW LANDS BEFORE THE REPLAY'S FIRST PAGE, AND NEITHER PHASE ADOPTS THE OTHER'S CURSOR.
- *
- *  · Phase 1, THE WINDOW ({@link drainWindowFirst}): every snapshot page, applied through the SAME
- *    {@link applyPage} as a feed page — local change-log rows, FK guards, folder reconciliation and
- *    generation marks included — with its own progress persisted in the cursor file's `window`
- *    field (the hosted snapshot cursor of the NEXT page), so a kill inside the window resumes at
- *    that page against the same generation. `cursor.sync` is NOT written: the snapshot's `asOfSeq`
- *    is not adopted as the feed cursor, because this mirror is COMPLETE where the browser's is
- *    windowed — the replay that follows still owes every row outside the window, and the sweep
- *    needs the marks of the whole feed, not of the window.
- *  · Phase 2, THE REPLAY: the `since=0` seq drain exactly as before, cursor committed per page,
- *    marks flushed before the cursor moves. It re-delivers the window's rows at their natural seqs,
- *    and both passes re-materialize CURRENT state (`getChanges` projects the live entity per row,
- *    never the historical one), so the replay can never walk a window row backwards; a row deleted
- *    on Cloud between the phases arrives as the tombstone the replay emits for its create.
- *
- * The rules-first pass still opens the bootstrap AHEAD of the window. Page 1 carries the rules
- * too, but the pass is the ordering promise the consent cutline depends on and it is kept first
- * on its own terms. The first screenful therefore lands after three requests and one page apply
- * (mailboxes, rules, snapshot page 1), with the archive filling in behind it for as long as it
- * takes — and the mirror's cursor never claims a horizon it has not applied, because the window
- * writes no feed cursor and the replay writes only the cursor of the page it just committed.
- *
- * Resume, in either phase, is the same cursor/mark semantics as before: `bootstrapping` set with
- * `window` mid-page ⇒ continue the window against the loaded marks; `bootstrapping` set with the
- * feed cursor off zero ⇒ continue the replay (the window is by then complete for this generation,
- * or — for a cursor an earlier build wrote — still owed, and run first, which is idempotent and
- * only brings the newest mail forward). A 410 from the replay restarts the whole bootstrap with a
- * fresh generation as it always has; a 410 to a persisted snapshot cursor re-reads the window from
- * page 1 inside the same generation, once — a second gives the window up for this bootstrap. Marks
- * made by an interrupted window are safe to keep: every
- * marked row was written, and one Cloud has since deleted is tombstoned by the replay, which
- * always drains to the horizon before the sweep runs.
- *
- * And the window is an ORDERING, not a row the mirror owes: a snapshot route that will not answer
- * — no such route (404) at once, any other refusal after {@link WINDOW_REFUSALS_MAX} consecutive
- * pulls — degrades that bootstrap to the plain replay, which still converges, and says so. The
- * alternative, retrying the window for ever, would turn a broken snapshot query into a desktop that
- * never finishes its first sync; the browser's engine makes the same call for the same route.
+ * The cloud mirror: pull the hosted account's `/sync` feed into the local mail schema so the
+ * desktop reads a complete mirror WITHOUT organizing. A Cloud install has no IMAP adapter, lease
+ * or sync loop (`cloud-engine-census.test.ts` makes that structural), so the hosted worker stays
+ * the single organizer. The five convergence rules (`apply.ts`) hold as idempotent (type,id)
+ * upserts. `accountId` is remapped to `world.accountId`; `mailboxId` is copied VERBATIM (remapping
+ * it to the synthetic row broke drafts, From and replies), so mailbox rows are mirrored first
+ * ({@link makeMailboxRefresh}) before the drain for the FK, and each entity appends one local
+ * change-log row. A bootstrap runs NEWEST FIRST — the snapshot window before the seq replay.
  */
 
 /**
@@ -179,29 +66,27 @@ export const CLOUD_SYNC_TYPES = [
    * nothing, because its next `GET /consent` answers from the account itself.
    */
   "settings",
+  /**
+   * A MAILBOX THE HOSTED ACCOUNT ERASED. One row, `op: "delete"` only, and it stands for every
+   * message, body, draft and folder that mailbox had (`change-log.ts`, the `"mailbox"` member of
+   * `EntityType`). Asked for here because the failure without it is this door's own version of
+   * the standalone one: the hosted store erases the mail, this mirror never hears, and the window
+   * goes on rendering a mailbox that is gone. `applyDelete` runs the same table walk the
+   * standalone removal runs (`local-mirror.ts#deleteMailboxRows`) and the loop re-emits the
+   * receipt on the LOCAL log, so the window's own mirror drops it by the same rule.
+   */
+  "mailbox",
 ] as const satisfies readonly EntityType[];
 
 /**
- * AND EVERY `EntityType` IS IN THAT LIST — a COMPILE-TIME assertion, in `src`, where it is
- * actually compiled.
- *
- * `CLOUD_SYNC_TYPES` is sent as `?types=`, so it is a REQUEST as well as a description: a type
- * left out asks the hosted feed not to send it, and the mirror then converges — correctly, by its
- * own rules — on a mailbox that is missing a whole kind of state. That is not a hypothetical. The
- * list shipped without `"tag"`, and the consequence was that a hosted account's tags never reached
- * any desktop install; it needed a one-time repair pass (`repairStaleTags`) to heal the mirrors
- * that had already committed a cursor past those rows. Nothing was red while it was wrong, because
- * an under-asking client is indistinguishable from an account with no tags.
- *
- * So the union is the source and this is the check: add a member to `EntityType` without listing
- * it here and `Exclude<…>` stops being `never`, the alias becomes the tuple below, and the
- * assignment of `true` fails to compile with the missing member named in the error. `satisfies`
- * above does the other direction — a listed type that is not an `EntityType` is a typo, and it
- * fails there.
- *
- * The `as const` is load-bearing: with the old `readonly EntityType[]` annotation this file used
- * to carry, `(typeof CLOUD_SYNC_TYPES)[number]` widens straight back to `EntityType` and the
- * assertion below is vacuously true whatever the array contains.
+ * And every `EntityType` is in that list — a COMPILE-TIME assertion, in `src` where it compiles.
+ * `CLOUD_SYNC_TYPES` is sent as `?types=`, so it is a REQUEST: a type left out asks the feed not
+ * to send it and the mirror converges — by its own rules — missing a whole kind of state (it
+ * shipped without `"tag"`, so tags never reached any desktop until `repairStaleTags`, and nothing
+ * was red because an under-asking client looks like an account with no tags). Adding an
+ * `EntityType` without listing it makes `Exclude<…>` stop being `never` and this fails to compile;
+ * `satisfies` above catches the reverse. The `as const` is load-bearing — a widened annotation
+ * makes the assertion vacuous.
  */
 type CloudSyncTypeMissing = Exclude<EntityType, (typeof CLOUD_SYNC_TYPES)[number]>;
 type CloudSyncTypesAreComplete = [CloudSyncTypeMissing] extends [never] ? true
@@ -221,6 +106,11 @@ void cloudSyncTypesAreComplete;
  * the time the message carrying the assignment is applied.
  */
 const APPLY_ORDER: readonly EntityType[] = [
+  /* `mailbox` is FIRST so that in the REVERSED delete pass it is LAST: the mailbox receipt takes
+     everything keyed by that mailbox, and running it after the page's own per-row deletes leaves
+     them nothing to find rather than the other way round. It never appears as a non-delete — the
+     feed emits this type only as a delete — so its place in the upsert order is inert. */
+  "mailbox",
   "settings", "folder", "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
 ];
 
@@ -251,18 +141,12 @@ export const NEWEST_BODIES_FIRST = 5 * BODIES_IDS_MAX;
 export const BODIES_WALK_COMPLETE = "complete";
 
 /**
- * WHERE THE BODY WALK HAS GOT TO — three states, in the one field that used to hold two of them.
- *
- * `GET /messages/bodies` keyset-pages the account by `messages.id` and answers `nextCursor: null`
- * on the LAST page. The cursor stored that answer verbatim, so `null` meant BOTH "the walk finished"
- * and — because the next pull read it as "no `after=` to send" — "start again from the first
- * message". A completed walk therefore restarted on every poll, re-fetching and re-upserting every
- * body in the account for as long as the app was open. Nothing was wrong with the mirror it
- * produced, which is why it went unnoticed: it converged on identical rows, at the cost of a
- * permanently busy process and a write-ahead log that never stopped growing.
- *
- * Splitting the states is the fix, and the split has to survive cursor files written before it
- * existed — see {@link resolveBodiesWalk} for how a `null` read off disk is decided.
+ * Where the body walk has got to — three states, in the field that once held two. `GET
+ * /messages/bodies` answers `nextCursor: null` on the LAST page, and storing that verbatim meant
+ * both "the walk finished" and "no `after=`, start again" — so a completed walk restarted on every
+ * poll, re-fetching every body for as long as the app was open (converging on identical rows, so
+ * it went unnoticed). Splitting the states is the fix, and it must survive cursor files written
+ * before it existed — see {@link resolveBodiesWalk} for how a `null` read off disk is decided.
  */
 type BodiesWalk =
   /** An on-disk `null`: complete or never-started, and only the mailbox row can say which. */
@@ -341,33 +225,14 @@ function readWindowPass(raw: unknown): WindowPass {
 export const WINDOW_REFUSALS_MAX = 3;
 
 /**
- * THE CURSOR FILE'S FORMAT VERSION — **and an ABSENT version means 0, which means RE-KEY.**
- *
- * The mirror's rows changed meaning when mailbox attribution stopped being the synthetic local id
- * (see this file's header). Every mirror written before that carries messages and drafts pointing
- * at a mailbox row the hosted account has never heard of, and no delta can repair them: a message
- * that has not changed on Cloud emits no change, so an incremental drain would leave the whole
- * back catalogue mis-attributed for ever while fresh installs came up correct.
- *
- * So the version is the migration, and the DEFAULT IS THE DANGEROUS DIRECTION ON PURPOSE. A cursor
- * file with no `version` field — which is every file any earlier build wrote — reads as 0 and
- * forces a `since=0` re-bootstrap, which re-applies every entity through the corrected upsert. The
- * inverse default (absent ⇒ current) is the one failure that would be invisible in testing: fresh
- * installs would be green and every UPGRADED install would silently keep the defect.
- *
- * The re-pull is the ordinary bootstrap machinery — 500-row pages, one transaction and one cursor
- * write per page, resumable after a crash — not a discard: `message_bodies` is keyed on
- * `message_id` alone and entity ids are preserved, so the body store is untouched by it.
- *
- * ── VERSION 2: THE TRIAGE STATE'S IDENTITY ──────────────────────────────────────────────────
- *
- * Same shape, one table over. `message_states` rows were written with a LOCAL random id while
- * the change log announced them under the hosted one, so the local `/sync` could not
- * materialize them and served every triage state as a delete tombstone — no pile, and parked
- * mail left standing in the Ohbox. The upsert carries the hosted id now, and this bump is what
- * reaches the rows already on disk: a state nobody touches again emits no delta, so an
- * incremental drain would repair only the states that happen to change and leave the rest
- * wrong for ever.
+ * The cursor file's format version — an ABSENT version means 0, which means RE-KEY. The mirror's
+ * rows changed meaning when mailbox attribution stopped being the synthetic local id (see the
+ * header), and no delta can repair a row that has not changed on Cloud, so the version IS the
+ * migration and the default is the dangerous direction on purpose: a file with no `version` reads
+ * as 0 and forces a `since=0` re-bootstrap through the corrected upsert (the inverse default would
+ * leave every upgraded install silently wrong). The re-pull is the ordinary resumable bootstrap,
+ * not a discard (`message_bodies` is keyed on `message_id`). VERSION 2 is the same shape for
+ * `message_states`, whose local random id served every triage state as a delete tombstone.
  */
 export const CURSOR_VERSION = 2;
 
@@ -382,17 +247,13 @@ interface CursorState {
   /** How far the body walk has got. See {@link BodiesWalk} for why this is not just an id. */
   bodies: BodiesWalk;
   /**
-   * Set while a `since=0` bootstrap is in flight and its trailing sweep has NOT yet run; cleared
-   * only once the sweep has. It is what makes the mark-and-sweep crash-safe, and what it demands
-   * changed when the generation learned to persist ({@link BootstrapGen.flush}): a bootstrap that
-   * commits a page then dies leaves a NON-zero cursor, and resuming from it is safe ONLY against
-   * the SAME generation's marks — a resume against a partial rebuild would sweep real rows. So a
-   * launch that finds this set RESUMES from the committed cursor when the generation file is
-   * there to continue marking into, and restarts the whole bootstrap from zero when it is not
-   * (a pre-generation-file cursor, an unreadable file). The restart-from-zero-on-every-failure
-   * form this replaces cannot finish on a large mailbox: a replay hundreds of pages long that
-   * starts over on ANY interruption — a sleep, a network change, an app quit — never reaches the
-   * horizon, and the mirror silently serves week-old mail forever while every retry looks alive.
+   * Set while a `since=0` bootstrap is in flight and its trailing sweep has NOT run; cleared once
+   * it has. It makes mark-and-sweep crash-safe: a bootstrap that commits a page then dies leaves a
+   * non-zero cursor, and resuming is safe ONLY against the same generation's marks (a resume
+   * against a partial rebuild would sweep real rows). So a launch that finds this set RESUMES from
+   * the committed cursor when the generation file is there to mark into, and restarts from zero
+   * when it is not. Restart-from-zero on every interruption never finishes a large mailbox — a
+   * long replay that starts over on any sleep or quit serves week-old mail while looking alive.
    */
   bootstrapping: boolean;
   /**
@@ -422,24 +283,13 @@ interface CursorState {
    */
   capMarkerRepair: boolean;
   /**
-   * THE MIRROR'S OWN "WHEN WAS I LAST CAUGHT UP" — the instant the last pull drained `/sync` to
-   * the horizon, this process's clock, written at pull completion and nowhere earlier (a pull
-   * that fails or is cut leaves the old stamp standing, so the next pull still reads as stale
-   * and freshens again — idempotent, the upsert apply absorbs the repeat).
-   *
-   * The sidecar's copy of the engine's `LAST_DRAIN_AT_META` (INSTANT-ARCH §6.6, one freshness
-   * contract on every surface), and it is read by exactly two things:
-   *
-   *  · {@link createCloudMirror}'s stale-resume freshen — a warm mirror resuming past the
-   *    shared `STALE_RESUME_MS` (`@trafficflow/core/drain-policy`, which owns the threshold for
-   *    every surface) fetches snapshot page 1 before its oldest-first replay;
-   *  · {@link CloudMirror.freshness} — what the desktop window's "as of <time> · catching up"
-   *    label renders, over `GET /mirror/freshness`.
-   *
-   * `null` is every cursor file written before this existed — exactly the mirrors that replay a
-   * week of backlog oldest-first today — and every mirror that has never completed a pull. Both
-   * read as "not known to be current", which is the honest default in the cheap direction: one
-   * extra snapshot page on the next pull.
+   * The mirror's own "when was I last caught up" — the instant the last pull drained `/sync` to the
+   * horizon, this process's clock, written only at pull completion (a cut pull leaves the old stamp
+   * so the next pull freshens again; idempotent). The sidecar's copy of the engine's
+   * `LAST_DRAIN_AT_META` (INSTANT-ARCH §6.6), read by two things: {@link createCloudMirror}'s
+   * stale-resume freshen (a warm mirror past `STALE_RESUME_MS` fetches snapshot page 1 first) and
+   * {@link CloudMirror.freshness} (the window's "as of <time> · catching up" label). `null` is
+   * every pre-freshen cursor and every mirror that never completed a pull — the honest default.
    */
   lastDrainAt: string | null;
 }
@@ -475,19 +325,13 @@ export interface CloudMirror {
   /** Pull now, then poll. */
   start(): Promise<void>;
   /**
-   * Stop polling, ASK ANY IN-FLIGHT PULL TO LEAVE, and resolve once it has.
-   *
-   * The await is the whole point, and it is why this is not `void`. A pull is a long walk over the
-   * network with a database transaction per page; clearing the poll timer stopped the NEXT one and
-   * did nothing about the one already running, so quitting closed the database underneath a drain
-   * that was still enqueuing work against it. The close waited behind that queue, missed the
-   * shell's grace period and the process was killed — every quit, with a page half-applied.
-   *
-   * The walk checks between pages and between id batches, so what a caller waits for here is one
-   * request and one page apply, not the rest of the mailbox. Nothing is left half-written: the
-   * cursor is only ever advanced after a page commits, so an interrupted walk resumes from the last
-   * page that landed, and a bootstrap interrupted mid-generation stays marked as one so the next
-   * launch restarts it rather than sweeping against a partial mark.
+   * Stop polling, ask any in-flight pull to leave, and resolve once it has. The await is the point
+   * (and why this is not `void`): clearing the poll timer stopped the NEXT pull and did nothing
+   * about the running one, so quitting closed the database under a drain still enqueuing work,
+   * missed the shell's grace period and was killed with a page half-applied. The walk checks
+   * between pages and id batches, so a caller waits for one request and one page apply. Nothing is
+   * left half-written — the cursor advances only after a page commits, and an interrupted bootstrap
+   * stays marked so the next launch restarts it rather than sweeping against a partial mark.
    */
   stop(): Promise<void>;
   /**
@@ -518,38 +362,23 @@ export interface CloudMirror {
    */
   awaitCloudSeq(target: bigint, deadlineMs: number): Promise<boolean>;
   /**
-   * HOW MANY MESSAGES THE HOSTED ACCOUNT HOLDS, per hosted mailbox id — the numbers this mirror
-   * is draining TOWARD, not the ones it holds.
-   *
-   * Empty until the first counted refresh (see {@link HOSTED_COUNTS_TTL_MS}), and empty for ever
-   * on an install whose account answers no counts. An empty map means "this process cannot tell",
-   * and every consumer must render that as an ABSENT number rather than a zero: `0` here would
-   * assert that somebody's account is empty, which is the one thing a mirror may never say about
-   * the master copy.
-   *
-   * In memory on purpose. It is not a mirrored row: the `mailboxes` table is the shared mail
-   * schema, running on hosted Postgres and on this PGlite from one journal, and a column that
-   * means something only inside a mirror would be dead and misnamed on the hosted side. It also
-   * SHOULD die with the process — a count is a measurement with a timestamp, and the honest
-   * lifetime of an unrefreshed one is short.
+   * How many messages the hosted account holds, per hosted mailbox id — the numbers this mirror is
+   * draining TOWARD, not the ones it holds. Empty until the first counted refresh (see {@link
+   * HOSTED_COUNTS_TTL_MS}) and empty for ever on an account that answers no counts. An empty map
+   * means "this process cannot tell", and every consumer must render that as an ABSENT number, not
+   * zero — `0` would assert somebody's account is empty, the one thing a mirror may never say about
+   * the master copy. In memory on purpose: it is not a mirrored row (the `mailboxes` table is the
+   * shared schema), and a count is a measurement whose honest lifetime is short.
    */
   hostedCounts(): ReadonlyMap<string, number>;
   /**
-   * THE FRESHNESS CONTRACT'S VERDICT FOR THIS MIRROR (INSTANT-ARCH §6.6) — the same three
-   * states the client engine's `freshness()` derives, from this mirror's own completion stamp
-   * ({@link CursorState.lastDrainAt}) against the shared `STALE_RESUME_MS`
-   * (`@trafficflow/core/drain-policy`) — literally the same `mirrorFreshness` call:
-   *
-   *  · `unknown` — no pull has ever completed (a first bootstrap; a pre-freshen cursor file).
-   *  · `stale`   — the last completed pull is older than the threshold. The local store is
-   *    renderable truth as of `asOf`, and the window's label says so until a pull settles.
-   *  · `current` — the last completed pull is recent; a running install re-stamps at least
-   *    every poll interval, so this is the steady state.
-   *
-   * Served to the window over `GET /mirror/freshness` (`cloud-engine.ts`) — the desktop's
-   * WINDOW engine drains this process's local feed and is always "current" relative to it, so
-   * the honest "as of" on the desktop is THIS process's stamp against the hosted account,
-   * never the window's own.
+   * The freshness contract's verdict for this mirror (INSTANT-ARCH §6.6) — the same three states
+   * the client engine's `freshness()` derives, from this mirror's completion stamp ({@link
+   * CursorState.lastDrainAt}) against the shared `STALE_RESUME_MS`, the same `mirrorFreshness`
+   * call: `unknown` (no pull ever completed), `stale` (last pull older than the threshold; the
+   * store is renderable truth as of `asOf`), `current` (recent; the steady state). Served to the
+   * window over `GET /mirror/freshness` — the desktop's WINDOW engine is always "current" relative
+   * to this process, so the honest "as of" is THIS process's stamp against the account, not the window's.
    */
   freshness(): MirrorFreshness;
 }
@@ -557,19 +386,13 @@ export interface CloudMirror {
 export const DEFAULT_CLOUD_POLL_MS = 20_000;
 
 /**
- * HOW OLD THE HOSTED MESSAGE COUNTS MAY GET before the next refresh asks for them again.
- *
+ * How old the hosted message counts may get before the next refresh asks again.
  * `GET /mailboxes?counts=1` is one grouped aggregate over the account's whole `messages` table,
- * and `packages/api/src/routes/mailboxes.ts` makes it opt-in precisely so that a POLLED route
- * cannot put that scan behind a heartbeat. This mirror polls every {@link DEFAULT_CLOUD_POLL_MS},
- * which is three times a minute — so asking for counts on every refresh would be exactly the
- * thing that doc-block refuses, from a client instead of a tab.
- *
- * Fifteen minutes, with {@link HOSTED_COUNTS_MIN_GAP_MS} as a hard floor beneath it, puts a steady
- * install at four counted reads an hour. The number the counts feed is a sentence about a
- * shortfall of dozens of messages or more; it does not need to be fresher than this, and the
- * cases where it DOES need to be fresh — a process that has just started, a bootstrap, a drain
- * that reported a backlog — are asked for by name rather than by shortening this.
+ * made opt-in (`routes/mailboxes.ts`) precisely so a POLLED route cannot put that scan behind a
+ * heartbeat — and this mirror polls three times a minute. Fifteen minutes, with {@link
+ * HOSTED_COUNTS_MIN_GAP_MS} as a hard floor, puts a steady install at four counted reads an hour;
+ * the count feeds a sentence about a shortfall of dozens of messages and needs no more. The cases
+ * that DO need it fresh (a just-started process, a bootstrap, a backlog) are asked for by name.
  */
 export const HOSTED_COUNTS_TTL_MS = 15 * 60_000;
 
@@ -669,15 +492,13 @@ function deleteCursor(path: string): void {
 const isBootstrapCursor = (s: string): boolean => !s || s === "0";
 
 /**
- * A BOOTSTRAP GENERATION: the ids a since=0 re-pull touched, tagged per entity type.
- *
- * A `since=0` replay carries the account's CURRENT entities, not ancient tombstones. So a message
- * deleted on Cloud while the mirror was offline — its tombstone since fallen below the retention
- * horizon — is simply absent from the replay, and a plain re-pull would leave the local row as a
- * PHANTOM forever. The fix is mark-and-sweep: tag every managed row this generation writes, then
- * delete the managed rows it never touched. Membership is keyed by each table's own id — every
- * type, `message_state` included: its DTO carries no `id`, which is what once made this set (and
- * the sweep, and the delete arm) key on the messageId while {@link applyPage} recorded the row id.
+ * A bootstrap generation: the ids a `since=0` re-pull touched, tagged per entity type. A `since=0`
+ * replay carries the account's CURRENT entities, so a message deleted on Cloud while the mirror
+ * was offline — its tombstone since fallen below the retention horizon — is simply absent, and a
+ * plain re-pull would leave the local row a PHANTOM for ever. The fix is mark-and-sweep: tag every
+ * managed row this generation writes, then delete the managed rows it never touched. Membership is
+ * keyed by each table's own id — `message_state` included, whose DTO carries no `id`, which once
+ * made this set key on the messageId while {@link applyPage} recorded the row id.
  */
 interface MarkSet {
   add(id: string): void;
@@ -714,22 +535,14 @@ interface BootstrapGen {
 }
 
 /**
- * The generation file, beside the cursor. NDJSON-ish: one `<type> <id>` line per marked row,
- * under a `#keying <CURSOR_VERSION>` header.
- *
- * THE HEADER IS WHAT MAKES THE MARKS COMPARABLE. A mark is an entity's id, so a re-key that
- * changes WHICH id an entity is marked by makes every earlier mark unreadable — and the sweep
- * reads an unreadable mark as "the feed never sent this row", which deletes it. Version 2 moved
- * `message_state` from the messageId to the row id, so a bootstrap interrupted under version 1
- * and resumed under version 2 would have swept every triage state it had already applied: the
- * defect this release fixes, reintroduced for the one population that was mid-replay.
- *
- * Refusing a mismatched file rather than refusing every re-key is deliberate. Resuming an
- * interrupted replay is load-bearing — a restart on every interruption never finishes on a large
- * mailbox — so the same-version resume is untouched and only the cross-version one starts over,
- * once. A file with no header is a version-1 file and is refused for that reason; the parser
- * skips any line whose first token is not an entity type, so an older build reads this header as
- * a comment.
+ * The generation file, beside the cursor: one `<type> <id>` line per marked row under a
+ * `#keying <CURSOR_VERSION>` header. THE HEADER makes the marks comparable — a mark is an entity's
+ * id, so a re-key that changes WHICH id marks an entity makes earlier marks unreadable, and the
+ * sweep reads an unreadable mark as "the feed never sent this row" and deletes it (version 2 moved
+ * `message_state` from the messageId to the row id, so a v1 bootstrap resumed under v2 would sweep
+ * every applied triage state). It refuses a MISMATCHED file rather than every re-key: the
+ * same-version resume is load-bearing (a restart on every interruption never finishes), so only
+ * the cross-version one starts over, once. A headerless file is a version-1 file and is refused.
  */
 const BOOTSTRAP_GEN_FILE = "cloud-bootstrap-gen.marks";
 const GEN_KEYING_PREFIX = "#keying ";
@@ -841,25 +654,24 @@ async function messagePresent(tx: Tx, id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+async function draftPresent(tx: Tx, id: string): Promise<boolean> {
+  const rows = await tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.id, id)).limit(1);
+  return rows.length > 0;
+}
+
 async function threadPresent(tx: Tx, id: string): Promise<boolean> {
   const rows = await tx.select({ id: threads.id }).from(threads).where(eq(threads.id, id)).limit(1);
   return rows.length > 0;
 }
 
 /**
- * A hosted `MailboxDTO` as the local row that mirrors it — **minus the two progress stamps.**
- *
- * `lastSyncAt` and `initialImportCompletedAt` are DELIBERATELY ABSENT and copying them would break
- * the body walk in a way that shows as blank mail. `initial_import_completed_at` is what
- * `resolveBodiesWalk` reads back to tell a finished body walk from one that never started; a
- * hosted account has finished ITS import long ago, so copying the stamp onto a mirror that has
- * fetched no body yet resolves the walk as `complete` and hands the account to
- * `fetchMissingBodies` — which asks only about messages this mirror already holds. On a first pull
- * that is none of them, so every message would open blank for ever.
- *
- * They are stamps about THIS mirror's own progress, written by `stampSynced` when a pull of THIS
- * process drains with the walk spent, and the hosted account's answer to the same question is a
- * different fact with the same name.
+ * A hosted `MailboxDTO` as the local row that mirrors it — minus the two progress stamps.
+ * `lastSyncAt` and `initialImportCompletedAt` are DELIBERATELY ABSENT: copying them breaks the
+ * body walk as blank mail. `initial_import_completed_at` is what `resolveBodiesWalk` reads to tell
+ * a finished body walk from one that never started, and a hosted account finished ITS import long
+ * ago, so copying the stamp onto a mirror that has fetched no body resolves the walk `complete` and
+ * hands it to `fetchMissingBodies` — which asks only about messages already held, none on a first
+ * pull. They are stamps about THIS mirror's own progress, written by `stampSynced`.
  */
 function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
   return {
@@ -883,85 +695,45 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
     syncBlockedReason: m.syncBlockedReason ?? null,
     syncBlockedSince: asDate(m.syncBlockedSince),
     disabledReason: m.disabledReason ?? null,
-    /* ── MAIL 0083'S SIX FACTS, WHICH THIS PROJECTION USED TO DROP ────────────────────────────
-     *
-     * `MailboxDTO` carries all of them and this copied `disabledReason` and stopped, so the
-     * mirrored row asserted the DEFAULT `organizer_role = 'organizer'` about a mailbox the DTO it
-     * was built from may say Cloud only READS. `?? null` on each for the rule stated above: this
-     * object IS the `onConflictDoUpdate` set, so a key left out makes a value cleared on Cloud
-     * persist locally.
-     *
-     * ── WHAT A MIRRORED ROLE MEANS LOCALLY, WHICH IS THE DECISION THIS NEEDED ────────────────
-     *
-     * It means nothing for WRITES, and that is what makes mirroring it safe rather than a way to
-     * disable this install's own doors. A Cloud-mode engine serves no mutation at all: every write
-     * is forwarded to Cloud with the bearer (`cloud-engine.ts`), and the hosted API applies its own
-     * `assertOrganizerRole` to the forwarded call, against the HOSTED row. That is not read off a
-     * comment — `cloud-engine-census.test.ts` fails the moment this module graph reaches any of the
-     * three modules an organizer is built from.
-     *
-     * So these columns feed the READ surfaces, which is exactly where they were missing: a
-     * Cloud-connected desktop's mailbox pane reads `GET /mailboxes` from this mirror, and with the
-     * facts dropped it could not say who organizes the mailbox — the reader banner had no source,
-     * on the one door where somebody else genuinely holds it.
-     *
-     * ── AND THE DOOR SWITCH, WHICH IS THE CASE WORTH STATING ─────────────────────────────────
-     *
-     * An install that switches from this door to the standalone one reuses these rows
-     * (`ensureLocalWorld` finds the existing mailbox by address). Mirroring the role makes
-     * `standDownMemory` answer truthfully there instead of reading silence. It was already safe
-     * without this — `organize_consented_at` was equally unmirrored, so it arrived NULL and
-     * `mayOrganize` refuses on `!consented && !takeoverAuthorized` — but that safety rested on a
-     * column being ABSENT, which is the kind of guarantee that evaporates the day somebody fills
-     * it in. Now the role says so directly.
-     */
+    /* Mail 0083's six facts, which this projection used to drop. `MailboxDTO` carries all of them
+     * and this copied `disabledReason` and stopped, so the row asserted the default
+     * `organizer_role = 'organizer'` about a mailbox the DTO may say Cloud only READS. `?? null` on
+     * each: this object IS the `onConflictDoUpdate` set, so a key left out persists a Cloud-cleared
+     * value. A mirrored role means nothing for WRITES — a Cloud engine forwards every mutation with
+     * the bearer and the hosted API applies `assertOrganizerRole` (`cloud-engine-census.test.ts`) —
+     * so these columns feed the READ surfaces (the mailbox pane's reader banner), and a door switch
+     * to standalone (`ensureLocalWorld`) then lets `standDownMemory` answer truthfully. */
     organizerRole: m.organizerRole ?? "organizer",
     organizedByKind: m.organizedBy?.kind ?? null,
     organizedByName: m.organizedBy?.name ?? null,
     organizedSince: asDate(m.organizedBy?.since ?? null),
     organizerState: m.organizerState ?? null,
-    /* ── THE NOTICE'S TWO INSTANTS TRAVEL WITH THE ROLE (mail 0088) ──────────────────────────
-     *
-     * They are mirrored for the same reason the role above them is, and the argument is sharper
-     * here: the notice is DERIVED (`event_at > seen_at`), so a mirror that carried the role and
-     * not the instants would show a Cloud-connected desktop a mailbox whose organizer had visibly
-     * changed and no line saying so — or, worse, would leave `seen_at` NULL against a live
-     * `event_at` and re-show a notice the person had already dismissed in the browser. The point
-     * of putting the pair in a row rather than in client state is that every door agrees; a door
-     * that mirrors half of it disagrees by construction.
-     *
-     * Both, never one: `event_at` alone re-shows a dismissed notice, `seen_at` alone hides a real
-     * one. The hosted row is the authority for both and this install writes neither of its own
-     * while it is a Cloud client — its own dismiss goes to the hosted route, and the next mirror
-     * pull brings the answer back. */
+    /* The notice's two instants travel with the role (mail 0088), and the argument is sharper: the
+     * notice is DERIVED (`event_at > seen_at`), so a mirror carrying the role and not the instants
+     * would show a Cloud desktop a changed organizer with no line saying so — or leave `seen_at`
+     * NULL against a live `event_at` and re-show a notice already dismissed in the browser. BOTH,
+     * never one: `event_at` alone re-shows a dismissed notice, `seen_at` alone hides a real one.
+     * The hosted row is the authority for both; a Cloud client writes neither of its own — its
+     * dismiss goes to the hosted route and the next pull brings the answer back. */
     organizerEventAt: asDate(m.organizerEventAt),
     organizerEventSeenAt: asDate(m.organizerEventSeenAt),
-    /* ── AND SO DO THE TWO FACTS THE PANE READS BESIDE THEM ─────────────────────────────────
-     *
-     * Same argument as the pair above, applied to the two columns the mailbox pane and the
-     * Screener derive their controls from.
-     *
-     * `organizerReleasedAt` separates a mailbox this account let go on purpose from one whose
-     * holder simply vanished. Both are readers with no holder; only the first has a sentence
-     * about something the person did, and a mirror that dropped it would show the wrong one.
-     *
-     * The holder's capabilities decide whether a decision made in this window has anywhere to
-     * go. Dropping them is not neutral: it degrades to "nothing can be decided here", which is
-     * the safe screen while no organizer offers the channel and the WRONG one the day some do —
-     * the window would withhold controls the hosted account would have accepted. The hosted row
-     * is the authority for both; this install writes neither of its own while it is a Cloud
-     * client.
-     *
-     * The capability travels as the DERIVED ANSWER and is stored back in the column the local
-     * read derives from, because the hosted DTO carries the answer rather than the holder's raw
-     * token set — one question is asked on the wire and one is answered. The re-encode is the
-     * honest shape of that: this row exists to make `GET /mailboxes` on this door say what the
-     * hosted account says, and the local projection reads the column. `false` writes NULL, which
-     * is the same thing the column holds for every holder that advertises nothing. */
+    /* And so do the two facts the pane reads beside them — the columns the mailbox pane and the
+     * Screener derive their controls from. `organizerReleasedAt` separates a mailbox this account
+     * let go on purpose from one whose holder vanished (both readers with no holder; only the first
+     * has a sentence about something the person did). The holder's capabilities decide whether a
+     * decision made here has anywhere to go: dropping them degrades to "nothing can be decided",
+     * the safe screen while no organizer offers the channel and the WRONG one the day some do. The
+     * hosted row is the authority for both; the capability travels as the DERIVED answer and is
+     * stored back in the column the local read derives from, `false` writing NULL. */
     organizerReleasedAt: asDate(m.organizerReleasedAt),
     organizedByCapabilities: m.organizerAcceptsRequests === true ? CAPABILITY_REQUESTS : null,
     organizeConsentedAt: asDate(m.organizeConsentedAt),
     smtpMaxSizeBytes: m.smtpMaxSizeBytes ?? null,
+    // The provider's own Junk folder (mail 0065). Mirrored rather than discovered: on a Cloud
+    // account this install never attaches IMAP, so its own column would stay NULL for ever and
+    // the rail and search would never name the folder junked mail went to. `?? null` on this
+    // upsert's rule — a path cleared on Cloud must clear here too.
+    junkFolder: m.junkFolder ?? null,
     // NOT decoration: `compose-from.ts` orders the From options by `createdAt` ascending and calls
     // the first sendable one the default sender. A mirror that stamped its own clock here would
     // pick a different default from the browser tab looking at the same account.
@@ -991,16 +763,12 @@ async function mailboxReferenced(tx: Tx, id: string): Promise<boolean> {
 
 /**
  * Remove retired mailbox rows nothing references any more — the second half of the synthetic row's
- * retirement, and the reason it is a two-step.
- *
- * A FRESH install reaches this inside the refresh transaction with the synthetic row holding zero
- * references (the refresh precedes the first drain), so it goes immediately. An UPGRADED install
- * reaches it with every mirrored message still pointing at that row, so it survives as a tombstone
- * until the re-key has moved them, and this runs again once the drain has finished.
- *
- * The zero-reference guard is what makes the two cases one rule instead of a special case for
- * each — and it is also the honest answer for a mailbox REMOVED on Cloud: its mail is still here,
- * so its row stays, exactly as `mailboxes_active_address_uq`'s partial index expects a tombstone to.
+ * retirement, and why it is a two-step. A FRESH install reaches this in the refresh transaction
+ * with the synthetic row holding zero references (the refresh precedes the first drain), so it goes
+ * at once; an UPGRADED install reaches it with every mirrored message still pointing at that row,
+ * so it survives as a tombstone until the re-key has moved them and runs again after the drain.
+ * The zero-reference guard makes the two cases one rule, and is the honest answer for a mailbox
+ * REMOVED on Cloud: its mail is still here, so its row stays, as `mailboxes_active_address_uq` expects.
  */
 async function dropRetiredMailboxes(tx: Tx, world: LocalWorld, hostedIds: readonly string[]): Promise<string[]> {
   const rows = await tx.select({ id: mailboxes.id }).from(mailboxes).where(
@@ -1030,30 +798,13 @@ export interface MailboxRefreshOutcome {
 }
 
 /**
- * APPLY ONE HOSTED MAILBOX LIST INTO THE LOCAL TABLE — retire, upsert and prune, IN ONE
- * TRANSACTION, in that order.
- *
- * ── THE ORDER IS A UNIQUE-CONSTRAINT DODGE ────────────────────────────────────────────────────
- *
- * `mailboxes_active_address_uq` is `(account_id, lower(address)) where status <> 'disabled'`. On
- * the common install the synthetic row's address IS the hosted mailbox's address — the account
- * login and the mailbox are the same string — so inserting the hosted row while the synthetic one
- * is still `connected` violates it. Retiring first frees the index; the upsert then lands.
- *
- * ── AND THE TRANSACTION IS WHY `GET /mailboxes` NEVER ANSWERS `[]` ────────────────────────────
- *
- * `DesktopMailboxes.tsx` states the rule from the other side: the mailbox probe must REJECT rather
- * than return an empty list, because "we could not ask" and "there are none" render differently —
- * the second puts "No mailbox connected, so nothing can arrive" in front of somebody whose mailbox
- * is working. This read is served locally and cannot fail that way, so the empty window has to be
- * closed here instead: split into two transactions, a reader between them sees a table holding
- * only tombstones and gets exactly that sentence.
- *
- * ── A RETIREMENT IS AN ORDINARY TOMBSTONE, WITH `disabled_reason` NULL ────────────────────────
- *
- * Deliberately not one of the `organized_elsewhere:*` members: `identity.ts`'s lookup returns a
- * disabled row only when it carries a reason (a lease stand-down is the SAME mailbox, paused), so
- * a NULL reason is what stops a later launch resurrecting the synthetic row it just retired.
+ * Apply one hosted mailbox list into the local table — retire, upsert, prune, IN ONE TRANSACTION,
+ * in that order. The order is a unique-constraint dodge: `mailboxes_active_address_uq` is
+ * `(account_id, lower(address)) where status <> 'disabled'`, and the synthetic row's address is
+ * the hosted mailbox's, so inserting while it is still `connected` violates it — retiring first
+ * frees the index. The single transaction is why `GET /mailboxes` never answers `[]`: split, a
+ * reader between transactions sees only tombstones and gets "No mailbox connected". A retirement is
+ * an ordinary tombstone with `disabled_reason` NULL — a reason would let a later launch resurrect it.
  */
 export async function applyMailboxRefresh(
   db: LocalDb,
@@ -1092,25 +843,13 @@ export async function applyMailboxRefresh(
 }
 
 /**
- * REPLACE a message's tag assignments with exactly the ones its DTO carries.
- *
- * ── WHY IT IS A REPLACE AND NOT AN UPSERT ───────────────────────────────────────────────────
- *
- * `labels` is the whole set, not a delta: an UNassign is delivered as the same `message` change
- * with one fewer id in it. An insert-only apply would therefore add tags and never remove one, so
- * a tag taken off a message in the browser would stay on it here for ever. Delete-then-insert
- * inside the page transaction gives the set semantics the wire actually has, and it is idempotent
- * on replay for the same reason every other write here is.
- *
- * ── AN ID NAMING A TAG WE HAVE NOT GOT IS SKIPPED, NOT STUBBED ──────────────────────────────
- *
- * `message_tags.tag_id` has a foreign key, so an assignment can only be written for a tag that is
- * already mirrored. The ordinary case is covered by {@link APPLY_ORDER}: a tag exists before it can
- * be assigned, so its change carries a lower seq and lands first. What is left is the case where
- * the tag's create has fallen below the feed's retention horizon while the message's own change has
- * not — and there the honest answer is to skip the assignment rather than invent a nameless tag to
- * hang it on. The client filters its tag list against each message's labels, so a label it cannot
- * resolve would draw nothing anyway; a stub would draw an empty chip.
+ * Replace a message's tag assignments with exactly the ones its DTO carries. It is a REPLACE, not
+ * an upsert, because `labels` is the whole set — an unassign arrives as the same `message` change
+ * with one fewer id — so an insert-only apply would add tags and never remove one; delete-then-
+ * insert inside the page transaction gives the set semantics the wire has, idempotently. An id
+ * naming a tag we have NOT got is skipped, not stubbed: `message_tags.tag_id` has a foreign key,
+ * {@link APPLY_ORDER} lands a tag before its assignment, and the residual (a tag create fallen
+ * below the retention horizon) is better skipped than hung on a nameless stub the client can't draw.
  */
 async function applyLabels(tx: Tx, world: LocalWorld, messageId: string, labels: readonly string[] | undefined): Promise<void> {
   await tx.delete(messageTags).where(eq(messageTags.messageId, messageId));
@@ -1125,23 +864,14 @@ async function applyLabels(tx: Tx, world: LocalWorld, messageId: string, labels:
 }
 
 /**
- * Apply one non-delete change. Returns false when a foreign-key referent is missing and the row
- * is skipped — the cursor still advances (a later update to the same entity re-emits it), which is
- * the forward-compatible posture `apply.ts` takes toward an unknown type.
- *
- * ── "A LATER UPDATE RE-EMITS IT" IS TRUE OF THE FK SKIPS AND FALSE OF THE MAILBOX ONE ─────────
- *
- * A message whose thread has not arrived is skipped and will come back, because something about
- * that message will change again. A message naming a MAILBOX this database does not hold will not:
- * mailboxes change far less often than mail, and a message already at rest emits nothing. That is
- * why the refresh runs BEFORE the drain and why {@link CloudMirrorConfig} makes it a hard failure
- * when it cannot — the skip below is the last resort, not the mechanism.
- *
- * `known` is every local mailbox id, whatever its status: a tombstoned row still satisfies the
- * foreign key, so mail belonging to a mailbox removed on Cloud keeps landing where it belongs
- * rather than being attributed to a different address. **Attributing to a different mailbox is the
- * one thing this may never do** — that is the wrong-sender class of defect the From selector's own
- * rules exist to prevent, and a message the mirror cannot place honestly is better absent.
+ * Apply one non-delete change. Returns false when a foreign-key referent is missing and the row is
+ * skipped — the cursor still advances (a later update re-emits it), the forward-compatible posture
+ * `apply.ts` takes. That re-emission is true of the FK skips and FALSE of the mailbox one: a
+ * message whose thread has not arrived changes again, but a message naming a MAILBOX this database
+ * lacks does not (mail at rest emits nothing), which is why the refresh runs BEFORE the drain and
+ * is a hard failure. `known` is every local mailbox id whatever its status (a tombstone satisfies
+ * the FK), because attributing mail to a DIFFERENT mailbox is the one thing this may never do — a
+ * message it cannot place honestly is better absent.
  */
 async function applyUpsert(
   tx: Tx,
@@ -1154,18 +884,13 @@ async function applyUpsert(
   switch (ch.type) {
     case "settings": {
       /**
-       * THE ACCOUNT'S SETTINGS ROW — applied for its STAMP, never for authority. The hosted-door
-       * webview's consent reads FORWARD to the hosted account, so nothing a user sees is served
-       * from these columns; what this write does is move the local row's `updated_at` (and keep
-       * the mirrored scalars honest), so the LOCAL `/sync`'s `materializeSettings` answers a
-       * stamp that MOVED — which is what tells the shell to re-ask. Two columns are deliberately
-       * NOT written:
-       *
-       *  · `folders_enabled_at` — `reconcileLocalFoldersFlag` derives the local flag from what
-       *    the feed actually sent (a folder page settles it in the same transaction), and a
-       *    second writer would fight it exactly when the two disagree (master on, zero folders);
-       *  · the per-mailbox exceptions — they live on the mirrored `mailboxes` rows, which are
-       *    the mirror's own and not this change's to re-attribute.
+       * The account's settings row — applied for its STAMP, never for authority. The hosted-door
+       * consent reads forward to the hosted account, so nothing a user sees is served from these
+       * columns; this write moves the local row's `updated_at` so the local `/sync`'s
+       * `materializeSettings` answers a stamp that MOVED, which tells the shell to re-ask. Two
+       * columns are deliberately NOT written: `folders_enabled_at` (`reconcileLocalFoldersFlag`
+       * derives the flag from what the feed sent, and a second writer would fight it) and the
+       * per-mailbox exceptions (they live on the mirrored `mailboxes` rows, not this change's).
        */
       const st = ch.entity as {
         dormancyDays?: number | null; autoSuggestAt?: string | null;
@@ -1272,6 +997,15 @@ async function applyUpsert(
         attachmentCount: m.attachmentCount ?? 0,
         updatedAt: asDate(m.updatedAt) ?? now,
       };
+      /* THE ARRIVAL, AND IT IS IN THE CONFLICT SET. `created_at` defaults to the moment THIS
+         process wrote the row, which on a mirror is not when the mailbox recorded the message —
+         and the cutline dates an undated message by exactly that column, so the local reader
+         would call every dateless sender active for ever. Carried from the wire when the server
+         sends it (the same instant each time, so the update is idempotent); omitted for a server
+         older than the field, which leaves the row as it was rather than moving it to now. */
+      const arrived = asDate(m.arrivedAt);
+      // `created_at` is NOT NULL: an unparseable value must leave the column alone, never reach it.
+      const rowArrival = arrived && Number.isFinite(arrived.getTime()) ? { createdAt: arrived } : {};
       await tx.insert(messages).values({
         id: m.id,
         accountId: world.accountId,
@@ -1280,7 +1014,8 @@ async function applyUpsert(
         bodyHash: "",
         dedupKey: `cloud:${m.id}`,
         ...display,
-      }).onConflictDoUpdate({ target: messages.id, set: display });
+        ...rowArrival,
+      }).onConflictDoUpdate({ target: messages.id, set: { ...display, ...rowArrival } });
       // `folder_state.desired_folder` is what `message-service.ts` projects as the message's folder.
       await tx.insert(folderState).values({
         messageId: m.id,
@@ -1324,22 +1059,13 @@ async function applyUpsert(
       if (!s) return false;
       if (!(await messagePresent(tx, s.messageId))) return false;
       /**
-       * THE HOSTED ROW'S ID, CARRIED — the one field this case used to leave to `defaultRandom()`.
-       *
-       * `MessageStateDTO` is the only DTO on the wire with no `id` of its own, so this insert
-       * omitted one and let PGlite mint a random uuid, while `applyPage` recorded the local
-       * change-log row under the HOSTED id (`ch.id`) like every other type. The local `/sync`
-       * materializes a `message_state` by `message_states.id`, found nothing under that id, and —
-       * by the delta contract — served the change as a DELETE TOMBSTONE. So a Cloud-door install
-       * announced every triage state and withdrew it in the same breath: `parkedMessageIds` and
-       * `triagePiles` read that entity, so nothing was held out of the Ohbox and nothing was
-       * listed under Resurface, while `MessageDTO.triage` — joined by MESSAGE id — landed
-       * correctly and kept the row's "back tomorrow" chip. Mail parked until Tuesday sat unread
-       * in the Ohbox wearing the date it was waiting for.
-       *
-       * The conflict target stays `message_id` (the unique the hosted table also carries), so an
-       * install whose rows were minted before this line HEALS in place on the next page rather
-       * than needing a migration; `id` is in the `set` for exactly that.
+       * The hosted row's id, carried — the one field this case left to `defaultRandom()`.
+       * `MessageStateDTO` is the only DTO on the wire with no `id`, so this insert let PGlite mint a
+       * random uuid while `applyPage` recorded the change-log under the HOSTED id, and the local
+       * `/sync` — materializing by `message_states.id` — found nothing and served a DELETE
+       * tombstone: parked and piled mail vanished from the Ohbox and Resurface while
+       * `MessageDTO.triage` (joined by MESSAGE id) kept its chip. The conflict target stays
+       * `message_id`, so rows minted before this HEAL in place on the next page; `id` is in the set.
        */
       const stateId = ch.id;
       await tx.insert(messageStates).values({
@@ -1417,6 +1143,18 @@ async function applyUpsert(
       const inReplyTo = d.inReplyToMessageId && (await messagePresent(tx, d.inReplyToMessageId))
         ? d.inReplyToMessageId
         : null;
+      /* ── THE ONE FIELD A PAGE MAY LEAVE OUT, AND `?? ""` WAS THE WAY TO LOSE MAIL ─────────
+         `DraftDTO.body` is `null` when a bounded page would not carry it (a stored body past
+         `DRAFT_BODY_MAX_BYTES`). Coalescing that to `""` wrote an EMPTY body over the mirror's
+         copy, and `drafts.body` is `NOT NULL` here, so this store cannot say "unknown" the way
+         the browser mirror can — the compose surface would then open an empty editor on a
+         message that is not empty and autosave the blank back to the account. So the body is
+         left out of the write entirely: a row we already hold keeps its text and lands
+         `"partial"` (the ledger must not read it as the entity's full state), and a row we have
+         never seen is not created at all, which is the arm an unknown mailbox already takes.
+         The next single-row read or edit carries the body and settles it. */
+      const bodyCarried = typeof d.body === "string";
+      if (!bodyCarried && !(await draftPresent(tx, d.id))) return false;
       const body = {
         accountId: world.accountId,
         // The draft's OWN sending mailbox — see the message branch. A draft written against the
@@ -1426,7 +1164,7 @@ async function applyUpsert(
         threadId: d.threadId ?? null,
         inReplyToMessageId: inReplyTo,
         subject: d.subject ?? "",
-        body: d.body ?? "",
+        ...(bodyCarried ? { body: d.body as string } : {}),
         html: d.html ?? null,
         to: d.to ?? [],
         cc: d.cc ?? [],
@@ -1434,11 +1172,18 @@ async function applyUpsert(
         status: d.status,
         updatedAt: asDate(d.updatedAt) ?? now,
       };
-      await tx.insert(drafts).values({ id: d.id, ...body })
-        .onConflictDoUpdate({ target: drafts.id, set: body });
+      if (bodyCarried) {
+        await tx.insert(drafts).values({ id: d.id, ...body, body: d.body as string })
+          .onConflictDoUpdate({ target: drafts.id, set: body });
+      } else {
+        // UPDATE, never an upsert: an insert would need a `body` value, and the only one
+        // available is the empty string this branch exists to refuse. The row was present a
+        // statement ago; if it has since gone, nothing is written and nothing is invented.
+        await tx.update(drafts).set(body).where(eq(drafts.id, d.id));
+      }
       gen?.draft.add(d.id);
       if (d.threadId) gen?.thread.add(d.threadId);   // the thread stub this draft pinned
-      return wantsReplyParent && inReplyTo === null ? "partial" : true;
+      return !bodyCarried || (wantsReplyParent && inReplyTo === null) ? "partial" : true;
     }
     case "approval": {
       const a = ch.entity as ApprovalDTO | undefined;
@@ -1490,52 +1235,24 @@ async function applyUpsert(
 }
 
 /**
- * Apply one delete. Children of a message go first, so the message's own FKs are clear.
- *
- * ── EVERY `message_id` FOREIGN KEY, NOT JUST THE ONES THIS FILE WRITES ────────────────────────
- *
- * A delete that misses one FK-holder does not lose that one row — it ABORTS THE WHOLE PAGE
- * TRANSACTION with 23503, the cursor never advances past the page, and the retry replays the
- * identical page into the identical violation: the mirror is wedged for ever while looking like
- * a transient network error. Measured live 2026-08-24 on a Linux install: one local draft whose
- * `in_reply_to_message_id` named a message deleted on Cloud pinned the cursor for two days
- * (`cloud_pull_failed` code 23503 on every poll), which the user experiences as "the desktop is
- * stale". The hosted store never hits this because ITS delete is a `deleted_at` stamp — the row
- * stays and every FK stays satisfied; the mirror's hard delete has to clear the children itself.
- *
- * So this clears every table `schema-mail.ts` points at `messages.id` — including the five the
- * Cloud door never writes (instances, flag state, tracker events, attachments, unsubscribe
- * records), for `mailboxReferenced`'s reason: this can run on a database that was a STANDALONE
- * install before the door was switched, and those tables hold that era's rows.
- *
- * A replying draft is DETACHED (`in_reply_to_message_id` → NULL), not deleted: the draft is the
- * user's writing and outlives its target, exactly as the hosted store keeps it when the message
- * it answers goes to Trash. A re-emitted draft converges — the upsert guards that column on
- * `messagePresent` and writes NULL for a target the mirror no longer holds. A draft on a DELETED
- * THREAD is detached the same way (`thread_id` → NULL), never deleted with it: the hosted store
- * still holds that draft, and a mirror that destroyed it would resurrect it only on its next
- * hosted edit — a draft at rest emits nothing.
- *
- * ── AND EVERY DETACH IS REPORTED, so the projection hears about the survivor ─────────────────
- *
- * A detach is a real change to a row the incoming feed did not name. The local `/sync` is
- * `change_log` over this database, so a detach nothing records is a detach the window never
- * redraws — a message still grouped under a deleted thread, for as long as that message stays at
- * rest. `detached` collects the survivors; the caller appends one local `update` change-log row
- * per entry in the same transaction, exactly as it records the delete itself.
+ * Apply one delete, children before the message so its own FKs are clear — and every `message_id`
+ * foreign key, not just the ones this file writes. A missed FK-holder does not lose one row: it
+ * ABORTS the whole page transaction (23503), the cursor never advances, and the retry replays it,
+ * wedging the mirror while it looks transient (measured 2026-08-24: one draft's
+ * `in_reply_to_message_id` pinned the cursor two days). The hosted store's delete is a `deleted_at`
+ * stamp, so this clears every table `schema-mail.ts` points at `messages.id`, the five the Cloud
+ * door never writes included. A replying draft is DETACHED (→ NULL), never deleted, and every
+ * detach is reported so the local `/sync` redraws the survivor.
  */
 interface DetachedSurvivor { type: "message" | "draft"; id: string }
 
 /**
- * How many survivor announcements one `recordChanges` call may carry.
- *
- * PGlite 0.2.17 accepts at most 32,767 bind parameters per statement, and a change-log insert
- * spends six per row — so a single unchunked batch THROWS (`RangeError: Invalid array length`) at
- * exactly 5,462 rows, measured. The failure mode is the one this whole slice removes: the page
- * transaction rolls back, the cursor never advances, and every poll replays the same tombstone —
- * a thread hoarding 5,462 stale messages would wedge the mirror by being repaired. 1,000 rows is
- * 6,000 parameters: comfortably under the cap, still ~5 statements for the largest plausible
- * thread instead of three per survivor.
+ * How many survivor announcements one `recordChanges` call may carry. PGlite 0.2.17 accepts at
+ * most 32,767 bind parameters per statement, and a change-log insert spends six per row, so an
+ * unchunked batch THROWS (`RangeError: Invalid array length`) at exactly 5,462 rows — the same
+ * wedge this slice removes, reached by repairing it (a page rolls back, the cursor never advances,
+ * every poll replays). 1,000 rows is 6,000 parameters: under the cap, ~5 statements for the
+ * largest plausible thread.
  */
 const DETACHED_BATCH_MAX = 1000;
 
@@ -1550,6 +1267,17 @@ async function recordDetached(tx: Tx, world: LocalWorld, detached: readonly Deta
 
 async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]): Promise<boolean> {
   switch (ch.type) {
+    case "mailbox": {
+      /* THE HOSTED ACCOUNT ERASED A MAILBOX. The same table walk the standalone removal runs, in
+         THIS page's transaction — one spelling of "what a mailbox's mail is", so a table added to
+         one door cannot be forgotten on the other. The local `mailboxes` row is left to
+         `makeMailboxRefresh`, which mirrors its status from the hosted row like every other
+         mailbox fact; this takes the MAIL. Unconditionally `true`: a receipt for a mailbox this
+         mirror never held deletes nothing and still has to be recorded on the local log, because
+         the window's mirror may hold rows this database no longer does. */
+      await deleteMailboxRows(tx, ch.id);
+      return true;
+    }
     case "message": {
       if (!(await messagePresent(tx, ch.id))) return false;
       const replying = await tx.select({ id: drafts.id }).from(drafts)
@@ -1722,18 +1450,13 @@ async function applyPage(
 }
 
 /**
- * THE MARK-AND-SWEEP. After a `since=0` bootstrap drain, delete every managed mail row the
- * generation never touched — the phantoms.
- *
- * FK-safe, children before parents: routing decisions, approvals, drafts, message states and rules
- * first (each can be an independent phantom hanging off a SURVIVING message when only that child was
- * removed on Cloud), then messages — whose delete cascades folder_state, bodies, states and routing
- * decisions exactly as a tombstone would — and threads last, whose delete detaches their surviving
- * drafts and messages rather than taking user writing with it.
- *
- * Each swept entity appends a local DELETE change-log row, so the Swift projection's own `/sync`
- * drops it too; a sweep the reader never hears about would leave the phantom on screen. `applyDelete`
- * is reused verbatim so the cascade matches the incremental delete path byte for byte.
+ * The mark-and-sweep. After a `since=0` bootstrap drain, delete every managed mail row the
+ * generation never touched — the phantoms. FK-safe, children before parents: routing decisions,
+ * approvals, drafts, message states and rules first (each an independent phantom off a surviving
+ * message), then messages (whose delete cascades bodies, states and folder_state as a tombstone
+ * would), then threads last, whose delete detaches surviving drafts rather than taking user writing
+ * with them. Each swept entity appends a local DELETE change-log row so the projection drops it too,
+ * and {@link applyDelete} is reused verbatim so the cascade matches the incremental path.
  */
 async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, now: Date): Promise<number> {
   return db.transaction(async (tx) => {
@@ -1823,47 +1546,14 @@ async function reconcileLocalFoldersFlag(tx: Tx, world: LocalWorld, now: Date): 
 }
 
 /**
- * THE ONE-TIME STALE-MIRROR TAG REPAIR — apply a `GET /sync/snapshot` page into a mirror whose
- * cursor has already run past the tags it never asked for.
- *
- * ── THE SHAPE OF THE DAMAGE ───────────────────────────────────────────────────────────────────
- *
- * `CLOUD_SYNC_TYPES` gained `"tag"` after the first Cloud mirrors were already running. `types=` is
- * a REQUEST, so those mirrors were served no tag change at all — and the tags on the account are
- * old, so their `change_log` rows sit BELOW the cursor those mirrors hold. A delta drain only ever
- * looks forward: it will never deliver them, on any launch, for the life of the install. Signing in
- * fresh is not affected (a `since=0` bootstrap asks for everything from zero and now names `tag`),
- * which is precisely why the fix looked proven when it was not — the case that was tested was the
- * only case that was never broken.
- *
- * ── AND WHY THE TAGS ALONE WOULD NOT LIGHT A SINGLE CHIP ──────────────────────────────────────
- *
- * Assignments do not travel as their own entity: they ride `MessageDTO.labels`, and {@link applyLabels}
- * SKIPS an id naming a tag the mirror has not got, because `message_tags.tag_id` is a foreign key.
- * So on these installs every already-mirrored message applied its labels against an empty `tags`
- * table and kept none of them. Writing the tag rows now would restore the rail and leave every
- * message bare. The repair therefore has two halves, and the second is the one that shows.
- *
- * ── ONE PAGE AT A TIME; THE CALLER PAGES ──────────────────────────────────────────────────────
- *
- * This applies ONE snapshot page. Page 1 carries the account's live state — EVERY tag
- * (`sync-service.ts` refuses to page them, for its own rail-boots-empty reason) — and the caller
- * (`repairStaleTags`) then follows `nextCursor` through the windowed pages and the LABELED TAIL,
- * applying each. The tail is the half that matters here: it carries tagged mail OLDER than the
- * bootstrap window, which the mirror holds (its `/sync?since=0` bootstrap replayed every message,
- * unbounded by the snapshot window) but whose labels were skipped when the tag did not yet exist
- * locally. Paging to the tail is the only way those chips come back — the delta never will, because
- * their `message_tags` changes sit below the cursor this mirror already holds.
- *
- * ── WHAT IT DELIBERATELY DOES NOT DO ──────────────────────────────────────────────────────────
- *
- * It rewrites no message row — only the assignments — so a snapshot read cannot walk a message
- * backwards over a delta the drain has already applied. And it touches only messages whose snapshot
- * DTO carries a NON-EMPTY `labels`: on the mirror this repairs, `message_tags` is necessarily empty
- * (the FK cannot hold a row without a tag), so nothing local can need CLEARING and a message with no
- * labels is already correct. That keeps the change-log churn to the messages that actually gain a
- * chip rather than the whole mailbox. The apply is idempotent (delete-then-insert per message), so a
- * re-run after a mid-drain failure converges rather than doubling anything.
+ * The one-time stale-mirror tag repair: apply `GET /sync/snapshot` pages into a mirror whose cursor
+ * ran past tags it never asked for. `CLOUD_SYNC_TYPES` gained `"tag"` after the first mirrors were
+ * running, and `types=` is a REQUEST, so those mirrors were served no tag change and the old tags
+ * sit BELOW their cursor — a delta only looks forward and never delivers them (a fresh `since=0`
+ * sign-in is unaffected, which is why the fix looked proven). Tags alone light no chip: assignments
+ * ride `MessageDTO.labels` and {@link applyLabels} SKIPS an id for a missing tag, so the caller
+ * ({@link repairStaleTags}) pages to the labeled tail to re-hang older tagged mail. It rewrites no
+ * message row, touches only non-empty `labels`, and is idempotent per message.
  */
 async function applyTagBackfill(
   db: LocalDb,
@@ -1952,19 +1642,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    */
   let sawBacklog = false;
   /**
-   * DID ANYTHING GET DELETED SINCE THE COUNTS WERE READ? — the one direction that makes a held
-   * count a LIE rather than merely old.
-   *
-   * The counts are refreshed on a cadence measured in minutes, and inside that window the mirror
-   * keeps draining. A drain that ADDS mail moves the local number toward the held total, which
-   * biases the comparison toward silence and is harmless. A drain that applies TOMBSTONES moves
-   * the local number DOWN while the held total stays where it was — and a shortfall computed
-   * against it is a sentence about mail that no longer exists on either side. Mail deleted from
-   * another device is the ordinary way that happens.
-   *
-   * So a delete does two things: it drops the held counts on the spot (the strip then says
-   * nothing, which is the honest answer to "we do not know"), and it makes the next refresh ask.
-   * A phantom sweep counts as a delete for the same reason — it also removes local rows.
+   * Did anything get deleted since the counts were read? — the one direction that makes a held
+   * count a LIE rather than merely old. The counts refresh on a cadence of minutes, and inside that
+   * window the mirror keeps draining: a drain that ADDS mail biases the shortfall toward silence
+   * (harmless), but one that applies TOMBSTONES moves the local number DOWN while the held total
+   * stays, so the shortfall is a sentence about mail that no longer exists (deleted from another
+   * device). So a delete drops the held counts on the spot (the strip then says nothing) and makes
+   * the next refresh ask; a phantom sweep counts as a delete, since it also removes local rows.
    */
   let sawDeletes = false;
 
@@ -1981,42 +1665,22 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * PULL THE ACCOUNT'S MAILBOXES AND APPLY THEM. Runs at the start of every pull, before the drain.
-   *
-   * ── A FAILURE HERE FAILS THE WHOLE PULL, AND THAT IS THE SAFE DIRECTION ───────────────────────
-   *
-   * Throwing looks harsh for a list of two rows, and continuing is the dangerous option. A drain
-   * that proceeds without a mailbox set skips every message it cannot attribute — and on a
-   * `since=0` bootstrap a skipped message is one the generation never marked, so the trailing
-   * mark-and-sweep would delete it. A transient 500 on this route would empty somebody's mirror.
-   *
-   * The cost of throwing is bounded and visible: `runPull` flips `reachable` false, the local read
-   * surface keeps serving every row it already holds, the write-through proxy answers
-   * `503 offline_read_only` rather than forwarding into a void, and the poll retries on the same
-   * backoff a failed `/sync` uses.
+   * Pull the account's mailboxes and apply them. Runs at the start of every pull, before the drain,
+   * and a failure here fails the WHOLE pull — the safe direction. Continuing without a mailbox set
+   * skips every message it cannot attribute, and on a `since=0` bootstrap a skipped message is one
+   * the generation never marked, so the trailing sweep would delete it: a transient 500 would empty
+   * somebody's mirror. The cost of throwing is bounded and visible — `runPull` flips `reachable`
+   * false, the read surface keeps serving every held row, the write-through proxy answers
+   * `503 offline_read_only`, and the poll retries on the same backoff a failed `/sync` uses.
    */
   /**
-   * MAY THIS REFRESH ASK FOR THE COUNTS?
-   *
-   * Four reasons to say yes, one floor under all of them, and the reasons are named rather than
-   * folded into a shorter interval because each is a different question:
-   *
-   *  · this process has never ASKED — the launch that follows an install being closed for days,
-   *    which is the one moment a shortfall is most likely and least visible. "Never asked" and
-   *    not "holds no numbers": an account whose build does not serve counts would answer the
-   *    second condition for ever, and past the floor below that is one full-table aggregate a
-   *    minute, indefinitely — the storm this cadence exists to prevent, re-entered through its
-   *    own failure case. Such an account is asked again on the TTL, like any other.
-   *  · a BOOTSTRAP is running — the mirror is rebuilding from zero, so the denominator is the
-   *    only thing that makes the count on screen mean anything.
-   *  · the last drain saw `hasMore` — the hosted account said there was more; a shortfall is not
-   *    hypothetical here.
-   *  · the last drain applied a DELETE — the held total is now too high by construction, and the
-   *    map has already been dropped for that reason; this is the ask that replaces it.
-   *  · the numbers are older than {@link HOSTED_COUNTS_TTL_MS}.
-   *
-   * The floor is checked FIRST and applies to every reason, so no combination of them can put two
-   * aggregates within a minute of each other.
+   * May this refresh ask for the counts? Reasons named rather than folded into a shorter interval,
+   * because each is a different question: this process has NEVER ASKED (the launch after days
+   * closed — "never asked", not "holds no numbers", or an account that serves no counts would ask
+   * one aggregate a minute for ever); a BOOTSTRAP is running (the denominator is all that makes the
+   * count mean anything); the last drain saw `hasMore`; the last drain applied a DELETE (the held
+   * total is now too high); or the numbers are older than {@link HOSTED_COUNTS_TTL_MS}. The floor
+   * ({@link HOSTED_COUNTS_MIN_GAP_MS}) is checked FIRST, so no combination puts two within a minute.
    */
   const countsWanted = (): boolean => {
     const t = now().getTime();
@@ -2117,46 +1781,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * RULES BEFORE MAIL — the bootstrap's one ordering promise.
-   *
-   * A `since=0` replay interleaves by hosted seq, and a sender the account decided AFTER their
-   * mail arrived replays as mail-first: for the whole stretch between the mail's seqs and the
-   * rule's, the mirror holds messages whose sender looks undecided. Every reader downstream —
-   * the shell's snapshot off this database, its delta off the local `change_log` — inherits that
-   * order, and the consent cutline reads the absent rule as "no decision", so already-screened
-   * senders present in the Screener until the replay catches up. Measured live on a desktop
-   * initial sync; unknown is not undecided.
-   *
-   * So a drain that is a bootstrap first drains `?types=rule` from zero to its horizon, applied
-   * through the SAME `applyPage` (local change-log rows and generation marks included), without
-   * ever touching the drain's committed cursor. Two consequences, both deliberate:
-   *
-   *  · the local `change_log` carries every rule before any message, so a client that snapshots
-   *    this mirror mid-bootstrap gets the full rule set on page 1 and one that tails the delta
-   *    gets rules first — the ordering holds at every interleaving;
-   *  · the main replay re-delivers every rule change at its natural seq and re-applies it
-   *    (idempotent — the DTO is re-materialized CURRENT state on both passes), which also
-   *    re-marks it in the generation, so the trailing sweep needs nothing special.
-   *
-   * It re-runs on a RESUMED bootstrap too: rules decided while the install was interrupted sit
-   * above the committed cursor, and the remaining replay would otherwise serve their senders'
-   * mail first. The pass is cheap — rules are the smallest type in the feed.
-   *
-   * A failure is a failure of the same wire the main drain uses, so it propagates as any drain
-   * page failure does rather than degrading to an unordered bootstrap.
-   *
-   * ── THE RESIDUAL WINDOW ON A RESUME, AND WHY READS ARE NOT GATED ON THIS PASS ────────────
-   *
-   * The bridge is deliberately exposed before the first pull (`main.ts` — the window must render
-   * sign-in and locally-held mail with no network at all), so a client that connects between
-   * process start and this pass landing can still read an interrupted bootstrap's message-only
-   * stretch — last session's state, which is what that client was already showing. Gating the
-   * read surface until this pass completes is the obvious remedy and is refused, because the
-   * gate would hold LOCAL reads hostage to a NETWORK request — a dead network would blank a
-   * desktop whose whole promise is that the mail is on the device. What bounds the window is
-   * that this pass is the first thing the first pull does: the rules land in the local
-   * change_log ahead of everything the resumed replay adds, so a connected client corrects on
-   * its next delta poll (seconds), instead of at the end of the replay (minutes).
+   * Rules before mail — the bootstrap's one ordering promise. A `since=0` replay interleaves by
+   * hosted seq, so a sender decided AFTER their mail replays mail-first, and the consent cutline
+   * reads the absent rule as "no decision" — already-screened senders present in the Screener until
+   * the replay catches up (measured; unknown is not undecided). So a bootstrap first drains
+   * `?types=rule` from zero through the SAME `applyPage` without touching the committed cursor, and
+   * re-runs on a resumed bootstrap; a failure propagates as any drain page failure. Reads are NOT
+   * gated on this pass — the bridge renders before the first pull, and gating local reads on a
+   * network request would blank a device whose mail is local; a client corrects on its next poll.
    */
   const drainRulesFirst = async (gen: BootstrapGen | null): Promise<{ applied: number; cut: boolean }> => {
     let applied = 0;
@@ -2230,36 +1862,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * THE OPENING WINDOW — phase 1 of a bootstrap. The header's NEWEST FIRST section is the contract;
-   * this is the mechanism.
-   *
-   * Pages `GET /sync/snapshot` from wherever the cursor file says this generation's window got to,
-   * lands each page through {@link landPage} as a feed page of creates — which is what a snapshot
-   * page is: every row `op: "create"` at `seq = asOfSeq` — and persists the NEXT page's hosted
-   * cursor only after the page committed and its marks flushed, the barrier the replay puts between
-   * a page and its cursor. `cursor.sync` is never written here. Page 1's small state lands as far
-   * as its parents allow: a state or pending decision whose message is older than the window is
-   * skipped by the upsert's `messagePresent` guard and arrives with the replay at its natural seq.
-   *
-   * Three answers are not the page that was asked for, and they are told apart on purpose:
-   *  · 410 to a PERSISTED cursor — the server refuses the position (a deploy that changed the
-   *    cursor's grammar): the window is re-read from page 1 inside the same generation, ONCE per
-   *    drain. The marks it made stay, for the header's reason. A second 410 in the same drain — the
-   *    server refusing the cursor its own page 1 just issued — and a 410 to a cursorless page are
-   *    DEFINITIVE: skipped at once, like a 404, never counted (a landed page 1 would reset the
-   *    count and the drain would loop restart → page 1 → 410 on every pull);
-   *  · 404 — a server with no snapshot route (a self-hosted server older than this client): the
-   *    window is skipped at once and the bootstrap degrades to the plain replay, which still
-   *    converges — oldest-first is a slower door, not a wrong one;
-   *  · anything else non-OK, or a 200 that is not a snapshot (a body that is not JSON included) — a
-   *    REFUSAL. The first
-   *    {@link WINDOW_REFUSALS_MAX}−1 propagate as a drain failure does (the poll retries on backoff,
-   *    the window resumes from its committed page, so a cold query gets its seconds); the one after
-   *    skips the window as a 404 does. Never applied as an empty page. A transport failure (the fetch
-   *    itself throwing) is the same wire the replay uses and simply propagates — the replay would die
-   *    on it too.
-   * The skip is NOT persisted here: `complete` rides the replay's first cursor write, so a kill
-   * before that write lets the next launch try the window again with a fresh count.
+   * The opening window — phase 1 of a bootstrap; the header's NEWEST FIRST section is the contract.
+   * Pages `GET /sync/snapshot` from the cursor file's `window`, lands each through {@link landPage}
+   * as a page of creates, and persists the next page's cursor only after it committed and its marks
+   * flushed. `cursor.sync` is never written. Three answers are not the page asked for: a 410 to a
+   * PERSISTED cursor re-reads from page 1 once per drain (its marks stay); a second 410 or a 410 to
+   * a cursorless page is definitive (skip, uncounted); a 404 skips to the plain replay; anything
+   * else non-OK is a REFUSAL — the first {@link WINDOW_REFUSALS_MAX}−1 propagate as a drain failure,
+   * the next skips. The skip is not persisted here — `complete` rides the replay's first cursor write.
    */
   const drainWindowFirst = async (gen: BootstrapGen | null): Promise<{ applied: number; cut: boolean }> => {
     let applied = 0;
@@ -2332,55 +1942,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * A STALE RESUME FETCHES THE NEWEST PAGE BEFORE IT REPLAYS ITS BACKLOG — the engine's
-   * `freshenStaleResume`, ported (INSTANT-ARCH §3.3 / §8 stage 2). The gap it closes is this
-   * file's own: the newest-first window exists only for the cursor-"0" bootstrap, so a WARM
-   * mirror reopened days later replayed its whole backlog oldest-first and the mail the person
-   * opened the laptop for landed LAST — the one surface where "10–15 s to a current view" was
-   * architecturally expected (§3.1).
-   *
-   * So: when {@link CursorState.lastDrainAt} says no pull has completed within the shared
-   * `STALE_RESUME_MS` (`@trafficflow/core/drain-policy`), fetch `GET /sync/snapshot` page 1 —
-   * the account's live small
-   * state plus the newest page of messages — and land it through the SAME {@link landPage} a
-   * window page takes, before the replay's first `/sync` ask. One page, one round trip; the
-   * newest screenful's bodies ride the window's own bounded ask behind it.
-   *
-   * ── WHY THIS IS SOUND OVER A WARM MIRROR — the same three facts the bootstrap window rests on ─
-   *
-   *  · every apply here is an idempotent upsert of CURRENT state, and the replay's own pages
-   *    re-materialize the live entity per row (`getChanges` projects, never replays history), so
-   *    the backlog behind this page can never walk a freshened row backwards;
-   *  · a row deleted on Cloud while this install was closed is simply ABSENT from the snapshot —
-   *    nothing shields the stale local copy, and the replay's tombstone removes it;
-   *  · `cursor.sync` IS NEVER TOUCHED (and `cursor.window` belongs to bootstraps): the replay
-   *    from the old cursor stays the one mechanism of record, so every tombstone in the backlog
-   *    is still delivered. Committing anything here would be the unsound version.
-   *
-   * ── NEVER DURING A BOOTSTRAP, AND THE REASON IS THE SWEEP ────────────────────────────────────
-   *
-   * The caller gates this on `sweep === null`. A bootstrap's pages are MARKED into the live
-   * generation and swept against it; this pass lands pages with `gen: null`, so a row only the
-   * freshen delivered would be unmarked and the trailing sweep would DELETE it as a phantom.
-   * The bootstrap already owns "newest first" through {@link drainWindowFirst}; this pass owns
-   * exactly the warm-resume case, where no generation and no sweep exist.
-   *
-   * ── FAILURE IS SWALLOWED ─────────────────────────────────────────────────────────────────────
-   *
-   * Freshness is an optimization; the replay is the contract. Any refusal, malformed body, or
-   * transport failure costs the head start and nothing else — logged, never counted against
-   * {@link WINDOW_REFUSALS_MAX} (that count is the bootstrap window's), never fatal to the pull.
-   *
-   * ── WHAT IT RETURNS: THE LEDGER OF WHAT IT LANDED (stage 3, the backlog diet) ────────────────
-   *
-   * On a landed freshen: the wire identities it ACTUALLY applied plus the snapshot's `asOfSeq`.
-   * The replay behind it skips any change for one of those identities at `seq ≤ asOfSeq` — the
-   * engine's older-or-equal seq guard, expressed for a mirror that has none: the freshen's copy
-   * IS the entity's state at `asOfSeq`, so every change at or below that point is a superseded
-   * copy of the same upsert, and re-applying it here is pure PGlite work (measured: the serial
-   * apply is the desktop replay's dominant cost). Applied-only, so an FK-skipped row stays
-   * deliverable; `null` on a deferred/failed/not-stale freshen, and the replay then applies
-   * everything exactly as before.
+   * A stale resume fetches the newest page before it replays its backlog — the engine's
+   * `freshenStaleResume`, ported (INSTANT-ARCH §3.3/§8). The newest-first window exists only for the
+   * cursor-0 bootstrap, so a WARM mirror reopened days later replayed oldest-first and the mail the
+   * person wanted landed last. So when {@link CursorState.lastDrainAt} is past `STALE_RESUME_MS`,
+   * fetch snapshot page 1 through the SAME {@link landPage} before the replay's first ask — sound
+   * because every apply is an idempotent upsert of current state, a Cloud deletion is absent and the
+   * replay's tombstone removes it, and `cursor.sync` is NEVER touched. NEVER during a bootstrap (its
+   * pages land `gen: null`, so the sweep would delete them). Returns the ledger plus `asOfSeq`.
    */
   const freshenStaleResume = async (): Promise<{ keys: Set<string>; asOfSeq: number } | null> => {
     if (aborted) return null;
@@ -2460,19 +2029,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    */
   const drainSync = async (): Promise<{ applied: number; sweep: BootstrapGen | null; cut: boolean }> => {
     let applied = 0;
-    // A drain that begins at since=0 — a first launch, or a healed/absent cursor — OR that finds a
-    // bootstrap left unfinished by a crash is a BOOTSTRAP: tag what it touches, sweep at the end.
-    //
-    // An unfinished bootstrap RESUMES from the committed cursor when its generation file is there
-    // to continue marking into — the union of marks across every segment covers exactly the pages
-    // the feed served, which is the sweep's whole requirement — and restarts from zero when it is
-    // not. Restart-from-zero-on-every-interruption cannot finish on a large mailbox (a replay
-    // hundreds of pages long, any sleep or quit starting it over; the mirror serves stale mail
-    // while looking alive), which is why the generation persists at all.
-    //
-    // A cursor written by an older format is the FOURTH way in: its rows carry the wrong mailbox
-    // attribution and no delta can correct them, so the whole feed is replayed through the
-    // corrected upsert — never resumed, whatever files are lying around. See {@link CURSOR_VERSION}.
+    // A drain that begins at since=0 — a first launch, or a healed/absent cursor — or that finds an
+    // unfinished bootstrap is a BOOTSTRAP: tag what it touches, sweep at the end. It RESUMES from
+    // the committed cursor when its generation file is there to mark into (the union of marks across
+    // segments covers exactly the pages the feed served, the sweep's whole requirement) and
+    // restarts from zero when it is not — restart-on-every-interruption never finishes a large
+    // mailbox, which is why the generation persists. A cursor in an older FORMAT is the fourth way
+    // in: its rows carry the wrong mailbox attribution, so the whole feed replays through the
+    // corrected upsert, never resumed (see {@link CURSOR_VERSION}).
     let sweep: BootstrapGen | null = null;
     const reKeying = cursor.version < CURSOR_VERSION;
     if (isBootstrapCursor(cursor.sync) || cursor.bootstrapping || reKeying) {
@@ -2621,21 +2185,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       }
       if (!res.ok) throw new Error(`the hosted /sync answered HTTP ${res.status}`);
       let body = (await res.json()) as SyncResponse;
-      // ── THE FRESHEN-SUPERSESSION SKIP (stage 3) ──────────────────────────────────────────
-      //
-      // A change at `seq ≤ asOfSeq` for an identity the freshen LANDED is a superseded copy of
-      // the row already in the mirror — the freshen's copy is the entity's state AT `asOfSeq`,
-      // which reflects every change at or below it, tombstones included. Dropping it here is
-      // the engine's older-or-equal seq guard, expressed for a relational mirror that keeps no
-      // per-row seq. Anything newer than `asOfSeq` — and anything the freshen could not land —
-      // applies exactly as before, and the CURSOR still advances over what was skipped (the
-      // skip never touches `body.cursor`), which is sound for the same reason the guard is.
-      //
-      // `sweep === null` IS LOAD-BEARING, not belt-and-braces: a mid-drain 410 arms a fresh
-      // generation on this very drain while `freshened` still holds the pre-410 ledger, and a
-      // bootstrap page filtered by it would leave the skipped identities UNMARKED — the
-      // trailing sweep would then delete them as phantoms. A generation must mark everything
-      // the feed serves, so the skip exists only outside bootstraps.
+      // The freshen-supersession skip (stage 3). A change at `seq ≤ asOfSeq` for an identity the
+      // freshen LANDED is a superseded copy — the freshen's copy is the entity's state AT `asOfSeq`,
+      // tombstones included — so dropping it is the engine's older-or-equal seq guard expressed for
+      // a mirror with no per-row seq. Anything newer, or anything the freshen could not land,
+      // applies as before, and the cursor still advances over what was skipped. `sweep === null` is
+      // LOAD-BEARING: a mid-drain 410 arms a fresh generation while `freshened` still holds the
+      // pre-410 ledger, so a bootstrap page filtered by it would leave the skipped identities
+      // UNMARKED and the sweep would delete them — the skip exists only outside bootstraps.
       if (freshened !== null && sweep === null) {
         const superseded = (ch: SyncChange): boolean =>
           ch.seq <= freshened.asOfSeq && freshened.keys.has(`${ch.type}:${ch.id}`);
@@ -2670,36 +2227,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * THE STALE-MIRROR TAG REPAIR, ONCE PER INSTALL. See {@link applyTagBackfill} for what is broken
-   * and why the snapshot is the probe; this is the decision to run it.
-   *
-   * Three gates, in cost order, and each one is also a correctness statement:
-   *
-   *  1. the cursor flag — a mirror that has already been through here is never asked again, so a
-   *     second startup does nothing and no steady-state pull carries an extra request;
-   *  2. ZERO local tag rows — the whole detection. A mirror that holds any tag has been served the
-   *     `tag` type and is not the damaged population, so it is left completely alone. A fresh
-   *     sign-in reaches this line with its bootstrap already applied and is skipped by it;
-   *  3. the hosted account HAS tags — an account with none has nothing to repair, and a tag it makes
-   *     later arrives as a delta above the cursor like any other change.
-   *
-   * A FAILED PROBE IS NOT A FAILED PULL. This is a one-time repair on top of a mirror that works;
-   * letting it throw would mark the mirror offline and put the write-through proxy into
-   * `503 offline_read_only` over a snapshot request. So it swallows, leaves the flag unset, and the
-   * next pull tries again.
-   *
-   * IT DRAINS THE WHOLE SNAPSHOT, NOT PAGE 1. Page 1 carries the tags; the windowed pages and the
-   * labeled tail carry the assignments to re-hang, and the tail specifically carries tagged mail
-   * OLDER than the window — the older-tags case, which page 1 alone never reached. So it follows
-   * `nextCursor` to the end. The flag is set only once that drain COMPLETES: a mid-drain failure
-   * returns without marking, so the next launch re-runs from page 1, and the apply is idempotent so
-   * the re-run converges. The honest limit: if page 1 lands and applies tags but a later page then
-   * fails on every launch, gate 2 (tags now present) will settle it — the rail is fixed and some
-   * below-window chips may wait for whatever next touches their message. That is strictly better
-   * than the pre-tail repair, which never reached them at all.
-   *
-   * Crash safety is the flag being the LAST write: a repair that commits and then dies re-probes on
-   * the next launch, finds tags present, and skips at gate 2 — the apply is an upsert either way.
+   * The stale-mirror tag repair, once per install (see {@link applyTagBackfill} for the damage).
+   * Three gates in cost order, each also a correctness statement: the cursor flag (never asked
+   * twice); ZERO local tag rows (the whole detection — any tag means the type was served, so it is
+   * left alone, and a fresh sign-in arrives already bootstrapped); and the hosted account HAS tags.
+   * A failed probe is NOT a failed pull — it swallows, leaves the flag unset and retries, or it
+   * would put the write-through proxy into `503 offline_read_only`. It drains the WHOLE snapshot
+   * (the tail carries tagged mail older than the window), sets the flag only on completion, and is
+   * an idempotent upsert, so a crash re-run converges.
    */
   /**
    * THE FIRST SNAPSHOT PAGE, fetched at most once per pull across BOTH one-time repairs (tags,
@@ -2787,18 +2322,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * THE ONE-TIME FOLDER BACKFILL — `repairStaleTags`' shape, for `repairStaleTags`' reason with
-   * one difference in the gates. Between the drain first asking for `folder` entities and the
-   * apply loop learning to store them, a mirror could drain folder creates, drop them, and
-   * persist a cursor past them — a delta only ever looks forward, so no later pull re-delivers
-   * them and the desktop's Folders rail stays empty for the life of the install.
-   *
-   * Unlike tags, "no local folder rows" is AMBIGUOUS (the account may simply have folders off),
-   * so there is no present-rows gate: the snapshot's first page is the answer itself — it
-   * carries the account's folder entities IFF the hosted flag is on (they are live small state,
-   * page 1 only, never the tail) — and applying whatever it holds plus reconciling the local
-   * flag settles both readings. Marked considered only when the page was READ; a failed fetch
-   * retries on the next pull, and the apply is idempotent so a crash re-run converges.
+   * The one-time folder backfill — `repairStaleTags`' shape for its reason, with one gate
+   * difference. Between the drain first asking for `folder` entities and the apply loop learning to
+   * store them, a mirror could drain folder creates, drop them, and persist a cursor past them — a
+   * delta only looks forward, so the Folders rail stays empty for the life of the install. Unlike
+   * tags, "no local folder rows" is AMBIGUOUS (the account may have folders off), so there is no
+   * present-rows gate: the snapshot's page 1 is the answer itself (it carries folder entities iff
+   * the hosted flag is on), and applying it plus reconciling the local flag settles both readings.
+   * Marked considered only when read; a failed fetch retries; the apply is idempotent.
    */
   const repairStaleFolders = async (bootstrapped: boolean): Promise<number> => {
     if (cursor.folderBackfill) return 0;
@@ -2890,35 +2421,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * DECIDE WHAT AN OLD CURSOR'S `bodies: null` MEANT — the migration read, and it is a one-way door.
-   *
-   * Every install running before the walk had a terminal state carries `null` in that field, and the
-   * two populations it stands for are not the same size. A mirror that has been up for more than the
-   * few minutes a first walk takes has FINISHED its walk; only a brand-new install, caught between
-   * its first `/sync` drain and its first body page, has genuinely not started one. So the read has
-   * to distinguish them, and there is already a fact on disk that does: `initial_import_completed_at`
-   * on the mailbox row is stamped by {@link stampSynced} exactly when a pass drains with the body
-   * walk spent, and never unstamped. Stamped ⇒ the walk finished ⇒ complete. Unstamped ⇒ it has not
-   * ⇒ walk from the first message.
-   *
-   * Reading it the other way round is the expensive mistake in both directions: calling a finished
-   * walk unstarted re-fetches the whole account once per launch, and calling an unfinished walk
-   * complete would leave a half-imported mailbox with bodies missing and nothing to fetch them —
-   * which is why the fallback is to walk. A wrong "walk" costs one pass; a wrong "complete" would
-   * cost correctness.
-   *
-   * ── IT READS THE MIRRORED ROWS, AND ONLY THIS PROCESS EVER STAMPS THEM ────────────────────────
-   *
-   * The row it used to read was the synthetic one, which no longer exists once the refresh has
-   * retired it. It now reads every ACTIVE mirrored mailbox — and the stamp on those rows is still a
-   * fact about THIS mirror, because {@link mailboxRow} deliberately does not copy the hosted
-   * account's own `initial_import_completed_at`. If it did, a brand-new mirror would inherit the
-   * hosted account's finished import, resolve `complete` before fetching a single body, and leave
-   * every message opening blank.
-   *
-   * EVERY active row must be stamped, and no rows at all is `walking`. The walk is account-wide, so
-   * a partially-stamped account is one whose walk has not finished — and the fallback stays the
-   * cheap direction rather than the wrong one.
+   * Decide what an old cursor's `bodies: null` meant — the migration read, and a one-way door.
+   * Every pre-walk install carries `null` for two populations of unequal size: a mirror up more
+   * than the few minutes a walk takes has FINISHED it, while only a brand-new install between its
+   * first `/sync` and first body page has not started. The discriminator on disk is
+   * `initial_import_completed_at` ({@link stampSynced} stamps it when a pass drains with the walk
+   * spent): stamped ⇒ complete, unstamped ⇒ walk. A wrong "walk" costs one pass; a wrong "complete"
+   * leaves mail blank for ever. It reads every ACTIVE mirrored row ({@link mailboxRow} does not copy
+   * the hosted stamp); no rows at all is `walking`.
    */
   const activeMirroredMailboxes = async (): Promise<Array<{ id: string; importedAt: Date | null }>> =>
     cfg.db.select({ id: mailboxes.id, importedAt: mailboxes.initialImportCompletedAt })
@@ -2958,22 +2468,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * THE STEADY STATE: fetch bodies for the messages this mirror holds that have none, and nothing
-   * else. Zero rows ⇒ zero requests, which is what a settled mailbox does on every poll.
-   *
-   * ── WHY THE LOCAL GAP, AND NOT THE CHANGE FEED ────────────────────────────────────────────────
-   *
-   * The obvious incremental source is the drain's own output — the messages it just applied — and it
-   * is the wrong one, for two reasons that only show up at scale. A `since=0` re-bootstrap applies
-   * EVERY message, so driving off the feed would re-request every body in the mailbox even though
-   * the mirror already holds them; and a body skipped because its message had not landed yet (the FK skip in
-   * {@link storeBodies}) is not in any subsequent page of the feed, so nothing would ever come back
-   * for it. Asking the database which messages have no body row answers both cases with one indexed
-   * read, and it cannot drift from the thing it is meant to keep true.
-   *
-   * It is also why the keyset walk's terminal state is safe to trust. `getBodies` LEFT-JOINs the body
-   * row, so a completed walk has written a row — empty if that is what the account holds — for every
-   * message in it. "Missing" therefore means genuinely absent, not merely empty.
+   * The steady state: fetch bodies for the messages this mirror holds that have none, and nothing
+   * else — zero rows means zero requests, what a settled mailbox does every poll. The obvious
+   * incremental source is the drain's own output, and it is wrong at scale: a `since=0` re-bootstrap
+   * applies EVERY message, so driving off the feed re-requests every body; and a body skipped by the
+   * FK skip in {@link storeBodies} is in no later page, so nothing comes back for it. Asking the
+   * database which messages have no body answers both with one indexed read that cannot drift. It is
+   * also why the keyset walk's terminal state is safe: `getBodies` LEFT-JOINs, so a completed walk
+   * wrote a row (empty if that is the account's answer) for every message, and "missing" means absent.
    */
   /**
    * ASK THE HOSTED ids MODE FOR A SET OF BODIES and store what comes back.
@@ -2987,33 +2489,16 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const askForIds = async (wanted: readonly string[]): Promise<number> => {
     let written = 0;
     for (let i = 0; i < wanted.length; i += BODIES_IDS_MAX) {
-      /*
-       * ── AN ABSENT ID HAS TWO MEANINGS, AND ONLY ONE OF THEM IS "STOP ASKING" ────────────────
-       *
-       * The ids mode drops an id from its answer for two reasons the wire cannot distinguish:
-       * the account does not own it (deliberate — a 404 would be an existence oracle), and
-       * `BODIES_BYTE_BUDGET` was crossed before the id's uuid-ordered row was reached, whose
-       * documented contract is the OPPOSITE instruction ("What is left out is asked for per
-       * message by the client" — `message-service.ts#getBodiesByIds`). This loop used to read
-       * every absence as the first meaning and park the id in `unanswered` for the launch's
-       * lifetime — so one message that sorted after a budget's worth of catch-up neighbours in a
-       * single batch mirrored as a row with NO body, permanently on a long-running install:
-       * rendered on webmail, blank on the desktop (owner report, 2026-08-21). The webmail engine
-       * reads the same answer correctly (`hydrateThread`: ids the answer did not carry are
-       * fetched singly); this was the one consumer that conflated the two meanings.
-       *
-       * The discriminator is in the answer's own shape. An OWNED message always yields an item —
-       * the service LEFT-JOINs the body row and answers empty text rather than omitting the row —
-       * so absence from a NON-EMPTY answer can only be the budget, and an EMPTY answer to a
-       * non-empty ask can only be "none of these ids are owned". So: re-ask the leftovers in
-       * their own request, and mark `unanswered` only from an empty answer.
-       *
-       * It terminates without a round cap doing the work: the budget rule includes the row that
-       * CROSSES the budget, so every non-empty answer carries the batch's first outstanding id
-       * and the leftover set strictly shrinks. The cap is pure defence against a server that
-       * stops honouring that shape — leftovers it strands are NOT marked, so the gap query
-       * simply re-offers them on the next pull rather than never again.
-       */
+       /*
+        * An absent id has TWO meanings, and only one is "stop asking". The ids mode drops an id for
+        * two reasons the wire cannot distinguish: the account does not own it (a 404 would be an
+        * existence oracle) and `BODIES_BYTE_BUDGET` was crossed before its row was reached (whose
+        * contract is the OPPOSITE — asked per message by the client). Reading every absence as the
+        * first parked ids in `unanswered`, so a message after a budget's worth mirrored blank for
+        * ever (owner report, 2026-08-21). The discriminator is the answer's shape: an OWNED message
+        * always yields an item (the service LEFT-JOINs), so absence from a non-empty answer is the
+        * budget and an empty answer is "none owned" — re-ask the leftovers, mark only from empty.
+        */
       let batch = wanted.slice(i, i + BODIES_IDS_MAX);
       for (let round = 0; batch.length > 0 && round < BODIES_IDS_MAX; round++) {
         if (aborted) return written;
@@ -3035,18 +2520,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * ── NEWEST FIRST, HERE TOO — the gap is filled from the top of the list down ─────────────────
-   *
-   * Which body-less messages a pull asks for first is this mirror's choice, and it used to be
-   * uuid order — a random permutation of the mailbox, so the message at the top of the list
-   * could get its body LAST. After the newest-first bootstrap (the header's NEWEST FIRST section)
-   * the LIST is current within seconds while the bodies still arrived in that random order, so a
-   * newest message opened blank until the fill happened to reach it. The order is now the list's
-   * own — `date desc nulls last, id desc`, the snapshot window's exact sort
-   * (`sync-service.ts`) — so the first screenful's bodies land first. Ordering ONLY: the same
-   * gap predicate, the same `BODIES_CATCHUP_MAX` bound, the same `unanswered` filter, the same
-   * `askForIds` writer; a pull that drains the newest gap moves on to the next-newest on the
-   * pull after, exactly as it did through uuid space.
+   * Newest first, here too — the gap is filled from the top of the list down. Which body-less
+   * messages a pull asks for first used to be uuid order, a random permutation, so the message at
+   * the top of the list could get its body LAST; after the newest-first bootstrap the list is
+   * current within seconds while bodies still arrived in that random order, so a newest message
+   * opened blank until the fill reached it. The order is now the list's own — `date desc nulls
+   * last, id desc`, the snapshot window's sort (`sync-service.ts`). Ordering ONLY: same gap
+   * predicate, `BODIES_CATCHUP_MAX` bound, `unanswered` filter and `askForIds` writer as before.
    */
   const NEWEST_FIRST = [sql`${messages.date} desc nulls last`, desc(messages.id)];
 
@@ -3063,33 +2543,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * THE ONE-TIME CAP-MARKER REPAIR — an old sidecar's empty row is not the same fact as an empty
-   * message, and until this pass ran there was no way for this mirror to tell.
-   *
-   * A sidecar from before the storage-cap marker receives a withheld batch item, ignores
-   * `item.withheld`, and inserts an ordinary empty `message_bodies` row. Upgrading adds
-   * `withheld_reason` as NULL, which is indistinguishable from "ordinarily stored and empty" —
-   * and {@link fetchMissingBodies} only ever offers rows that are ABSENT, so a present-but-empty
-   * row is never re-asked. That mirror then serves a withheld body as an ordinary empty one for
-   * ever, on the one tier whose whole promise is that the honest state renders everywhere.
-   *
-   * ── WHY A CURSOR FLAG AND NOT THE TWO OBVIOUS ALTERNATIVES ──────────────────────────────────
-   *
-   *  · A {@link CURSOR_VERSION} bump cannot reach this: the re-key resets `sync`/`bootstrapping`
-   *    and deliberately leaves `bodies` alone (`message_bodies` is not a `/sync` entity), so it
-   *    would replay every message and fetch no bodies at all.
-   *  · Widening `fetchMissingBodies`'s predicate permanently would be a standing poll with no
-   *    termination: a genuinely empty body re-asked answers empty again, matches the predicate
-   *    again, and does so on every pull for ever. The SQL layer has no "answered" tri-state and
-   *    inventing one would fork the meaning of a column defined once in the shared schema.
-   *
-   * So termination is a property of the CURSOR, exactly as the stale-tag repair's is: considered
-   * once, recorded, never revisited. Absent from every cursor file written before this pass, which
-   * reads as `false` — and that population is precisely the one that needs it.
-   *
-   * Deferred, WITHOUT marking, while the first body walk is still running: the walk stores markers
-   * correctly for everything it covers, so repairing underneath it would ask twice for the same
-   * rows and could mark the repair done over a mirror that is still filling.
+   * The one-time cap-marker repair — an old sidecar's empty row is not the same fact as an empty
+   * message. A pre-cap sidecar ignores `item.withheld` and inserts an ordinary empty row; upgrading
+   * adds `withheld_reason` NULL, indistinguishable from "ordinarily empty", and {@link
+   * fetchMissingBodies} only offers ABSENT rows, so a withheld body serves as empty for ever. A
+   * {@link CURSOR_VERSION} bump leaves `bodies` alone and fetches none, and widening the predicate
+   * is a standing poll with no termination — so termination is a property of the CURSOR, considered
+   * once and recorded (absent files read `false`, the population that needs it). Deferred WITHOUT
+   * marking while the first body walk runs, or it would ask twice and mark done over a filling mirror.
    */
   const repairCapMarkers = async (): Promise<number> => {
     if (cursor.capMarkerRepair) return 0;
@@ -3134,7 +2595,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // repair. Never fatal to the pull — the mirror is exactly as correct as it was before.
       cfg.log?.("cloud_cap_marker_repair_deferred", {
         reason: "a bodies page failed; the mirror is unaffected and the next launch retries",
-        err: String(err),
+        // The THROWN value, as the two deferral lines above it pass it: `String(err)` collapses
+        // every failure to `errorClass: "String"` with no code and no cause, which is the whole
+        // record this line is. Held by the `err` census at the foot of `log-census.test.ts`.
+        err,
       });
       return written;
     }
@@ -3148,28 +2612,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
-   * The body pass: walk the account once, then keep only the newcomers topped up.
-   *
-   * ── WHILE THE WALK RUNS, THE NEWEST SCREENFUL GOES FIRST ────────────────────────────────────
-   *
-   * `walkAllBodies` is a keyset walk in the SERVER's order — `messages.id`, a uuid, which is a
-   * random permutation of the mailbox — and it has to stay that: the `after` cursor is what
-   * makes an interrupted walk resume instead of restart, and the server pages by it. So during
-   * a bootstrap the list (newest-first, the header's NEWEST FIRST section) is current within
-   * seconds while the bodies of the messages at the TOP of it arrive whenever uuid space happens
-   * to reach them — a newest message opened blank for the walk's whole life.
-   *
-   * The fix is not to reorder the walk but to put a bounded newest-first ask IN FRONT of each
-   * of its turns: {@link fetchMissingBodies}, in the list's order, capped at
-   * {@link NEWEST_BODIES_FIRST} ids — five `?ids=` requests — then the walk proceeds exactly as
-   * before. Every pull while walking repeats it, and because the gap predicate excludes rows the
-   * previous turn filled, each repeat takes the NEXT newest screenful: a newest-first drain
-   * running beside the uuid walk, and the two converge on the same set. The walk will re-send
-   * the bodies this ask already stored (`storeBodies` upserts; the walk's pages are the
-   * server's, not ours), which is the bounded price — at most `NEWEST_BODIES_FIRST` bodies per
-   * pull — of a list whose top opens readable while the rest is still filling.
-   *
-   * The walk's own state is untouched: same cursor, same `complete` marker, same resume.
+   * The body pass: walk the account once, then keep only the newcomers topped up. `walkAllBodies`
+   * is a keyset walk in the SERVER's order (`messages.id`, a uuid — a random permutation) and must
+   * stay so: the `after` cursor is what makes an interrupted walk resume. So during a bootstrap the
+   * list is current within seconds while the bodies at its TOP arrive whenever uuid space reaches
+   * them. The fix is not to reorder the walk but to put a bounded newest-first ask IN FRONT of each
+   * turn — {@link fetchMissingBodies} in the list's order, capped at {@link NEWEST_BODIES_FIRST} —
+   * so each pull takes the next newest screenful and the two converge on the same set. The bounded
+   * price is the bodies the walk re-sends (`storeBodies` upserts); the walk's own state is untouched.
    */
   const backfillBodies = async (): Promise<number> => {
     if (cursor.bodies.phase === "unresolved") {
@@ -3185,6 +2635,11 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   const runPull = async (): Promise<number> => {
+    /* WHEN THIS PULL BEGAN, for the first-import clock below. A pull walks the whole feed before it
+       can stamp anything, so the pull that finds a first import open is where a large mirror's
+       first pages land; handing the reporter the moment it reported would leave that pull outside
+       the duration it announces. See `first-sync.ts`. */
+    const pullStartedAt = performance.now();
     try {
       /* THE MAILBOXES FIRST, ALWAYS. A message's `mailbox_id` is a foreign key and the drain writes
          it verbatim from the feed, so the rows it points at have to exist before the first page is
@@ -3268,22 +2723,17 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         });
         return applied;
       }
-      /* THE TWO STAMPS THE PROGRESS SURFACE READS. See {@link stampSynced} — on a mirrored
-         install this process is the only thing that could write them, and without them the
-         window's sync line has no way to tell a first import from a settled mailbox. The body
-         walk reaching its end is part of "drained": the mail list is complete before its bodies
-         are, and a first import that claims to be finished while messages still open blank has
-         claimed too early. This is also the fact {@link resolveBodiesWalk} reads back on a later
-         launch to tell a finished walk from one that never started.
-
-         ON EVERY ACTIVE MIRRORED ROW, AND NEVER ON A TOMBSTONE. It used to be the single synthetic
-         mailbox, which no longer exists once the refresh has retired it — stamping that id would
-         update no row at all and the sync line would say "Syncing your mail" for the life of the
-         install. A retired row is excluded for the inverse reason: a mailbox that is gone has no
-         import to report finishing. */
+       /* The two stamps the progress surface reads (see {@link stampSynced}) — on a mirrored install
+          this process is the only writer, and without them the window's sync line cannot tell a
+          first import from a settled mailbox. The body walk reaching its end is part of "drained":
+          the mail list completes before its bodies, and a first import that claims finished while
+          messages open blank claimed too early. It is also the fact {@link resolveBodiesWalk} reads
+          back later. ON EVERY ACTIVE MIRRORED ROW, never a tombstone: the old single synthetic id is
+          gone (stamping it updates no row and the line says "Syncing your mail" for ever), and a
+          removed mailbox has no import to report finishing. */
       for (const row of await activeMirroredMailboxes()) {
         const stamps = await stampSynced(cfg.db, row.id, now(), cursor.bodies.phase === "complete");
-        await firstSync.report(row.id, stamps, () => mirroredMessageCount(cfg.db, row.id));
+        await firstSync.report(row.id, stamps, () => mirroredMessageCount(cfg.db, row.id), pullStartedAt);
       }
       // THE PULL'S LAST WORD — this mirror drained the hosted feed to its horizon at this
       // moment, on this process's own clock. Written at COMPLETION and nowhere earlier, exactly

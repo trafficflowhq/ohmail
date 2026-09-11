@@ -210,10 +210,6 @@ const TABLE = {
   phoneThisPhone: "This phone",
   phoneStateOrganizing: "Organizing",
   phoneStateStopping: "Stopping",
-  /* The sixth, and the only one with no desktop twin: a computer has no start to wait through —
-     its press lands on an idle mailbox. A phone's can be queued behind a stop it changed its mind
-     about, and the chip has to say which of the two is happening. */
-  phoneStateStarting: "Starting",
   phoneStateNotOrganized: "Nothing organizes this mailbox",
   phoneStateReader: (name: string) => `Organized by ${name}`,
   phoneStateReaderLegacy: "Organized by another install",
@@ -259,9 +255,6 @@ const TABLE = {
   settingsStartHere: "Start organizing here",
   settingsStartHereFailed:
     "This phone could not start organizing that mailbox. Nothing changed. Try again in a moment.",
-  settingsStopHereFailed:
-    "This phone could not hand that mailbox back, so it is still organizing it. Try again in a "
-    + "moment.",
 
   /* The standalone door's own refusals. Each one names what is missing; none of them ever
      carries the password, which is not an argument any of these takes. */
@@ -284,10 +277,7 @@ const TABLE = {
   standaloneOtherMailbox:
     "The mailbox on this phone is not the one this entry names. Forget this entry and open the mailbox again.",
   standaloneNotStored: (detail: string) =>
-    `This phone could not record the mailbox it just opened: ${detail}. It was closed again and `
-    + "nothing was kept — try Connect once more.",
-  standaloneAlreadyOpen:
-    "This phone already has a mailbox open. Forget it in Servers before opening another one.",
+    `This phone could not record the mailbox it just opened: ${detail}`,
   /* The consent press (`net/mailboxes.ts#organizeHere`). Each one names what the mailbox answered;
      none of them claims the phone is organizing, because on these arms it is not. */
   organizeHereUnreachable: (detail: string) =>
@@ -600,9 +590,6 @@ const TABLE = {
     "The pairing and the mail this phone had copied are gone. The server could not be reached to "
     + "end the session, so it may still count this phone as connected — revoke this device from its "
     + "Devices list to finish.",
-  forgetClaimStands: (minutes: number) =>
-    "The mailbox and its mail are gone from this phone. Its claim on the mailbox could not be "
-    + `given back, so another machine can take the mailbox in about ${minutes} minutes.`,
   forgetStillPending:
     "This server is still being forgotten on this phone — ohmail could not remove its "
     + "sign-in yet. Restart the app to let it finish, or revoke this device from the server's "

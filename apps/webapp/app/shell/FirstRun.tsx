@@ -99,16 +99,14 @@ export interface FirstRunProps {
   onRefresh: () => void;
   /** Leave the stage — the caller returns the route to the app. */
   onLeave: () => void;
-   /**
-   * THE PULL SCREEN'S NUMBERS.
+  /**
+   * THE PULL SCREEN'S NUMBERS, all from the client's own mirror except the last.
    *
-   * `screened`/`history` are what the two counters say, and both are projections over the mirror
-   * ON SCREEN. `pulled` is the numerator the rate sampler folds, and it is NOT that mirror's row
-   * count: on a windowed client the projection stops at the policy floor while the import runs
-   * on, so a rate folded from it reads zero and the ETA never appears. The DENOMINATOR is on the
-   * facts (`serverMessageCount`), because only the server can say how much is out there.
+   * `screened`/`history` are what the two counters say; `mirrorCount` is the numerator the rate
+   * sampler folds. The DENOMINATOR is on the facts (`serverMessageCount`), because only the
+   * server can say how much is out there.
    */
-  pull: { screened: number; history: number; pulled: number };
+  pull: { screened: number; history: number; mirrorCount: number };
   /** How much mail the server says is in the mailbox — see `MailboxDTO.serverMessageCount`. */
   serverMessageCount?: number;
   /** The guided decision's sender, or `null` when the queue is empty (the step is skipped). */
@@ -664,7 +662,7 @@ export function FirstRun({
   /* ── THE PULL'S RATE ───────────────────────────────────────────────────────────────── */
 
   const [samples, setSamples] = useState<PullSample[]>([]);
-  const pulled = pull.pulled;
+  const mirrorCount = pull.mirrorCount;
   /**
    * Sampled on every render in which the count MOVED, not on a timer of its own. The mirror's
    * size only changes when a drain lands, and a timer would fill the window with duplicate
@@ -672,13 +670,13 @@ export function FirstRun({
    */
   const lastSampled = useRef<number | null>(null);
   useEffect(() => {
-    if (lastSampled.current === pulled) return;
-    lastSampled.current = pulled;
-    setSamples((prev) => pullSampleStep(prev, pulled, Date.now()));
-  }, [pulled]);
+    if (lastSampled.current === mirrorCount) return;
+    lastSampled.current = mirrorCount;
+    setSamples((prev) => pullSampleStep(prev, mirrorCount, Date.now()));
+  }, [mirrorCount]);
 
   const rate = pullRate(samples);
-  const remaining = pullRemaining(serverMessageCount, pulled);
+  const remaining = pullRemaining(serverMessageCount, mirrorCount);
   const etaMs = pullEtaMs(remaining, rate);
 
   /**
@@ -1287,8 +1285,8 @@ export function FirstRun({
             </div>
             {remaining !== null ? (
               <div className="ob-track" role="progressbar" aria-valuemin={0}
-                aria-valuemax={pulled + remaining} aria-valuenow={pulled}>
-                <i style={{ width: `${Math.round((pulled / (pulled + remaining)) * 100)}%` }} />
+                aria-valuemax={mirrorCount + remaining} aria-valuenow={mirrorCount}>
+                <i style={{ width: `${Math.round((mirrorCount / (mirrorCount + remaining)) * 100)}%` }} />
               </div>
             ) : null}
             {/* "about", and NEVER before two minutes of samples. The gate is in `pull-rate.ts`;

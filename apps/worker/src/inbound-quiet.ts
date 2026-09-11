@@ -3,114 +3,15 @@ import { mailboxes, messages, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 
 /**
- * THE INBOUND-QUIET PASS — the forwarding-detection heuristic (mail 0078), and the single owner
- * of its predicate.
- *
- * ── THE INCIDENT THIS EXISTS FOR ──────────────────────────────────────────────────────────
- *
- * A mailbox synced perfectly for weeks while receiving essentially nothing, because a
- * provider-level forward (set up at the provider, without "keep a copy") diverted every inbound
- * mail BEFORE IMAP storage. From where ohmail stands the mailbox was completely healthy: every
- * cycle connected, every folder listed, `last_sync_at` fresh — and every surface said so. Two
- * days of debugging pointed at ohmail when the answer was upstream. The mail simply never
- * reached the mailbox, and absence of arrivals is the one shape no per-cycle signal carries.
- * This pass is the scan that notices that shape, because quiet is BY DEFINITION the absence of
- * ingest events — an ingest-transition emission cannot enter this state, only leave it
- * (`storage_at_cap` in `packages/db/src/alerts.ts` makes the same argument for its scan).
- *
- * ── WHAT COUNTS AS "GENUINE INBOUND", AND WHY EACH EXCLUSION IS THERE ─────────────────────
- *
- *  · `lower(from_address) <> lower(mailbox.address)` — the user's OWN sends land in the Sent
- *    folder and are ingested like everything else; a diverted mailbox's user typically keeps
- *    SENDING from it (that is the measured incident shape), so without this clause an active
- *    sender's mailbox never trips. (A send from an ALIAS is not excluded — it keeps `recent` non-zero and holds
- *    the notice back, which errs toward silence, never toward a false alarm.)
- *  · ohmail's own organization needs NO exclusion, structurally: moves rewrite `folder_state`
- *    and never create `messages` rows, so nothing ohmail does to a mailbox can look like an
- *    arrival.
- *  · `deleted_at` is deliberately NOT excluded. A tombstoned row still proves the mail ARRIVED
- *    — the row is the message's identity and survives deletion — and the question this pass
- *    asks is about arrival, not retention. Excluding it would tell a user who deletes mail on
- *    reading that their mailbox "receives almost nothing", which is false.
- *  · junk is deliberately NOT excluded either: the notice's sentence is "this mailbox has
- *    received almost nothing", and a mailbox whose Junk folder fills daily has not.
- *  · TWO CLOCKS, split by what each can honestly answer (review finding, round 1). "Is mail
- *    arriving NOW" is judged on `created_at` — ingestion, the one clock a sender cannot choose
- *    — and rows with no header date count too: a future-dated header must not pass for recency
- *    for ever, and a delayed or date-less message is proof of arrival exactly when it matters.
- *    "What does the history claim" (the absolute arm, and the episode's stamp) is judged on the
- *    header `date`, bounded above by `now` — the honest clock ACROSS an initial import, where
- *    every row's `created_at` is the import instant and says nothing about the history's shape.
- *
- * ── THE PREDICATE (all thresholds are exported constants; the tests replay the incident) ───
- *
- * TRIP — start an episode (`inbound_quiet_since` NULL → stamped) — only when ALL gates hold:
- *
- *   gates  status = 'connected' ∧ sync_blocked_since IS NULL ∧ last_sync_at within
- *          {@link INBOUND_QUIET_SYNC_FRESH_MS} ∧ initial_import_completed_at NOT NULL ∧
- *          created_at older than {@link INBOUND_QUIET_MIN_AGE_MS}.
- *          The notice CLAIMS "this mailbox syncs fine" — on a broken, blocked, stale or
- *          still-importing mailbox that claim is false and the right surface is the error/block
- *          copy that already exists. The age floor keeps a mailbox connected this week from
- *          being judged at all; import-complete keeps a half-imported history from being read
- *          as quiet.
- *
- *   and ONE of the two arms:
- *
- *   both arms first require zero genuine INGESTION within {@link INBOUND_QUIET_WINDOW_MS}
- *          — mail that is demonstrably arriving holds every trip back — then:
- *   A (comparative)  a SIBLING connected mailbox on the same account ingested at least
- *          {@link INBOUND_QUIET_SIBLING_MIN} in the same window, counting only rows ingested
- *          AFTER that sibling's own initial import completed — history a fresh connect just
- *          wrote is not live flow. The sibling is the evidence that mail in general is
- *          flowing to this account — a fortnight of account-wide silence (a vacation, a quiet
- *          spell) trips nothing, and connecting a new mailbox beside a quiet one trips
- *          nothing either.
- *   B (absolute)     zero genuine inbound DATED within {@link INBOUND_QUIET_ABSOLUTE_MS}
- *          (and not future-dated), and either the mailbox HAS older genuine inbound (so its
- *          newest is months old — the connect-a-diverted-mailbox shape) or it is itself older
- *          than the absolute window (months connected, nothing ever). Needs no sibling, so a
- *          single-mailbox account is covered.
- *
- * The stamp is the newest genuine inbound `date` the mailbox holds — `created_at` when it never
- * held one — so the client can say "almost nothing since {date}" from the row itself, and
- * COALESCED: a later pass never advances a live episode's stamp.
- *
- * CLEAR — end the episode (`inbound_quiet_since` → NULL) — only when genuine inbound RESUMES:
- * at least {@link INBOUND_QUIET_RECOVERY_MIN} INGESTED arrivals within
- * {@link INBOUND_QUIET_WINDOW_MS}, whatever their headers claim.
- * The hysteresis (trip at zero, clear at three) is what makes a dismissal durable on a mailbox
- * that is quiet by nature: ONE stray mail a month must not end the episode — an ended episode
- * re-trips later with a fresh `since`, and a fresh `since` newer than the dismissal re-shows
- * the notice. Three-in-a-fortnight is real flow; after it, a NEW silence is a genuine state
- * change and has earned a fresh notice. Unhealthy states do NOT clear an episode (the episode
- * outlives an outage rather than re-arming against a standing dismissal); the CLIENT gates
- * display on health, this pass gates only the trip.
- *
- * `inbound_quiet_dismissed_at` is never touched here — the dismissal belongs to the user
- * (`POST /mailboxes/:id/inbound-quiet/dismiss`) and holds for as long as the episode does.
- *
- * ── COST, AND WHO CALLS IT ────────────────────────────────────────────────────────────────
- *
- * Per account: one select over the account's mailbox rows, one grouped aggregate over its
- * messages BOUNDED to the absolute window (`date > now − 60d`), plus — only for a mailbox
- * actually crossing into an episode, or a gated candidate with an empty window — one unbounded
- * `max(date)` probe. A settled account pays the bounded aggregate and nothing else, and the
- * cadence is hours ({@link INBOUND_QUIET_EVERY_MS in index.ts}), not the poll path: the DTO the
- * clients read carries the stored columns, so `GET /mailboxes` stays as cheap as it was.
- *
- * TWO production callers, one per DOOR (bubble-up-pass.ts's pattern, same reasons):
- *  · the hosted sync cycle, time-gated, per served account, under the shard's leader lock —
- *    which is why `opts.accountId` is REQUIRED: an unscoped pass under a shard-specific lock
- *    would let shard 1 mutate shard 0's rows;
- *  · `apps/sidecar/src/engine.ts`'s drain tail — the LOCAL store of a standalone install, same
- *    IMAP blind spot, no worker anywhere.
- *
- * Pure and hermetic: a database handle and a clock, so tests drive it against PGlite and replay
- * the incident's timeline as a fixture. No change_log row is emitted — mailbox lifecycle state
- * travels by the polled `GET /mailboxes` read, the same way `last_sync_at` and the error four
- * do — and no log line carries an address (the account and mailbox ids are the loggable facts).
- */
+ * THE INBOUND-QUIET PASS — the forwarding-detection heuristic (mail 0078) and the single owner of its
+ * predicate. It exists because a provider-level forward diverted every inbound mail BEFORE IMAP storage
+ * while every per-cycle signal said the mailbox was healthy — absence of arrivals is the one shape no
+ * per-cycle signal carries (`storage_at_cap` in `alerts.ts` makes the same argument). Genuine inbound
+ * excludes the user's own sends (`lower(from_address) <> lower(mailbox.address)`); tombstones and junk are
+ * NOT excluded (they still prove arrival); TWO CLOCKS split by what each answers honestly — `created_at`
+ * (ingestion, unforgeable) for "arriving now", the header `date` (bounded by `now`) for "what the history
+ * claims". It TRIPS (`inbound_quiet_since`) only on a connected, unblocked, fresh, import-complete mailbox
+ * with zero recent ingest, via a comparative sibling arm or an absolute arm; CLEARS on {@link INBOUND_QUIET_RECOVERY_MIN} arrivals (hysteresis makes a dismissal durable). All thresholds are exported `INBOUND_QUIET_*` constants; `inbound_quiet_dismissed_at` is the user's. Two callers (hosted cycle under the shard lock, `apps/sidecar`'s drain), cadence `INBOUND_QUIET_EVERY_MS`; no change_log row. */
 
 /** The quiet window: zero genuine inbound for this long is "quiet". Generous, deliberately. */
 export const INBOUND_QUIET_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
@@ -181,18 +82,14 @@ export async function inboundQuietPass(
   }).from(mailboxes).where(eq(mailboxes.accountId, accountId));
   if (rows.length === 0) return { tripped: 0, cleared: 0 };
 
-  // ONE bounded aggregate for the whole account. The join is what lets one statement apply each
-  // mailbox's OWN address to the self-sent exclusion; the `date > absoluteStart` bound is the
-  // cost ceiling — a settled account never pays an unbounded scan here.
-  // TWO CLOCKS in one statement, and the split is a review finding, not a taste: `created_at`
-  // (ingestion — ours, unforgeable) answers "is mail arriving NOW", `date` (the header — the
-  // sender's) answers "what does the history claim", bounded above by `now` so a future-dated
-  // header cannot pass for recency. The row bound is the LOOSER of the two windows on each
-  // clock, so both filters see every row they may count.
-  // An instant is a different LITERAL on each store — an ISO string the server parses, a count of
-  // milliseconds the device stores — and a comparison against the wrong one does not fail: it
-  // compares text with a number and quietly matches nothing. Every bound below goes through the
-  // seam for that reason, including the two that are only ever read.
+  // ONE bounded aggregate for the whole account. The join applies each mailbox's OWN address to the
+  // self-sent exclusion; the `date > absoluteStart` bound is the cost ceiling (a settled account never pays
+  // an unbounded scan). TWO CLOCKS in one statement, a review finding not a taste: `created_at` (ingestion,
+  // ours, unforgeable) answers "is mail arriving NOW", `date` (the header, the sender's, bounded by `now`)
+  // answers "what does the history claim". The row bound is the LOOSER of the two windows on each clock, so
+  // both filters see every row they may count. An instant is a different LITERAL on each store (an ISO
+  // string vs a millisecond count), and a comparison against the wrong one quietly matches nothing, so
+  // every bound goes through the seam.
   const d = dialect(db);
   const windowAt = d.ts(windowStart);
   const absoluteAt = d.ts(absoluteStart);

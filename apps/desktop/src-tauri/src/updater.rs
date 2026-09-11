@@ -311,9 +311,9 @@ pub struct Facts {
     /// gates on and the installer that would have run cannot disagree. `None` on a build the
     /// bundler never packaged.
     pub bundled_as: Option<InstallKind>,
-    /// Is this process the AppImage `$APPIMAGE` names? See [`AppImage`] — the variable alone is
-    /// not the fact, because every child of an AppImage inherits it.
-    pub appimage: AppImage,
+    /// Is `$APPIMAGE` set? The runtime sets it to the file it mounted, and the plugin takes it as
+    /// the path to rewrite.
+    pub appimage_env: bool,
     /// Does `/.flatpak-info` exist? The marker inside the sandbox, and the reliable one —
     /// `FLATPAK_ID` is not always inherited.
     pub flatpak_info: bool,
@@ -322,35 +322,18 @@ pub struct Facts {
     pub os: Os,
 }
 
-/// Is the running executable the AppImage `$APPIMAGE` names? The variable is not the answer: the
-/// runtime exports it to the process it launches and every child inherits it, so a copy extracted
-/// from an image, or anything started from a terminal that is itself an AppImage, sees it set
-/// while owning no image at all. Those copies have nothing the plugin could rewrite, and offering
-/// them an update is a press that reports done and changes nothing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum AppImage {
-    /// `$APPIMAGE` is unset or empty. Nothing here was launched by an AppImage runtime.
-    #[default]
-    None,
-    /// `$APPIMAGE` is set and this process is NOT the image it names — an extracted copy, an
-    /// `APPIMAGE_EXTRACT_AND_RUN` start, or a child of some other AppImage.
-    Inherited,
-    /// This process IS that image: the executable is served by a LIVE mount the AppImage runtime
-    /// made, and `$APPIMAGE` names a regular file — a file that exists to be replaced. What makes
-    /// it live is [`running_image`]: a `/proc/self/mountinfo` entry at that directory, its device
-    /// the one the executable is read from, its FUSE subtype the image's own file name.
-    Running,
-}
-
 /// The one decision, as a pure function of what the machine says. The ORDER is the design:
 ///
 ///  1. The sandbox marker wins outright — a Flatpak is a Flatpak whatever a bundler wrote, and
 ///     the software centre is what updates it.
-///  2. The bundler's record next, for every kind but the AppImage, and ahead of the AppImage fact
-///     because a packaged install must not be talked into replacing a stranger's file.
-///  3. The AppImage fact then decides the AppImage ALONE, not together with the bundler's mark. An
+///  2. The bundler's record next, for every kind but the AppImage, and ahead of `$APPIMAGE`
+///     because that variable is INHERITED: a process started from a terminal that is itself
+///     inside an AppImage sees it set, and a packaged install must not be talked into replacing a
+///     stranger's file by an environment it did not set.
+///  3. `$APPIMAGE` then decides the AppImage ALONE, not together with the bundler's mark. An
 ///     AppImage whose mark went missing would otherwise stop updating with nothing on screen to
-///     say so, and an extracted copy carries the mark while having no image to rewrite.
+///     say so, and an extracted copy — which has no file to rewrite — is exactly what the
+///     variable's absence names.
 ///  4. Under a system prefix with no mark: a distribution built this and owns the files.
 pub fn classify(facts: Facts) -> InstallKind {
     if facts.flatpak_info {
@@ -362,170 +345,12 @@ pub fn classify(facts: Facts) -> InstallKind {
         }
     }
     match facts.os {
-        Os::Linux if facts.appimage == AppImage::Running => InstallKind::AppImage,
+        Os::Linux if facts.appimage_env => InstallKind::AppImage,
         Os::Linux if facts.system_path => InstallKind::LinuxPackage,
         Os::Linux => InstallKind::Unpackaged,
         Os::Windows => InstallKind::WindowsSetup,
         Os::Mac => InstallKind::MacBundle,
     }
-}
-
-/// What the machine says about `$APPIMAGE`, as values rather than as an environment — so every
-/// case below is a row in a table instead of a variable a test would have to set globally.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ImageEnv<'a> {
-    /// `$APPIMAGE`, empty read as absent: the file the runtime mounted, and the only file the
-    /// plugin's AppImage installer rewrites.
-    pub appimage: Option<&'a std::path::Path>,
-    /// Is `$APPIMAGE_EXTRACT_AND_RUN` PRESENT? The runtime then unpacked the image to a temporary
-    /// directory and ran the copy: nothing is mounted and the running files are not the image.
-    pub extract_and_run: bool,
-    /// `$APPDIR` — the mount point the runtime made. Inherited exactly as `$APPIMAGE` is, and set
-    /// by an extracted `AppRun` to the extraction directory, so it CONFIRMS the mount below and
-    /// never establishes it alone.
-    pub appdir: Option<&'a std::path::Path>,
-    /// `/proc/self/exe`, resolved.
-    pub exe: Option<&'a std::path::Path>,
-    /// Does `$APPIMAGE` name a regular file? Measured by [`read_facts`]; there is nothing to
-    /// replace if it does not.
-    pub image_is_a_file: bool,
-    /// `/proc/self/mountinfo`, whole and unparsed — the kernel's list of what is mounted where.
-    /// `None` where it could not be read, which classifies NOT running: a fact that could not be
-    /// read is not a fact that held.
-    pub mountinfo: Option<&'a str>,
-    /// `st_dev` of the running executable — the kernel's own answer to which mount serves this
-    /// file, and the half of the test below that a person cannot write by choosing a path.
-    pub exe_device: Option<u64>,
-}
-
-/// One `/proc/self/mountinfo` line, as much of it as this decision reads. The kernel's format is
-/// fixed: id, parent, `major:minor`, root, mount point, options, any number of optional fields, a
-/// lone `-`, the filesystem type, the source, the super options.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MountEntry {
-    pub major: u32,
-    pub minor: u32,
-    pub mount_point: String,
-    pub fs_type: String,
-    pub source: String,
-}
-
-/// The four characters the kernel escapes in a mount point, a filesystem type and a source: space,
-/// tab, newline and the backslash itself, each as three octal digits. All four are ASCII, so a
-/// decoded byte IS the character it stood for; nothing else in the line is escaped.
-fn unescape_mountinfo(field: &str) -> String {
-    let mut out = String::with_capacity(field.len());
-    let mut rest = field.chars();
-    while let Some(c) = rest.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        let digits: String = rest.clone().take(3).collect();
-        match u8::from_str_radix(&digits, 8) {
-            Ok(byte) if digits.len() == 3 => {
-                out.push(byte as char);
-                rest.nth(2);
-            }
-            _ => out.push('\\'),
-        }
-    }
-    out
-}
-
-/// Read one line, or `None` where it is not one. Deliberately not lenient: a line this cannot
-/// parse is a line this decision does not get to use.
-pub fn parse_mount_line(line: &str) -> Option<MountEntry> {
-    let mut fields = line.split_whitespace();
-    let (_id, _parent) = (fields.next()?, fields.next()?);
-    let device = fields.next()?;
-    let _root = fields.next()?;
-    let mount_point = fields.next()?;
-    // The options, then the optional fields, are however many the kernel felt like writing; the
-    // lone `-` is what ends them, and it is the only field that can be exactly that.
-    let mut tail = fields.skip_while(|field| *field != "-");
-    tail.next()?;
-    let fs_type = unescape_mountinfo(tail.next()?);
-    let source = unescape_mountinfo(tail.next()?);
-    let (major, minor) = device.split_once(':')?;
-    Some(MountEntry {
-        major: major.parse().ok()?,
-        minor: minor.parse().ok()?,
-        mount_point: unescape_mountinfo(mount_point),
-        fs_type,
-        source,
-    })
-}
-
-/// The mount the kernel serves `mount_point` from: the LAST entry naming it, because a mount made
-/// over an earlier one is the one a path now resolves through.
-pub fn mount_entry_at(mountinfo: &str, mount_point: &std::path::Path) -> Option<MountEntry> {
-    mountinfo
-        .lines()
-        .filter_map(parse_mount_line)
-        .filter(|entry| std::path::Path::new(&entry.mount_point) == mount_point)
-        .next_back()
-}
-
-/// `st_dev` split the way `/proc/self/mountinfo` prints it. The encoding is the kernel's own, and
-/// glibc's `major()`/`minor()`: twelve low bits of major, eight low bits of minor, the rest above.
-/// Measured: this machine's root filesystem is `252:0` and stats as `64512`; a mounted AppImage is
-/// `0:187` and stats as `187`.
-pub fn device_pair(device: u64) -> (u32, u32) {
-    let major = ((device >> 8) & 0x0fff) | ((device >> 32) & !0x0fff);
-    let minor = (device & 0xff) | ((device >> 12) & !0xff);
-    (major as u32, minor as u32)
-}
-
-/// Is this directory named the way the AppImage runtime names its mount? A `mkdtemp` directory
-/// called `.mount_…`. The name is where the old rule STOPPED, and a directory anybody can create
-/// is why that was not enough: it now only says which mount to go and look up.
-fn is_runtime_mount_dir(dir: &std::path::Path) -> bool {
-    dir.file_name().is_some_and(|name| name.to_string_lossy().starts_with(".mount_"))
-}
-
-/// Does this mount name the image `$APPIMAGE` names? The runtime mounts through libfuse, which
-/// writes the image's own file NAME into the FUSE subtype and into the source — measured on three
-/// live mounts as `- fuse.ohmail-linux-x86_64.AppImage ohmail-linux-x86_64.AppImage`. The source
-/// is admitted in either spelling, because libfuse picks it and a false refusal here would stop a
-/// real AppImage ever updating. Nothing ties the mount to the image's INODE: two mounts of one
-/// hard-linked file took each link's own name, so the name is what the kernel has.
-fn mount_names_the_image(entry: &MountEntry, name: &std::ffi::OsStr) -> bool {
-    let subtype_is_the_image = entry
-        .fs_type
-        .strip_prefix("fuse.")
-        .is_some_and(|subtype| std::ffi::OsStr::new(subtype) == name);
-    subtype_is_the_image && std::path::Path::new(&entry.source).file_name() == Some(name)
-}
-
-/// The AppImage fact, from what was measured. `Running` rests on what the RUNTIME produced and a
-/// person cannot stage: a live mount at the directory the executable is served from, on the device
-/// the executable is read from, named after the image `$APPIMAGE` names. An extracted tree is not
-/// a mount, and a directory somebody called `.mount_x` is not one either.
-pub fn running_image(env: ImageEnv<'_>) -> AppImage {
-    let Some(image) = env.appimage else { return AppImage::None };
-    if env.extract_and_run || !env.image_is_a_file {
-        return AppImage::Inherited;
-    }
-    // FAIL CLOSED on anything unread. The cost of refusing is the one this file already pays for a
-    // distribution's build: no update offered, and a sentence saying so.
-    let (Some(exe), Some(device), Some(mountinfo), Some(name)) =
-        (env.exe, env.exe_device, env.mountinfo, image.file_name())
-    else {
-        return AppImage::Inherited;
-    };
-    // `$APPDIR` still only CONFIRMS: an extracted `AppRun` sets it to the extraction directory.
-    if env.appdir.is_some_and(|dir| !exe.starts_with(dir)) {
-        return AppImage::Inherited;
-    }
-    let served_from = device_pair(device);
-    for dir in exe.ancestors().filter(|dir| is_runtime_mount_dir(dir)) {
-        let Some(entry) = mount_entry_at(mountinfo, dir) else { continue };
-        if (entry.major, entry.minor) == served_from && mount_names_the_image(&entry, name) {
-            return AppImage::Running;
-        }
-    }
-    AppImage::Inherited
 }
 
 /// Is this path under a system prefix? Compared by PATH COMPONENT rather than as a string prefix,
@@ -551,56 +376,18 @@ fn bundled_as() -> Option<InstallKind> {
     }
 }
 
-/// A variable set to nothing is not a path, and an unset one is not an empty one.
-fn env_path(name: &str) -> Option<std::path::PathBuf> {
-    std::env::var_os(name)
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from)
-}
-
-/// WHICH MOUNT THE RUNNING BINARY IS READ FROM. Stated through `/proc/self/exe` — the same link
-/// `current_exe` resolved — rather than through the path it returned, because a path re-resolves
-/// when it is stat'd and the magic link is the kernel's answer for THIS process. Windows has
-/// neither, and the AppImage question cannot arise there: [`classify`] only asks it on Linux.
-#[cfg(unix)]
-fn running_executable_device() -> Option<u64> {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata("/proc/self/exe").ok().map(|meta| meta.dev())
-}
-
-#[cfg(not(unix))]
-fn running_executable_device() -> Option<u64> {
-    None
-}
-
 fn read_facts() -> Facts {
-    let exe = std::env::current_exe().ok();
-    let appimage = env_path("APPIMAGE");
-    let appdir = env_path("APPDIR");
-    // WHAT IS MOUNTED WHERE. `desktop-shell.test.ts` holds this module to four disk reads, each
-    // named by its argument: an updater that touched the filesystem anywhere else would be
-    // applying an update by hand, outside the plugin that verifies payloads.
-    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok();
     Facts {
         bundled_as: bundled_as(),
-        appimage: running_image(ImageEnv {
-            appimage: appimage.as_deref(),
-            // PRESENCE, exactly as the runtime reads it: `APPIMAGE_EXTRACT_AND_RUN=0` extracts
-            // too, so a value test here would disagree with the thing that actually decided.
-            extract_and_run: std::env::var_os("APPIMAGE_EXTRACT_AND_RUN").is_some(),
-            appdir: appdir.as_deref(),
-            exe: exe.as_deref(),
-            // Is there a file there at all to be replaced.
-            image_is_a_file: appimage
-                .as_deref()
-                .and_then(|image| std::fs::metadata(image).ok())
-                .is_some_and(|meta| meta.is_file()),
-            mountinfo: mountinfo.as_deref(),
-            exe_device: running_executable_device(),
-        }),
-        // The Flatpak marker inside the sandbox.
+        // A variable set to nothing is not a path to an AppImage.
+        appimage_env: std::env::var_os("APPIMAGE").is_some_and(|value| !value.is_empty()),
+        // The ONE disk read this module makes, and `desktop-shell.test.ts` holds it to exactly
+        // this one: an updater that touched the filesystem anywhere else would be applying an
+        // update by hand, outside the plugin that verifies payloads.
         flatpak_info: std::fs::metadata("/.flatpak-info").is_ok(),
-        system_path: exe.as_deref().map(path_is_system).unwrap_or(false),
+        system_path: std::env::current_exe()
+            .map(|exe| path_is_system(&exe))
+            .unwrap_or(false),
         os: HOST_OS,
     }
 }

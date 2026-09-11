@@ -219,6 +219,16 @@ export interface EngineMessage extends EngineMessageExtras {
   to: EmailAddress[];
   cc: EmailAddress[];
   date: ISODateTime | null;
+  /**
+   * WHEN THE MAILBOX RECORDED THIS MESSAGE — the wire's `arrivedAt` (`messages.created_at`).
+   *
+   * The cutline dates a message by {@link date} ELSE this, because `Date:` is sender-written and
+   * any stranger can omit it — see `consent-cutline.ts#messageMs`. OPTIONAL for
+   * {@link lastReadAt}'s reason: a mirror row written before the field is `undefined`, which
+   * means "no arrival recorded" and falls back to the pre-field answer rather than to an
+   * invented instant. Every server this engine talks to sends it; fixture rows may leave it out.
+   */
+  arrivedAt?: ISODateTime;
   folder: Folder;
   snippet: string;
   unread: boolean;

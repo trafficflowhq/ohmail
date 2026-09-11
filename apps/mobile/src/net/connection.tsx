@@ -15,13 +15,13 @@ import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
 import {
-  discardStandaloneLaunch, endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused,
-  takeConsentPress, sayOrganizerRestricted, standaloneHere, standaloneLaunchGeneration,
+  endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused, takeConsentPress,
+  sayOrganizerRestricted, standaloneHere,
 } from "../engine/organizer-session";
 import { consoleEngineLogSink } from "../engine/engine-log";
 import { decidedState, type DecidedState } from "./decided";
 import {
-  CLAIM_LAPSES_AFTER_MINUTES, PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
+  PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
   type ReopenOutcome, type StandaloneEngine,
 } from "../engine/standalone-door";
 import { phoneEngineReopen } from "../engine/engine-artifact";
@@ -165,12 +165,8 @@ async function reopenWithBackground(
   const opened = await reopenStandaloneMailbox(deps);
   if (!opened.ok) return opened;
   const { door } = opened;
-  /* THE LAUNCH THIS SESSION BELONGS TO — the door screen's own reason, one path over. The import
-     is not awaited, and a relaunch can still be given up after it: the forget stops this engine,
-     and a session raised over it afterwards would refuse the next connect its own. */
-  const launch = standaloneLaunchGeneration();
   void import("../engine/organizer-session-native")
-    .then((m) => { m.startOrganizerSessionNative(door, door.address, launch); })
+    .then((m) => { m.startOrganizerSessionNative(door, door.address); })
     .catch(() => { sayOrganizerRestricted(); });
   return opened;
 }
@@ -301,7 +297,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
   /**
    * Record the consent for the mailbox this phone opened — the press, and the id it needs.
-   * The route is `POST /local/mailboxes/:id/organize` and the id is the engine's, so the roster is
+   * The route is `POST /mailboxes/:id/organize` and the id is the engine's, so the roster is
    * read first through the same session. A roster that cannot be read is a refusal with its
    * own sentence, never a silent skip: the defect this closes is a phone that reads its own
    * mailbox and organizes nothing while every surface says it is fine. Nothing here waits on
@@ -597,15 +593,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
               accountId: door.accountId,
             });
           } catch (err) {
-            /* ══ THE KEYSTORE REFUSED TO RECORD THE MAILBOX, AND THIS IS THE ONE EXIT ═════════
-               The engine was left RUNNING here, with the door and the session it had just been
-               given, and only the sentence changed: the next Connect opened a second engine over
-               the same device store — two organizers of one mailbox, the invariant this app lives
-               under — because `holdStandaloneDoor` and `startOrganizerSession` are both
-               first-start-wins and decline the newcomer silently. So the refusal undoes the
-               launch: the claim goes back, the session and the engine stop, and the credential
-               this launch sealed is discarded so the next press dials what is on the form. */
-            await discardStandaloneLaunch();
+            /* The keystore refused to record the mailbox. The engine is running and nothing names
+               it, which is exactly the state a relaunch could not recover from, so it is said here
+               rather than navigated past. */
             const reason = refuse("standaloneNotStored", faultDetail(err));
             if (stillCurrent()) enter({ k: "refused", reason });
             return { ok: false, reason };
@@ -638,12 +628,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
              that the row names. Removing the row alone would leave a phone organizing a mailbox
              nothing on the chooser mentions, with a notification standing over it. */
           const row = (await env.profiles.list()).find((p) => p.id === profileId);
-          /* ── AND WHETHER THE CLAIM ACTUALLY WENT IS THE THING THE ANSWER IS ABOUT ───────────
-             `endStandaloneHere`'s hand-back was swallowed and this reported a forget over it, so
-             a release the mail server never confirmed left the mailbox blocked to the person's
-             other machine for the staleness window — by an install that no longer lists it and
-             has no verb left to release it. The row still goes: what changes is the sentence. */
-          const claimWentBack = row?.origin === LOCAL_ENGINE_ORIGIN ? await endStandaloneHere() : true;
+          if (row?.origin === LOCAL_ENGINE_ORIGIN) await endStandaloneHere();
           const atForget = live.now();
           if (atForget.k === "live" && atForget.session.profile.id === profileId) {
             const bearer = atForget.session.bearer;
@@ -665,12 +650,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           }
           const outcome = await forgetProfile(env, profileId, { closed, revoke: revokeLive });
           await refreshProfiles();
-          if (outcome.kind !== "forgotten") return { ok: false, reason: outcome.reason };
-          /* EVERYTHING LOCAL IS GONE AND SOMETHING IS NOT — `ForgetOutcome.partial`'s own shape,
-             which the mail-remains and server-not-told arms already use. The claim is the third. */
-          return claimWentBack
-            ? { ok: true }
-            : { ok: false, reason: refuse("forgetClaimStands", CLAIM_LAPSES_AFTER_MINUTES) };
+          return outcome.kind === "forgotten" ? { ok: true } : { ok: false, reason: outcome.reason };
         }),
       disconnect: () =>
         gate.run(async () => {

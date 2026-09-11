@@ -1,53 +1,16 @@
-import { makeHttpServer } from "@trafficflow/core/adapters/http-host";
+import { makeHttpServer, type SocketRefusal } from "@trafficflow/core/adapters/http-host";
 import { makeAuthConfig, type AuthConfig } from "@trafficflow/services/mail";
 import type { Diagnostic } from "./log.js";
 
 /**
- * THE LOOPBACK LISTENER — the second door on the one engine process (Phase 3).
- *
- * `tailscale serve --bg https:443 http://127.0.0.1:<port>` is what publishes this to the tailnet:
- * Tailscale terminates TLS with a real MagicDNS certificate, the phone gets a secure browser
- * context, and roaming is Tailscale's problem. The serve invocation itself is the RUST SHELL's
- * (no shell-outs from this process, ever); this module's whole job is to make the engine side of
- * that arrangement correct:
- *
- *  · **`127.0.0.1` and NOTHING else.** Never the tailnet interface, never `0.0.0.0`, never a
- *    hostname — and deliberately NOT configurable: there is no host/interface option on
- *    {@link startHostListener}, the literal below is the only address that ever reaches
- *    `listen()`, and the bind is re-checked at runtime against what the kernel actually gave us.
- *    "No open ports" stays literally true OF THIS DOOR; only a process on this machine (in
- *    practice, the tailscaled proxy) can reach the socket. `tailscale funnel` is FORBIDDEN —
- *    that is pinned on the shell side, where the invocation lives. (The LAN fallback is a
- *    DIFFERENT door in a different module — `host-lan.ts`, one operator-chosen interface,
- *    opt-in on top of host mode, its own census — and nothing about it loosens this one.)
- *  · **Host mode absent ⇒ no listener object is even constructed.** {@link resolveHostConfig} is
- *    the one reading of the host knobs, and only the exact boolean `true` arms anything — the
- *    dangerous branch requires configuration, three times over (mode, port, origin).
- *  · **Bad host config degrades, never crashes.** The stdio door is the product; the host door
- *    is an addition to it. A garbage origin or port turns host mode OFF with a surfaced reason
- *    ({@link resolveHostConfig} refuses, `engine.ts` logs `host_config_invalid`) — the boot
- *    itself must not be able to fail because the host half was misconfigured.
- *
- * ── THE BODY CAP, SIZED AGAINST THE SEND CEILING THIS DOOR ANNOUNCES ─────────────────────────
- *
- * The listener changes a fact the stdio composition was built on. The local bag declares
- * `sendSurfaceMaxTotalBytes: null` — "no platform ceiling" — because the compose form, the
- * handler and the SMTP dial are one process with no request body between them. On THIS door that
- * is no longer true: a phone's send rides an HTTP request through this adapter, attachments
- * inline as base64, so the door must declare a surface ceiling and the adapter's byte cap must
- * clear it — or the compose surface accepts a send the transport then kills with an opaque 413.
- *
- * The pair below is the self-host server's, deliberately (`apps/server/src/config.ts`:
- * `BODY_MAX_BYTES` / `SELF_HOST_SEND_MAX_TOTAL_BYTES`): 32 MB of raw attachment bytes encodes to
- * ~42.7 MB of base64, which clears a 50 MB body cap with megabytes to spare for the JSON
- * envelope. The two long-running doors state one number. What actually applies to a send is
- * still `effectiveAttachmentCap` — the SMALLER of this surface and the submission server's own
- * RFC 1870 `SIZE` announcement (`mailboxes.smtp_max_size_bytes`, probed per mailbox) — so a
- * stingier server binds first, an unprobed one stays at the strict hosted constant, and a
- * generous one (Gmail announces ~34 MB) is bounded by the surface rather than by a transport
- * error. Bigger buys almost nothing (no mainstream submission server accepts much past this) and
- * inflates what an always-on listener must be willing to buffer per request; unbounded is not an
- * option at all — the cap is the DoS bound (ruled point 4).
+ * The loopback listener — the second door on the one engine process (Phase 3). `tailscale serve`
+ * publishes it to the tailnet (TLS terminated with a real MagicDNS cert, a secure browser context);
+ * the serve invocation is the RUST SHELL's, and this makes the engine side correct: `127.0.0.1` and
+ * NOTHING else — not configurable, re-checked against the kernel, so "no open ports" stays true of
+ * this door (`tailscale funnel` is forbidden shell-side; the LAN fallback is a different module).
+ * Host mode absent ⇒ no listener object is constructed (`resolveHostConfig`, only the exact boolean
+ * `true` arms it); bad config DEGRADES with a surfaced reason, never crashes. The body cap is the
+ * self-host server's pair, because a phone's send rides an HTTP request here whose cap must clear the announced surface.
  */
 
 /** The one address the host door ever binds. A literal, pinned by census AND re-checked at bind. */
@@ -68,22 +31,88 @@ export const HOST_HEADERS_TIMEOUT_MS = 30_000;
 export const HOST_REQUEST_TIMEOUT_MS = 300_000;
 
 /**
- * THE CONCURRENT-ADMISSION BOUND — how many requests may be IN A HANDLER at once; the next one
- * answers `503 host_busy` with `Retry-After` instead of entering.
- *
- * The per-request byte cap bounds one request; nothing else bounded how many of them a client
- * could hold open at once, and the redeem route buffers its body — so a burst of concurrent
- * near-cap POSTs from one misbehaving (or compromised) paired device could exhaust the one
- * engine process's heap and take the WINDOW's door down with the phone's. Sixteen is generous
- * for the legitimate audience — a handful of a person's own devices, each issuing a few
- * requests in parallel — and it bounds the worst-case in-flight buffering at
- * 16 × {@link HOST_BODY_MAX_BYTES}.
- *
- * Stated honestly: this bounds CONCURRENCY, not aggregate bytes — a byte-metered admission
- * budget would need hooks inside the adapter's body stream and belongs to its own change if the
- * threat model ever widens past this machine's own tailnet (funnel is forbidden, so it has not).
+ * The concurrent-admission bound — how many requests may be IN A HANDLER at once; the next answers
+ * `503 host_busy` with `Retry-After` instead of entering. The per-request byte cap bounds one
+ * request, but nothing bounded how many a client could hold open, and the redeem route buffers its
+ * body — so a burst of near-cap POSTs from one misbehaving device could exhaust the engine's heap and
+ * take the WINDOW's door down with the phone's. Sixteen is generous for the legitimate audience (a
+ * handful of a person's own devices) and bounds worst-case buffering at 16 × {@link
+ * HOST_BODY_MAX_BYTES}. It bounds CONCURRENCY, not aggregate bytes — a byte-metered budget belongs
+ * to its own change if the threat model ever widens past this tailnet (funnel is forbidden).
  */
 export const HOST_MAX_CONCURRENT_REQUESTS = 16;
+
+/**
+ * The CONNECTION bound, which is a different question from the one above and went unasked for a
+ * long time: the admission budget counts requests IN A HANDLER, and a socket
+ * that has not finished sending its headers has reached no handler — so one client could hold as
+ * many sockets as the kernel would give it, each for the whole {@link HOST_HEADERS_TIMEOUT_MS},
+ * and every cap on this door counted none of them. Sixty-four is four sockets per admitted
+ * request: generous for the legitimate audience (a household's own devices, a couple of
+ * keep-alive sockets each) and small enough that the door cannot be held shut by one caller.
+ */
+export const HOST_MAX_CONNECTIONS = 64;
+
+/**
+ * How long one CLASS of socket refusal waits before it may write a second line. A line per
+ * refused socket would make the flood its own second denial of service — of the log, of the
+ * disk, and of anyone reading it — so each class reports its first occurrence at once and then
+ * at most one line a minute carrying how many there have been since the last one.
+ */
+export const SOCKET_REFUSAL_LOG_WINDOW_MS = 60_000;
+
+/**
+ * Fold the adapter's per-socket refusals into at most one line per class per
+ * {@link SOCKET_REFUSAL_LOG_WINDOW_MS}, each carrying the count since the previous line.
+ * `flush()` empties whatever a window still owes, so a burst that stops is still counted rather
+ * than waiting for a next occurrence that may never come — the doors call it as they close.
+ *
+ * Both classes are `info`, and that is the reading: a bound that turned sockets away is the door
+ * working. Neither line names a peer — who is holding the door is an identifying value.
+ */
+export function socketRefusalReporter(log: Diagnostic | undefined, now: () => number = Date.now): {
+  note(why: SocketRefusal): void;
+  flush(): void;
+} {
+  const pending = new Map<SocketRefusal, { count: number; at: number }>();
+  const say = (why: SocketRefusal, count: number): void => {
+    if (why === "bound") {
+      log?.("host_conn_refused", {
+        count,
+        reason: "connections on this door reached the bound and the newest were turned away at " +
+          "the accept; a door one caller can hold open is the state this bound prevents",
+      });
+      return;
+    }
+    log?.("host_header_timeout", {
+      count,
+      reason: "sockets were closed for producing no complete request inside the header ceiling; " +
+        "each one held a slot on this door until it was",
+    });
+  };
+  return {
+    note(why) {
+      const held = pending.get(why);
+      if (held === undefined) {
+        pending.set(why, { count: 0, at: now() });
+        say(why, 1);
+        return;
+      }
+      held.count += 1;
+      if (now() - held.at < SOCKET_REFUSAL_LOG_WINDOW_MS) return;
+      say(why, held.count);
+      held.count = 0;
+      held.at = now();
+    },
+    flush() {
+      for (const [why, held] of pending) {
+        if (held.count === 0) continue;
+        say(why, held.count);
+        held.count = 0;
+      }
+    },
+  };
+}
 
 /**
  * How long in-flight requests get after `close()` before their sockets are destroyed. SSE is off
@@ -131,29 +160,14 @@ export interface ResolvedHostConfig {
 }
 
 /**
- * THE ONE READING of the host-mode knobs. Pure, and it NEVER throws: a refused value returns the
- * disarmed state with a `reason`, because the stdio door must never die over host config.
- *
- * Rules, in order:
- *  · `hostMode` must be the exact boolean `true`. Absent — every install that has never heard of
- *    host mode — and any garbage value stay disarmed with NO reason: nothing was asked for.
- *    (Pinned since the door first landed; an absent config value must never select the
- *    dangerous branch.)
- *  · `hostPort`, when present, is an integer in 1..65535. Port 0 is refused rather than treated
- *    as "ephemeral": `tailscale serve` points at a FIXED port, and a port that changes per
- *    launch would silently strand the published route.
- *  · `hostOrigin`, when present, must be one bare absolute origin — https, or http on loopback
- *    only — whose hostname doubles as the rpID, validated by the SAME
- *    `makeAuthConfig`/`assertOriginConfig` path the managed host, the self-host server and the
- *    stdio door construct through. A MagicDNS name passes cleanly: `ts.net` is on the public
- *    suffix list, so `machine.tailnet.ts.net` is a registrable name of its own. An IP literal —
- *    including the tailnet 100.x address — is refused, exactly as the self-host server refuses
- *    it: the published origin is the MagicDNS name, which is also the only thing Tailscale will
- *    mint a certificate for.
- *
- * A refusal names the VARIABLE and the rule, never the value (`loadOrigin` in
- * `apps/server/src/config.ts` is the precedent: the underlying validator's message may quote the
- * offending string, so the surfaced sentence is fixed text).
+ * The one reading of the host-mode knobs. Pure, and it NEVER throws: a refused value returns the
+ * disarmed state with a `reason`, because the stdio door must never die over host config. `hostMode`
+ * must be the exact boolean `true` — absent or garbage stays disarmed with NO reason (nothing was
+ * asked for). `hostPort`, when present, is an integer 1..65535; port 0 is refused rather than
+ * "ephemeral" because `tailscale serve` points at a FIXED port. `hostOrigin`, when present, is one
+ * bare absolute origin (https, or http on loopback) whose hostname doubles as the rpID, through the
+ * same `makeAuthConfig`/`assertOriginConfig` path — a MagicDNS name passes, an IP literal is refused
+ * exactly as the self-host server refuses it. A refusal names the VARIABLE and the rule, never the value.
  */
 export function resolveHostConfig(
   cfg: { hostMode?: boolean; hostOrigin?: string; hostPort?: number },
@@ -211,6 +225,19 @@ export interface HostListener {
   /** The port actually bound — echoes the configured one (tests bind 0 and read the real one). */
   readonly port: number;
   /**
+   * Stop serving mail on this door WITHOUT releasing its socket: every request from here on is
+   * {@link HOST_STOOD_DOWN_BODY}, and no handler is entered. Idempotent.
+   *
+   * Releasing the port is the thing this must not do. A `tailscale serve`
+   * registration points at a FIXED loopback port; the withdrawal can refuse, or the CLI can be
+   * gone, and the stand-down proceeds anyway — correctly, because the setting is the person's to
+   * turn off. What must not follow is a free port, because the next thing to bind it inherits a
+   * published route to somebody's tailnet. So the door stays bound and says what it is.
+   */
+  standDown(): void;
+  /** Whether this door has stood down — the real state of the socket, not of a setting. */
+  stoodDown(): boolean;
+  /**
    * Stop accepting, let in-flight requests finish (bounded by the grace), destroy stragglers,
    * release the socket. Called BEFORE the stdio host and the store on the way down: a remote
    * request must not find a closed database under a live socket.
@@ -230,6 +257,30 @@ export interface HostListener {
 const HOST_BUSY_BODY = JSON.stringify({
   error: { code: "host_busy", message: "too many concurrent requests on this door; retry shortly" },
 });
+
+/**
+ * The stood-down door's one answer — same envelope, and deliberately NO `retry-after`: this is
+ * not a door that is busy, it is a door that has stopped, and a client told to retry would keep
+ * a withdrawn address alive in its own state.
+ */
+const HOST_STOOD_DOWN_BODY = JSON.stringify({
+  error: {
+    code: "host_stood_down",
+    message: "this computer has stopped serving mail on this address; the port stays held so " +
+      "that nothing else can answer on it",
+  },
+});
+
+/** The stood-down answer, built fresh per request — a Response body is read once. */
+const stoodDownResponse = (): Response =>
+  new Response(HOST_STOOD_DOWN_BODY, {
+    status: 503,
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    },
+  });
 
 /**
  * ONE admission budget, however many doors wrap handlers in it. `wrap` refuses entry past
@@ -287,40 +338,42 @@ export function startHostListener(opts: {
   graceMs?: number;
   /** TEST SEAM — see `AdapterOptions.connectionsCheckingIntervalMs`. */
   connectionsCheckingIntervalMs?: number;
+  /** TEST SEAM — production takes {@link HOST_MAX_CONNECTIONS}. */
+  maxConnections?: number;
+  /** TEST SEAM — production takes {@link HOST_HEADERS_TIMEOUT_MS}. */
+  headersTimeoutMs?: number;
 }): Promise<HostListener> {
   /**
-   * EVERY handler invocation is TRACKED, and the tracking carries both review findings:
-   *
-   *  · ADMISSION — a request arriving while {@link HOST_MAX_CONCURRENT_REQUESTS} handlers are
-   *    already running answers `503 host_busy` without entering one, so a burst of concurrent
-   *    near-cap bodies is bounded instead of buffering until the shared heap dies.
-   *  · DRAIN — `close()` resolves only after every tracked handler has SETTLED, not merely
-   *    after the sockets are gone. `closeAllConnections()` destroys a straggler's SOCKET, which
-   *    makes node fire the close callback while the handler promise is still running against
-   *    the database; resolving there lets `main.ts` close PGlite underneath a live send. The
-   *    settled-set wait is deliberately unbounded — a destroyed socket cannot feed a handler
-   *    more bytes, its awaited work is local (the store, one SMTP dial), and the shell's own
-   *    process grace is the backstop for a genuinely hung one.
-   *
-   * The tracked window is the HANDLER promise — `Request → Response` head. Response-body
-   * streaming past that point is socket work, not store work: this door's large responses are
-   * buffered JSON (SSE is off), so nothing reads the store after the head resolves.
-   *
-   * The mechanism itself is {@link createAdmission}; the BUDGET is process-wide when the caller
-   * hands the shared one in (`main.ts` does — the LAN door draws on the same sixteen).
+   * Every handler invocation is TRACKED, carrying both review findings. ADMISSION: a request
+   * arriving while {@link HOST_MAX_CONCURRENT_REQUESTS} handlers run answers `503 host_busy` without
+   * entering, so a burst of near-cap bodies is bounded before the shared heap dies. DRAIN: `close()`
+   * resolves only after every tracked handler has SETTLED, not merely after the sockets are gone —
+   * `closeAllConnections()` destroys a straggler's SOCKET, which fires the close callback while the
+   * handler still runs against the database, and resolving there lets `main.ts` close PGlite under a
+   * live send. The tracked window is the HANDLER promise (`Request → Response` head); response-body
+   * streaming past it is socket work. The budget is process-wide when the caller hands the shared one in.
    */
   const admission = opts.admission ?? createAdmission();
   const tracked = admission.wrap(opts.handle);
   const drained = (): Promise<void> => admission.drained();
+  const refusals = socketRefusalReporter(opts.log);
 
-  const server = makeHttpServer(tracked, {
-    bodyMaxBytes: HOST_BODY_MAX_BYTES,
-    headersTimeoutMs: HOST_HEADERS_TIMEOUT_MS,
-    requestTimeoutMs: HOST_REQUEST_TIMEOUT_MS,
-    ...(opts.connectionsCheckingIntervalMs !== undefined
-      ? { connectionsCheckingIntervalMs: opts.connectionsCheckingIntervalMs }
-      : {}),
-  });
+  // The stand-down is read HERE, in front of the admission budget: a stopped door's answer is a
+  // constant and must not consume a slot, and no handler may be entered after it.
+  let stood = false;
+  const server = makeHttpServer(
+    (req) => (stood ? Promise.resolve(stoodDownResponse()) : tracked(req)),
+    {
+      bodyMaxBytes: HOST_BODY_MAX_BYTES,
+      headersTimeoutMs: opts.headersTimeoutMs ?? HOST_HEADERS_TIMEOUT_MS,
+      requestTimeoutMs: HOST_REQUEST_TIMEOUT_MS,
+      maxConnections: opts.maxConnections ?? HOST_MAX_CONNECTIONS,
+      onSocketRefused: (why) => refusals.note(why),
+      ...(opts.connectionsCheckingIntervalMs !== undefined
+        ? { connectionsCheckingIntervalMs: opts.connectionsCheckingIntervalMs }
+        : {}),
+    },
+  );
   return new Promise<HostListener>((done, fail) => {
     server.once("error", fail);
     server.listen(opts.port, HOST_LOOPBACK_ADDRESS, () => {
@@ -339,6 +392,12 @@ export function startHostListener(opts: {
       let closing: Promise<void> | null = null;
       done({
         port: addr.port,
+        // Nothing is torn down here, deliberately: dropping the idle keep-alive sockets would
+        // give a paired device a transport error on its next request instead of the sentence,
+        // and a transport error is what an outage looks like. Every socket, pooled or fresh, is
+        // answered. The PORT is not released — that is the whole point.
+        standDown: () => { stood = true; },
+        stoodDown: () => stood,
         close: () =>
           (closing ??= new Promise<void>((closed) => {
             const grace = setTimeout(
@@ -348,6 +407,8 @@ export function startHostListener(opts: {
             grace.unref?.();
             server.close(() => {
               clearTimeout(grace);
+              // Whatever a refusal window still owes is said before the door stops reporting.
+              refusals.flush();
               // The sockets are gone; the STORE is not safe yet — see the tracking note above.
               void drained().then(() => closed());
             });
@@ -367,19 +428,13 @@ export interface HostDoor {
 }
 
 /**
- * The production mount: bind the host door iff the composition is armed AND the shell configured
- * both halves of the published route. Anything less is a named, surfaced degradation — never a
- * crash, and never a socket:
- *
- *  · disarmed ⇒ `null`, silently: no listener object is even constructed, and the absence of a
- *    log line is the byte-identical-boot half of the ruling.
- *  · armed without BOTH `port` and `origin` ⇒ `null` + `host_listener_skipped` naming the
- *    missing knob. The origin arm is deliberate: a listener without the served origin would
- *    refuse every real browser mutation as cross-site (the request guard would allow-list only
- *    the stdio door's loopback origin), which is worse than no listener — it pairs a phone and
- *    then fails it on first use.
- *  · a bind failure (the port is taken, the kernel refused) ⇒ `null` + `host_listen_failed`;
- *    the stdio door keeps serving.
+ * The production mount: bind the host door iff the composition is armed AND the shell configured both
+ * halves of the published route. Anything less is a named degradation, never a crash and never a
+ * socket: disarmed ⇒ `null` silently (no listener object, the byte-identical-boot half of the
+ * ruling); armed without BOTH `port` and `origin` ⇒ `null` + `host_listener_skipped` (the origin arm
+ * is deliberate — a listener without the served origin refuses every browser mutation as cross-site,
+ * worse than no listener); a bind failure ⇒ `null` + `host_listen_failed`, the stdio door still
+ * serving.
  */
 export async function maybeStartHostListener(
   door: HostDoor,
@@ -418,6 +473,84 @@ export async function maybeStartHostListener(
       err,
       reason: "the host door's loopback listener could not bind; the stdio door keeps serving " +
         "and host mode is off for this launch",
+    });
+    return null;
+  }
+}
+
+/**
+ * THE STAND-DOWN'S OWN KNOB, and it is deliberately not one of the four arming ones. A disarm
+ * clears every `OHMAIL_HOST_*` variable and respawns the engine; `OHMAIL_HOST_STAND_DOWN=<port>`
+ * is the shell saying "this port was published, hold it" — one variable, one meaning, and it
+ * cannot be mistaken for an armed door. Pure, never throws: a refusal names the variable and the
+ * rule, never the value, and the engine serves its stdio door either way.
+ *
+ * Armed AND holding is a contradiction, not a combination: the armed door binds that port
+ * itself, so a launch asking for both is refused here rather than racing itself at the bind.
+ */
+export function resolveStandDownPort(
+  cfg: { hostMode?: boolean; standDownPort?: number },
+): { port: number | null; reason: string | null } {
+  if (cfg.standDownPort === undefined) return { port: null, reason: null };
+  if (cfg.hostMode === true) {
+    return {
+      port: null,
+      reason: "OHMAIL_HOST_STAND_DOWN names a port to hold while host mode is armed; the armed " +
+        "door binds that port itself, so nothing is held and the arming stands",
+    };
+  }
+  if (!Number.isInteger(cfg.standDownPort) || cfg.standDownPort < 1 || cfg.standDownPort > 65535) {
+    return {
+      port: null,
+      reason: "OHMAIL_HOST_STAND_DOWN must be the integer port between 1 and 65535 that host " +
+        "mode last published; nothing is held for this launch",
+    };
+  }
+  return { port: cfg.standDownPort, reason: null };
+}
+
+/**
+ * Hold a port host mode has stood down from: bind it on loopback and answer the disarmed
+ * sentence on every request, so a `tailscale serve` registration that outlived its withdrawal
+ * proxies THIS and never whatever binds the port next. Nothing is served — no handler exists on
+ * this listener — and the door says so in the API's own envelope.
+ *
+ * Never a crash and never silence: a refused knob and a failed bind each get their named line.
+ * A bind that fails is the case where something already holds the port, which this cannot fix
+ * and must not hide.
+ */
+export async function maybeHoldStoodDownPort(
+  cfg: { hostMode?: boolean; standDownPort?: number },
+  log: Diagnostic,
+): Promise<HostListener | null> {
+  const { port, reason } = resolveStandDownPort(cfg);
+  if (reason !== null) {
+    log("host_stand_down_skipped", { reason });
+    return null;
+  }
+  if (port === null) return null;
+  try {
+    const listener = await startHostListener({
+      // Unreachable by construction: `standDown()` runs before anything can connect, and the
+      // stand-down is read in front of the admission budget. It exists so the door has the same
+      // shape as the armed one rather than a second listener with its own lifecycle.
+      handle: () => Promise.resolve(stoodDownResponse()),
+      port,
+      log,
+    });
+    listener.standDown();
+    log("host_stood_down", {
+      port: listener.port,
+      reason: "host mode is off and this port stays held, answering that this computer no " +
+        "longer serves mail here; releasing it would leave any published route pointing at " +
+        "whatever binds it next",
+    });
+    return listener;
+  } catch (err) {
+    log("host_stand_down_failed", {
+      err,
+      reason: "the port host mode published could not be held; something else may already have " +
+        "it, and any published route to it is outside this app's reach",
     });
     return null;
   }

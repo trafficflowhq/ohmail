@@ -803,17 +803,9 @@ interface SnapshotCapableAdapter {
  * messages unconditionally, plus anything within `days`, and drop the rest. Dropped rows are not lost — they are one
  * `/sync` change or one re-snapshot away, because {@link MirrorStore.prune} deletes rather than tombstones.
  */
-/**
- * `maxRows` is the CEILING beside `minRows`'s floor, and it is what makes the window a function of
- * the POLICY rather than of the mailbox: without it `days` keeps everything recent, so a mailbox
- * whose mail is dense inside `days` sits almost entirely in a "windowed" mirror. Measured on the
- * rig's own large corpus: what falls inside ninety days is 2.7x the floor. Absent is today's
- * behaviour exactly — days and the floor, no ceiling — because an embedder that never set one must
- * not start evicting. It must be >= `minRows`, or the floor would be unreachable.
- */
 export type StorePolicy =
   | { mode: "full" }
-  | { mode: "windowed"; days: number; minRows: number; maxRows?: number };
+  | { mode: "windowed"; days: number; minRows: number };
 
 /**
  * The two `/sync` entity types the pin set reads, narrowed to the ONE field each that decides whether the user still
@@ -1469,18 +1461,6 @@ export const OUTBOX_UNKEYED_CREATE_TTL_MS = 24 * 60 * 60 * 1000;
  * `ready` record is never re-fetched ({@link OhmailEngine.bodyPlan}). A whole mailbox would be
  * hundreds of megabytes, which is why the tail deliberately never enters the pass.
  */
-/**
- * HOW MANY BACKLOG PAGES SHARE ONE PUBLISH while a drain is catching up.
- *
- * A publish re-derives the whole mirror and re-renders, and during a first import that is the
- * renderer's whole cost: the same shell costs 660 MB mounted after the import and 950 MB
- * rendering through it a page at a time. Not the row ceiling, not the eager pass, not cadence.
- *
- * Eight is the largest step that still reads as mail arriving rather than a screen that jumps;
- * a catch-up ending mid-group publishes at the settle, so no row waits.
- */
-export const BACKLOG_PUBLISH_PAGES = 8;
-
 export const EAGER_BODIES_MAX = 1000;
 
 /**
@@ -1521,22 +1501,18 @@ class OverlayReader implements EntityReader {
     return this.store.get<T>(type, id);
   }
 
-  entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> {
+  entries<T = unknown>(type: string): Array<{ id: string; entity: T }> {
     if (this.overlays.size === 0) return this.store.entries<T>(type);
-    // An OVERLAID row keeps the STORE's seq, because the seq is a fact about the log and an
-    // overlay is a fact about this tab. A row that exists only as an overlay has never been in the
-    // log at all and reads 0 — which no windowed prune can mistake for "already here", and the
-    // prune reads the store directly anyway.
-    const byId = new Map<string, { entity: T; seq: number }>();
-    for (const e of this.store.entries<T>(type)) byId.set(e.id, { entity: e.entity, seq: e.seq });
+    const byId = new Map<string, T>();
+    for (const e of this.store.entries<T>(type)) byId.set(e.id, e.entity);
     for (const effects of this.overlays.values()) {
       for (const e of effects) {
         if (e.type !== type) continue;
         if (e.entity === null) byId.delete(e.id);
-        else byId.set(e.id, { entity: e.entity as T, seq: byId.get(e.id)?.seq ?? 0 });
+        else byId.set(e.id, e.entity as T);
       }
     }
-    return [...byId.entries()].map(([id, v]) => ({ id, entity: v.entity, seq: v.seq }));
+    return [...byId.entries()].map(([id, entity]) => ({ id, entity }));
   }
 
   list<T = unknown>(type: string): T[] {
@@ -1814,8 +1790,6 @@ export class OhmailEngine {
   private snapshotUnavailable = false;
   /** How much of the mailbox to keep. Resolved once; `full` when the host said nothing. */
   private readonly storePolicy: StorePolicy;
-  /** Did the last COMPLETED drain settle inside one page? See {@link prefetchRecentBodies}. */
-  private caughtUpInOnePage = true;
   /** See {@link STALE_RESUME_MS}; the option exists for tests. */
   private readonly staleResumeMs: number;
   /** In-flight archive passes by query key — see {@link OhmailEngine.searchServer}. */
@@ -1927,17 +1901,6 @@ export class OhmailEngine {
     // THE ABSENT BRANCH IS `full`. See {@link StorePolicy} — a host that configures nothing gets
     // today's behaviour, and no mirror is ever pruned by omission.
     this.storePolicy = opts.storePolicy ?? { mode: "full" };
-    // A ceiling under the floor is a misconfiguration, not a narrower window: the eviction loop
-    // starts at `minRows`, so it would read as "the floor won" and the window it names would never
-    // be the window it keeps. Refused here rather than clamped — a silent reorder is the shape
-    // that makes a wrong constant survive a release.
-    if (this.storePolicy.mode === "windowed"
-        && this.storePolicy.maxRows !== undefined
-        && this.storePolicy.maxRows < this.storePolicy.minRows) {
-      throw new Error(
-        `storePolicy.maxRows (${this.storePolicy.maxRows}) is below minRows (${this.storePolicy.minRows})`,
-      );
-    }
     this.eagerBodiesOn = opts.eagerBodies === true;
     this.store = opts.store ?? new MemoryMirrorStore();
     this.types = opts.types;
@@ -2377,8 +2340,6 @@ export class OhmailEngine {
      */
     const epoch = ++this.drainEpoch;
     let rebootstrapped = false;
-    /** Pages this drain consumed — read at the settle by {@link OhmailEngine.prefetchRecentBodies}. */
-    let pagesThisDrain = 0;
     // The rules-first pass runs AT MOST ONCE per drain (re-owed by the 410 reset below): the
     // completion stamp only lands when the whole drain settles, so without this latch every page
     // of a multi-page first drain would re-open with a redundant rules request.
@@ -2468,31 +2429,13 @@ export class OhmailEngine {
         }
         throw err;
       }
-      // READ THE HIGH-WATER BEFORE THE PAGE LANDS — it is the grace bound below, and one line
-      // later it is gone.
-      const highBefore = this.store.maxSeq();
-      pagesThisDrain += 1;
       await this.store.applyResponse(resp);
-      if (resp.hasMore) {
-        // A PRUNE PER BACKLOG PAGE, so the mirror never grows past the window on the way in. The
-        // peak of a first import used to be the size of the MAILBOX — every row of it, and 254
-        // whole-mirror derivations before a single eviction, measured. `highBefore` is the grace —
-        // see {@link pruneToPolicy}. One notify for the apply and the prune together: they are one
-        // change to the mirror as far as any reader is concerned, and two is two derivations.
-        await this.pruneToPolicy(highBefore);
-        // AND ONE PUBLISH PER {@link BACKLOG_PUBLISH_PAGES} OF THEM — see the constant. The settle
-        // below always publishes, so the last rows never wait on this.
-        if (pagesThisDrain % BACKLOG_PUBLISH_PAGES === 0) this.notify();
-        continue;
-      }
       this.notify();
-      // A drain that took more than one page was a CATCH-UP, not a poll — see
-      // {@link OhmailEngine.prefetchRecentBodies}.
-      this.caughtUpInOnePage = pagesThisDrain <= 1;
+      if (resp.hasMore) continue;
 
-      // AND THE PASS AT THE SETTLE, ungraced, at the point the mirror is caught up and therefore
-      // at its most complete — the last page's own rows are judged here and nowhere earlier. A
-      // `full` policy returns immediately.
+      // ONE PRUNE PASS PER SUCCESSFUL DRAIN, at the point the mirror is caught up and therefore
+      // at its most complete — which is when a windowed client's eviction decision is least
+      // likely to be made about a half-arrived mailbox. A `full` policy returns immediately.
       if (await this.pruneToPolicy()) this.notify();
       // A drain is the one thing that can deliver the REAL Sent row an optimistic copy is standing
       // in for — retire any copy the mirror now holds under the same header (or that has aged out),
@@ -2590,17 +2533,6 @@ export class OhmailEngine {
    */
   prefetchRecentBodies(): Promise<void> {
     if (!this.eagerBodiesOn) return Promise.resolve();
-    /*
-     * NOT WHILE THE MIRROR IS STILL CATCHING UP. The pass asks for the newest EAGER_BODIES_MAX
-     * after every settled drain; during an import the newest N keeps MOVING, so each pass fetches
-     * a thousand bodies the next one evicts — the pass and the BODY_CACHE_MAX evictor chasing each
-     * other, the condition that bound was chosen to prevent. Measured over a large first import
-     * arriving as polls: 3 549 of 3 770 whole-mirror derivations and 320 MB of a 525 MB peak, still
-     * held after two full collects. A drain that needed more than one page was a catch-up; the
-     * next poll that settles in one page runs the pass, so this defers the work rather than
-     * dropping it, and a mailbox that is merely busy loses nothing.
-     */
-    if (!this.caughtUpInOnePage) return Promise.resolve();
     if (this.eagerRun) {
       this.eagerAgain = true;
       return this.eagerRun;
@@ -2846,18 +2778,10 @@ export class OhmailEngine {
   /**
    * Evict the messages this client has chosen not to keep; returns whether anything went. The
    * shape is {@link OhmailEngine.purgeProtectedBodies}'s: one pass computing a victim list, then
-   * the store write. The rule: keep the newest `minRows` whatever their age (what stops a quiet
-   * mailbox evicting itself down to an empty app); of the rest, keep anything newer than `days`
-   * that is also among the newest `maxRows`; evict the remainder. The pin set overrides all three.
-   */
-
-  /**
-   * IT RUNS PER BACKLOG PAGE AS WELL AS AT THE SETTLE, and `graceAbove` is what makes that sound.
-   * Floor, ceiling and age are MONOTONE in the arriving set, so a row evictable at one page is
-   * evictable at every later one: running early loses nothing. Only the PIN SET is non-monotone —
-   * a message's pinning row can arrive after the message — and every server writer emits the two
-   * within a few seqs, so excluding rows above the previous page's high-water covers the straddle.
-   * Every other pin re-materializes: a `/sync` change carries the FULL DTO.
+   * the store write. It runs after a drain, not on a timer: a timer would evict mid-bootstrap, and
+   * "we are caught up" is the only moment the newest-N half of the window means what it says. The
+   * rule: keep the newest `minRows` whatever their age (what stops a quiet mailbox evicting itself
+   * down to an empty app); of the rest, keep anything newer than `days`; evict the remainder.
    */
 
   /**
@@ -2870,7 +2794,7 @@ export class OhmailEngine {
    * still `pending` — both unanswered questions, unanswerable without the mail. Anything resolved does NOT pin: it is
    * history, and history is what the window is for.
    */
-  private async pruneToPolicy(graceAbove?: number): Promise<boolean> {
+  private async pruneToPolicy(): Promise<boolean> {
     const policy = this.storePolicy;
     if (policy.mode !== "windowed") return false; // `full` — the default. Nothing is ever evicted.
 
@@ -2883,20 +2807,12 @@ export class OhmailEngine {
     const sorted = [...rows].sort((a, b) => messageTime(b.entity) - messageTime(a.entity));
     const cutoff = this.now().getTime() - policy.days * 86_400_000;
     const pinned = this.pinnedMessageIds();
-    // The ceiling, in the same newest-first order the floor is counted in: beyond it a row goes
-    // for being NUMEROUS rather than for being old, which is the half `days` alone cannot do.
-    // Absent ⇒ Infinity ⇒ the pre-ceiling rule, unchanged, for every embedder that set no ceiling.
-    const ceiling = policy.maxRows ?? Number.POSITIVE_INFINITY;
 
     const victims: Array<{ type: string; id: string }> = [];
     for (let i = policy.minRows; i < sorted.length; i++) {
       const row = sorted[i]!;
-      if (i < ceiling && messageTime(row.entity) >= cutoff) continue;
+      if (messageTime(row.entity) >= cutoff) continue;
       if (pinned.has(row.id)) continue;
-      // THE ONE-PAGE GRACE. Nothing that arrived in the page just applied is evictable until a
-      // later page has landed, so a pinning row that is one page behind its message still finds
-      // it here.
-      if (graceAbove !== undefined && row.seq > graceAbove) continue;
       victims.push({ type: "message", id: row.id });
     }
     if (victims.length === 0) return false;
@@ -2952,17 +2868,6 @@ export class OhmailEngine {
     }
     for (const a of this.store.list<PendingApproval>("approval")) {
       if (a.status === "pending" && a.messageId) pinned.add(a.messageId);
-    }
-    /**
-     * A TAGGED MESSAGE, whatever its age. The server serves these deliberately: after the windowed walk meets both
-     * floors, `getSnapshot` opens a LABELED TAIL and carries every message below the window that owns a tag, because
-     * a tagged row evicted from a windowed mirror can never be re-delivered — its `message_tags` change sits below
-     * the client's post-bootstrap cursor. Without this clause the first post-drain prune threw that tail away again,
-     * so a tag whose mail was older than the window showed a fraction of its messages and a count to match.
-     * `labels` is the mirror's own field; an assignment later re-materializes an evicted row as a `message` update.
-     */
-    for (const { id, entity } of this.store.entries<EngineMessage>("message")) {
-      if (entity.labels && entity.labels.length > 0) pinned.add(id);
     }
     return pinned;
   }
@@ -5713,21 +5618,6 @@ export class OhmailEngine {
    * have reached the end of what this device keeps" are different sentences, and only one of them
    * has a control under it.
    */
-  /**
-   * How much of the mailbox this client's mirror is CONFIGURED to keep — the window itself, or
-   * `null` where the mirror is the mailbox (`{ mode: "full" }`, and the absent-config default).
-   *
-   * The POLICY and not a measurement: a latch recording that a prune has happened is lost on every
-   * reload, and "the mirror holds at least `minRows`" is false at exactly that many recent rows. A
-   * list derived from the whole mirror — History, which no wire partition serves — is bounded
-   * whenever this is non-null, whatever the mailbox happens to hold today, and that is the only
-   * form of the fact a surface can state without ever being wrong.
-   */
-  storeWindow(): { days: number; minRows: number } | null {
-    const policy = this.storePolicy;
-    return policy.mode === "windowed" ? { days: policy.days, minRows: policy.minRows } : null;
-  }
-
   listOlderAvailable(): boolean {
     return this.listOlderFn !== null;
   }

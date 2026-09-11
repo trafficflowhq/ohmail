@@ -26,17 +26,6 @@ import type { StandaloneFields } from "../ui/standalone-form";
 export type ClaimHereOutcome = "claimed" | "held" | "refused";
 
 /**
- * WHAT THE PERSON'S STOP SETTLED — the engine's own three answers, mirrored here.
- *
- * `released` is the only one a caller may act on as "the mailbox has been let go": the claim is
- * out of the mail server's records and the row has recorded the stop. `not_organizing` is a
- * mailbox with nothing to give up, and `refused` covers both a route that said no and a cycle
- * that could not confirm the claim left. A boolean collapsed the last two into the first, so the
- * notification came down over a phone that was still organizing.
- */
-export type StopOrganizingOutcome = "released" | "not_organizing" | "refused";
-
-/**
  * The running engine, as this app uses it. Structural, because the bundle is not typed — every
  * member here is a claim about the artifact, and `test/engine-bundle-loads.test.ts` reads them
  * off a real booted one rather than off this declaration. The first three are the client's
@@ -61,15 +50,6 @@ export interface StandaloneEngine {
   address: string;
   /** Remove this install's claim on every mailbox and leave the rows alone. */
   handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
-  /**
-   * DISCARD THE PASSWORD THIS ENGINE SEALED FOR ITSELF — the refused launch's second effect.
-   *
-   * The seal is written at attach, before anything dials, and `resolveLogin` lets the STORE win:
-   * a launch the app could not record leaves a credential that beats the next press's corrected
-   * form. The engine already removes it on the refusals IT decides (`mailbox_open_seal_discarded`);
-   * this is the same act for the one the APP decides, and the only caller is that refusal.
-   */
-  forgetStoredLogin(): Promise<boolean>;
   /** Force one gated cycle per mailbox, so the lease is re-read now. */
   resume(): Promise<void>;
   /**
@@ -92,7 +72,7 @@ export interface StandaloneEngine {
    * person's stop is the opposite instruction, so it goes through the release the ROW records —
    * and a reader with no press never re-enters the gate, on this launch or any later one.
    */
-  stopOrganizing(): Promise<StopOrganizingOutcome>;
+  stopOrganizing(): Promise<boolean>;
   /**
    * What each mailbox reports — the row's answer, not the gate's optimism.
    *
@@ -108,15 +88,6 @@ export interface StandaloneEngine {
       organizing: boolean;
       heldBy: string | null;
       reason: string | null;
-      /**
-       * THE PERSON'S STOP STILL STANDING ON THE ROW — ISO 8601, or `null`.
-       *
-       * `organizing` answers what the engine's pass may ARRANGE, and a pass carrying out a release
-       * arranges nothing whether or not the claim actually left the mailbox. So this is the only
-       * field that separates a stop the mail server honoured from one it refused, and the panel
-       * and the press both read it rather than inferring a stop from `organizing: false`.
-       */
-      releaseRequestedAt: string | null;
     }>;
     /**
      * CAN THIS INSTALL REACH THE MAIL SERVER RIGHT NOW — the engine's own connection facts, which
@@ -251,18 +222,6 @@ export function imapConfigFor(fields: StandaloneFields): {
  * around it, in the reader's own language.
  */
 export const PHONE_CLAIM_NAME = "ohmail on a phone";
-
-/**
- * HOW LONG A CLAIM THIS PHONE COULD NOT GIVE BACK GOES ON BLOCKING THE MAILBOX.
- *
- * Every install honours one staleness window and the desktop's is the fleet's
- * (`DEFAULT_STALE_AFTER_MS`, and the invariant is that no tier configures its own). The app may
- * not import the lease — the privacy census holds the engine behind the connection layer — so the
- * number is spelled here and PINNED against the lease's own constant by
- * `test/phone-claim-lapse-minutes.test.ts`, which is what keeps it from becoming a second answer
- * to "when can my laptop have the mailbox".
- */
-export const CLAIM_LAPSES_AFTER_MINUTES = 10;
 
 /**
  * IS THIS PROFILE ROW THE MAILBOX THIS PHONE OPENED ITSELF? The ORIGIN decides, and nothing else.

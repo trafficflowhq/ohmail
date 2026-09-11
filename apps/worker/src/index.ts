@@ -115,43 +115,37 @@ import { OrganizerProfileSync, syncProfileMirror } from "./profile.js";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME,
-  LeaseUnavailableError, DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
+  LeaseUnavailableError, leaseBlockReason, leaseStoodDown, DEFAULT_STALE_AFTER_MS,
+  type OrganizerWriteAuthority,
   type LeaseSelf, type LeasePeekCapableAdapter,
 } from "./lease.js";
 // The APPEND-less read of `ohmail/_meta` — see `LeasePeekCapableAdapter`. A reader LOOKS at the
 // lease every cycle to keep `organizer_state` and the holder columns honest, and looking must
 // never write a claim: `readLeasePeek` takes the read-only IO and creates nothing.
-import { readLeasePeek, deriveRequestKey } from "@trafficflow/core/adapters/organizer-lease";
+import {
+  readLeasePeek, answerLeasePeek, deriveRequestKey, type OrganizerIntent,
+} from "@trafficflow/core/adapters/organizer-lease";
 
 /** How often the leader runs the global maintenance pass (expired-idempotency-key sweep). */
 export const MAINTENANCE_EVERY_MS = 60 * 60 * 1000;
 
 /**
- * How often the leader runs the BUBBLE-UP RESURFACING pass, and NOT CONFIGURABLE.
- *
- * There is no `TF_BUBBLE_UP_EVERY_MS`, deliberately. An env var here is the "absent config
- * selects the dangerous branch" trap this repository keeps paying for: unset, an
- * `?? SOMETHING` would pick a period nobody chose, and the failure is silent — a snoozed
- * message resurfaces late, or a deployment that meant 60 s runs the pass hourly, and the only
- * symptom is a user's dated promise arriving whenever. `config.ts`'s own note about a proxy for
- * time that silently retunes itself is the same lesson from the other direction.
- *
- * 60 s because that is the granularity the promise is made at: `AppShell`'s resurface action
- * names a wall-clock minute (`format.ts`, next Friday 09:00 UTC), and the default
- * `pollIntervalMs` is 60 s anyway, so a shorter period would buy nothing but extra queries.
+ * How often the leader runs the BUBBLE-UP RESURFACING pass, and NOT CONFIGURABLE. There is no
+ * `TF_BUBBLE_UP_EVERY_MS` deliberately: an env var is the "absent config selects the dangerous
+ * branch" trap — an unset `?? SOMETHING` picks a period nobody chose, and the failure is silent (a
+ * snoozed message resurfaces late, or a deployment meaning 60 s runs the pass hourly). 60 s because
+ * that is the granularity the promise is made at — `AppShell`'s resurface names a wall-clock minute
+ * and `pollIntervalMs` is 60 s anyway, so a shorter period buys nothing but extra queries.
  */
 export const BUBBLE_UP_EVERY_MS = 60_000;
 
 /**
- * How often the leader runs the THREAD-JOIN HEAL, and NOT CONFIGURABLE — a `const` for the
- * reason {@link BUBBLE_UP_EVERY_MS} is: an unset `?? something` would silently pick a period
- * nobody chose.
- *
- * Six hours, not sixty seconds, because the pass repairs a presentation defect, not a promise:
- * a conversation a forward split renders as two threads until the heal joins them, and the
- * joining evidence (`conversationJoinVerdict`) needs the counterparty's REPLY to have arrived
- * anyway — which takes hours to days in human mail. Every cycle would be a fleet-wide GROUP BY
- * bought against no user-visible latency.
+ * How often the leader runs the THREAD-JOIN HEAL, and NOT CONFIGURABLE — a `const` for {@link
+ * BUBBLE_UP_EVERY_MS}'s reason: an unset `?? something` would silently pick a period nobody chose.
+ * Six hours, not sixty seconds, because the pass repairs a presentation defect, not a promise: a
+ * conversation a forward split renders as two threads until the heal joins them, and the joining
+ * evidence (`conversationJoinVerdict`) needs the counterparty's REPLY to have arrived, which takes
+ * hours to days. Every cycle would be a fleet-wide GROUP BY bought against no user-visible latency.
  */
 export const THREAD_JOIN_HEAL_EVERY_MS = 6 * 60 * 60 * 1000;
 
@@ -168,21 +162,13 @@ export const THREAD_JOIN_HEAL_EVERY_MS = 6 * 60 * 60 * 1000;
 export const INBOUND_QUIET_EVERY_MS = 6 * 60 * 60 * 1000;
 
 /**
- * HOW SOON THE AWAY-REPLY SWEEP RETRIES WHILE IT IS STILL OWED — fifteen minutes.
- *
- * The sweep runs ONCE PER WORKER PROCESS and its gate closes only on an attempt in which every
- * account walked to exhaustion (`away-reply-flag-redeliver.ts#makeAwayReplySweep`). This interval
- * governs the case where it did NOT: an account that threw, or one whose walk hit the safety
- * bound. Without it such an attempt would repeat on every cycle, which for a persistently failing
- * account is a hot loop; with it the retry is periodic and resumes from that account's cursor.
- *
- * It starts DUE, so the first attempt is on the first cycle after start — which, in the train's
- * deploy order (API, then worker, then web — see `deploy-0150-apiworker.sh`), is the first cycle
- * after an API that already knows the flag.
- *
- * The pass is a REPAIR, not a feature: once a release carrying `autoReplyByUs` has reached every
- * client, this and the pass it calls can be deleted outright. That is also why there is no daily
- * belt — the pass's own header carries the cost argument.
+ * How soon the away-reply sweep retries while it is still owed — fifteen minutes. The sweep runs
+ * ONCE PER WORKER PROCESS and its gate closes only on an attempt in which every account walked to
+ * exhaustion; this interval governs the case where it did NOT (an account that threw, or hit the
+ * safety bound), which would otherwise repeat on every cycle — a hot loop for a persistently failing
+ * account. It starts DUE, so the first attempt is the first cycle after start. The pass is a REPAIR:
+ * once a release carrying `autoReplyByUs` reaches every client, this and the pass it calls can be
+ * deleted outright, which is why there is no daily belt.
  */
 export const AWAY_REPLY_REDELIVER_RETRY_MS = 15 * 60 * 1000;
 
@@ -235,14 +221,11 @@ export interface WorkerStats {
   lockLost: boolean;
   /**
    * Messages this process's attached mailboxes could not ingest on three or more attempts
-   * (`ESCALATE_AFTER_ATTEMPTS`) — mail that is recorded, still probed once per deployed build, and
-   * no longer plausibly one deploy away from working.
-   *
-   * A COUNT and nothing else, deliberately: which mailbox and which UID are in `message_failures`
-   * and in the worker's own log line, and neither belongs on a public endpoint. Nothing PAGES on
-   * this number — `/health` is polled, not alerted on — so it is a window rather than an alarm. The
-   * path that pages is a heartbeat column plus a fifth alert rule, and that is a cloud migration and
-   * a grant-census change of its own.
+   * (`ESCALATE_AFTER_ATTEMPTS`) — recorded, still probed once per deployed build, and no longer
+   * plausibly one deploy away from working. A COUNT and nothing else: which mailbox and which UID
+   * are in `message_failures` and in the log, and neither belongs on a public endpoint. Nothing
+   * PAGES on this number — `/health` is polled, not alerted on — so it is a window, not an alarm; the
+   * path that pages is a heartbeat column plus a fifth alert rule, a cloud migration of its own.
    */
   escalatedMessages: number;
   /**
@@ -252,18 +235,13 @@ export interface WorkerStats {
    */
   lastCycleAt: Date | null;
   /**
-   * EVERY CONFIGURED PAGER ARM, AND WHETHER IT IS ACTUALLY DELIVERING.
-   *
-   * The startup line has always named the arms (`worker_serving alertSinks:["mail"]`), and a
-   * name is not a state: an arm that has refused every delivery since the day it was
-   * configured appears in that list exactly like a working one, and did — the webhook arm sat
-   * in it, dead, for months. A second vendor makes that worse rather than better, because the
-   * surviving arm keeps the pages landing and there is then no symptom at all.
-   *
-   * So the standing per-arm verdict is published: closed outcome codes, counts and timestamps,
-   * never the vendor's error sentence (that is drain-bound and this endpoint is not). A
-   * `lastOkAt: null` with `attempts: 0` is the honest report for an arm nobody has exercised —
-   * absence of evidence, said out loud rather than read as health.
+   * Every configured pager arm, and whether it is actually delivering. The startup line has always
+   * named the arms (`alertSinks:["mail"]`), and a name is not a state: an arm that has refused every
+   * delivery since it was configured appears in that list exactly like a working one, and did — the
+   * webhook arm sat in it, dead, for months, and a second vendor makes that worse, because the
+   * surviving arm keeps pages landing and there is then no symptom at all. So the standing per-arm
+   * verdict is published — closed codes, counts, timestamps, never the vendor's error sentence — and
+   * a `lastOkAt: null` with `attempts: 0` is the honest report for an arm nobody has exercised.
    */
   alertSinks: AlertSinkHealth[];
   /**
@@ -299,16 +277,12 @@ interface MailboxRuntime {
   mailboxId: string;
   adapter: MailboxAdapter;
   /**
-   * THE SIGNING KEY FOR THIS MAILBOX'S REQUEST CHANNEL, or `null` when there is no shared secret.
-   *
-   * Derived from the mailbox PASSWORD at attach — `deriveRequestKey`, HKDF salted with the address
-   * — and held for the life of the runtime rather than recomputed per cycle. It is derived HERE
-   * because this is where the credential is decrypted; nothing downstream has one, and nothing
-   * downstream should.
-   *
-   * `null` for an OAuth mailbox: each install holds its own token, so there is no secret both
-   * sides share and no key to derive. Every consumer treats that as "this mailbox has no request
-   * channel", which is the honest answer rather than a failure.
+   * The signing key for this mailbox's request channel, or `null` when there is no shared secret.
+   * Derived from the mailbox PASSWORD at attach (`deriveRequestKey`, HKDF salted with the address)
+   * and held for the life of the runtime rather than recomputed per cycle. Derived HERE because this
+   * is where the credential is decrypted; nothing downstream has one or should. `null` for an OAuth
+   * mailbox: each install holds its own token, so there is no secret both sides share and no key to
+   * derive, and every consumer treats that as "this mailbox has no request channel".
    */
   requestKey: string | null;
   deps: SyncDeps;
@@ -335,24 +309,13 @@ interface MailboxRuntime {
   needsRecovery: boolean;
   /**
    * `Date.now()` when this runtime's cycle FIRST failed to read the organizer lease, or `null`
-   * whenever the lease has answered at all since.
-   *
-   * ── THE FIELD A MEASURED LEASE OUTAGE DID NOT HAVE ─────────────────────────────────────
-   *
-   * `LeaseUnavailableError` is exempt from `maxSyncFailures` BY CLASS in `cycle()`, and that
-   * exemption is CORRECT — an infrastructure fault must never write `status='error'` on a
-   * customer's mailbox. What was missing is a second observer on the exempt arm: a membership
-   * test can say "this cycle could not read the lease" but not "for how long", so nothing could
-   * tell a provider blip from a socket that died ten minutes ago and is never coming back. In
-   * one production incident every served mailbox sat in the second state for most of an hour
-   * reporting `leader` and `serving`.
-   *
-   * On the runtime rather than in a closure map, because it is a property of ONE connection: a
-   * detach drops the runtime, the next roster pass builds a fresh one starting at `null`, and that
-   * reset is exactly right — the new connection has not failed to read anything yet.
-   *
-   * Cleared whenever `mayOrganize` RESOLVES, either way. A stand-down proves the lease readable
-   * just as an organize verdict does; only a throw means "we could not look".
+   * whenever the lease has answered at all since. `LeaseUnavailableError` is exempt from
+   * `maxSyncFailures` BY CLASS in `cycle()`, correctly — an infrastructure fault must never write
+   * `status='error'` — but a membership test can say "this cycle could not read the lease", not "for
+   * how long", so nothing could tell a provider blip from a socket that died ten minutes ago (one
+   * incident sat every mailbox there for most of an hour reporting `leader`, `serving`). On the
+   * runtime because it is a property of ONE connection — a detach resets it to `null`, which is right,
+   * the new connection has failed nothing yet. Cleared whenever `mayOrganize` RESOLVES either way.
    */
   leaseUnavailableSince: number | null;
   /**
@@ -383,6 +346,14 @@ interface MailboxRuntime {
    */
   lease: {
     takeoverAuthorizedAt: Date | null;
+    /**
+     * Mail 0104. WHAT THAT PRESS ASKED FOR — `takeover` asks for the mailbox whoever holds it,
+     * `join` asks only for one nobody is organizing. Read in the same statement as the stamp and
+     * meaningless without it; Cloud's own door writes `takeover`, so this reads `takeover` for
+     * every press a person makes here, and the field exists because the FENCE is shared with an
+     * install that has no takeover verb.
+     */
+    takeoverIntent: OrganizerIntent;
     disabledReason: string | null;
     /**
      * Mail 0083. WHAT THE ROW SAYS THE ROLE IS — which is not the same thing as what this process
@@ -444,20 +415,13 @@ interface MailboxRuntime {
    */
   role: OrganizerRole;
   /**
-   * This mailbox's LAST cycle ended still owing work — a truncated inbound batch
-   * (`hasBacklog`) or filing that hit the reconciler's per-cycle budget (`owesFiling`).
-   *
-   * It is what the rotation's fast-lane reservation keys on, and it is the mailbox's OWN report
-   * rather than a guess from its size: a huge mailbox that has finished importing is
-   * light, and a small mailbox mid-first-import is heavy. The same two flags already drive
-   * the `backfill_progress` re-kick, so this costs one assignment and introduces no new notion of
-   * "big".
-   *
-   * FALSE at attach, deliberately, and it is the one value that could be argued either way. A
-   * fresh runtime has not said anything yet, and presuming it heavy would hold the whole shard's
-   * first pass out of the reserved lane — at boot every mailbox is fresh, so a presume-heavy
-   * default would make the first rotation after every deploy the narrowest one. It costs at most
-   * one cycle of a backfilling mailbox occupying the fast lane, after which it reports for itself.
+   * This mailbox's LAST cycle ended still owing work — a truncated inbound batch (`hasBacklog`) or
+   * filing that hit the reconciler's per-cycle budget (`owesFiling`). It is what the rotation's
+   * fast-lane reservation keys on, and it is the mailbox's OWN report rather than a guess from its
+   * size (a finished-importing huge mailbox is light, a small mid-first-import one heavy); the same
+   * two flags already drive the `backfill_progress` re-kick. FALSE at attach, deliberately: a fresh
+   * runtime has said nothing yet, and presuming it heavy would hold the whole shard's first pass out
+   * of the reserved lane — at boot every mailbox is fresh, so it would make the first rotation the narrowest.
    */
   owesBacklog: boolean;
   /**
@@ -468,22 +432,13 @@ interface MailboxRuntime {
   profile: OrganizerProfileSync;
   /**
    * `Date.now()` of the OLDEST unserved wake for this mailbox — its IDLE fired, or the sync-kick
-   * channel named it — or `null` when nothing is owed.
-   *
-   * ── WHY A KICK NEEDS A NAME AND NOT JUST A TIMER ──────────────────────────────────────────────
-   *
-   * `adapter.watch(() => kickCycle())` is the whole of the realtime path, and `kickCycle` schedules
-   * a rotation, not a visit. So a mailbox whose doorbell rang went to the back of a queue with
-   * every other mailbox on the shard in front of it, and the measurement is what that costs: a
-   * 15.5-minute visit gap for a mailbox on a wake channel that answers in under a second.
-   *
-   * Recording WHICH mailbox rang turns the kick into a priority instead of a nudge. Oldest wake
-   * first, so a mailbox that has been ringing since the start of a backfill is served before one
-   * that rang a moment ago — the same oldest-first rule the rest of this file's ordering uses.
-   *
-   * Cleared when the mailbox is ADMITTED to a lane, not when the cycle completes: a wake that
-   * arrives DURING its own visit is about mail that landed after `changesSince` was answered, and
-   * clearing on completion would swallow it.
+   * channel named it — or `null` when nothing is owed. `adapter.watch(() => kickCycle())` schedules
+   * a rotation, not a visit, so a mailbox whose doorbell rang went to the back of the queue behind
+   * every other mailbox on the shard (a measured 15.5-minute gap on a sub-second wake channel).
+   * Recording WHICH mailbox rang turns the kick into a priority: oldest wake first, the same
+   * oldest-first rule the rest of this file uses. Cleared when the mailbox is ADMITTED to a lane, not
+   * when the cycle completes — a wake arriving DURING its own visit is about mail that landed after
+   * `changesSince`, and clearing on completion would swallow it.
    */
   wokenAt: number | null;
 }
@@ -494,69 +449,27 @@ interface Quarantine {
   retryAt: number;
   reason: string;
   /**
-   * Mail migration 0039's column. Did `retry_after` actually get written for this mailbox?
-   *
-   * ── WHY A FLAG AND NOT "JUST READ THE COLUMN" ────────────────────────────────────────────
-   *
-   * Because `retry_after IS NULL` has to mean exactly one thing before it can be a release
-   * signal, and without this flag it means two: "an operator cleared it" and "the durable write
-   * never landed". The second is a normal outcome here — `markMailboxFailed` is fenced (a
-   * disabled row, or another instance now leads the shard) and is best-effort against a database
-   * that may be the very thing that is broken.
-   *
-   * Conflating them is not a cosmetic bug. The roster gate would read the NULL as "try now", the
-   * attach would fail again, the write would fail again, and the mailbox would be re-dialled
-   * every `rosterIntervalMs` for as long as the condition lasted — the exact silent DoS against
-   * a customer's provider that the block at the end of `attach()` spends twenty lines forbidding,
-   * arrived at from the other direction. So the column governs only when we know it is OURS.
+   * Mail migration 0039's column. Did `retry_after` actually get written for this mailbox? A flag,
+   * not "just read the column", because `retry_after IS NULL` has to mean exactly one thing before it
+   * can be a release signal, and without this it means two: "an operator cleared it" and "the durable
+   * write never landed". The second is normal — `markMailboxFailed` is fenced and best-effort against
+   * a database that may be the very thing broken. Conflated, the roster gate reads NULL as "try now",
+   * the attach fails again, the write fails again, and the mailbox is re-dialled every
+   * `rosterIntervalMs` — the silent DoS against a customer's provider `attach()`'s end forbids. So
+   * the column governs only when we know it is OURS.
    */
   persisted: boolean;
 }
 
 /**
- * The always-on worker. ONE process, ONE leader lock per shard; it then syncs ALL
- * enabled mailboxes of ALL accounts in its shard — a second registered account is
- * never silently unsynced — reading each mailbox's credentials from
- * `mailbox_credentials` (envelope-decrypted via the KeyProvider).
- *
- * The roster is LIVE, not a startup snapshot: a `TF_ROSTER_INTERVAL_MS` pass re-reads the
- * shard's enabled mailboxes and reconciles the runtime map — accounts that registered after
- * boot are connected without a restart, and mailboxes that were disabled or deleted are
- * unwatched and CLOSED instead of being kept on an IDLE connection forever (a parked account
- * and the credential-deletion path both produce exactly that).
- *
- * Failure isolation is per mailbox: a bad mailbox is marked status='error', DETACHED, and
- * retried with exponential backoff, never aborting the others — and never stalling another
- * ACCOUNT. Runtime failures count too: `maxSyncFailures` consecutive cycle errors detach the
- * mailbox rather than logging the same error forever. A mailbox that comes back is restored
- * to status='connected' only after a VERIFIED recovery (connect + folders + two full sync
- * cycles).
- *
- * Cycles and roster passes are SERIALIZED on one queue, so a roster pass can never start beside
- * a cycle, and `stop()` awaits the in-flight work instead of yanking the DB and the lock away
- * from it.
- *
- * A cycle nevertheless SERVES an owed roster pass from inside its own queue entry (see
- * `yieldToRoster`), which is what stops a customer's brand-new mailbox waiting out an unrelated
- * mailbox's backfill before anything connects to it at all.
- *
- * INSIDE one cycle entry, up to `cycleLanes` mailboxes are visited AT ONCE (see the lane
- * block in `cycle()`). This paragraph used to say parallelism "would only add connection
- * pressure" and that the per-account seq row lock serializes writers anyway; the second half is
- * why the concurrency key is the ACCOUNT and not the mailbox, and the first half was measured
- * false — one mailbox's deep backfill put most of its shard's mailboxes past the 15-minute
- * sync-lag threshold
- * and left another 15.5 minutes between visits on a sub-second wake channel. What has NOT changed
- * is that one mailbox is visited by one cycle at a time, that the write fence and the organizer
- * lease see exactly what they always did, and that every lane is joined before the pass ends.
- *
- * SECURITY: the worker host holds KEK material (config.keyProvider / TF_KEK_V1) because
- * it must decrypt per-mailbox credentials to connect — same trust level as the API.
- * Treat this process accordingly.
- *
- * PROGRAMMATIC contract (unchanged, and depended on by `test/leader-lock.test.ts`
- * semantics): if another process holds the lock this THROWS. The CLI does NOT use this
- * path — it stands by instead of exiting (`supervisor.ts`).
+ * The always-on worker. ONE process, ONE leader lock per shard; it then syncs ALL enabled mailboxes
+ * of ALL accounts in its shard (a second registered account is never silently unsynced), reading each
+ * mailbox's credentials from `mailbox_credentials` (envelope-decrypted via the KeyProvider). The
+ * roster is LIVE, not a startup snapshot: a `TF_ROSTER_INTERVAL_MS` pass re-reads the shard and
+ * reconciles the runtime map, so accounts that registered after boot connect without a restart and
+ * disabled/deleted mailboxes are closed. Failure isolation is per mailbox (marked `error`, detached,
+ * backed off, never aborting others); cycles and roster passes are SERIALIZED on one queue, and a
+ * cycle SERVES an owed roster pass from inside its entry, visiting up to `cycleLanes` mailboxes at once. SECURITY: this host holds KEK material to decrypt credentials — same trust level as the API.
  */
 export async function startWorker(config: WorkerConfig, hooks: WorkerHooks = {}): Promise<RunningWorker> {
   const lock: LeaderLock | null = await acquireLeaderLock(
@@ -600,38 +513,27 @@ export async function startWorkerWithLock(
     }
     const keyProvider = maybeKeyProvider;
 
-    // ── OAuth2 (Exchange/M365) token source — one per process, per-mailbox cache. ───────────────
-    //
-    // Constructed UNCONDITIONALLY, even on a deployment with no `MS_OAUTH_*` set and no oauth
-    // mailboxes: the refusal for a missing client secret has to NAME the missing variable, and that
-    // only happens if the provider exists to be asked. A password-only deployment simply never
-    // invokes it — an oauth row is the only thing that reaches `fetchAccessToken`. The rotated-token
-    // write targets the mailbox's OWN imap row, and is the only write this port makes.
-    // ONE WRITER of a rotated refresh token, shared with the API host (`rotateMailboxOAuthSecret`,
-    // `packages/db`). It was a hand-written update here and a second one there; the
-    // `transport = 'imap'` predicate is what stops a rotation overwriting an unrelated smtp row and
-    // is not a thing to state twice.
+    // OAuth2 (Exchange/M365) token source — one per process, per-mailbox cache. Constructed
+    // UNCONDITIONALLY, even with no `MS_OAUTH_*` and no oauth mailboxes: the refusal for a missing
+    // client secret must NAME the missing variable, which only happens if the provider exists to be
+    // asked; a password-only deployment simply never invokes it (an oauth row is the only thing that
+    // reaches `fetchAccessToken`). The rotated-token write targets the mailbox's OWN imap row and is
+    // the only write this port makes — ONE WRITER shared with the API host
+    // (`rotateMailboxOAuthSecret`), whose `transport = 'imap'` predicate stops a rotation
+    // overwriting an unrelated smtp row and is not a thing to state twice.
     const updateSecret: UpdateSecretPort = (mailboxId, ciphertextEnc, keyVersion) =>
       rotateMailboxOAuthSecret(db, {
         mailboxId, ciphertext: ciphertextEnc, keyVersion, now: new Date(),
       });
     /**
-     * THE REGISTRATION IS RESOLVED AT TOKEN TIME, FROM THE CONFIG STORE, WITH ENV AS THE FALLBACK.
-     *
-     * Not at boot. An Entra client secret expires on Azure's schedule, and when it does every oauth
-     * mailbox in the fleet stops refreshing — silently, because `refreshAccessToken` correctly
-     * classifies a rejected client as "we could not ask" rather than as a dead credential, so nothing
-     * is quarantined and nothing pages. The remedy is an operator pasting a new secret into the admin
-     * console, and this worker process may not have restarted for weeks. So the value is read on the
-     * refresh path, through the SAME resolver the API's onboarding routes call
-     * (`resolveOAuthProviderConfig`), which is what makes it impossible for the two to sign with
-     * different clients or to disagree about whether env may override a disabled row.
-     *
-     * `enabled` is deliberately NOT consulted here. It is the ONBOARDING switch — whether a new
-     * consent ceremony may start — and refusing to refresh an already-connected mailbox because the
-     * operator turned onboarding off would take working mailboxes down as a side effect of closing a
-     * door. A registration whose credentials are gone still refuses, by way of the named
-     * `OAuthConfigError` the token client throws on an empty id or secret.
+     * The registration is resolved AT TOKEN TIME, from the config store, with env as the fallback —
+     * not at boot. An Entra client secret expires on Azure's schedule, and when it does every oauth
+     * mailbox stops refreshing silently, because `refreshAccessToken` classifies a rejected client as
+     * "we could not ask" rather than a dead credential, so nothing quarantines or pages. The remedy
+     * is an operator pasting a new secret, and this process may not have restarted for weeks, so the
+     * value is read on the refresh path through the SAME resolver (`resolveOAuthProviderConfig`) the
+     * API uses. `enabled` is NOT consulted — it is the ONBOARDING switch, and refusing to refresh an
+     * already-connected mailbox because onboarding is off would take working mailboxes down.
      */
     const oauthTokenProvider: OAuthTokenProvider = new MicrosoftTokenProvider({
       clientId: config.msOAuth?.clientId ?? "",
@@ -639,20 +541,14 @@ export async function startWorkerWithLock(
       defaultTenant: config.msOAuth?.tenant ?? "common",
       resolveClient: async (want) => {
         /*
-         * THE PUBLIC DOOR IS A DIFFERENT REGISTRATION AND IT IS NOT IN THE CONFIG STORE.
-         *
-         * A mailbox connected through the device-code flow holds a refresh token issued by the
-         * PUBLIC application, and only that application can renew it. This process is the organizer
-         * on a self-hosted install, so it is the process that has to do so for ever. It resolves the
-         * public client from the environment alone — there is no `oauth_provider_config` arm for it,
-         * and deliberately so: that table's whole content is the confidential registration an
-         * operator manages from the admin console, and this composition has no admin console.
-         *
-         * `kind: "public"` is STATED. Returning it unlabelled would let the token client default it
-         * to `confidential`, and then `clientAuthFields` would demand a secret a public
-         * registration does not have. Missing entirely, the empty `clientId` is refused by name
-         * (`MS_DEVICE_CLIENT_ID`) before any request goes out — which is the honest answer for a
-         * mailbox whose door this install no longer has.
+         * The public door is a different registration and it is NOT in the config store. A mailbox
+         * connected through the device-code flow holds a refresh token issued by the PUBLIC
+         * application, and only that application can renew it — and this process is the organizer on a
+         * self-hosted install, so it must do so for ever. It resolves the public client from the
+         * environment alone: there is no `oauth_provider_config` arm for it, because that table's
+         * content is the confidential registration an operator manages, and this composition has no
+         * admin console. `kind: "public"` is STATED — unlabelled, the token client defaults it to
+         * `confidential` and demands a secret a public registration lacks.
          */
         if (want === "public") {
           return {
@@ -743,18 +639,13 @@ export async function startWorkerWithLock(
     const makeAdapter = config.adapterFactory
       ?? ((cfg, ctx) => new ImapAdapter(cfg, { onConnectionError: ctx.onConnectionError }));
 
-    // ── Structured logs + the alert pass ───────────────────────────────────────────────
-    //
-    // Every line this worker emits from here on is one JSON object carrying `instanceId` and
-    // `shard`, and every per-mailbox line adds `accountId`/`mailboxId` — the two ids that
-    // turn "a sync cycle failed" into "THIS customer's mail stopped". Bound once, on a child
-    // logger, so no call site can forget them.
-    //
-    // The DEFAULT is `silentLogger`, not a stdout logger, for every path except the CLI: a
-    // library that prints because its host forgot to inject something is a library that
-    // pollutes somebody's test output. `runWorkerSupervised` (and therefore the deployed
-    // process) injects
-    // a real one; `startWorker` called directly from a test stays quiet unless it asks.
+    // Structured logs + the alert pass. Every line this worker emits from here on is one JSON object
+    // carrying `instanceId` and `shard`, and every per-mailbox line adds `accountId`/`mailboxId` —
+    // the two ids that turn "a sync cycle failed" into "THIS customer's mail stopped". Bound once, on
+    // a child logger, so no call site can forget them. The DEFAULT is `silentLogger`, not a stdout
+    // logger, for every path except the CLI: a library that prints because its host forgot to inject
+    // something pollutes somebody's test output. `runWorkerSupervised` (and the deployed process)
+    // injects a real one; `startWorker` called from a test stays quiet unless it asks.
     const instanceId = config.instanceId ?? instanceIdFrom();
     const environment = config.environment ?? "production";
     const startedAt = new Date();
@@ -763,19 +654,14 @@ export async function startWorkerWithLock(
     });
 
     /**
-     * THE LEADER EPOCH, as the two mailbox lifecycle writes see it.
-     *
-     * `worker_heartbeats` is already the durable, atomically-claimed record of "who leads shard
-     * N" — `writeHeartbeat` overwrites `instance_id` on takeover and `refreshHeartbeat` refuses
-     * a surrendered leader's late pulse against exactly this predicate. Passing it into
-     * `markMailboxFailed` / `markMailboxConnected` fences those writes with the SAME definition
-     * rather than a second one, and `clearHeartbeat` takes it so a surrender cannot clobber a
-     * successor's claim. See the fencing block in `mailboxes.ts`.
-     *
-     * The first beat is written before any attach (`reconcileRoster`, `firstBeatPending`), so
-     * the row exists by the time either mailbox write can fire. If that best-effort beat failed,
-     * the fence closes and the write is refused and LOGGED (`mailbox_failure_write_fenced`)
-     * rather than landing unfenced — the safe direction, and a visible one.
+     * The leader epoch, as the two mailbox lifecycle writes see it. `worker_heartbeats` is already
+     * the durable, atomically-claimed record of "who leads shard N" — `writeHeartbeat` overwrites
+     * `instance_id` on takeover and `refreshHeartbeat` refuses a surrendered leader's late pulse
+     * against exactly this predicate. Passing it into `markMailboxFailed`/`markMailboxConnected`
+     * fences those writes with the SAME definition, and `clearHeartbeat` takes it so a surrender
+     * cannot clobber a successor's claim. The first beat is written before any attach, so the row
+     * exists by the time either write fires; a failed beat closes the fence and the write is refused
+     * and LOGGED (`mailbox_failure_write_fenced`) rather than landing unfenced — the safe direction.
      */
     const fence: LeaderFence = { shardIndex, instanceId };
     const alertIntervalMs = config.alertIntervalMs ?? DEFAULT_ALERT_INTERVAL_MS;
@@ -893,43 +779,28 @@ export async function startWorkerWithLock(
      */
     let servedIds: readonly string[] = [];
     /**
-     * ══════════════════════════════════════════════════════════════════════════════════════════
-     *  THE SHARED-DEPENDENCY CONDITION — WHEN OUR OWN DATABASE IS THE THING THAT IS BROKEN
-     * ══════════════════════════════════════════════════════════════════════════════════════════
-     *
-     * `null` ⇒ the database is answering. Otherwise the ms instant the current run of database
-     * faults began, kept in MEMORY on purpose: it is the state in which the database cannot be
-     * written to, so a column recording it would be exactly as unreachable as the thing it
-     * reports. `/health` is served out of this process and touches no database (see
-     * `health.ts`), which makes it the only surface that still works during the condition it
-     * describes.
-     *
-     * ONE CONDITION FOR THE PROCESS, not one per mailbox, because that is what the fault IS —
-     * the same argument the classifier circuit is built on (`aiFor`): a per-mailbox counter over
-     * a shared dependency converges thirteen times slower and reports thirteen incidents.
+     * The shared-dependency condition — when our own database is the thing that is broken. `null` ⇒
+     * the database is answering; otherwise the ms instant the current run of database faults began,
+     * kept in MEMORY on purpose — it is the state in which the database cannot be written to, so a
+     * column recording it would be exactly as unreachable as the thing it reports. `/health` is
+     * served out of this process and touches no database (see `health.ts`), which makes it the only
+     * surface that still works during the condition it describes. ONE CONDITION for the process, not
+     * one per mailbox, because that is what the fault IS — the argument the classifier circuit is
+     * built on: a per-mailbox counter over a shared dependency converges 13× slower and reports 13 incidents.
      */
     let dbFaultSince: number | null = null;
     /** Database faults observed in the CURRENT run. Reported once at the end, not once each. */
     let dbFaults = 0;
     const quarantine = new Map<string, Quarantine>();
     /**
-     * Mailboxes on the duty that this process is NOT SERVING, and since when (mail 0029).
-     *
-     * ── WHY THE BUCKETS CARRY A CLOCK NOW ─────────────────────────────────────────────────
-     *
-     * They were bare `Set<string>`s, and the whole of a measured half-hour silence lived in that: a
-     * membership test can say "not served" but not "not served for how long", so no catch arm
-     * could decide whether the state had lasted long enough to be worth writing down, and every
-     * arm settled for a log line. `since` is what lets ONE place make that decision.
-     *
-     * ── AND WHY `reason` IS NULLABLE ──────────────────────────────────────────────────────
-     *
-     * `null` means "accounted for, but the ROW ALREADY EXPLAINS ITSELF". It is the stand-down case
-     * and only that: `mayOrganize` returning false (`attach`, and again in `cycle`) has already
-     * written `status='disabled'` plus `disabled_reason` through `markMailboxStoodDown`, which
-     * CLEARS these two columns in the same statement. Writing `lease_unreadable` on top would be
-     * this pass contradicting itself, and it would be a strictly worse answer than the one already
-     * on the row — "somebody else is organizing it" beats "we could not read the lease".
+     * Mailboxes on the duty that this process is NOT SERVING, and since when (mail 0029). They were
+     * bare `Set<string>`s, and a measured half-hour silence lived in that: a membership test can say
+     * "not served" but not "for how long", so no catch arm could decide whether the state had lasted
+     * long enough to write down, and every arm settled for a log line. `since` lets ONE place decide.
+     * `reason` is nullable: `null` means "accounted for, but the ROW ALREADY EXPLAINS ITSELF" — the
+     * stand-down case only, where `mayOrganize` returning false already wrote `status='disabled'` plus
+     * `disabled_reason` through `markMailboxStoodDown`, which CLEARS these two columns; writing
+     * `lease_unreadable` on top would be this pass contradicting itself with a worse answer.
      */
     interface SyncBlock {
       /** `Date.now()` when this process FIRST observed this block. Never moved by a re-observation. */
@@ -939,20 +810,14 @@ export async function startWorkerWithLock(
     }
     const awaitingCreds = new Map<string, SyncBlock>();
     /**
-     * Mailboxes this pass did not attach because of the ORGANIZER LEASE — either another
-     * organizer holds them (the row is now `disabled` and the next roster pass will not offer
-     * them again) or the lease could not be read at all.
-     *
-     * It exists because `roster_invariant_violated` is an assertion that every mailbox of the
-     * duty is in exactly one accounted-for bucket, and a mailbox we deliberately declined to
-     * organize is accounted for. Without this set the gate would page an operator about its own
-     * correct behaviour, every thirty seconds — which is how a real alert becomes noise.
-     *
-     * A lease-unavailable mailbox still counts toward `expected`, so `/health` keeps reporting
-     * `degraded` while it lasts. That is the honest answer: nothing is syncing it.
-     *
-     * THE TWO POPULATIONS ARE NOT THE SAME STATE and mail 0029 is where that starts to matter —
-     * only the "could not read it" half gets a `reason`. See {@link SyncBlock}.
+     * Mailboxes this pass did not attach because of the ORGANIZER LEASE — either another organizer
+     * holds them (the row is now `disabled` and the next pass will not offer them) or the lease could
+     * not be read at all. It exists because `roster_invariant_violated` asserts every mailbox is in
+     * exactly one accounted-for bucket, and a mailbox we deliberately declined to organize is
+     * accounted for — without this set the gate would page an operator about its own correct behaviour
+     * every thirty seconds. A lease-unavailable mailbox still counts toward `expected`, so `/health`
+     * reports `degraded` while it lasts (nothing is syncing it). The two populations are not the same
+     * state (mail 0029) — only "could not read it" gets a `reason` (see {@link SyncBlock}).
      */
     const leaseBlocked = new Map<string, SyncBlock>();
     /**
@@ -1005,20 +870,14 @@ export async function startWorkerWithLock(
     const smtpSizeAttempted = new Set<string>();
 
     /**
-     * Enter (or stay in) the shared-database condition — ONE incident, however many mailboxes.
-     *
-     * ── WHY THE LOUD LINE IS EDGE-TRIGGERED ───────────────────────────────────────────────────
-     *
-     * "(d) surface as the worker-wide condition it is — the health surface and ONE alert, not
-     * thirteen" is half of what this fix owes, and a `log.error` per occurrence would deliver the
-     * thirteen. A shard of thirteen mailboxes under a two-minute outage produces one `error` here
-     * and one `info` when it clears; the per-occurrence detail rides `debug`, where the operator
-     * who wants the mailbox-by-mailbox trace can still get it.
-     *
-     * `runAlertPass` is deliberately NOT the surface for this one, and that is not an oversight:
-     * every rule it evaluates is a query (`packages/db/src/alerts.ts`), so during the fault it
-     * describes, it cannot run. The two things that still work are this process's own log stream
-     * and its `/health`, and both carry it.
+     * Enter (or stay in) the shared-database condition — ONE incident, however many mailboxes. The
+     * loud line is EDGE-TRIGGERED: "surface as the worker-wide condition it is — the health surface
+     * and ONE alert, not thirteen" is what this owes, and a `log.error` per occurrence would deliver
+     * the thirteen. A shard of thirteen under a two-minute outage produces one `error` here and one
+     * `info` when it clears; the per-occurrence detail rides `debug`. `runAlertPass` is deliberately
+     * NOT the surface for this, and that is not an oversight: every rule it evaluates is a query, so
+     * during the fault it describes it cannot run — the two things that still work are this process's
+     * own log stream and its `/health`, and both carry it.
      */
     function noteDatabaseFault(
       err: unknown, at: { mailboxId?: string; accountId?: string } = {},
@@ -1050,36 +909,14 @@ export async function startWorkerWithLock(
      * mail, so the evidence that ends it has to be mail that was written.
      */
     /**
-     * ══════════════════════════════════════════════════════════════════════════════════════
-     *  A BEST-EFFORT CATCH MAY SWALLOW THE MAILBOX'S VERDICT. IT MAY NOT SWALLOW THE SHARD'S.
-     * ══════════════════════════════════════════════════════════════════════════════════════
-     *
-     * `cycle()` is full of catches that deliberately do nothing: a `last_sync_at` that could not
-     * be written, an `initial_import_completed_at`, a per-account pass. Every one of them is right
-     * about the MAILBOX — a freshness column must never walk a healthy mailbox toward
-     * `status='error'` — and every one of them was also silently correct about the SHARD, which
-     * it is not entitled to be.
-     *
-     * MEASURED in production, and it is a defect the lanes exposed rather than one they invented. With
-     * the rotation serial, a database that died mid-pass met the NEXT mailbox's `runSyncCycle` and
-     * was announced by the arm the origin-tagging fix built for it. With lanes, every mailbox can be past
-     * `runSyncCycle` at the same instant — so an outage landing in that window is met only by the
-     * bookkeeping writes, all of which catch, and the shard announced NOTHING: `/health` answered
-     * `degraded: false, databaseFaultSince: null` through a total outage. The diagnostic run reads
-     * `mailbox_sync_stamp_failed: 2`, `bubble_up_failed: 2`, `workflow_drain_failed: 2`,
-     * `rule_retro_failed: 2` — and no `worker_database_fault` at all.
-     *
-     * So the catches keep doing exactly what they did, and additionally ANNOUNCE. Nothing is
-     * counted against a mailbox, nothing is quarantined, no row is touched; `noteDatabaseFault` is
-     * edge-triggered, so a whole cycle's worth of these produces one incident.
-     *
-     * IT ONLY WORKS ON CALLS THAT NAME THEIR ORIGIN, which is why the call sites are wrapped in
-     * `asDatabaseFault` and why only SOME of them are. A pure-database call — `stampMailboxSync`,
-     * `loadServedAccounts`, the per-account passes — is our database by construction, so tagging it
-     * states a fact. `sensitiveBackfillPass`, `ohboxTidyPass` and `screenerAutoPass` are NOT
-     * wrapped and must not be: each holds the customer's adapter as well, so a tag around the whole
-     * call would promote a provider failure to a shard-wide condition. That is `loadMailboxCreds`'
-     * argument in `db-fault.ts`, applied to the three calls it applies to.
+     * A best-effort catch may swallow the mailbox's verdict. It may not swallow the shard's.
+     * `cycle()` is full of catches that deliberately do nothing (a `last_sync_at` that could not be
+     * written, a per-account pass) — every one right about the MAILBOX (a freshness column must never
+     * walk a healthy mailbox toward `error`) and silently also correct about the SHARD, which it is
+     * not entitled to be. With lanes, a database dying mid-pass can meet every mailbox past
+     * `runSyncCycle` at once, so an outage was met only by bookkeeping writes that all catch, and the
+     * shard announced NOTHING (`/health` said `databaseFaultSince: null` through a total outage). So
+     * the catches ANNOUNCE now (`noteDatabaseFault`, edge-triggered) — but only calls that NAME their origin via `asDatabaseFault`; a call holding the customer's adapter must not be wrapped (`db-fault.ts`).
      */
     function noteIfSharedDatabaseFault(
       err: unknown, mb?: { mailboxId: string; accountId: string },
@@ -1098,39 +935,16 @@ export async function startWorkerWithLock(
       dbFaults = 0;
     }
 
-    // ══════════════════════════════════════════════════════════════════════════════════════
-    //  A ROSTER PASS THAT IS OWED, AND THE CYCLE THAT WAS SITTING ON IT
-    // ══════════════════════════════════════════════════════════════════════════════════════
-    //
-    // `reconcileRoster` is the ONLY path by which a mailbox joins the rotation, and the roster
-    // is a live re-read rather than a boot snapshot — `roster.e2e.test.ts` has proven that since
-    // the first version of this worker and it still passes. What it could not see is that the
-    // pass shares its queue with
-    // `cycle()`, which is ONE entry covering every attached mailbox at one bounded batch each.
-    //
-    // Measured against the live deployment: `worker_heartbeats.last_cycle_at` did not move for
-    // ten minutes. One cycle entry held the queue that whole time while
-    // `beat_at` stayed fresh, because the pulse is the one thing that runs off it. `expected`
-    // and `mailboxes` in that row are recomputed only inside a roster pass, so the heartbeat
-    // reported the pre-existing count throughout — which is exactly what the starvation report
-    // said, and
-    // why nothing in the mailbox's own row explained it: nothing was wrong with the row.
-    //
-    // So adoption was not broken. It was STARVED, and the starvation term was the WHOLE cycle
-    // rather than one mailbox's share of it: at the shipped `maxMailboxes` of 64 that is hours,
-    // and it grows with every customer the shard takes on. A new customer connects their mailbox
-    // and watches nothing happen, which is the first thing they ever ask this product to do.
-    //
-    // THE FIX IS SCHEDULING, NOT CONCURRENCY. `rosterPending` says a pass is owed; `cycle()`
-    // serves it BETWEEN two mailboxes, inside its own queue entry, where no adapter operation is
-    // suspended. Nothing new runs in parallel — `stop()`'s `drain()` still covers the pass,
-    // because it is part of the entry the queue is already awaiting.
-    //
-    // THE FLAG IS AN ACCELERATOR AND THE QUEUE ENTRY IS THE FLOOR. `requestRoster` does both,
-    // and the redundancy is load-bearing rather than defensive: on an idle shard — no runtimes,
-    // or every cycle finishing in milliseconds — nothing ever reaches a yield point, so a
-    // flag-only design would stop adopting entirely on precisely the deployments where the bug
-    // did not exist.
+    // A roster pass that is owed, and the cycle that was sitting on it. `reconcileRoster` is the ONLY
+    // path by which a mailbox joins the rotation and is a live re-read, but it shares its queue with
+    // `cycle()`, which is ONE entry covering every attached mailbox. Measured: `last_cycle_at` did
+    // not move for ten minutes while one cycle entry held the queue and `beat_at` stayed fresh (the
+    // pulse is the one thing off it), so adoption was not broken but STARVED — the starvation term is
+    // the WHOLE cycle, which at `maxMailboxes` 64 is hours. The fix is SCHEDULING, not concurrency:
+    // `rosterPending` says a pass is owed and `cycle()` serves it BETWEEN two mailboxes, inside its
+    // own entry, so nothing new runs in parallel and `stop()`'s drain still covers it. The flag is an
+    // accelerator and the queue entry the floor — on an idle shard nothing reaches a yield point, so
+    // a flag-only design would stop adopting exactly where the bug did not exist.
     /** A roster pass is owed. Cleared by whichever of the two paths gets to it first. */
     let rosterPending = false;
     /** When the OLDEST unserved request was made — the delay `roster_pass_delayed` reports. */
@@ -1153,48 +967,30 @@ export async function startWorkerWithLock(
     }
     async function drain(): Promise<void> { try { await tail; } catch { /* logged at source */ } }
 
-    // ══════════════════════════════════════════════════════════════════════════════════════
-    //  THE ONE PROPERTY THE SINGLE QUEUE USED TO GIVE FOR FREE
-    // ══════════════════════════════════════════════════════════════════════════════════════
-    //
-    // The queue above is unchanged: ONE entry at a time, cycles and roster passes both, and
-    // `stop()` still drains it. What changed is the INSIDE of a cycle entry, which now visits up
-    // to `cycleLanes` mailboxes at once instead of one.
-    //
-    // The mid-cycle adoption's safety argument was "a roster pass runs between two mailboxes, where NOTHING is
-    // suspended inside an adapter". That sentence bought exactly one thing — a pass may never
-    // close an adapter somebody is using — and with lanes in flight it is no longer literally
-    // true, so the property it bought is stated and enforced directly instead of being inherited
-    // from the shape.
-    //
-    // `laneBusy` is the enforcement. `reconcileRoster` is the ONE detach site reachable from
-    // inside a running cycle (the other three — `handleConnectionError`, `handleLockLoss`,
-    // `stop()` — each take their own `serialize` entry and therefore cannot start until the whole
-    // cycle entry has returned), and it now SKIPS a mailbox a lane is inside and hands it to
-    // `deferredLeaves`, which the cycle drains after its lanes have joined. That is the same
-    // "detached after the loop, never inside it" discipline `toStandDown`/`toQuarantine`/
-    // `toReconnect` already follow, extended to the one caller that could not previously need it.
-    //
-    // In the steady state both are empty: a roster pass detaches only on disable, deletion or a
-    // cap eviction, so this costs one Set membership test per pass on every deployment where
-    // nothing is being turned off.
+    // The one property the single queue used to give for free. The queue is unchanged (ONE entry at a
+    // time, cycles and roster passes both, `stop()` drains it); what changed is the INSIDE of a cycle
+    // entry, which now visits up to `cycleLanes` mailboxes at once. The mid-cycle adoption's safety
+    // argument was "a roster pass runs between two mailboxes where NOTHING is suspended in an
+    // adapter", which bought one thing — a pass may never close an adapter somebody is using — and
+    // with lanes in flight is no longer literally true, so the property is enforced directly.
+    // `laneBusy` is the enforcement: `reconcileRoster` (the ONE detach site reachable from inside a
+    // running cycle) SKIPS a mailbox a lane is inside and hands it to `deferredLeaves`, drained after
+    // the lanes join — the same "detached after the loop, never inside it" discipline the others
+    // follow. In the steady state both are empty: this costs one Set membership test per pass.
     /** Mailbox ids a lane of the RUNNING cycle is currently inside. */
     const laneBusy = new Set<string>();
     /** Runtimes a roster pass wanted to detach while a lane held them; drained by `cycle()`. */
     const deferredLeaves: Array<{ rt: MailboxRuntime; release: boolean; reason: string }> = [];
 
     /**
-     * THIS mailbox is owed a visit — its IDLE fired, or the enforced-sync scan named it.
-     *
-     * Keeps the OLDEST unserved wake (`??=`), so a mailbox ringing repeatedly through a long
-     * backfill is ordered by when it FIRST rang rather than by its most recent signal — otherwise
-     * a chatty mailbox would keep resetting itself to the back of the woken group.
-     *
-     * Silently ignores a mailbox this process does not serve. Both callers are already scoped to
-     * `runtimes` (the IDLE callback belongs to an attached adapter, `syncKickPass` filters on the
-     * served set), so this is the race between a signal in flight and a detach, and dropping it is
-     * correct: a mailbox that is no longer attached has no lane to be prioritized into, and the
-     * next attach re-establishes IDLE.
+     * THIS mailbox is owed a visit — its IDLE fired, or the enforced-sync scan named it. Keeps the
+     * OLDEST unserved wake (`??=`), so a mailbox ringing repeatedly through a long backfill is
+     * ordered by when it FIRST rang rather than its most recent signal — otherwise a chatty mailbox
+     * keeps resetting itself to the back. Silently ignores a mailbox this process does not serve: both
+     * callers are already scoped to `runtimes` (the IDLE callback belongs to an attached adapter,
+     * `syncKickPass` filters on the served set), so this is the race between a signal in flight and a
+     * detach, and dropping it is correct — a detached mailbox has no lane, and the next attach
+     * re-establishes IDLE.
      */
     function noteWake(mailboxId: string): void {
       const rt = runtimes.get(mailboxId);
@@ -1203,17 +999,13 @@ export async function startWorkerWithLock(
       nudgeCycle();
     }
 
-    // ── AND A RUNNING CYCLE HAS TO BE ABLE TO HEAR IT ─────────────────────────────────────
-    //
-    // The dispatcher inside `cycle()` blocks on `Promise.race(lanes)` — it wakes when a lane
-    // FINISHES, which is the wrong event for this: a wake that lands while three lanes are inside
-    // long batches would not be looked at until one of them returned, so the mailbox would wait a
-    // bounded batch (~254 s measured) for a signal that answered in under a second. This is the
-    // other thing the race waits on.
-    //
-    // ONE pending promise, re-armed on every fire, rather than a fresh one per turn: the naive
-    // form leaves every superseded promise unresolved and holds its `resolve` for the life of the
-    // process. It never rejects, so the race can never reject either.
+    // And a running cycle has to be able to hear it. The dispatcher inside `cycle()` blocks on
+    // `Promise.race(lanes)` — it wakes when a lane FINISHES, the wrong event for this: a wake landing
+    // while three lanes are inside long batches would not be looked at until one returned, so the
+    // mailbox would wait a bounded batch (~254 s measured) for a signal that answered in under a
+    // second. This is the other thing the race waits on. ONE pending promise, re-armed on every fire,
+    // rather than a fresh one per turn — the naive form leaves every superseded promise unresolved
+    // and holds its `resolve` for the life of the process. It never rejects, so the race cannot either.
     let wakeSignal!: Promise<void>;
     let fireWake!: () => void;
     function armWake(): void { wakeSignal = new Promise<void>((r) => { fireWake = r; }); }
@@ -1229,24 +1021,15 @@ export async function startWorkerWithLock(
       return Math.min(retryBaseMs * 2 ** Math.max(0, attempts - 1), retryMaxMs);
     }
 
-    // ── THE AI SPEND PORT ───────────────────────────────────────────────────────────────
-    //
-    // ONE for the process, where there were three memoised gate factories: a `debit_classify`
-    // gate for ingest, a second `debit_classify` gate with the exclusive claim and the setup-pool
-    // wrapper for the Screener's cron half, and a `debit_workflow` gate for workflow steps. Each
-    // call site's terms had to be composed here, correctly, and the api host had to compose the
-    // same two for the Screener from its own code — a host that got one wrong gave that call site
-    // another's terms, which is how setup-funded Screener spends once skipped the claim entirely.
-    // Now the call site names its ACTION and the terms come from `SPEND_ACTIONS`.
-    //
-    // The per-account memo is gone with them, and nothing is lost: it existed because a gate
-    // instance carried the "sources I charged" marker that told a refund from a giveaway, and the
-    // port answers that with `ok.attempt` — the caller keeps the attempt it was told it charged
-    // and names it when reversing. That works across a process restart and across a network hop,
-    // which the marker never could.
-    //
-    // Composed UNCONDITIONALLY, before any live model is, for the reason the gates were: metering
-    // must exist before the spend does, not after.
+    // The AI spend port. ONE for the process, where there were three memoised gate factories (a
+    // `debit_classify` for ingest, a second with the exclusive claim and setup-pool wrapper for the
+    // Screener's cron half, a `debit_workflow` for workflow steps). Each call site's terms had to be
+    // composed here and the API host had to compose the same two — a host that got one wrong gave a
+    // call site another's terms (setup-funded Screener spends once skipped the claim entirely). Now
+    // the call site names its ACTION and the terms come from `SPEND_ACTIONS`. The per-account memo is
+    // gone and nothing is lost: it carried the "sources I charged" marker, and the port answers that
+    // with `ok.attempt` — which works across a restart and a network hop, as the marker never could.
+    // Composed UNCONDITIONALLY, before any live model: metering must exist before the spend does.
     /* ONE ENTITLEMENTS PORT FOR THE PROCESS, or a named unmetered state.
      *
      * `ENTITLEMENTS_URL` set ⇒ the HTTP client of that program; unset ⇒ `UNMETERED`, and the
@@ -1258,32 +1041,16 @@ export async function startWorkerWithLock(
     /** The spend half the call sites take — `undefined` where nothing meters. */
     const spend = isMetered(entitlements) ? entitlements : undefined;
 
-    // ── The LIVE classifier, behind a per-process circuit breaker ─────────────────────
-    //
-    // ONE circuit for the process, because the failure domain is the shared API key and
-    // endpoint: per-mailbox circuits would each burn their own faults into the same outage,
-    // and `cycle()` walks the rotation serially so one counter converges fastest.
-    //
-    // `circuit.port()` is resolved PER CYCLE at the call sites below and never cached: while
-    // the circuit is open it answers `undefined`, `pipeline.ts`'s `classifier &&` short-
-    // circuits before the money question, and the message files rules-only with neither a
-    // model call nor a debit. Holding a wrapper across the open transition would instead
-    // charge every message and then fail it.
-    //
-    // ── THE COST RECORDER, ATTACHED HERE BECAUSE HERE IS WHERE THE POOL EXISTS ───────────
-    //
-    // The model client was constructed while the CONFIGURATION was parsed (`loadAiPorts`), which
-    // is strictly before this function opened the pool from the URL that configuration produced.
-    // So `onUsage` had to be handed something before there was anything to record into, and
-    // `config.aiUsage` is that relay — this line is the other half of it.
-    //
-    // BUFFERED (30 s), not per call: this process classifies once per message in a serial cycle,
-    // so a write per call would be a write per message for ever. The buffer is safe here in a way
-    // it is not on the serverless host — nothing freezes this process between a call and its
-    // flush — and the tail is flushed on shutdown below.
-    //
-    // Absent when managed AI is not armed, in which case there is no client to report through
-    // either. The rules-only deployment records nothing and spends nothing, which agrees.
+    // The LIVE classifier, behind a per-process circuit breaker. ONE circuit for the process, because
+    // the failure domain is the shared API key and endpoint — per-mailbox circuits would each burn
+    // their own faults into the same outage, and `cycle()` walks the rotation serially so one counter
+    // converges fastest. `circuit.port()` is resolved PER CYCLE and never cached: while open it
+    // answers `undefined`, `pipeline.ts`'s `classifier &&` short-circuits before the money question,
+    // and the message files rules-only with no model call and no debit; holding a wrapper across the
+    // open transition would charge every message and then fail it. The COST RECORDER is attached here
+    // because here is where the pool exists — `config.aiUsage` relays usage to it, BUFFERED (30 s),
+    // safe because nothing freezes this process between a call and its flush, tail flushed on
+    // shutdown. Absent when managed AI is not armed — the rules-only deployment records and spends nothing.
 
     // Absent classifier ⇒ no circuit and today's behaviour exactly (rules-only routing).
     const classifierCircuit: ClassifierCircuit | undefined = config.classifier
@@ -1303,35 +1070,16 @@ export async function startWorkerWithLock(
       };
     }
 
-    // ── THE ACCOUNT'S OHBOX POSTURE, RESOLVED PER ACCOUNT AND CACHED WITH A SHORT TTL ─────────
-    //
-    // One worker serves many accounts, so the posture is resolved from THAT account's
-    // `account_settings` row, never from config — the same reason the spend gate is built from the
-    // mailbox row's `accountId`. Cached briefly so a user toggling the posture takes effect within a
-    // cycle or two without a DB read on every cycle for every mailbox, and short enough that the
-    // change is not perceptibly delayed.
-    //
-    // A read FAULT resolves to the lenient default (`DEFAULT_OHBOX_POLICY`) and does NOT poison the
-    // cache — a transient blip must never demote a real person's mail, and must not stick. This is
-    // the same absent-config-selects-safe rule `resolveOhboxPolicy` states.
-    // ── AND THE SCREENING CUTOFF, OFF THE SAME ROW AND THE SAME READ ─────────────────────────
-    //
-    // `screening_baseline_at - dormancy_days` (mail migration 0056): mail that arrived before it keeps its
-    // arrival folder instead of being held at the consent gate. The arithmetic is done HERE, once
-    // per account per TTL, and a resolved instant is threaded into `planChange` — the engine never
-    // sees the two components, for the reason `PlanDeps.screeningCutoff` gives.
-    //
-    // A NULL baseline resolves to `undefined`, which is "no cutoff" and therefore the pre-0056
-    // routing. So does a read fault, on exactly the rule the posture beside it follows: the safe
-    // direction for an unknown is the consent gate, and a transient blip must not start leaving a
-    // stranger's mail in the INBOX. That is why the catch returns only `ohboxPolicy` — every other
-    // field, this one included, is absent there on purpose.
-    // ── AND THE STORAGE CAP, PER ACCOUNT, ON THE SAME DISCIPLINE ──────────────────────────────
-    //
-    // The hosted worker is THE metered composition: `SyncDeps.storageCap` is required, the local
-    // engines type `UNMETERED_STORAGE_CAP`, and this resolver is the one place a verdict's limit
-    // becomes the number ingest reserves against. Resolved at attach for the runtime's base deps
-    // and refreshed in the per-cycle spread below, so a limit change moves the cap within a cycle.
+    // The account's Ohbox posture, resolved per account and cached with a short TTL. One worker
+    // serves many accounts, so it is resolved from THAT account's `account_settings` row, never from
+    // config, and cached briefly so a toggle takes effect within a cycle or two without a DB read per
+    // cycle per mailbox. A read FAULT resolves to the lenient default (`DEFAULT_OHBOX_POLICY`) and
+    // does NOT poison the cache — a transient blip must never demote a real person's mail. The
+    // screening cutoff comes off the same row and read: `screening_baseline_at - dormancy_days` (mail
+    // 0056), resolved once per account per TTL and threaded into `planChange` as an instant; a NULL
+    // baseline or a read fault resolves to `undefined` (no cutoff, the consent-gate direction). And
+    // the storage cap per account: the hosted worker is THE metered composition (`SyncDeps.storageCap`
+    // required, local engines `UNMETERED_STORAGE_CAP`), refreshed per cycle so a limit change moves within one.
     const storageCapFor = makeStorageCapResolver(entitlements, log);
     const SCREENING_TTL_MS = 30_000;
     type ScreeningDeps = Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff">;
@@ -1363,40 +1111,16 @@ export async function startWorkerWithLock(
       }
     }
 
-    // ══════════════════════════════════════════════════════════════════════════════════════
-    //  THE ORGANIZER LEASE, wired
-    // ══════════════════════════════════════════════════════════════════════════════════════
-    //
-    // The invariant: exactly one active organizer per mailbox, enforced by a lease in
-    // `ohmail/_meta` — the mailbox is the only medium a LOCAL install and Cloud share. The
-    // lease engine existed, with a GreenMail two-worlds test beside it, and NOTHING
-    // called it, while real mailboxes were organized by Cloud with no claim in `ohmail/_meta`
-    // at all (verified against the live logins: the folder did not exist).
-    //
-    // The gate runs at TWO seams and both are necessary:
-    //
-    //  · `attach()`, immediately after `connect()` and BEFORE `ensureFolders()`. Everything
-    //    after that line writes to somebody's mailbox — `ensureFolders` creates the `ohmail/*`
-    //    tree and `runKickstart` re-routes the Screener backlog. The dual-mode rule for this
-    //    seam: reconnect is
-    //    learn-then-act, and an organizer reads the lease BEFORE its first move. A gate
-    //    that ran only in `cycle()` would let every attach organize a mailbox somebody else
-    //    holds, once per quarantine retry, for ever. Moving the first DRAIN off this path
-    //    deliberately left this gate where it was.
-    //  · `cycle()`, immediately before `runSyncCycle`. This is the RE-VERIFICATION, and it is
-    //    what turns a lease into an exclusion: a claim is only evidence for the cycle that read
-    //    it, so a mailbox that changed hands while we were attached stops being organized on the
-    //    next pass rather than at the next restart. It is also the gate the FIRST
-    //    sync of every mailbox passes through, the attach path no longer syncing anything.
-    //
-    // Both seams are guarded by ordering rather than by reading: `attach-nonblocking.e2e.test.ts`
-    // asserts that no `ensureFolders` precedes its mailbox's first `organize` verdict, and that no
-    // `changesSince` runs without a verdict recorded since the previous one.
-    //
-    // ONE ORGANIZER IDENTITY FOR THE WHOLE PROCESS, and it is not `instanceId`. See the block
-    // above `cloudInstallId` in `lease.ts`: a per-process id would make every leader failover
-    // read as a new organizer arriving, and the incoming worker would disable the mailbox the
-    // outgoing one was healthily serving.
+    // The organizer lease, wired. The invariant: exactly one active organizer per mailbox, enforced
+    // by a lease in `ohmail/_meta` — the only medium a LOCAL install and Cloud share. The lease engine
+    // existed with a GreenMail two-worlds test and NOTHING called it, while real mailboxes were
+    // organized by Cloud with no claim in the folder at all. The gate runs at TWO seams: `attach()`,
+    // after `connect()` and BEFORE `ensureFolders()` (everything after writes to somebody's mailbox,
+    // and reconnect is learn-then-act); and `cycle()`, before `runSyncCycle`, the RE-VERIFICATION that
+    // turns a lease into an exclusion (a claim is evidence only for the cycle that read it, so a
+    // mailbox that changed hands stops being organized next pass). Both seams are guarded by ORDERING
+    // (`attach-nonblocking.e2e.test.ts`), and there is ONE organizer identity for the whole process —
+    // not `instanceId`, or every leader failover would read as a new organizer arriving (`lease.ts`).
     const organizerInstallId = config.organizer?.installId ?? cloudInstallId(environment);
     const organizerDisplayName = config.organizer?.displayName ?? CLOUD_DISPLAY_NAME;
     const organizerStaleAfterMs = config.organizer?.staleAfterMs;
@@ -1411,20 +1135,14 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * A READER LOOKS. IT DOES NOT CLAIM .
-     *
-     * The APPEND-less read of `ohmail/_meta`, run once per reader cycle, whose whole product is
-     * the four holder columns — so the banner every client renders is a ROW read rather than a
-     * live IMAP dial per viewer. `readLeasePeek` cannot create the folder and cannot write a
-     * claim; that narrowness is the enforcement, not a convention (see `LeasePeekCapableAdapter`).
-     *
-     * NEVER THROWS. A reader that could not look is a reader that keeps reading mail: the columns
-     * keep their previous answer, which is at worst one poll interval stale, and the alternative
-     * — treating an unreadable folder as evidence — is exactly the conflation the lease forbids
-     * ("somebody else holds this" and "I could not look" must not be reachable from one another).
-     *
-     * It writes only when something CHANGED, so a reader whose organizer is quietly renewing
-     * costs zero writes per cycle.
+     * A reader looks. It does not claim. The APPEND-less read of `ohmail/_meta`, run once per reader
+     * cycle, whose whole product is the four holder columns — so the banner every client renders is a
+     * ROW read rather than a live IMAP dial per viewer. `readLeasePeek` cannot create the folder or
+     * write a claim; that narrowness is the enforcement (see `LeasePeekCapableAdapter`). NEVER throws:
+     * a reader that could not look keeps reading mail, the columns keep their previous answer (at
+     * worst one poll stale), and the alternative — treating an unreadable folder as evidence — is
+     * exactly the conflation the lease forbids. It writes only when something CHANGED, so a reader
+     * whose organizer is quietly renewing costs zero writes per cycle.
      */
     async function refreshReaderHolder(
       mb: { mailboxId: string; accountId: string },
@@ -1435,7 +1153,6 @@ export async function startWorkerWithLock(
       },
     ): Promise<void> {
       const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
-      if (typeof peek !== "function") return;
       try {
         /* ── THE CONFIGURED WINDOW, and omitting it was a real divergence ─────────────────────
          *
@@ -1447,10 +1164,28 @@ export async function startWorkerWithLock(
          * omission and the same cause, with a WRITE at the end of it. One window per mailbox, read
          * from one place; the sidecar already forwards its own (`engine.ts:3267`, `:3657`), which
          * is what made the difference legible. */
-        const seen = await readLeasePeek({
-          io: peek.call(adapter), now: new Date(),
+        /* THREE ANSWERS, AND THE MISSING ACCESSOR IS ONE OF THEM. This probed `leasePeekIo` and
+           answered a failed probe with a bare `return` — no write, no line, and the four holder
+           columns left saying exactly what an unorganized mailbox's say. Every banner in the
+           product reads those columns, so an adapter without the read-only accessor renders
+           "nobody organizes this mailbox" about a mailbox nothing has looked at. `answerLeasePeek`
+           makes that an ANSWER; the row is still left alone, because a failed look is not evidence
+           about who holds the mailbox. */
+        const answered = await answerLeasePeek({
+          io: typeof peek === "function" ? peek.call(adapter) : undefined,
+          now: new Date(),
           ...(organizerStaleAfterMs !== undefined ? { staleAfterMs: organizerStaleAfterMs } : {}),
         });
+        if (answered.answer === "unreadable") {
+          log.warn("organizer_holder_refresh_failed", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId, op: answered.op,
+            reason: "this reader could not look at the claim folder, so the holder columns keep "
+              + "their previous answer; a look that did not land is not evidence that nobody "
+              + "organizes this mailbox, and the next cycle looks again",
+          });
+          return;
+        }
+        const seen = answered.peek;
         // FRESHEST FIRST, and the freshest is the one a person means by "who organizes this".
         // `holders` is already sorted that way by `peekLease`; an empty list means the folder
         // holds no readable claim, which is reported as "nobody named" rather than invented.
@@ -1482,18 +1217,14 @@ export async function startWorkerWithLock(
         if (current.kind === kind && current.name === name && current.state === state
           && current.capabilities === capabilities && current.installId === installId
           && (current.since ? current.since.getTime() : null) === (since ? since.getTime() : null)) return;
-        /* ── ONLY AN OCCUPANCY FLIP IS AN EVENT (0.14.1) ──────────────────────────────────
-         *
-         * This function writes whenever ANY of the four columns moved, and most of those movements
-         * are not news: a peer restarting shifts `organized_since`, a machine being renamed shifts
-         * `organized_by_name`. Telling somebody "another install organizes this mailbox now" for
-         * either of those would be the notice crying wolf — and the once-per-event promise is only
-         * worth something if what counts as an event is what a person would call one.
-         *
-         * `held` ⇄ `stopped`, and either direction to or from "we have not looked", ARE what the
-         * two reader sentences are about: somebody is organizing this, or somebody stopped and you
-         * can claim it.
-         */
+        /* Only an occupancy flip is an event (0.14.1). This function writes whenever ANY of the four
+         * columns moved, and most of those movements are not news: a peer restarting shifts
+         * `organized_since`, a machine being renamed shifts `organized_by_name`, and telling somebody
+         * "another install organizes this now" for either would be the notice crying wolf — the
+         * once-per-event promise is worth something only if what counts as an event is what a person
+         * would call one. `held` ⇄ `stopped`, and either direction to or from "we have not looked",
+         * ARE what the two reader sentences are about: somebody is organizing this, or somebody
+         * stopped and you can claim it. */
         const stateChanged = current.state !== state;
         await refreshOrganizerHolder(db, mb.mailboxId, {
           kind, installId, displayName: name, claimedAt: since, state,
@@ -1517,29 +1248,21 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * Read the lease for one mailbox and, when it says no, make that durable.
-     *
-     * Returns `true` iff this process may organize this mailbox right now — which, since mail
-     * 0083, is the same question as "is this install the ORGANIZER of this mailbox", and `false`
-     * is no longer "stop": it is `role: "reader"`, and the caller keeps syncing. Throws
-     * {@link LeaseUnavailableError} when the lease could not be read at all — never a stand-down,
-     * because "somebody else holds this" and "I could not look" must not be reachable from one
-     * another. Both call sites exempt that class the way they already exempt
-     * `ClassifierFaultError`.
-     *
-     * `false` has TWO causes and they are deliberately one answer here: another organizer holds
-     * the mailbox, or nobody has asked this install to organize it (a consent-less mailbox, the
-     * state `POST /mailboxes` creates). The behaviour is identical — read, move nothing — and what
-     * distinguishes them for a human is the ROW, which names a holder only in the first case.
-     *
-     * The demotion write is FENCED like every other mailbox lifecycle write, and a fenced-out
-     * write still demotes IN THIS PROCESS: the row belongs to whoever leads the shard now, but the
-     * decision not to organize is ours and is not contingent on recording it.
+     * Read the lease for one mailbox and, when it says no, make that durable. Returns `true` iff this
+     * process may organize the mailbox right now — since mail 0083 the same question as "is this
+     * install the ORGANIZER", and `false` is no longer "stop": it is `role: "reader"`, and the caller
+     * keeps syncing. Throws {@link LeaseUnavailableError} when the lease could not be READ at all,
+     * never a stand-down (that "somebody else holds this" and "I could not look" must not be reachable
+     * from one another); both call sites exempt that class like `ClassifierFaultError`. `false` has
+     * two causes deliberately answered as one — another organizer holds it, or nobody asked this
+     * install to (a consent-less mailbox) — differing only in the ROW, which names a holder in the first. The demotion write is FENCED, but a fenced-out write still demotes IN THIS PROCESS.
      */
     async function mayOrganize(
       mb: { mailboxId: string; accountId: string },
       lease: {
         takeoverAuthorizedAt: Date | null; disabledReason: string | null;
+        /** Mail 0104 — the VERB behind the stamp; see {@link MailboxRuntime.lease}. */
+        takeoverIntent: OrganizerIntent;
         organizerRole: OrganizerRole;
         organizeConsentedAt: Date | null;
         /** Mail 0088 — "stop organizing this mailbox, keep my mail", honoured before anything. */
@@ -1556,36 +1279,15 @@ export async function startWorkerWithLock(
        */
       requestKeyForGate: string | null,
     ): Promise<boolean> {
-      /* ══ THE RELEASE IS HONOURED FIRST, BEFORE THE LEASE IS READ AT ALL (0.14.1) ═══════
-       *
-       * "Stop organizing this mailbox and keep my mail" is not a question for the lease. The lease
-       * answers "who is entitled to organize this", and the answer here is nobody — the person has
-       * withdrawn the entitlement, and there is no folder content that could change that.
-       *
-       * ── AND IT IS FIRST FOR A REASON THAT IS NOT ORDERING PREFERENCE ────────────────────────
-       *
-       * Below this arm, `readMailboxLease` APPENDS. An install that read the lease before honouring
-       * the release would renew its claim, and then release it one statement later — leaving a
-       * window in which a machine that has been told to stop is advertising itself as the
-       * organizer, once per cycle, in somebody else's mailbox. It would also spend the round trip.
-       *
-       * THE ORDER OF THE THREE WRITES BELOW IS LOAD-BEARING:
-       *
-       *  1. the CLAIM goes first, while the connection that can expunge it is open. This is the
-       *     only teardown-shaped path in this process that releases, and it releases for
-       *     `releaseOrganizerClaim`'s stated reason: a fresh claim left behind stands another
-       *     install down for the whole staleness window, at exactly the moment somebody has chosen
-       *     to move organizing elsewhere.
-       *  2. the ROW second, which is what makes the release durable and what
-       *     `closeStoodDownAppointments` reads to decide it may act (its precondition is
-       *     `organizer_role = 'reader'`, checked inside its own transaction).
-       *  3. the APPOINTMENTS last, and only after the row says reader — the other order closes
-       *     nothing, silently, because the precondition is not met yet.
-       *
-       * A FAILED RELEASE DOES NOT ABORT THE CEASING. This install has stopped organizing whichever
-       * way the writes went; the costs of each failure are one staleness window (the claim), one
-       * more cycle in which the request is re-honoured (the row), and a worse sentence on a
-       * scheduled send (the appointments). None of them is a reason to keep organizing.
+      /* The release is honoured FIRST, before the lease is read at all (0.14.1). "Stop organizing and
+       * keep my mail" is not a question for the lease — the answer is nobody, the person withdrew the
+       * entitlement. It is first because `readMailboxLease` below APPENDS: an install that read the
+       * lease first would renew its claim and release it one statement later, advertising itself as
+       * the organizer of a mailbox it has been told to stop, once per cycle. The three writes are
+       * ordered: the CLAIM first (while the connection that can expunge it is open —
+       * `releaseOrganizerClaim`, or a fresh claim stands another install down for the staleness
+       * window); the ROW second (what makes the release durable, and what `closeStoodDownAppointments`
+       * reads); the APPOINTMENTS last (the other order closes nothing, silently). A failed release does NOT abort the ceasing — this install has stopped organizing whichever way the writes went.
        */
       if (lease.releaseRequestedAt !== null) {
         const removed = await releaseOrganizerClaim(
@@ -1595,50 +1297,25 @@ export async function startWorkerWithLock(
           { mailboxId: mb.mailboxId, accountId: mb.accountId, adapter, leaseNonce: nonce.leaseNonce },
           "the person asked this install to stop organizing this mailbox and keep reading it",
         );
-        /* ══ ZERO CLAIMS REMOVED IS NOT A RELEASE ═════════════════════════════════════════════
-         *
-         * The release is authorized from the row as it stood when the person pressed, and carried
-         * out here a cycle later. The mailbox can change hands in between — another install takes
-         * the lease and expunges this one's claim — and the removal above matches on OUR install
-         * id, so it removes nothing and used to say nothing about that.
-         *
-         * `markMailboxReleased` then ran anyway, and it nulls all SIX holder columns. The row said
-         * nobody organizes this mailbox while another install actively did, and every client's
-         * banner is a row read. That is the same defect the install-id column was added to close,
-         * one layer down: an answer about ownership derived from something other than who holds
-         * the claim.
-         *
-         * So the row is only stamped released when this install's claim was actually taken out, or
-         * when the folder holds NOBODY — which is a genuine release, just one somebody else's
-         * cleanup got to first. A foreign claim, or a folder we could not read, leaves the request
-         * standing: the ask is re-honoured next cycle, costing one attempt per poll, and it heals
-         * itself the moment the foreign claim goes. The holder columns keep naming the real holder,
-         * so the person is told who has it rather than that nobody does.
+        /* Zero claims removed is not a release. The release is authorized from the row as it stood
+         * when the person pressed and carried out a cycle later, and the mailbox can change hands in
+         * between — another install expunges this one's claim — so the removal above (matched on OUR
+         * install id) removes nothing and used to say nothing about it. `markMailboxReleased` then ran
+         * anyway and nulls all six holder columns, so the row said nobody organizes this mailbox while
+         * another install actively did (every banner is a row read) — the install-id defect one layer
+         * down. So the row is stamped released only when our claim was actually taken out, or the
+         * folder holds NOBODY; a foreign claim leaves the request standing, re-honoured next cycle,
+         * healing when the foreign claim goes, with the holder columns still naming the real holder.
          */
-        /* ══ THE FOLDER DECIDES, NOT THE COUNT ════════════════════════════════════════════════
-         *
-         * The first cut of this asked the peek only when the removal returned ZERO, and that left
-         * the same defect standing one case over: if another install appends its claim while ours
-         * is still there, removing ours returns ONE, the count looks like success, and the row is
-         * cleared over a claim that is still in the folder. A positive count says our claim went,
-         * not that the mailbox is free.
-         *
-         * So the folder is read after every removal, and the row is stamped only when nothing
-         * else is holding it. Four things withhold, and each is a different kind of "we cannot
-         * say the mailbox is free":
-         *
-         *  · a LIVE foreign claim — somebody else has it, which is the whole point;
-         *  · UNREADABLE claims — the lease contract is explicit that evidence which says it is a
-         *    claim and cannot be parsed is EVIDENCE, not nothing (`MalformedClaim`), and a folder
-         *    holding only unreadable claims is `stopped`, never `none`;
-         *  · a folder we could not read at all — "we did not see a foreign claim" and "there is
-         *    none" must not be reachable from one another;
-         *  · an adapter with no read side. Unreachable in production (`ImapAdapter.leasePeekIo`
-         *    always exists); withheld rather than assumed, because the assumption is the bug.
-         *
-         * A STALE foreign claim does not withhold. It is the corpse of an install that stopped
-         * renewing, the takeover path exists to step over it, and blocking on one would leave the
-         * request re-honoured every cycle for ever with nothing able to clear it.
+        /* The folder decides, not the count. The first cut asked the peek only when the removal
+         * returned ZERO, which left the defect one case over: if another install appends its claim
+         * while ours is still there, removing ours returns ONE, the count looks like success, and the
+         * row is cleared over a claim still in the folder. A positive count says our claim went, not
+         * that the mailbox is free. So the folder is read after every removal and the row is stamped
+         * only when nothing else holds it. Four things withhold: a LIVE foreign claim; UNREADABLE
+         * claims (a `MalformedClaim` is EVIDENCE, not nothing); a folder we could not read at all; an
+         * adapter with no read side (unreachable in production, withheld not assumed). A STALE foreign
+         * claim does NOT withhold — it is a corpse the takeover path steps over.
          */
         let mayMark = false;
         /**
@@ -1647,21 +1324,15 @@ export async function startWorkerWithLock(
          * "no peek on this adapter") are all forms of not knowing; this one is knowing.
          */
         let sawLiveHolder = false;
-        /* ── THE PEEK IS NOT GATED ON OUR REMOVAL, AND THAT MATTERS SINCE THE NONCE SCOPE ──────
-         *
-         * It used to sit inside `if (removed !== null)`, on the reading that a failed removal left
-         * nothing to certify. A release addressed by (install, nonce) added a THIRD outcome to
-         * that condition: an install that cannot name its claim refuses, `removed` is `null`, and
-         * the peek never ran — so `sawLiveHolder` stayed false and the lapse bound below stamped
-         * "nothing organizes this mailbox" while another install actively did. Measured, not
-         * reasoned: `release-stranded-claim.test.ts`'s holder case went red in exactly that
-         * direction the moment the refusal was introduced.
-         *
-         * The peek answers a different question from our removal — "is this mailbox free?", not
-         * "did our delete land" — so it is asked whenever the adapter can answer it. `mayMark`
-         * still requires our own removal to have happened, which is the part that was never the
-         * peek's to decide.
-         */
+        /* The peek is NOT gated on our removal, and that matters since the nonce scope. It used to
+         * sit inside `if (removed !== null)`, on the reading that a failed removal left nothing to
+         * certify; a release addressed by (install, nonce) added a THIRD outcome — an install that
+         * cannot name its claim refuses, `removed` is `null`, and the peek never ran, so
+         * `sawLiveHolder` stayed false and the lapse bound stamped "nothing organizes this" while
+         * another install actively did (`release-stranded-claim.test.ts`'s holder case went red in
+         * exactly that direction). The peek answers "is this mailbox free?", not "did our delete
+         * land", so it is asked whenever the adapter can answer it; `mayMark` still requires our own
+         * removal, the part that was never the peek's to decide. */
         {
           const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
           if (typeof peek === "function") {
@@ -1704,29 +1375,15 @@ export async function startWorkerWithLock(
             }
           }
         }
-        /* ── A LAPSE BOUND, SO "STOPPING ON THE NEXT PASS" CANNOT STAND FOR EVER ─────────────
-         *
-         * Every withholding path above is honest and every one of them is UNBOUNDED. A folder over
-         * the read ceiling is the plain case: confirming the release needs the folder read, that
-         * read never completes, the stamp never clears, and the pane says "Stopping on the next
-         * pass" until somebody empties the folder by hand.
-         *
-         * The bound is the staleness window, because that is the window after which no install
-         * honours a record — and this arm RETURNS AHEAD OF THE GATE, so a pending release means
-         * our claim has not been renewed since it was asked. Once it has been un-renewed for a
-         * whole window it has aged out of the folder on its own and the release is a fact, whether
-         * or not this process could watch it happen. Exactly the sidecar's `releasedByLapse`, on
-         * exactly its reasoning.
-         *
-         * It does NOT flip the release — it completes one already asked for. `TF_LEASE_STALE_MS`
-         * is the knob, refused as a non-negative integer by `optInt` at load, so there is one
-         * window here and no second value to disagree with it.
-         *
-         * AND IT DOES NOT STEP OVER A HOLDER WE SAW. `markMailboxReleased` nulls all six holder
-         * columns, so stamping over a live foreign claim would put "nothing organizes this
-         * mailbox" in front of somebody while another install actively does — the defect the
-         * withholding exists to prevent. The bound is for NOT KNOWING, and a seen holder is
-         * knowing; that case keeps re-honouring the request and heals when the claim goes.
+        /* A lapse bound, so "stopping on the next pass" cannot stand for ever. Every withholding path
+         * above is honest and UNBOUNDED — a folder over the read ceiling never completes the read that
+         * confirms the release, so the pane says "Stopping on the next pass" until somebody empties the
+         * folder by hand. The bound is the staleness window (the window after which no install honours
+         * a record), and this arm RETURNS AHEAD OF THE GATE, so a pending release means our claim has
+         * not been renewed since it was asked — un-renewed for a whole window, it has aged out on its
+         * own and the release is a fact (the sidecar's `releasedByLapse`, its reasoning). It COMPLETES
+         * one already asked for, never flips one; `TF_LEASE_STALE_MS` is the one knob. It does NOT step
+         * over a holder we saw — the bound is for NOT KNOWING, and a seen holder is knowing.
          */
         const lapseMs = organizerStaleAfterMs ?? DEFAULT_STALE_AFTER_MS;
         const releasedByLapse = !mayMark && !sawLiveHolder
@@ -1788,24 +1445,15 @@ export async function startWorkerWithLock(
         }
         return false;
       }
-      /* -- A CONSENT-LESS MAILBOX IS NEVER PROMOTED BY AN EMPTY FOLDER  -----------
-       *
-       * `decideLease`'s first arm organizes a mailbox with ZERO claims — "nobody has ever
-       * organized this mailbox", which is the right answer for a mailbox somebody asked us to
-       * organize and is a SEIZURE for one they merely connected. `POST /mailboxes` now creates a
-       * consent-less reader precisely so a fresh connect builds a mirror and moves nothing, and
-       * without this line the very first cycle would find an empty `ohmail/_meta`, claim it,
-       * create the `ohmail/*` tree and file the backlog — the outcome the pre-consent state
-       * exists to prevent, reached before the person ever saw the consent screen.
-       *
-       * It sits ABOVE the read rather than inside `decideLease` because it is not a fact about
-       * the LEASE: the folder says what it says. It is a fact about whether THIS install has been
-       * asked, and that lives in the row.
-       *
-       * `takeover_authorized_at` overrides it, and must: that stamp IS the explicit human action,
-       * and `organizeHere` writes both columns in one transaction — so a mailbox reaching here
-       * with a stamp and no consent is one whose consent write is committing beside it, never a
-       * mailbox nobody asked about.
+      /* A consent-less mailbox is never promoted by an empty folder. `decideLease`'s first arm
+       * organizes a mailbox with ZERO claims ("nobody has ever organized this"), the right answer for
+       * a mailbox somebody asked us to organize and a SEIZURE for one they merely connected.
+       * `POST /mailboxes` now creates a consent-less reader precisely so a fresh connect moves
+       * nothing, and without this line the first cycle would find an empty `ohmail/_meta`, claim it,
+       * create the tree and file the backlog — before the person ever saw the consent screen. It sits
+       * ABOVE the read because it is not a fact about the LEASE (the folder says what it says) but
+       * about whether THIS install has been asked, which lives in the row. `takeover_authorized_at`
+       * overrides it and must: that stamp IS the explicit human action, written beside consent in one tx.
        */
       if (lease.organizeConsentedAt === null && lease.takeoverAuthorizedAt === null) {
         log.info("organizer_awaiting_consent", {
@@ -1815,44 +1463,15 @@ export async function startWorkerWithLock(
         });
         return false;
       }
-      /* ══ A READER WITH NO PRESS NEVER ENTERS THE GATE ═══════════════════════════════════════
-       *
-       * ── THE DEFECT THIS CLOSES, WHICH WAS LIVE ON CLOUD AND ONLY ON CLOUD ──────────────────
-       *
-       * `readMailboxLease` is not a report. It runs the WRITE gate, and `decideLease`'s arm 4 —
-       * "the folder holds no readable claim at all, so nobody has ever organized this mailbox" —
-       * answers `organize` and APPENDS. That arm is correct for the question it is asked. The
-       * mistake was asking it.
-       *
-       * A CONSENTED READER against an EMPTY `ohmail/_meta` is not a hypothetical: it is what the
-       * folder looks like the moment the other organizer releases cleanly, which is precisely what
-       * a well-behaved stand-down and the release below both produce. This gate then ran arm 4 on
-       * the very next cycle, claimed the mailbox, and `:1493` promoted the row — AUTO-RESUME WITH
-       * NO PRESS, sixty seconds after somebody deliberately moved organizing away.
-       *
-       * The desktop door never had it (`reader-no-auto-resume.test.ts` pins the sidecar's arm), so
-       * the two doors disagreed about the product's own governing rule — *ceasing to organize is
-       * automatic; BECOMING an organizer always requires an explicit human action* — with the
-       * hosted side on the wrong side of it.
-       *
-       * ── AND WITHOUT THIS LINE THE RELEASE ABOVE IS A CONTROL THAT UNDOES ITSELF ────────────
-       *
-       * That is what makes this a REQUIRED fix rather than a hardening. "Stop organizing here" ends
-       * with an empty folder and a consented reader — the exact shape arm 4 promotes — so the
-       * release would be reversed by the next cycle of the process that performed it, every time,
-       * and the button would look broken in the most alarming possible way.
-       *
-       * ── WHAT REPLACES THE READ ─────────────────────────────────────────────────────────────
-       *
-       * Nothing here, and that is deliberate: BOTH call sites already peek on a `false` answer
-       * (`attach`'s else-branch and `visitMailbox`'s `if (!organize)`), through `refreshReaderHolder`
-       * — the APPEND-less `readLeasePeek` whose IO object has one method and no way to write. So
-       * the reader still learns who holds the mailbox on every cycle and its banner stays fresh;
-       * it simply learns by LOOKING. Peeking a second time here would double the FETCH per cycle
-       * for one answer.
-       *
-       * `takeoverAuthorizedAt` is the exemption and must be: that stamp IS the explicit human
-       * action, so a reader carrying one is exactly the reader that should be allowed to claim.
+      /* A reader with no press never enters the gate. `readMailboxLease` is not a report — it runs the
+       * WRITE gate, and `decideLease`'s arm 4 ("no readable claim, so nobody has ever organized this")
+       * answers `organize` and APPENDS. That arm is correct for the question it is asked; the mistake
+       * was asking it. A CONSENTED READER against an EMPTY `ohmail/_meta` is what the folder looks like
+       * the moment the other organizer releases cleanly, so this gate ran arm 4 the next cycle, claimed
+       * the mailbox and promoted the row — AUTO-RESUME WITH NO PRESS, sixty seconds after somebody
+       * moved organizing away, and the release above reversed by the cycle that performed it. The
+       * desktop door never had it (`reader-no-auto-resume.test.ts`). Nothing replaces the read: both
+       * call sites already peek on `false` through `refreshReaderHolder`, so the banner stays fresh. `takeoverAuthorizedAt` is the exemption — that stamp IS the explicit human action.
        */
       if (lease.organizerRole === "reader" && lease.takeoverAuthorizedAt === null) {
         log.info("organizer_reader_peek_only", {
@@ -1862,28 +1481,15 @@ export async function startWorkerWithLock(
         });
         return false;
       }
-      /* ── WHAT THIS CLAIM WILL OFFER A READER (mail 0090) ─────────────────────────────────
-       *
-       * `requests` is advertised only while this account HOLDS a request key, because that key is
-       * the only thing that lets this organizer tell a genuine reader's decision from a message
-       * anyone with APPEND rights on the mailbox wrote. No key, no capability, and a reader is
-       * refused honestly at its own door instead of queueing a decision nothing can verify.
-       *
-       * MINTED here, not merely read, and only on THIS door: the hosted database is where an
-       * account's key lives, so the hosted worker is the one process entitled to create one. A
-       * LOCAL install must never mint its own — it would generate a key the Cloud reader has never
-       * seen, and every record either side wrote would be refused by the other. It receives the
-       * account's key over an authenticated call instead, and holds no key at all until it does.
-       *
-       * So on this door the answer is unconditionally YES once the mint returns, and the `catch` is
-       * where the interesting case lives: a key this process could not read or create means the
-       * claim advertises NOTHING and readers are refused honestly, while mail keeps flowing. That
-       * is the fail-safe direction — the request channel is secondary to reading mail, and a claim
-       * advertising a capability with no key behind it would leave readers queueing decisions this
-       * organizer can never verify.
-       *
-       * Read AFTER the reader peek-only return above, so a mailbox this install merely reads never
-       * mints a key it has no use for.
+      /* What this claim will offer a reader (mail 0090). `requests` is advertised only while this
+       * account HOLDS a request key, the only thing that lets this organizer tell a genuine reader's
+       * decision from a message anyone with APPEND rights wrote — no key, no capability, a reader
+       * refused honestly at its own door. MINTED here, not merely read, and only on THIS door: the
+       * hosted database is where an account's key lives, so the hosted worker is the one process
+       * entitled to create one; a LOCAL install must never mint its own (it would generate a key the
+       * Cloud reader has never seen) and receives it over an authenticated call. So the answer is
+       * unconditionally YES once the mint returns, and the `catch` is the interesting case: a key this
+       * process could not read or create means the claim advertises NOTHING, the fail-safe direction. Read AFTER the reader peek-only return, so a mailbox this install merely reads mints no key.
        */
       // WHAT THIS CLAIM OFFERS A READER: `requests`, but only where a shared secret exists to
       // verify one with. The key is derived from the mailbox password at attach and carried on the
@@ -1907,7 +1513,12 @@ export async function startWorkerWithLock(
         // handed over unchanged, because the election ranks presses against each other: what
         // decides a contest between this install and another one that has ALSO been pressed for is
         // which person pressed last, and a boolean cannot say.
-        takeover: lease.takeoverAuthorizedAt ? { authorizedAt: lease.takeoverAuthorizedAt } : null,
+
+        // AND THE VERB, which lets rule 6 refuse a press that asked only to JOIN a mailbox
+        // somebody else is organizing. The two are one fact about one press.
+        takeover: lease.takeoverAuthorizedAt
+          ? { authorizedAt: lease.takeoverAuthorizedAt, intent: lease.takeoverIntent }
+          : null,
         ...(organizerStaleAfterMs !== undefined ? { staleAfterMs: organizerStaleAfterMs } : {}),
         log: (event: string, detail: Record<string, unknown>): void => {
           log.info(event, { ...detail, mailboxId: mb.mailboxId, accountId: mb.accountId });
@@ -1922,29 +1533,25 @@ export async function startWorkerWithLock(
         // `MIN_PERMIT_TTL_MS` refuses. Every write in the cycle that follows asks this receipt.
         nonce.leasePermit = await acquireLeasePermit({
           ...leaseArgs, adopt: { outcome, at: gateAskedAt },
+          /* THE NONCE THE PERMIT RENEWS IS THIS RUNTIME'S NONCE. A re-read past the deadline or
+             the write count writes a new claim and expunges the old one; holding the old nonce
+             made the next cycle's gate read this worker's own claim as a restored clone, stand it
+             down, and leave a live claim with nobody behind it. See `LeasePermitInput.onRenew`. */
+          onRenew: ({ nonce: renewed }) => { nonce.leaseNonce = renewed; },
         });
         // ONE-SHOT. The authorization bought this becoming and no other; leaving it set would
         // let a lapse-then-resubscribe seize the mailbox back months later from whatever a human
         // deliberately moved it to. Written only when there IS something to clear, so the steady
         // state is zero extra writes per cycle.
-        /* -- AND THE ROW'S ROLE IS THE THIRD TERM, WITHOUT WHICH THIS WROTE NOTHING 
-         *
-         * The two original terms were the whole of "there is a stand-down on this row" while a
-         * stand-down WAS `status='disabled'` plus a reason. 0083 moved that fact to
-         * `organizer_role` and left `disabled_reason` with no writer at all, so for the one shape
-         * that needs no stamp — a CONSENTED reader whose foreign organizer released its claim, at
-         * which point `decideLease` correctly says organize — both terms were null and this block
-         * was skipped. The lease said organizer, the pipeline ran as organizer, and the ROW went
-         * on saying `reader`.
-         *
-         * That is not a cosmetic disagreement: `organizer_role` is the authority every service
-         * write door consults (`assertOrganizerRole`), so the process would move mail on IMAP
-         * while its own API answered `409 organized_elsewhere` to every request that asked it to —
-         * naming itself as the holder, out of the holder columns nothing had cleared either.
-         *
-         * `apps/sidecar/src/engine.ts` repaired the identical hole in the identical place, and
-         * for the identical reason: the arm was unreachable until a reader could be promoted
-         * without a relaunch, and then it was not.
+        /* And the row's role is the third term, without which this wrote nothing. The two original
+         * terms were the whole of "there is a stand-down on this row" while a stand-down WAS
+         * `status='disabled'` plus a reason; 0083 moved that fact to `organizer_role` and left
+         * `disabled_reason` with no writer, so for the one shape needing no stamp — a CONSENTED reader
+         * whose foreign organizer released its claim, at which point `decideLease` says organize — both
+         * terms were null and this block was skipped: the lease said organizer, the pipeline ran as
+         * organizer, and the ROW went on saying `reader`. That is not cosmetic: `organizer_role` is the
+         * authority every write door consults (`assertOrganizerRole`), so the process moved mail on
+         * IMAP while its own API answered `409 organized_elsewhere`. `engine.ts` repaired the identical hole.
          */
         if (lease.takeoverAuthorizedAt || lease.disabledReason || lease.organizerRole === "reader") {
           try {
@@ -1963,36 +1570,24 @@ export async function startWorkerWithLock(
         return true;
       }
 
-      /* ── THE INTENTS THIS PROCESS RECORDED AND MAY NO LONGER CARRY OUT ─────────────────────
-       *
-       * Between the takeover and this poll the row still read `organizer`, so a paired device's
-       * forwarded move passed `assertOrganizerRole` and was recorded as a local `folder_state`
-       * intent. A reader's `reconcileFolders` skips it and the install that CAN perform it has
-       * never heard of it, so the near side would show a move that never reaches the mail server.
-       * It travels now, as the `message.move` request the door would have written.
-       *
-       * ON THE TRANSITION ONLY — `lease.organizerRole` still holds what the row says, and this
-       * gate answers `stand_down` every cycle while a foreign claim stands, so an ungated export
-       * would mint a request per cycle. Best-effort like the appointment close below it and for
-       * the same reason: this process has already stopped organizing the mailbox. */
-      /* ── THE HANDOVER RIDES THE DEMOTION'S OWN TRANSACTION, AND BOTH HALVES ARE CONTINGENT ──
-       *
-       * It used to be a separate transaction ahead of the write below, which left two sequences
-       * open. The first: a paired device's forwarded move can commit AFTER a handover that has
-       * already read its pending set and BEFORE the demotion — so this host accepted the move,
-       * became a reader, and neither performed nor exported it. The second: the handover's own
-       * failure was swallowed, so a demotion was recorded with an export that did not happen and
-       * every not-yet-exported move stayed on a reader for ever.
-       *
-       * One transaction closes both. `markMailboxStoodDown` takes `FOR UPDATE` on the mailbox row
-       * first (it is fenced), and `assertOrganizerRole` takes `FOR SHARE` on that row inside the
-       * transaction that records a forwarded move — so the lock is granted only once every such
-       * write in flight has committed, and one arriving afterwards waits for this commit and is
-       * then refused. Exported, or refused.
-       *
-       * ON THE TRANSITION ONLY — `lease.organizerRole` still holds what the row says, and this
-       * gate answers `stand_down` every cycle while a foreign claim stands, so an ungated export
-       * would mint a request per cycle. */
+      /* The intents this process recorded and may no longer carry out. Between the takeover and this
+       * poll the row still read `organizer`, so a paired device's forwarded move passed
+       * `assertOrganizerRole` and was recorded as a local `folder_state` intent — a reader's
+       * `reconcileFolders` skips it and the install that CAN perform it has never heard of it, so the
+       * near side shows a move that never reaches the mail server. It travels now, as the
+       * `message.move` request the door would have written. ON THE TRANSITION ONLY —
+       * `lease.organizerRole` still holds what the row says and this gate answers `stand_down` every
+       * cycle while a foreign claim stands, so an ungated export would mint a request per cycle.
+       * Best-effort: this process has already stopped organizing the mailbox. */
+      /* The handover rides the demotion's own transaction, and both halves are contingent. It used to
+       * be a separate transaction ahead of the write, leaving two sequences open: a paired device's
+       * forwarded move committing AFTER a handover read its pending set and BEFORE the demotion (the
+       * host accepted the move, became a reader, and neither performed nor exported it); and the
+       * handover's own failure swallowed, so a demotion was recorded with an export that did not
+       * happen. One transaction closes both: `markMailboxStoodDown` takes `FOR UPDATE` first and
+       * `assertOrganizerRole` takes `FOR SHARE` inside a forwarded-move transaction, so the lock is
+       * granted only once every such write has committed, and one arriving after waits and is refused.
+       * ON THE TRANSITION ONLY, or an ungated export would mint a request per cycle. */
       const wasOrganizer = lease.organizerRole === "organizer";
       /* A HOLDER RATHER THAN A `let`, so the read below is the handover's own answer and not a
          narrowing of the initializer: the assignment happens inside the transaction's callback. */
@@ -2078,34 +1673,16 @@ export async function startWorkerWithLock(
         });
         return false;
       }
-      // ── AND THE APPOINTMENTS THIS PROCESS CAN NO LONGER KEEP ARE CLOSED WITH A SENTENCE ────
-      //
-      // The mailbox leaves the roster from here (`loadEnabledMailboxes` excludes `disabled`), and
-      // a pending scheduled send does not travel — the portable profile carries configuration and
-      // deliberately no drafts. So the appointment is owed an ending now. See
-      // `closeStoodDownAppointments` for why FAILED rather than handed over: an adopted
-      // appointment is a window in which two organizers hold one send.
-      //
-      // Best-effort, like the write above it and for the same reason: standing down is a decision
-      // this process has already made and may not be made contingent on a second write. The
-      // hosted scheduled-send pass is the backstop — it refuses a `disabled` mailbox at due time
-      // and closes the row itself — so a fault here costs a worse sentence, never a silent send.
-      //
-      // ── DELIBERATELY NOT FENCED, AND THAT IS AN ARGUMENT RATHER THAN AN OMISSION ──────────
-      //
-      // Every lifecycle write on `mailboxes` carries {@link LeaderFence} because two CLOUD
-      // instances could otherwise both write one row across a shard handover. This write is
-      // justified by something else: the LEASE said another organizer holds this mailbox, and
-      // that is a fact about `ohmail/_meta` which any instance reading it reaches — a successor
-      // leader's own gate stands the same mailbox down on its own next pass. The fence arbitrates
-      // Cloud against Cloud; the lease arbitrates organizer against organizer, and the
-      // appointment is the organizer's.
-      //
-      // Fencing it would also break the ordinary case rather than an exotic one: `lifecycleWhere`
-      // refuses a mailbox that is ALREADY disabled, so `markMailboxStoodDown` returns false on
-      // every repeat stand-down — and a close gated on that answer would never run for the
-      // mailbox that has been stood down since before this code existed, which is precisely the
-      // population the fix is for.
+      // And the appointments this process can no longer keep are closed with a sentence. The mailbox
+      // leaves the roster here (`loadEnabledMailboxes` excludes `disabled`) and a pending scheduled
+      // send does not travel (the portable profile carries configuration, deliberately no drafts), so
+      // the appointment is owed an ending now — see `closeStoodDownAppointments` for why FAILED rather
+      // than handed over (an adopted appointment is two organizers holding one send). Best-effort, and
+      // the hosted scheduled-send pass is the backstop. DELIBERATELY NOT FENCED: the fence arbitrates
+      // Cloud against Cloud, but the LEASE said another organizer holds this, a fact any instance
+      // reading `ohmail/_meta` reaches — and fencing it would break the ordinary case, since
+      // `lifecycleWhere` refuses an already-disabled mailbox, so `markMailboxStoodDown` returns false
+      // on every repeat and a close gated on that would never run for a long-stood-down mailbox.
       await standDownAppointments(mb, outcome.reason);
       return false;
     }
@@ -2153,23 +1730,14 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * RELEASE the claim on a mailbox this process is no longer entitled to organize.
-     *
-     * The roster half of the entitlement gate is the parked-accounts reader — it drops a parked
-     * account's mailboxes out of `loadEnabledMailboxes`, and `reconcileRoster` detaches them.
-     * That is not enough on its own. A dropped row leaves a FRESH claim in `ohmail/_meta`, and a
-     * fresh Cloud claim stands a desktop install down: the account is parked, the user clicks "Organize from
-     * this Mac", and the button appears to do nothing for the whole staleness window because
-     * their own machine keeps reading our claim and standing itself down again. Ten minutes of a
-     * product that looks broken, at the exact moment somebody has just chosen to leave.
-     *
-     * So the claim is deleted while the connection that can delete it is still open. This is the
-     * ONLY teardown path that releases: `detach` is also reached by a connection error, a
-     * quarantine, a lost lock and a clean stop, and in every one of those Cloud fully intends to
-     * keep organizing — releasing there would hand the mailbox away on a deploy.
-     *
-     * Best effort, always. A failed release costs the winner one staleness window; a release
-     * that could abort a detach would be strictly worse than the fault it reports.
+     * Release the claim on a mailbox this process is no longer entitled to organize. The roster half
+     * (the parked-accounts reader dropping a parked account's mailboxes out of `loadEnabledMailboxes`,
+     * `reconcileRoster` detaching them) is not enough: a dropped row leaves a FRESH claim in
+     * `ohmail/_meta`, and a fresh Cloud claim stands a desktop install down — the account is parked,
+     * the user clicks "Organize from this Mac", and the button appears to do nothing for the staleness
+     * window. So the claim is deleted while the connection that can delete it is open. This is the
+     * ONLY teardown path that releases: `detach` is also reached by a connection error, quarantine,
+     * lost lock and clean stop, and in every one Cloud intends to keep organizing. Best effort — a release that could abort a detach would be worse than the fault it reports.
      */
     async function releaseOrganizerClaim(
       /**
@@ -2225,26 +1793,15 @@ export async function startWorkerWithLock(
     ): Promise<void> {
       const prev = quarantine.get(mailboxId);
       const attempts = (prev?.attempts ?? 0) + 1;
-      // PREFER THE SERVER'S OWN BACKOFF HINT, BOUNDED BY OUR CEILING.
-      //
-      // imapflow parses MS365's throttle reply — `BAD Request is throttled. Suggested Backoff
-      // Time: 92415 milliseconds` — and hangs the number on the error as `err.throttleReset`
-      // (`imapflow@1.5.0/lib/imap-flow.js:853-863`). It is MILLISECONDS, assigned raw with no
-      // unit conversion; reading it as seconds and multiplying by 1000 sleeps for a day. Until
-      // now this worker parsed it via the library and then threw it away, so a provider that
-      // told us exactly when to come back was retried on our own ladder regardless — which is
-      // what earns the next throttle.
-      //
-      // `Math.max` then `Math.min` is the whole contract: the hint may only LENGTHEN the wait
-      // (a hint shorter than the ladder loses, so a throttling provider can never talk us into
-      // retrying sooner than our own backoff), and it may never escape `retryMaxMs` (a hostile
-      // or mis-parsed hint cannot park a mailbox indefinitely). `backoffFor` is deliberately
-      // untouched — the ladder is still the floor, and `mailboxes.ts:381-383` points here for it.
-      //
-      // `Number.isFinite` rather than `typeof === "number"`: `Math.max(x, NaN)` is NaN, which
-      // would make `retryAt` NaN, and every `Date.now() >= NaN` is false — the mailbox would
-      // never leave quarantine. imapflow's own `!isNaN` guard means it cannot send one today;
-      // this is the wait computation refusing to depend on that.
+      // Prefer the server's own backoff hint, bounded by our ceiling. imapflow parses MS365's
+      // throttle reply — "Suggested Backoff Time: 92415 milliseconds" — onto the error as
+      // `err.throttleReset` (imapflow@1.5.0). It is MILLISECONDS, raw; reading it as seconds sleeps
+      // for a day. This worker parsed it and threw it away, so a provider that told us exactly when to
+      // come back was retried on our own ladder regardless — which earns the next throttle. `Math.max`
+      // then `Math.min` is the contract: the hint may only LENGTHEN the wait (never shorter than the
+      // ladder) and may never escape `retryMaxMs` (a hostile hint cannot park a mailbox for ever).
+      // `Number.isFinite` rather than `typeof === "number"`: `Math.max(x, NaN)` is NaN, `retryAt`
+      // becomes NaN, and every `Date.now() >= NaN` is false — the mailbox would never leave quarantine.
       const raw = (reason as { throttleReset?: unknown } | null | undefined)?.throttleReset;
       const hint = Number.isFinite(raw) ? (raw as number) : 0;
       const wait = Math.min(Math.max(backoffFor(attempts), hint), retryMaxMs);
@@ -2264,17 +1821,13 @@ export async function startWorkerWithLock(
       // bookkeeping failure.
       const code = classifyMailboxError(reason, phase);
       /**
-       * A CEILING WE SET IS NOT A BROKEN MAILBOX — the one arm that does not write `error`.
-       *
+       * A ceiling we set is not a broken mailbox — the one arm that does not write `error`.
        * `ImapBoundExceeded` is raised by this codebase, never by the server: the mailbox
-       * authenticated, answered, and sent more than one pass takes. `classifyMailboxError` has no
-       * way to see that (it reads response codes, errnos and a flag, and a bound breach carries
-       * none of them), so it answers `sync` and the row used to say the mailbox had failed.
-       *
-       * The backoff is UNCHANGED and deliberately so — the ladder above still runs, the in-memory
-       * entry is still written, and `retry_after` still persists it. Only the row's verdict moves.
-       * Keyed on the CLASS and not on a bound code, so a ceiling added later is covered without
-       * being enumerated here.
+       * authenticated, answered, and sent more than one pass takes. `classifyMailboxError` reads
+       * response codes, errnos and a flag, none of which a bound breach carries, so it answers `sync`
+       * and the row used to say the mailbox failed. The backoff is UNCHANGED (the ladder runs, the
+       * in-memory entry is written, `retry_after` persists it) — only the row's verdict moves. Keyed
+       * on the CLASS, not a bound code, so a ceiling added later is covered without being enumerated.
        */
       const bounded = isImapBoundExceeded(reason);
       if (bounded) noteBlock(readLimited, mailboxId, "read_limited");
@@ -2358,71 +1911,14 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * ONE MAILBOX'S CONNECTION DIED ASYNCHRONOUSLY — contain it to that mailbox.
-     *
-     * This is the callback every adapter is handed, and it is the half of a crash-loop
-     * post-mortem that the placement fix does not cover. `ImapFlow` reports a socket that FAILED —
-     * a server `BYE`, an `ETIMEOUT` — by EMITTING `error`; with no listener Node raises an
-     * uncaught exception and `entry.ts` exits the process — so one customer's provider hiccup
-     * took down every account in the shard and the platform restarted the container every ~26 s.
-     * The adapter now always listens (`ImapAdapter.guardAsyncErrors`), and this decides what
-     * the failure costs: exactly one mailbox, detached and quarantined with its normal
-     * exponential backoff, while every other mailbox keeps syncing.
-     *
-     * ── AND IT NOW ALSO HEARS A SOCKET THAT MERELY *ENDED* ─────────────────────────────────
-     *
-     * "reports a dead socket by emitting `error`" was the claim this comment used to make, and it
-     * was wrong in the direction that cost most of an hour of production silence: imapflow calls its own
-     * `close()` on `_socketClose`/`_socketEnd`/a failed IDLE recovery, and `close()` emits
-     * **`close`**, never `error`. Nothing listened, so `onConnectionError` never fired and this
-     * function never ran — the drain had zero connection events for a total outage. The adapter now
-     * routes `close` here too, as an {@link ImapConnectionClosedError}, suppressed for teardowns we
-     * asked for.
-     *
-     * ── AND IT COSTS SOMETHING DIFFERENT, WHICH IS THE RULE APPLIED RATHER THAN RELITIGATED ──
-     *
-     * The rule is explicit that the consequence of a dead connection is DETACH and not
-     * quarantine, because quarantine writes `status='error'` plus an exponential backoff for an
-     * INFRASTRUCTURE fault — "the socket timed out" rendered to a customer as "your mailbox is
-     * broken". That argument does not stop applying because the detector changed. It applies HARDER
-     * here: the measured incident timeline fits `WORKER_NET_TIMEOUTS.socketMs` (120 s) → socket timeout →
-     * failed NOOP recovery → a silent `close()`, so the event this branch now hears is exactly the
-     * one that would have marked a healthy customer's mailbox `error` and bumped its `retry_count` — for a
-     * connection the worker's own deadline ended. Any provider that drops an idle connection would
-     * do the same on a schedule.
-     *
-     * So the two shapes are separated, by CLASS and never by a driver string (imapflow has both a
-     * `NoConnection` and an `EConnectionClosed`, so keying on either would be keying on its
-     * internals):
-     *
-     *  · the connection ERRORED (`error`: a `BYE`, an `ETIMEOUT`, a TLS failure) → detach AND
-     *    quarantine, exactly as before. Unchanged, and `connection-error.e2e.test.ts`
-     *    still asserts `quarantined === 1` for it;
-     *  · the connection merely ENDED (`close`) → DETACH ONLY. No `status='error'`, no
-     *    `error_code`, no `retry_count`, no backoff — so the next roster pass re-dials within
-     *    `rosterIntervalMs` (30 s) instead of waiting out `retryBaseMs` (60 s, doubling), and the
-     *    row keeps telling the truth. This is what makes it the FAST path; routed into the
-     *    quarantine it would have been the slow one.
-     *
-     * The cost of not quarantining, written down rather than discovered: a provider that accepts
-     * LOGIN, allows the lease read and the folder ops, establishes IDLE and THEN closes produces a
-     * re-dial every roster interval for ever, where a backoff would have widened to 16 minutes. It
-     * is not unbounded and it is not silent — `mailbox_connection_error` + `mailbox_detached` +
-     * `mailbox_attach_started` fire on every iteration, and because no cycle ever completes,
-     * `last_sync_at` stops advancing and the `sync_lag` rule pages at 15 minutes. A login the
-     * provider actually REJECTS still quarantines through `attach()`'s own catch, so the loop only
-     * exists for a provider that accepts everything and serves nothing.
-     *
-     * This is NOT the only detector, deliberately: `guardAsyncErrors` returns early for any client
-     * with no event surface, i.e. for every fake in this suite, so `cycle()` independently bounds
-     * the lease-unavailable arm by duration and detaches on it. Event-driven detection is the fast
-     * path (seconds); the bound is the one that cannot be bypassed by composition.
-     *
-     * ON THE QUEUE, not inline. Two reasons, and both are correctness rather than tidiness:
-     * a detach must never close an adapter a cycle is using, and an error raised DURING
-     * `attach()` — which itself runs on the queue — must land after that attach has finished
-     * and had its own catch, or the mailbox would be quarantined twice and its backoff would
-     * double on the first failure.
+     * One mailbox's connection died asynchronously — contain it to that mailbox. This is the callback
+     * every adapter is handed. `ImapFlow` reports a socket that FAILED by EMITTING `error`; with no
+     * listener Node raises an uncaught exception and `entry.ts` exits the process, so one customer's
+     * hiccup took down the shard and restarted the container every ~26 s. It now also hears a socket
+     * that merely ENDED: imapflow calls `close()` on `_socketClose`/a failed IDLE recovery, which
+     * emits `close`, never `error` — nothing listened, so a total outage had zero connection events.
+     * The two shapes are separated BY CLASS (never a driver string): ERRORED → detach AND quarantine;
+     * merely ENDED → DETACH ONLY (no `error`, no backoff), so the next roster pass re-dials in 30 s rather than waiting out `retryBaseMs`. ON THE QUEUE, so a detach never closes an adapter a cycle is using and an error during `attach()` lands after that attach's own catch.
      */
     function handleConnectionError(mailboxId: string, accountId: string, err: unknown): void {
       if (stopped) return;
@@ -2466,34 +1962,24 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * REGISTER one mailbox into the rotation: connect, prove the organizer lease, ensure the
-     * folder tree, join `runtimes`, kickstart once, establish IDLE. It does NOT sync — the
-     * first drain and restart convergence both ride `cycle()`, and the reason is
-     * measured rather than aesthetic: with two inline sync cycles here, one production mailbox held
-     * this function for over six minutes and the next mailbox in the roster was not dialled at all until it
-     * returned.
-     *
-     * EVERY failure path closes the adapter it just opened — previously a throw from
-     * `ensureFolders()` or the inline drain leaked the connection, because the adapter had not
-     * been pushed onto the tracked list yet.
+     * Register one mailbox into the rotation: connect, prove the organizer lease, ensure the folder
+     * tree, join `runtimes`, kickstart once, establish IDLE. It does NOT sync — the first drain and
+     * restart convergence both ride `cycle()`, and the reason is measured: with two inline sync cycles
+     * here, one production mailbox held this function for over six minutes and the next mailbox in the
+     * roster was not dialled until it returned. EVERY failure path closes the adapter it just opened —
+     * previously a throw from `ensureFolders()` or the inline drain leaked the connection, because the
+     * adapter had not been pushed onto the tracked list yet.
      */
     async function attach(mb: EnabledMailbox): Promise<void> {
-      // ── THE SETUP IS INSIDE THE BOUNDARY ──────────────────────────────────────────────────
-      //
-      // `loadMailboxCreds` and `makeAdapter` used to run ABOVE the `try` below, and that is a
-      // shard-wide outage waiting for one corrupt row. A credential envelope that cannot be
-      // decrypted — bad ciphertext, a key version this deployment no longer carries — or an
-      // `adapterFactory` that refuses one mailbox's configuration threw from OUTSIDE every catch
-      // in this file. On a cold start that rejected `startWorkerWithLock`, closed every mailbox
-      // already attached and released the shard lock; on a timer roster pass the pass-level catch
-      // logged and stopped, so the second and every later unattached mailbox were never visited. The
-      // roster is stable oldest-first, so the same bad row led every pass: healthy mailboxes
-      // behind it stayed unsynced for ever, and the failing one never reached an accounted retry
-      // bucket at all.
-      //
-      // `adapter` is therefore nullable and the catch below null-guards its close. That is the
-      // whole shape of the fix: everything that can fail on behalf of ONE mailbox happens where
-      // that mailbox's own catch can see it.
+      // The setup is INSIDE the boundary. `loadMailboxCreds` and `makeAdapter` used to run ABOVE the
+      // `try` below — a shard-wide outage waiting for one corrupt row. A credential envelope that
+      // cannot be decrypted (bad ciphertext, a key version this deployment no longer carries), or an
+      // `adapterFactory` that refuses one mailbox's configuration, threw from OUTSIDE every catch: on
+      // a cold start it rejected `startWorkerWithLock` and released the lock; on a timer pass the
+      // pass-level catch stopped, so later unattached mailboxes were never visited. The roster is
+      // stable oldest-first, so the same bad row led every pass and healthy mailboxes behind it stayed
+      // unsynced for ever. `adapter` is therefore nullable and the catch null-guards its close — every
+      // per-mailbox failure now happens where that mailbox's own catch can see it.
       let adapter: MailboxAdapter | null = null;
       let unwatch: (() => Promise<void>) | null = null;
       try {
@@ -2515,23 +2001,15 @@ export async function startWorkerWithLock(
         awaitingCreds.delete(mb.mailboxId);
         announced.creds.delete(mb.mailboxId);
 
-        // ── WHAT THIS MAILBOX'S SUBMISSION SERVER WILL ACCEPT (mail 0055) ────────────────────
-        //
-        // Attempted here because this is a place that already holds decrypted SMTP credentials
-        // for a mailbox nobody is asking to change. The rule and its bounds are
-        // `learnSmtpMaxSize`'s; the timeouts and the write are `smtp-size.ts`'s.
-        //
-        // ON THE MANAGED DEPLOYMENT THIS ALWAYS FAILS, and that is measured rather than assumed:
-        // Railway blocks outbound submission ports, so every dial from here answers "Connection
-        // timeout" while the IMAP dial to the same host on 993 completes in the next log line.
-        // The managed service learns these numbers from the API host on a schedule instead. This
-        // arm is kept because it is correct wherever egress is open — a self-hosted worker on
-        // somebody's own network — and it is bounded to one refused connection per mailbox per
-        // process, logged at `info`.
-        //
-        // AWAITED rather than fired and forgotten, and it is worth saying why: the alternative
-        // leaves a promise rejecting into nothing on a path whose whole purpose is that one
-        // mailbox's failure stays one mailbox's failure.
+        // What this mailbox's submission server will accept (mail 0055). Attempted here because this
+        // is a place that already holds decrypted SMTP credentials for a mailbox nobody is changing;
+        // the rule and bounds are `learnSmtpMaxSize`'s, the timeouts and write `smtp-size.ts`'s. ON
+        // THE MANAGED DEPLOYMENT THIS ALWAYS FAILS, measured: Railway blocks outbound submission
+        // ports, so every dial answers "Connection timeout" while the IMAP dial to the same host on
+        // 993 completes in the next log line — the managed service learns these numbers from the API
+        // host instead. Kept because it is correct where egress is open (a self-hosted worker),
+        // bounded to one refused connection per mailbox per process, logged at `info`. AWAITED rather
+        // than fired-and-forgotten, so one mailbox's failure stays one mailbox's failure.
         try {
           const learned = await learnSmtpMaxSize({
             mailboxId: mb.mailboxId,
@@ -2612,34 +2090,24 @@ export async function startWorkerWithLock(
         await adapter.connect();
         const connectMs = Date.now() - tAttach;
 
-        // ── THE ORGANIZER LEASE, BEFORE THE FIRST MOVE ────────────────────────────────────
-        //
-        // Here and not below `ensureFolders()`: every line after this one WRITES to somebody's
-        // mailbox. `ensureFolders` creates the `ohmail/*` tree and `runKickstart` re-routes the
-        // Screener backlog. If another organizer holds this mailbox, neither may happen — and
-        // "learn then act" is the rule for exactly this seam, because reconnect-after-sleep is
-        // when a mailbox is most likely to have changed hands.
-        //
-        // Taking the first DRAIN off this path did NOT move this gate, and the
-        // ordering it protects is now guarded rather than argued: `ensure_folders` may not
-        // precede `lease_organize` for any mailbox
-        // (`test/attach-nonblocking.e2e.test.ts`, claim 5).
-        //
-        // Standing down here returns EARLY and leaves the mailbox out of `runtimes`, so this
-        // attach ends with the connection closed by the `finally`-shaped path below rather than
-        // with a quarantine: it is not a failure, so it must not earn a retry backoff. The row
-        // is now `disabled`, so the next roster pass does not offer it again.
-        //
-        // The nonce this gate writes is carried onto the runtime below rather than discarded:
-        // it is the clone defence's memory, and a gate whose nonce is thrown away re-arms that
-        // defence from scratch on every cycle.
+        // The organizer lease, before the first move. Here and not below `ensureFolders()`: every line
+        // after this WRITES to somebody's mailbox (`ensureFolders` creates the `ohmail/*` tree,
+        // `runKickstart` re-routes the Screener backlog). If another organizer holds it, neither may
+        // happen — "learn then act" is the rule for this seam, because reconnect-after-sleep is when a
+        // mailbox most likely changed hands. Taking the first DRAIN off this path did NOT move this
+        // gate, and the ordering is guarded (`ensure_folders` may not precede `lease_organize` —
+        // `attach-nonblocking.e2e.test.ts`, claim 5). Standing down here returns EARLY and leaves the
+        // mailbox out of `runtimes` (not a failure, so no retry backoff; the row is `disabled`, so the
+        // next pass does not offer it). The nonce this gate writes is carried onto the runtime — it is
+        // the clone defence's memory, and a discarded nonce re-arms that defence every cycle.
         const leaseState = {
           leaseNonce: null as string | null,
           // Until the gate runs there is no permit; the attach's own gate call replaces this.
           leasePermit: { noLease: "not_supplied" } as OrganizerWriteAuthority,
         };
         const leaseRow = {
-          takeoverAuthorizedAt: mb.takeoverAuthorizedAt, disabledReason: mb.disabledReason,
+          takeoverAuthorizedAt: mb.takeoverAuthorizedAt, takeoverIntent: mb.takeoverIntent,
+          disabledReason: mb.disabledReason,
           // Mail 0083 — see `MailboxRuntime.lease.organizerRole`. This is the shape the promotion
           // hole was reachable through: an existing reader row attaches with no stamp and a null
           // reason, so without this the gate had nothing left to notice it by.
@@ -2658,23 +2126,15 @@ export async function startWorkerWithLock(
           installId: mb.organizedByInstallId,
         };
         const tLease = Date.now();
-        /* -- A STAND-DOWN NO LONGER ENDS THE ATTACH  --------------------------------
-         *
-         * This block used to `return`, and the mailbox left the roster with its connection closed:
-         * standing down meant stopping. It now means BEING A READER — another mail client on the
-         * mailbox — so the attach continues past this line with `role: "reader"`, keeps its login
-         * and its poll timer, and builds a mirror that GROWS. What it does not do is any of the
-         * four things below that write to somebody else's mailbox.
-         *
-         * `mayOrganize` has already written the demotion and the holder columns and closed the
-         * appointments this process can no longer keep, exactly as before; the only thing that
-         * changed is what happens on the line after it.
-         *
-         * TWO REFUSALS ARE FOLDED INTO ONE ANSWER HERE, deliberately. `mayOrganize` returns false
-         * both for "somebody else holds this" and for "nobody has asked this install to organize
-         * it" (a consent-less mailbox), and the attach treats them identically because the
-         * BEHAVIOUR is identical: read, do not move. What tells them apart for a human is the row
-         * — a consent-less mailbox names no holder — and the log line each arm writes.
+        /* A stand-down no longer ends the attach. This block used to `return`, and the mailbox left
+         * the roster with its connection closed — standing down meant stopping. It now means BEING A
+         * READER (another mail client on the mailbox), so the attach continues with `role: "reader"`,
+         * keeps its login and poll timer, and builds a mirror that GROWS; what it does not do is the
+         * four things below that write to somebody else's mailbox. `mayOrganize` has already written
+         * the demotion, the holder columns and the appointment close, exactly as before. TWO REFUSALS
+         * ARE FOLDED INTO ONE ANSWER: `mayOrganize` returns false both for "somebody else holds this"
+         * and "nobody asked this install to organize it" (a consent-less mailbox), and the attach
+         * treats them identically because the BEHAVIOUR is (read, do not move); the row tells them apart.
          */
         const role: OrganizerRole =
           (await mayOrganize(mb, leaseRow, leaseState, adapter, "attach",
@@ -2738,20 +2198,15 @@ export async function startWorkerWithLock(
           // over these deps, so a flip in either direction applies on the very next cycle without
           // a re-attach. It is required here so this composition cannot be the one that forgets.
           role,
-          // ── THE LEADER FENCE OVER THIS MAILBOX'S MAIL-BEARING WRITES ─────────────────────
-          //
-          // The SAME `fence` the lifecycle writes key on — one definition of "am I still the
-          // leader of this shard", never two — extended to everything `runSyncCycle` persists
-          // and to its IMAP mutations. Before this line existed, a worker whose advisory lock
-          // had dropped kept committing messages, advancing cursors, appending change_log rows
-          // and issuing IMAP moves for the rest of its cycle beside the new leader: the fence
-          // covered `mailboxes.status` and nothing that carries mail.
-          //
-          // `() => lockLost` is the synchronous tripwire: `handleLockLoss` flips it the moment
-          // loss is observed, so the in-flight cycle refuses its NEXT write and unwinds instead
-          // of running out its batch — which is what lets the detach queued behind this cycle
-          // actually run. `stopped` is deliberately NOT part of it: a graceful shutdown lets
-          // in-flight writes complete, exactly as before.
+          // The leader fence over this mailbox's mail-bearing writes. The SAME `fence` the lifecycle
+          // writes key on — one definition of "am I still the leader of this shard" — extended to
+          // everything `runSyncCycle` persists and to its IMAP mutations. Before this line, a worker
+          // whose advisory lock had dropped kept committing messages, advancing cursors, appending
+          // change_log rows and issuing IMAP moves beside the new leader: the fence covered
+          // `mailboxes.status` and nothing that carries mail. `() => lockLost` is the synchronous
+          // tripwire — `handleLockLoss` flips it the moment loss is observed, so the in-flight cycle
+          // refuses its NEXT write and unwinds. `stopped` is deliberately NOT part of it: a graceful
+          // shutdown lets in-flight writes complete.
           fence: makeSyncWriteFence(db, mb.mailboxId, fence, () => lockLost),
           ...(spend ? { credits: spend } : {}),
           // Whose `Authentication-Results` this mailbox may believe, resolved from the
@@ -2759,38 +2214,26 @@ export async function startWorkerWithLock(
           // not name, which routes exactly as before this field existed; for Gmail/Microsoft it
           // is what lets a forged known-contact `From` be demoted to the Screener.
           trustedAuthservIds: providerAuthservIds(creds.imap.host),
-          // ── ONE LEDGER PER ATTACHMENT, AND THAT LIFETIME IS THE DESIGN ───────────────────
-          //
-          // Per mailbox, because a written-off UID is meaningless in another mailbox's folders.
-          // Built HERE rather than per cycle, because the two things it remembers are both
-          // cross-cycle: how many times a message has already failed, and which UIDs must stay
-          // out of the known-set so their bodies are not re-fetched on every pass. A ledger
-          // rebuilt per cycle would count every attempt as the first and never reach a terminal
-          // decision — which is the wedge, restated.
-          //
-          // THE PARAGRAPH THAT USED TO BE HERE IS NOW FALSE, and it is worth saying so rather than
-          // deleting it: it read "the durable record is owed (a migration is a separate decision),
-          // and until it exists a restart is how a parser fix reaches the mail it fixes." That was
-          // true, and it was also a mail-loss defect — the Sent folder's cursor is a UID watermark,
-          // so a restart does NOT re-offer a skipped Sent UID and nothing ever would. Mail migration 0041
-          // landed the table. `runSyncCycle` hydrates this ledger from it at the top of every cycle
-          // and re-reads owed UIDs by UID, so this object being dropped on detach now costs nothing
-          // at all.
+          // One ledger per attachment, and that lifetime is the design. Per mailbox, because a
+          // written-off UID is meaningless in another mailbox's folders. Built HERE rather than per
+          // cycle, because the two things it remembers are cross-cycle: how many times a message has
+          // failed, and which UIDs must stay out of the known-set so their bodies are not re-fetched.
+          // A ledger rebuilt per cycle would count every attempt as the first and never reach a
+          // terminal decision — the wedge, restated. The paragraph that used to be here is now FALSE:
+          // it claimed a restart was how a parser fix reached skipped Sent mail, but the Sent cursor is
+          // a UID watermark, so a restart does NOT re-offer a skipped UID (mail loss). Mail 0041 landed
+          // the durable table; `runSyncCycle` hydrates this ledger from it, so dropping it on detach now
+          // costs nothing.
           deadLetters: new DeadLetterLedger(),
-          // ── ONE KNOWN-SET MEMO PER ATTACHMENT, FOR THE SAME REASON AS THE LEDGER ────────
-          //
-          // `buildCursor` re-read this mailbox's ENTIRE `message_instances` join at the top of
-          // every cycle — thousands of rows a call on a real mailbox, once per poll interval, for the
-          // life of the attachment. It is state this process wrote and that nobody else may write
-          // while it holds the mailbox, so it is remembered instead, and any write that could move
-          // it drops the memo. See `known-set.ts`.
-          //
-          // Built HERE and not per cycle, because per-cycle is what it already was. Built per
-          // ATTACHMENT and not per process, because the lifetime is the safety argument: a mailbox
-          // that changes hands is detached and re-attached, and the new runtime starts cold. It is
-          // dropped explicitly on detach, on the lock-loss tripwire and on every stand-down below,
-          // rather than left to garbage collection — a memo of somebody else's mailbox must stop
-          // existing at the moment leadership is in doubt, not at the moment nothing references it.
+          // One known-set memo per attachment, for the same reason as the ledger. `buildCursor`
+          // re-read this mailbox's ENTIRE `message_instances` join at the top of every cycle —
+          // thousands of rows a call, once per poll, for the life of the attachment. It is state this
+          // process wrote and that nobody else may write while it holds the mailbox, so it is
+          // remembered, and any write that could move it drops the memo (see `known-set.ts`). Built per
+          // ATTACHMENT, not per process, because the lifetime is the safety argument: a mailbox that
+          // changes hands is detached and re-attached and the new runtime starts cold. Dropped
+          // explicitly on detach, the lock-loss tripwire and every stand-down — a memo of somebody
+          // else's mailbox must stop existing the moment leadership is in doubt.
           knownSet: new KnownSetCache(mb.mailboxId),
           // The account's managed storage cap AT ATTACH — the per-cycle spread below refreshes
           // it, so this value's real job is that the field cannot be forgotten: it is required,
@@ -2870,20 +2313,15 @@ export async function startWorkerWithLock(
               sweepScan = adopted.state;
               return {
                 moved: res.moved, skipped: res.skipped, junkFolder: res.junkFolder,
-                // ── THE SCAN'S DEFERRALS, NOT THIS WINDOW'S ──────────────────────────────────
-                //
-                // `res.deferred` is one window. The cursor moves past a deferred member, so the
-                // FINAL window of a multi-window scan can honestly report zero while a row it
-                // deferred earlier is still in the pile — and the retirement rule would then
-                // retire the command over exactly the mail the deferral was protecting. So what
-                // crosses this boundary is the accumulated fact, carried in `SweepScanState`
-                // beside `movedSinceTop` and for the same reason.
-                //
-                // `exhaustedDeferrals` is the termination bound: after three consecutive
-                // completed scans kept alive by deferrals alone, the exemption stops and the
-                // command may retire. Without it, a stale locator nothing will ever repoint keeps
-                // the command queued and the mailbox re-kicked for ever — which is the hole the
-                // retirement rule existed to close, re-opened through a different door.
+                // The scan's deferrals, not this window's. `res.deferred` is one window, and the
+                // cursor moves past a deferred member, so the FINAL window of a multi-window scan can
+                // honestly report zero while a row it deferred earlier is still in the pile — and the
+                // retirement rule would then retire the command over exactly the mail the deferral
+                // protected. So what crosses this boundary is the accumulated fact, in `SweepScanState`
+                // beside `movedSinceTop`. `exhaustedDeferrals` is the termination bound: after three
+                // consecutive completed scans kept alive by deferrals alone, the exemption stops and
+                // the command may retire — without it, a stale locator nothing repoints keeps the
+                // command queued and the mailbox re-kicked for ever.
                 deferred: res.deferred,
                 deferralsHold: adopted.deferralsHold,
                 examinedAll: adopted.examinedAll,
@@ -2908,30 +2346,16 @@ export async function startWorkerWithLock(
           },
         };
 
-        // ── REGISTERING THE MAILBOX *IS* WHAT ATTACH IS FOR ────────────────────────────────
-        //
-        // This line used to be a fix for a reporting bug — `reconcileOnRestart` drained inline
-        // below it, `runtimes` stayed empty for the length of that drain, and `stats()` plus
-        // every heartbeat said `mailboxes: 0` while the process was doing the single busiest
-        // thing it ever does. Measured in production: a first import ingested thousands of
-        // messages over most of an hour while the heartbeat reported zero mailboxes, and
-        // "hard at work" was indistinguishable from "dead".
-        //
-        // Now the drain is gone from this function and this line is the POINT of it,
-        // not a mitigation: attach connects, proves the lease, ensures the folders, joins the
-        // rotation and establishes IDLE. Everything that reads mail rides `cycle()`, which
-        // already owns bounded batches, the `hasBacklog` re-kick and the `last_sync_at` stamp.
-        // Measured cost of the old shape, twice in production: about six minutes each time
-        // for one mailbox, during which the NEXT mailbox was not dialled at all.
-        //
-        // `unwatch` is null until IDLE is established a few lines down and is patched onto the
-        // same object; `detach()` already tolerates a null `unwatch`, and the serial queue
-        // guarantees no cycle or roster pass interleaves with a mid-flight attach — including
-        // with mid-cycle adoption, because a mid-cycle pass runs INSIDE the cycle's queue entry rather
-        // than beside it, so this attach still has the queue to itself for its whole duration.
-        //
-        // The failure path is unchanged: the catch below deletes the runtime and quarantines, so
-        // a mailbox that dies in `runKickstart` or `watch` does not linger in the rotation.
+        // Registering the mailbox IS what attach is for. This line used to be a fix for a reporting
+        // bug — `reconcileOnRestart` drained inline below it, `runtimes` stayed empty for that drain,
+        // and `stats()` plus every heartbeat said `mailboxes: 0` while the process did the busiest
+        // thing it ever does (a first import ingested thousands of messages over most of an hour while
+        // the heartbeat reported zero). Now the drain is gone from this function and this line is the
+        // POINT of it: attach connects, proves the lease, ensures folders, joins the rotation and
+        // establishes IDLE, and everything that reads mail rides `cycle()`. `unwatch` is null until
+        // IDLE is established and is patched onto the same object; the serial queue guarantees no cycle
+        // or roster pass interleaves with a mid-flight attach. The failure path is unchanged: the catch
+        // deletes the runtime and quarantines.
         const rt: MailboxRuntime = {
           accountId: mb.accountId, mailboxId: mb.mailboxId, adapter, deps, unwatch: null,
           requestKey: deriveRequestKey({ auth: creds.imap.auth, address: mb.address }),
@@ -2971,68 +2395,36 @@ export async function startWorkerWithLock(
         runtimes.set(mb.mailboxId, rt);
         await beat();
 
-        // ── ARM THE PROFILE HOLD BEFORE THE FIRST ROUTING DECISION (TAKEOVER-RESCREEN) ───
-        //
-        // A mailbox taken over from another organizer arrives CARRYING its decisions — the
-        // travelling profile in `ohmail/_meta`. The write-behind's ordinary seed discovers it at
-        // the END of the first completed cycle, which is after that cycle has already routed:
-        // the drill measured a cold takeover moving all 31 INBOX messages of already-screened-in
-        // senders into the Screener while the document answering for them sat one FETCH away.
-        // This read-only detection runs here — after the lease gate above said organize, before
-        // any cycle can route — so `cycle()`'s `importDecisionOpen` is true from the very first
-        // ingest. Never throws; on a read fault the seed retries at the first tick and the
-        // residual is at most one pre-fix cycle (the method's doc carries the direction
-        // argument). Ordinary mailboxes (no document, our own document, an in-sync one) return
-        // in one FETCH and arm nothing.
-        /* -- SKIPPED FOR A READER: THE PROFILE HOLD IS AN INCOMING ORGANIZER'S QUESTION ------
-         *
-         * The third of the four skips. `armHoldFromFolder` exists so an organizer TAKING a mailbox
-         * over does not re-screen the decisions it is inheriting — it detects a foreign profile
-         * document, holds it, and asks the person whether to import. A reader inherits nothing and
-         * decides nothing, so there is no question to hold open; arming it would put a pending
-         * import prompt on a screen for a mailbox this install does not organize. The read itself
-         * is harmless, but the MARKER it writes is what the confirm surface renders.
-         *
-         * A PROMOTION DOES NOT COME THROUGH HERE. This used to read "on promotion the hold is
-         * armed by the attach that follows it, which is the first cycle with anything to
-         * inherit", and the mailbox-removal design removed the re-attach that sentence depended on: a reader is
-         * promoted IN PLACE, on the cycle path. The promotion arms its own hold there, and the
-         * two call sites are the two ways a process can become this mailbox's organizer.
-         */
+        // Arm the profile hold before the first routing decision (TAKEOVER-RESCREEN). A mailbox taken
+        // over from another organizer arrives CARRYING its decisions — the travelling profile in
+        // `ohmail/_meta`. The write-behind's ordinary seed discovers it at the END of the first cycle,
+        // after that cycle has already routed: the drill measured a cold takeover moving all 31 INBOX
+        // messages of already-screened-in senders into the Screener while the document answering for
+        // them sat one FETCH away. This read-only detection runs here — after the lease gate said
+        // organize, before any cycle can route — so `cycle()`'s `importDecisionOpen` is true from the
+        // first ingest. Never throws; a read fault retries at the first tick and the residual is at
+        // most one pre-fix cycle. Ordinary mailboxes return in one FETCH and arm nothing.
+        /* Skipped for a reader: the profile hold is an incoming organizer's question. The third of the
+         * four skips. `armHoldFromFolder` exists so an organizer TAKING a mailbox over does not
+         * re-screen the decisions it is inheriting — it detects a foreign profile document, holds it,
+         * and asks whether to import. A reader inherits nothing and decides nothing, so there is no
+         * question to hold; arming it would put a pending import prompt on screen for a mailbox this
+         * install does not organize (the read is harmless, but the MARKER is what the confirm surface
+         * renders). A PROMOTION does not come through here: mail 0083 promotes a reader IN PLACE on the
+         * cycle path, which arms its own hold there — the two call sites are the two ways a process can
+         * become this mailbox's organizer. */
         if (role === "organizer") await rt.profile.armHoldFromFolder();
 
-        // ── MAKE THE MAILBOX SCREENER-SHAPED, ONCE, BEFORE THE FIRST DRAIN ───────────────
-        //
-        // Here and not in `cycle()`: it is a once-per-mailbox pass (`mailboxes.kickstart_at`,
-        // mail migration 0025), and it has to run BEFORE the first drain. Import the Sent folder's
-        // recipients into `contacts` first and the very first routing decision already knows who
-        // the user's correspondents are; import them afterwards and hundreds of messages have already
-        // been filed into the Screener and need re-routing.
-        //
-        // Moving the drain from the line below this one onto the cycle loop left the
-        // ordering intact for a reason worth stating: the first cycle is queued
-        // behind the roster pass this attach belongs to, so it cannot begin until every attach
-        // of the pass — and therefore this kickstart — has returned.
-        //
-        // Mid-cycle adoption restated the mechanism without weakening the guarantee, and the old wording
-        // ("queued behind … (`serialize`)") is now false, which is why it is rewritten rather
-        // than left standing. A roster pass can now run mid-cycle, from inside that cycle's own
-        // queue entry (`yieldToRoster`). The ordering re-derives from two facts: the mailbox
-        // attached here is NOT in the running cycle's `rotation`, which was snapshotted at its
-        // top, and the mid-cycle pass is AWAITED, so it returns only once every attach — hence
-        // every kickstart — has finished. This mailbox's first `runSyncCycle` is therefore the
-        // `kickCycle` entry the pass queued, which is strictly behind the cycle in flight.
-        //
-        // It stays here
-        // rather than moving to the cycle because it is once-per-mailbox and marker-gated, and a
-        // virgin mailbox's Screener backlog is empty, so it is cheap on the one path that must
-        // stay fast.
-        //
-        // A FAILURE HERE MUST NOT FAIL THE ATTACH, for the same reason a model fault must not:
-        // the mailbox is connected and its folders exist, and shaping is an improvement to
-        // routing, not a precondition for it. The marker is written only on success, so the
-        // next attach simply tries again — and a mailbox whose Sent folder is unreadable still
-        // syncs perfectly well, it just screens more.
+        // Make the mailbox Screener-shaped, once, before the first drain. Here and not in `cycle()`:
+        // it is a once-per-mailbox pass (`mailboxes.kickstart_at`, mail 0025) that must run BEFORE the
+        // first drain — import the Sent folder's recipients into `contacts` first and the very first
+        // routing decision already knows the user's correspondents; import them afterwards and hundreds
+        // of messages have been filed into the Screener and need re-routing. Moving the drain onto the
+        // cycle loop left the ordering intact: the first cycle is queued behind the roster pass this
+        // attach belongs to, so it cannot begin until every attach — hence this kickstart — has
+        // returned (a mid-cycle pass is AWAITED, from inside the cycle's own entry). It stays here
+        // because it is once-per-mailbox and marker-gated, and a virgin Screener backlog is empty. A
+        // FAILURE MUST NOT FAIL THE ATTACH — the marker is written only on success, so the next attach retries.
         const tKickstart = Date.now();
         /* -- SKIPPED FOR A READER: THE KICKSTART RE-ROUTES THE SCREENER BACKLOG ---------------
          *
@@ -3063,43 +2455,16 @@ export async function startWorkerWithLock(
 
         const kickstartMs = Date.now() - tKickstart;
 
-        // ── NOTHING THAT DRAINS RUNS HERE — A RULE NOW APPLIED TO THE DRAIN ITSELF ────────
-        //
-        // Two changes deleted work from this exact line, for the same reason, and the second one
-        // is the reason the first was not enough.
-        //
-        // The first version ran `runThreadBackfill` here: pure database work, minutes of it on a
-        // large backlog, while the connection above was dialled, authenticated, NOT yet
-        // in IDLE (`adapter.watch` is below) and with nothing awaiting it. The socket outlived
-        // its timeout, imapflow emitted the failure on a client with no `error` listener, and an
-        // uncaught exception took the process down every ~26 s for eight minutes. `try/catch`
-        // could never have helped: the throw did not come out of the call it wrapped. The rule
-        // was therefore stronger than "catch it" — **nothing that does not need the connection
-        // runs while the connection is held and unattended.**
-        //
-        // A later measurement covered what was STILL here: `reconcileOnRestart`, two full sync cycles.
-        // About six minutes for one mailbox against 2.3 s for the
-        // other, twice, with the next mailbox's `attach_started` 88 ms after the previous
-        // `attached` — so at `maxMailboxes=64` the last mailbox is not dialled for hours after a
-        // deploy. And because `last_sync_at` is stamped by `cycle()` and by nothing else, a boot
-        // spent draining here fired `sync_lag` saying "their owners are not receiving mail" about
-        // mailboxes that were visibly ingesting in the same log. Every deploy paged falsely.
-        //
-        // So restart convergence rides `cycle()` now, and it needs nothing new to do it: the
-        // cycle already re-verifies the lease, runs the SAME `runSyncCycle`, owns bounded batches
-        // and re-kicks itself while `hasBacklog`, and stamps `last_sync_at`. Two
-        // consequences that used to need arguing are now facts of the shape:
-        //
-        //  · convergence is no longer once-per-attach but every-cycle-until-converged, which is
-        //    strictly stronger than the two passes `reconcileOnRestart` promised;
-        //  · a model fault can no longer fail an attach, because no classifier runs on this path.
-        //    The `ClassifierFaultError` exemption that used to sit here is now only in `cycle()`,
-        //    where the class is exempted for the same reason it always was.
-        //
-        // The guard is `test/attach-nonblocking.e2e.test.ts`: B's `connect()` must
-        // precede A's first AND second `changesSince`, and A's backlog must drain over several
-        // cycles on ONE connection. Re-adding a single `await runSyncCycle(deps)` here turns it
-        // red — that mutation was watched fail when the change landed.
+        // Nothing that drains runs here — a rule now applied to the drain itself. Two changes deleted
+        // work from this line for the same reason. The first ran `runThreadBackfill` here: minutes of
+        // pure database work while the connection above was dialled, authenticated, NOT yet in IDLE
+        // and with nothing awaiting it — the socket outlived its timeout, imapflow emitted the failure
+        // on a client with no `error` listener, and an uncaught exception took the process down every
+        // ~26 s (try/catch could not help — the throw did not come out of the call it wrapped). The
+        // rule: nothing that does not need the connection runs while the connection is held and
+        // unattended. A later measurement covered what was still here (`reconcileOnRestart`, two full
+        // cycles, ~six minutes for one mailbox, false `sync_lag` pages every deploy), so restart
+        // convergence rides `cycle()` now — every-cycle-until-converged, and no classifier on this path.
         const tWatch = Date.now();
         // ── THE DOORBELL NOW SAYS WHO RANG IT ──────────────────────────────────────────────────
         //
@@ -3110,26 +2475,16 @@ export async function startWorkerWithLock(
         // still the thing that makes a cycle happen at all.
         unwatch = await adapter.watch(() => { noteWake(mb.mailboxId); kickCycle(); });
         rt.unwatch = unwatch;
-        // ── THE QUARANTINE ENTRY IS *NOT* CLEARED HERE. IT MOVED WITH THE DRAIN ───────────
-        //
+        // The quarantine entry is NOT cleared here. It moved with the drain.
         // `quarantine.delete(mb.mailboxId)` was the last line of this function, and its reason was
-        // exact: the entry carries the exponential backoff's attempt count, and clearing it BEFORE
-        // the drain would reset a struggling provider's backoff to the base delay on every retry —
-        // the mailbox hammered at the minimum interval for ever.
-        //
-        // The drain moved, so "the end of a successful attach" IS now "before the drain",
-        // and leaving the delete here reintroduces exactly that bug for the one class of mailbox it
-        // was written about: a login the provider accepts whose every sync cycle throws. Attach
-        // would succeed, clear the count, the cycles would fail into a fresh attempts=1 quarantine,
-        // the next roster pass would attach again, for ever at `retryBaseMs`. Nothing about that is
-        // observable in `stats()` — `quarantined` excludes anything in `runtimes` — so it would have
-        // been a silent DoS against a customer's provider.
-        //
-        // It is therefore spent on the first SUCCESSFUL cycle, beside the recovery write and for
-        // the same reason: both are claims that the mailbox works, and only a completed cycle is
-        // evidence of that. Guarded in `mailbox-failure.e2e.test.ts` ("the backoff GROWS"), which
-        // asserts the `retryInMs` sequence rather than the row's monotonic counter — the counter
-        // grows either way and cannot see this.
+        // exact: the entry carries the exponential backoff's attempt count, and clearing it BEFORE the
+        // drain would reset a struggling provider's backoff to the base delay on every retry — the
+        // mailbox hammered at the minimum interval for ever. The drain moved, so "the end of a
+        // successful attach" IS now "before the drain", and leaving the delete here reintroduces
+        // exactly that bug: a login the provider accepts whose every sync cycle throws would attach,
+        // clear the count, fail into a fresh attempts=1 quarantine, and re-attach for ever at
+        // `retryBaseMs` — a silent DoS (`stats()` excludes anything in `runtimes`). It is spent on the
+        // first SUCCESSFUL cycle instead, beside the recovery write (`mailbox-failure.e2e.test.ts`).
 
         // ── THE PHASE BREAKDOWN, SO THE NEXT BOOT ANSWERS "WHICH PHASE" ITSELF ────────────
         //
@@ -3147,39 +2502,28 @@ export async function startWorkerWithLock(
         // Beat per attach, so a roster of several real mailboxes reports progress while it is
         // still working through them rather than only once the last one is up.
         await beat();
-        // ── THE RECOVERY WRITE IS NOT HERE. IT IS ON THE CYCLE PATH ───────────────────────
-        //
-        // It used to be, and the definition it enforced was "connect + folders + two full sync
-        // cycles + IDLE": the heartbeat may count a mailbox that is mid-drain, but the STATUS
-        // COLUMN may only say `connected` about one that has actually synced. That invariant is
-        // unchanged and still worth exactly as much — a mailbox whose login works but whose every
-        // cycle throws must not flip error → connected → error on each backoff retry, or Settings
-        // shows "connected" flashes about a mailbox that has never once synced.
-        //
-        // What changed is that "two inline cycles" was a PROXY for "actually synced", available
-        // here only because the drain was here. With the drain on the cycle loop the real thing
-        // is available instead: `rt.needsRecovery` is spent in `cycle()` after the first
-        // successful `runSyncCycle`, and a mailbox whose cycles all throw accumulates toward
-        // quarantine without ever being called connected. Writing it here now would be strictly
-        // weaker than the line it replaced — it would mean "the login worked".
+        // The recovery write is NOT here. It is on the cycle path. It used to be, and the definition it
+        // enforced was "connect + folders + two full sync cycles + IDLE": the heartbeat may count a
+        // mailbox mid-drain, but the STATUS COLUMN may only say `connected` about one that has actually
+        // synced (or Settings shows "connected" flashes on a mailbox that has never synced). That
+        // invariant is unchanged, but "two inline cycles" was a PROXY for "actually synced", available
+        // here only because the drain was here. With the drain on the cycle loop the real thing is
+        // available: `rt.needsRecovery` is spent in `cycle()` after the first successful `runSyncCycle`,
+        // and a mailbox whose cycles all throw accumulates toward quarantine without ever being called
+        // connected. Writing it here now would mean "the login worked" — strictly weaker.
       } catch (err) {
         if (unwatch) { try { await unwatch(); } catch { /* ignore */ } }
         if (adapter) { try { await adapter.close(); } catch { /* ignore */ } }  // never leak a half-open login
         runtimes.delete(mb.mailboxId);
-        // ── A SHARED-SERVICE FAULT IS NOT THIS MAILBOX'S FAULT ───────────────────────────────
-        //
-        // The credential read moved inside this `try`, and that read is a DATABASE read. Left
-        // unexempted, one database blip would quarantine every mailbox of the shard in turn and write
-        // `status='error'` on each — "the database was unreachable for ninety seconds" rendered as
-        // "your mailbox is broken", which is a measured incident's exact shape. So it is
-        // rethrown instead: the roster pass fails, no mailbox row is touched, no backoff is
-        // earned, and the next pass retries the whole roster.
-        //
-        // Exempted BY CLASS, like `LeaseUnavailableError` below it — the same reason, that a
-        // threshold cannot be tuned into a wrong answer. Everything genuinely attributable to THIS
-        // mailbox (an envelope that will not decrypt, an adapter that refuses its configuration, a
-        // login the provider rejects) still quarantines exactly as before, and iteration continues
-        // to the next mailbox instead of the pass dying on the first bad row.
+        // A shared-service fault is not this mailbox's fault. The credential read moved inside this
+        // `try`, and that read is a DATABASE read. Left unexempted, one database blip would quarantine
+        // every mailbox of the shard in turn and write `status='error'` on each — "the database was
+        // unreachable for ninety seconds" rendered as "your mailbox is broken", a measured incident's
+        // exact shape. So it is rethrown: the roster pass fails, no mailbox row is touched, no backoff
+        // is earned, and the next pass retries the whole roster. Exempted BY CLASS, like
+        // `LeaseUnavailableError` — a threshold cannot be tuned into a wrong answer — while everything
+        // genuinely attributable to THIS mailbox (an undecryptable envelope, a refused configuration, a
+        // rejected login) still quarantines, and iteration continues to the next mailbox.
         if (isDatabaseFault(err)) {
           log.error("mailbox_attach_database_fault", {
             mailboxId: mb.mailboxId, accountId: mb.accountId, err,
@@ -3188,19 +2532,17 @@ export async function startWorkerWithLock(
           });
           throw err;
         }
-        // A LEASE WE COULD NOT READ IS NOT A BROKEN MAILBOX, and it must not be quarantined into
-        // an exponential backoff. Exempted BY CLASS, the pattern `ClassifierFaultError` already
-        // establishes below: exempting by class rather than by threshold arithmetic is what
-        // keeps "an infrastructure fault can never quarantine a mailbox" true at every tuning of
-        // `maxSyncFailures`. The mailbox is simply not attached this pass; the next roster pass
-        // — thirty seconds — tries again, and the ONLY thing that did not happen is organizing
-        // a mailbox we could not prove was ours.
-        //
-        // Since mail migration 0029: it RECORDS, and `reconcileSyncBlocks` decides whether the state has lasted
-        // long enough to be worth the row. Until that split existed this arm's `log.warn` was the
-        // ONLY trace of a mailbox nothing was syncing, and it once stayed the only trace for half an hour.
+        // A lease we could not read is not a broken mailbox, and must not be quarantined into an
+        // exponential backoff. Exempted BY CLASS, the pattern `ClassifierFaultError` establishes below:
+        // exempting by class rather than threshold arithmetic keeps "an infrastructure fault can never
+        // quarantine a mailbox" true at every tuning of `maxSyncFailures`. The mailbox is simply not
+        // attached this pass; the next pass (thirty seconds) tries again, and the ONLY thing that did
+        // not happen is organizing a mailbox we could not prove was ours. Since mail 0029 it RECORDS,
+        // and `reconcileSyncBlocks` decides whether the state lasted long enough for the row — until
+        // that split existed this arm's `log.warn` was the only trace of a mailbox nothing was syncing,
+        // and it once stayed the only trace for half an hour.
         if (err instanceof LeaseUnavailableError) {
-          noteBlock(leaseBlocked, mb.mailboxId, "lease_unreadable");
+          noteBlock(leaseBlocked, mb.mailboxId, leaseBlockReason(err));
           log.warn("attach_lease_unavailable", {
             mailboxId: mb.mailboxId, accountId: mb.accountId, err,
             // The OPERATION, from the error rather than from this call site: `runLeaseGate` names
@@ -3225,19 +2567,14 @@ export async function startWorkerWithLock(
     async function reconcileRoster(): Promise<void> {
       if (stopped) return;
 
-      // ── SAY SOMETHING BEFORE THE FIRST ATTACH, AND LEAVE DURABLE EVIDENCE ──────────────
-      //
-      // A boot-time outage was once invisible for two hours, and this is the half of that which
-      // is not about locks. A leader whose first roster pass blocks inside `attach` — a hung
-      // provider dial, a first `ensureFolders` against a real server, a database wait — had
-      // written NO heartbeat row and emitted NO log since taking the lock. From the outside,
-      // "wedged mid-boot" and "never started" and "no mailboxes to serve" are the same thing:
-      // an absence. Nothing can page on an absence it cannot distinguish from idleness.
-      //
-      // So the beat happens before anything that can BLOCK. It is deliberately a beat and not
-      // just a log: a log line is only visible to whoever is tailing, while the heartbeat row
-      // is what an EXTERNAL watchdog reads. `beat()` is already best-effort, so a failed write
-      // here cannot stop the boot it is reporting.
+      // Say something before the first attach, and leave durable evidence. A boot-time outage was once
+      // invisible for two hours, and this is the half not about locks. A leader whose first roster
+      // pass blocks inside `attach` — a hung provider dial, a first `ensureFolders`, a database wait —
+      // had written NO heartbeat row and emitted NO log since taking the lock, and from outside
+      // "wedged mid-boot", "never started" and "no mailboxes to serve" are the same absence, which
+      // nothing can page on. So the beat happens before anything that can BLOCK, and it is a beat not
+      // just a log: a log is visible only to whoever is tailing, while the heartbeat row is what an
+      // EXTERNAL watchdog reads. `beat()` is best-effort, so a failed write cannot stop the boot.
       if (!booted) {
         booted = true;
         log.info("leader_boot_started", {
@@ -3254,18 +2591,14 @@ export async function startWorkerWithLock(
       expected = served.length;
       servedIds = served.map((m) => m.mailboxId);
 
-      // …AND THE FIRST BEAT SAYS WHAT THE DUTY IS, NOT `0/0`.
-      //
-      // The boot beat used to fire above this block, before the roster was even read, so the
-      // first row a watchdog ever saw was `mailboxes: 0, expected: 0, degraded: false` — which
-      // reads as "this worker is healthy and has nothing to do". For a leader about to spend
-      // three minutes attaching two real mailboxes that is the most misleading sentence the row
-      // can contain, and it is what an operator was looking at during the incident.
-      //
-      // Moved to HERE, after `expected` is known, it says `0/2, degraded` instead: booting, not
-      // yet serving. The blocking risk that trade reintroduces is exactly one DB read — against
-      // the same database the beat itself writes to, so a read that hangs would have hung the
-      // beat too.
+      // …and the first beat says what the duty is, not `0/0`. The boot beat used to fire above this
+      // block, before the roster was read, so the first row a watchdog saw was
+      // `mailboxes: 0, expected: 0, degraded: false` — which reads as "healthy and nothing to do". For
+      // a leader about to spend three minutes attaching two real mailboxes that is the most misleading
+      // sentence the row can contain, and it is what an operator saw during the incident. Moved to
+      // HERE, after `expected` is known, it says `0/2, degraded` instead: booting, not yet serving. The
+      // blocking risk that trade reintroduces is exactly one DB read — against the same database the
+      // beat writes to, so a read that hangs would have hung the beat too.
       if (firstBeatPending) {
         firstBeatPending = false;
         await beat();
@@ -3306,38 +2639,29 @@ export async function startWorkerWithLock(
       for (const rt of [...runtimes.values()]) {
         if (stopped) return;
         if (!desired.has(rt.mailboxId)) {
-          // ── NOT WHILE A LANE IS INSIDE IT ────────────────────────────────────────────────
-          //
-          // This is the ONE detach reachable from inside a running cycle — a roster pass served
-          // by `yieldToRoster` — and with lanes it can now land on a mailbox whose `changesSince`
-          // is suspended. Closing that adapter would abort a batch mid-flight and, through
-          // `releaseOrganizerClaim` below, hand the mailbox away while this process is still
-          // organizing it.
-          //
-          // DEFERRED, never skipped: the cycle drains `deferredLeaves` once its lanes have
-          // joined, so the mailbox leaves in the same cycle it stopped being ours in. The
-          // duty-gap check further down is not affected — a mailbox still in `runtimes` is
-          // `served` by it, which is what it is until the drain runs.
+          // Not while a lane is inside it. This is the ONE detach reachable from inside a running
+          // cycle — a roster pass served by `yieldToRoster` — and with lanes it can now land on a
+          // mailbox whose `changesSince` is suspended. Closing that adapter would abort a batch
+          // mid-flight and, through `releaseOrganizerClaim` below, hand the mailbox away while this
+          // process is still organizing it. DEFERRED, never skipped: the cycle drains `deferredLeaves`
+          // once its lanes have joined, so the mailbox leaves in the same cycle it stopped being ours.
+          // The duty-gap check is unaffected — a mailbox still in `runtimes` is `served` by it, which
+          // is what it is until the drain runs.
           if (laneBusy.has(rt.mailboxId)) {
             deferredLeaves.push({
               rt, release: true, reason: "no longer an enabled mailbox of this shard",
             });
             continue;
           }
-          // ── THE ENTITLEMENT LAPSE RELEASES THE CLAIM, NOT JUST THE ROSTER ROW ──────────
-          //
-          // BEFORE the detach, because the detach closes the connection that can do it. This is
-          // the ONLY teardown path that releases, and the discrimination is the point:
-          // `detach` is also reached by a connection error, a quarantine, a lost lock and a
-          // clean stop, and in every one of those Cloud fully intends to keep organizing — a
-          // release there would hand the mailbox to a desktop install on every deploy.
-          //
-          // Leaving the duty is the opposite: the account lapsed, the user disconnected the
-          // mailbox, or the cap evicted it. In all three Cloud has stopped being this mailbox's
-          // organizer, and a live claim it no longer renews is what makes the user's own machine
-          // stand ITSELF down for the length of the staleness window — a leave-anytime product
-          // whose "Organize from this Mac" button appears to do nothing for ten minutes at
-          // exactly the moment somebody chose to leave.
+          // The entitlement lapse releases the claim, not just the roster row. BEFORE the detach,
+          // because the detach closes the connection that can do it. This is the ONLY teardown path
+          // that releases, and the discrimination is the point: `detach` is also reached by a
+          // connection error, a quarantine, a lost lock and a clean stop, and in every one Cloud fully
+          // intends to keep organizing — a release there would hand the mailbox to a desktop install on
+          // every deploy. Leaving the duty is the opposite: the account lapsed, the user disconnected,
+          // or the cap evicted it, and a live claim Cloud no longer renews is what makes the user's own
+          // machine stand ITSELF down for the staleness window — ten minutes of a "leave anytime"
+          // product whose button appears to do nothing at the moment somebody chose to leave.
           await releaseOrganizerClaim(rt, "this mailbox is no longer an enabled mailbox of this shard");
           await detach(rt, "no longer an enabled mailbox of this shard");
         }
@@ -3346,20 +2670,14 @@ export async function startWorkerWithLock(
       for (const id of [...quarantine.keys()]) if (!desired.has(id)) quarantine.delete(id);
       for (const id of [...leaseBlocked.keys()]) if (!desired.has(id)) leaseBlocked.delete(id);
 
-      // ── ATTACH WHAT IS MISSING, THEN KICK A CYCLE IF ANYTHING NEW CAME UP ────────────────
-      //
-      // `attach()` syncs nothing at all, so a mailbox that joins the rotation here
-      // has no mail processed until a cycle runs — and `setInterval` fires for the FIRST time only
-      // after a full period, which in production is 60 s. That is the same 68 s dead window the
-      // takeover kick below `worker_serving` was measured against and exists to close, reopened
-      // per mailbox at every roster pass. Nothing fails and NOTHING LOGS if this kick is
-      // forgotten, which is why it is guarded (`attach-nonblocking.e2e.test.ts`, claim 7) rather
-      // than trusted.
-      //
-      // In a `finally`, so an `attach` that rethrows a shared-database fault mid-loop still kicks
-      // for the mailboxes it did bring up before the pass died. `kickCycle` is idempotent
-      // (`cycleQueued`), checks `stopped` itself, and queues behind this pass rather than
-      // interleaving with it.
+      // Attach what is missing, then kick a cycle if anything new came up. `attach()` syncs nothing,
+      // so a mailbox that joins the rotation here has no mail processed until a cycle runs — and
+      // `setInterval` fires for the FIRST time only after a full period (60 s in production), the same
+      // dead window the takeover kick was measured against, reopened per mailbox at every roster pass.
+      // Nothing fails and NOTHING LOGS if this kick is forgotten, which is why it is guarded
+      // (`attach-nonblocking.e2e.test.ts`, claim 7). In a `finally`, so an `attach` that rethrows a
+      // shared-database fault mid-loop still kicks for the mailboxes it did bring up; `kickCycle` is
+      // idempotent (`cycleQueued`), checks `stopped` itself, and queues behind this pass.
       const now = Date.now();
       let newlyAttached = 0;
       try {
@@ -3371,7 +2689,9 @@ export async function startWorkerWithLock(
             // authorized by the connect flow while this mailbox was already serving reaches the
             // next cycle's gate instead of waiting for a restart.
             attached.lease = {
-              takeoverAuthorizedAt: mb.takeoverAuthorizedAt, disabledReason: mb.disabledReason,
+              // Mail 0104 — the verb moves with the stamp on every refresh, for the same reason.
+              takeoverAuthorizedAt: mb.takeoverAuthorizedAt, takeoverIntent: mb.takeoverIntent,
+              disabledReason: mb.disabledReason,
               // Mail 0083, refreshed with the other two: a promotion or demotion written by
               // another process (the connect flow, the reconcile backstop) is a fact about this
               // row, and a value captured at attach would leave this gate deciding against it.
@@ -3388,65 +2708,41 @@ export async function startWorkerWithLock(
               // doing nothing until the worker happened to restart.
               releaseRequestedAt: mb.releaseRequestedAt,
             };
-            // CONVERGE THE ROW ONTO REALITY — but only about a mailbox that has actually SYNCED.
-            //
-            // This mailbox is attached; if its row still says `error` the recovery write failed or
-            // was fenced, and until this line existed NOTHING retried it. The old comment claimed
-            // "the next roster pass writes it" and this loop's `continue` was the proof that it did
-            // not — the mailbox would sync perfectly while Settings → Mailboxes and the admin
-            // console called it broken, for the life of the process. `mb.status` is re-read from
-            // the database every pass, so this is a no-op the moment the write lands.
-            //
-            // `lastSuccessAt !== null` is the non-blocking-attach half. Before it, "attached" implied "drained
-            // twice", so being in `runtimes` was itself evidence of a sync. It no longer is, and
-            // without this clause a mailbox whose login works and whose every cycle throws would be
-            // converged to `connected` by this pass 30 seconds later — resurrecting, from the
-            // roster, exactly the "connected flashes on a mailbox that has never synced" the attach
-            // path was careful never to write.
+            // Converge the row onto reality — but only about a mailbox that has actually SYNCED. This
+            // mailbox is attached; if its row still says `error` the recovery write failed or was
+            // fenced, and until this line NOTHING retried it (the old comment claimed "the next roster
+            // pass writes it" and this loop's `continue` was the proof it did not — the mailbox synced
+            // perfectly while Settings and the admin console called it broken). `mb.status` is re-read
+            // every pass, so this is a no-op the moment the write lands. `lastSuccessAt !== null` is the
+            // non-blocking-attach half: "attached" no longer implies "drained twice", so without this
+            // clause a mailbox whose login works and whose every cycle throws would be converged to
+            // `connected` 30 s later — resurrecting the "connected flashes on a never-synced mailbox".
             if (mb.status !== "connected" && attached.lastSuccessAt !== null) await markRecovered(mb);
             continue;
           }
-          // ── THE BACKOFF GATE, AND SINCE MAIL MIGRATION 0039 THE ROW CAN OVERRULE THE MAP ─
-          //
-          // Three cases, and the ORDER of the first two is the whole of the release path:
-          //
-          //  1. an entry whose durable write LANDED (`persisted`) is governed by `mb.retryAfter`,
-          //     re-read from the database on this very pass. `retry_after IS NULL` therefore means
-          //     "somebody cleared it" — the admin release write — and this mailbox is attached
-          //     NOW instead of waiting out a ladder nobody can otherwise reach. The map entry is
-          //     deliberately NOT deleted: `attempts` is the ladder's input, and resetting it here
-          //     would hand a struggling provider a fresh minimum-interval retry loop. A release
-          //     buys one immediate attempt, not a clean slate;
-          //  2. an entry whose write did NOT land falls back to `q.retryAt`, which is the
-          //     pre-0039 behaviour exactly. See `Quarantine.persisted` for why a NULL column must
-          //     not be read as a release when we never wrote it;
-          //  3. NO map entry but a future `retry_after` on the row — a mailbox this process has
-          //     never quarantined because the process is NEW. It is SEEDED below rather than
-          //     attached, which is the half that makes a quarantine survive a restart at all.
+          // The backoff gate, and since mail 0039 the row can overrule the map. Three cases, and the
+          // ORDER of the first two is the whole of the release path: (1) an entry whose durable write
+          // LANDED (`persisted`) is governed by `mb.retryAfter`, re-read from the database this pass,
+          // so `retry_after IS NULL` means "somebody cleared it" (the admin release) and the mailbox
+          // is attached NOW — the map entry is NOT deleted, since `attempts` is the ladder's input and
+          // resetting it hands a struggling provider a fresh minimum-interval loop (a release buys one
+          // attempt, not a clean slate); (2) an entry whose write did NOT land falls back to
+          // `q.retryAt`, the pre-0039 behaviour; (3) no map entry but a future `retry_after` on the row
+          // is a mailbox this NEW process never quarantined, SEEDED below rather than attached.
           const q = quarantine.get(mb.mailboxId);
           if (q) {
             const until = q.persisted ? (mb.retryAfter?.getTime() ?? null) : q.retryAt;
             if (until !== null && now < until) continue;
           } else if (mb.retryAfter && now < mb.retryAfter.getTime()) {
-            // ── THE RESTART SEED ────────────────────────────────────────────────────────────
-            //
-            // Without this a fresh leader forgets every backoff and re-dials every parked mailbox
-            // at once, which is (a) the gap this column was added to close, still open, and (b) a
-            // way to turn a deploy during a provider outage into a burst of retries. Two details
-            // are load-bearing:
-            //
-            //  · `attempts` is floored at the row's `retry_count`, so the ladder resumes where the
-            //    outage actually is instead of restarting at the base delay. The two counters are
-            //    allowed to disagree (`mailboxes.ts` says why), and this is the one place the
-            //    durable one is the better estimate — the alternative is attempt 1 for a mailbox
-            //    that has failed forty times;
-            //  · `persisted: true`, because this entry was READ from the column. It is governed by
-            //    the column from here on, so an operator's release reaches it on the next pass.
-            //
-            // Seeding also keeps the roster invariant honest: `unexplained` below counts anything
-            // neither served, awaiting credentials, quarantined nor lease-blocked, so a mailbox
-            // skipped on the row alone would log `roster_invariant_violated` every 30 s and page a
-            // human about correct behaviour.
+            // The restart seed. Without this a fresh leader forgets every backoff and re-dials every
+            // parked mailbox at once — the gap this column was added to close, and a way to turn a
+            // deploy during a provider outage into a burst of retries. Two details are load-bearing:
+            // `attempts` is floored at the row's `retry_count`, so the ladder resumes where the outage
+            // is instead of the base delay (the two counters may disagree, and this is the one place
+            // the durable one is the better estimate); and `persisted: true`, because this entry was
+            // READ from the column, so it is governed by the column and an operator's release reaches
+            // it next pass. Seeding also keeps the roster invariant honest — a mailbox skipped on the
+            // row alone would log `roster_invariant_violated` every 30 s about correct behaviour.
             quarantine.set(mb.mailboxId, {
               attempts: Math.max(1, mb.retryCount),
               retryAt: mb.retryAfter.getTime(),
@@ -3495,42 +2791,14 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * ══════════════════════════════════════════════════════════════════════════════════════
-     *  THE SINGLE WRITER OF `sync_blocked_reason` (mail migration 0029)
-     * ══════════════════════════════════════════════════════════════════════════════════════
-     *
-     * One place reads the three buckets, compares elapsed time against ONE threshold, and writes
-     * or clears. The catch arms above only RECORD, and that split is the design rather than
-     * tidiness: an arm that decided for itself would need its own copy of the grace, its own
-     * fenced write, and its own idea of when to clear — three copies, in the three places least
-     * likely to be exercised. It is also what makes the credentials and capacity arms fall out for
-     * free: they were never about the lease, they were about a mailbox nobody is serving.
-     *
-     * ── LAST IN THE ROSTER PASS, DELIBERATELY ─────────────────────────────────────────────
-     *
-     * `attach` runs above it and populates this pass's buckets, so a mailbox that recovered this
-     * pass is cleared in the same pass rather than one interval later. `selected` is used and not
-     * `served`, because the capacity arm's mailboxes are precisely the ones `served` excludes.
-     *
-     * ── WHY THE WRITE REPEATS AND THE CLEAR DOES NOT ──────────────────────────────────────
-     *
-     * A blocked mailbox is re-written every pass. That is idempotent — `markMailboxSyncBlocked`
-     * COALESCEs `sync_blocked_since`, so the column holds the start of the block and not the time
-     * of the latest pass — and it is what CONVERGES the row when another writer clears the columns
-     * while the block is still in force (`PATCH /mailboxes/:id` with a status change does exactly
-     * that). A write-once design would leave that row silent for the life of the process.
-     *
-     * The clear, by contrast, is gated on the row ACTUALLY CARRYING a reason, read fresh from the
-     * database this pass. Without that gate a healthy shard would issue one pointless UPDATE per
-     * mailbox per roster interval, for ever.
-     *
-     * ── BEST-EFFORT, ALWAYS ───────────────────────────────────────────────────────────────
-     *
-     * This is bookkeeping about mailboxes that are ALREADY not being served. A failure here must
-     * not abort the roster pass that is attaching the healthy ones, and a worker deployed ahead of
-     * mail migration 0029 fails every one of these writes on a column that does not exist yet — which is
-     * loud in the log and harmless to the rotation, exactly as `markMailboxFailed`'s own
-     * best-effort treatment was for its own column.
+     * The single writer of `sync_blocked_reason` (mail 0029). One place reads the three buckets,
+     * compares elapsed time against ONE threshold, and writes or clears. The catch arms above only
+     * RECORD, and that split is the design: an arm that decided for itself would need its own grace,
+     * its own fenced write and its own idea of when to clear — three copies in the three places least
+     * likely to be exercised. LAST in the roster pass, so a mailbox that recovered this pass is cleared
+     * the same pass (`selected`, not `served`, because the capacity arm's mailboxes are what `served`
+     * excludes). The write REPEATS (idempotent — `markMailboxSyncBlocked` COALESCEs
+     * `sync_blocked_since`) and CONVERGES a row another writer cleared; the clear is gated on the row ACTUALLY carrying a reason, or a healthy shard issues one pointless UPDATE per mailbox per interval. Best-effort — a worker ahead of mail 0029 fails these on a missing column, harmlessly.
      */
     async function reconcileSyncBlocks(selected: readonly EnabledMailbox[]): Promise<void> {
       const nowMs = Date.now();
@@ -3598,17 +2866,14 @@ export async function startWorkerWithLock(
         rosterPending = true;
         rosterPendingSince = Date.now();
       }
-      // ── AND MAKE IT AUDIBLE TO A CYCLE THAT IS ALREADY BLOCKED ON ITS LANES ────────────────
-      //
-      // `yieldToRoster` is at the top of the dispatcher loop, and that loop only goes round when
-      // a lane finishes. So a pass owed while every lane is inside a long batch waited out a
-      // bounded batch (~254 s measured) before it was even LOOKED at — the adoption fix's residual
-      // ("the residual bound is ONE bounded batch"), unchanged by lanes on their own. The nudge
-      // spends it: the pass is served at the next turn of the loop, with the lanes still running.
-      //
-      // Safe for exactly one reason, and it is the reason `laneBusy` exists: the pass's detach
-      // loop skips any mailbox a lane is inside. Everything else it does — attaching a mailbox
-      // with no lane, recomputing the duty, converging rows — never touches a live batch.
+      // And make it audible to a cycle that is already blocked on its lanes. `yieldToRoster` is at the
+      // top of the dispatcher loop, and that loop only turns when a lane finishes — so a pass owed
+      // while every lane is inside a long batch waited out a bounded batch (~254 s measured) before it
+      // was even LOOKED at (the adoption fix's residual, unchanged by lanes alone). The nudge spends
+      // it: the pass is served at the next turn of the loop, with the lanes still running. Safe for the
+      // reason `laneBusy` exists — the pass's detach loop skips any mailbox a lane is inside, and
+      // everything else it does (attaching a lane-less mailbox, recomputing the duty, converging rows)
+      // never touches a live batch.
       nudgeCycle();
       if (rosterQueued) return;
       rosterQueued = true;
@@ -3623,35 +2888,26 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * Run the owed pass, if it is still owed.
-     *
-     * The flag is cleared BEFORE the await, not after: a timer tick landing while the pass is
-     * running is a request for the NEXT pass — it has not been served by a read that already
-     * happened — and clearing afterwards would swallow it.
-     *
-     * Reached from two places, never concurrently: the queued entry above, and `yieldToRoster`
-     * from inside a running cycle. Both are on the one queue, so "the queued entry starts while
-     * a cycle holds the queue" is not a state this program has.
+     * Run the owed pass, if it is still owed. The flag is cleared BEFORE the await, not after: a timer
+     * tick landing while the pass is running is a request for the NEXT pass — it has not been served by
+     * a read that already happened — and clearing afterwards would swallow it. Reached from two places,
+     * never concurrently: the queued entry above, and `yieldToRoster` from inside a running cycle. Both
+     * are on the one queue, so "the queued entry starts while a cycle holds the queue" is not a state
+     * this program has.
      */
     async function servePendingRoster(): Promise<void> {
       if (stopped || !rosterPending) return;
       rosterPending = false;
       const waitedMs = Date.now() - rosterPendingSince;
-      // ── THE HALF OF THE STARVATION FINDING THAT WAS "AND NOTHING SURFACES IT" ──────────
-      //
-      // A pass that is owed and cannot run emitted NOTHING while it was happening: no log, no
-      // counter, no column. `mailboxes`/`expected` in the heartbeat cannot show it — they are
-      // written BY the pass that is not running — so from the outside a starved shard and a
-      // healthy one are the same row. This line is the difference, and it is a `warn` because
-      // a pass later than its own interval means one queue entry ran longer than the interval,
-      // which is worth knowing even when it is a legitimately slow backfill.
-      //
-      // `latencyMs` and not `waitedMs`, which is the name this line wants: the logger's
-      // ALLOWED_FIELDS list is the primary redaction control and a key that is not on it has its
-      // VALUE dropped, silently, leaving a line that reports a delay without saying how long.
-      // Widening that list is a change to the shared logger for one call site, so the call site
-      // takes the existing name instead. Proven rather than assumed — the first version of this
-      // line emitted `waitedMs` and its own test read `NaN`.
+      // The half of the starvation finding that was "and nothing surfaces it". A pass that is owed and
+      // cannot run emitted NOTHING while it was happening: no log, no counter, no column.
+      // `mailboxes`/`expected` in the heartbeat cannot show it — they are written BY the pass that is
+      // not running — so from outside a starved shard and a healthy one are the same row. This line is
+      // the difference, a `warn` because a pass later than its own interval means one queue entry ran
+      // longer than the interval, worth knowing even when it is a legitimately slow backfill.
+      // `latencyMs` and not `waitedMs`: the logger's ALLOWED_FIELDS is the primary redaction control
+      // and a key not on it has its VALUE dropped silently (the first version emitted `waitedMs` and
+      // its own test read `NaN`).
       if (waitedMs >= rosterIntervalMs) {
         log.warn("roster_pass_delayed", {
           latencyMs: waitedMs, rosterIntervalMs, mailboxes: runtimes.size,
@@ -3663,61 +2919,27 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * Hand the queue to an owed roster pass, from inside the cycle that is holding it.
-     *
-     * CALLED FROM EXACTLY ONE PLACE: the top of the rotation's dispatcher loop, which is the only
-     * point in a cycle where no mailbox is being TAKEN and the runtime map is not being walked.
-     *
-     * ── WHAT THIS COMMENT USED TO SAY, AND WHY IT CHANGED ────────────────────────────────────
-     *
-     * It said "…WHERE NO ADAPTER OPERATION IS SUSPENDED: between two mailboxes of the rotation.
-     * That restriction is the whole safety argument". The restriction bought exactly one thing —
-     * a pass may never close an adapter somebody is using — and lanes make it no longer literally
-     * true, so the property is now enforced by name rather than inherited from the shape:
-     * `laneBusy` holds the mailbox ids a lane is inside, and `reconcileRoster` defers their
-     * detach (and their claim release) to `deferredLeaves` instead of doing it under a live batch.
-     *
-     * The same comment declined a tighter adoption bound: "the residual bound is ONE bounded
-     * batch rather than one roster interval, and that trade is deliberate: the tighter bound is
-     * only purchasable with real concurrency between `attach` and a running cycle, and that is
-     * how a mailbox ends up with two organizers." The premise was too broad. Two organizers come
-     * from two things organizing ONE mailbox; a mailbox being attached has no lane, and the
-     * rotation's per-account key keeps every other mailbox to one visit at a time. So the bound
-     * IS the roster interval now — `requestRoster` nudges a cycle blocked on its lanes — and the
-     * one thing this worker may never do is still impossible, structurally.
-     *
-     * `reconcileRoster` is called through `servePendingRoster` DIRECTLY and never through
-     * `serialize`: this code is already inside the queue's running entry, and `tail.then(...)`
-     * would wait for an entry that cannot finish until this call returns.
+     * Hand the queue to an owed roster pass, from inside the cycle that is holding it. Called from
+     * EXACTLY ONE place: the top of the rotation's dispatcher loop, the only point where no mailbox is
+     * being TAKEN and the runtime map is not being walked. The comment used to say "…between two
+     * mailboxes, where NO ADAPTER OPERATION IS SUSPENDED", which bought one thing — a pass may never
+     * close an adapter somebody is using — and lanes make that no longer literally true, so it is
+     * enforced by name: `laneBusy` holds the ids a lane is inside, and `reconcileRoster` defers their
+     * detach to `deferredLeaves`. The bound IS the roster interval now (`requestRoster` nudges a cycle
+     * blocked on its lanes); two organizers come from two things organizing ONE mailbox, and a mailbox being attached has no lane. `reconcileRoster` runs through `servePendingRoster` DIRECTLY, never `serialize` — this is already inside the queue's running entry.
      */
     async function yieldToRoster(): Promise<void> {
       if (stopped || !rosterPending) return;
-      // ── A ROSTER PASS THAT THROWS MUST NOT TAKE THE ROTATION WITH IT ───────────────────────
-      //
-      // `requestRoster`'s own queued entry has always caught this and said why — *"a roster pass
-      // is a DB read: a failure is a DB blip, not a reason to stop serving the mailboxes already
-      // attached"* — and the in-cycle path had no catch at all. The same failure was therefore
-      // tolerated on one path and fatal on the other, which was an asymmetry rather than a
-      // decision.
-      //
-      // It is not cosmetic, and the shape it produces is a livelock. `loadEnabledMailboxes` reads
-      // through the bare handle rather than the tagged repo, so a dead database throws an
-      // UNTAGGED `ECONNREFUSED` here — which `isSharedDatabaseFault` correctly declines to call
-      // ours (it is byte-identical to a dead IMAP host, see `db-fault.ts`). Uncaught, that throw
-      // left `cycle()` BEFORE a single lane had been admitted, so:
-      //
-      //   · no lane ran, so no TAGGED fault was ever raised, so `noteDatabaseFault` never fired
-      //     and `/health` kept answering `degraded: false` through a total outage — the
-      //     announcement path bypassed entirely, by a read that happens before it;
-      //   · `kickCycle`'s backstop could not cover it either, for the same reason: it asks
-      //     `isSharedDatabaseFault`, and this throw is untagged;
-      //   · and the next cycle did the same thing, for as long as the outage lasted.
-      //
-      // Caught here, the pass is skipped, the rotation runs, the lanes meet the database through
-      // the tagged repo, and the outage is announced by the arm that exists for it. Measured:
-      // `shared-db-fault.pg.test.ts` times out waiting for the outage to reach a cycle without
-      // this, and the frequency tracks how often a pass is owed — which is why it surfaced when
-      // `requestRoster` began nudging a running cycle rather than only the timer serving it.
+      // A roster pass that throws must not take the rotation with it. `requestRoster`'s queued entry
+      // always caught this (a roster pass is a DB read, a failure a blip, not a reason to stop serving
+      // attached mailboxes), and the in-cycle path had no catch — the same failure tolerated on one
+      // path and fatal on the other. It is not cosmetic: `loadEnabledMailboxes` reads through the bare
+      // handle, so a dead database throws an UNTAGGED `ECONNREFUSED` here, which `isSharedDatabaseFault`
+      // correctly declines to call ours (byte-identical to a dead IMAP host). Uncaught, it left
+      // `cycle()` before a lane ran, so no tagged fault was raised, `noteDatabaseFault` never fired,
+      // and `/health` answered `degraded: false` through a total outage. Caught here, the pass is
+      // skipped, the lanes meet the database through the tagged repo, and the outage is announced
+      // (`shared-db-fault.pg.test.ts`).
       try {
         await servePendingRoster();
       } catch (err) {
@@ -3739,63 +2961,16 @@ export async function startWorkerWithLock(
        * host-measured elapsed, not a wall-clock: durations carry no skew.
        */
       const passStartedMs = Date.now();
-      // ══════════════════════════════════════════════════════════════════════════════════════
-      //  A MAILBOX THAT HAS NEVER SYNCED GOES TO THE FRONT, NOT THE BACK
-      // ══════════════════════════════════════════════════════════════════════════════════════
-      //
-      // This used to be `[...runtimes.values()]` walked in Map insertion order, which is roster
-      // order, which is oldest-first. So the newest mailbox on the shard is served LAST, and its
-      // first sync waits out every other mailbox's bounded batch. Mid-cycle adoption fixed the
-      // ADOPTION term
-      // of that and wrote the residual down in the same breath — *"one backfilling mailbox still
-      // dominates ~10 minutes today"* — and this is that residual, which is the larger term:
-      // attach is under a second, the first CYCLE is the whole rotation.
-      //
-      // Measured in production, on a shard with three cold
-      // backfills: a newly created mailbox attached in 601 ms and its first cycle came
-      // 12.8 minutes later — by which time its provider had closed the idle connection, so that
-      // cycle raised `LeaseUnavailableError(NoConnection)`, the mailbox was detached and
-      // re-attached at the BACK of the rotation, and the next 13 minutes did the same thing.
-      // `coalesce(last_sync_at, created_at)` aged past an hour and a half with `status='connected'` throughout.
-      // A re-attach appends to the Map, so a mailbox whose connection cannot survive one rotation
-      // is deterministically served last for ever: it is not slow, it is a livelock.
-      //
-      // TWO CHANGES. The first-syncer rule's own text said "and neither is concurrency", quoting
-      // the earlier ruling that a strict adoption bar "is only purchasable with real concurrency between
-      // attach and a running cycle, and that price is the dual-organizer bug". The lanes buy some of
-      // that concurrency and do NOT pay that price — see the lane block below — but the
-      // ordering is unchanged and is still what decides who is served first:
-      //
-      //  1. the pass starts with the runtimes that have never completed a cycle, oldest-first
-      //     within each group, so ordering is still stable and every mailbox still gets exactly
-      //     one bounded batch per pass;
-      //  2. a never-synced runtime the interleaved roster pass adopts MID-PASS is admitted to the
-      //     FRONT of what is left, instead of waiting for the next pass. Without this the fix
-      //     would not cover the case it was found in — a mailbox connected during somebody
-      //     else's backfill — because that mailbox is not in the snapshot at all.
-      //
-      // `lastSuccessAt` and not the row's `last_sync_at`, deliberately: it is per RUNTIME, so a
-      // mailbox that synced for days and was then detached and re-dialled comes back as a
-      // first-syncer for one pass. That is the intended reading — a fresh connection has proven
-      // nothing yet, and a mailbox whose connection keeps dying is exactly the one that must not
-      // be served last.
-      //
-      // THE BOUND IS `servedIds`, and it is what keeps a LIVE queue finite: one turn per mailbox
-      // id per pass. Without it, a mailbox that is re-attached by every roster pass (the
-      // production case above) could be re-admitted indefinitely inside one cycle.
-      //
-      // ── AND THE SECOND GROUP: WHOEVER RANG THE DOORBELL ─────────────────────────────────────
-      //
-      // Between the first-syncers and everybody else sit the mailboxes with an unserved wake —
-      // an IDLE that fired, or an enforced-sync stamp. They are the mailboxes with a person
-      // waiting at the other end, and before this they were ordered by nothing at all: the wake
-      // asked for A cycle and then took its ordinary place in it, which is how a sub-second wake
-      // channel produced a 15.5-minute visit gap. Oldest wake first inside the group.
-      //
-      // BELOW the first-syncers and not above them, because the first-syncer production case is the
-      // worse one: a never-synced mailbox that is served last is a livelock, while a woken one
-      // that waits a turn is a delay. The two groups mostly do not compete anyway — a first sync
-      // is heavy and a wake is light, so the lane reservation below puts them in different lanes.
+      // A mailbox that has never synced goes to the front, not the back. This used to be
+      // `[...runtimes.values()]` in Map insertion (roster, oldest-first) order, so the newest mailbox
+      // is served LAST and its first sync waits out every other's bounded batch. Mid-cycle adoption
+      // fixed the ADOPTION term; this is the residual, the larger one — attach is under a second, the
+      // first CYCLE is the whole rotation. Measured: a new mailbox attached in 601 ms and its first
+      // cycle came 12.8 minutes later, by which time its provider closed the idle connection, so it
+      // detached and re-attached at the BACK for ever — a livelock, not slowness. So the pass starts
+      // with never-completed runtimes oldest-first, a never-synced runtime adopted MID-PASS is admitted
+      // to the FRONT (`servedIds` bounds one turn per id), and between them sit mailboxes with an
+      // unserved wake, oldest wake first (the sub-second channel that produced a 15.5-minute gap).
       const woken = (rt: MailboxRuntime): boolean => rt.lastSuccessAt !== null && rt.wokenAt !== null;
       /** Runtimes still owed a bounded batch this pass, first-syncers first, then the woken. */
       const pending: MailboxRuntime[] = [...runtimes.values()]
@@ -3829,25 +3004,14 @@ export async function startWorkerWithLock(
       /** How many extra turns each mailbox has already been given this pass. */
       const revisits = new Map<string, number>();
       /**
-       * Re-admit a mailbox whose doorbell rang AFTER its turn in this pass.
-       *
-       * Without this, lanes shorten the rotation and leave the CYCLE as the unit a wake waits for:
-       * one bounded batch, ~254 s measured, for a signal that answered in under a second. With it,
-       * and with a lane held back for mailboxes that owe nothing, the wait is the time to find a
-       * free lane.
-       *
-       * FOUR CONDITIONS, and each is load-bearing rather than defensive:
-       *
-       *  · an unserved wake (`wokenAt`), which is the only thing that earns a second turn at all.
-       *    It is spent on admission, so this cannot re-trigger on its own;
-       *  · already served this pass — a mailbox that has NOT had its turn is in `pending` already
-       *    and must keep the first-syncer ordering rather than being moved by this;
-       *  · not currently in a lane. A mailbox mid-visit will observe its own wake on the next pass
-       *    (the wake outlives the visit, deliberately — see `MailboxRuntime.wokenAt`), and
-       *    re-admitting it here is the one thing that would break per-mailbox serialization;
-       *  · under {@link CYCLE_WAKE_REVISITS}, which is the floor under the hole this puts in
-       *    `servedIds`. Past it the mailbox KEEPS its wake and leads the next pass, which is the
-       *    pre-lane behaviour — so the worst case of this mechanism is what shipped.
+       * Re-admit a mailbox whose doorbell rang AFTER its turn in this pass. Without this, lanes
+       * shorten the rotation and leave the CYCLE as the unit a wake waits for (~254 s for a signal that
+       * answered in under a second); with it, and a lane held back for mailboxes that owe nothing, the
+       * wait is the time to find a free lane. FOUR conditions, each load-bearing: an unserved wake
+       * (`wokenAt`, the only thing that earns a second turn, spent on admission); already served this
+       * pass (a not-yet-served mailbox is in `pending` and keeps first-syncer ordering); not currently
+       * in a lane (a mid-visit mailbox observes its own wake next pass, and re-admitting it here would
+       * break per-mailbox serialization); and under {@link CYCLE_WAKE_REVISITS}, past which the mailbox KEEPS its wake and leads the next pass — the pre-lane behaviour, so the worst case is what shipped.
        */
       function admitWoken(): void {
         for (const rt of runtimes.values()) {
@@ -3863,23 +3027,14 @@ export async function startWorkerWithLock(
         }
       }
       /**
-       * Re-apply the PLANNING order to what is left of `pending`, so a wake that lands MID-PASS
-       * for a mailbox that has NOT had its turn yet moves it forward instead of leaving it at its
-       * snapshot position.
-       *
-       * `admitWoken` above handles the already-served half of the wake story; this is the other
-       * half, and it was the measured one: the pass plans its order once at the top, so a
-       * doorbell that rang two seconds into a seven-minute pass for the last mailbox in the
-       * snapshot bought nothing at all — probe 2 of the 2026-08-26 measurement waited 478 s with
-       * `wokenAt` set the whole time, because its position was fixed before its wake existed.
-       *
-       * A STABLE re-partition into the exact three groups the planner used — first-syncers
-       * (their internal order untouched), then woken by oldest wake, then the rest in their
-       * existing order — so this cannot invert anything the planning comment promises. It moves
-       * mailboxes only BETWEEN dispatcher turns (never a runtime a lane holds — those are not in
-       * `pending`), consumes nothing, and admission still applies every rule (`servedIds`,
-       * account exclusivity, the heavy cap) at the moment a lane is filled. Runs on every
-       * dispatcher turn; the array is at most the shard's mailbox count, so the sort is noise.
+       * Re-apply the PLANNING order to what is left of `pending`, so a wake that lands MID-PASS for a
+       * mailbox that has NOT had its turn moves it forward instead of leaving it at its snapshot
+       * position. `admitWoken` handles the already-served half; this is the other, measured one: the
+       * pass plans its order once at the top, so a doorbell ringing two seconds into a seven-minute
+       * pass for the last mailbox in the snapshot bought nothing (probe 2 of 2026-08-26 waited 478 s
+       * with `wokenAt` set). A STABLE re-partition into the planner's three groups (first-syncers
+       * untouched, then woken by oldest wake, then the rest) — it moves mailboxes only BETWEEN turns
+       * (never one a lane holds), consumes nothing, and admission re-applies every rule at fill time. Runs every turn; the array is at most the shard's mailbox count, so the sort is noise.
        */
       function reorderPending(): void {
         const rank = (rt: MailboxRuntime): number =>
@@ -3903,15 +3058,12 @@ export async function startWorkerWithLock(
       /** Mailboxes this cycle stood down from; detached after the loop, never inside it. */
       /**
        * Runtimes whose LEASE could not be read for long enough to give up on — and NOT, since mail
-       * 0083, runtimes that stood down.
-       *
-       * A stand-down no longer detaches: it demotes the runtime to a reader in place, which keeps
-       * the login, the poll timer and a mirror that grows (see the cycle's own note). What still
-       * reaches this list is the unreadable-lease path below, which is a CONNECTION fault: we
-       * cannot tell whether we hold the mailbox, and the honest answer to that is to stop touching
-       * it, not to assume either role. The list keeps its name because the detach and the log line
-       * it drives are unchanged, and because renaming it would obscure that the population shrank
-       * rather than that the handling changed.
+       * 0083, runtimes that stood down. A stand-down no longer detaches: it demotes the runtime to a
+       * reader in place, keeping the login, the poll timer and a mirror that grows. What still reaches
+       * this list is the unreadable-lease path, a CONNECTION fault: we cannot tell whether we hold the
+       * mailbox, and the honest answer is to stop touching it, not to assume either role. The list
+       * keeps its name because the detach and log line it drives are unchanged, and renaming it would
+       * obscure that the population shrank rather than that the handling changed.
        */
       const toStandDown: MailboxRuntime[] = [];
       /**
@@ -3925,46 +3077,16 @@ export async function startWorkerWithLock(
        */
       const toReconnect: Array<{ rt: MailboxRuntime; unavailableMs: number }> = [];
 
-      // ══════════════════════════════════════════════════════════════════════════════════════
-      //  THE ROTATION RUNS SEVERAL MAILBOXES AT ONCE, AND WHICH ONES IS THE DESIGN
-      // ══════════════════════════════════════════════════════════════════════════════════════
-      //
-      // Everything above this line is still true: one queue entry, one turn per mailbox per pass,
-      // first-syncers-first ordering, the mid-pass roster service. What changes is that the walk pulls
-      // up to `cycleLanes` mailboxes at a time instead of one, under three admission rules. Each
-      // is a load-bearing invariant rather than a tuning choice, and each has a mutation recorded
-      // in `roster-serialization.pg.test.ts`.
-      //
-      //  1. ONE CYCLE PER MAILBOX, ALWAYS. Structural and unchanged: `servedIds` bounds a mailbox
-      //     to one turn per pass, and the queue bounds the process to one `cycle()` at a time, so
-      //     there is no composition in which two cycles of one mailbox overlap. Per-mailbox
-      //     serialization is load-bearing in `sync.ts`, in the fence, and in the organizer lease,
-      //     and nothing here weakens it.
-      //
-      //  2. ONE CYCLE PER ACCOUNT. The concurrency key is the ACCOUNT, not the mailbox, which is
-      //     a strictly stronger claim than (1) and is here for a measurable reason rather than
-      //     caution: `recordChange` → `allocateSeq` takes the account's `account_sync_state` ROW
-      //     LOCK and holds it to commit (`packages/db/src/change-log.ts`). Two mailboxes of one
-      //     account running at once would meet on that row, and the worker's connections carry
-      //     `lock_timeout: 30_000` (`WORKER_TIMEOUTS`), so the meeting is either a 30-second stall
-      //     or a `55P03` — counted against a mailbox whose provider did nothing wrong. Keying on
-      //     the account removes the contention by construction instead of tuning a timeout.
-      //
-      //  3. A LANE IS RESERVED FOR MAILBOXES THAT OWE NOTHING. `heavyLanes` bounds how many
-      //     runtimes with `owesBacklog` may be in flight, leaving `CYCLE_FAST_LANES` for the rest.
-      //     Without it three cold backfills fill three lanes and a woken mailbox is behind a deep
-      //     batch again — the 15.5-minute measurement with a smaller constant. The guard asserts
-      //     BOTH directions: the fast mailbox's latency AND that the heavy one keeps draining.
-      //
-      // THE FENCE IS UNAFFECTED, and this was checked rather than assumed. Leadership is
-      // per SHARD and read-only; the fence's claim statement is `SELECT … FOR UPDATE` on the
-      // MAILBOX row, so two lanes claim two different rows and never contend. `LeaderFencedError`
-      // reaches `handleLockLoss`, which is idempotent, so two lanes refused in the same instant
-      // quiesce once.
-      //
-      // THE POOL IS THE CEILING, and it is why `cycleLanes` is clamped rather than trusted:
-      // `makeOwnedDb` opens `WORKER_POOL_MAX` connections for this whole process and a fenced
-      // write group holds one for its transaction. See `resolveCycleLanes`.
+      // The rotation runs several mailboxes at once, and which ones is the design. Everything above is
+      // still true (one queue entry, one turn per mailbox per pass, first-syncers-first, the mid-pass
+      // roster service); the walk pulls up to `cycleLanes` at a time under three admission rules, each
+      // a load-bearing invariant with a mutation in `roster-serialization.pg.test.ts`. 1. ONE CYCLE PER
+      // MAILBOX (structural: `servedIds` bounds a turn per pass, the queue one `cycle()` at a time).
+      // 2. ONE CYCLE PER ACCOUNT (the concurrency key): `recordChange` → `allocateSeq` takes the
+      // account's `account_sync_state` ROW LOCK to commit, so two mailboxes of one account would stall
+      // 30 s or `55P03` on `lock_timeout` — keyed on the account, the contention is gone by
+      // construction. 3. A LANE reserved for mailboxes that OWE NOTHING (`heavyLanes`), or three cold
+      // backfills fill every lane. The fence is unaffected (per-mailbox `FOR UPDATE`); the pool is the ceiling.
       /** Lanes in flight: mailboxId → the promise that settles when its visit is over. */
       const inFlight = new Map<string, Promise<void>>();
       /** Accounts with a lane in flight — rule 2. */
@@ -3989,16 +3111,13 @@ export async function startWorkerWithLock(
       }
 
       /**
-       * One mailbox's turn. NEVER throws and never rejects — every arm is handled inside.
-       *
-       * `woken` says this visit was admitted on a wake (IDLE fired, or the sync-kick scan named
-       * it) — captured at admission, because admission is also what SPENDS `rt.wokenAt`. It buys
-       * one thing: an EAGER `last_sync_at` stamp on success, beside the first-success stamp and
-       * for a client-facing reason rather than an alerting one. The pull affordance's spinner
-       * settles on "every mailbox's `lastSyncAt` moved past my request" (`PullNewMail.tsx`,
-       * `POST /sync/pull`), and the batched stamp at the end of the pass can be MINUTES behind
-       * the visit that actually served the wake — an honest scan reported dishonestly late. One
-       * UPDATE per woken visit, i.e. per doorbell ring or per real arrival, never per rotation.
+       * One mailbox's turn. NEVER throws and never rejects — every arm is handled inside. `woken` says
+       * this visit was admitted on a wake (IDLE fired, or the sync-kick scan named it), captured at
+       * admission because admission also SPENDS `rt.wokenAt`. It buys one thing: an EAGER `last_sync_at`
+       * stamp on success, for a client-facing reason — the pull affordance's spinner settles on "every
+       * mailbox's `lastSyncAt` moved past my request" (`PullNewMail.tsx`), and the batched stamp at
+       * pass end can be MINUTES behind the visit that served the wake, an honest scan reported
+       * dishonestly late. One UPDATE per woken visit, i.e. per doorbell ring or real arrival, never per rotation.
        */
       async function visitMailbox(rt: MailboxRuntime, woken = false): Promise<void> {
         try {
@@ -4014,22 +3133,15 @@ export async function startWorkerWithLock(
             { mailboxId: rt.mailboxId, accountId: rt.accountId }, rt.lease, rt, rt.adapter, "cycle",
             rt.requestKey,
           );
-          /* -- THE ROLE FLIP, IN BOTH DIRECTIONS, WITHOUT A RE-ATTACH  -------------
-           *
-           * `wasOrganizer` is what this process was a moment ago; `organize` is what the lease
-           * just said. The two comparisons below are the only two transitions there are, and each
-           * used to require a detach:
-           *
-           *  · ORGANIZER -> READER. This used to push the runtime onto `toStandDown`, which
-           *    detached it and closed the connection. It now keeps the connection, keeps the poll
-           *    timer, keeps the credentials and keeps syncing — as a reader. The demotion write
-           *    and the appointment close already happened inside `mayOrganize`.
-           *  · READER -> ORGANIZER. A human authorized a claim-back (or gave consent), the gate
-           *    spent the stamp, and `clearOrganizerStandDown` has already flipped the row. What
-           *    the ROW cannot do is create the folder tree, so `ensureFolders` runs here — the
-           *    one line of the attach a promotion has to catch up on, and the reason the person
-           *    is never asked to quit and reopen anything.
-           */
+          /* The role flip, in both directions, without a re-attach. `wasOrganizer` is what this process
+           * was a moment ago; `organize` is what the lease just said. The two comparisons are the only
+           * two transitions there are, and each used to require a detach: ORGANIZER → READER used to
+           * push the runtime onto `toStandDown` (detach, close the connection) and now keeps the
+           * connection, poll timer, credentials and syncing as a reader (the demotion write and
+           * appointment close already happened inside `mayOrganize`); READER → ORGANIZER means a human
+           * authorized a claim-back or gave consent, the gate spent the stamp, and
+           * `clearOrganizerStandDown` flipped the row — what the ROW cannot do is create the folder
+           * tree, so `ensureFolders` runs here, the one line of the attach a promotion catches up on. */
           const wasOrganizer = rt.role === "organizer";
           rt.role = organize ? "organizer" : "reader";
           if (organize && !wasOrganizer) {
@@ -4042,26 +3154,16 @@ export async function startWorkerWithLock(
             // direction: everything this runtime remembers about the mailbox it remembered as a
             // READER, and the cycle that follows is going to move mail on the strength of it.
             rt.deps.knownSet?.drop("organizer promotion");
-            /* ── AND THE IMPORT HOLD IS ARMED HERE, BECAUSE NO ATTACH IS COMING ─────────────
-             *
-             * `armHoldFromFolder` detects a foreign profile document and holds it, so an
-             * organizer TAKING a mailbox over adopts the placement it is inheriting instead of
-             * re-screening a history somebody else already sorted. Its only other call site is
-             * inside `attach()`, whose comment promised that "on promotion the hold is armed by
-             * the attach that follows it".
-             *
-             * No attach follows a promotion any more. Mail 0083 made the READER -> ORGANIZER flip
-             * happen IN PLACE — that is the point of the reader model, and the line above says so
-             * — so the promise was left naming a re-attach that had been deleted. The sequence it
-             * left open is TAKEOVER-RESCREEN exactly: a reader on a mailbox a desktop organizes,
-             * a claim-back authorized, the gate promotes, and `runSyncCycle` runs on this very
-             * pass with `importDecisionOpen === false` and files the inherited history into
-             * `ohmail/Screener` — while `onOrganize`, below, seeds the answering document only
-             * after the cycle that needed it.
-             *
-             * BEFORE `runSyncCycle`, for the same reason `ensureFolders` is: the first cycle is
-             * the one that does the damage, so arming it afterwards arms it too late.
-             */
+            /* And the import hold is armed here, because no attach is coming. `armHoldFromFolder`
+             * detects a foreign profile document and holds it, so an organizer TAKING a mailbox over
+             * adopts the placement it inherits instead of re-screening a history somebody else sorted;
+             * its only other call site is inside `attach()`, whose comment promised the hold is armed
+             * by the attach that follows a promotion. No attach follows a promotion any more — mail
+             * 0083 made READER → ORGANIZER happen IN PLACE — so the promise named a re-attach that was
+             * deleted, and the sequence it left open is TAKEOVER-RESCREEN: a claim-back promotes, and
+             * `runSyncCycle` runs this pass with `importDecisionOpen === false` and files the inherited
+             * history into `ohmail/Screener`. BEFORE `runSyncCycle`, like `ensureFolders`: the first
+             * cycle does the damage, so arming it afterwards arms it too late. */
             await rt.profile.armHoldFromFolder();
             log.info("organizer_promoted", {
               mailboxId: rt.mailboxId, accountId: rt.accountId,
@@ -4089,53 +3191,31 @@ export async function startWorkerWithLock(
           // exactly that reason — putting it there would leave a mailbox that alternates
           // stand-down / unreadable accumulating toward a detach it has not earned.
           rt.leaseUnavailableSince = null;
-          /* -- A READER DOES NOT LEAVE THE ROSTER, AND THE MEMO IS NOT DROPPED --------------
-           *
-           * This block used to drop the known-set memo and push the runtime onto `toStandDown`,
-           * which detached it. Both are wrong for a reader and for opposite reasons.
-           *
-           * The DETACH is wrong because a reader's whole product is a mirror that keeps growing:
-           * detaching would freeze it at the instant of the handover, which is exactly the
-           * behaviour this ruling replaced (the earlier dual-mode design's "stops syncing entirely",
-           * amended in the same commit as this line).
-           *
-           * DROPPING THE MEMO is wrong because the memo is a record of what THIS mailbox contains,
-           * not of who organizes it. It was dropped at a stand-down because the runtime was about
-           * to die and any surviving copy would be a memory of somebody else's mailbox; the
-           * runtime now survives and keeps reading the SAME mailbox, so the memo is still true.
-           * Dropping it would buy nothing and cost a full `listKnownLocators` re-read on every
-           * demotion. (It IS dropped on the promotion above — that direction is about to move
-           * mail on the strength of it.)
-           *
-           * `leaseBlocked` is still noted so `/health` and `sync_blocked_reason` can say why this
-           * mailbox is not being ORGANIZED here, which stays true and is not the same statement as
-           * "not being synced".
-           */
+          /* A reader does not leave the roster, and the memo is not dropped. This block used to drop
+           * the known-set memo and push the runtime onto `toStandDown` (detach). Both are wrong for a
+           * reader, for opposite reasons. The DETACH is wrong because a reader's whole product is a
+           * mirror that keeps growing — detaching would freeze it at the handover, the behaviour this
+           * ruling replaced. DROPPING THE MEMO is wrong because the memo records what THIS mailbox
+           * contains, not who organizes it: it was dropped at a stand-down because the runtime was about
+           * to die, and it now survives and keeps reading the SAME mailbox, so the memo is still true
+           * (dropping it costs a full `listKnownLocators` re-read on every demotion; it IS dropped on
+           * the promotion above, which is about to move mail on it). `leaseBlocked` is still noted so
+           * `/health` can say why this mailbox is not ORGANIZED here, not the same as "not synced". */
           if (!organize) {
             noteBlock(leaseBlocked, rt.mailboxId, null);
             await refreshReaderHolder(
               { mailboxId: rt.mailboxId, accountId: rt.accountId }, rt.adapter, rt.holderSeen,
             );
-            /* ── AND CACHE THE ORGANIZER'S SETTINGS DOCUMENT, ONCE PER READER CYCLE (mail 0094) ──
-             *
-             * A reader's own responder/rule/window/signature rows are inert: the ones in force are
-             * in the published document of the install that HOLDS this mailbox. The panes rendered
-             * the local rows anyway — ruling 6's Critical — so the reader keeps a copy and
-             * `GET /mailboxes/:id/profile` serves that instead.
-             *
-             * A SIBLING OF `refreshReaderHolder`, NOT A LINE INSIDE IT, and that is the whole
-             * placement decision: that function RETURNS EARLY when none of the six holder columns
-             * moved, which is its zero-writes steady state. Folded in after that return, the mirror
-             * would refresh only when the HOLDER changed — and the document changes far more often
-             * than the holder does, so a person's settings pane would sit on a stale copy for as
-             * long as one machine kept organizing the mailbox.
-             *
-             * Here rather than at the attach path too: this is the recurring cycle, and attach is
-             * followed by one of these within a poll.
-             *
-             * Probed, not asserted: `profileIo` is an accessor the real IMAP adapter carries and a
-             * double need not, so an adapter without it is skipped — `refreshReaderHolder` treats
-             * `leasePeekIo` exactly this way. Never throws; `syncProfileMirror` owns that. */
+            /* And cache the organizer's settings document, once per reader cycle (mail 0094). A
+             * reader's own responder/rule/window/signature rows are inert: the ones in force are in the
+             * published document of the install that HOLDS this mailbox. The panes rendered the local
+             * rows anyway (ruling 6's Critical), so the reader keeps a copy and
+             * `GET /mailboxes/:id/profile` serves that. A SIBLING of `refreshReaderHolder`, not a line
+             * inside it: that function RETURNS EARLY when none of the six holder columns moved (its
+             * zero-writes steady state), and folded in, the mirror would refresh only when the HOLDER
+             * changed — while the document changes far more often, so a settings pane would sit on a
+             * stale copy. Probed, not asserted (`profileIo` is an accessor a double need not carry);
+             * never throws (`syncProfileMirror` owns that). */
             const mkIo = (rt.adapter as Partial<{
               profileIo(id: { installId: string; mailboxId: string }): ProfileIo;
             }>).profileIo;
@@ -4185,21 +3265,15 @@ export async function startWorkerWithLock(
             // and never throws: a faulted read answers the previous cycle, or a provably armed
             // hold before the first success. The attach-time preflight above remains for the
             // durable marker the confirm surface needs and for the write-behind's own hold.
-            /* ── AND ONLY AN ORGANIZER ASKS IT ────────────────────────────────────────────
-             *
-             * The flag governs whether the consent gate adopts placement instead of screening,
-             * which is a decision only an organizer makes — a reader files nothing, so the
-             * answer cannot change what its cycle does.
-             *
-             * Asking anyway was not free once the role gate above stopped readers from seeding:
-             * `importDecisionOpenNow`'s TTL is the flush interval for a SEEDED install and
-             * `min(EVAL_TAKEOVER_TTL_MS, flushInterval)` for an unseeded one, so an attached
-             * reader — which never seeds — would fetch the whole profile source out of
-             * `ohmail/_meta` every 30 s for the life of the attachment, instead of settling into
-             * the five-minute cadence. A reader that polls a mailbox it does not organize is
-             * exactly what the reader model asks for; a reader that FETCHES a document it may
-             * not act on is not.
-             */
+            /* And only an organizer asks it. The flag governs whether the consent gate adopts placement
+             * instead of screening, a decision only an organizer makes — a reader files nothing, so the
+             * answer cannot change what its cycle does. Asking anyway was not free once the role gate
+             * stopped readers from seeding: `importDecisionOpenNow`'s TTL is the flush interval for a
+             * SEEDED install and `min(EVAL_TAKEOVER_TTL_MS, flushInterval)` for an unseeded one, so an
+             * attached reader — which never seeds — would fetch the whole profile source out of
+             * `ohmail/_meta` every 30 s for the life of the attachment instead of settling into the
+             * five-minute cadence. A reader that polls a mailbox it does not organize is the model; a
+             * reader that FETCHES a document it may not act on is not. */
               importDecisionOpen: rt.role === "organizer" ? await rt.profile.importDecisionOpenNow() : false,
             });
           } catch (err) {
@@ -4215,21 +3289,26 @@ export async function startWorkerWithLock(
            * and expunging records out from under whoever took over. So the channel runs for an
            * ORDINARY fault and never for this one, and the arms below still see exactly the error
            * they saw before. */
-          /* ── AND AN UNREADABLE LEASE IS AN UNANSWERED QUESTION, NOT AN ORDINARY FAULT ──────
+          /* And an unreadable lease is an unanswered question, not an ordinary fault.
+           * `LeaseUnavailableError` does not say somebody else organizes this mailbox; it says this
+           * cycle could not find out. The channel below APPENDS acknowledgements and EXPUNGES records,
+           * and its standing to do either comes from the lease alone — a fence is a NO, this is a
+           * question with no answer, and a write must not proceed on one (that is how a process keeps
+           * writing into a mailbox another organizer already holds). It does not contradict the gate one
+           * layer down, where a partial folder read is ACTED on: that is a read deciding what it knows,
+           * this is a write claiming standing it failed to establish. Skipping costs a delay — the
+           * records remain, and the next pass drains them once the lease reads again. */
+          /* ── AND THE PERMIT'S OWN LAST VERDICT, WHICH NO CLASS IN THIS LIST NAMES ─────────
            *
-           * `LeaseUnavailableError` does not say somebody else organizes this mailbox; it says
-           * this cycle could not find out. The channel below APPENDS acknowledgements and
-           * EXPUNGES records, and its standing to do either comes from the lease alone. A fence
-           * is a NO; this is a question with no answer, and a write must not proceed on one —
-           * that is how a process keeps writing into a mailbox another organizer already holds.
-           *
-           * It does not contradict the gate's rule one layer down, where a partial read of the
-           * folder is ACTED on rather than refused. That is a read deciding what it knows; this
-           * is a write claiming standing it failed to establish, and being wrong costs opposite
-           * things — a refused read strands a mailbox nobody organizes, an unproven write breaks
-           * the one-organizer invariant. Skipping costs a delay: the records remain, and the next
-           * pass drains them once the lease reads again. */
-          const cycleMayStillWrite = !(cycleError instanceof LeaderFencedError)
+           * A stand-down mid-cycle revokes the permit. `fileOne`, `reconcileFlags` and
+           * `folderOpsPass` swallow everything but a fence, so it reaches here as NO ERROR and
+           * this cycle would go on to acknowledge and expunge records in a mailbox another
+           * install now organizes. Asked of the permit, both shapes are one fact. ORGANIZER only:
+           * a reader holds no permit and its own drive below must not be refused by a receipt
+           * left over from before its demotion. */
+          const permitStoodDown = organize && leaseStoodDown(rt.leasePermit);
+          const cycleMayStillWrite = !permitStoodDown
+            && !(cycleError instanceof LeaderFencedError)
             && !(cycleError instanceof LeaseUnavailableError)
             // ── AND A SHARED-DATABASE FAULT IS NOT SOMETHING TO DRAIN THROUGH EITHER ─────────
             //
@@ -4241,43 +3320,16 @@ export async function startWorkerWithLock(
             // mailbox to learn what the first mailbox already knew.
             && !isSharedDatabaseFault(cycleError);
 
-          /* ══ THE REQUEST CHANNEL, AFTER THE MAIL — AND THE ORDER IS THE SECURITY PROPERTY ══
-           *
-           * This ran BEFORE `runSyncCycle` until mail 0090, so a decision would govern mail
-           * arriving in the same pass. That is a real benefit and it is not worth what it costs:
-           * `ohmail/_meta` is a folder anyone with APPEND rights on the mailbox can write to, so a
-           * drain that runs FIRST lets a flood of records delay — or, with a slow enough database,
-           * indefinitely postpone — the pass that reads somebody's mail. Reading mail is the
-           * product. A queued decision landing one cycle later is not a regression anybody can
-           * perceive, and the `folder_state` rows the drain writes are picked up by the NEXT
-           * pass's reconciler, which was always going to run anyway.
-           *
-           * Both halves are bounded inside `request-drain.ts` (`REQUEST_DRAIN_MAX_PER_CYCLE`,
-           * `REQUEST_DRAIN_TIME_BUDGET_MS`), so this needs no budget of its own. A failure in
-           * either is caught and logged: the mail is done by the time this runs, so neither can
-           * cost this pass anything.
-           *
-           * ── AND IT RUNS WHEN THE CYCLE FAILED, WHICH IS WHY THE FAILURE IS HELD ABOVE ───────
-           *
-           * A `runSyncCycle` that THROWS — a storage-cap refusal, an IMAP fault, a classifier
-           * outage — used to escape straight to the per-mailbox catch below, skipping this block
-           * (a leader fence throws here too and is the one case deliberately left out, for the
-           * reason stated just above this comment). So a
-           * mailbox with a PERSISTENT sync fault drained nothing for as long as the fault lasted,
-           * and a reader's decisions on it expired reporting that NOBODY TOOK THEM while an
-           * organizer was live and connected throughout. That is the worst of the available
-           * outcomes, because the person is told something false rather than told to wait.
-           *
-           * So the throw is held in `cycleError`, this block runs, and the failure is rethrown
-           * immediately below with nothing else having happened — the failure counter, the
-           * backoff and the quarantine all see exactly what they saw before. Held rather than
-           * swallowed, and rethrown before the success bookkeeping rather than after: draining is
-           * not a claim that the cycle succeeded.
-           *
-           * ONE call site, on purpose. A second one — a copy of this block inside the catch — is
-           * how a decision gets applied twice, and the drain's idempotency key is a safety net
-           * rather than a licence to spend it. It is also what keeps the host census's textual
-           * "drains after the cycle" assertion meaning what it says. */
+          /* The request channel, after the mail — and the order is the security property. This ran
+           * BEFORE `runSyncCycle` until mail 0090, so a decision could govern mail arriving the same
+           * pass — a real benefit not worth its cost: `ohmail/_meta` is a folder anyone with APPEND
+           * rights can write to, so a drain that runs FIRST lets a flood of records delay (or, with a
+           * slow database, indefinitely postpone) the pass that reads somebody's mail. Reading mail is
+           * the product; a decision landing one cycle later is imperceptible. Both halves are bounded in
+           * `request-drain.ts`. It runs when the cycle FAILED (the throw is held in `cycleError`),
+           * because a persistent fault used to drain nothing and a reader's decisions expired reporting
+           * NOBODY TOOK THEM while an organizer was live — the throw is held, this runs, and it is
+           * rethrown immediately below. ONE call site: a copy inside the catch applies a decision twice. */
           if (!cycleMayStillWrite) {
             /* Nothing, deliberately, and it is not a silent skip: the fence arm below logs the
              * handover with its own sentence, and the successor drains this mailbox on its next
@@ -4358,20 +3410,15 @@ export async function startWorkerWithLock(
           // and written on every completed cycle so a mailbox that has finished importing stops
           // being heavy the moment it says so.
           rt.owesBacklog = hasBacklog || owesFiling;
-          // ── THE VERIFIED-RECOVERY WRITE, ON THE PATH THAT CAN ACTUALLY VERIFY IT ────────
-          //
-          // Moved here from `attach()`. The bar it used to clear was "connect +
-          // folders + two inline sync cycles + IDLE", which was a PROXY for "has actually
-          // synced" that happened to be reachable before attach returned. Here every success is
-          // a real cycle, so the bar is the thing itself — and a mailbox whose login works but
-          // whose every cycle throws now never flips to `connected` at all; its failures
-          // accumulate toward quarantine instead, which is the honest outcome.
-          //
-          // Spent once (`needsRecovery = false` regardless of the write's fate) because
-          // `markRecovered` never throws: a write that was fenced or failed is retried by the
-          // roster pass, which re-reads `mb.status` from the database every pass and is gated on
-          // this same runtime having completed a cycle. Retrying it from here every cycle
-          // instead would be one pointless UPDATE per cycle for the life of a disabled mailbox.
+          // The verified-recovery write, on the path that can actually verify it. Moved here from
+          // `attach()`. The bar it cleared was "connect + folders + two inline sync cycles + IDLE", a
+          // PROXY for "has actually synced" that happened to be reachable before attach returned. Here
+          // every success is a real cycle, so the bar is the thing itself — and a mailbox whose login
+          // works but whose every cycle throws never flips to `connected`; its failures accumulate
+          // toward quarantine, the honest outcome. Spent once (`needsRecovery = false` regardless of
+          // the write's fate) because `markRecovered` never throws: a fenced or failed write is retried
+          // by the roster pass, which re-reads `mb.status` and is gated on this runtime having completed
+          // a cycle. Retrying from here every cycle would be one pointless UPDATE per cycle.
           if (rt.needsRecovery) {
             rt.needsRecovery = false;
             await markRecovered(rt);
@@ -4380,71 +3427,31 @@ export async function startWorkerWithLock(
           // the end of `attach()`. A mailbox that completed a cycle is not in a failure backoff;
           // one that merely connected is not yet evidence of anything.
           quarantine.delete(rt.mailboxId);
-          /* ── THE PORTABLE PROFILE'S WRITE-BEHIND TICK ────────────────────────────────────
-           *
-           * Never throws; a settings copy that cannot be written must not count against a mailbox
-           * whose provider did nothing wrong. Debounced inside (`TF_PROFILE_FLUSH_MS`), so a
-           * burst of screener verdicts between two ticks is one append.
-           *
-           * ── THE ROLE CHECK, WHICH THIS COMMENT USED TO ARGUE WAS UNNECESSARY ───────────
-           *
-           * It read: *"HERE and only here, because this line is reachable only after
-           * `mayOrganize` said organize AND `runSyncCycle` completed — the lease gate above is
-           * the single-writer mechanism, and the profile module deliberately re-derives none of
-           * it."* That was true while a loser DETACHED. Mail 0083 made a loser a reader that
-           * keeps cycling, so `organize === false` now falls through the gate, through
-           * `runSyncCycle`, and onto this line — and the single-writer mechanism the comment
-           * delegated to had stopped covering it.
-           *
-           * Measured, not reasoned: a Cloud worker demoted by a live desktop claim appended a
-           * profile document to `ohmail/_meta` on the next cycle — one `profileAppends`, on a
-           * mailbox another install organizes, in the one folder a LOCAL install and Cloud share.
-           * Two installs writing settings documents into one `_meta` is the co-tenancy hazard
-           * that folder's own fixture is built to expose, and the reader had no business in it:
-           * a reader mirrors, marks read and sends. Publishing the mailbox's configuration is an
-           * organizer's act, and `armHoldFromFolder` on the attach path is already gated on
-           * exactly this test for exactly this reason.
-           */
-          if (rt.role === "organizer") await rt.profile.onOrganize();
-          // ── THE FIRST STAMP DOES NOT WAIT FOR THE REST OF THE ROTATION ──────────────────
-          //
-          // The batched write below the loop stamps everything that synced this pass, and that is
-          // still the steady-state writer. But this loop is SERIAL, so until this line existed a
-          // mailbox's very first `last_sync_at` waited on every other mailbox's bounded batch —
-          // and `coalesce(last_sync_at, created_at) < now() - 15 minutes` (`packages/db/src/
-          // alerts.ts`) is measured from the moment the ROW was created, not from this pass. Two
-          // ways that pages a healthy first connect:
-          //
-          //  · WIDTH. A real two-mailbox shard measured most of ten minutes to the first
-          //    completed pass after a deploy, leaving only a few minutes
-          //    of margin. A third backfilling mailbox on the shard spends it.
-          //  · SHUTDOWN. `if (stopped) return;` at the top of this loop returns BEFORE the
-          //    batched write, so a deploy landing mid-rotation discards the stamp for every
-          //    mailbox that had already synced in that pass. With a long backfill and this
-          //    repo's deploy cadence, consecutive restarts keep the column NULL across passes
-          //    that each genuinely succeeded.
-          //
-          // ONCE PER ATTACH, not once per process: `attach()` mints `lastSuccessAt: null`, so a
-          // dead-connection detach and re-attach arms this again — correctly, because a fresh
-          // connection's first success is new evidence. So the cost is one extra UPDATE per
-          // attach, and the batching rationale on `stampMailboxSync` still governs everything
-          // after it.
-          //
-          // The pass-1 double write is DELIBERATE, not an oversight to be optimized away: if this
-          // write fails, the batched one covers the same row in the same pass, which is what lets
-          // `firstSuccess` be spent once without leaving an orphan.
-          //
-          // `woken` joins `firstSuccess` here (2026-08-26): a visit admitted on a wake stamps
-          // eagerly too, because the pull affordance settles its spinner on `lastSyncAt` moving
-          // past its request instant, and the batched stamp at pass end can be minutes behind the
-          // visit that answered the wake. Same double-write posture, one UPDATE per doorbell ring
-          // or real arrival — never one per rotation.
-          //
-          // THE `catch` IS LOAD-BEARING AND MUST NEVER RETHROW OR `continue`. Uncaught, a failed
-          // bookkeeping UPDATE would fall into this loop's `catch (err)` arm, miss the
-          // `LeaseUnavailableError`/`ClassifierFaultError` exemptions, increment `rt.failures` and
-          // walk a customer's row toward `status='error'` and a detach — a mailbox marked broken
-          // because a freshness column could not be written.
+          /* The portable profile's write-behind tick. Never throws — a settings copy that cannot be
+           * written must not count against a mailbox whose provider did nothing wrong. Debounced
+           * inside (`TF_PROFILE_FLUSH_MS`). The ROLE CHECK is here because this comment used to argue it
+           * was unnecessary — "reachable only after `mayOrganize` said organize" — which was true while
+           * a loser DETACHED. Mail 0083 made a loser a reader that keeps cycling, so `organize === false`
+           * now falls through the gate, `runSyncCycle`, and onto this line, and the single-writer
+           * mechanism the comment delegated to had stopped covering it. Measured: a Cloud worker demoted
+           * by a live desktop claim appended a profile document to `ohmail/_meta` on the next cycle —
+           * two installs writing settings into one `_meta`, the co-tenancy hazard, and a reader mirrors,
+           * marks read and sends; publishing configuration is an organizer's act. */
+          /* …and not on a permit that stood down mid-cycle. The publish is an append and an
+             expunge in `ohmail/_meta`, and it is reached on exactly the shape the role check
+             cannot see: a refusal swallowed inside the cycle leaves `cycleError` null, so this
+             line runs with `rt.role` still holding the answer the gate gave before the drain. */
+          if (rt.role === "organizer" && !permitStoodDown) await rt.profile.onOrganize();
+          // The first stamp does not wait for the rest of the rotation. The batched write below stamps
+          // everything that synced this pass and is still the steady-state writer, but this loop is
+          // SERIAL, so a mailbox's very first `last_sync_at` waited on every other's bounded batch — and
+          // `coalesce(last_sync_at, created_at) < now() - 15 minutes` (`alerts.ts`) is measured from row
+          // creation, not this pass. Two ways that pages a healthy first connect: WIDTH (a real
+          // two-mailbox shard measured most of ten minutes to the first completed pass), and SHUTDOWN
+          // (`if (stopped) return;` above the batched write discards the stamp for every mailbox that
+          // synced this pass). ONCE PER ATTACH (`attach()` mints `lastSuccessAt: null`); `woken` joins
+          // it (2026-08-26) for the pull spinner. The `catch` is load-bearing and must never rethrow or
+          // `continue` — a failed bookkeeping UPDATE would miss the exemptions and walk a row toward `error`.
           if (firstSuccess || woken) {
             try {
               // The DB-clock variant, NOT `new Date()`: this stamp is the pull affordance's
@@ -4465,26 +3472,16 @@ export async function startWorkerWithLock(
             }
           }
 
-          // ── THE FIRST IMPORT IS FINISHED, SO SAY SO — ONCE ──────────────────────────────
-          //
-          // `hasBacklog === false` is the one honest end-of-import signal the worker has: this
-          // cycle drained everything the adapter owed, so the mailbox is no longer a partial one.
-          // `stampInitialImportComplete` guards on `initial_import_completed_at IS NULL`, so this
-          // is a once-per-mailbox write — every later no-backlog cycle matches zero rows — and the
-          // client reads a NULL stamp as a FLOOR under "still importing" regardless of what its own
-          // mirror is doing, which is what stops a tab that caught up to a partial server state
-          // from calling the mailbox done.
-          //
-          // NOT gated on `firstSuccess`: a mailbox large enough to drain in bounded batches
-          // completes several cycles WITH a backlog before the one that clears it, so the stamp
-          // belongs to the first no-backlog cycle, not the first successful one.
-          //
-          // A FAILURE HERE MUST NOT FAIL THE CYCLE, the same rule the `last_sync_at` stamp and the
-          // sensitive-backfill pass below both follow: the mailbox is connected and serving, and a
-          // freshness column that could not be written is retried on the next no-backlog cycle. An
-          // uncaught throw would fall into this loop's `catch (err)` arm, miss the
-          // `LeaseUnavailableError`/`ClassifierFaultError` exemptions and walk a healthy mailbox
-          // toward `status='error'`.
+          // The first import is finished, so say so — once. `hasBacklog === false` is the one honest
+          // end-of-import signal the worker has: this cycle drained everything the adapter owed, so the
+          // mailbox is no longer partial. `stampInitialImportComplete` guards on
+          // `initial_import_completed_at IS NULL`, so this is a once-per-mailbox write, and the client
+          // reads a NULL stamp as a FLOOR under "still importing" regardless of what its own mirror is
+          // doing — which stops a tab that caught up to a partial server state from calling the mailbox
+          // done. NOT gated on `firstSuccess`: a mailbox draining in bounded batches completes several
+          // cycles WITH a backlog before the one that clears it, so the stamp belongs to the first
+          // no-backlog cycle. A FAILURE MUST NOT FAIL THE CYCLE — an uncaught throw would miss the
+          // exemptions and walk a healthy mailbox toward `error`.
           if (!hasBacklog) {
             try {
               await asDatabaseFault("cycle.stampInitialImportComplete",
@@ -4500,32 +3497,16 @@ export async function startWorkerWithLock(
             }
           }
 
-          // ── PUTTING BACK THE HTML A CLASSIFIER FALSE POSITIVE THREW AWAY ────────────────
-          //
-          // A click tracker's percent-escaped slash spelled `2fa`, so ordinary newsletters,
-          // invoices and monitoring alerts were judged to carry an authentication code and were
-          // stored redacted with their html discarded. The classifier is fixed; the mail that
-          // was already damaged is not, and the only remaining copy of that html is the message
-          // on the server.
-          //
-          // HERE, AND NOT IN THE ATTACH ARM WHERE THE KICKSTART LIVES. The kickstart is cheap on
-          // a virgin mailbox — an empty Screener backlog — so it can sit in front of the first
-          // drain. This one is a network read per damaged message, and a mailbox with two
-          // hundred of them would hold up its own first sync while it repaired mail nobody is
-          // waiting on. On the cycle it costs a marker read per mailbox once the pass is done,
-          // and mail keeps flowing while the repair proceeds a few messages at a time.
-          //
-          // AFTER a SUCCESSFUL `runSyncCycle`, deliberately: the pass shares this cycle's
-          // connection, so it must not run on one that has just failed to sync, and the failure
-          // arm below has already decided what such a connection is worth.
-          //
-          // A FAILURE HERE MUST NOT FAIL THE CYCLE, for the reason the kickstart's own catch
-          // gives: the mailbox is connected and syncing, and repairing an old body is a
-          // correction to a record rather than a precondition for anything. The marker is
-          // written only on a completed walk, so a failure simply retries next cycle. The catch
-          // is INSIDE the success path and swallows everything, which is what keeps a repair
-          // fault out of `rt.failures` — a mailbox must never walk toward `status='error'`
-          // because a two-week-old newsletter could not be re-read.
+          // Putting back the html a classifier false positive threw away. A click tracker's
+          // percent-escaped slash spelled `2fa`, so ordinary newsletters, invoices and alerts were
+          // judged to carry an authentication code and stored redacted with their html discarded. The
+          // classifier is fixed; the damaged mail is not, and the only remaining copy of that html is
+          // the message on the server. HERE, not in the attach arm where the kickstart lives: the
+          // kickstart is cheap on a virgin mailbox, but this is a network read per damaged message, and
+          // a mailbox with two hundred would hold up its own first sync. AFTER a SUCCESSFUL
+          // `runSyncCycle` (it shares the connection). A FAILURE MUST NOT FAIL THE CYCLE — the marker is
+          // written only on a completed walk, and the catch swallows everything so a repair fault
+          // never walks a mailbox toward `error` because a two-week-old newsletter could not be re-read.
           try {
             const repaired = await sensitiveBackfillPass({
               db: db as unknown as Tx, adapter: rt.adapter,
@@ -4555,22 +3536,15 @@ export async function startWorkerWithLock(
             });
           }
 
-          // ── PUT THE CONNECTION BACK ON WATCH — THE LAST ACT OF EVERY SUCCESSFUL VISIT ────
-          //
-          // Everything above re-SELECTed other folders on this same connection, and imapflow
-          // idles on whichever mailbox is CURRENTLY selected — so without this line the IDLE
-          // established at attach watches the last folder the visit touched, an INBOX arrival
-          // emits no `exists`, and the push channel is dead from the first cycle onward while
-          // looking healthy. That was the measured production state on 2026-08-26: p50 194 s /
-          // p90 431 s from arrival to mirror across 48 h, entirely poll-driven. One SELECT per
-          // visit is the whole cost, and only the success path pays it — a failed visit is
-          // connection trouble, and the detach/re-attach that follows re-establishes the watch
-          // from scratch.
-          //
-          // Swallowed like the two passes above it and for the same reason: a re-arm that could
-          // not SELECT is the connection dying, which the adapter's own `close` listener turns
-          // into a detach — it is not evidence against the mailbox and must not walk it toward
-          // `status='error'` over a wake channel.
+          // Put the connection back on watch — the last act of every successful visit. Everything above
+          // re-SELECTed other folders on this same connection, and imapflow idles on whichever mailbox
+          // is CURRENTLY selected — so without this line the IDLE established at attach watches the last
+          // folder the visit touched, an INBOX arrival emits no `exists`, and the push channel is dead
+          // from the first cycle onward while looking healthy (the measured 2026-08-26 state: p50 194 s
+          // / p90 431 s arrival-to-mirror, entirely poll-driven). One SELECT per visit is the whole
+          // cost, and only the success path pays it — a failed visit is connection trouble whose
+          // detach/re-attach re-establishes the watch. Swallowed like the passes above: a re-arm that
+          // could not SELECT is the connection dying, which the adapter's `close` listener detaches.
           try {
             await rt.adapter.rearmWatch?.();
           } catch (err) {
@@ -4581,18 +3555,14 @@ export async function startWorkerWithLock(
             });
           }
         } catch (err) {
-          // ── A FENCED-OUT WRITE IS PROOF OF LOST LEADERSHIP, NOT A MAILBOX FAULT ─────────
-          //
-          // `worker_heartbeats` stopped naming this instance as the shard's leader while a
-          // mail-bearing write was in flight — the write was REFUSED with nothing persisted
-          // (see `makeSyncWriteFence`), and every later write of this cycle would be refused
-          // for the same reason. So the response is the lock-loss response, not the failure
-          // ladder: quiesce the whole instance and let the supervisor re-acquire. Counting
-          // this toward `maxSyncFailures` would quarantine a healthy mailbox over OUR handover,
-          // and continuing the pass would spend a full rotation collecting the same refusal
-          // once per mailbox. FIRST among the arms because it is the only one that ends the
-          // pass — `handleLockLoss` is idempotent, so a tripwire-initiated unwind that already
-          // ran it costs nothing here.
+          // A fenced-out write is proof of lost leadership, not a mailbox fault. `worker_heartbeats`
+          // stopped naming this instance as the shard's leader while a mail-bearing write was in flight
+          // — the write was REFUSED with nothing persisted (`makeSyncWriteFence`), and every later write
+          // of this cycle would be refused for the same reason. So the response is the lock-loss
+          // response, not the failure ladder: quiesce the whole instance and let the supervisor
+          // re-acquire. Counting this toward `maxSyncFailures` would quarantine a healthy mailbox over
+          // OUR handover, and continuing would spend a rotation collecting the same refusal. FIRST among
+          // the arms because it is the only one that ends the pass — `handleLockLoss` is idempotent.
           if (err instanceof LeaderFencedError) {
             log.error("sync_cycle_fenced", {
               mailboxId: rt.mailboxId, accountId: rt.accountId, err,
@@ -4609,56 +3579,16 @@ export async function startWorkerWithLock(
             stopPass = true;
             return;
           }
-          // ── OUR DATABASE FAILING IS NOT THIRTEEN MAILBOXES FAILING ───────────────────────
-          //
-          // Until this arm existed the cycle path exempted three classes and read EVERY other
-          // throw as evidence against the mailbox that happened to be mid-cycle. A Postgres
-          // outage is not selective: it fails the first mailbox, then the second, then the rest,
-          // once per pass — so at `maxSyncFailures` the whole shard walks into quarantine one
-          // mailbox at a time, each with `status='error'` on a customer's row and an exponential
-          // backoff earned against a provider that answered every request correctly. The shard
-          // then stays dark for the length of the ladder AFTER the database comes back, which is
-          // the part that makes it more than cosmetic: the outage outlives its own cause.
-          //
-          // It is exempted BY ORIGIN, and that is the one thing this arm could not have been
-          // built on before. `db-fault.ts` has the measurements; the short version is that a
-          // Postgres that is not listening throws `code: "ECONNREFUSED"` — the same `name` and
-          // the same `code` a dead IMAP host throws — so no predicate over the error could
-          // separate "our database is down" from "this customer's provider is down". Every
-          // database call `runSyncCycle` makes now goes through a wrapped repo or the wrapped
-          // fence transaction, so the answer is recorded at the call instead of inferred from it.
-          //
-          // FOUR CONSEQUENCES, and they are the four halves of the finding:
-          //
-          //  a. `rt.failures` is NOT incremented. The mailbox keeps whatever genuine failures it
-          //     had — this is not a reset — and cannot be quarantined by our outage at any
-          //     tuning of `maxSyncFailures`, which is why the exemption is a class test and not
-          //     a threshold comparison. The same rule `ClassifierFaultError` states below.
-          //  b. `quarantineMailbox` is not called, so no backoff entry is written and no
-          //     `mailboxes.status`/`retry_count` write is attempted. The row is untouched — the
-          //     honest outcome, since nothing about the mailbox changed.
-          //  c. THE PASS STOPS. A dead database means stop writing, not stop this mailbox: every
-          //     remaining mailbox would collect the identical failure, one IMAP round trip each,
-          //     for nothing. `break` and not `return`, deliberately — the post-loop bookkeeping
-          //     below is all best-effort and already catches its own failures, and it holds the
-          //     `last_sync_at` stamp for the mailboxes that DID sync before the fault, which a
-          //     transient blip must not throw away.
-          //  d. it is reported ONCE, as the shard-wide condition it is. See `noteDatabaseFault`.
-          //
-          // AFTER the fence arm, which is not arbitrary: `LeaderFencedError` is thrown by the
-          // fence's own refusal path (`underFence`) rather than by a database call, so it never
-          // carries this tag — but it is the more specific claim and the one that must reach
-          // `handleLockLoss`, so it is tested first and a takeover during a database blip
-          // still quiesces instead of being read as an outage. The reverse order would be a
-          // swallowed fence refusal.
-          //
-          // AND THE BOUNDARY, STATED. This predicate is deliberately NOT
-          // `classifyIngestFault(err).domain === "infrastructure"`. That one calls the CUSTOMER'S
-          // IMAP host infrastructure too, which is correct where it is used and would be the
-          // inverse defect here: a provider that refuses to answer is exactly what quarantine
-          // exists for, and exempting it would dissolve mailbox isolation itself. An
-          // ambiguous timeout with no origin therefore stays a per-mailbox fault — a missed
-          // exemption costs a self-clearing quarantine, a wrong one costs isolation.
+          // Our database failing is not thirteen mailboxes failing. Until this arm the cycle path
+          // exempted three classes and read every other throw as evidence against the mailbox mid-cycle
+          // — but a Postgres outage fails the first, then the second, then the rest, so at
+          // `maxSyncFailures` the whole shard walks into quarantine with `status='error'` on customers'
+          // rows and a backoff earned against a provider that answered correctly, and stays dark for the
+          // ladder's length AFTER the database returns. Exempted BY ORIGIN, which is what could not be
+          // done before: a dead Postgres throws `ECONNREFUSED`, the same name and code a dead IMAP host
+          // throws, so no predicate over the error could separate them — every database call now goes
+          // through a wrapped repo, recording the answer at the call. `rt.failures` is not incremented,
+          // no backoff is written, THE PASS STOPS (`break`), and it is reported ONCE (`noteDatabaseFault`).
           if (isSharedDatabaseFault(err)) {
             noteDatabaseFault(err, { mailboxId: rt.mailboxId, accountId: rt.accountId });
             // Consequence (c) — THE PASS STOPS — reaches the dispatcher as a flag since the lanes
@@ -4670,63 +3600,18 @@ export async function startWorkerWithLock(
             stopPass = true;
             return;
           }
-          // A MODEL FAULT IS NOT A MAILBOX FAILURE, and must never count toward quarantine.
-          //
-          // Without this, three failed polls of a third-party API detach the mailbox and write
-          // `status='error'` — a model-provider incident rendered as "your mailbox is broken". The
-          // circuit has already counted this fault and will open on it; the message stays
-          // un-ingested and the cursor unadvanced, so the next cycle re-plans the same mail
-          // rules-only. Nothing here is lost, so nothing here should be punished.
-          //
-          // The exemption is keyed on the ERROR CLASS rather than on a threshold comparison, so
-          // "an outage can never quarantine a mailbox" holds at every tuning of `maxSyncFailures`
-          // and of the circuit's own threshold.
-          // ── A LEASE WE COULD NOT READ IS NOT A MAILBOX FAILURE — AND IT IS NOT NOTHING EITHER ──
-          //
-          // The exemption stays, and it stays BY CLASS: a mailbox whose `ohmail/_meta` cannot be
-          // read must not be read as "no claim, so organize" (the dual-organizer bug through the
-          // back door) and must not be read as "stand down" either, because a stand-down is STICKY
-          // and one transient network error would permanently disable a mailbox nobody else
-          // wants. Quarantining here would be the same mistake with a
-          // backoff attached: `status='error'` plus a retry delay, on a customer's row, for a fault
-          // that is ours or the network's.
-          //
-          // WHAT THIS ARM USED TO SAY, AND WHY THAT SENTENCE WAS THE OUTAGE:
-          //
-          //   "So: nothing happens this cycle. Nothing is ingested, nothing is quarantined, and
-          //    the next cycle asks again."
-          //
-          // In a measured production incident the next cycle asked again over a hundred times.
-          // Every served mailbox emitted `sync_cycle_lease_unavailable` with
-          // `causeCode="NoConnection"` for most of an hour; the row read `status=connected`,
-          // `sync_blocked_reason=NULL`, `error_code=NULL`, `retry_count=0` throughout; `/health`
-          // said `leader` and `serving`; and it healed only on a process restart. Every layer
-          // behaved as documented and the composition was a do-nothing loop with no exit. So the
-          // comment was not describing a safe default — it was documenting an outage as policy, and
-          // in this repository a comment is the claim under test.
-          //
-          // THREE THINGS HAPPEN NOW, and none of them is a quarantine:
-          //
-          //  1. it RECORDS, on EVERY occurrence — `noteBlock` is idempotent (it refuses to move
-          //     `since` when the reason is unchanged), so "every occurrence" costs one map read and
-          //     keeps the FIRST observation. This is not optional bookkeeping: a cycle-path detach
-          //     that left the mailbox in no bucket would make `roster_invariant_violated` page every
-          //     30 s about this fix's own behaviour;
-          //  2. it CLOCKS, so a provider blip and a socket that died ten minutes ago stop being the
-          //     same observation. `mayOrganize` resolving clears it, above;
-          //  3. past `leaseUnavailableDetachMs` it DETACHES — after the loop, with `toStandDown` and
-          //     `toQuarantine` — and the next roster pass re-attaches on a FRESH connection, because
-          //     attach is connect + gate + folders + IDLE, i.e. attach IS reconnect. Re-attaching
-          //     also converts an undiagnosable steady state into outcomes this file already handles:
-          //     a live-but-unreadable lease lands in the attach arm's own `noteBlock`, and a login
-          //     the provider now rejects quarantines through the attach catch, correctly attributed.
-          //
-          // `releaseOrganizerClaim` is NOT called here and must never be: releasing on connection
-          // death would hand the mailbox to a desktop install on every provider blip. `:1201` stays
-          // the only release site. Guarded by `dead-connection.e2e.test.ts` claim 5, which asserts
-          // `FakeMetaFolder.removals` does not move across detach and re-attach.
+          // A model fault is not a mailbox failure, and must never count toward quarantine. Without
+          // this, three failed polls of a third-party API detach the mailbox and write `status='error'`
+          // — a model incident rendered as "your mailbox is broken". The circuit has counted the fault
+          // and will open on it; the message stays un-ingested and the cursor unadvanced, so the next
+          // cycle re-plans rules-only — nothing lost, nothing punished. Keyed on the ERROR CLASS, so the
+          // exemption holds at every tuning. A lease we could not read is exempt BY CLASS too: it must
+          // not read as "no claim, organize" (the dual-organizer bug) or as "stand down" (sticky — one
+          // transient error disables a mailbox for ever). Its old "nothing happens, the next cycle asks
+          // again" was an outage as policy (over a hundred cycles, most of an hour). Now it RECORDS,
+          // CLOCKS, and past `leaseUnavailableDetachMs` DETACHES; `releaseOrganizerClaim` is never called here.
           if (err instanceof LeaseUnavailableError) {
-            noteBlock(leaseBlocked, rt.mailboxId, "lease_unreadable");
+            noteBlock(leaseBlocked, rt.mailboxId, leaseBlockReason(err));
             rt.leaseUnavailableSince ??= Date.now();
             const unavailableMs = Date.now() - rt.leaseUnavailableSince;
             const due = unavailableMs >= leaseUnavailableDetachMs;
@@ -4767,31 +3652,23 @@ export async function startWorkerWithLock(
         }
       }
 
-      // ── THE DISPATCHER ────────────────────────────────────────────────────────────────────
-      //
-      // Work-stealing and not waves, and the difference is the whole point of the slice. A wave
-      // scheduler — take N, await all N, take the next N — costs `max(wave)` per wave, so the
-      // heavy mailbox still dominates the wave it is in and the measured rotation barely moves:
-      // 3×254 s + 10×2 s serial is 782 s, and in waves of three it is ~766 s. Lanes that refill
-      // the instant one frees cost `max(total/N, longest)` instead — ~260 s for the same shard —
-      // which is the point at which a mailbox waits for its OWN batch rather than for the shard's.
-      //
-      // The roster yield is at the TOP, exactly where the adoption fix put it, and it is now the only
-      // place a mailbox is taken from `pending`. Lanes may be in flight across it, which is the
-      // one property the adoption fix's original sentence promised and `laneBusy` now enforces directly.
+      // The dispatcher. Work-stealing and not waves, and the difference is the whole point of the
+      // slice. A wave scheduler (take N, await all N, take the next N) costs `max(wave)` per wave, so
+      // the heavy mailbox dominates its wave and the rotation barely moves (3×254 s + 10×2 s serial is
+      // 782 s, in waves of three ~766 s). Lanes that refill the instant one frees cost
+      // `max(total/N, longest)` — ~260 s for the same shard — the point at which a mailbox waits for
+      // its OWN batch rather than the shard's. The roster yield is at the TOP, where the adoption fix
+      // put it, and is now the only place a mailbox is taken from `pending`; lanes may be in flight
+      // across it, the property `laneBusy` now enforces directly.
       for (;;) {
         if (stopped) break;
-        // ── SERVE THE ROSTER PASS THIS CYCLE IS SITTING ON ──────────────────────────────
-        //
-        // Lanes may be running while this pass does its work, so "nothing is
-        // suspended inside an adapter" is no longer what makes it safe — `laneBusy` is. The
-        // pass detaches nothing a lane is holding and defers it to `deferredLeaves` instead.
-        //
-        // NOT while `stopPass` is set. The pass is winding down because the shared database is
-        // gone, and a roster pass is a database read: attempting it once per draining lane would
-        // add `roster_pass_failed` lines to the one moment an operator least wants log noise, and
-        // could not succeed. It stays owed and runs after this cycle, which is where the queued
-        // entry `requestRoster` made would have run it anyway.
+        // Serve the roster pass this cycle is sitting on. Lanes may be running while this pass works,
+        // so "nothing is suspended inside an adapter" is no longer what makes it safe — `laneBusy` is:
+        // the pass detaches nothing a lane is holding and defers it to `deferredLeaves`. NOT while
+        // `stopPass` is set: the pass is winding down because the shared database is gone, and a roster
+        // pass is a database read — attempting it once per draining lane would add `roster_pass_failed`
+        // lines to the moment an operator least wants noise, and could not succeed. It stays owed and
+        // runs after this cycle, where the queued entry `requestRoster` made would have run it.
         if (!stopPass) await yieldToRoster();
         if (stopped) break;
         // …and whatever that pass just adopted that has never synced goes to the front of what
@@ -4816,21 +3693,15 @@ export async function startWorkerWithLock(
           // so nothing can pass this gate twice on one signal.
           if (servedIds.has(rt.mailboxId) && !revisitAllowed.delete(rt.mailboxId)) continue;
           servedIds.add(rt.mailboxId);
-          // ── AND THEN DISTRUST THE SNAPSHOT, BY IDENTITY AND NOT BY PRESENCE ─────────────
-          //
-          // `pending` was planned at the top of this cycle and a roster pass may since have
-          // detached this mailbox — disabled, deleted, parked, evicted by the cap. The
-          // single queue used to make that impossible; the yield above is what trades it away,
-          // so it becomes a line of code and gets a test. (The first-syncer rule admits new runtimes to
-          // `pending` but never revalidates the ones already in it — that is this guard's job.)
-          //
-          // `runtimes.get(id) !== rt` and NOT `!runtimes.has(id)`, because a ten-minute cycle
-          // spans many roster intervals: one pass can detach a mailbox and a later one re-attach
-          // it as a NEW runtime with a NEW connection. `has` is true for that, and the stale `rt`
-          // this loop is holding carries the CLOSED adapter — its failures would climb to
-          // `maxSyncFailures`, and `detach(staleRt)` deletes by mailbox id, evicting the healthy
-          // runtime, leaking its live IDLE login and writing `status='error'` on a mailbox that
-          // is working perfectly.
+          // And then distrust the snapshot, by identity and not by presence. `pending` was planned at
+          // the top of this cycle and a roster pass may since have detached this mailbox (disabled,
+          // deleted, parked, evicted). The single queue used to make that impossible; the yield above
+          // trades it away, so it becomes a line of code with a test. `runtimes.get(id) !== rt` and NOT
+          // `!runtimes.has(id)`, because a ten-minute cycle spans many roster intervals: one pass can
+          // detach a mailbox and a later one re-attach it as a NEW runtime with a NEW connection. `has`
+          // is true for that, and the stale `rt` this loop holds carries the CLOSED adapter — its
+          // failures would climb to `maxSyncFailures`, and `detach(staleRt)` deletes by mailbox id,
+          // evicting the healthy runtime and writing `error` on a mailbox that is working perfectly.
           if (runtimes.get(rt.mailboxId) !== rt) continue;
           // THE WAKE IS SPENT ON ADMISSION, not on completion — see `MailboxRuntime.wokenAt`. A
           // signal that arrives during this very visit is about mail that landed after
@@ -4915,31 +3786,16 @@ export async function startWorkerWithLock(
         });
       }
 
-      // ── STANDING DOWN MEANS STOPPING ENTIRELY, NOT MIRRORING QUIETLY ────────────────────
-      //
-      // The dual-organizer rule: the loser stands down on its next cycle and STOPS SYNCING
-      // ENTIRELY — it does not keep passively mirroring. A 'read-only' IMAP loop is half the
-      // dual-organizer bug surface: it still observes folders, still feeds `adopt_external`,
-      // still burns a connection. So the runtime is detached and the login closed, exactly as
-      // a quarantine would — but with NO backoff entry, because this is not a failure and must
-      // never be retried on a timer. The row is `disabled`, so the next roster pass does not
-      // offer the mailbox again; only a human re-enabling it does.
-      //
-      // Outside the loop, like the quarantine pass, so a detach can never close an adapter the
-      // rotation is still walking.
-      // The identity guard here is the same one the rotation loop carries and for the same
-      // reason: these three lists were validated when they were PUSHED, and a roster pass has
-      // been able to run between then and now since mid-cycle adoption. Detaching a stale `rt` deletes the
-      // map entry a healthy re-attached runtime owns.
-      //
-      // SAY WHAT IS AND IS NOT PROVEN. The HARM is proven — deleting the guard on the rotation
-      // loop above turns `roster-preemption.e2e.test.ts`'s stale-runtime claim red with
-      // `mailboxes: 3` where 4 are attached, which is the healthy runtime being evicted. The
-      // three guards below are the same rule at the same risk, and each ALONE is not covered:
-      // removing any one of them leaves the suite green. Proving one needs a mailbox that
-      // reaches a post-loop list AND is detached and re-attached by two later mid-cycle passes
-      // before the loop ends — four mailboxes and three parks. Written down rather than
-      // asserted, so the next person knows which line is evidence and which is argument.
+      // Standing down means being a reader in place, and this loop detaches only the ones that must
+      // leave. The three post-loop lists (stand-down, quarantine, lease-blocked) carry the IDENTITY
+      // GUARD the rotation loop carries and for the same reason: they were validated when PUSHED, and
+      // a roster pass has been able to run between then and now since mid-cycle adoption — detaching a
+      // stale `rt` deletes the map entry a healthy re-attached runtime owns. Outside the loop, like the
+      // quarantine pass, so a detach can never close an adapter the rotation is still walking. SAY WHAT
+      // IS AND IS NOT PROVEN: the HARM is proven — deleting the guard on the rotation loop turns
+      // `roster-preemption.e2e.test.ts`'s stale-runtime claim red with `mailboxes: 3` where 4 are
+      // attached. The three guards below are the same rule at the same risk; each ALONE is not covered,
+      // so it is written down rather than asserted, so the next person knows which line is evidence.
       for (const rt of toStandDown) {
         if (runtimes.get(rt.mailboxId) !== rt) continue;
         await detach(rt, "this mailbox's organizer lease could not be read for long enough to stop trying");
@@ -4958,24 +3814,15 @@ export async function startWorkerWithLock(
         await quarantineMailbox(rt.mailboxId, rt.accountId, err, "sync");
       }
 
-      // ── A CONNECTION THAT CANNOT READ ITS OWN LEASE IS DETACHED, NOT QUARANTINED ───────────
-      //
-      // The whole distinction, in three properties this loop has and the quarantine loop above does
-      // not:
-      //
-      //  · NO backoff entry and NO `status='error'`. This is an infrastructure fault, so the row
-      //    keeps saying `connected` while `sync_blocked_reason` says `lease_unreadable` — which is
-      //    the honest pair, and it is what the by-class exemption exists to protect. A mailbox must
-      //    never be marked broken because our socket died.
-      //  · NO `releaseOrganizerClaim`. Cloud fully intends to keep organizing this mailbox; a
-      //    release here would hand it to a desktop install on every provider blip and break "exactly
-      //    one active organizer per mailbox" in the one direction that loses a customer's mail.
-      //  · The mailbox is left in `leaseBlocked` by the arm that queued it, so
-      //    `roster_invariant_violated` stays quiet: a detached-and-accounted-for mailbox is not a
-      //    duty gap. Deleting the `noteBlock` above turns this loop into a pager.
-      //
-      // Outside the rotation loop for the reason the other two are: a detach must never close an
-      // adapter the loop is still walking.
+      // A connection that cannot read its own lease is detached, not quarantined. The whole
+      // distinction, in three properties this loop has and the quarantine loop does not: NO backoff
+      // entry and NO `status='error'` — this is an infrastructure fault, so the row keeps saying
+      // `connected` while `sync_blocked_reason` says `lease_unreadable`, the honest pair the by-class
+      // exemption protects; NO `releaseOrganizerClaim` — Cloud intends to keep organizing, and a
+      // release here would hand the mailbox to a desktop install on every blip; and the mailbox is left
+      // in `leaseBlocked` by the arm that queued it, so `roster_invariant_violated` stays quiet (a
+      // detached-and-accounted-for mailbox is not a duty gap). Outside the rotation loop, so a detach
+      // never closes an adapter the loop is still walking.
       for (const { rt, unavailableMs } of toReconnect) {
         if (runtimes.get(rt.mailboxId) !== rt) continue;
         await detach(
@@ -4985,50 +3832,16 @@ export async function startWorkerWithLock(
         );
       }
 
-      // ── THE DB PASSES RUN OVER THE SHARD'S FULL ENABLED SET, NOT THE ATTACHED DUTY ──────
-      //
-      // This used to be `dutyAccounts`, which is `accountsOf(served)` where
-      // `served = selected.slice(0, maxMailboxes)`. That cap exists to bound IMAP CONNECTIONS
-      // and nothing else, and neither pass below opens one: `ToolApplyContext`
-      // (`packages/core/src/ai/workflows/executor.ts`) is `{repo, tx, accountId, runId,
-      // stepIndex, now, drafter, credits}` with NO adapter, `file_message` is annotated NEVER
-      // IMAP, and `bubbleUpPass` is one SELECT plus one UPDATE per due row. So an account whose
-      // mailbox fell past the cap had its `workflow_runs` row accepted with a 202 and drained by
-      // nobody, and its snoozed messages would never resurface — for a reason that does not
-      // apply to either pass. `dutyAccounts` stays the list for the THREAD BACKFILL below,
-      // which genuinely needs an attached mailbox.
-      //
-      // Multi-shard is closed by construction: `shardPredicate` (`mailboxes.ts`) is
-      // `hashtext(account_id) % shards`, so an account belongs to exactly one shard's list and
-      // two shards' workers can never both claim the same row.
-      //
-      // DELIBERATE SCOPE, unchanged and now stated for BOTH passes (write it down, do not
-      // rediscover it): the list derives from ENABLED MAILBOXES. An account whose every mailbox
-      // is `status='disabled'` — which is what a disconnect leaves behind —
-      // appears in no shard's list, so it gets no workflow drain, no time scan AND NO BUBBLE-UP
-      // FLIP; any already-`pending` workflow_runs and any due `bubbled_up` message_states it
-      // has sit untouched until the account is re-enabled. That is the intended semantics for
-      // all three (a suspended account's automation must not keep firing, and resurfacing mail
-      // into an ohbox nobody is entitled to sync is the same act), and it is why "disable,
-      // never delete" is safe here. The consequence the disabling path owns: when it disables an
-      // account it must also park or cancel that account's pending runs, or they accumulate
-      // forever.
-      //
-      // FALLBACK, NOT FAILURE. `dutyAccounts` is in-memory and could not throw; this is a query
-      // and can. On a database fault the cycle degrades to the OLD, NARROWER list rather than
-      // skipping the passes entirely — a subset is what shipped until this slice, and it beats a
-      // cycle in which no account is drained at all.
-      // NO SECOND PREEMPTION POINT HERE, and the absence is a decision rather than an omission.
-      //
-      // A yield before the per-account passes below is safe — the detaches are done and nothing
-      // beyond this line touches an adapter — and it was written, and then removed, because NO
-      // TEST CAN DRIVE IT. The passes are database work with no injectable delay, so the branch
-      // cannot be made to matter deterministically, and a guard nobody has watched fail is not
-      // evidence. What it would have bought is bounded and small: a mailbox connected during the
-      // DB passes waits them out, and the queued pass runs the moment this cycle returns.
-      //
-      // So `cycle()` has exactly ONE preemption point — between two mailboxes — which is also
-      // the whole safety argument, in one sentence, with nothing to qualify.
+      // The DB passes run over the shard's full enabled set, not the attached duty. This used to be
+      // `dutyAccounts` (`accountsOf(served)`, capped at `maxMailboxes`), a cap that exists to bound
+      // IMAP CONNECTIONS and nothing else — and neither pass below opens one, so an account whose
+      // mailbox fell past the cap had its `workflow_runs` accepted with a 202 and drained by nobody,
+      // and its snoozed messages never resurfaced. `dutyAccounts` stays the list for the THREAD
+      // BACKFILL, which needs an attached mailbox. Multi-shard is closed by construction
+      // (`shardPredicate` is `hashtext(account_id) % shards`). DELIBERATE SCOPE: the list derives from
+      // ENABLED MAILBOXES, so a fully-disabled account gets no drain, time scan or bubble-up flip
+      // (the intended semantics — a suspended account's automation must not keep firing). FALLBACK, not
+      // failure: a database fault degrades to the old narrower list. cycle() has exactly ONE preemption point.
       let passAccounts = dutyAccounts;
       try {
         passAccounts = await asDatabaseFault("cycle.loadServedAccounts",
@@ -5042,30 +3855,16 @@ export async function startWorkerWithLock(
         });
       }
 
-      // ── THE BUBBLE-UP RESURFACING PASS, IN THE LOOP AND TIME-GATED ──────────────────────
-      //
-      // It lives here rather than in a platform cron for the reason `pruneIdempotencyKeys`
-      // below does, and the argument is stronger here because the alternative is disproved
-      // rather than merely worse: `runBubbleUpCron` takes `acquireLeaderLock(…,
-      // leaderLockKeyFor(shardIndex))` — the SAME lock this process is holding right now — so a
-      // platform cron on this shard would be a process whose only function, while the worker is
-      // healthy, is to start, fail to take the lock and exit. The wrapper is a manual backstop
-      // for a DEAD worker; it was never a scheduler target. The worker is already the single
-      // elected writer, so exactly one process runs this, and a failure is a logged error and
-      // never a cycle abort.
-      //
-      // Until this call existed nothing in production flipped `bubbled_up` back:
-      // `AppShell`'s resurface shortcut hid the message and showed the user a DATED promise
-      // ("Resurfaces {when}", a real next-Friday-09:00 timestamp) that no code could keep.
-      //
-      // BEFORE the workflow block, not after: a message coming due may satisfy a `time`
-      // trigger's target set in this same tick, and the reverse order would delay that a full
-      // cycle for nothing.
-      //
-      // TIME-GATED, and not per-cycle-unconditional and not its own `setInterval`. A second
-      // off-queue writer is unearned for a pass costing one query per account, and the detach
-      // loops above exist precisely because a pass that is not on this queue can close an
-      // adapter the cycle is walking.
+      // The bubble-up resurfacing pass, in the loop and time-gated. It lives here rather than a platform
+      // cron because `runBubbleUpCron` takes `acquireLeaderLock(…, leaderLockKeyFor(shardIndex))` — the
+      // SAME lock this process holds — so a platform cron on this shard would be a process whose only
+      // function, while the worker is healthy, is to start, fail to take the lock and exit; the wrapper
+      // is a manual backstop for a DEAD worker. Until this call, nothing in production flipped
+      // `bubbled_up` back, so `AppShell`'s resurface shortcut showed a DATED promise ("Resurfaces
+      // {when}") no code could keep. BEFORE the workflow block, since a message coming due may satisfy
+      // a `time` trigger this tick. TIME-GATED, not per-cycle-unconditional and not its own
+      // `setInterval` — a second off-queue writer is unearned for one query per account, and an
+      // off-queue pass can close an adapter the cycle is walking.
       if (Date.now() - lastBubbleUpAt >= BUBBLE_UP_EVERY_MS) {
         lastBubbleUpAt = Date.now();
         for (const accountId of passAccounts) {
@@ -5111,31 +3910,16 @@ export async function startWorkerWithLock(
         }
       }
 
-      // ── APPLY A NEW RULE TO MAIL THAT IS ALREADY FILED ──────────────────────────────
-      //
-      // Its OWN try/catch and its own loop, not folded into the workflow block above, for the
-      // reason that block's comment already gives: one account's failure must not skip the rest,
-      // and a workflow error must not skip this. They share nothing.
-      //
-      // It runs HERE, on the worker, and not on the API host, because writing thousands of
-      // `folder_state` rows inside `POST /rules` is the thing this slice exists to stop — the
-      // sheet used to fire one `POST /messages/:id/move` per matching message from the browser,
-      // each taking the account's `account_sync_state` row lock, and abandoned the rest if the
-      // tab closed. The pass needs nothing from the services package (the dependency rule,
-      // `test/deps.test.ts`): the db and core packages are the whole of its imports,
-      // which is what makes this the right host rather than a dodge.
-      //
-      // The package is named in prose rather than in backticks on purpose: `deps.test.ts` scans
-      // this file's raw TEXT for that specifier and does NOT strip comments, so writing it here
-      // fails the dependency rule from a comment. That is the same "a mention is not a call" defect
-      // `test/every-pass-has-a-producer.test.ts` documents having fixed in itself; deps.test.ts
-      // has not, and hardening it belongs to whoever owns that guard.
-      //
-      // It is NOT time-gated, unlike `bubbleUpPass`. The pass's own per-cycle write budget
-      // (`RULE_RETRO_WRITES_PER_CYCLE`) already bounds what it does, its owed probe is one
-      // indexed query against a PARTIAL index that holds zero rows in the steady state, and a
-      // user who has just clicked a destination is waiting for their mail to move — a gate would
-      // add latency to the one thing this feature is.
+      // Apply a new rule to mail that is already filed. Its OWN try/catch and loop, not folded into the
+      // workflow block, for that block's reason: one account's failure must not skip the rest. It runs
+      // HERE, on the worker, not the API host, because writing thousands of `folder_state` rows inside
+      // `POST /rules` is what this slice stops — the sheet used to fire one `POST /messages/:id/move`
+      // per match from the browser, each taking the account's sync-state row lock, abandoning the rest
+      // if the tab closed. The pass needs nothing from the services package (the db and core packages
+      // are its whole imports), which makes this the right host. The package is named in prose, not
+      // backticks, on purpose: `deps.test.ts` scans this file's raw TEXT and does not strip comments.
+      // NOT time-gated, unlike `bubbleUpPass`: its per-cycle write budget bounds it, its owed probe is
+      // one indexed query, and a user who clicked a destination is waiting for their mail to move.
       for (const accountId of passAccounts) {
         if (stopped) return;
         try {
@@ -5159,20 +3943,15 @@ export async function startWorkerWithLock(
         }
       }
 
-      // ── FILE THE ALREADY-MISFILED AUTOMATED MAIL OUT OF THE OHBOX ───────────────────────
-      //
-      // Its OWN try/catch and loop, for the reason the retro block above has one: one account's
-      // failure must not skip the rest. It is the durable, one-time-per-opt-in half of the
-      // `people_only` posture — the live engine demotes NEW mail, this re-routes the backlog that
-      // was placed before the account opted in.
-      //
-      // Like the retro pass it lives here, on the worker, and needs nothing beyond the db and core
-      // packages — the same dependency-direction reason that pass gives (`deps.test.ts` scans this
-      // file's raw text, so the reason is stated without naming the forbidden package). It is owed
-      // work only for an account that flipped to `people_only` (or pressed "tidy now"), which the
-      // pass checks itself with one PK read; for every other account the call is that read and no
-      // more. NOT time-gated: its own per-cycle write budget bounds what it does, and an owner who
-      // just opted in is waiting for their Ohbox to shrink.
+      // File the already-misfiled automated mail out of the Ohbox. Its OWN try/catch and loop: one
+      // account's failure must not skip the rest. It is the durable, one-time-per-opt-in half of the
+      // `people_only` posture — the live engine demotes NEW mail, this re-routes the backlog placed
+      // before the account opted in. Like the retro pass it lives here and needs nothing beyond the db
+      // and core packages (the same dependency reason, stated without naming the forbidden package
+      // because `deps.test.ts` scans this file's raw text). It is owed work only for an account that
+      // flipped to `people_only` or pressed "tidy now", which one PK read checks; for every other
+      // account the call is that read and no more. NOT time-gated: its per-cycle write budget bounds it,
+      // and an owner who just opted in is waiting for their Ohbox to shrink.
       for (const accountId of passAccounts) {
         if (stopped) return;
         try {
@@ -5195,20 +3974,15 @@ export async function startWorkerWithLock(
         }
       }
 
-      // ── REJOIN THE CONVERSATIONS A FORWARD SPLIT ────────────────────────────────────────
-      //
-      // A forward re-entering the mailbox carries no References, so one human conversation
-      // becomes two header chains and renders as two threads — correctly, under the ingest
-      // rule, which is why no ingest change can close it. The heal merges them once the
-      // evidence completes (`conversationJoinVerdict` — same account, same base subject, the
-      // same non-self correspondent on BOTH chains, the later chain opening with a
-      // reply/forward prefix, inside a 14-day window), performing exactly the merge the user's
-      // own `POST /threads/merge` performs, change rows included.
-      //
-      // TIME-GATED like `bubbleUpPass` and unlike the retro/tidy passes, because nobody is
-      // waiting on it: the pass is a repair of presentation, its own budget bounds a run, and
-      // its pre-filter is a per-account GROUP BY that would buy nothing run per-cycle.
-      // Its OWN try/catch and loop: one account's failure must not skip the rest.
+      // Rejoin the conversations a forward split. A forward re-entering the mailbox carries no
+      // References, so one human conversation becomes two header chains and renders as two threads —
+      // correctly, under the ingest rule, which is why no ingest change can close it. The heal merges
+      // them once the evidence completes (`conversationJoinVerdict` — same account, same base subject,
+      // the same non-self correspondent on BOTH chains, the later opening with a reply/forward prefix,
+      // inside a 14-day window), performing exactly the merge `POST /threads/merge` performs, change
+      // rows included. TIME-GATED like `bubbleUpPass` and unlike the retro/tidy passes, because nobody
+      // is waiting on it: it repairs presentation, its own budget bounds a run, and its pre-filter is a
+      // per-account GROUP BY that would buy nothing per-cycle. Its OWN try/catch and loop.
       if (Date.now() - lastThreadJoinHealAt >= THREAD_JOIN_HEAL_EVERY_MS) {
         lastThreadJoinHealAt = Date.now();
         for (const accountId of passAccounts) {
@@ -5279,19 +4053,15 @@ export async function startWorkerWithLock(
         }
       }
 
-      // ── RE-DELIVER `autoReplyByUs` TO MIRRORS THAT PREDATE IT ──────────────────────────
-      //
-      // The flag is computed at materialize time, so it reaches a message only when a change_log
-      // row for that message does. Every responder reply already sitting in somebody's Ohbox was
-      // written before the flag existed, so without this pass the client half filters on a field
-      // those rows do not carry and the replies stay in "Earlier" for ever — the fix invisible on
-      // exactly the mailboxes that reported the bug. Found by review as a HIGH.
-      //
-      // ONCE PER PROCESS, on the first cycle: see the gate's docblock for why there is no
-      // durable marker and no interval. Its OWN try/catch and loop like every pass here — one
-      // account's failure must not skip the rest, and this one must never abort a cycle: it
-      // writes no state of its own, so the next gated run simply re-reads reality. It moves
-      // nothing and touches no message row; a change_log row is a re-read instruction.
+      // Re-deliver `autoReplyByUs` to mirrors that predate it. The flag is computed at materialize
+      // time, so it reaches a message only when a change_log row for that message does — and every
+      // responder reply already in somebody's Ohbox was written before the flag existed, so without
+      // this pass the client filters on a field those rows do not carry and the replies stay in
+      // "Earlier" for ever, the fix invisible on exactly the mailboxes that reported the bug (found by
+      // review as a HIGH). ONCE PER PROCESS, on the first cycle (see the gate's docblock for why no
+      // durable marker). Its OWN try/catch and loop, and it must never abort a cycle: it writes no
+      // state of its own, moves nothing and touches no message row — a change_log row is a re-read
+      // instruction — so the next gated run simply re-reads reality.
       if (!awayReplySweep.done
           && Date.now() - lastAwayReplySweepAt >= AWAY_REPLY_REDELIVER_RETRY_MS) {
         lastAwayReplySweepAt = Date.now();
@@ -5378,31 +4148,16 @@ export async function startWorkerWithLock(
         }
       }
 
-      // ── BUY THE MODEL'S ADVICE ABOUT INCOMING HELD SENDERS ───────────────────────────────
-      //
-      // Its OWN try/catch and loop, for the reason every block above has one. It runs AFTER the
-      // deterministic auto-apply directly above it, and that order is load-bearing rather than
-      // cosmetic: that pass files the obvious bulk OUT of the Screener with no model and no
-      // spend, so anything it takes this cycle is a sender this one never pays to ask about.
-      // Wrong way round and the account buys advice about newsletters that were about to be
-      // filed for free.
-      //
-      // The ONLY pass here that spends money, and the only thing in the product that spends with
-      // no press in the same minute. Three bounds hold it — the `auto_suggest_at` watermark (the
-      // pre-opt-in backlog is never drained by flipping a switch), a ten-sender page per account
-      // per cycle, and `spend()` before every model call with the first refusal stopping the
-      // account. Off by default: for an account that has not opted in this is one PK read, and
-      // for a deployment with no model (or with the classifier circuit OPEN) it is not even that.
-      //
-      // The gate books the SAME `debit_classify` reason the ingest path meters with, which is what
-      // makes the ledger's `classify:screener:<message_id>` source a real duplicate check across
-      // this pass, the client's on-open batch and the manual ladder.
-      //
-      // The `screener` ACTION, though, not the ingest one: the same ledger reason on different
-      // terms — an exclusive claim, and the mailbox's screening-only setup grant drawn first. A
-      // duplicate check was never enough here, because it makes the second buyer of one message
-      // free and cannot make it not happen, so this pass and a user pressing Suggest both reached
-      // the model for one credit. Both come from `SPEND_ACTIONS.screener` now.
+      // Buy the model's advice about incoming held senders. Its OWN try/catch and loop. It runs AFTER
+      // the deterministic auto-apply above, load-bearing: that pass files the obvious bulk OUT of the
+      // Screener with no model and no spend, so anything it takes this cycle is a sender this one never
+      // pays to ask about (wrong way round and the account buys advice about newsletters about to be
+      // filed for free). The ONLY pass here that spends money, and the only thing in the product that
+      // spends with no press in the same minute — three bounds hold it (the `auto_suggest_at`
+      // watermark, a ten-sender page per account per cycle, and `spend()` before every model call with
+      // the first refusal stopping the account). Off by default. It books the SAME `debit_classify`
+      // reason ingest meters with (the `classify:screener:<message_id>` source is a real duplicate
+      // check), but the `screener` ACTION — an exclusive claim and the screening-only setup grant first.
       for (const accountId of passAccounts) {
         if (stopped) return;
         try {
@@ -5463,36 +4218,16 @@ export async function startWorkerWithLock(
         } catch (err) {
           log.error("send_fingerprint_prune_failed", { err });
         }
-        // ── EXPIRED STAGED ATTACHMENT BYTES: THE OBJECT, THEN THE ROW ───────────────────
-        //
-        // A hosted send puts attachment bytes in a private bucket and references them; the row
-        // carries a 24-hour `expires_at` and this is the half that makes that a fact rather than
-        // a promise. Same slot and same reasoning as the prune above it — the worker is the
-        // single elected writer, so exactly one process sweeps — and a failure is a logged
-        // warning, never a cycle abort.
-        //
-        // THE ABANDONED UPLOAD IS THE CASE THAT MATTERS: a ticket minted, a compose window
-        // closed, no object ever written. `remove` treats a storage 404 as success precisely so
-        // that row goes; a sweep that read the 404 as failure would keep every abandoned ticket
-        // for the life of the deployment while reporting nothing.
-        //
-        // IT DRAINS. This used to take ONE 200-row page per hourly slot, which any
-        // account minting faster than that outran permanently — and since the predicate is the
-        // clock rather than an identity, one such account starved cleanup for every other account
-        // on the deployment. `sweepExpiredStagingFor` now pages until the expired set is empty,
-        // under a row ceiling and a wall-clock budget stated on the constants in
-        // `@trafficflow/db/cloud`. The per-account mint quota that makes the arithmetic close is
-        // the other half of the same fix, at the mint.
-        //
-        // WHAT IS LOGGED IS CHOSEN SO A BACKLOG CANNOT BE SILENT, which is the failure this whole
-        // finding was about. `drained: false` means rows are still expired when the pass ends —
-        // either a bound bound (`stoppedBy`) or a bucket refusing deletes (`failedPages`) — and
-        // it is a warning even though nothing threw, because a clean-looking number over a
-        // growing bucket is exactly what went wrong before.
-        //
-        // The skip is LOGGED rather than silent. A deployment whose API stages and whose worker
-        // has no bucket configured grows that bucket forever, and the only place that is visible
-        // is here.
+        // Expired staged attachment bytes: the object, then the row. A hosted send puts attachment
+        // bytes in a private bucket and references them; the row carries a 24-hour `expires_at` and
+        // this is the half that makes that a fact. Same slot as the prune above (the worker is the
+        // single elected writer). The abandoned upload is the case that matters — a ticket minted, a
+        // compose window closed, no object written — and `remove` treats a storage 404 as success so
+        // that row goes (reading it as failure would keep every abandoned ticket for the deployment's
+        // life). It DRAINS: this took ONE 200-row page per hourly slot, which any faster account
+        // outran, starving cleanup for everyone; `sweepExpiredStagingFor` now pages until empty under a
+        // row ceiling and wall-clock budget. `drained: false` is a WARNING even though nothing threw —
+        // a clean-looking number over a growing bucket is exactly what went wrong before.
         if (stagingStorage) {
           try {
             const sweep = await sweepExpiredStagingFor(db as unknown as Tx, stagingStorage, new Date());
@@ -5539,28 +4274,16 @@ export async function startWorkerWithLock(
       //    cycle produced and the row never claims a freshness the worker has not earned.
       await beat();
 
-      // ── BACKFILL DRAIN ─────────────────────────────────────────────────────────────────
-      //
-      // A mailbox mid-backfill is drained as fast as the queue allows instead of one bounded
-      // batch per `pollIntervalMs`: at two hundred messages a cycle, a 60 s poll would take a
-      // twenty-thousand-message mailbox ~100 hours. Queued through `kickCycle`, so it lands on the
-      // SAME serial queue as the roster pass — the drain cannot starve roster reconciliation,
-      // and `stop()` still awaits whatever is in flight.
-      //
-      // Termination: a truncated batch always ADMITS at least one message (the adapter's
-      // anti-stall rule), and every admitted message leaves a durable trace the next cycle's
-      // known-set reflects — a new row, an instance row for a copy (`recordInstance`, upserted on
-      // every dedup arm that declines to re-ingest), or a failure-ledger row — so the unknown set
-      // strictly shrinks and the re-kick reaches a resting cycle. A mailbox that instead keeps
-      // FAILING runs into `maxSyncFailures` and is quarantined.
-      //
-      // The earlier wording here — "always commits at least one message, so the backlog strictly
-      // shrinks" — was FALSIFIED in production (2026-08-29, one hosted mailbox): an admitted create
-      // whose dedup arm REPOINTED the primary instead of recording an instance learned nothing,
-      // so the same two copies were admitted every cycle and this re-kick fired every ~2.3 minutes
-      // for the worker's whole life. The shrink guarantee is a property of the PIPELINE's dedup
-      // arms (see `pipeline.ts`, the second-copy rule) and of `fetchCapped`'s skip-not-break byte
-      // walk, not of admission alone — both are mutation-guarded where they live.
+      // Backfill drain. A mailbox mid-backfill is drained as fast as the queue allows instead of one
+      // bounded batch per `pollIntervalMs` (at two hundred messages a cycle, a 60 s poll would take a
+      // twenty-thousand-message mailbox ~100 hours). Queued through `kickCycle`, so it lands on the
+      // SAME serial queue as the roster pass and cannot starve reconciliation. Termination: a truncated
+      // batch always ADMITS at least one message, and every admitted message leaves a durable trace the
+      // next known-set reflects (a row, an instance, or a failure-ledger row), so the unknown set
+      // strictly shrinks. The earlier "always commits at least one message" wording was FALSIFIED in
+      // production (2026-08-29): an admitted create whose dedup arm REPOINTED the primary instead of
+      // recording an instance learned nothing, so the re-kick fired every ~2.3 minutes for ever — the
+      // shrink guarantee is a property of `pipeline.ts`'s dedup arms and `fetchCapped`, not admission alone.
       if (backlogged.length > 0 && !stopped) {
         log.info("backfill_progress", {
           mailboxes: backlogged.length, sample: backlogged.slice(0, 3),
@@ -5576,38 +4299,16 @@ export async function startWorkerWithLock(
       }
     }
 
-    // ══════════════════════════════════════════════════════════════════════════════════════
-    //  THE THREAD BACKFILL, BEHIND THE CYCLE AND BOUNDED
-    // ══════════════════════════════════════════════════════════════════════════════════════
-    //
-    // What the first version got wrong was placement, not the pass: it ran to exhaustion on the
-    // attach seam,
-    // in front of a live IMAP connection, and killed the process (see the placement note in
-    // `attach()`). Four properties replace it, and
-    // each one is a guard in `test/thread-backfill-placement.e2e.test.ts`:
-    //
-    //  1. **Attach never waits for it.** There is no call to it on that path at all, which is a
-    //     stronger statement than "it is fast": a backfill that hangs for ever cannot delay an
-    //     attach it is not part of.
-    //  2. **It is a SEPARATE queue entry, not the tail of `cycle()`.** Inline, a slow slice
-    //     would sit between the cycle's work and the `beat()` that publishes its freshness, and
-    //     would hold the queue against the roster pass for the whole slice. As its own entry it
-    //     runs after the cycle has already reported, and a roster pass queued meanwhile is
-    //     served between two slices rather than after all of them. It deliberately does NOT
-    //     touch `lastCycleAt` or call `beat()` — it is not a cycle, and freshness it did not
-    //     earn is exactly the lie /health was fixed to stop telling.
-    //  3. **Bounded twice, by pages AND by wall clock**, so one enormous mailbox cannot starve
-    //     the cycle it rides on. Resuming is free: the predicate is `thread_id IS NULL`.
-    //  4. **It cannot throw into anything.** The body catches, and the queued task carries its
-    //     own `.catch` — a rejection escaping `serialize` would become an unhandled rejection,
-    //     which `installCrashHandlers` turns into `exit(1)`: the exact shape of the outage.
-    //
-    // PACING: one slice per completed cycle, and NO self re-kick. The message-backfill drain
-    // above re-kicks itself because its progress is guaranteed by the adapter's anti-stall
-    // rule; this pass's progress depends on every examined row leaving the predicate, so a
-    // regression in `setMessageThread` would turn a self-re-kicking loop into a pinned CPU
-    // against the live database. At 2 000 rows a slice even a large first import is a handful of
-    // slices — minutes, for work that happens once in the life of an account.
+    // The thread backfill, behind the cycle and bounded. What the first version got wrong was
+    // placement, not the pass: it ran to exhaustion on the attach seam, in front of a live IMAP
+    // connection, and killed the process. Four properties replace it, each a guard in
+    // `thread-backfill-placement.e2e.test.ts`: 1. attach never waits for it (there is no call on that
+    // path — a stronger statement than "it is fast"); 2. it is a SEPARATE queue entry, not the tail of
+    // `cycle()`, so it runs after the cycle reported and deliberately does NOT touch `lastCycleAt` or
+    // `beat()` — freshness it did not earn is the lie /health was fixed to stop telling; 3. bounded by
+    // pages AND wall clock (resuming is free — the predicate is `thread_id IS NULL`); 4. it cannot
+    // throw into anything (an escaping rejection becomes `exit(1)`). PACING: one slice per completed
+    // cycle, NO self re-kick — a `setMessageThread` regression would otherwise pin the CPU.
 
     /** One slice at a time on the queue, the same dedupe `kickCycle` uses. */
     let backfillQueued = false;
@@ -5681,25 +4382,14 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * WHY THE DUTY IS NOT FULLY SERVED, RIGHT NOW — the count and its decomposition.
-     *
-     * Set arithmetic over `servedIds` against the rotation and the three block maps. Bounded by
-     * `maxMailboxes` (64), so it is cheap enough to run on every `/health` probe and on every beat,
-     * and it touches no database — which `/health` may never do.
-     *
-     * THE BUCKET ORDER IS A PRECEDENCE, and it has to be, because the maps are genuinely not
-     * disjoint. The reachable overlap is quarantine + stand-down: a mailbox whose backoff expires
-     * is offered to `attach`, `mayOrganize` declines it, and the quarantine entry is deliberately
-     * NOT deleted (its `attempts` is the ladder's input — see the release path above). So it is in
-     * both maps at once and something has to break the tie.
-     *
-     * QUARANTINE WINS, and the reason is the asymmetry of being wrong rather than a claim that the
-     * quarantine is the fresher fact — it is not; the stand-down came from the more recent attach.
-     * Calling a stood-down mailbox quarantined costs a degraded reading that is arguably a false
-     * one. Calling a quarantined mailbox stood down HIDES a real fault, because `standDown` is
-     * excluded from the calculus by design. A conservative error stays visible; the other one is
-     * an assertion quietly weakened, and this file is not the place to trade a real quarantine
-     * against a tidier count.
+     * Why the duty is not fully served, right now — the count and its decomposition. Set arithmetic
+     * over `servedIds` against the rotation and the three block maps, bounded by `maxMailboxes` (64),
+     * so it runs on every `/health` probe and beat and touches no database (which `/health` may never
+     * do). THE BUCKET ORDER IS A PRECEDENCE, because the maps are not disjoint: the reachable overlap
+     * is quarantine + stand-down (a mailbox whose backoff expires is offered to `attach`, `mayOrganize`
+     * declines it, and the quarantine entry is deliberately NOT deleted). QUARANTINE WINS, from the
+     * asymmetry of being wrong: calling a stood-down mailbox quarantined costs an arguably-false
+     * degraded reading, while calling a quarantined mailbox stood down HIDES a real fault (`standDown` is excluded from the calculus). A conservative error stays visible; the other quietly weakens an assertion.
      */
     function unservedBreakdown(): UnservedBreakdown {
       const b = {
@@ -5771,18 +4461,15 @@ export async function startWorkerWithLock(
         // publish. `anyDegradedCause` is the same predicate over the struct that carries the names.
         degraded: anyDegradedCause(degradedCauses()),
         lastCycleAt,
-        // THE CLASSIFIER CIRCUIT'S AGE, published so something outside this process can see it.
-        //
-        // The breaker is in-process by design (one circuit per process, sharing one API key), so
-        // an outage that opens it is invisible to every other host: mail keeps arriving, files by
-        // rules alone, and nothing fails, times out or writes an error row. That is the whole
-        // point of the breaker and it is also why the state has to leave the process — a fault
-        // whose entire symptom is "mail is routed worse" cannot be noticed by a liveness check.
-        //
-        // FIRST open of the current run, not the newest: the cooldown doubles per trip and the
-        // breaker half-opens between them, so a provider down for an hour produces a series of
-        // opens whose latest is always minutes old. `firstOpenedAt` is cleared by the first
-        // success, so a closed circuit publishes null and the rule stops firing on its own.
+        // The classifier circuit's age, published so something outside this process can see it. The
+        // breaker is in-process by design (one circuit per process, sharing one API key), so an outage
+        // that opens it is invisible to every other host: mail keeps arriving, files by rules alone,
+        // and nothing fails, times out or writes an error row — the whole point of the breaker, and why
+        // the state has to leave the process (a fault whose entire symptom is "mail is routed worse"
+        // cannot be noticed by a liveness check). FIRST open of the current run, not the newest: the
+        // cooldown doubles per trip and the breaker half-opens between them, so an hour's outage
+        // produces a series whose latest is always minutes old. Cleared by the first success, so a
+        // closed circuit publishes null and the rule stops firing on its own.
         aiCircuitOpenSince: classifierCircuit?.state().firstOpenedAt ?? null,
         // The other half of the sentence above. A closed circuit means "no outage" only if this
         // process has actually had an answer; before its first success it means "no attempt", and
@@ -5793,33 +4480,14 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * THE OFF-QUEUE PULSE — the fix for a worker that looks dead while it is working hardest.
-     *
-     * Every other beat in this file happens at the END of something: a cycle, an attach, a
-     * roster pass. That was fine until a real first sync arrived. `cycle()` drains one bounded
-     * batch per pass — and `attach()` used to drain two before it returned — so a
-     * leader backfilling a large mailbox writes nothing for minutes at a time, and the
-     * `worker_down` rule reads `beat_at` staleness and nothing else. Moving the drain off attach
-     * shortens the longest single silence but does NOT remove it: one bounded cycle over a slow
-     * provider is still minutes, and the re-kick loop runs them back to back. At two minutes it pages a human about a worker that is
-     * ingesting mail as fast as the provider will serve it, and the platform is entitled to
-     * replace the instance mid-backfill. A first sync should not look like an outage.
-     *
-     * So the pulse runs on the LOCK-VERIFY timer, off the serial queue, and it is deliberately
-     * not a second timer: it fires only after `lock.verify()` has answered `held: true`, so the
-     * claim "shard 0 has a live leader" is backed by the lock itself rather than by a process
-     * asserting it about itself. It uses `refreshHeartbeat`, whose UPDATE is guarded on
-     * `(shard, instance, leader = true)` — the one thing a timer must never do is resurrect a
-     * leader that has already surrendered, and that guard is in the statement rather than in a
-     * `stopped` check here, because a check and a write are not atomic.
-     *
-     * WHAT THIS COSTS, WRITTEN DOWN RATHER THAN DISCOVERED: a worker whose SERIAL QUEUE is
-     * wedged — a provider dial with no timeout — now keeps beating and no longer trips
-     * `worker_down` in two minutes. That fault is still caught, by the `sync_lag` rule reading
-     * `last_sync_at` at fifteen minutes, and `last_cycle_at` (which advances only on a cycle
-     * that actually synced) still says so on the row itself. Fifteen minutes to notice a wedge
-     * is the price of not paging on every large first sync; a `last_cycle_at` clause on the
-     * leader rule is a recorded follow-up.
+     * The off-queue pulse — the fix for a worker that looks dead while it is working hardest. Every
+     * other beat happens at the END of something (a cycle, an attach, a roster pass), fine until a
+     * real first sync arrived: `cycle()` drains one bounded batch per pass, so a leader backfilling a
+     * large mailbox writes nothing for minutes, and the `worker_down` rule reads `beat_at` staleness
+     * and nothing else — at two minutes it pages about a worker ingesting as fast as the provider
+     * serves. So the pulse runs on the LOCK-VERIFY timer, off the serial queue, and only after
+     * `lock.verify()` answered `held: true` (the claim is backed by the lock, not a process asserting
+     * about itself). It uses `refreshHeartbeat`, whose UPDATE is guarded on `(shard, instance, leader = true)` in the statement — a timer must never resurrect a surrendered leader. The cost: a wedged serial queue keeps beating, caught instead by `sync_lag` at fifteen minutes (a recorded follow-up).
      */
     async function pulse(): Promise<void> {
       if (stopped) return;
@@ -5831,16 +4499,12 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * One alert pass, from the WORKER side.
-     *
-     * It covers the DB-visible rules (stuck sends, sync lag and their neighbours) and
-     * deliberately does NOT include itself: `shards: []` skips the leader-liveness rule,
-     * because a process reporting that it is alive is not evidence of anything. That rule is
-     * the API host's job (`GET /internal/alerts`), which is a different process on a
-     * different platform — see the header of `packages/db/src/alerts.ts`.
-     *
-     * Never throws: it runs off a timer, and an unhandled rejection here would take down a
-     * worker that is syncing mail perfectly well.
+     * One alert pass, from the WORKER side. It covers the DB-visible rules (stuck sends, sync lag and
+     * their neighbours) and deliberately does NOT include itself: `shards: []` skips the leader-
+     * liveness rule, because a process reporting that it is alive is not evidence of anything. That
+     * rule is the API host's job (`GET /internal/alerts`), a different process on a different platform
+     * (see `alerts.ts`'s header). Never throws: it runs off a timer, and an unhandled rejection here
+     * would take down a worker that is syncing mail perfectly well.
      */
     async function alertPass(): Promise<void> {
       try {
@@ -5945,28 +4609,16 @@ export async function startWorkerWithLock(
       });
     }
 
-    // ══════════════════════════════════════════════════════════════════════════════════════
-    //  THE LOCK MACHINERY STARTS BEFORE THE INITIAL ROSTER, NOT AFTER IT
-    // ══════════════════════════════════════════════════════════════════════════════════════
-    //
-    // The initial roster pass attaches every mailbox, and each attach used to also drain
-    // two bounded batches inline — minutes per mailbox on a real deployment. While that ran, the two
-    // things that make this process observable and safe did not exist yet, because both were
-    // created AFTER the `await` below. The ordering stays even though the roster pass is now
-    // bounded by connect-time: a lock lost during a slow provider dial still has to be handled
-    // while it is happening, and 64 mailboxes' worth of connects is not a short window either.
-    //
-    //  · the pulse, so the boot window wrote one heartbeat and then nothing until the drain
-    //    finished. `/health` answered 200 with `standby: true, mailboxes: 0` (the supervisor is
-    //    still inside its first `attempt()`), and a worker busily ingesting was indistinguishable
-    //    from an idle one — and from a dead one;
-    //  · the lock guard, so a lock LOST during a long boot attach was not handled until the
-    //    whole roster pass returned. Two workers could be draining the same mailbox for the
-    //    length of a backfill, which is the exact split-brain this guard exists to prevent.
-    //
-    // The cost of moving them up is that `handleLockLoss` can now fire before the work timers
-    // exist, so those become nullable and are null-guarded — the same discipline the `booted`
-    // declaration above records for its own temporal-dead-zone reason.
+    // The lock machinery starts BEFORE the initial roster, not after it. The initial roster pass
+    // attaches every mailbox, and each attach used to also drain two bounded batches inline — minutes
+    // per mailbox. While that ran, the two things that make this process observable and safe did not
+    // exist yet, because both were created AFTER the `await` below. The ordering stays even though the
+    // pass is now bounded by connect-time (a lock lost during a slow dial still has to be handled, and
+    // 64 mailboxes' connects is not short): the pulse (the boot window wrote one heartbeat and then
+    // nothing — `/health` said `standby, mailboxes: 0`, a busy worker indistinguishable from a dead
+    // one), and the lock guard (a lock LOST during a long boot attach was not handled until the pass
+    // returned — two workers draining one mailbox, the split-brain this guard prevents). The cost:
+    // `handleLockLoss` can now fire before the work timers exist, so those are nullable and null-guarded.
 
     // ── Split-brain guard (the advisory lock is SESSION-scoped: Postgres frees it the
     //    instant the connection drops, and postgres.js then silently reconnects WITHOUT it).
@@ -6095,27 +4747,16 @@ export async function startWorkerWithLock(
     }
 
     pollTimer = setInterval(() => { kickCycle(); }, config.pollIntervalMs);
-    // TAKEOVER KICK. `setInterval` fires for the FIRST time only after a full period, so
-    // without this line a standby that has just won the lock waits `pollIntervalMs` — 60 s in
-    // production — before its first cycle. Measured across a real rolling deploy that showed
-    // up as a 68 s gap between the outgoing instance's last cycle and the incoming one's
-    // first, while the deploy config promised a much shorter handover; the lock handover was
-    // never the slow
-    // part (about five seconds), the idle wait for the first tick was.
-    //
-    // It used to be a partial defence: `attach()` ran `reconcileOnRestart` per mailbox, so mail
-    // was not actually unsynced for that minute and only the per-account workflow drains, the
-    // time scan and the closing heartbeat waited. That is no longer true and this
-    // line covers MAIL as well — attach registers a mailbox and syncs nothing, so without a kick
-    // a fresh leader would hold two live IMAP connections and process no mail for a full poll
-    // interval.
-    //
-    // It is now the second of two kicks and the redundancy is deliberate: `reconcileRoster`
-    // kicks whenever a pass attached anything, which already covers this boot. `kickCycle` is
-    // idempotent, and a boot that depended on the roster pass's kick would be one refactor away
-    // from a silent 60 s dead start. Queued rather than awaited: `startWorkerWithLock` must
-    // return so the supervisor can publish leadership, and `serialize` puts this behind the
-    // initial roster pass that is already on the queue.
+    // Takeover kick. `setInterval` fires for the FIRST time only after a full period, so without this
+    // a standby that just won the lock waits `pollIntervalMs` (60 s) before its first cycle — measured
+    // across a real rolling deploy as a 68 s gap between the outgoing instance's last cycle and the
+    // incoming one's first, while the lock handover was ~five seconds and the idle wait for the first
+    // tick was the rest. It used to be a partial defence (attach ran `reconcileOnRestart`, so only the
+    // per-account passes waited); that is no longer true, and this covers MAIL too — attach registers a
+    // mailbox and syncs nothing, so without a kick a fresh leader holds two live logins and processes
+    // no mail for a poll interval. Second of two kicks, deliberately redundant: `reconcileRoster` kicks
+    // whenever a pass attached anything, `kickCycle` is idempotent, and a boot depending on the pass's
+    // kick would be one refactor from a silent 60 s dead start. Queued, so `startWorkerWithLock` returns.
     kickCycle();
     // REQUESTS a pass rather than appending one. The old form put a pass on the tail
     // and left it there: during a measured ten-minute cycle that produced
@@ -6126,33 +4767,25 @@ export async function startWorkerWithLock(
     // behind a slow IMAP cycle — the cycle being slow is one of the things it reports on.
     alertTimer = setInterval(() => { void alertPass(); }, alertIntervalMs);
     /**
-     * THE API-CRON SCHEDULE — this worker as the clock for the API host's internal passes
-     * (the session reap and the SMTP SIZE back-fill, daily). The whole
-     * argument — why the worker and not the platform cron those routes were written for, why
-     * the cadence restarts with leadership, and every overlap arm — is the header of
-     * `api-cron.ts`; what is decided HERE is only WHO schedules:
-     *
-     *  · inside `startWorkerWithLock`, so only the leader-lock holder ever pokes — a rolling
-     *    deploy's outgoing and incoming instances cannot both drive a route;
-     *  · shard 0 only, because these passes are deployment-wide, not per-shard, and N shard
-     *    leaders poking hourly is N−1 too many;
-     *  · armed by config (`TF_API_CRON_URL` + `TF_API_CRON_SECRET`), so a self-hosted compose
-     *    with its own scheduler stays quiet.
+     * The API-cron schedule — this worker as the clock for the API host's internal passes (the session
+     * reap and the SMTP SIZE back-fill, daily). The whole argument (why the worker and not the platform
+     * cron those routes were written for, why the cadence restarts with leadership, every overlap arm)
+     * is `api-cron.ts`'s header; what is decided HERE is only WHO schedules: inside
+     * `startWorkerWithLock`, so only the leader-lock holder pokes; shard 0 only, because these passes
+     * are deployment-wide, not per-shard, and N shard leaders poking hourly is N−1 too many; and armed
+     * by config (`TF_API_CRON_URL` + `TF_API_CRON_SECRET`), so a self-hosted compose stays quiet.
      */
     if (config.apiCron && shardIndex === 0) {
       apiCron = startApiCron({ baseUrl: config.apiCron.baseUrl, secret: config.apiCron.secret, log });
     }
-    // ENFORCED SYNC (mail migration 0049): a short scan for mailboxes the API stamped `sync_requested_at`.
-    // OFF the serial queue like the alert pass — it is one indexed read plus a compare-and-clear,
-    // no adapter operation — and its `kick` REQUESTS a cycle rather than running one, so the actual
-    // sync still goes through the single queue. Scoped to `runtimes` so it only ever hastens a
-    // mailbox this instance organizes.
-    //
-    // SINGLE-FLIGHT, because `setInterval` does not wait for its callback: a database that takes
-    // longer than 3 s to answer stacks a new pass on top of the slow one every tick — each holding
-    // a pool connection, all racing the same compare-and-clear — which turns one slow read into
-    // pool pressure at exactly the moment the database is struggling. A tick that finds the
-    // previous pass still running skips; the stamp it would have seen is still there for the next.
+    // Enforced sync (mail 0049): a short scan for mailboxes the API stamped `sync_requested_at`. OFF
+    // the serial queue like the alert pass — it is one indexed read plus a compare-and-clear, no
+    // adapter operation — and its `kick` REQUESTS a cycle rather than running one, so the actual sync
+    // still goes through the single queue. Scoped to `runtimes` so it only hastens a mailbox this
+    // instance organizes. SINGLE-FLIGHT, because `setInterval` does not wait for its callback: a
+    // database taking longer than 3 s stacks a new pass on the slow one every tick, each holding a pool
+    // connection and racing the same compare-and-clear — one slow read turned into pool pressure at the
+    // worst moment. A tick that finds the previous pass running skips; the stamp is there next time.
     let syncKickInFlight = false;
     syncKickTimer = setInterval(() => {
       void (async () => {
@@ -6179,29 +4812,14 @@ export async function startWorkerWithLock(
     }, SYNC_KICK_EVERY_MS);
 
     /**
-     * ── THE UNIFIEDPUSH WAKE SENDER ───────────────────────────────────────────────────────────
-     *
-     * Here rather than in the API for the reason `push_subscriptions` had no sender for months:
-     * the thing that knows mail arrived is whatever ingested it, and on both the managed host and
-     * a self-host compose that is THIS process. The serverless API has no place to keep a LISTEN
-     * or a debounce window.
-     *
-     * It is fed by the change-wake hub rather than called from the ingest path, and that is a
-     * decision worth stating: `change_log` is the one place every writer converges — this worker's
-     * sync loop, an API mutation, a cron pass — so subscribing to the channel means a wake fires
-     * for anything a device would want to pull, not only for the arrivals this file happens to
-     * know about. It costs ONE session-mode connection for the whole process (the hub's invariant
-     * is streams : connections = N : 1), lazily dialled and released on `end()`.
-     *
-     * ONLY THE LEADER SENDS. This whole body runs with the shard's advisory lock held; a standby
-     * is still waiting for it and reaches none of this, and `clearTimers` takes the sender down
-     * the instant the lock is lost. Two instances POSTing to one endpoint is the duplicate-wake
-     * shape, and it is the same argument the organizer lease makes about IMAP.
-     *
-     * The construction cannot fail the boot: a hub whose LISTEN will not establish registers the
-     * callback anyway and retries, and the device's own foreground sync is the reliability floor
-     * under all of it. Wrapped anyway, because a boot that dies here would take mail syncing with
-     * it for a latency feature.
+     * The UnifiedPush wake sender. Here rather than the API for the reason `push_subscriptions` had no
+     * sender for months: the thing that knows mail arrived is whatever ingested it, and on both the
+     * managed host and a self-host compose that is THIS process (the serverless API has no place to
+     * keep a LISTEN or a debounce window). It is fed by the change-wake hub rather than the ingest
+     * path: `change_log` is where every writer converges, so a wake fires for anything a device would
+     * pull, not only the arrivals this file knows about, at ONE session-mode connection for the
+     * process. ONLY THE LEADER SENDS — this body runs with the shard's lock held, and two instances
+     * POSTing to one endpoint is the duplicate-wake shape the organizer lease argues about for IMAP. The construction cannot fail the boot (a hub whose LISTEN will not establish retries), wrapped anyway because a boot that dies here would take mail syncing down for a latency feature.
      */
     try {
       wakeHub = makeChangeWakeHub(config.databaseUrl, log);
@@ -6240,15 +4858,13 @@ export async function startWorkerWithLock(
         log,
       });
       /**
-       * Said at BOOT rather than left to the first wake, because "are encrypted wakes on" is a fact
-       * an operator wants when the process starts — and because both the `absent` and `configured`
-       * arms are deliberately silent from then on.
-       *
-       * `state` and `reason`, and NOT `vapid`/`encryptedWakes`: the logger allow-lists field NAMES
-       * and drops the rest. The first managed deploy of this line logged
-       * `droppedFields=["vapid","encryptedWakes"]` and therefore said nothing at all — the exact
+       * Said at BOOT rather than left to the first wake, because "are encrypted wakes on" is a fact an
+       * operator wants when the process starts — and because both the `absent` and `configured` arms
+       * are deliberately silent from then on. `state` and `reason`, NOT `vapid`/`encryptedWakes`: the
+       * logger allow-lists field NAMES and drops the rest, and the first managed deploy of this line
+       * logged `droppedFields=["vapid","encryptedWakes"]` and therefore said nothing at all — the exact
        * failure the allow-list reports rather than hides. `state` carries the three-valued answer
-       * (`configured` / `absent` / `invalid`), which is the whole fact.
+       * (`configured`/`absent`/`invalid`), which is the whole fact.
        */
       log.info("push_wake_started", {
         state: vapid.kind,
@@ -6349,29 +4965,24 @@ function sample(mbs: readonly EnabledMailbox[], n = 3): string {
 
 /**
  * The CLI bootstrap, as a NAMED export — because "was this module run directly?" stops being
- * answerable inside a single-file bundle. The self-host organizer image bundles this package
- * into one file, and that file holds FIVE `isCliEntry(import.meta.url)` main guards (this
- * one and the four cron CLIs), all reading the SAME `import.meta.url`. Run directly, all
- * five fire: the crons finish their pass and `flushExit(0)` — a clean exit that kills the
- * supervisor mid-boot, measured as a restart loop on the bundled organizer's first compose
- * boot. So the bundle's entry stub neutralizes `argv[1]` (no guard can match) and starts
- * THIS function explicitly; `scripts/bundle-host.mjs` carries the other half of the story.
- * Under `node dist/index.js` and `tsx src/index.ts` nothing changes: the guard below calls
- * the same function.
+ * answerable inside a single-file bundle. The self-host organizer image bundles this package into one
+ * file holding FIVE `isCliEntry(import.meta.url)` main guards (this one and the four cron CLIs), all
+ * reading the SAME `import.meta.url`; run directly, all five fire — the crons finish and `flushExit(0)`,
+ * a clean exit that kills the supervisor mid-boot (measured as a restart loop on the bundled
+ * organizer's first compose boot). So the bundle's entry stub neutralizes `argv[1]` (no guard can
+ * match) and starts THIS function explicitly (`scripts/bundle-host.mjs` carries the other half). Under
+ * `node dist/index.js` and `tsx src/index.ts` nothing changes — the guard below calls the same function.
  */
 export async function runWorkerCli(): Promise<void> {
   await (async () => {
-    // THE composition root for logging. `startWorkerWithLock` defaults to `silentLogger` so
-    // no test or embedder inherits stdout noise; the process that a human actually deploys
-    // is the one that turns the logger on, and it does it exactly once, here.
-    //
-    // It starts UNBOUND — no `instanceId`, no `environment` — because those come from
-    // `loadConfig()`, and reading the environment is one of the two things most likely to
-    // fail on a fresh deploy. A logger that cannot exist until the configuration parses is a
-    // logger that cannot report a configuration that does not parse. So the bootstrap logger
-    // is built first, the crash handlers are hung off it, and it is REPLACED (not rebuilt at
-    // each call site) once the config is in hand. `installCrashHandlers` reads it lazily for
-    // exactly that reason.
+    // THE composition root for logging. `startWorkerWithLock` defaults to `silentLogger` so no test or
+    // embedder inherits stdout noise; the process a human deploys is the one that turns the logger on,
+    // exactly once, here. It starts UNBOUND — no `instanceId`, no `environment` — because those come
+    // from `loadConfig()`, and reading the environment is one of the two things most likely to fail on
+    // a fresh deploy: a logger that cannot exist until the configuration parses is a logger that cannot
+    // report a configuration that does not parse. So the bootstrap logger is built first, the crash
+    // handlers are hung off it, and it is REPLACED (not rebuilt at each call site) once the config is
+    // in hand; `installCrashHandlers` reads it lazily for exactly that reason.
     let cliLog = createLogger({ service: "worker" });
     // `survivable` closes the shared-database-fault fix's own residual. postgres@3.4.9 throws a TypeError from
     // `setImmediate(nextWrite)` when a connection dies with a write buffered — no promise, so it
@@ -6391,17 +5002,14 @@ export async function runWorkerCli(): Promise<void> {
         fields: { instanceId: config.instanceId ?? instanceIdFrom(), environment: config.environment },
       });
 
-      // LIGHT THE NOTICE CHANNEL, ONCE, AND LAZILY.
-      //
-      // `packages/db` drops notices until a host installs a sink, so without this line the drain is
-      // silent rather than structured: strictly safer than the postgres.js default of dumping the raw
-      // notice object, but zero diagnostics. Installed here, AFTER `cliLog` has been rebuilt with
-      // `instanceId`/`environment`, so a `pg_notice` line is attributable to an instance.
-      //
-      // Read through a closure rather than captured by value, for the same reason
-      // `installCrashHandlers({ log: () => cliLog })` above does it: `cliLog` is REPLACED, not
-      // rebuilt at each call site, so a sink holding the value would keep logging through the
-      // pre-config logger for the life of the process.
+      // Light the notice channel, once, and lazily. `packages/db` drops notices until a host installs
+      // a sink, so without this line the drain is silent rather than structured — safer than the
+      // postgres.js default of dumping the raw notice object, but zero diagnostics. Installed here,
+      // AFTER `cliLog` has been rebuilt with `instanceId`/`environment`, so a `pg_notice` line is
+      // attributable to an instance. Read through a closure rather than captured by value, for the same
+      // reason `installCrashHandlers({ log: () => cliLog })` does: `cliLog` is REPLACED, not rebuilt at
+      // each call site, so a sink holding the value would keep logging through the pre-config logger for
+      // the life of the process.
       setNoticeSink(noticeSinkFor({
         warn: (event, fields) => cliLog.warn(event, fields),
         info: (event, fields) => cliLog.info(event, fields),

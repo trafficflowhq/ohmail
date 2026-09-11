@@ -189,6 +189,11 @@ export function messageRowToDTO(
     to: (m.toAddresses as EmailAddress[]) ?? [],
     cc: (m.ccAddresses as EmailAddress[]) ?? [],
     date: iso(m.date),
+    // The arrival, projected on EVERY message the API emits for `lastReadAt`'s reason — the
+    // cutline reads it wherever a mirror was built, and a page that omitted it would retire a
+    // sender the count keeps. `created_at` is NOT NULL on both stores, so this never manufactures
+    // an instant: it is the moment the mailbox recorded the message.
+    arrivedAt: m.createdAt.toISOString(),
     folder,
     snippet: m.snippet,
     unread: m.unread,
