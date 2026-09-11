@@ -1,47 +1,12 @@
 /**
  * Run `scripts/harden-staff-role.sql` against a database — the executable form of the runbook's
- * provisioning step (OPS1).
- *
- * That step says `psql -v ON_ERROR_STOP=1 -f scripts/harden-staff-role.sql`. **`psql` is not
- * installed on the machine this repo is developed on**, which makes the runbook unexecutable
- * rather than merely awkward — nobody noticed because nobody had run it. This reproduces psql's
- * guarantees, and it lives in `packages/db` rather than `scripts/` for one reason: it must
- * import `transactionPoolerReason` from this package rather than re-implement it — twice
- * already, a copied predicate rotted alone.
- *
- * ── WHAT IT REPRODUCES, AND WHY EACH MATTERS ────────────────────────────────────────────
- *
- *   · `ON_ERROR_STOP=1` — postgres.js aborts a `.unsafe()` batch on the first error, and the
- *     script carries its own `BEGIN`/`COMMIT`, so a failed run commits nothing.
- *   · An explicit `ROLLBACK` on the way out. An aborted batch otherwise leaves a
- *     long-lived client sitting inside a failed transaction; `psql` exits and rolls back for
- *     free, a pooled node client does not.
- *   · **Print every NOTICE and WARNING.** `no privileges could be revoked for "<schema>"` is
- *     EXPECTED for schemas this session does not own, and an operator who does not see them
- *     cannot tell an expected warning from a real one.
- *
- * ── THREE REFUSALS BEFORE IT WRITES ANYTHING ────────────────────────────────────────────
- *
- *   1. Not a transaction pooler — DDL belongs on a session connection. Shared predicate.
- *   2. The pre-flight must be clean. The script CAN ABORT, and all three of its abort
- *      conditions are properties of the DATABASE, not the file. Finding one here costs seconds;
- *      finding one mid-window costs the window.
- *   3. **The customer-facing copy must no longer say the role is "not yet live".**
- *      Provisioning `ohmail_admin` makes the FAQ's and the privacy policy's "not yet provisioned"
- *      statements false by understatement, and "Claims are contracts": the copy edit and the
- *      provisioning have to land together. The coupling is carried by
- *      `STAFF_ROLE_LIVE_IN_PRODUCTION` — `--apply` is refused while that flag is `false`, and
- *      `test/staff-role-copy-gate.test.ts` refuses to let the flag flip to `true`
- *      unless both copy sites have been updated. So this check needs no database and runs before
- *      the connection is opened; the copy edit is what the flag stands for.
- *   4. `--apply` must be explicit. The default prints identity and pre-flight and stops.
- *
- * It deliberately does NOT set the role's password: that value must never reach a shell history
- * or a log, and `ALTER ROLE … PASSWORD` is one statement an operator can paste themselves.
- *
- * Usage:
- *   pnpm --filter @trafficflow/db provision:staff            # dry run
- *   pnpm --filter @trafficflow/db provision:staff -- --apply
+ * provisioning step (`psql` is not installed here, which made that step unexecutable). It
+ * reproduces psql's guarantees: abort on first error, an explicit ROLLBACK on the way out, every
+ * NOTICE and WARNING printed. Refusals before any write: not a transaction pooler; the pre-flight
+ * must be clean; the customer-facing copy must no longer say the role is "not yet live"
+ * (`STAFF_ROLE_LIVE_IN_PRODUCTION` gates `--apply`, and a test refuses the flag until both copy
+ * sites are updated); `--apply` must be explicit. It does NOT set the role's password: that value
+ * must never reach a shell history — one statement an operator can paste.
  */
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
