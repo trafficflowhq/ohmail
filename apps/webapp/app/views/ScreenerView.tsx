@@ -68,13 +68,11 @@ import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
 
 /**
  * "Reads & Receipts" — the piles an apply would file into, as one phrase.
- *
- * The final conjunction goes through `pileJoin` rather than a hard-coded `" & "` because it is
- * the one part of this that is not a list separator: several languages join the last pair with a
- * word, and a literal ampersand here would be untranslatable punctuation baked into a component.
- * Everything before the last pair is a plain comma, which every locale this ships in agrees on.
- *
- * Never empty: the control that calls it is rendered only when `suggestedCount > 0`, and those
+ * The final conjunction goes through `pileJoin` rather than a hard-coded
+ * `" & "`: several languages join the last pair with a word, and a literal
+ * ampersand would be untranslatable punctuation baked into a component;
+ * everything before the last pair is a plain comma. Never empty: the
+ * calling control is rendered only when `suggestedCount > 0`, and those
  * rows are where the list comes from.
  */
 function pileList(dests: DecisionDestination[], t: (k: string, v?: Record<string, string>) => string): string {
@@ -86,23 +84,14 @@ function pileList(dests: DecisionDestination[], t: (k: string, v?: Record<string
 }
 
 /**
- * THE SIX GROUPS A WAITING QUEUE FALLS INTO — the filter chips, in the order they are offered.
- *
- * Spelled as {@link APPLY_PILE_ORDER} plus the one group the bulk apply REFUSES, because that is
- * the whole point of the row. "Apply 12 — Ohbox, Reads & Receipts" over a queue of 47 is a true
- * sentence that leaves 35 senders unaccounted for, and a reader has no way to find out where
- * they went: the button names what it will do and says nothing about what it is stepping over.
- * The chips are that remainder, made countable — `none`, which is every sender the model held,
- * could not answer for, or was never asked about.
- *
- * `spam` USED TO BE LISTED HERE SEPARATELY, and it moved into `APPLY_PILE_ORDER` rather than being
- * dropped: the apply now files spam like every other verdict, so it is one of the piles the button
- * names instead of one of the groups it steps over. Its chip is unchanged and sits in the same
- * place, which is the point of deriving this list rather than hand-keeping it.
- *
- * Deriving the piles from the shared constant is what keeps the chips and the banner describing
- * ONE set: a new destination, or a change of order, moves both at once. Two hand-kept lists would
- * drift, and the drift would read as the apply count being wrong.
+ * The six groups a waiting queue falls into — the filter chips, in offer order: {@link
+ * APPLY_PILE_ORDER} plus the one group the bulk apply REFUSES, which is the point of the row —
+ * "Apply 12 — Ohbox, Reads & Receipts" over a queue of 47 leaves 35 senders unaccounted for, and
+ * the chips are that remainder made countable (`none` is every sender the model held, could not
+ * answer for, or was never asked about). `spam` moved INTO `APPLY_PILE_ORDER` rather than being
+ * dropped: the apply files spam like every other verdict now. Deriving from the shared constant
+ * keeps chips and banner describing ONE set — two hand-kept lists would drift, and the drift would
+ * read as the apply count being wrong.
  */
 const FILTER_ORDER = [...APPLY_PILE_ORDER, "none"] as const;
 type ScreenerFilterId = DecisionDestination | "none";
@@ -111,46 +100,14 @@ type ScreenerFilterId = DecisionDestination | "none";
 export const HELD_ANCHOR_PAD_PX = 14;
 
 /**
- * WHERE THE READ COLUMN MUST SCROLL TO PUT THE LAST HELD MESSAGE AT THE TOP.
- *
- * Held mail renders oldest→newest, so a fresh render sits on the OLDEST message while the decision
- * a person is about to take is about the newest. All three terms are load-bearing and the
- * two-term versions are both plausible:
- *
- *  · `lastTop - readTop` is the message's offset from the column's VIEWPORT edge, not from the
- *    column's content origin. Used alone it is correct only from `scrollTop === 0`, and from
- *    anywhere else it scrolls by a delta instead of to a position — which is what happens on every
- *    selection change after the first, because the previous sender left the column scrolled.
- *  · `+ scrollTop` converts that viewport offset into a content offset. This is the term a
- *    plausible-looking rewrite drops.
- *  · `- pad` is the gap above the message. Clamped at 0, because the first message in a short list
- *    yields a negative target and a negative `scrollTop` is silently coerced to 0 by the DOM —
- *    correct by accident, and this makes it correct on purpose.
- *
- * Pure, and taking numbers rather than elements, because jsdom reports every
- * `getBoundingClientRect` as zero: an assertion made against a MOUNTED view cannot tell this
- * formula from a wrong one, so the guard has to drive the arithmetic directly.
- *
- * ── THE LIMIT THIS DOCBLOCK USED TO NAME IS NOW CLOSED, AND IT WAS WORSE THAN "COLD" ─────────
- *
- * It read: the effect runs once per `[activeId, segment]`, which is right for a WARM mirror and
- * leaves a COLD one anchored against snippets that then grow — and that re-anchoring "needs a
- * scroll-intent signal this view does not have".
- *
- * The diagnosis was exactly right; the scope was too kind. "Cold" suggests a first run, and this is
- * not about warm-up: a DERIVED row's body is a snippet EVERY time the sender is selected. `bodyOf`
- * answers `full` only from a body it already holds — an inline `m.body`, or a stored `message_body`
- * record — so wherever bodies are fetched on demand the entries begin short and grow. The anchor
- * therefore landed correctly only where the rows carry their bodies inline (the demo world's shape,
- * `m.body !== undefined`, final height from the first render) and put the reader inside the OLDEST
- * message everywhere else. Three snippets at ~100px anchor at 186px; the same three hydrated are
- * ~600px each, so 186px is inside the first card.
- *
- * The signal turned out not to need a listener. The caller now remembers the position it last
- * WROTE ({@link ANCHOR_TOLERANCE_PX}) and re-anchors only while the scroller is still there, so a
- * reader who scrolled owns the column and a body landing does not yank them — the promise the old
- * dependency list was keeping, kept without giving up the anchor. See the effect, and
- * `test/screener-latest-anchor.test.tsx`, which models the growth because jsdom reports no layout.
+ * Where the read column must scroll to put the last held message at the top (held mail renders
+ * oldest→newest; the decision is about the newest). All three terms are load-bearing: `lastTop -
+ * readTop` is a viewport offset (alone it scrolls by a delta after the first selection); `+
+ * scrollTop` converts it to a content offset — the term a plausible rewrite drops; `- pad`, clamped
+ * at 0. Pure over numbers: jsdom reports every rect as zero. It re-anchors as bodies grow (a
+ * derived row's body is a snippet on every selection; ~100px snippets hydrate to ~600px): the
+ * caller remembers the position it last WROTE ({@link ANCHOR_TOLERANCE_PX}) and re-anchors only
+ * while the scroller is still there (`test/screener-latest-anchor.test.tsx` models the growth).
  */
 export function heldAnchorTop(
   readTop: number, lastTop: number, scrollTop: number, pad = HELD_ANCHOR_PAD_PX,
@@ -200,19 +157,14 @@ function acceptDestOf(w: ScreenerSenderDTO): DecisionDestination | null {
 }
 
 /**
- * THE FILTER CHIPS — the waiting queue, partitioned and counted.
- *
- * Counted over the SAME rows `suggestedCount` is counted over (waiting minus everything already
- * decided), so the four apply-able chips add up to the number on the apply button. They are read
- * off one array in one pass rather than re-derived per chip, which is the only way that identity
- * survives someone editing one of them later.
- *
- * ── WHAT IS NOT OFFERED ────────────────────────────────────────────────────────────────────
- *
- * A chip with nothing in it. Pressing it would empty the pane, and an empty pane under a pressed
- * chip is indistinguishable from an empty queue — the same inert-control lie the apply button is
- * gated against one control over. And with only one non-empty group there is no partition to
- * make: the chip would filter the list to itself, so the whole row stays away.
+ * The filter chips — the waiting queue, partitioned and counted. Counted
+ * over the SAME rows `suggestedCount` is (waiting minus everything already
+ * decided), so the four apply-able chips add up to the number on the apply
+ * button; read off one array in one pass, the only way that identity
+ * survives later edits. Not offered: a chip with nothing in it — pressing
+ * it would empty the pane, indistinguishable from an empty queue (the same
+ * inert-control lie the apply button is gated against). With only one
+ * non-empty group there is no partition to make, so the whole row stays away.
  */
 function FilterChips({
   counts,
@@ -262,20 +214,14 @@ function FilterChips({
 }
 
 /**
- * A PROGRESS TRACK OVER A SENTENCE THAT IS ALREADY ON SCREEN.
- *
- * Both bulk paths here — buying suggestions, applying them — publish their progress as two
- * numbers beside the sentence that states them, never as a string to be parsed back (see
- * `SuggestBatchControl.progress`). This renders the pair and nothing else.
- *
- * `aria-hidden`, and that is not an oversight: the sentence beside it is in a `role="status"`
- * and is already announced. A labelled `<progress>` would announce the same fact a second time,
- * once as prose and once as a percentage, which is how a screen reader user ends up hearing a
- * bulk run narrated twice per chunk.
- *
- * NEVER RENDERED WITHOUT BOTH NUMBERS. `total` of 0 would put `NaN%` in the accessibility tree
- * and an indeterminate bar on screen — a run that claims to be in flight forever — so a track
- * with no denominator is no track.
+ * A progress track over a sentence that is already on screen. Both bulk
+ * paths publish progress as two numbers beside the sentence, never a string
+ * to be parsed back (`SuggestBatchControl.progress`); this renders the pair
+ * and nothing else. `aria-hidden` is not an oversight: the sentence beside
+ * it is in a `role="status"` and already announced — a labelled
+ * `<progress>` would narrate a bulk run twice per chunk. Never rendered
+ * without both numbers: `total` 0 would put `NaN%` in the accessibility
+ * tree and an indeterminate bar on screen — a run in flight forever.
  */
 function ProgressTrack({ done, total }: { done: number; total: number }) {
   if (!(total > 0)) return null;
@@ -298,44 +244,14 @@ function askState(control: SuggestBatchControl): AskWellState {
 }
 
 /**
- * ASKING FOR SUGGESTIONS — the control that names the cost before it spends.
- *
- * Every part of this is the same rule stated once: nothing here moves a credit until a person
- * has read a number and pressed a button underneath it. So the price is on screen BEFORE the
- * confirm exists, the confirm is disabled while the price is unknown, and changing how many
- * senders to cover re-asks the server rather than multiplying anything locally.
- *
- * The batch is bounded because the alternative is not. A backlogged mailbox holds hundreds of
- * first-time senders; "suggest for all of them" behind one press is a spend nobody can picture
- * in advance. Sizes come from the state, already clamped to what one request may carry, and
- * the largest is always "everything you could buy in one go" so the common case is one press.
- *
- * ── AND IT DOES NOT VANISH WHEN THERE IS NOTHING LEFT TO BUY ──────────────────────────────
- *
- * This function began `if (control.available === 0) return null`, which is the hide the whole
- * of the AI surface used on a worked queue: an account with 74 answered senders and none
- * outstanding had no suggest control, no mention of suggestions, nothing — indistinguishable
- * from a build where the feature was never wired up. The chips and the apply banner were still
- * there, but they act on advice; nothing on screen said where advice comes from or that this
- * account had already got all of it.
- *
- * So the empty buy list now RESTS rather than disappears. It states the number of senders that
- * have an answer, and it offers the one action that is still true — asking again — which is the
- * same ladder, the same dry run and the same confirm, over the other half of the queue.
- *
- * The only case that still renders nothing is nothing to buy AND nothing to re-ask, which is an
- * empty gate. The list beside this already says "No one's waiting."; a sentence here about zero
- * senders having zero suggestions would be a second, worse way to say it.
- *
- * ── EXPORTED, FOR THE ONE HOST THAT BRINGS ITS OWN CONTROL BUT NOT ITS OWN LADDER ───────────
- *
- * The desktop app hands a node in through this view's `suggestNode` prop, and what that node
- * contains depends on which door the install came in by. A standalone install spends nothing and
- * has its own, wordless control. An install pointed at a hosted account spends that account's
- * allowance, so it is buying the same thing this ladder buys, over a pipe instead of a socket —
- * and rendering a second ladder for it would be a second place for a price to be shown that a
- * purchase does not honour. So it renders THIS one, over a {@link SuggestBatchControl} built by the
- * shared hook with a transport of its own. Nothing about the control changes; only how it asks.
+ * Asking for suggestions — the control that names the cost before it spends: the price is on screen BEFORE the
+ * confirm exists, the confirm is disabled while the price is unknown, and changing the size re-asks the server rather
+ * than multiplying locally. The batch is bounded ("suggest for all" over a backlog is a spend nobody can picture);
+ * sizes come pre-clamped from the state. It does not vanish when there is nothing left to buy: `available === 0 →
+ * null` made a fully answered account look like a build where the feature was never wired — the empty buy list now
+ * RESTS, stating the answered count and offering the re-ask (same ladder, dry run, confirm). Only nothing-to-buy AND
+ * nothing-to-re-ask renders nothing. Exported for the desktop's hosted door, which brings its own transport but must
+ * not render a second ladder — a second place for a price a purchase does not honour.
  */
 export function SuggestControl({ control }: { control: SuggestBatchControl }) {
   const t = useTranslations("screener");
@@ -420,18 +336,16 @@ export function SuggestControl({ control }: { control: SuggestBatchControl }) {
             data-run={running ? "working" : undefined}
             onClick={control.confirm}
           >
-            {/* THE SERVER'S COUNT WHEN THERE IS ONE, the chosen size only while the price is
-                still unknown — and the button is unpressable in exactly that window. A label
-                built from `size` alone would say "Suggest for 25 senders" over a quote of 12,
-                which is the control naming one number and spending against another.
-
-                On the re-ask that gap is the ordinary case rather than a race: the server prices
-                only what it is not already holding, so a ladder of 74 routinely quotes 3.
-                "Suggest again for 3 senders" over a chosen 74 is the truth — those three are the
-                ones with new mail, and the other 71 answer from what was already bought.
-
-                While the purchase runs the button says so in the verb's progressive form and
-                carries the run along its foot (`data-run`), the way Send carries a send. */}
+            {/* The server's count when there is one, the chosen size only
+                while the price is unknown — and the button is unpressable in
+                exactly that window: a label built from `size` alone would
+                say "Suggest for 25 senders" over a quote of 12. On the
+                re-ask the gap is the ordinary case: the server prices only
+                what it is not already holding, so a ladder of 74 routinely
+                quotes 3 — the other 71 answer from what was already bought.
+                While the purchase runs the button says so in the verb's
+                progressive form and carries the run along its foot
+                (`data-run`), the way Send carries a send. */}
             {running
               ? t("suggest.running")
               : t(again ? "suggest.confirmAgain" : "suggest.confirm", {
@@ -461,27 +375,13 @@ export function SuggestControl({ control }: { control: SuggestBatchControl }) {
 }
 
 /**
- * QUICK-ADJUST — the decision, on the row, without opening the sender.
- *
- * The Screener's decisions have always lived in the bar above the PREVIEW, which means every
- * sender costs a selection before it costs a decision. On a queue of seventy that is seventy
- * round trips through a reading pane to file mail whose destination the list already names.
- * This is the same decision taken where it is already legible.
- *
- * ── IT ADDS NOTHING TO THE DECIDE PATH, AND THAT IS THE POINT ───────────────────────────────
- *
- * Every control here calls `ScreenerState.decide` — the one funnel. So a row press gets the
- * undo window, the delayed commit, the read clamp on the demoting piles, the rule promotion,
- * and the past-the-gate branch that files with a rule and capped moves instead of a decide,
- * all of them, because it is not a second implementation of filing. A row control that reached
- * for `engine.mutate` directly would look identical on screen and quietly drop all six.
- *
- * ── AND IT ACCEPTS ONLY WHAT THERE IS TO ACCEPT ─────────────────────────────────────────────
- *
- * `accept` is present exactly when {@link acceptDestOf} names a destination. A held sender, a
- * `noAnswer`, and a sender nobody bought advice for get the five destinations and no accept —
- * there is no suggestion to take, and a ✓ over one would be the row claiming an answer the
- * model refused to give.
+ * Quick-adjust — the decision, on the row, without opening the sender: the bar above the preview
+ * costs a selection per decision, seventy round trips on a queue of seventy. It adds nothing to the
+ * decide path, which is the point: every control calls `ScreenerState.decide` — the one funnel — so
+ * a row press gets the undo window, the delayed commit, the read clamp, the rule promotion and the
+ * past-the-gate branch, all of them; a row control reaching for `engine.mutate` directly would look
+ * identical and quietly drop all six. `accept` is present exactly when {@link acceptDestOf} names a
+ * destination — a ✓ over a `noAnswer` would claim an answer the model refused to give.
  */
 function RowActions({
   accept,
@@ -566,16 +466,14 @@ function Empty({ segment, settled }: { segment: ScreenerSegmentId; settled: bool
   const t = useTranslations("screener");
   const speak = useLoadingGrace(!settled);
   /**
-   * ── "No one's waiting." IS A FACT ABOUT SENDERS, NOT ABOUT THIS LIST ──────────────────
-   *
-   * This pane was caught claiming nobody was waiting — 0 rows, meta "all clear" — on a mailbox
-   * that was holding hundreds of messages in that very pile. The rows come from the mirror
-   * (`shell/screener-state.ts` reads `engine.read()`), and before the mirror has been read there
-   * are no senders to have an opinion about. Every sentence below asserts one.
-   *
-   * So the three settled states are held back until {@link MailState.settled}, and what is shown
-   * instead names the situation and nothing else — no invented sender, no placeholder row. See
-   * `OhboxView`'s `SyncState`, which this mirrors deliberately: one defect, one shape of answer.
+   * "No one's waiting." is a fact about senders, not about this list — the
+   * pane was caught claiming nobody was waiting on a mailbox holding
+   * hundreds of messages in that pile: the rows come from the mirror, and
+   * before the mirror has been read there are no senders to have an opinion
+   * about. The three settled states are held back until
+   * {@link MailState.settled}, and what is shown instead names the
+   * situation and nothing else — no invented sender, no placeholder row
+   * (`OhboxView`'s `SyncState`, mirrored deliberately).
    */
   if (!settled) {
     return (

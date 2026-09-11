@@ -121,20 +121,13 @@ export function ReadsView({
   jumpTo: string | null;
   onJumped: () => void;
   /**
-   * ── THE CONTROLLED CLOSE — the counterpart of `jumpTo`, and the same one-shot shape ─────────
-   *
-   * An id the shell is asking this view to CLOSE, because the URL no longer claims that reading:
-   * Back walked out of a stream reading in place. `onClosed` acknowledges it, exactly the way
-   * `onJumped` acknowledges a jump, so the request is state the shell clears rather than a
-   * standing prop this view has to diff.
-   *
-   * A REQUEST, NOT A MIRROR OF EXPANSION. `StreamCard` owns the visual open and this view owns
-   * only `expandedId` (the verbs), and neither becomes shell state or URL state here — a stream's
-   * expanded card stays scroll posture, which is the shell's standing ruling. What the shell gains
-   * is the ability to close the ONE card it had claimed, never to enumerate what is open.
-   *
-   * Optional, so a view mounted without a shell (the demo, most tests) simply has no close
-   * channel and behaves exactly as it did.
+   * The controlled close — the counterpart of `jumpTo`, the same one-shot shape: an id the shell
+   * asks this view to CLOSE because the URL no longer claims that reading (Back walked out of a
+   * stream reading in place). `onClosed` acknowledges it, as `onJumped` acknowledges a jump, so the
+   * request is state the shell clears, not a standing prop to diff. A REQUEST, not a mirror of
+   * expansion: `StreamCard` owns the visual open and this view owns `expandedId` — an expanded card
+   * stays scroll posture, the shell's standing ruling; the shell may close the ONE card it claimed,
+   * never enumerate what is open. Optional: no shell, no channel.
    */
   closeTo?: string | null;
   onClosed?: () => void;
@@ -223,15 +216,13 @@ export function ReadsView({
   const seenFrom = Math.max(0, win.start - freshCount);
   const seenTo = Math.max(0, win.end - freshCount);
   /**
-   * THE STREAM IS A SLIDING WINDOW over the same `[fresh, seen]` order — only the cards near
-   * the viewport are in the DOM, with measured-height spacers standing in for the rest.
-   * `stream-window.ts` carries the whole argument (why the growing prefix it replaces made
-   * scroll depth a permanent tax, how per-card heights keep the spacers honest, what `\Seen`
-   * honesty means under a window).
-   *
-   * A scroll to a card that is not in the DOM is a silent no-op (`StreamShell.scrollTo`), so
-   * every jump goes through `ensure` first and the scroll runs AFTER the commit that mounted
-   * the target — `pendingScroll` below is that ordering, made state instead of a race.
+   * The stream is a sliding window over the same `[fresh, seen]` order — only cards near the
+   * viewport are in the DOM, with measured-height spacers standing in for the rest
+   * (`stream-window.ts` carries the whole argument: why the growing prefix taxed scroll depth, how
+   * per-card heights keep the spacers honest, what `\Seen` honesty means under a window). A scroll
+   * to a card not in the DOM is a silent no-op, so every jump goes through `ensure` first and the
+   * scroll runs AFTER the commit that mounted the target — `pendingScroll` is that ordering, made
+   * state instead of a race.
    */
   const streamIds = useMemo(() => all.map((m) => m.id), [all]);
   /** The pile's order by id, for the leave-range tracker — see `StreamShell.pileIndexOf`. */
@@ -264,18 +255,13 @@ export function ReadsView({
    */
   const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean } | null>(null);
   /**
-   * OPEN THE LANDED CARD THE WAY A CLICK OPENS IT.
-   *
-   * `StreamCard` owns its own expanded state, so there is no prop to set: a click on the card
-   * selects it and expands it in one gesture (`expandOnClick`, `packages/ui`), which is exactly
-   * what "the reader opened this message" means here — the body unclamps and the message's verbs
-   * come up. Driving that one mechanism is deliberate; a second way to open a card would be a
-   * second definition of open.
-   *
-   * AFTER the landing, never before. Expanding pins the clip's `max-height` to the content height
-   * measured at that moment, and a card the browser has not rendered yet (every card past the
-   * fold carries `content-visibility: auto`) measures its intrinsic box rather than its text —
-   * which would clip the message it was just asked to show.
+   * Open the landed card the way a click opens it. `StreamCard` owns its own expanded state, so
+   * there is no prop to set: a click selects and expands in one gesture (`expandOnClick`,
+   * `packages/ui`) — the body unclamps and the verbs come up; a second way to open a card would be
+   * a second definition of open. AFTER the landing, never before: expanding pins the clip's
+   * `max-height` to the content height measured at that moment, and a card the browser has not
+   * rendered (past the fold, `content-visibility: auto`) measures its intrinsic box rather than its
+   * text — clipping the message it was asked to show.
    */
   /**
    * A CARD THE SHELL HAS SINCE ASKED TO CLOSE — the anchor loop's own race, closed by name.
@@ -311,25 +297,14 @@ export function ReadsView({
     setPendingScroll(null);
   }, [pendingScroll, openLandedCard]);
   /**
-   * THE CONTROLLED CLOSE, driven through the card's OWN PILL — see `closeTo` on the props.
-   *
-   * The pill is the one definition of close in this codebase: it runs the collapse animation,
-   * flips `StreamCard`'s internal `open`, and reports `onToggle(id, false)`, which clears
-   * `expandedId` and takes the verbs down in the same motion. A second way to close a card would
-   * be a second definition of closed, exactly as `openLandedCard` clicks the card rather than
-   * inventing a second way to open one.
-   *
-   * THE PILL AND NOT THE CARD. Clicking the card selects and EXPANDS it (`expandOnClick`), so a
-   * card-click here would re-open the very reading Back just left — and re-select it.
-   *
-   * Synchronous, with no `requestAnimationFrame`: the jump's frame exists to let a commit mount
-   * the target row first, and a close has no such ordering — the card is on screen or there is
-   * nothing to close. `[closeTo]` is the whole dependency list for the same reason the jump's is
-   * (`onClosed` is a fresh closure on every shell render); the callback is read through a ref.
-   *
-   * A request for a card that is not mounted, or not open, is ACKNOWLEDGED and does nothing —
-   * the shell must not be left holding a request forever because the reader had already
-   * collapsed the card themselves.
+   * The controlled close, driven through the card's OWN PILL (`closeTo`). The pill is the one
+   * definition of close: it runs the collapse animation, flips `StreamCard`'s `open`, and reports
+   * `onToggle(id, false)`, which clears `expandedId` and takes the verbs down in the same motion.
+   * The pill and NOT the card: clicking the card selects and EXPANDS, so a card-click would re-open
+   * the reading Back just left. Synchronous, no `requestAnimationFrame` (a close has no mount
+   * ordering); `[closeTo]` is the whole dependency list, callbacks read through a ref. A request
+   * for an unmounted or closed card is ACKNOWLEDGED and does nothing — the shell must not hold a
+   * request forever because the reader already collapsed the card.
    */
   const closeRefs = useRef({ onClosed });
   closeRefs.current = { onClosed };
@@ -401,15 +376,13 @@ export function ReadsView({
   };
 
   /**
-   * A JUMP FROM OUTSIDE THE PILE — a search result, a tag row, any "show me this message".
-   *
-   * `[jumpTo]` IS THE WHOLE DEPENDENCY LIST, and that is the point rather than an omission. The
-   * work happens in a `requestAnimationFrame`, and the callbacks the shell passes are fresh
-   * closures on every one of its renders (`onJumped={() => setJump(null)}`) while `all` is
-   * re-derived on every mirror delta — so with either in the deps this effect re-ran, its cleanup
-   * cancelled the pending frame, and the jump was dropped for as long as the shell kept
-   * re-rendering. A jump is a one-shot response to a request, not a subscription to the pile, so
-   * the latest callbacks and the latest order are read through refs at fire time.
+   * A jump from outside the pile — a search result, a tag row. `[jumpTo]` IS the whole dependency
+   * list, the point rather than an omission: the work happens in a `requestAnimationFrame`, the
+   * shell's callbacks are fresh closures per render and `all` re-derives per mirror delta — with
+   * either in the deps the effect re-ran, its cleanup cancelled the pending frame, and the jump was
+   * dropped for as long as the shell kept re-rendering. A jump is a one-shot response to a request,
+   * not a subscription to the pile: the latest callbacks and order are read through refs at fire
+   * time.
    */
   const jumpRefs = useRef({ onCur, onJumped });
   jumpRefs.current = { onCur, onJumped };
@@ -420,23 +393,14 @@ export function ReadsView({
   useEffect(() => {
     if (!jumpTo) return;
     /**
-     * WHICH REQUEST IS NEWER, DECIDED AT SCHEDULE TIME RATHER THAN ASSUMED.
-     *
-     * The line below used to clear `closedRef` unconditionally, on the reading that a jump is
-     * always the newer request. It is not: this effect runs on the render that sets `jumpTo`
-     * and the work happens a frame later, and the close effect is synchronous — so a Back
-     * landing inside that one frame set `closedRef`, the frame then cleared it, and the
-     * landing re-opened the card the reader had just closed, with the URL already bare.
-     * `[jumpTo]` is unchanged by a close, so the effect's own cleanup never ran and the frame
-     * was never cancelled.
-     *
-     * The two cases are separated by the close COUNTER and not by the tombstone's value:
-     * closed-before-the-request means a genuinely new deep link to a message the reader closed
-     * earlier, which must open; a close COUNTED while this frame was pending wins. Comparing
-     * the id alone is not enough and was the first form of this fix — a second Back on a
-     * message that was already the tombstone writes the same id, so nothing looks different.
-     * The abandoned jump is still acknowledged — the shell must not be left holding a request
-     * forever.
+     * Which request is newer, decided at schedule time rather than assumed. The line below used to
+     * clear `closedRef` unconditionally, reading a jump as always newer. It is not: this effect
+     * runs on the render that sets `jumpTo` and the work happens a frame later, while the close
+     * effect is synchronous — a Back landing inside that frame set `closedRef`, the frame cleared
+     * it, and the landing re-opened the card the reader had just closed. The cases are separated by
+     * the close COUNTER, not the tombstone's value: a close counted while this frame was pending
+     * wins (comparing the id alone was the first fix — a second Back on the same message writes the
+     * same id). The abandoned jump is still acknowledged.
      */
     const closeSeqAtRequest = closeSeqRef.current;
     const timer = requestAnimationFrame(() => {
@@ -456,16 +420,13 @@ export function ReadsView({
   }, [jumpTo]);
 
   /**
-   * Keep the row the USER selected in view — `cur`, never `current`.
-   *
-   * `current` on line 76 is `cur` OR, when nothing has been selected, whichever message
-   * happens to be the first unread one. Keyed on that, this effect scrolled the list on
-   * MOUNT, to a row nobody had asked for, while the reading stream beside it stayed at the
-   * top — and it re-ran every time the fallback re-resolved, which happens whenever a
-   * message is marked read. A fallback may decide what is DISPLAYED (the highlight below
-   * still follows `current`); it may not move the viewport and it may not be the thing that
-   * drives a scroller into the seen-on-scroll machinery, which writes `\Seen` to the user's
-   * own IMAP server. See `useSeenOnScroll` for the other half of this.
+   * Keep the row the USER selected in view — `cur`, never `current`. `current` is `cur` OR, when
+   * nothing is selected, whichever message is first unread. Keyed on that, this effect scrolled the
+   * list on MOUNT to a row nobody asked for, and re-ran every time the fallback re-resolved — which
+   * happens whenever a message is marked read. A fallback may decide what is DISPLAYED (the
+   * highlight still follows `current`); it may not move the viewport, and it may not drive a
+   * scroller into the seen-on-scroll machinery, which writes `\Seen` to the user's own IMAP server
+   * (`useSeenOnScroll` is the other half).
    */
   useEffect(() => {
     if (!cur) return;
@@ -495,30 +456,14 @@ export function ReadsView({
   }, [cur]);
 
   /**
-   * BECOMING CURRENT IS ONE OF TWO EXPLICIT-INTENT FETCHES; NEITHER IS THE PILE.
-   *
-   * The card under the cursor is the one being read — put there by a click, by j/k, or by
-   * the scroll-spy as somebody scrolls the stream — so that is where the body is asked for
-   * here. It also breaks a circle: a card holding only a snippet measures short, and before
-   * `bodyState` existed a short card hid its Expand pill, so "hydrate on expand" alone would
-   * have had no first move.
-   *
-   * The SECOND trigger is `StreamShell`'s `onNear` (wired to `hydrateBody` below): a card that
-   * has come within a viewport's lookahead of the fold, so the sanitized html viewer is ready
-   * as it scrolls in rather than the raw text dump the stream showed until this change. That is
-   * what makes Reads read like mail; without it the cards render `body.text` because the html
-   * part is never fetched.
-   *
-   * NEITHER FETCHES THE PILE. `partition.fresh` plus `partition.seen` is the whole of Reads,
-   * and a mount that fetched all of it would be a pile-wide prefetch billed per message for
-   * mail nobody looked at — and there is no API cost without revenue behind it.
-   * Its posture is explicit-intent fetches, and a card the reader has reached — as the cursor
-   * or as lookahead — is the smallest honest unit of that. Both paths go through the same
-   * idempotent, single-flight `hydrateBody`, so the two triggers never double-spend.
-   *
-   * Keyed on `current` rather than on the version, so a delta landing mid-read does not
-   * re-ask; `hydrateBody` would short-circuit anyway, and depending on the mirror here would
-   * make the effect run on every drain.
+   * Becoming current is one of two explicit-intent fetches; neither is the pile. The card under the cursor is
+   * the one being read, so the body is asked for here — which also breaks a circle: a snippet-only card
+   * measures short, and before `bodyState` a short card hid its Expand pill, so "hydrate on expand" had no
+   * first move. The second trigger is `StreamShell`'s `onNear`: a card within a viewport's lookahead, so the
+   * sanitized viewer is ready as it scrolls in — what makes Reads read like mail. Neither fetches the pile: a
+   * mount that fetched all of it is a pile-wide prefetch billed per message for mail nobody looked at. Both
+   * paths share the idempotent single-flight `hydrateBody`, so the triggers never double-spend. Keyed on
+   * `current`, not the version, so a delta landing mid-read does not re-ask.
    */
   useEffect(() => {
     if (current) hydrateBody(current);
@@ -597,20 +542,16 @@ export function ReadsView({
       {...rowStamp(m, now, absoluteTime, onToggleTime)}
       subject={m.subject}
       preview={m.snippet}
-      /* `data-unseen` for the sweep; NO dot — NEWNESS is the row's position relative to the
-         line. READNESS is the mailbox's own statement and renders truthfully: a `\Seen`
-         message (including one read before this client ever ran, or in another client)
-         takes the quiet ink, an unread one keeps full weight. Measured live without this:
-         a warm import rendered every row at unread weight, and "Mark all read" changed
-         nothing visible.
-
-         `presentsUnread`, because a message can be resurfaced WHEREVER it lives: the pin is
-         state, not a folder, so a `ohmail/Reads` issue put back at the top of the Ohbox is
-         listed in both places at once — and one of them drawing it bold while the other drew
-         it grey is precisely the inconsistency this derivation exists to remove. It cannot
-         cost a stray write: the scroll observer this attribute arms re-judges against the
-         STORED flag before it marks anything (`onSeen` below), so a pinned row that is
-         already read is observed and skipped. */
+      /* `data-unseen` for the sweep; NO dot — newness is the row's position
+         relative to the line, readness is the mailbox's own statement: a
+         `\Seen` message takes the quiet ink, an unread one keeps full
+         weight (measured without this: a warm import rendered every row at
+         unread weight and "Mark all read" changed nothing visible).
+         `presentsUnread`, because a message can be resurfaced wherever it
+         lives — the pin is state, not a folder — and one surface drawing it
+         bold while another drew it grey is the inconsistency this removes.
+         No stray write: the scroll observer re-judges against the STORED
+         flag before it marks (`onSeen`), so a pinned read row is skipped. */
       unread={presentsUnread(m)}
       seen={!presentsUnread(m)}
       dotless
