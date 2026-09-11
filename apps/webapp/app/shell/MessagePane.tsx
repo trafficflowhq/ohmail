@@ -1007,9 +1007,8 @@ function ActionBar({
             primary capsule, and Forward answers a different question — not "what do I say back"
             but "who else needs to see this". `.abar-fwd` is SECOND in the admission order, so
             the three answer verbs are seated before anything else; what pays is the horizons
-            and Tag folding into More earlier — the trade is stated with the admission order at
-            the foot of `action-bar.css`. `mm-fwd` is the other half of "in the row or in the
-            menu, never both". */}
+            and Tag folding into More earlier — stated with the admission order at the foot of
+            `action-bar.css`. `mm-fwd` is the other half of "row or menu, never both". */}
         {canForward ? (
           <div className="abar-g abar-v abar-fwd">
             <button
