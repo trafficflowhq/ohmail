@@ -5,31 +5,14 @@ import {
 } from "../draft-prompt.js";
 
 /**
- * THE DRAFTER IMPLEMENTATION — the model half of the seam declared in `../draft-port.ts`.
- *
- * It mirrors the classifier exactly: the PORT lives outside this directory so services can
- * depend on it without depending on a model, and the implementation here takes an INJECTED
- * client so the suite mocks it and makes no network call. This module NEVER imports a model SDK
- * at load time — the concrete client is constructed by the application and injected, which keeps
- * the drafter hermetic and the tests offline.
- *
- * The port's own file states the sensitivity guarantee, because that guarantee is a property of
- * the input SHAPE rather than of this implementation: the caller refuses to draft against a
- * message excluded from AI and excludes such messages from the surrounding context before
- * building the input, so there is no field here through which a raw body could arrive.
- *
- * ── THE QUESTION MOVED OUT; ONLY THE TRANSPORT IS LEFT ───────────────────────────────────────
- *
- * The voice and reply policy, the response schema, the redaction allow-list and the coercion now
- * live in `../draft-prompt.ts`, a leaf outside this directory. There is more than one way to
- * reach a model — a hosted deployment with its own account, and a standalone install running
- * against a key or a local model belonging to its user — and a second copy of the reply policy is
- * how those two come to write in two different voices from the same mailbox. In particular the
- * redaction sink is now SHARED rather than reimplemented: "no raw content in a draft request" is
- * a property of every drafter, not a habit each of them has to keep.
- *
- * Every name that used to be declared here is re-exported below, so no import outside this
- * package moves.
+ * The drafter implementation — the model half of the seam in `../draft-port.ts`, mirroring the
+ * classifier: the PORT lives outside this directory, the implementation takes an INJECTED client,
+ * no model SDK at load time. The sensitivity guarantee is stated at the port, being a property of
+ * the input SHAPE: the caller refuses to draft against AI-excluded messages and excludes them
+ * from context, so no field here can carry a raw body. The voice, policy, schema and redaction
+ * allow-list live in `../draft-prompt.ts` — a second copy of the reply policy is how two
+ * deployments write in two voices from one mailbox; the redaction sink is shared rather than
+ * reimplemented. Old names re-exported.
  */
 
 /* Re-exported so that consumers importing the drafting vocabulary from this module — or from the
@@ -76,24 +59,14 @@ export function buildDraftParams(input: DraftInput, opts: SonnetDrafterOpts = {}
     model: opts.model ?? DEFAULT_MODEL,
     max_tokens: opts.maxTokens ?? 1024,
     /**
-     * THINKING OFF, and it is a billing decision before it is a quality one.
-     *
-     * `claude-sonnet-5` runs ADAPTIVE THINKING BY DEFAULT when this field is omitted, and
-     * `max_tokens` caps thinking plus response text TOGETHER. Two consequences, both measured
-     * against the live API rather than reasoned about:
-     *
-     *  · **Truncation.** A real draft of an ordinary business reply came back as 259 thinking
-     *    tokens + 539 text = 798 of the 1024 available. A longer reply, or a deeper think,
-     *    silently loses its ending — and a truncated draft is a draft the customer paid an AI
-     *    action for.
-     *  · **Cost the ledger cannot see.** One credit buys one draft, so every thinking token is
-     *    margin, and how many there are is the model's decision rather than ours. That is a
-     *    variable this product cannot price until `onUsage` has produced real numbers.
-     *    Deterministic first, tuned second.
-     *
-     * The alternative — keep thinking and raise `max_tokens` — is the better answer for QUALITY
-     * and is deliberately deferred to a re-pricing decision made WITH measurements, not before
-     * any exist. Accepted on Sonnet 5 at any effort.
+     * Thinking OFF — a billing decision before a quality one. `claude-sonnet-5` runs adaptive
+     * thinking by default, and `max_tokens` caps thinking plus response TOGETHER. Measured live:
+     * an ordinary business reply came back 259 thinking + 539 text of 1024, so a longer reply
+     * silently loses its ending — a truncated draft the customer paid for. And every thinking
+     * token is margin whose count is the model's decision — unpriceable until `onUsage` produces
+     * real numbers. Deterministic first, tuned second: keeping thinking and raising `max_tokens`
+     * is deferred to a re-pricing decision made WITH measurements. Accepted on Sonnet 5 at any
+     * effort.
      */
     thinking: { type: "disabled" },
     system: [

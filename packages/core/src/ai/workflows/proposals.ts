@@ -5,21 +5,15 @@ import {
 import { validateSteps, validateTrigger, type WorkflowStep, type WorkflowTrigger } from "../../workflow-shapes.js";
 import type { WorkflowPattern, WorkflowProposal, WorkflowPort } from "./propose.js";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pattern ASSEMBLY + proposal GENERATION. This lives
-// in CORE (db-coupled, worker-importable — the same seam as the executor) so
-// BOTH the worker `proposal-cron` and the services `ProposalsService` delegate here
-// without the worker importing services. The AI port is INJECTED (mocked in tests).
-//
-// REDACTION: `assembleWorkflowPatterns` emits NON-SENSITIVE pattern METADATA
-// ONLY — sender/domain, destination, recurrence count, provenance — drawn from
-// `learning_signals` (the redaction-aware behavioral log fed by routing decisions /
-// approvals / adopted moves) and enabled `rules`. It NEVER reads a body/snippet/
-// subject, and it STRUCTURALLY EXCLUDES any pattern whose sender or domain has ANY
-// sensitivity-flagged message (no_ai/no_forward/no_kb/sensitivity-category/priority)
-// — so a suggestion derived from sensitive mail can never be surfaced OR sent to the
-// model. `buildProposeParams` re-asserts the redaction allowlist as defense in depth.
-// ─────────────────────────────────────────────────────────────────────────────
+// Pattern ASSEMBLY + proposal GENERATION. In CORE (db-coupled, worker-importable — the executor's
+// seam) so the worker's `proposal-cron` and the services `ProposalsService` both delegate here
+// without the worker importing services; the AI port is injected. REDACTION:
+// `assembleWorkflowPatterns` emits non-sensitive pattern METADATA only — sender/domain,
+// destination, recurrence count, provenance — drawn from `learning_signals` and enabled `rules`.
+// It never reads a body, snippet or subject, and it STRUCTURALLY excludes any pattern whose
+// sender or domain has any sensitivity-flagged message, so a suggestion derived from sensitive
+// mail can never be surfaced or sent to the model. `buildProposeParams` re-asserts the redaction
+// allowlist as defence in depth.
 
 /** How many times a sender→destination pattern must recur before it is a candidate. */
 export const RECURRENCE_THRESHOLD = 3;
@@ -137,20 +131,14 @@ export interface GenerateProposalsDeps {
   now?: () => Date;
   threshold?: number;
   /**
-   * The spend authorization — asked AFTER the patterns are assembled and IMMEDIATELY BEFORE the model, and only
-   * when there is something to ask the model about. `false` ⇒ abandon the pass, touching
-   * nothing.
-   *
-   * A callback rather than a gate because this module is core: it owns the ORDER (assemble →
-   * authorize → model), the worker owns the money. Both halves of that order are corrections:
-   *
-   *  · the worker used to charge before this function ran at all, so an account with no
-   *    recurring patterns paid an AI action for a pass that `makeOpusProposer` short-circuits
-   *    to `[]` without touching a model. Charging for a call that reaches no model is the one
-   *    bill the ledger could never explain;
-   *  · a refusal must not fall through into the transaction below, whose first act is to DELETE
-   *    the account's open proposals. Degrading to "wipe the suggestions you already had" is a
-   *    worse experience than showing yesterday's.
+   * The spend authorization — asked AFTER assembly, immediately before the model, and only when
+   * there is something to ask about; `false` abandons the pass, touching nothing. A callback
+   * rather than a gate because this module is core: it owns the ORDER, the worker owns the money.
+   * Both halves are corrections: the worker used to charge before this ran, so an account with no
+   * recurring patterns paid for a pass the proposer short-circuits to `[]` — the one bill the
+   * ledger could never explain; and a refusal must not fall through into the transaction below,
+   * whose first act DELETES the account's open proposals — wiping the suggestions you had is
+   * worse than showing yesterday's.
    */
   authorize?: (patterns: WorkflowPattern[]) => Promise<boolean>;
 }

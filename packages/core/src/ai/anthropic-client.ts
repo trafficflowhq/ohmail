@@ -2,32 +2,14 @@ import type { AnthropicLike } from "./classify.js";
 import type { Logger } from "../log.js";
 
 /**
- * THE LIVE MODEL CLIENT. A `fetch` shim over `POST /v1/messages` that satisfies
- * {@link AnthropicLike}, the narrow structural seam `makeHaikuClassifier`, `makeSonnetDrafter`
- * and `makeOpusProposer` already take.
- *
- * ## Why a shim and not `@anthropic-ai/sdk`
- *
- * The SDK is not in the lockfile, and adding it would land in two places that both pay for it:
- * the worker's Docker image and the Vercel function bundle. What the three ports actually use of
- * a client is ONE method — `messages.create(params) => { content, usage? }` — so the SDK's value
- * here would be retries, timeouts and error typing, which is ~150 lines. The seam was designed
- * for exactly this (`classify.ts`: "the concrete client is constructed by the app/worker and
- * injected"), so the shim is the intended shape rather than a workaround.
- *
- * ## Why it lives in `packages/core`
- *
- * `apps/worker` may import **core + db only** — the worker's dependency test pins that list
- * recursively, because a `@trafficflow/services` import typechecks, resolves through the vitest
- * alias, and then throws `MODULE_NOT_FOUND` inside the worker's image. The worker is the biggest
- * consumer of this client (classify runs once per message), so core is the only home it can
- * reach — and it is where the ports it feeds already live.
- *
- * ## Hermetic by construction
- *
- * `fetchImpl` is injectable and every test passes one, so the default suite makes no network
- * call. Nothing in this module executes at import time; a deployment without
- * `ANTHROPIC_API_KEY` never constructs it.
+ * The live model client — a `fetch` shim over `POST /v1/messages` satisfying {@link
+ * AnthropicLike}, the seam the three port factories take. A shim and not `@anthropic-ai/sdk`: the
+ * SDK is not in the lockfile and would land in the worker image and the Vercel bundle, while the
+ * ports use one method — `messages.create(params)`; retries, timeouts and error typing are ~150
+ * lines. In `packages/core` because the worker may import core + db only (the dependency test
+ * pins the list recursively) and is this client's biggest consumer. Hermetic: `fetchImpl` is
+ * injectable, nothing executes at import time, and a deployment without `ANTHROPIC_API_KEY` never
+ * constructs it.
  */
 
 /** The `anthropic-version` every request pins. Bumping it is an API-shape decision, not config. */
@@ -160,28 +142,14 @@ export class AnthropicTransportError extends Error {
 }
 
 /**
- * THE WORST-CASE WALL TIME one call through this client can take, in milliseconds.
- *
- * It exists because a per-ATTEMPT timeout reads like a whole-call bound and is not one, and
- * something outside this module was sized against the wrong number: the exclusive AI work claim
- * (`AI_CLAIM_TTL_MS`) was set to 60 s on the stated ground that *"the worker's model timeout is
- * 30 s"*. The worker passes `timeoutMs: 30_000` and no `maxRetries`, so its real ceiling is three
- * attempts plus two backoffs — and a live holder's claim expired while it was still inside the
- * call, letting a second caller take the claim over and buy a second provider call against the
- * one credit the first had already paid. Anyone bounding a lease, a lock or a function duration
- * against this client must bound it against THIS, never against `timeoutMs`.
- *
- * The two terms:
- *
- *  · `timeoutMs × (maxRetries + 1)` — every attempt can burn its full deadline;
- *  · `maxRetries × MAX_RETRY_AFTER_MS` — a server `retry-after` is honoured up to that cap, which
- *    dominates the exponential default (500 ms doubling, ±25 % jitter) by more than an order of
- *    magnitude. Taking the cap rather than the default is what makes this a CEILING: a bound that
- *    holds only when the provider is not asking us to wait is not a bound at all, and a 429 storm
- *    is exactly when several callers are queued on the same source.
- *
- * Deliberately excludes DNS, connection setup and the caller's own work around the call, so a
- * consumer sizing a lease should still leave margin above it.
+ * The worst-case wall time one call through this client can take. A per-ATTEMPT timeout reads
+ * like a whole-call bound and is not one: `AI_CLAIM_TTL_MS` was sized at 60 s on the stated
+ * ground that "the worker's model timeout is 30 s", while the real ceiling is three attempts plus
+ * two backoffs — a live holder's claim expired mid-call and a second caller bought a second
+ * provider call against one credit. Two terms: `timeoutMs × (maxRetries + 1)`, plus `maxRetries ×
+ * MAX_RETRY_AFTER_MS` — the server's `retry-after` cap dominates the exponential default, and a
+ * bound that only holds when the provider is not asking us to wait is not a bound. Excludes DNS
+ * and connection setup; leave margin above it.
  */
 export function callCeilingMs(o: { timeoutMs?: number; maxRetries?: number } = {}): number {
   const timeoutMs = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -207,23 +175,13 @@ export interface AnthropicClientOptions {
   /** Jitter source; injected so backoff is deterministic under test. */
   random?: () => number;
   /**
-   * Called after EVERY metered call, success or failure. This is the margin-measurement hook: the
-   * hosts wire it to their structured logger AND to the cost table, so the token counts behind
-   * every AI action the product has ever performed are both greppable and joinable.
-   *
-   * Invoked through a try/catch — a reporter that throws must not become the outcome of a
-   * model call that succeeded.
-   *
-   * **It may return a promise, and this client AWAITS it.** That widening exists for one host
-   * and one reason: the API runs serverless, so its process can be frozen the instant a response
-   * is written, and a reporter that started a durable write without being awaited is a write
-   * that may simply never land. Awaiting inside a call that has already spent seconds at a model
-   * provider costs nothing measurable and turns "usually recorded" into "recorded".
-   *
-   * A reporter that REJECTS is swallowed exactly like one that throws, and for the same reason:
-   * observability is never load-bearing. A long-lived host that would rather not wait returns
-   * `void` and flushes on its own clock — see `makeAiUsageRecorder`, which does both depending
-   * on the host it was built for.
+   * Called after EVERY metered call, success or failure — the margin-measurement hook: hosts wire
+   * it to the structured logger AND the cost table, so the token counts behind every AI action
+   * are greppable and joinable. Invoked through a try/catch — a reporter that throws must not
+   * become the outcome of a call that succeeded. It may return a promise, and this client AWAITS
+   * it: the API runs serverless, so an unawaited durable write may simply never land; awaiting
+   * after seconds at a model provider costs nothing measurable. A rejecting reporter is swallowed
+   * like a throwing one — observability is never load-bearing. See `makeAiUsageRecorder`.
    */
   onUsage?: (report: AnthropicCallReport) => void | Promise<void>;
   /** Convenience: when set and `onUsage` is not, usage is logged as `ai_call` at info level. */
@@ -288,17 +246,14 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
   const random = opts.random ?? Math.random;
   const log = opts.log;
   const report = opts.onUsage ?? ((r: AnthropicCallReport) => {
-    // The default is not "nothing": an unmeasured cost is the failure mode #49 names. With no
-    // logger either, we stay silent rather than writing to a stdout the host does not own.
-    //
-    // THIS DEFAULT IS THE FAILURE MODE, NOT THE MITIGATION, and it is worth saying so where it
-    // is written. A host that forgets to pass `onUsage` gets a deployment in which every metered
-    // call works, every credit is debited and nothing anywhere records what the tokens cost —
-    // and if it also passed no `log`, this line resolves to `undefined?.info(…)` and does
-    // literally nothing. That was the worker's state until cloud 0029: the arm that makes most
-    // of the product's model calls, silently unmeasured, beside a comment claiming otherwise.
-    // The guard against it is not here (a default cannot detect its own absence) but in the
-    // `ai_usage_unrecorded` rule, which compares the cost table against the credit ledger.
+    // The default is not "nothing": an unmeasured cost is its own failure mode, and this default
+    // IS the failure mode, not the mitigation. A host that forgets `onUsage` gets a deployment
+    // where every metered call works, every credit is debited, and nothing records what the
+    // tokens cost — and with no `log` either, this line resolves to `undefined?.info(…)` and does
+    // literally nothing. That was the worker's state for a stretch: the arm making most of the
+    // product's model calls, silently unmeasured, beside a comment claiming otherwise. The guard
+    // is not here (a default cannot detect its own absence) but in the `ai_usage_unrecorded`
+    // rule, which compares the cost table against the credit ledger.
     log?.info("ai_call", { ...r });
   });
 

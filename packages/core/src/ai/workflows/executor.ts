@@ -9,19 +9,15 @@ import {
   workflowRuns,
   type Tx,
 } from "@trafficflow/db";
-/* THE LEAF, NOT `/cloud` — and the split below is load-bearing rather than tidy.
- *
- * This module is compiled into the desktop engine. `workflowAttemptKey` is a VALUE, so its edge
- * survives bundling: absent a `sideEffects` declaration a bundler must assume the named module has
- * work to do at load, and keeps its bytes. While that value was named through `@trafficflow/db/cloud`
- * the barrel came with it, and the barrel is billing, the credit ledger, the staff directory, the
- * hosted schema and the postgres SERVER DRIVER — 26 extra workspace modules in an artifact a
- * stranger downloads. `ledger-source.ts` imports `node:crypto` and nothing else, which is what makes
- * it nameable from here; its own header states the rule this line now keeps.
- *
- * `SpendPort` comes from the root barrel as a TYPE ONLY, which is erased at compile time and
- * creates no edge — `import type` rather than a bare `import` is the whole difference, so it must
- * not be collapsed back into one statement. */
+/**
+ * The LEAF, not `/cloud` — and the split is load-bearing. This module is compiled into the
+ * desktop engine, and `workflowAttemptKey` is a VALUE, so its edge survives bundling; named
+ * through `@trafficflow/db/cloud` the barrel came with it — billing, the credit ledger, the staff
+ * directory, the hosted schema and the postgres server driver, 26 extra workspace modules in an
+ * artifact a stranger downloads. `ledger-source.ts` imports `node:crypto` and nothing else, which
+ * is what makes it nameable from here. `SpendPort` comes from the root barrel as a TYPE ONLY —
+ * erased at compile time, no edge — so the two imports must not be collapsed into one statement.
+ */
 import { workflowAttemptKey } from "@trafficflow/db/ledger-source";
 import type { SpendPort } from "@trafficflow/db";
 import { makeDrizzleRepo, type DrizzleRepo } from "../../adapters/drizzle-repo.js";
@@ -30,35 +26,16 @@ import type { DraftPort, DraftInput, DraftResult } from "../draft.js";
 import { plainTextToOutboundBody } from "../../outbound-text.js";
 import type { ToolName, WorkflowStep } from "../../workflow-shapes.js";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The gated workflow EXECUTOR.
-//
-// This is the security-critical layer that DRAINS a `pending` workflow_run and
-// runs its steps. It lives in CORE and operates at the DB/repo level (the
-// worker imports core+db only, never services), so `file_message` reuses the
-// desired-state handoff (`upsertFolderState` + a `message` move change — NEVER
-// IMAP), `draft_reply` calls the INJECTED DraftPort (mocked in tests) and
-// inserts a `drafts` row, `add_kb_entry` inserts a `kb_entries` row.
-//
-// The two invariants a workflow must NEVER violate:
-//   1. NEVER act on sensitive mail — a WHOLE-RUN pre-flight refuses the entire
-//      run if ANY targeted message is no_ai/no_forward/no_kb/sensitivity-flagged/
-//      priority, and a per-step structural re-check is the second layer.
-//   2. NEVER double-execute — each step commits in its OWN tx and advances a durable
-//      `stepCursor`; the (runId, stepIndex) audit row is the idempotency marker a
-//      re-drain checks BEFORE re-applying, and draft/kb inserts carry a unique
-//      `workflow_dedup_key` as defense in depth.
-//
-// The canonical inverse home is `audit_log`: one row per applied step with its
-// undo. `workflow_runs.log` is only a convenience index for the run DTO.
-//
-// This was the ONE call site in the product that made a paid model call inside a transaction —
-// the reason a "charge on the caller's own transaction" gate method had to exist at all, and,
-// since the charge moved into `prepare`, the reason it no longer does. Every other metered path
-// (`pipeline.ts`,
-// `DraftingService`, `proposal-cron.ts`, `ScreenerService`) already charged outside the
-// transaction that stores its result; the step machinery now does too, in `prepare`.
-// ─────────────────────────────────────────────────────────────────────────────
+// The gated workflow EXECUTOR — drains a `pending` workflow_run and runs its steps. In CORE at
+// the DB/repo level (the worker imports core+db only): `file_message` reuses the desired-state
+// handoff (never IMAP), `draft_reply` calls the injected DraftPort and inserts a `drafts` row,
+// `add_kb_entry` inserts a `kb_entries` row. Two invariants: (1) never act on sensitive mail — a
+// whole-run pre-flight refuses if ANY targeted message is flagged, with a per-step structural
+// re-check behind it; (2) never double-execute — each step commits in its own tx and advances a
+// durable `stepCursor`; the (runId, stepIndex) audit row is the idempotency marker, and inserts
+// carry a unique `workflow_dedup_key`. The canonical inverse home is `audit_log`;
+// `workflow_runs.log` is a convenience index. This was the one call site making a paid model call
+// inside a transaction; since the charge moved into `prepare`, it no longer does.
 
 /* The undo payload is declared with the tool GRAMMAR, in `workflow-shapes.ts`, not here with the
  * runner that writes it: the service that replays an undo is mail-half code, and having the shape
@@ -76,20 +53,14 @@ export interface ToolApplyResult {
 }
 
 /**
- * Per-step context handed to a tool's `apply`, all bound to the step's OWN transaction.
- *
- * **There is deliberately no `drafter` and no `credits` here, and their ABSENCE is the
- * enforcement of the rule** — "no network, no ledger write inside the step transaction". Both
- * fields once existed: `draft_reply` charged through a gate method that ran on `ctx.tx`, then made
- * the paid Anthropic call on that same transaction, so any of the three writes that follow the
- * call — the `drafts` insert, the dedup re-read, `recordChange` — rolled the CHARGE back along
- * with itself while Anthropic had already been paid. One unpaid model call per post-call failure.
- *
- * The old comment argued the opposite in detail ("the charge and the effect become ONE fact, so
- * there is nothing to refund"), and it was true of the database effect and false of the money —
- * which is the only effect the charge-for-real-cost rule is about. A comment cannot hold a rule like this, so the
- * rule is now a type: money and network live in {@link ToolPrepareContext}, which runs strictly
- * between transactions, and reaching for either from `apply` is a compile error.
+ * Per-step context handed to a tool's `apply`, all bound to the step's OWN transaction. There is
+ * deliberately no `drafter` and no `credits` here, and their ABSENCE is the enforcement of the
+ * rule — no network, no ledger write inside the step transaction. Both fields once existed:
+ * `draft_reply` charged on `ctx.tx` and made the paid call on that same transaction, so any of
+ * the three writes after the call rolled the CHARGE back while Anthropic had already been paid —
+ * one unpaid model call per post-call failure. A comment cannot hold a rule like this, so it is a
+ * type: money and network live in {@link ToolPrepareContext}, strictly between transactions, and
+ * reaching for either from `apply` is a compile error.
  */
 export interface ToolApplyContext {
   repo: DrizzleRepo;   // desired-state write + recordChange + recordAudit (the repo seam)
@@ -101,20 +72,13 @@ export interface ToolApplyContext {
 }
 
 /**
- * The PREPARE context — the ONLY place in the step machinery where a paid model call or a ledger
- * write may happen, and the reason it is a separate type from {@link ToolApplyContext}.
- *
- * `db` is the TOP-LEVEL handle and `prepare` is invoked with **no `db.transaction` frame open**.
- * That is what makes the AI credit gate safe to call from here: the gate opens its own short
- * transaction, and the original self-deadlock (three cases at once, before that method existed)
- * was never a lock-graph deadlock — at the step gate the transaction holds no row locks at all.
- * It was an inner `BEGIN` issued on the handle whose connection the outer transaction was
- * holding, which blocks forever on PGlite's single connection and wedges a real pool only when
- * it is exhausted. A structural absence of nesting fixes it in the strictest harness, not an
- * argument about locks.
- *
- * This is the order `DraftingService` already proves: fallible reads, then the charge, then the
- * model, and the storing transaction afterwards on its own.
+ * The PREPARE context — the only place in the step machinery where a paid model call or ledger
+ * write may happen. `db` is the top-level handle and `prepare` runs with no transaction frame
+ * open, which is what makes the credit gate safe: the gate opens its own short transaction, and
+ * the original self-deadlock was an inner `BEGIN` on the handle whose connection the outer
+ * transaction held — blocking for ever on PGlite's single connection. A structural absence of
+ * nesting fixes it in the strictest harness. The order is `DraftingService`'s: fallible reads,
+ * the charge, the model, then the storing transaction on its own.
  */
 export interface ToolPrepareContext {
   db: Tx;              // TOP-LEVEL handle — never a transaction. See `runOne`.
@@ -278,47 +242,14 @@ const draftReplyTool: Tool = {
     return typeof args.messageId === "string" ? [args.messageId] : [];
   },
   /**
-   * Everything that costs money or makes a network call, OUTSIDE any transaction.
-   *
-   * The order is `DraftingService`'s (`drafting-service.ts:100-208`), and each position is a fix
-   * rather than a preference:
-   *
-   *  1. `loadDraftTarget` — a missing target costs nothing, so it is asked first;
-   *  2. `buildDraftInput` — two fallible database round-trips that spend no tokens, so they sit
-   *     BEFORE the charge; charging first billed an AI action for a request in which zero model
-   *     calls occurred, which is the bill the ledger could never explain;
-   *  3. the CHARGE — after both, and before the model, so "revenue precedes token spend" is
-   *     structural: an empty balance stops the step before it costs us a token;
-   *  4. the MODEL, with a refund if it throws.
-   *
-   * The charge is per STEP (`workflow_run:<runId>:<stepIndex>`), one row per step per run. A
-   * re-drained run re-executes its steps idempotently, so a retry of an attempt still open
-   * answers `duplicate` → proceed, charged nothing.
-   *
-   * **That free re-run is now reachable, and it is crash-resume.** `workflowDrainPass`
-   * requeues a run whose `running` claim has gone unrefreshed past `STALE_CLAIM_MS`, and the
-   * executor resumes it from `stepCursor`. The gate is built for exactly that retry: the
-   * workflow gate declares no `retryWindowMs`, so an un-refunded attempt never ages out and the
-   * resumed step is served free however long the worker was down. The cost that IS repeated is
-   * the model call itself, when the crash landed between the charge and the step's commit — we
-   * pay for it, the customer does not. `apps/worker/src/workflow-cron.ts` states the whole trade.
-   *
-   * This paragraph used to read "nothing deployed re-queues a run … do not read this as
-   * crash-resume: it is not". That was true when it was written and is the defect the
-   * stale-claim reaper closed.
-   *
-   * `spend`, not `tryDebit`: the refusal has to be MAPPED, not collapsed into one boolean. A
-   * database FAULT used to propagate out of the deleted gate method and land as reason `error`;
-   * collapsing it into the same answer as an empty balance would tell a fully funded customer
-   * they are out of credits because our ledger connection dropped. `workflow_runs.reason` is
-   * free text carried raw into the DTO, so the three distinct words cost no copy.
-   *
-   * The gate is reached only AFTER the whole-run sensitivity pre-flight and the per-step
-   * structural re-check have both passed, so a sensitive target cannot produce a ledger row here
-   * (no AI spend on sensitive mail: zero rows, asserted against `credit_ledger`). A refusal
-   * FAILS the step
-   * rather than degrading: there is no deterministic fallback for "write a reply", and silently
-   * marking a step done that never ran would be a silent AI action, which this product forbids.
+   * Everything that costs money or makes a network call, OUTSIDE any transaction, in
+   * `DraftingService`'s order: a missing target costs nothing, asked first; the fallible reads
+   * sit BEFORE the charge, or a request with zero model calls gets billed; the CHARGE precedes
+   * the model, so revenue precedes token spend; the model is refunded on a throw. The charge is
+   * per step (`workflow_run:<runId>:<stepIndex>`); a re-drained run answers `duplicate` →
+   * proceed, charged nothing — crash-resume: when the crash landed between charge and commit, we
+   * pay for the repeated model call. `spend`, not `tryDebit`: a database fault must not read as
+   * an empty balance. Reached only after both sensitivity checks; a refusal FAILS the step.
    */
   async prepare(ctx, args) {
     const messageId = requireString(args.messageId, "draft_reply.messageId");
@@ -357,17 +288,14 @@ const draftReplyTool: Tool = {
       chargedAttempt = outcome.verdict === "ok" ? outcome.attempt : null;
     }
 
-    // THE PAID CALL. Outside every transaction, which is the whole point of `prepare`.
-    //
-    // This path REFUNDS, and the workflow path did not before. The reason is DraftingService's:
-    // a refund is worth making when the retry might never come, and a `failed` run is terminal —
-    // the stale-claim reaper requeues a stranded `running` claim and DELIBERATELY does not touch `failed`,
-    // so there is still no future free retry to honour this charge. `refund(source)` is a no-op
-    // unless THIS gate charged THIS attempt: the marker is
-    // cleared on every non-charging decision, so a free retry of an earlier open attempt cannot
-    // reverse a charge whose work may already have been delivered. The refund also CLOSES the
-    // attempt, so a later re-queue is charged afresh rather than served free — which is what
-    // stops refund-plus-retry composing into an unlimited free draft.
+    // The paid call. Outside every transaction, which is the whole point of `prepare`. This path
+    // REFUNDS: a `failed` run is terminal — the stale-claim reaper requeues stranded `running`
+    // claims and deliberately never touches `failed` — so there is no future free retry to honour
+    // the charge. `refund(source)` is a no-op unless THIS gate charged THIS attempt: the marker
+    // is cleared on every non-charging decision, so a free retry of an earlier open attempt
+    // cannot reverse a charge whose work may already have been delivered. The refund also CLOSES
+    // the attempt, so a later re-queue is charged afresh — which is what stops refund-plus-retry
+    // composing into an unlimited free draft.
     let result: DraftResult;
     try {
       result = await ctx.drafter.draft(input);
@@ -395,20 +323,15 @@ const draftReplyTool: Tool = {
     if (prepared?.tool !== "draft_reply") throw new WorkflowStepError("not_prepared");
     const { result } = prepared;
 
-    // BOTH HALVES, PROMOTED TOGETHER. The model answers in prose; a stored draft carries a text
-    // part and a markup part, and the send path only produces a `multipart/alternative` when the
-    // second one is there. This step used to write the words alone, so a reply a workflow drafted
-    // went out as `text/plain` while the same reply composed by hand went out as both.
-    //
-    // The pair comes from ONE call, which is what stops the two parts from being sourced
-    // independently — the request path stores the same pair by handing the markup to
-    // `DraftsService`, which derives the words back out of it. This inserter cannot use that
-    // service (core never imports services), so it takes the halves directly; a test asserts the
-    // two routes agree by rendering the markup back to text and comparing.
-    //
-    // The 256 KiB html ceiling is NOT checked here, unlike the request path: this is a direct
-    // insert, so `drafts_html_cap` is the only gate and it would surface as a failed run rather
-    // than as a `413`. A drafter capped at a thousand output tokens cannot reach it.
+    // Both halves, promoted together. The model answers in prose; a stored draft carries a text
+    // part and a markup part, and the send path only produces `multipart/alternative` when the
+    // second is there — this step used to write the words alone, so a workflow-drafted reply went
+    // out `text/plain` while the same reply composed by hand went out as both. The pair comes
+    // from ONE call, which stops the two parts being sourced independently; the request path
+    // stores the same pair through `DraftsService`, which this inserter cannot use (core never
+    // imports services) — a test asserts the two routes agree by rendering the markup back to
+    // text. The 256 KiB html ceiling is not checked here: `drafts_html_cap` is the only gate, and
+    // a drafter capped at a thousand output tokens cannot reach it.
     const promoted = plainTextToOutboundBody(result.body);
 
     // Unique workflow_dedup_key + ON CONFLICT DO NOTHING → a re-drain never stores a
@@ -495,44 +418,14 @@ function toolFor(name: string): Tool | undefined {
  * Run as ONE SQL predicate (not a post-filter) so a flag can never be forgotten.
  */
 /**
- * Do ALL of `messageIds` belong to `accountId`?
- *
- * ── WHY THIS IS SEPARATE FROM {@link anySensitive}, WHICH ALREADY TAKES AN ACCOUNT ───────────
- *
- * Because {@link anySensitive} FAILS OPEN on a foreign id, and must. Its question is "is any of
- * these flagged?", asked with `eq(messages.accountId, accountId)` in the predicate — so a message
- * belonging to somebody else matches no row, the answer is "none are flagged", and the run
- * proceeds. That is the correct answer to the question it asks and the wrong answer to the
- * question nobody was asking: "may this account act on these at all?"
- *
- * Nothing else asked it either. `validateSteps` checks the tool ALLOWLIST and the shape of
- * `args`; a step is `{tool, args}` with `args.messageId` a free string. `fileMessageTool.apply`
- * reads the prior folder state, writes the desired one and records the change — and
- * `upsertFolderState` is keyed on `message_id` alone, with no account column to disagree with.
- * So an authenticated, verified account could author a workflow naming ANOTHER account's message
- * id, run it, and set that message's desired folder; the worker then performs the physical IMAP
- * move on a mailbox the caller has no relationship with. The mailbox is the master, so that write
- * is not one this product can take back.
- *
- * IT IS CHECKED HERE, AT `resolveTargets`, AND NOT INSIDE EACH TOOL. Every tool already declares
- * the message ids it will touch so the sensitivity layers can see them; that declaration is
- * exactly the ownership question's input too. One check at each of the two places the executor
- * already resolves targets covers every tool that exists and every tool anybody adds later — a
- * per-tool check would be a rule each new tool has to remember, which is the shape of enforcement
- * account isolation is specifically not allowed to have.
- *
- * IT ASKS "DOES ANY TARGET BELONG TO SOMEBODY ELSE?", NOT "DOES EVERY TARGET BELONG TO ME?", and
- * the difference is a behaviour this executor already guarantees. An id matching NO message is not
- * foreign, it is missing — and a missing target is supposed to reach its tool and throw
- * `target_missing` at its own step, leaving the steps before it committed. That is the documented
- * no-auto-rollback property, with its own test. The `every-target-is-mine` form refused those runs
- * at the pre-flight instead, took the guarantee away as a side effect, and would have been a
- * second change smuggled in under a security fix.
- *
- * The cost is a weak oracle: a foreign id fails the run at the pre-flight and an unknown id fails
- * it at a step, so the two are distinguishable from the run row. It is worth nothing — the ids are
- * v4 UUIDs, so distinguishing "exists elsewhere" from "does not exist" requires already holding
- * the id that the check exists to refuse.
+ * Do ALL of `messageIds` belong to `accountId`? Separate from {@link anySensitive}, which FAILS
+ * OPEN on a foreign id and must: its predicate carries the account, so a stranger's message
+ * matches no row and answers "none flagged" — wrong for "may this account act on these at all":
+ * `upsertFolderState` is keyed on `message_id` alone, so naming another account's id could move
+ * mail in a stranger's mailbox. Checked at `resolveTargets`: every tool declares its targets, so
+ * one check covers every future tool. It asks "does any target belong to somebody else": a
+ * missing id must still throw `target_missing` at its own step — the no-auto-rollback property.
+ * The ids are v4 UUIDs, so the leaked oracle is worth nothing.
  */
 async function anyForeign(tx: Tx, accountId: string, messageIds: string[]): Promise<boolean> {
   if (messageIds.length === 0) return false;

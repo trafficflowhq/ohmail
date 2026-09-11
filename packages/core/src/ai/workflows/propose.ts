@@ -4,23 +4,14 @@ import {
 } from "../../workflow-shapes.js";
 
 /**
- * The AI WorkflowPort seam — mirrors the Haiku
- * classifier and Sonnet drafter EXACTLY. The PORT lives in core so the worker cron
- * and ProposalsService can depend on it without a cycle; the Opus implementation
- * takes an INJECTED client (`AnthropicLike`) so the default suite mocks it and makes
- * no network call. `makeOpusProposer` NEVER imports `@anthropic-ai/sdk` at module
- * load — the concrete `new Anthropic()` client is constructed by the app/worker and
- * injected, which keeps the proposer hermetic and the test suite offline.
- *
- * REDACTION: the port's input is NON-SENSITIVE pattern METADATA ONLY —
- * sender/domain, destination, counts, provenance drawn from `learning_signals`/
- * `routing_decisions`/`rules` (already redaction-aware). It NEVER carries a body,
- * snippet, subject, or any raw message content. `buildProposeParams` STRUCTURALLY
- * asserts this: it rejects a pattern that carries any key outside the allowed
- * metadata set, so raw content can never be serialized into a model request even by
- * mistake. The caller (ProposalsService.assemblePatterns) also excludes any pattern
- * whose underlying messages are sensitivity-flagged — the port cannot see what the
- * caller never assembles.
+ * The AI WorkflowPort seam — mirrors the classifier and drafter: the PORT lives in core so the
+ * worker cron and ProposalsService depend on it without a cycle; `makeOpusProposer` takes an
+ * INJECTED client and never imports a model SDK at load. REDACTION: the input is non-sensitive
+ * pattern METADATA only — sender/domain, destination, counts, provenance — never a body, snippet
+ * or subject. `buildProposeParams` STRUCTURALLY asserts this: it rejects a pattern carrying any
+ * key outside the allowed metadata set, so raw content cannot be serialized into a request even
+ * by mistake; the caller also excludes patterns whose messages are sensitivity-flagged — the port
+ * cannot see what the caller never assembles.
  */
 
 /* The pattern SHAPE is declared with the workflow grammar, in `workflow-shapes.ts`: it is also
@@ -68,15 +59,12 @@ export interface OpusProposerOpts {
 }
 
 /**
- * `claude-opus-4-8` was never a real model id — no such model has shipped. It sat here as
- * the default for the whole build, invisibly: nothing calls the proposer with a live client
- * yet (no model is connected in production), so the only thing that ever read this string
- * was a test asserting it equalled itself. The first real propose call would have been a
- * flat API error on a name that does not exist.
- *
- * Pinned to the released Opus 5. Proposal runs are rare, batched and read a whole pattern
- * set at once, so the strongest model is the right trade here — unlike classify, which runs
- * per message and is cost-dominant.
+ * `claude-opus-4-8` was never a real model id — no such model has shipped. It sat as the default
+ * for the whole build, invisibly: nothing calls the proposer with a live client yet, so the only
+ * reader was a test asserting it equalled itself, and the first real propose call would have been
+ * a flat API error. Pinned to the released Opus 5: proposal runs are rare, batched, and read a
+ * whole pattern set at once, so the strongest model is the right trade — unlike classify, which
+ * runs per message and is cost-dominant.
  */
 const DEFAULT_MODEL = "claude-opus-5";
 
@@ -176,20 +164,14 @@ export function buildProposeParams(patterns: WorkflowPattern[], opts: OpusPropos
     model: opts.model ?? DEFAULT_MODEL,
     max_tokens: opts.maxTokens ?? 2048,
     /**
-     * THINKING OFF — the same decision `draft.ts` makes, and for the same two reasons, except
-     * that both are sharper here.
-     *
-     * `claude-opus-5` also runs adaptive thinking by default, and it is the most expensive
-     * model this product calls ($5 / $25 per MTok). One proposal pass costs ONE credit whatever
-     * it spends, and the pass is driven by a CRON rather than by a person — so an unbounded
-     * per-call token spend multiplied by every account, every bucket, is the one cost in this
-     * system with no natural ceiling. `max_tokens: 2048` is also the tightest budget of the
-     * three ports, so it is the most likely to be eaten by thinking and truncate a proposal
-     * list mid-array.
-     *
-     * `disabled` is accepted on Opus 5 only at effort `high` or below; `high` is the default
-     * and this file sets no effort, so it is legal. If an `effort` of `xhigh`/`max` is ever
-     * added here, this line has to go with it — the API answers 400 for the pair.
+     * Thinking OFF — `draft.ts`'s decision, and both reasons are sharper here. `claude-opus-5`
+     * runs adaptive thinking by default and is the most expensive model this product calls; one
+     * proposal pass costs one credit whatever it spends, and the pass is cron-driven — an
+     * unbounded per-call token spend multiplied by every account is the one cost with no natural
+     * ceiling. `max_tokens: 2048` is also the tightest budget of the three ports, the most likely
+     * to be eaten by thinking and truncate a proposal list mid-array. `disabled` is accepted on
+     * Opus 5 only at effort `high` or below; this file sets no effort, so it is legal — an
+     * `xhigh`/`max` effort added here must remove this line, or the API answers 400.
      */
     thinking: { type: "disabled" },
     system: [

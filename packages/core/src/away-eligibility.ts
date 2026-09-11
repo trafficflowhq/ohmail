@@ -3,57 +3,25 @@ import { autoReplySuppression, type AutoReplySuppression } from "./rules.js";
 import { AWAY_SCREENER_FOLDER } from "./away-scope.js";
 
 /**
- * MAY THE AWAY RESPONDER ANSWER THIS MESSAGE? — the whole suppression set, as one pure function
- * over one row, so that every guard can be deleted in place and watched to let a reply through.
- *
- * ── WHY THIS IS A MODULE AND NOT A LOOP BODY ────────────────────────────────────────────────
- *
- * The responder is the one thing in this product that sends mail with nobody looking, and its
- * safety argument is not "the pass is careful" — it is a SET OF NAMED GUARDS, each of which has
- * been watched to fire. That is only checkable if each guard is a branch a table test can reach
- * with a hand-built row. Buried in the pass's loop they would be reachable only through a database
- * fixture, an adapter and a clock, and the ones that are cheap to get wrong (the header verdict,
- * the screened-out folders) would be the ones nobody covered.
- *
- * The pass keeps exactly two decisions of its own, and neither is a suppression: CANDIDACY (the
- * WHERE clause — the episode floor, the ledger anti-join, the organizer JOIN) and the THROTTLE (an
- * atomic upsert, which is a property of the database and not of a row in hand). Everything else is
- * here.
- *
- * ── THE ORDER IS CHEAPEST-FIRST, AND IT IS PART OF THE CONTRACT ─────────────────────────────
- *
- * A caller reports the FIRST reason that holds, so the order decides which reason an operator sees
- * for a row that trips several. Cheapest first is also most-certain first: `own_address` is a set
- * membership over addresses we own, `already_replied` is a fact about the thread. A row that is
- * both our own address and a mailing list should read as `own_address`, because that is the fact
- * about it that would still be true if every other guard were removed.
- *
- * ── WHAT IS DELIBERATELY NOT HERE ───────────────────────────────────────────────────────────
- *
- * No database handle, no clock, no adapter, no logger. `already_replied` arrives as a decided
- * BOOLEAN and not as a query, because the query that establishes it (an own-authored message in
- * the same thread at or after this one) is the pass's, and a function that could reach the database
- * would be a function a table test could not drive.
+ * May the away responder answer this message? — the whole suppression set as one pure function
+ * over one row, so every guard can be deleted in place and watched to let a reply through. The
+ * responder is the one thing that sends mail with nobody looking; its safety argument is a SET OF
+ * NAMED GUARDS, each watched to fire — checkable only if each is a branch a table test reaches
+ * with a hand-built row. The pass keeps two decisions of its own, neither a suppression:
+ * candidacy (the WHERE clause) and the throttle (an atomic upsert). Cheapest-first order, part of
+ * the contract: the FIRST holding reason is reported. Deliberately absent: a database handle, a
+ * clock, an adapter — `already_replied` arrives as a decided boolean.
  */
 
 /**
- * The folders whose contents are NEVER answered, whatever the audience.
- *
- * ── `ohmail/Screened` IS NOT `ohmail/Screener`, AND THE DIFFERENCE IS THE WHOLE POINT ────────
- *
- * They are one letter apart and they mean opposite things. `ohmail/Screener` is where a stranger
- * WAITS — nobody has decided about them yet, and `audience='everyone'` exists precisely to answer
- * them. `ohmail/Screened` is where a sender this account has REJECTED goes: the "no" of the screening
- * decision, durably recorded. Quarantine is mail the pipeline judged hostile.
- *
- * So the two rejected states are audience-blind and the waiting state is not. Widening the audience
- * is a decision to answer people you have not yet met; it is not a decision to answer people you
- * have already turned away, and it is certainly not a decision to answer a phish — which would
- * confirm to whoever sent it that the address is live and attended.
- *
- * Two reasons rather than one (`screened_out` vs `not_screened_in`) because an operator reading
- * "we did not answer this" needs to know which of the two happened: one is permanent and one
- * changes the moment the sender is let in.
+ * The folders whose contents are never answered, whatever the audience. `ohmail/Screened` is not
+ * `ohmail/Screener`, and the one-letter difference is the whole point: Screener is where a
+ * stranger WAITS — `audience='everyone'` exists precisely to answer them — while Screened is a
+ * sender this account has REJECTED, and Quarantine is mail judged hostile. The two rejected
+ * states are audience-blind: widening the audience is a decision to answer people you have not
+ * met, not to answer people you turned away — and answering a phish confirms the address is live.
+ * Two reasons rather than one (`screened_out` vs `not_screened_in`) because one is permanent and
+ * one changes the moment the sender is let in.
  */
 export const AWAY_NEVER_ANSWERED_FOLDERS: Readonly<Record<string, AwaySuppression>> = {
   "ohmail/Screened": "screened_out",
@@ -69,16 +37,12 @@ export const AWAY_NEVER_ANSWERED_FOLDERS: Readonly<Record<string, AwaySuppressio
 };
 
 /**
- * THE PILE VOCABULARY, RE-EXPORTED FROM THE LEAF THAT OWNS IT.
- *
- * It lives in `away-scope.ts` and not here because the settings control and the Ohbox banner need
- * the same members this rule refuses by, and they cannot load THIS file: {@link awayTextHash}
- * below imports `node:crypto`. Two lists that agree today is the shape the brief's own hard stop
- * names ("the designer's control offers a pile the engine refuses"), so there is one list and
- * both sides import it.
- *
- * Re-exported rather than merely imported so that every consumer already reaching for this
- * module's vocabulary — the pass, the service validator, the table test — keeps one import.
+ * The pile vocabulary, re-exported from the leaf that owns it. It lives in `away-scope.ts`
+ * because the settings control and the Ohbox banner need the same members this rule refuses by,
+ * and they cannot load THIS file — {@link awayTextHash} imports `node:crypto`. Two lists that
+ * agree today is exactly the hazard ("the control offers a pile the engine refuses"), so there is
+ * one list and both sides import it. Re-exported rather than merely imported so every consumer of
+ * this module's vocabulary keeps one import.
  */
 export {
   AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, AWAY_PILE_VIEW, AWAY_SCREENER_FOLDER,
@@ -86,19 +50,14 @@ export {
 } from "./away-scope.js";
 
 /**
- * MAILBOXES A SITE OR A SERVER OWNS, never a person — matched WHOLE, punctuation stripped, so
- * `www-data`, `www_data` and `wwwdata` are one entry.
- *
- * RFC 3834 §2: a responder must not be triggered by mail that appears to be from a mail system
- * or a robot. `SERVICE_LOCAL_PREFIXES` in `rules.ts` already refuses the `no-reply@` family, and
- * this set is the CMS/system half it deliberately omits — that list also decides where mail is
- * FILED, and `wordpress@` is mail somebody may well want in their Ohbox. It just must not be
- * written back to.
- *
- * WHOLE-NAME equality and not a prefix, which is the half a prefix rule gets wrong: measured
- * against a real mailbox, `startsWith("wp")` refuses `wpe@` and `wpeteam@` (a hosting company's
- * people) and `startsWith("www")` refuses a sender whose local part is a domain. `webmaster@` and
- * `abuse@` are human roles and are deliberately absent.
+ * Mailboxes a site or a server owns, never a person — matched WHOLE, punctuation stripped, so
+ * `www-data`, `www_data` and `wwwdata` are one entry. RFC 3834 §2: a responder must not answer
+ * mail from a mail system or a robot. `SERVICE_LOCAL_PREFIXES` in `rules.ts` refuses the
+ * `no-reply@` family; this set is the CMS/system half it deliberately omits — that list also
+ * decides where mail is FILED, and `wordpress@` may well be wanted in the Ohbox; it just must not
+ * be written back to. Whole-name equality, not a prefix — measured: `startsWith("wp")` refuses
+ * `wpe@` and `wpeteam@` (a hosting company's people). `webmaster@` and `abuse@` are human roles
+ * and deliberately absent.
  */
 export const AWAY_MACHINE_LOCALS: ReadonlySet<string> = new Set([
   "wordpress", "root", "wwwdata", "daemon", "cron", "nobody",
@@ -126,32 +85,25 @@ export type AwaySuppression =
   | "not_screened_in"
   | "already_replied"
   /**
-   * The two AWAY-ONLY header verdicts, and they are their own members rather than reusing
-   * `auto_submitted` / `service_sender`.
-   *
-   * They were folded into those two at first, which contradicted this module's own rule one screen
-   * up — "two reasons rather than one, because an operator reading 'we did not answer this' needs
-   * to know which of the two happened". A stored `reason` of `auto_submitted` would have been
-   * ambiguous between "the sender marked this message as automatic" (RFC 3834, the loop stop) and
-   * "the sender's Exchange asked us not to auto-reply" (a policy header on ordinary human mail),
-   * which are different facts with different remediations.
-   *
-   *  · `auto_reply_suppressed` — `X-Auto-Response-Suppress: OOF|AutoReply|All`.
-   *  · `null_return_path` — an empty `Return-Path` (`<>`): a bounce, or a notification whose
-   *    sender has declared it accepts no reply.
+   * The two away-only header verdicts, and they are their own members rather than reusing
+   * `auto_submitted`/`service_sender`. Folded in at first, which contradicted this module's own
+   * rule — an operator reading "we did not answer this" needs to know which happened: a stored
+   * `auto_submitted` would be ambiguous between the sender marking the message automatic (RFC
+   * 3834, the loop stop) and the sender's Exchange asking us not to auto-reply (a policy header
+   * on ordinary human mail) — different facts, different remediations. `auto_reply_suppressed` —
+   * `X-Auto-Response-Suppress: OOF|AutoReply|All`; `null_return_path` — an empty `Return-Path`
+   * (`<>`): a bounce, or a notification declaring it accepts no reply.
    */
   | "auto_reply_suppressed"
   | "null_return_path"
   /**
-   * THE MESSAGE IS ITSELF A DELIVERY REPORT — `multipart/report; report-type=delivery-status`
-   * (RFC 6522 §3 / RFC 3464), which is the shape a bounce actually arrives in.
-   *
-   * Its own member rather than `auto_submitted`, because the two are different facts with
-   * different remediations: `auto_submitted` is a sender declaring its message automatic, and a
-   * DSN is a mail system reporting that a delivery failed. Not every MTA sets RFC 3834's header
-   * on one, and some send it from an address with no service local part and a present
-   * `Return-Path` — which is how a bounce reaches the send path with every other guard clear and
-   * earns a reply of its own.
+   * The message is itself a delivery report — `multipart/report; report-type=delivery-status`
+   * (RFC 6522 §3 / RFC 3464), the shape a bounce actually arrives in. Its own member rather than
+   * `auto_submitted`: a sender declaring its message automatic and a mail system reporting a
+   * failed delivery are different facts with different remediations. Not every MTA sets RFC
+   * 3834's header on a bounce, and some send it from an address with no service local part and a
+   * present `Return-Path` — which is how a bounce reaches the send path with every other guard
+   * clear and earns a reply of its own.
    */
   | "bounce_report"
   /**
@@ -286,17 +238,14 @@ export function awayEligibility(
     return "not_screened_in";
   }
 
-  // ── THE PILE SCOPE ────────────────────────────────────────────────────────────────────────
-  //
-  // AFTER the audience, and that order is what keeps the two settings from contradicting: a
-  // stranger still held in the Screener is refused by the audience unless it is `everyone`, and
-  // only then does this rule ask whether `ohmail/Screener` is a pile its owner ticked. The write
-  // doors refuse that pile beside `screened_in` (`awayScopeFitsAudience`), so the row where the
-  // two disagree is not representable.
-  //
-  // A row with NO placement is refused: mail whose pile nobody has decided yet is not mail known
-  // to be in an answered pile, and absent evidence may not select the branch that sends mail. An
-  // EMPTY `piles` therefore answers nobody, which is the fail-closed reading and not "no filter".
+  // The pile scope — AFTER the audience, and that order keeps the two settings from
+  // contradicting: a stranger still in the Screener is refused by the audience unless it is
+  // `everyone`, and only then does this ask whether `ohmail/Screener` is a pile its owner ticked;
+  // the write doors refuse that pile beside `screened_in` (`awayScopeFitsAudience`), so the row
+  // where the two disagree is not representable. A row with NO placement is refused: mail whose
+  // pile nobody has decided is not mail known to be in an answered pile, and absent evidence may
+  // not select the branch that sends mail. An EMPTY `piles` answers nobody — fail-closed, not "no
+  // filter".
   if (!piles.includes(placed ?? "")) return "wrong_pile";
 
   // ── WHAT MAY NEVER EARN A REPLY, WHATEVER THE SETTINGS ────────────────────────────────────
@@ -319,29 +268,14 @@ export function awayEligibility(
 }
 
 /**
- * MAY THIS MESSAGE EVER EARN AN AUTOMATIC REPLY? — the reason it may not, or `null`.
- *
- * ── COMPOSED, NEVER COPIED, AND THE BRIEF THAT ASKED FOR A COPY WAS WORKING FROM A GREP ─────
- *
- * The slice this predicate was written for recorded that no `no-reply@` / `mailer-daemon@` /
- * `postmaster@` / empty-`Return-Path` exclusion existed. Every one of them does, and has since
- * 0087: `SERVICE_LOCAL_PREFIXES` + `isServiceSender` in `rules.ts`, reached through
- * {@link autoReplySuppression}, plus the two away-only header tests that used to sit inline in
- * {@link awayEligibility} and now live here. Measured against the built package before anything
- * changed: `no-reply@`, `noreply@`, `no_reply@`, `do-not-reply@`, `donotreply@`,
- * `MAILER-DAEMON@`, `mailer-daemon@`, `postmaster@`, `bounce@`, `bounces@` and
- * `bounce-123-abc@` all answered `service_sender`.
- *
- * So this function ADDS one member and re-encodes nothing. The senders that actually reached the
- * send path were `hello@`, `team@`, `updates@`, `info@`, `news@`, `support@` and `store@` — none
- * a service local part, all of them ordinary human-ambiguous roles that `isServiceSender` is
- * deliberately tight enough to admit — and what those messages had in common was their PILE, not
- * their sender. The pile rule is the cure; this predicate is the floor under it.
- *
- * ── WHY IT IS ITS OWN EXPORTED FUNCTION ─────────────────────────────────────────────────────
- *
- * So that "every site that can send an away reply consults it" is a claim a census test can
- * check by name, rather than a property of one function's control flow.
+ * May this message EVER earn an automatic reply? — the reason it may not, or `null`. Composed,
+ * never copied: every claimed-missing exclusion has existed since 0087 (`SERVICE_LOCAL_PREFIXES`
+ * + `isServiceSender`, reached through {@link autoReplySuppression}, plus the two away-only
+ * header tests now here); measured against the built package, the whole
+ * `no-reply@`/`mailer-daemon@`/`postmaster@`/`bounce@` family answered `service_sender`. This
+ * ADDS one member and re-encodes nothing — the senders that actually reached the send path were
+ * ordinary human-ambiguous roles, and what they shared was their PILE: the pile rule is the cure,
+ * this the floor under it. Exported so a census can check every send site consults it by name.
  */
 export function neverAutoReply(
   headers: Readonly<Record<string, unknown>>, sender: string,
@@ -388,24 +322,14 @@ export function neverAutoReply(
 }
 
 /**
- * IS THIS MESSAGE A DELIVERY STATUS NOTIFICATION? — `Content-Type: multipart/report` carrying
- * `report-type=delivery-status`.
- *
- * BOTH halves are required, and the second one is what keeps this off ordinary mail: a READ
- * RECEIPT is also `multipart/report`, with `report-type=disposition-notification`, and it is a
- * person's client asking for an acknowledgement rather than a mail system reporting a failure.
- * Treating one as a bounce would silence a correspondent who did nothing but tick a box.
- *
- * EXPORTED, and it has a second caller for a reason worth stating: the pass reads incoming
- * bounces to learn which correspondents are unreachable, and "is this message a bounce" must be
- * the SAME question there as it is here. Asked twice — once in this predicate and once as a SQL
- * `content-type LIKE` in the pass — the two would answer differently the first time a sender
- * folded the header, and the direction of that disagreement is that a HUMAN reply to an away
- * reply gets read as a bounce and their address is marked dead.
- *
- * The value is matched with the parameter quoted or bare (both are legal per RFC 2045 §5.1) and
- * without assuming parameter order, because a `Content-Type` may be folded across lines with
- * `boundary` between the type and the report type. `\s*` around the `=` for the same reason.
+ * Is this message a delivery status notification? — `multipart/report` carrying
+ * `report-type=delivery-status`. BOTH halves required: a read receipt is also `multipart/report`,
+ * with `report-type=disposition-notification` — a person's client asking for an acknowledgement —
+ * and treating one as a bounce would silence a correspondent who ticked a box. Exported for its
+ * second caller: the pass reads incoming bounces to learn which correspondents are unreachable,
+ * and "is this a bounce" must be the SAME question there — two copies would disagree the first
+ * time a sender folded the header, reading a human reply as a bounce. Matched quoted or bare (RFC
+ * 2045 §5.1), order-free, `\s*` around the `=`.
  */
 export function isDeliveryReport(headers: Readonly<Record<string, unknown>>): boolean {
   const ct = awayHeaderValues(headers, "content-type");
@@ -415,16 +339,13 @@ export function isDeliveryReport(headers: Readonly<Record<string, unknown>>): bo
 }
 
 /**
- * ONE HEADER, EVERY VALUE — the accessor, and it exists for the reason `rules.ts` has its own.
- *
- * A stored header map is a `JSON.parse`d object, so a bare `headers["constructor"]` is a truthy
+ * One header, every value — the accessor, and it exists for the reason `rules.ts` has its own: a
+ * stored header map is a `JSON.parse`d object, so a bare `headers["constructor"]` is a truthy
  * INHERITED value and a bare `headers["precedence"]` misses `Precedence`. This reads case-blind
- * over the object's OWN keys only, and normalises the single/array/scalar shapes the parser can
- * produce into one array of strings.
- *
- * Not imported from `rules.ts` because it is not exported there; duplicated deliberately and
- * narrowly, and the duplication is one loop with no policy in it. The POLICY that matters —
- * `autoReplySuppression` — is called, never copied.
+ * over the object's OWN keys only, and normalises the single/array/scalar shapes into one array
+ * of strings. Not imported from `rules.ts` because it is not exported there; duplicated
+ * deliberately and narrowly — one loop with no policy in it. The POLICY that matters,
+ * `autoReplySuppression`, is called, never copied.
  */
 function awayHeaderValues(
   headers: Readonly<Record<string, unknown>>, name: string,
@@ -441,25 +362,13 @@ function awayHeaderValues(
 }
 
 /**
- * THE TEXT THIS RESPONDER IS CURRENTLY SAYING, as a hash — the key `throttle='per_message'` means
- * "once, until you change the text" by.
- *
- * ── WHY A HASH OF THE TEXT AND NOT A VERSION NUMBER ─────────────────────────────────────────
- *
- * A stored version id (or the row's `updated_at`, which is the same thing with a clock on it) makes
- * every SAVE a new version, and a save is not an edit: somebody who switches the responder off on
- * Friday and on again on Monday, or who opens Settings and presses Save having changed nothing, has
- * written the same words twice. Keyed by version, each of those re-arms a reply to every
- * correspondent already answered — which is precisely the "an edit answers everyone again" failure
- * the old `responder_updated_at` episode key shipped with, and the reason this slice replaces it.
- *
- * Keyed by the TEXT, the question the throttle asks is the question the setting's copy asks:
- * "Once, until you change the text". Unchanged text is unchanged, however many times it was saved.
- *
- * NFC-normalised and trimmed before hashing, so a body that differs only in Unicode composition or
- * in trailing whitespace — which is what a copy-paste through a different editor produces — is the
- * same text. Nothing else is normalised: internal whitespace and case are the author's, and a
- * responder rewritten in different words is a different message even if it says the same thing.
+ * The text this responder is currently saying, as a hash — the key `throttle='per_message'` means
+ * "once, until you change the text" by. A hash of the TEXT and not a version number: a stored
+ * version id makes every SAVE a new version, and a save is not an edit — pressing Save having
+ * changed nothing would re-arm a reply to every correspondent already answered, the failure the
+ * old `responder_updated_at` episode key shipped with. NFC-normalised and trimmed before hashing,
+ * so Unicode composition and trailing whitespace do not make a new text; nothing else is
+ * normalised — a responder rewritten in different words is a different message.
  */
 export function awayTextHash(body: string | null | undefined): string {
   return createHash("sha256").update((body ?? "").normalize("NFC").trim(), "utf8").digest("hex");

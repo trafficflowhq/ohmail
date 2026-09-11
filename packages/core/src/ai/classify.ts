@@ -5,41 +5,14 @@ import {
 } from "../classify-prompt.js";
 
 /**
- * The AI classifier seam. The PORT lives in core so
- * the pipeline can depend on it without a cycle; the Haiku implementation takes an
- * INJECTED client (`AnthropicLike`) so the default suite mocks `@anthropic-ai/sdk`
- * and makes no network call. `makeHaikuClassifier` never imports the SDK — the
- * concrete `new Anthropic()` client is constructed by the app/worker and injected,
- * which keeps `apps/worker` depending on core only and the tests hermetic.
- *
- * ── THIS FILE NOW HAS A SENSITIVITY FLAG OF ITS OWN ──────────────────────────────────────────
- *
- * This file is clean for the question only *under a correct upstream decision*: it has no
- * sensitivity flag and no runtime snippet cap of its own, so it cannot contain an upstream false
- * negative — and the `never echo secrets` line in the system prompt is a request, not
- * enforcement. Both true, and both are the reason real sensitive content
- * reached the wire: the only thing between a credential and `messages.create` was one boolean
- * computed one module away.
- *
- * `classifyUserPayload` therefore re-reads the payload it is about to serialise, with the
- * same local detector, and THROWS rather than sending. It is a second line of defence, not the
- * first — `pipeline.ts` still refuses before the credit gate and before the classifier is
- * touched, which is what keeps a sensitive message out of the ledger. This is what makes the
- * outbound client structurally unreachable for recognised content even from a caller that
- * forgot to ask: `ScreenerService` builds its own `ClassifierInput` from a stored row, in a
- * package this file cannot see, and it is covered by this too.
- *
- * ── THE QUESTION MOVED OUT; ONLY THE TRANSPORT IS LEFT ───────────────────────────────────────
- *
- * The taxonomy, the response schema, the sensitivity sink and the coercion now live in
- * `../classify-prompt.ts`, a leaf outside this directory. There is more than one way to reach a
- * model — a hosted deployment with its own account, and a standalone install running against a
- * key or a local model belonging to its user — and a second copy of the taxonomy is how those
- * two come to file the same message into different folders. What is left here is what is
- * genuinely THIS provider's: the model id, the request shape, and the client seam.
- *
- * Every name that used to be declared here is re-exported below, so no import outside this
- * package moves.
+ * The AI classifier seam. The PORT lives in core so the pipeline can depend on it without a
+ * cycle; the Haiku implementation takes an INJECTED client, so the suite makes no network call
+ * and the worker depends on core only. This file has a sensitivity flag of its own: the only
+ * thing between a credential and `messages.create` used to be one boolean computed one module
+ * away, so `classifyUserPayload` re-reads the payload with the same local detector and THROWS
+ * rather than sending — the outbound client is structurally unreachable for recognised content.
+ * The taxonomy, schema and sensitivity sink live in `../classify-prompt.ts`; left here: the model
+ * id, the request shape, the client seam.
  */
 
 /**
@@ -137,16 +110,12 @@ function extractJsonText(content: unknown): string {
 
 /**
  * The same request, asking the SCREENING question instead of the routing one — a different
- * `system` prefix and a different schema over the same screened user payload.
- *
- * The payload builder is shared deliberately: the outbound sensitivity screen is a property of
- * what leaves this process, not of which question it is attached to, and a second builder here is
- * how one of the two questions would eventually ship without it.
- *
- * It is shared even though this question is the one the AI-OPEN ruling opened, and that is the
- * point: what differs is carried on the INPUT (`ClassifierInput.outbound`) by the caller who did
- * the redacting, not by which builder was reached. A caller that redacts and says so is served; a
- * caller that says nothing is refused, here, exactly as before.
+ * `system` prefix and schema over the same screened user payload. The payload builder is shared
+ * deliberately: the outbound sensitivity screen is a property of what leaves this process, not of
+ * which question it is attached to, and a second builder is how one question eventually ships
+ * without it. Shared even though this is the question the AI-OPEN ruling opened — what differs is
+ * carried on the INPUT (`ClassifierInput.outbound`) by the caller who did the redacting: a caller
+ * that redacts and says so is served; one that says nothing is refused, here, exactly as before.
  */
 export function buildScreeningParams(input: ClassifierInput, opts: HaikuClassifierOpts): Record<string, unknown> {
   const userPayload = classifyUserPayload(input);
