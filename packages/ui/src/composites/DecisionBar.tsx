@@ -38,17 +38,14 @@ export interface DecisionCapsuleCopy {
 }
 
 /**
- * EVERY WORD THIS BAR SAYS, BROUGHT BY THE HOST.
- *
- * The five labels, the scope toggle and the consequence line used to be literals in this file, so
- * a German window rendered a German rail, German filter chips and an English decision bar — the
- * one control on the surface that writes a rule. A composite has no catalogue and must not grow
- * one; the host reads `messages/*.json` and hands the words down, the same contract `Settings`
- * states ("no fetch, no copy of its own — the host brings the words, from the catalogue").
- *
- * Required, not defaulted. An optional copy prop with an English default is the same defect with
- * a longer fuse: it compiles, it renders, and it is wrong only in the locale nobody on the team
- * reads. Missing it is a type error at every call site instead.
+ * Every word this bar says is brought by the host. The labels, scope
+ * toggle and consequence line used to be literals here, so a German window
+ * rendered an English decision bar — the one control on the surface that
+ * writes a rule. A composite has no catalogue and must not grow one; the
+ * host reads `messages/*.json` and hands the words down (the `Settings`
+ * contract). Required, not defaulted: an optional copy prop with an
+ * English default is the same defect with a longer fuse — missing copy
+ * is a type error at every call site instead.
  */
 export interface DecisionBarCopy {
   dest: Record<DecisionDestination, DecisionCapsuleCopy>;
@@ -89,32 +86,12 @@ export interface DecisionBarProps {
 /**
  * Five split-buttons — Ohbox · Reads · Receipts · Screen out · Spam —
  * with the AI destination preselected, a sender/domain scope toggle and
- * the consequence line. Fits one line at 1280px (container query).
- *
- * ── THE KEY GOES ON THE VERB, AND THE LEGEND IS GONE ───────────────────────────────────
- *
- * A live walk found this bar illegible in three ways at once. Every capsule is TWO verbs,
- * and only one of them was ever explained: the note said what the ✓ half does and nothing
- * said what pressing the label does. Four of the five keys were in a `title` attribute —
- * invisible to anyone not hovering — while a strip at the far end of the bar spelled
- * "⇧+key marks read" for keys that were not on screen, and the view under it printed a
- * second strip reading "o r c n x file". Three lists of the same five facts, none of them
- * beside the control.
- *
- * So each half wears its own cap, from `DECISION_KEY` — the same constant `ScreenerView`
- * derives its keyboard registry bindings from, so a cap and its binding cannot disagree
- * without editing the one line both read. That is the message action bar's rule ("keys
- * generated from the registry and attached to the verb they belong to") applied
- * to the surface it had not reached.
- *
- * ── AND TWO SHIPPED HINTS WERE FALSE ───────────────────────────────────────────────────
- *
- * The AI capsule was capped `y` and the strip read "y accept" UNCONDITIONALLY, but `y` is
- * bound only by this component's own `keyboard` listener — and the webapp deliberately
- * stopped passing `keyboard` when the keys moved into the registry (`ScreenerView`'s keymap
- * note). The product therefore shipped a keycap for a key that does nothing, twice. The cap
- * is now `y` only where `y` is really live, and the strip is deleted rather than corrected:
- * accept-on-↵ is hinted by the view, from the binding that exists.
+ * the consequence line; one line at 1280px (container query). Each capsule
+ * half wears its own keycap, from `DECISION_KEY` — the same constant
+ * `ScreenerView` derives its registry bindings from, so a cap and its
+ * binding cannot disagree without editing the one line both read. No
+ * detached legend, and a cap appears only where its key is really live
+ * (a strip once hinted `y` where `y` was not bound).
  */
 export function DecisionBar({
   aiDest,

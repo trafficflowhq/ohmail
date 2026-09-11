@@ -11,15 +11,13 @@ export interface Command {
   keys?: string[];
   icon?: IconName;
   /**
-   * THIS COMMAND HAS NOTHING TO ACT ON RIGHT NOW — shown, dimmed, and inert.
-   *
-   * The same word the keyboard registry uses (`keymap.tsx`'s `disabled`), and the same
-   * treatment the `?` sheet gives one: the row stays in the list so the command remains
-   * discoverable, and it says out loud that it cannot act instead of running to no effect.
-   *
-   * Listing rather than hiding, because a palette whose contents change with the cursor is a
-   * palette you cannot learn. Enter and a click both do nothing at all — not even close the
-   * sheet, since closing is the one thing that would read as "that worked".
+   * This command has nothing to act on right now — shown, dimmed, inert.
+   * The same word the keyboard registry uses (`keymap.tsx`'s `disabled`)
+   * and the same treatment the `?` sheet gives one: the row stays listed
+   * so the command remains discoverable, and says it cannot act instead
+   * of running to no effect. Listing rather than hiding — a palette whose
+   * contents change with the cursor cannot be learned. Enter and click do
+   * nothing, not even close the sheet: closing would read as "that worked".
    */
   disabled?: boolean;
   run: () => void;

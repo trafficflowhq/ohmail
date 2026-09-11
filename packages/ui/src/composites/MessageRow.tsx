@@ -37,64 +37,35 @@ export interface MessageRowProps {
   address?: string;
   time?: string;
   /**
-   * THE SAME INSTANT SAID THE OTHER WAY — the stamp's hover title.
-   *
-   * A row stamp is relative because that is what a list is scanned by ("Sat", "09:12"), and the
-   * one question it cannot answer is which Saturday. So the caller hands over the other form of
-   * the same instant and it hangs on the stamp: hover a date, read the exact one. When the list
-   * has been flipped to the absolute form ({@link onToggleTime}) this is the relative one, so the
-   * title always names whichever form is NOT on screen.
-   *
-   * DATA, NOT A DEPENDENCY: it is independent of {@link onToggleTime}, so a surface with no flip
-   * behind it still says the exact instant on hover. Absent ⇒ no title, exactly as before.
+   * The stamp's hover title: the same instant in the other form. A row
+   * stamp is relative ("Sat", "09:12") and cannot say which Saturday, so
+   * the caller hands over the absolute form and it hangs on the stamp;
+   * when the list is flipped ({@link onToggleTime}) this is the relative
+   * one — the title always names whichever form is not on screen. Data,
+   * not a dependency: independent of the flip, so a surface without one
+   * still says the exact instant on hover. Absent ⇒ no title.
    */
   timeTitle?: string;
   /**
-   * FLIP EVERY STAMP IN THE LIST between the relative and absolute forms — or ABSENT, where no
-   * surface is holding that preference.
-   *
-   * The gesture is one press on any one date, and what it changes is the whole list at once: a
-   * reader comparing dates wants them all in the same shape, not one hovered at a time. The state
-   * is the app's (`AppShell` owns it, resets it on a view switch and shares it with the open
-   * message), so all this component does is report the press.
-   *
-   * ── WHY THE STAMP IS NOT A CONTROL OF ITS OWN, WHICH IS THE OBVIOUS SHAPE ────────────────────
-   *
-   * The row IS a `<button>` and a button may not contain another one. This is not a validity
-   * quibble: the HTML PARSER closes the row at the inner start tag, so `<button class="row">…
-   * <button class="stamp">` parses to two SIBLING buttons (measured against jsdom's parser) —
-   * the stamp escapes the row it is supposed to sit in, and since this page is server-rendered
-   * that is the tree the browser has built before React hydrates anything. A `tabindex` on the
-   * span is no better: that is interactive content too, and it breaks the "no interactive
-   * descendants" contract `role="option"` rows depend on (see {@link picked}), while adding one
-   * tab stop per row to every list in the product.
-   *
-   * So the press is HIT-TESTED instead — the same answer `AppShell`'s capture-phase handler
-   * already gives for the sender circle and address (`sender-hit.ts`), for the same reason. The
-   * stamp is marked `data-stamp` only when a flip is actually wired, and the row's own press
-   * routes a click that landed on it here. The consequence, stated rather than hidden: on a list
-   * row the flip is a POINTER gesture. The keyboard route to the same preference is the open
-   * message's stamp, which is a real `<button>` because a message header is not one.
-   *
-   * ABSENT ⇒ a plain, inert span: no hit target, no pressable styling, and a press on the date
-   * does what a press on the row has always done. Never a control that answers nothing.
+   * Flip every stamp in the list between relative and absolute — or absent
+   * where no surface holds that preference. One press changes the whole
+   * list (AppShell owns the state); this component only reports the press.
+   * The stamp is not a nested control — the HTML parser closes a <button>
+   * at an inner button's start tag, and a tabindex span breaks the
+   * "no interactive descendants" contract of `role="option"` rows — so the
+   * press is hit-tested via `data-stamp` (the `sender-hit.ts` pattern).
+   * The keyboard route is the open message's stamp. Absent ⇒ inert span.
    */
   onToggleTime?: () => void;
   subject: string;
   /**
-   * A QUIET DESTINATION GLOSS AFTER THE SUBJECT — "← Reads", where a restore would put this
-   * message back.
-   *
-   * The Trash list is the only list whose rows are somewhere they are leaving, so it is the only
-   * one that has a destination to name. It rides the subject's own line and is the FIRST thing
-   * to go: `.trash-to` is inside the badge strip's unbounded tail, and it is hidden outright
-   * under 640px, because a phone-width row has one line for the subject and the subject is what
-   * the reader is looking for.
-   *
-   * A STRING and not a node: the row is a `<button>`, and a caller passing markup here would be
-   * one paste away from putting a control inside one — which the HTML parser resolves by closing
-   * the row, the exact failure {@link MessageRowProps.onToggleTime} records. Absent ⇒ nothing is
-   * rendered and every existing row is byte-identical.
+   * A quiet destination gloss after the subject — "← Reads", where a
+   * restore would put this message back. Only the Trash list has a
+   * destination to name. It rides the subject's line, is the first thing
+   * clipped, and is hidden under 640px. A string and not a node: the row
+   * is a <button>, and markup here would be one paste away from a control
+   * inside one (the parse failure {@link MessageRowProps.onToggleTime}
+   * records). Absent ⇒ nothing rendered, rows byte-identical.
    */
   destination?: string;
   preview?: string;
@@ -102,21 +73,14 @@ export interface MessageRowProps {
   amount?: string;
   unread?: boolean;
   /**
-   * DROP THE ROW'S DOT — for lists whose NEWNESS lives on a waterline.
-   *
-   * Reads and Receipts say "new" with the line, not with a dot: "new" means "above the
-   * line". A dotless row still stamps `data-unseen` from `unread`, because the
-   * seen-on-scroll observer is the eventual `\Seen` sweep and it selects on that
-   * attribute — the STATE keeps flowing to the user's own IMAP server.
-   *
-   * WHAT THIS FLAG DOES NOT DROP: `seen`'s quiet ink. This paragraph used to say the
-   * opposite — that a quieter read row is "per-row read status by other means" and is
-   * suppressed too — and a live warm account showed where that ends: every row of an
-   * imported, largely-read mailbox rendered at full unread weight, and "Mark all read"
-   * changed nothing a reader could see. Newness is the line's statement; READNESS is the
-   * mailbox's (`\Seen`), and a row may not render a claim the IMAP master contradicts.
-   *
-   * Absent ⇒ the row is exactly what it always was, dot and all — the Ohbox's contract.
+   * Drop the row's dot, for lists whose newness lives on a waterline
+   * (Reads, Receipts: "new" means "above the line"). A dotless row still
+   * stamps `data-unseen` from `unread` — the seen-on-scroll observer
+   * selects on it and the state flows to the user's own IMAP server.
+   * This flag does not drop `seen`'s quiet ink: readness is the mailbox's
+   * statement (`\Seen`), and a row may not render a claim the IMAP master
+   * contradicts. Absent ⇒ the row is exactly what it always was, dot and
+   * all — the Ohbox's contract.
    */
   dotless?: boolean;
   /** Seen styling (quiet ink, lighter weights). */
@@ -125,54 +89,28 @@ export interface MessageRowProps {
   justSeen?: boolean;
   selected?: boolean;
   /**
-   * MULTI-SELECT MEMBERSHIP, and why it changes the row's ROLE.
-   *
-   * Measured live on 2026-08-02: picking rows in the Ohbox set `aria-selected` on zero of
-   * them. The pick was a class name and nothing else, so a screen reader could not tell a
-   * picked row from any other and the bulk action operated on a set the user could not
-   * perceive.
-   *
-   * `aria-selected` is only meaningful on `option`/`row`/`gridcell`/`tab` — putting it on a
-   * `button` is invalid ARIA that some readers ignore — so a row that participates in a
-   * multi-select declares `role="option"` and its container declares `role="listbox"`
-   * (`ListRows`). The element stays a focusable `<button>`; only the role changes, and the
-   * row has no interactive descendants, which is what `option` requires.
-   *
-   * `aria-pressed` was the alternative and it describes the wrong action: clicking a row
-   * moves the CURSOR, `x` picks. A toggle button would announce the click as the toggle.
-   *
-   * Undefined ⇒ this list has no multi-select and the row stays a plain button. Every list
-   * but the Ohbox is untouched.
+   * Multi-select membership, and why it changes the row's role: picking
+   * rows once set `aria-selected` on none of them, and `aria-selected` is
+   * only valid on option/row/gridcell/tab. So a multi-select row declares
+   * `role="option"` inside a `role="listbox"` container (`ListRows`); the
+   * element stays a focusable <button> with no interactive descendants,
+   * which `option` requires. `aria-pressed` would describe the wrong
+   * action (click moves the cursor, `x` picks). Undefined ⇒ no
+   * multi-select; the row stays a plain button.
    */
   picked?: boolean;
   /** Spam-grade rendering — less ink. */
   dull?: boolean;
   threadCount?: number;
   /**
-   * THREAD PARTICIPANTS — the people in this conversation, as circles beside the subject.
-   *
-   * Two or more entries here put an overlapping stack of small circles in the row's badge strip,
-   * newest voice first, immediately after the `⤷ N` count. The caller chooses the people (the
-   * Ohbox uses the same voices its sender line names) and this component only draws them — same
-   * {@link Avatar}, same address-keyed hue, so a face is the same colour here as everywhere else
-   * in the app.
-   *
-   * THE LEAD IS NOT THEIRS, and that is deliberate rather than a leftover. Every row is led by
-   * {@link avatarInitial} — the latest sender's one full-size circle — on a thread row exactly as
-   * on a plain one, because the lead is what decides where a row's TEXT begins. Thread rows and
-   * singletons are neighbours in one list, so a stack standing in the lead slot would put a
-   * conversation's sender line out of line with the rows above and below it, and would move that
-   * edge as rows fold and unfold while mail arrives. The faces ride the subject line instead,
-   * where a conversation gaining a voice changes nothing about the list's left edge.
-   *
-   * THE STACK DOES NOT REPLACE THE `⤷ N` COUNT, and the two are not the same statement: the
-   * circles say WHO is in the conversation, the count says HOW MANY messages are folded into
-   * the row. They are wanted together precisely in the case the stack is capped
-   * ({@link THREAD_CIRCLES_MAX}).
-   *
-   * FEWER THAN TWO ⇒ NOTHING CHANGES. One participant is not a conversation of people, so the
-   * row renders byte-for-byte as a row with no participants at all — no stack, no empty strip
-   * entry. Every list that passes none is untouched.
+   * Thread participants: two or more entries draw overlapping small
+   * circles in the badge strip, newest voice first, after the `⤷ N` count
+   * — same {@link Avatar}, same address-keyed hue as everywhere else. The
+   * lead circle stays {@link avatarInitial}: the lead decides where the
+   * row's text begins, and a stack there would misalign thread rows
+   * against singleton neighbours. Circles say who, the count says how
+   * many ({@link THREAD_CIRCLES_MAX} caps the stack). Fewer than two ⇒
+   * the row renders byte-for-byte as one with no participants.
    */
   participants?: { initials: string; hue: number }[];
   hasAttachment?: boolean;
@@ -212,26 +150,14 @@ export interface MessageRowProps {
   /** Spam variant: detection badge text. */
   detection?: string;
   /**
-   * A TRAILING CONTROL SLOT — rendered BESIDE the row, never inside it.
-   *
-   * The row is a `<button>`, and a button may not contain another one: nested interactive
-   * content is a parse error, so the browser HOISTS the inner control out of the row and the
-   * two end up siblings anyway — with the DOM no longer matching the tree React thinks it
-   * rendered. It would also break the `role="option"` contract stated on {@link picked}, which
-   * requires the row to have no interactive descendants.
-   *
-   * So a row with actions renders as a flex pair inside one presentational wrapper: the row
-   * button, which keeps every class, `data-id` and role it has always had, and this slot
-   * beside it. `role="presentation"` on the wrapper is what keeps a `listbox`'s ownership of
-   * its `option` rows intact across the extra element.
-   *
-   * ABSENT BY DEFAULT, and absent means the row renders exactly as it always did — the bare
-   * button, no wrapper. Every list but the one that opts in is untouched, byte for byte.
-   *
-   * A caller that wants the slot to come and go DURING a row's exit animation should pass a
-   * component that returns null rather than dropping the prop: changing the prop from present
-   * to absent changes the element tree around the button, which remounts it and kills the
-   * transition mid-flight.
+   * A trailing control slot, rendered beside the row, never inside it:
+   * the row is a <button>, nested interactive content is a parse error
+   * the browser resolves by hoisting the inner control out, and
+   * `role="option"` requires no interactive descendants. A row with
+   * actions renders as a flex pair in one `role="presentation"` wrapper,
+   * the row button unchanged beside this slot. Absent ⇒ the bare button.
+   * To toggle during an exit animation pass a component that returns
+   * null — dropping the prop remounts the button mid-transition.
    */
   actions?: ReactNode;
   onClick?: () => void;
@@ -281,17 +207,14 @@ export function MessageRow(props: MessageRowProps) {
   } = props;
 
   /**
-   * TWO STRIP GROUPS, BY WHAT MAY GIVE WAY UNDER WIDTH PRESSURE.
-   *
-   * `keep` holds the members whose intrinsic width is BOUNDED — the thread count ("⤷ NNN"),
-   * the participant faces (three fixed 18px circles), the attachment clip (an icon) and the
-   * protected capsule (one word) — and they never shrink: they are the strip's point, and a
-   * row that hides its thread count reads as a single message. `tail` holds the UNBOUNDED
-   * members — tag chips, the place and state notes, whose text is user- or folder-named —
-   * and it alone shrinks and clips when the line runs out. The split is structural because
-   * no CSS floor can express "as wide as the bounded members": `min-width:min-content` on a
-   * flat strip pulls the chips' text width back in (measured), and a flat `overflow:hidden`
-   * clips the very members this exists to keep (review-caught).
+   * Two strip groups, split by what may give way under width pressure.
+   * `keep` holds members whose intrinsic width is bounded (thread count,
+   * participant faces, attachment clip, protected capsule) and never
+   * shrinks — a row that hides its thread count reads as a single message.
+   * `tail` holds the unbounded members (tag chips, place and state notes)
+   * and alone shrinks and clips. The split is structural: no CSS floor
+   * expresses "as wide as the bounded members"; `min-width:min-content`
+   * pulls chip text back in and `overflow:hidden` clips the kept members.
    */
   const keep: ReactNode[] = [];
   const tail: ReactNode[] = [];

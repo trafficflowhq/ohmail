@@ -45,15 +45,13 @@ export const GLOSS_GAP = 6;
 export interface GlossPosition { top: number; left: number; side: "below" | "above" }
 
 /**
- * Place the card by three rectangles — the glyph's, the card's own size, the window — the same
- * pure function the date picker uses for its month, so the flip is tested with real numbers.
- *
- * Below the glyph when the whole card fits there; above it otherwise; and if it fits neither way
- * (a very short window) below. Then BOTH axes are clamped to the window's insets — the promise is
- * "inside the window", never a side, and it holds even for an anchor that is itself off-screen
- * (a glyph pressed by script, or one the layout has just moved): a card that follows its anchor
- * out of the window is unreadable by construction. Left edge starts a little before the glyph so
- * the text lines up with the line it explains.
+ * Place the card by three rectangles — the glyph's, the card's own size,
+ * the window — the same pure function the date picker uses, so the flip is
+ * tested with real numbers. Below the glyph when the whole card fits there;
+ * above it otherwise; below if it fits neither way. Both axes are then
+ * clamped to the window's insets — the promise is "inside the window",
+ * even for an anchor that is itself off-screen. The left edge starts a
+ * little before the glyph so the text lines up with the line it explains.
  */
 export function placeGloss(
   anchor: { top: number; bottom: number; left: number; right: number },
@@ -72,38 +70,14 @@ export function placeGloss(
 }
 
 /**
- * DETAIL ON DEMAND — the (i) whose sentence opens beside it.
- *
- * Several surfaces carry a sentence a person needs ONCE and then reads past for ever: what "this
- * computer files this mailbox" means, repeated under every mailbox row; what a credit buys, beside
- * the number; that a tracking pixel was refused, above a message it has nothing to do with. Each
- * was spending a line of the surface on a fact that is true and rarely wanted. The gloss keeps the
- * fact and stops spending the line: a small glyph (or a short caption) stands where the sentence
- * stood, and the sentence opens beside it when asked.
- *
- * It is the second (i) in this system and the difference from `InfoNote` is where the words go
- * when they open. `InfoNote` opens IN THE FLOW under its lead — right for a settings note or a
- * view's description, where a line of room exists. The gloss opens in a card OVER the surface —
- * for a meta line, a chip, a figure, where there is no room for a second line and pushing the
- * rows down would be the disturbance being removed.
- *
- * ── NEVER A TOOLTIP ──────────────────────────────────────────────────────────────────────────
- *
- * A hover-only affordance does not exist for a finger or for a keyboard. So the trigger is a real
- * button: hover opens it (mouse only — a touch's pointerenter is the tap itself and would cancel
- * the press that follows), focus opens it, a press PINS it, Escape closes it and keeps focus where
- * it was, a press outside closes it, a second press closes it. Nothing inside the card takes focus,
- * so there is nothing to trap: Tab leaves as it always did and the card goes with the focus.
- *
- * Two kinds of open, deliberately: `soft` (hover, focus) follows the pointer and the focus away;
- * `pinned` (a press) stays until Escape, an outside press, blur or a second press. A mouse press
- * therefore reads: focus opens it, the click pins it, the pointer may leave and it stands.
- *
- * The card is `position: fixed` and placed by {@link placeGloss} from the glyph's rectangle, so a
- * scroll container's `overflow: hidden` cannot clip it; it is re-placed on resize and on any
- * scroll while open. It is in the DOM closed as well as open (`hidden`), because the accessible
- * description has to be computable BEFORE it opens — a description that appears on focus is one
- * the reader asks for and does not get.
+ * Detail on demand: a sentence a person needs once stands behind a small
+ * glyph and opens in a card beside it. Unlike `InfoNote`, which opens in
+ * the flow under its lead, the gloss opens over the surface, where there is
+ * no room for a second line. Never a tooltip: the trigger is a real button
+ * — hover (mouse only) and focus open it `soft`, a press pins it, Escape,
+ * an outside press or a second press closes it, and nothing inside takes
+ * focus. The card is `position: fixed`, placed by {@link placeGloss}, and
+ * in the DOM while closed so the accessible description exists pre-open.
  */
 export function Gloss({ text, caption, placement = "meta", className }: GlossProps) {
   const id = useId();

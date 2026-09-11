@@ -8,17 +8,13 @@ export interface SearchBoxProps {
   onChange: (value: string) => void;
   onSubmit?: (value: string) => void;
   /**
-   * THE WORDS, FROM THE HOST — neither of these defaults any more, and the reason is the same
-   * one that emptied `CommandPalette`'s defaults.
-   *
-   * They used to read `placeholder = "Search everything — typos welcome"` and
-   * `ariaLabel = "Search"`. A composite in this package has no catalogue to read, so a default
-   * here is an English string that renders in every locale — and an optional prop puts no
-   * obligation on any call site to notice. The pill is the widest thing on the search view;
-   * `search.placeholder` and `search.aria` were sitting in both catalogues, translated, with
-   * nothing wired to them.
-   *
-   * Required, so a new call site cannot render this in English by omission.
+   * The words come from the host; neither defaults any more, for the
+   * reason that emptied `CommandPalette`'s defaults: a composite here has
+   * no catalogue, so a default is an English string rendering in every
+   * locale, and an optional prop puts no obligation on a call site to
+   * notice. `search.placeholder` and `search.aria` sat translated in both
+   * catalogues with nothing wired to them. Required, so a new call site
+   * cannot render English by omission.
    */
   placeholder: string;
   ariaLabel: string;

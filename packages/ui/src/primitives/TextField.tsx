@@ -8,17 +8,14 @@ import {
 import "./text-field.css";
 
 /**
- * THE TWO SHAPES, and the rule that decides between them.
- *
- *   box   the default. The field draws its own 1px edge on the canvas ground — present while the
- *         field is EMPTY, which is the whole point: a placeholder and a resize handle are not an
- *         affordance, an edge is.
- *   line  no box of its own, because the CONTAINER already draws the boundary — a compose header
- *         row (`.c-field`, whose hairline runs under label and control alike and turns accent on
- *         focus), a floating card's edge (the tag picker, the command palette, the search pill), a
- *         rail row that happens to accept typing. A second edge inside any of those would turn one
- *         calm object into two stacked widgets. `line` is legal ONLY inside such a container; the
- *         field-treatment census cannot see containers, so this sentence is the rule.
+ * The two shapes. `box` (default): the field draws its own 1px edge on
+ * the canvas ground, present while the field is empty — a placeholder is
+ * not an affordance, an edge is. `line`: no box of its own, because the
+ * container already draws the boundary (a compose header row's hairline,
+ * a floating card's edge, a rail row that accepts typing) — a second edge
+ * inside any of those turns one calm object into two stacked widgets.
+ * `line` is legal only inside such a container; the field-treatment
+ * census cannot see containers, so this sentence is the rule.
  */
 export type TextFieldShape = "box" | "line";
 
@@ -42,23 +39,14 @@ function classes(shape: TextFieldShape | undefined, mono: boolean | undefined, m
 }
 
 /**
- * THE ONE TEXT FIELD — every place a person types into this product wears this.
- *
- * It is a thin element: a real `<input>` or `<textarea>` with the treatment's classes, every
- * native attribute passed through, the ref forwarded. There is deliberately no label, hint or
- * error slot here — `SettingsField` composes those around it, the compose header composes its
- * own row, and a primitive that owned the layout of its surroundings would be a second settings
- * grammar. What it owns is the LOOK of the control: the edge, the ground, the focus ring, the
- * read-only and disabled states, in both schemes and on both faces, from the tokens.
- *
- * `multiline` chooses the element. The ref type follows it: pass a `RefObject<HTMLInputElement>`
- * to the input form and a `RefObject<HTMLTextAreaElement>` to the textarea form — the overloads
- * below are what make that a compile-time fact rather than a cast at every call site.
- *
- * A caller's `className` is kept alongside the treatment's, never instead of it: the host
- * stylesheets still size and place these controls (`.rcp-input`'s typeable floor, the subject's
- * heavier type, a settings column's width), and a test that finds a field by its host class
- * still finds it.
+ * The one text field — every place a person types wears this: a real
+ * <input> or <textarea> with the treatment's classes, native attributes
+ * passed through, the ref forwarded. No label, hint or error slot —
+ * `SettingsField` and the compose header compose those; this owns only
+ * the look (edge, ground, focus ring, read-only/disabled, both schemes,
+ * both faces). `multiline` chooses the element; the overloads make the
+ * matching ref type a compile-time fact. A caller's `className` is kept
+ * alongside the treatment's: host stylesheets still size these controls.
  */
 const TextFieldBase = forwardRef<HTMLInputElement | HTMLTextAreaElement, TextFieldProps>(
   function TextField(props, ref) {

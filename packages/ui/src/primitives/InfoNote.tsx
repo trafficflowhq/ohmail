@@ -16,29 +16,14 @@ export interface InfoNoteProps {
 }
 
 /**
- * A COMPACT (i) DISCLOSURE — one line of essential text, and the rest a press away.
- *
- * The problem it solves is a layout one. Several explanations in this app grew to three
- * sentences of furniture sitting above the content they explain, pushing the first row of a
- * list off the fold on a short window and taking two lines of a decision bar that has a
- * segmented control in the same row. They are all still TRUE and all still worth having — an
- * explanation that disappears is one nobody can go back to — so the answer is not to delete
- * them but to stop spending vertical space on them until they are asked for.
- *
- * ── WHY `<details>` AND NOT A `useState` TOGGLE ──────────────────────────────────────────────
- *
- * Three things come free and none of them are free by hand: the summary is a button to assistive
- * technology with the lead line as its accessible name, the open state is keyboard-operable with
- * no key handling of our own, and there is no client state, so a server-rendered page and its
- * hydrated self cannot disagree about whether the note is open.
- *
- * The fourth is the one worth stating outright, because it looks like a mistake if you meet it
- * in a test: **the collapsed text is in the DOM.** `<details>` hides its content with the
- * browser's own rules rather than by not rendering it, so `textContent` sees the whole
- * explanation whether or not it is on screen. That is the correct behaviour — find-in-page
- * reaches it, and a screen reader can walk it — but it does mean a test asserting the presence
- * of some detail sentence proves the sentence EXISTS, not that anybody can see it. A test that
- * means "visible" has to read `open` on the `<details>`.
+ * A compact (i) disclosure — one line of essential text, the rest a press
+ * away: explanations stay true and reachable but stop spending vertical
+ * space until asked for. `<details>`, not a useState toggle: the summary
+ * is a button to assistive technology, the open state is keyboard-operable,
+ * and server render and hydration cannot disagree. Note for tests: the
+ * collapsed text IS in the DOM (`<details>` hides, it does not unrender) —
+ * asserting a sentence's presence proves it exists, not that anyone can
+ * see it; a test that means "visible" reads `open` on the element.
  */
 export function InfoNote({ lead, children, moreLabel, className }: InfoNoteProps) {
   return (

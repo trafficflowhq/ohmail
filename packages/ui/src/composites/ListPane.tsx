@@ -15,17 +15,14 @@ export interface ListPaneProps {
   /** Keyboard hints strip pinned under the scroller. */
   hints?: ReactNode;
   /**
-   * THE FOOT OF THE COLUMN — verbs that act on what is IN the list, under the scroller.
-   *
-   * It TAKES THE HINTS STRIP'S PLACE rather than standing beside it, and that is the slot's
-   * whole contract: both are one line under the scroller, and stacking them would push the
-   * rows up twice and put a teaching line under a control that is the thing being taught.
-   * A pane with nothing in `foot` is the pane it always was, to the pixel.
-   *
-   * IN FLOW, NEVER STICKY, and the reason is measured rather than aesthetic: a bar stuck
-   * inside the scroller lands in the toast's band (`.toast` sits 72px up), so a toast raised
-   * BY the bar's own verb covers the bar. Below the scroller there is no such overlap. A
-   * caller that wants a floating capsule here mounts one — the slot is a box, not a look.
+   * The foot of the column — verbs that act on what is in the list, under
+   * the scroller. It takes the hints strip's place rather than standing
+   * beside it: both are one line under the scroller, and stacking them
+   * would push the rows up twice. A pane with nothing in `foot` is the
+   * pane it always was. In flow, never sticky — a bar stuck inside the
+   * scroller lands in the toast's band (`.toast` sits 72px up), so a toast
+   * raised by the bar's own verb would cover the bar. A caller that wants
+   * a floating capsule mounts one; the slot is a box, not a look.
    */
   foot?: ReactNode;
   /** Centered standalone column (Tag view). */
@@ -39,15 +36,14 @@ export interface ListPaneProps {
   /** External scroller ref, if the app drives scrolling itself. */
   scrollerRef?: RefObject<HTMLDivElement>;
   /**
-   * RE-SCAN THE SEEN-ON-SCROLL OBSERVER when this value changes.
-   *
-   * `useSeenOnScroll` observes the rows present when it first runs and never again on its own.
-   * That is correct for a list that mounts all its rows at once, and WRONG for a windowed list,
-   * whose rows come and go as the window slides: a row that mounts on scroll would never be
-   * observed, so it could never mark itself `\Seen` however far the user read past it. A view
-   * that windows AND wires `onSeen` passes its window bounds here so the observer re-attaches to
-   * the rows actually on screen — the same thing `StreamShell` does for the reading stream via
-   * its `contentKey`. Absent ⇒ scan once, the unwindowed behaviour every existing caller had.
+   * Re-scan the seen-on-scroll observer when this value changes.
+   * `useSeenOnScroll` observes the rows present when it first runs and
+   * never again on its own — correct for a list that mounts all rows at
+   * once, wrong for a windowed list: a row that mounts on scroll would
+   * never be observed and could never mark itself `\Seen`. A view that
+   * windows and wires `onSeen` passes its window bounds here so the
+   * observer re-attaches to the rows actually on screen (as `StreamShell`
+   * does via `contentKey`). Absent ⇒ scan once, the unwindowed behaviour.
    */
   rescanKey?: unknown;
   className?: string;

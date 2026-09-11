@@ -1,44 +1,12 @@
 /**
- * Theme management, matching the prototype's contract exactly:
- * - explicit preference is stamped as `data-theme` on <html>;
- * - "system" removes the attribute so the tokens.css
- *   prefers-color-scheme fallback takes over;
- * - toggle() flips the *effective* theme (system+dark → explicit light).
- *
- * SSR-safe by construction: the first client render is deterministic and
- * byte-identical to the server render (defaultPreference + "light" system
- * fallback — no localStorage or matchMedia reads during render). The
- * persisted preference and the real OS theme are adopted in a post-mount
- * effect. To avoid a pre-hydration flash, inline `themeInitScript()`
- * before your app markup: it stamps the persisted `data-theme` before
- * first paint, and the provider leaves that stamp untouched until it has
- * adopted the same stored value.
- *
- * ── THE FACE — paper / ohmarchy (OHMARCHY-PLAN.md §3a) ──────────────────────────────────
- *
- * A SECOND appearance dimension, orthogonal to light/dark: `data-face="ohmarchy"` on
- * <html>, absent = paper. Absence-as-paper is what keeps the paper face byte-identical by
- * construction — no selector in tokens.css changes meaning, and ohmarchy.css only ever
- * matches the stamped state.
- *
- * Three inputs resolve to the effective face, in this order:
- *
- *   1. `facePreference` — this DEVICE's explicit choice ("only this device"), persisted
- *      under `ohmail.face`. It outranks the account on this device because that is what
- *      the scope option promised when it was chosen.
- *   2. `accountFace` — the account-level synced choice, adopted from `GET /consent` by the
- *      host (never fetched here; this package has no wire). Adoption also mirrors it to
- *      `ohmail.face.account` so the NEXT boot's init script stamps it pre-paint — the same
- *      device-caches-the-account's-last-answer move as the shell's boot cache.
- *   3. Detection: a LINUX device with neither defaults to ohmarchy, for that device only
- *      — the wedge this face exists for. Honest limit: a browser reveals "Linux", not
- *      "Omarchy" — this is a deliberate wedge bet on Linux visitors broadly. Android and
- *      ChromeOS also announce Linux and are excluded; an explicit prior choice at either
- *      scope always wins over detection because it sits higher in this list.
- *
- * The ACCOUNT write does not live here: packages/ui has no API client. The host writes
- * `PATCH /consent/settings` through its own transport and then calls `adoptAccountFace`
- * with the echo — the same echo-not-the-argument rule every consent knob keeps.
+ * Theme: an explicit preference is stamped as `data-theme` on <html>;
+ * "system" removes the attribute so tokens.css's prefers-color-scheme
+ * fallback applies. The first client render matches the server render
+ * (no storage or matchMedia reads during render); persisted state is
+ * adopted post-mount, and `themeInitScript()` stamps it pre-paint.
+ * The face is a second dimension: `data-face="ohmarchy"`, absent = paper,
+ * resolved device preference over synced account face over Linux-only
+ * detection. The account face write lives in the host, not here.
  */
 import {
   createContext,
@@ -55,17 +23,12 @@ import {
 export type StorageVerdict = "stored" | "lost";
 
 /**
- * THE STORAGE DOOR — A SHAPE THIS PACKAGE DECLARES AND DELIBERATELY DOES NOT IMPLEMENT.
- *
- * The provider used to write `localStorage` itself, inside a swallowing `try`: a private window
- * turned "your theme is remembered" into a lie with nothing anywhere saying so. The door that
- * answers lives in `@ohmail/client-engine`, and this package may not import it — a UI package
- * that reaches into the client engine points the dependency graph upward and would drag the
- * engine into every host that mounts a button. So the direction is inverted: the host hands the
- * door in, and this file imports nothing.
- *
- * THERE IS NO `null` DOOR. Absence is the only way to say "this host wired none", so "not
- * supplied" and "supplied as nothing" cannot be confused — see {@link ThemePersistence}.
+ * The storage door is declared here and implemented by the host: writing
+ * localStorage directly in a swallowed try made "your theme is remembered"
+ * silently false in a private window, and this package may not import
+ * `@ohmail/client-engine` (the dependency graph points upward). The host
+ * hands the door in. There is no `null` door — absence is the only way to
+ * say "this host wired none" — see {@link ThemePersistence}.
  */
 export interface StorageDoor {
   get(key: string): string | null;

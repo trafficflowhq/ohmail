@@ -46,16 +46,14 @@ export interface SplitButtonProps {
 }
 
 /**
- * One capsule, one or two decisions. The main segment files; the attached ✓
- * segment (when present) files AND marks read — each with its own handler.
- *
- * The ✓ half is OMITTED for a destination with no "read" verb (Screen out, Spam): filing there
- * is triaging mail out, and "mark it read" is meaningless for mail you are not admitting. Callers
- * express that by simply not passing `check`; the capsule then reads as a single button.
- *
- * Both halves can carry their own keycap (`kbdHint`, `check.kbdHint`), which is what replaced the
- * bar's detached "o r c n x file" legend: the key goes on the verb, exactly as the message action
- * bar's does.
+ * One capsule, one or two decisions. The main segment files; the attached
+ * ✓ segment (when present) files and marks read, each with its own
+ * handler. The ✓ half is omitted for a destination with no "read" verb
+ * (Screen out, Spam): "mark it read" is meaningless for mail not being
+ * admitted — callers express that by not passing `check`, and the capsule
+ * reads as a single button. Both halves can carry their own keycap
+ * (`kbdHint`, `check.kbdHint`): the key goes on the verb, exactly as the
+ * message action bar's does.
  */
 export function SplitButton({
   label,

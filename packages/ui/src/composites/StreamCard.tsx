@@ -20,16 +20,14 @@ export interface StreamCardProps {
   amount?: string;
   time: string;
   /**
-   * A FACT ABOUT THE MESSAGE, said in the meta line — between the sender and the time.
-   *
-   * What the reading pane says above a message as a bar ("A tracking pixel was blocked."), a card
-   * says here as a glyph with a short caption whose sentence opens on demand. A SLOT and not a
-   * shape, for the reason `actions` is one: the app owns the words and the primitive that opens
-   * them (`BlockNotice` over `Gloss`); this file decides only where the node stands and what it
-   * inherits — the time's size and ink, never the accent. A press on it is a question about the
-   * notice, not an engagement with the card, so it does not select or expand the card.
-   *
-   * Default-absent: a card whose caller passes nothing is exactly the card that shipped before.
+   * A fact about the message, said in the meta line between sender and
+   * time. What the reading pane says as a bar ("A tracking pixel was
+   * blocked.") a card says as a glyph whose sentence opens on demand.
+   * A slot, not a shape: the app owns the words and the primitive
+   * (`BlockNotice` over `Gloss`); this file decides only where the node
+   * stands and what it inherits — the time's size and ink, never the
+   * accent. A press on it does not select or expand the card.
+   * Default-absent: pass nothing and the card is unchanged.
    */
   notice?: ReactNode;
   subject: string;
@@ -56,15 +54,13 @@ export interface StreamCardProps {
   expandLabel: string;
   collapseLabel: string;
   /**
-   * WHAT `body` ACTUALLY IS. Omitted ⇒ `"full"`, the shape every existing caller had.
-   *
-   * It is here rather than in the app because it changes the CARD'S OWN measurement, and
-   * that measurement is what hid the affordance. `short` is computed from `scrollHeight`, so
-   * a card holding a one-line snippet measures short, `.scast.short .sc-x{display:none}`
-   * hides the Expand pill, and there is no way left to ask for the rest — on a live account
-   * that was every card in Reads and Receipts. Anything other than `"full"` therefore keeps
-   * the pill reachable however short the text is, because the text being short is precisely
-   * the symptom.
+   * What `body` is. Omitted ⇒ "full", the shape every existing caller
+   * had. It lives here because it changes the card's own measurement:
+   * `short` is computed from `scrollHeight`, so a card holding a one-line
+   * snippet measured short, `.scast.short .sc-x{display:none}` hid the
+   * Expand pill, and there was no way left to ask for the rest. Anything
+   * other than "full" keeps the pill reachable however short the text is,
+   * because the text being short is precisely the symptom.
    */
   bodyState?: "full" | "snippet" | "loading" | "failed" | "withheld";
   /** Shown in place of the body while it is being fetched. App-owned copy. */
@@ -79,16 +75,14 @@ export interface StreamCardProps {
    */
   withheldLabel?: string;
   /**
-   * THE RENDERED MESSAGE, swapped in for the plain-text preview once the card is OPEN.
-   *
-   * Omitted ⇒ the card is text-only, exactly as before. When present it renders ONLY while
-   * expanded: the collapsed card keeps the fast, clamp-measured `body` preview, and expanding
-   * lifts the clamp and drops in this node — the sanitized html viewer the reading pane uses,
-   * so Reads and Receipts read the same as the Ohbox and the reader instead of dumping
-   * `body.text`. A plain-text message passes no slot and is untouched.
-   *
-   * The viewer sizes itself (an iframe measured to its own content), which is why the
-   * measuring effect and the clamp step aside for it — see `showViewer` below.
+   * The rendered message, swapped in for the plain-text preview once the
+   * card is open. Omitted ⇒ text-only, as before. Present, it renders only
+   * while expanded: the collapsed card keeps the fast clamp-measured
+   * `body` preview; expanding lifts the clamp and drops in this node (the
+   * same sanitized html viewer the reading pane uses). A plain-text
+   * message passes no slot. The viewer sizes itself (an iframe measured
+   * to its own content), so the measuring effect and the clamp step aside
+   * for it — see `showViewer` below.
    */
   bodySlot?: ReactNode;
   onSelect?: (id: string) => void;
@@ -101,17 +95,13 @@ export interface StreamCardProps {
    */
   onToggle?: (open: boolean) => void;
   /**
-   * WHO ELSE THE MESSAGE WENT TO, under the subject.
-   *
-   * A SLOT and not a shape, for the reason `actions` is one: the reading pane already has a
-   * recipients block with chips, a contact popover and a details disclosure in it, and a
-   * composite that re-described any of that would be a second copy of it drifting from the
-   * first. The caller passes the app's own `MessageRecipients`; this file only decides where
-   * it sits and how much air it gets.
-   *
-   * Default-absent, so a card whose caller passes nothing is exactly the card that shipped
-   * before — which is also how a one-recipient message renders: the caller withholds the node
-   * rather than the card drawing an empty row.
+   * Who else the message went to, under the subject. A slot, not a shape:
+   * the reading pane already has a recipients block with chips, popover
+   * and disclosure, and a composite re-describing it would be a second
+   * copy drifting from the first. The caller passes the app's own
+   * `MessageRecipients`; this file decides only where it sits.
+   * Default-absent — a one-recipient message withholds the node rather
+   * than the card drawing an empty row.
    */
   recipients?: ReactNode;
   /**
@@ -183,16 +173,14 @@ export function StreamCard({
     const clip = clipRef.current;
     if (!clip) return;
     /**
-     * A VIEWER CARD IS NEVER CLAMP-MEASURED AND NEVER `short`.
-     *
-     * The html viewer (an iframe) sizes itself, and its two clamp states are pure CSS
-     * (collapsed 348, `.scast.viewer.open` unclamped). So JS only clears any inline `max-height`
-     * pin a text-phase toggle left on the clip — INCLUDING the snippet-height pin of a card
-     * expanded BEFORE its body hydrated, which would otherwise beat
-     * `.scast.viewer.open .sc-clip{max-height:none}` and clip the viewer at two lines (defect
-     * this fixes). Forcing the pinned start to register first lets `max-height` TRANSITION to
-     * the CSS target on collapse rather than snap from a keyword. Clearing a style needs no
-     * layout, so this branch runs under jsdom, where the guard reads the emptied string.
+     * A viewer card is never clamp-measured and never `short`: the iframe
+     * sizes itself and its clamp states are pure CSS (collapsed 348,
+     * `.scast.viewer.open` unclamped). JS only clears any inline
+     * `max-height` pin a text-phase toggle left on the clip — including
+     * the snippet-height pin of a card expanded before its body hydrated,
+     * which would otherwise beat the CSS and clip the viewer at two
+     * lines. Registering the pinned start first lets `max-height`
+     * transition on collapse; this branch also runs under jsdom.
      */
     if (showViewer) {
       void clip.offsetHeight;

@@ -15,27 +15,14 @@ export interface BannerProps {
 }
 
 /**
- * A STANDING BANNER AT THE HEAD OF A LIST — pinned on a desktop, in the flow on a phone.
- *
- * One element, one stylesheet rule decides its form, and the rule is a media query on the shell's
- * own breakpoint (`layout.mobileMax` in `@ohmail/tokens`, 900 — the same 901px the rail, the
- * split and every other width decision in the shell already turn on). At and above it the banner
- * is `position: sticky` at the top of the scroller it is the first block of, so it stays in view
- * while the rows pass under it. Below it the banner is a block like any other: it is read at the
- * top and it scrolls away with the first swipe, which on a phone is the difference between a
- * notice and a toolbar.
- *
- * WHERE IT GOES is part of the design: the banner is the scroller's FIRST CHILD, not a sibling of
- * the scroller above it. Outside the scroller it could only ever be pinned; inside it, the one
- * media rule gives both forms without a line of JavaScript deciding the width — which is the whole
- * reason there is no `useNarrow()` here and must never be one.
- *
- * The look is the standing pane the away notice already wears: the soft accent wash, the card
- * radius, a 2px rule down the leading edge so the eye finds an object before it reads a sentence.
- * Not an alert — no warning colour, no icon — because what a banner states here is normal and
- * usually wanted. Pinned, it paints the wash over the PANEL ground rather than over whatever row
- * is passing under it: the wash is translucent by design and a row showing through it would make
- * the sentence unreadable at exactly the moment it is pinned.
+ * A standing banner at the head of a list — pinned on a desktop, in the
+ * flow on a phone. A media query on the shell's breakpoint
+ * (`layout.mobileMax`, 900) decides the form: at and above, sticky at the
+ * top of its scroller; below, a block that scrolls away. It must be the
+ * scroller's first child — one media rule then gives both forms with no
+ * JavaScript width decision (no `useNarrow()` here, ever). Look: the away
+ * notice's standing pane, not an alert; pinned, the translucent wash
+ * paints over the panel ground so passing rows cannot show through it.
  */
 export function Banner({ children, action, role = "status", className }: BannerProps) {
   return (

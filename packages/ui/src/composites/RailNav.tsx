@@ -16,16 +16,14 @@ export interface RailItem {
   /** Tooltip / accessible enrichment ("4 unread of 9"). */
   title?: string;
   /**
-   * The row's own quick-nav key, revealed ONLY while the row is hovered or keyboard-focused —
-   * a shortcut you discover by pointing at the thing, not a badge charged to every row forever.
-   *
-   * It takes the count's slot for the moment of the reveal (like `kbdHint`, but transient), and
-   * is deliberately NOT rendered at rest: nothing is in the DOM until a pointer or Tab lands on
-   * the row, so the resting rail keeps its counts and no keycaps. A tap can fire a compatibility
-   * `mouseenter` (and some engines focus a button on tap), so the reveal is also cleared on
-   * click — otherwise a touch that navigated would leave the keycap standing in the count's
-   * place. `kbdHint` wins when both are set (the `?` sheet is a louder, deliberate "show me
-   * every key" and should not be undercut by a per-row reveal).
+   * The row's quick-nav key, revealed only while the row is hovered or
+   * keyboard-focused. It takes the count's slot for the reveal (like
+   * `kbdHint`, but transient) and is not rendered at rest — nothing is in
+   * the DOM until a pointer or Tab lands on the row. A tap can fire a
+   * compatibility `mouseenter`, so the reveal is also cleared on click,
+   * else a touch that navigated leaves the keycap standing. `kbdHint`
+   * wins when both are set: the `?` sheet is the deliberate "show me
+   * every key" and is not undercut by a per-row reveal.
    */
   navKey?: string;
 }
@@ -112,42 +110,25 @@ export interface RailNavProps {
   mailboxesLabel: string;
   mailboxes?: RailMailbox[];
   /**
-   * THE SHELL'S OWN CONTROLS, AT THE FOOT OF THE RAIL.
-   *
-   * Things that act on the app rather than on mail — opening the command palette, switching the
-   * theme. They used to float in a fixed capsule centred over the bottom of the page, which cost
-   * every scrolling surface a clearance band and put two controls permanently on top of the mail.
-   * The rail is where the app's own chrome already lives, so they sit at the end of it, above the
-   * account line.
-   *
-   * `ReactNode` and not a typed list: the controls are the host's, written in the rail's own
-   * vocabulary (`.ritem`, with a keycap in `.cnt` exactly as the Search row carries "/"), and
-   * `RailNav` only gives them a place and a hairline. **Optional and default-absent** — the
-   * desktop shell renders the same rail with no dock and is untouched by this.
-   *
-   * The dock lays out as ONE FLEX ROW (`rail.css`): a host marks the control that should take
-   * the line with `.dock-cmd` and any icon-width control with `.dock-theme`. A host that marks
-   * neither gets children sized by their own content, which is the sane default rather than a
-   * broken one.
+   * The shell's own controls at the foot of the rail — things that act on
+   * the app rather than on mail (command palette, theme) — above the
+   * account line, where app chrome lives. `ReactNode`, not a typed list:
+   * the controls are the host's, written in the rail's vocabulary
+   * (`.ritem`, keycap in `.cnt`). Optional and default-absent — the
+   * desktop shell renders the same rail with no dock. One flex row
+   * (`rail.css`): mark the line-taking control `.dock-cmd` and an
+   * icon-width one `.dock-theme`; unmarked children size by content.
    */
   dock?: ReactNode;
   /**
-   * WHAT THE MAILBOX IS DOING, immediately above the dock.
-   *
-   * The host's sync line — a first import running, a drain that keeps failing, a mailbox that
-   * needs its password again. It used to be a full-width strip across the top of every view (or,
-   * for the progress states, a pill floating over the bottom-left corner of the mail), which put
-   * app-level chrome on top of somebody's reading. It is app-level chrome, so it belongs where
-   * the rest of it already lives.
-   *
-   * Above the dock rather than below it: the dock is a pair of controls that are always there,
-   * and this appears and disappears. A row that comes and goes must not push the two fixed
-   * controls around, and it does not — `.rail-sync-slot` takes the rail's slack instead of the
-   * dock (`rail.css`), so the dock and the account line stay welded to the bottom edge whether
-   * this is present or not.
-   *
-   * `ReactNode` and default-absent for the same reason `dock` is: the desktop shell renders this
-   * rail without one.
+   * What the mailbox is doing, immediately above the dock: the host's
+   * sync line (first import running, a failing drain, a password needed).
+   * App-level chrome, so it lives with the rest of the chrome instead of
+   * as a strip over somebody's reading. Above the dock, not below: this
+   * row comes and goes and must not push the two fixed controls around —
+   * `.rail-sync-slot` takes the rail's slack (`rail.css`), keeping dock
+   * and account line welded to the bottom edge. `ReactNode` and
+   * default-absent for the reason `dock` is.
    */
   sync?: ReactNode;
   /** Bottom line — the account address. */

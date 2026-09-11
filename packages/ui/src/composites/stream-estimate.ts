@@ -1,37 +1,12 @@
 /**
- * WHAT A READING-STREAM CARD IS PROBABLY GOING TO BE, BEFORE THE BROWSER HAS LAID IT OUT.
- *
- * `.view-reads .stream .scast` carries `content-visibility: auto`, so a mounted card the reader
- * has never approached has a BOX and no contents: the box's height comes from
- * `contain-intrinsic-size`, and the browser only replaces it with the real height when the card
- * enters the layout margin. That replacement moves everything below it — and if the reader is
- * scrolling past the card at that moment, the content under the viewport moves with it. Measured
- * on a 300-card fixture at 390px, one 40-step scroll, no expands: five cards resolved from the
- * flat estimate to their real height, `200 → 242`, `200 → 450`, `200 → 536`, `200 → 545`,
- * `200 → 653`. The largest single displacement in the whole run was one of those, 453px, and the
- * step it landed on moved a fully visible card 87px against a 120px scroll.
- *
- * So the estimate stops being one number for every card and becomes a reading of THIS card's own
- * data. It does not have to be right — a card that is 5px out costs 5px, and the browser's
- * `auto` keyword replaces the estimate with the measured height for good after the first pass.
- * It has to stop being 200 for a card that is 650.
- *
- * ── WHY THE WIDTH IS A PARAMETER AND NOT A CONSTANT ──────────────────────────────────────────
- *
- * Every line count here is `characters ÷ characters-per-line`, and characters-per-line is a
- * function of the column: the same subject wraps to one line in a 620px card and three in a
- * 358px one. A formula with the desktop column baked in would under-count every phone card by
- * exactly the ratio, i.e. it would be wrong in the one place the cards are tallest. The caller
- * passes the card's own `offsetWidth`, which is available for a `content-visibility: auto` card
- * because containment skips the CONTENTS and not the element's own box.
- *
- * ── THE CONSTANTS ARE `stream.css`'S OWN NUMBERS ─────────────────────────────────────────────
- *
- * Each one is named beside the rule it comes from. They are approximations of a text layout, not
- * a re-implementation of one: `0.5em` per character is the average advance width of this
- * product's UI stack at these sizes, measured against the fixture's own cards rather than
- * assumed, and it is why this file is checked by a test that compares its answer with a real
- * browser's on three card shapes.
+ * Estimates a reading-stream card's height before the browser lays it out.
+ * `.scast` carries `content-visibility: auto`, so an unvisited card's box
+ * height is this estimate; when the real height replaces it mid-scroll,
+ * everything below moves (a flat 200 once moved a visible card 453px).
+ * The estimate reads the card's own data and need not be exact — the
+ * browser keeps the measured height after the first pass — it must stop
+ * being 200 for a card that is 650. Width is a parameter (characters per
+ * line depend on the column); constants are stream.css's own numbers.
  */
 
 /** `.sc-head{padding:20px 26px 0}` — the head's top padding, and its side padding. */
@@ -55,16 +30,11 @@ const SUBJECT_MARGIN_TOP = 5;
  */
 const SUBJECT_CHAR_EM = 0.62;
 /**
- * ── THE RECIPIENTS BLOCK IS A TWO-POINT MEASUREMENT, AND SAYS SO ─────────────────────────────
- *
- * It is the reading pane's own block (`.msg-rcpts`), it holds chips that wrap, and its height is
- * therefore a function of the column: measured 60px at a 568px inner width and 142px at 306px,
- * on the fixture's own five-recipient cards. A single constant was 34, which is neither, and it
- * was the largest term in the estimate's error at 390.
- *
- * A straight line between the two points, clamped at both ends. It is an interpolation between
- * two real readings rather than a model of chip wrapping — the estimate exists to stop being 200
- * for a card that is 650, and it does not need to predict a chip's width to do that.
+ * The recipients block (`.msg-rcpts`) holds chips that wrap, so its height
+ * is a function of the column: measured 60px at a 568px inner width and
+ * 142px at 306px; a single constant was 34, the largest error term at 390.
+ * A straight line between the two readings, clamped at both ends — an
+ * interpolation, not a model of chip wrapping.
  */
 const RCPTS_AT = [
   { inner: 306, h: 142 },
@@ -111,15 +81,11 @@ export interface StreamCardEstimateInput {
    */
   touch?: boolean;
   /**
-   * WILL THIS CARD'S PREVIEW BE THE CLAMPED BODY RATHER THAN THE SNIPPET?
-   *
-   * True for every card whose body is fetched rather than synced — which in the reading streams
-   * is every card: `onNear` hydrates a card as it approaches, so the layout the browser performs
-   * when the card enters the margin is the HYDRATED one, and the collapsed card's box is the
-   * clamp. Estimating such a card from its two-line snippet was the second half of the same
-   * defect the flat 200px was the first half of: measured after the per-card estimate landed and
-   * before this flag existed, five cards still resolved `353 → 545`, `347 → 536`, `283 → 450`,
-   * `439 → 653` — every one of them a card reserved at its snippet's height.
+   * True when this card's preview will be the clamped body rather than the
+   * snippet — in the reading streams that is every card: `onNear` hydrates
+   * a card as it approaches, so the layout the browser performs is the
+   * hydrated one. Estimating from the two-line snippet reserved such cards
+   * at snippet height (e.g. 353 → 545 before this flag existed).
    */
   clamped?: boolean;
 }

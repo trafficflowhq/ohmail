@@ -16,26 +16,14 @@ export type TagHueName =
   | "heather";
 
 /**
- * The tag hues the Blanc system paints, in the order a picker shows them. The single source of
- * this list on the client: `chip.css` has a `.hue-*` rule for each, `hueOf` clamps to it, and the
- * server's `TagsService.RENDERABLE_HUES` must equal it (a hue with no CSS rule is an invisible
- * dot). Adding one means adding a `--tg-*` family AND a `chip.css` rule in the same change.
- * The repository-level `test/tag-hues.test.ts` asserts that whole chain — six files that have to
- * agree — rather than leaving this comment as the only thing saying so.
- *
- * ── WHY THIS LIST MAY BE REORDERED AND THE THREE ORIGINAL NAMES MAY NOT CHANGE ──────────────
- *
- * The order here is WHEEL order (hue angle), not the order the product grew the colours in, and
- * that is safe for exactly one reason: a tag stores its colour as this NAME (`tags.hue text`,
- * mail 0031 — no CHECK constraint, no index into a list). Nothing reads `TAG_HUES` by position;
- * `hueOf` tests membership and the picker maps over it. So the three the prototype extracted —
- * `moss`, `ochre`, `rosewood` — keep their spelling and their `--tg-pottery|buch|privat` token
- * families forever, and every tag written before this list grew renders exactly as it did.
- *
- * The seven added names were also chosen to MISS the set the server used to accept on its own
- * (`clay|slate|plum|amber|teal`): rows written by that build are still in the database carrying
- * those strings, `hueOf` clamps them to moss today, and re-admitting one of those names would
- * silently repaint somebody's existing tag.
+ * The tag hues the Blanc system paints, in wheel order. The single client
+ * source: `chip.css` has a `.hue-*` rule for each, `hueOf` clamps to it,
+ * and the server's `TagsService.RENDERABLE_HUES` must equal it —
+ * `test/tag-hues.test.ts` asserts the chain. Reordering is safe (a tag
+ * stores its colour as this name; nothing reads `TAG_HUES` by position),
+ * but `moss`/`ochre`/`rosewood` keep their spelling and `--tg-*` token
+ * families, and the old server names (`clay|slate|plum|amber|teal`) may
+ * not be re-admitted: stored rows still carry them, clamped to moss today.
  */
 export const TAG_HUES: readonly TagHueName[] = [
   "rosewood",

@@ -55,17 +55,14 @@ export interface ReadingPaneProps {
   /** Deterministic per-sender hue for that circle; see `Avatar`. */
   avatarHue?: number;
   /**
-   * Makes the from-line a CONTROL — avatar and address together.
-   *
-   * The requirement: click a mail address wherever it appears, the Ohbox included, and change
-   * that sender's screening from there. A row cannot carry this affordance (`.row` is itself
-   * a `<button>`, and nesting interactive content in one is invalid), so the open message
-   * is where the address becomes clickable for real, with a focusable, keyboard-reachable
-   * control rather than a span with a mouse handler.
-   *
-   * Receives the control itself so a popover can be anchored on it — this pane is mounted
-   * twice while the reader is open (read column and sheet) and the caller must be able to
-   * hang the popover off the copy that was clicked.
+   * Makes the from-line a control — avatar and address together. The
+   * requirement: click a mail address wherever it appears and change that
+   * sender's screening from there. A list row cannot carry this (`.row`
+   * is itself a <button>; nesting interactive content is invalid), so the
+   * open message is where the address becomes a focusable,
+   * keyboard-reachable control. Receives the control itself so a popover
+   * can be anchored on it — this pane mounts twice while the reader is
+   * open (read column and sheet), and the popover hangs off the clicked copy.
    */
   onSender?: (anchor: HTMLElement) => void;
   /** Tooltip/aria for that control — supplied by the app, which owns the copy. */

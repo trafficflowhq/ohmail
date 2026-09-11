@@ -60,15 +60,14 @@ export function shouldStack(naturalPx: number, availPx: number): boolean {
 }
 
 /**
- * Capsule segmented control; the active segment floats on lift-0.
- *
- * The control measures its own row form against the room its
- * parent gives it and switches to a stacked list (`data-stack`) when the row would overflow — see
- * `seg.css` for the two forms. The measurement is a ResizeObserver on the parent and on the
- * control itself; where none exists (a server render, a DOM without layout) the row form stands,
- * which is what every existing test renders. The natural width is remembered from the last row
- * measurement so a stacked list can tell when the room has come back, and it is forgotten when
- * the labels change (a locale switch, a count) so the next measurement reads the new words.
+ * Capsule segmented control; the active segment floats on lift-0. It
+ * measures its row form against the room its parent gives it and switches
+ * to a stacked list (`data-stack`) when the row would overflow (see
+ * `seg.css`). The measurement is a ResizeObserver on parent and control;
+ * where none exists (server render, DOM without layout) the row form
+ * stands, which is what every existing test renders. The natural width is
+ * remembered so a stacked list can tell when room came back, and forgotten
+ * when the labels change so the next measurement reads the new words.
  */
 export function SegmentedControl<T extends string = string>({
   options,

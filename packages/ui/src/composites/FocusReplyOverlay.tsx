@@ -20,18 +20,14 @@ export interface FocusReplyOverlayProps {
   value?: string;
   onChange?: (value: string) => void;
   /**
-   * THE EDITOR, SUPPLIED BY THE APP — and when it is, `value`/`onChange` are not used at all.
-   *
-   * The run steps through the same messages the inline reply answers and writes into the SAME
-   * per-message scratch buffer, so whatever the two surfaces offer has to be one grammar. Once
-   * that buffer can hold formatting, a plain `<textarea>` here is not a smaller editor, it is a
-   * lossy one: it would render markup as its flattened text and then overwrite the markup with
-   * that flattening the first time somebody pressed a key.
-   *
-   * A slot rather than moving the rich editor into this package: it belongs to the webapp — it
-   * knows the app's copy, its sanitizer allowlist and its scratch-buffer shape — and `@ohmail/ui`
-   * is also the desktop's, which has no business acquiring ProseMirror to render a card. The
-   * textarea stays as the default for every caller that has no editor to hand in.
+   * The editor, supplied by the app — when present, `value`/`onChange` are
+   * not used. The run writes into the same per-message scratch buffer as
+   * the inline reply, so the two surfaces must share one grammar: once the
+   * buffer holds formatting, a plain <textarea> here is lossy — it renders
+   * markup as flattened text and overwrites the markup on the first key.
+   * A slot rather than moving the rich editor into this package: the
+   * editor belongs to the webapp (its copy, sanitizer allowlist, buffer
+   * shape), and `@ohmail/ui` is also the desktop's. Textarea is the default.
    */
   editor?: ReactNode;
   onDone: () => void;

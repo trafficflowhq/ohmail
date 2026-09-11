@@ -3,35 +3,14 @@ import { Icon } from "../icons.js";
 import "./date-picker.css";
 
 /**
- * DATE PICKER — a month grid anchored to the control that opened it.
- *
- * The resurface chooser used a native `<input type="date">`: the
- * operating system drew the calendar in its own look, opened it downward from a control that
- * stands at the foot of the reading column, and let it run off the bottom of the display. This
- * is the same choice — a calendar day — drawn in the product's own tokens, placed where it fits,
- * and operable from the keyboard.
- *
- * THE WORDS COME FROM THE HOST. This package has no catalogue, so every string is a prop
- * (`labels`), the way `SearchBox` and `CommandPalette` take theirs; and the month and weekday
- * names come from `Intl.DateTimeFormat` in the host's locale — the same source the shell's
- * `format.ts` reads its "Fri" and "Sept." from — never from an array written here.
- *
- * DAYS ARE CALENDAR DAYS, "YYYY-MM-DD", never instants. The host decides what "today" is and
- * which zone it is in (the shell's `dayValue` does), and receives the picked day as the same
- * string; every date computed here runs through `Date.UTC` so no zone can move a day.
- *
- * PLACEMENT: below the anchor when the whole card fits there, above it otherwise, and never
- * outside the viewport on either axis — the same order the shell's overlay clamp states for the
- * sender sheet. Measured after render (`useLayoutEffect`) and again on resize.
- *
- * KEYBOARD (the grid roves; one cell holds the tab stop):
- *   ← → ↑ ↓   one day, one week; crossing a month edge shows that month
- *   Home End  first and last day of the week
- *   PgUp PgDn the same day a month earlier or later
- *   ↵ Space   pick the focused day (nothing on a disabled day)
- *   Esc       close — the HOST returns focus to its trigger, as it does for the More menu
- * A key the picker handles reaches nothing else (`stopImmediatePropagation` on the native event,
- * for the reason `MoreMenu` states: the shell's key registry listens on `document` too).
+ * Date picker: a month grid in the product's own tokens, anchored to the
+ * control that opened it — below when it fits, above otherwise, never
+ * outside the viewport. Strings come from the host via `labels`; month and
+ * weekday names from Intl.DateTimeFormat in the host's locale. Days are
+ * calendar days ("YYYY-MM-DD"), never instants: the host decides today and
+ * the zone, and all math runs through Date.UTC. Keyboard: arrows move a
+ * day/week, Home/End, PgUp/PgDn, Enter/Space pick, Esc closes; handled keys
+ * stop immediate propagation — the shell's key registry is on document too.
  */
 
 export interface DatePickerLabels {

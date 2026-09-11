@@ -1,41 +1,12 @@
 /**
- * The seen-marking machinery from the prototype, as a hook: an element
- * carrying `data-unseen` counts as seen once it has fully risen into
- * (or above) the top third of its scroller — but never before the USER
- * has actually driven the scroller.
- *
- * ── WHY THE GUARD IS ON INPUT AND NOT ON `scroll` ─────────────────────────
- *
- * It used to arm on the scroller's `scroll` event, and the comment above
- * used to say "never before the USER has actually scrolled". That sentence
- * was false: `scroll` is a CONSEQUENCE, fired identically for
- * `scrollIntoView`, `scrollTo` and an anchor jump, and the two views that
- * wire this hook up to a real `\Seen` write issue exactly those calls —
- * `ReadsView`/`ReceiptsView` scroll the list to follow the selection, and
- * both scroll the reading stream on a cross-view jump. So a jump from
- * Search or a Tag row armed the guard and the observer then committed
- * every unread row the jump had swept past. Measured against the real
- * view, by a regression test that reproduces the jump:
- * a jump to the 16th receipt marked ELEVEN messages read, with no user
- * scroll anywhere in the sequence, and read-state is not local — the
- * worker reconciles it onto `\Seen` on the user's own IMAP server.
- *
- * INPUT is intent; scroll position is a consequence of it. So the guard
- * arms on the events a human produces to move a scroller and on nothing
- * else, and a programmatic scroll — however it is issued, by whichever
- * caller, now or later — cannot reach the commit path because it produces
- * none of them. That is what makes this proof against the next caller
- * rather than against the two that exist: a suppression window around
- * today's `scrollIntoView` calls would have to be added to each new one,
- * and a smooth scroll that lands after the window closes defeats it
- * anyway.
- *
- * The bias is deliberate: a missed mark leaves mail bold, a false mark
- * writes `\Seen` to the user's server. Everything ambiguous is therefore
- * left OUT of `arm` — notably `pointerdown` (a scrollbar drag is a real
- * scroll, but so is a click on a row, and a row click is what makes these
- * views scroll themselves) and the app's own `j`/`k`, which move a cursor
- * and call `scrollIntoView` rather than scrolling natively.
+ * Marks an element carrying `data-unseen` as seen once it has fully risen
+ * into the top third of its scroller — never before the user has driven the
+ * scroller. The guard arms on input events, not `scroll`, which also fires
+ * for scrollIntoView/scrollTo: a cross-view jump once marked eleven unread
+ * messages read, and read state reconciles onto `\Seen` on the user's own
+ * IMAP server. A programmatic scroll produces no input event, so it cannot
+ * reach the commit path. Ambiguous events (pointerdown, the app's j/k) stay
+ * out of `arm`: a false mark writes to the server; a missed one leaves bold.
  */
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 
