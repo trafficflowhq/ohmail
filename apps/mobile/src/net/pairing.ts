@@ -158,7 +158,7 @@ export function nextStep(hello: HelloAnswer): PickerStep {
  * Re-exported here rather than imported at every call site so that the screens keep one import,
  * and so this module's own header keeps documenting the token discipline it enforces.
  */
-export { parsePairLink, type PairLink } from "@ohmail/client-engine";
+export { parsePairLink, shortPin, type PairLink } from "@ohmail/client-engine";
 
 /* ── the picker's origin handoff ────────────────────────────────────────────────────────────── */
 
@@ -385,21 +385,77 @@ function vaultFor(profiles: ServerProfileStore, id: string): RefreshVault {
 }
 
 /**
- * The whole ceremony: negotiate, redeem, learn the account, persist the profile (active),
- * boot the engine. Every refusal is a sentence the screen can show; none of them carries the
- * token.
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  THE ADMISSION — what a probe MEASURED about a door, and the only way to reach a redeem
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * A pairing is two acts with a PERSON between them: find out what is at this address (no
+ * credential spent, nothing stored), show them what was found, and only then spend the code.
+ * Before this type existed there was one act — {@link pairWithServer} took an origin and a token
+ * and redeemed on the spot — which is why a scanned QR paired a phone with whatever answered.
+ *
+ * A QR is a string nobody can read. The desktop's Devices pane has said, in every shipped
+ * release since the same-network door landed, *"a device pairing over your network shows these
+ * characters before it pairs. If it shows different ones, something else is answering for this
+ * computer."* The phone showed nothing and pressed on. So the sentence was false, and the check
+ * it invites — the one thing standing between a scan and trusting a stranger's key for the life
+ * of the pairing — was not offered to anybody.
+ *
+ * WHY IT IS A TYPE AND NOT A SCREEN'S DISCIPLINE. A confirmation any new call site can forget is
+ * not a gate. {@link pairWithServer} no longer accepts an origin at all: it accepts one of these,
+ * and the only function that makes one is {@link probePairing}. The unconfirmed pairing is not
+ * refused — it is unrepresentable. A census over this app's own sources closes the other half by
+ * naming the one component allowed to redeem, so a screen that probed and then redeemed without
+ * showing anybody the answer is a failing build rather than a review note.
+ *
+ * Every field is MEASURED, never taken from the link, with one exception that is stated because
+ * it matters: `origin` and `pin` ARE the link's, because they are what the phone will connect to
+ * and the key it will accept — the subject of the question, not the answer. `flavor` is the
+ * door's own word about itself, read over the pinned connection. A "display name" carried in the
+ * QR was rejected for this reason: it would let the attacker's code name the attacker's server
+ * "MacBook Pro" on the very screen built to catch it.
  */
-export async function pairWithServer(
+export interface PairAdmission {
+  /** Lower-cased scheme+host(+port) — where the redeem and every later request will go. */
+  origin: string;
+  /** The door's key fingerprint from the link, INSTALLED in the TLS stack. `null` unpinned. */
+  pin: string | null;
+  /** What `GET /hello` said this is — "local", "desktop-host", "selfhost", "managed". */
+  flavor: string;
+  /** Where the `/sync` family answers, measured (`server-base.ts`). */
+  apiBase: string;
+  /**
+   * The brand. Not security — a phone cannot keep a secret from its own code — but a value with
+   * this field can only have come from {@link probePairing}, so a call site cannot assemble one
+   * out of a scanned link and skip the person.
+   */
+  readonly probed: true;
+}
+
+export type ProbeOutcome =
+  | { kind: "offers"; admission: PairAdmission }
+  | { kind: "refused"; reason: Refusal };
+
+/**
+ * ASK AN ADDRESS WHAT IT IS, SPENDING NOTHING.
+ *
+ * Steps 0, 1 and 1b of the old one-shot ceremony, unchanged and in the same order — the transport
+ * gate, `/hello`, and where the mail API answers. Every one is credential-free, which is what
+ * lets them run before the person has decided anything and what makes a refusal here cost a
+ * sentence instead of a spent code.
+ *
+ * The TOKEN IS NOT A PARAMETER. It stays with whoever scanned it until the confirmation is
+ * pressed, so nothing on this path can log it, send it or hold it.
+ */
+export async function probePairing(
   env: PairingEnv,
-  input: { origin: string; token: string; pin?: string | null },
-): Promise<PairOutcome> {
+  input: { origin: string; pin?: string | null },
+): Promise<ProbeOutcome> {
   const fetchImpl = env.fetchImpl ?? bareFetch();
   const origin = normalizeOrigin(input.origin);
   if (!/^https?:\/\/\S+$/.test(origin)) {
     return { kind: "refused", reason: refuse("pairBadAddress", input.origin) };
   }
-  const token = input.token.trim();
-  if (token === "") return { kind: "refused", reason: refuse("pairEmptyToken") };
 
   // 0 — THE TRANSPORT, BEFORE THE FIRST REQUEST AND NOT BEFORE THE REDEEM. `/hello` below is
   // already a request to this origin, so a pin installed after it would leave the negotiation
@@ -461,7 +517,32 @@ export async function pairWithServer(
     }
     return { kind: "refused", reason: resolved.reason };
   }
-  const apiBase = resolved.base;
+
+  return {
+    kind: "offers",
+    admission: {
+      origin, pin, flavor: negotiated.hello.flavor, apiBase: resolved.base, probed: true,
+    },
+  };
+}
+
+/**
+ * SPEND THE CODE against a door a person has just confirmed: redeem, learn the account, settle
+ * any owed deletion, persist the profile (active), boot the engine. Every refusal is a sentence
+ * the screen can show; none of them carries the token.
+ *
+ * It takes an {@link PairAdmission} rather than an origin, which is what makes the confirmation
+ * structural: there is no way to reach this function from a scanned string alone.
+ */
+export async function pairWithServer(
+  env: PairingEnv,
+  input: { admission: PairAdmission; token: string },
+): Promise<PairOutcome> {
+  const fetchImpl = env.fetchImpl ?? bareFetch();
+  const { origin, pin, apiBase } = input.admission;
+  const negotiatedFlavor = input.admission.flavor;
+  const token = input.token.trim();
+  if (token === "") return { kind: "refused", reason: refuse("pairEmptyToken") };
 
   // 2 — spend the token: its one appearance, in the redeem body. `kind` is this phone's own
   // declaration (the server's whitelist now carries the mobile vocabulary), omitted only when
@@ -578,7 +659,7 @@ export async function pairWithServer(
   try {
     profile = await env.profiles.add({
       origin,
-      flavor: negotiated.hello.flavor,
+      flavor: negotiatedFlavor,
       accountId: identity.accountId,
       refreshToken: tokens.refreshToken,
       // The pin is persisted with the credential, because it has to be re-installed on every

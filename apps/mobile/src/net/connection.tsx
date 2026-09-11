@@ -54,6 +54,9 @@ import {
   mobileDeviceKind,
   negotiate,
   pairWithServer,
+  probePairing,
+  type PairAdmission,
+  type ProbeOutcome,
   type ConnectedSession,
   type Negotiation,
   type PairingEnv,
@@ -97,14 +100,26 @@ export interface Connection {
    * NAME the answer before a single-use code is spent.
    */
   probeBase(origin: string): Promise<BaseVerdict>;
-  /** Redeem a scanned/typed pairing and go live on it. The reason is a showable sentence. */
   /**
+   * ASK WHAT IS AT THIS ADDRESS, SPENDING NOTHING — step one of two.
+   *
    * `pin` is the desktop door's key fingerprint out of the pairing link, for an address no
    * certificate authority can vouch for. Absent for every origin the platform verifies on its
    * own. It is a parameter rather than something the seam re-derives because it comes from the
    * QR the person scanned — that is the whole trust path.
+   *
+   * The answer is what the confirmation screen renders. NOTHING is stored, no code is spent, and
+   * the token is not even passed: it stays with the screen that scanned it until somebody says
+   * yes. See `net/pairing.ts#PairAdmission`.
    */
-  pair(origin: string, token: string, pin?: string | null): Promise<Attempt>;
+  probePair(origin: string, pin?: string | null): Promise<ProbeOutcome>;
+  /**
+   * REDEEM A CONFIRMED PAIRING and go live on it — step two. The reason is a showable sentence.
+   *
+   * Takes the admission {@link Connection.probePair} answered with, so this cannot be reached
+   * from a scanned string: the person in between is part of the type.
+   */
+  pairConfirmed(admission: PairAdmission, token: string): Promise<Attempt>;
   /** Switch the live session to a stored profile — BY ID; the row is re-read in the gate. */
   switchTo(profileId: string): Promise<Attempt>;
   /**
@@ -414,11 +429,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       activeId,
       ask: (origin) => negotiate(globalThis.fetch.bind(globalThis) as FetchLike, origin),
       probeBase: (origin) => resolveApiBase(globalThis.fetch.bind(globalThis) as FetchLike, origin),
-      pair: (origin, token, pin) =>
+      /* The probe takes no gate turn and tears nothing down: it spends nothing and stores
+         nothing, so a person who looks at the confirmation and presses Back is left exactly
+         where they were — still paired with whatever they were paired with. */
+      probePair: (origin, pin) => probePairing(env, { origin, pin: pin ?? null }),
+      pairConfirmed: (admission, token) =>
         gate.run(async (stillCurrent) => {
           if (live.current.k === "live") teardown(live.current.session);
-          if (stillCurrent()) setState({ k: "connecting", origin });
-          const outcome = await pairWithServer(env, { origin, token, pin: pin ?? null });
+          if (stillCurrent()) setState({ k: "connecting", origin: admission.origin });
+          const outcome = await pairWithServer(env, { admission, token });
           await refreshProfiles();
           if (!stillCurrent()) {
             if (outcome.kind === "paired") outcome.session.store.close();

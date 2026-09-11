@@ -37,6 +37,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@ohmail/ui";
+/* `shortPin` moved to core when the phone grew the third end of the key comparison; this file
+   still both USES it (the client door) and re-exports it (DesktopDevices imports it from here). */
+import { shortPin } from "@ohmail/client-engine";
 
 import { ProviderPicker } from "../../webapp/app/shell/ProviderPicker";
 import { hostsFor, providerById } from "../../webapp/app/shell/providers";
@@ -1183,20 +1186,14 @@ export function sentenceForKind(kind: HostLinkRefusal | string, host: string): s
 }
 
 /**
- * THE TWELVE CHARACTERS A PERSON ACTUALLY COMPARES — first six, an ellipsis, last six.
- *
- * The fingerprint is forty-three base64url characters. Shown whole it is a credential-shaped
- * string that nobody reads to the end, and a check nobody performs is worse than no check,
- * because it looks like one. Twelve is what fits in one glance across two screens, and the host's
- * own Devices pane shows exactly the same twelve from the same rule — the two ends of the
- * comparison have to be one function or the ceremony compares nothing.
- *
- * A value SHORTER than the twelve it would elide is returned whole rather than padded with an
- * ellipsis that hides nothing.
+ * Re-exported from `@trafficflow/core/pair-link`, where it moved when the PHONE grew the third
+ * end of the comparison. It was written here; the rule now has to be one function across three
+ * graphs (this window, the host's Devices pane, the phone's pairing confirmation), and the
+ * desktop's own copy — "a device pairing over your network shows these characters before it
+ * pairs" — is what makes that a contract rather than a tidiness. `DesktopDevices.tsx` imports it
+ * from this module, so the name stays here and decides nothing.
  */
-export function shortPin(pin: string): string {
-  return pin.length <= 13 ? pin : `${pin.slice(0, 6)}…${pin.slice(-6)}`;
-}
+export { shortPin };
 
 /**
  * Door three: a hosted ohmail account, mirrored onto this machine.

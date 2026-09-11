@@ -168,3 +168,24 @@ export function originNeedsPin(origin: string): boolean {
   // so that the day it is not, the answer is already the safe one.
   return host.startsWith("[");
 }
+
+/**
+ * THE TWELVE CHARACTERS A PERSON ACTUALLY COMPARES — first six, an ellipsis, last six.
+ *
+ * The fingerprint is forty-three base64url characters. Shown whole it is a credential-shaped
+ * string nobody reads to the end, and a check nobody performs is worse than no check because it
+ * looks like one. Twelve is what fits in one glance across two screens.
+ *
+ * IT LIVES HERE BECAUSE THE COMPARISON HAS THREE ENDS, NOT TWO. It was written in the desktop
+ * window, which shows this computer's key under Settings → Devices and the same twelve on its own
+ * client door. The PHONE is the third, and it is the end the whole ceremony is for: the desktop's
+ * copy says "a device pairing over your network shows these characters before it pairs", so a
+ * phone computing them by another rule — or not showing them — is that sentence being false. One
+ * function, in the package all three graphs compile.
+ *
+ * A value SHORTER than the twelve it would elide is returned whole rather than padded with an
+ * ellipsis that hides nothing.
+ */
+export function shortPin(pin: string): string {
+  return pin.length <= 13 ? pin : `${pin.slice(0, 6)}…${pin.slice(-6)}`;
+}

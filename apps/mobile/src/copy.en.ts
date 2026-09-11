@@ -345,6 +345,42 @@ const TABLE = {
   scanManual: "Enter it by hand instead",
   scanAgain: "Scan again",
 
+  /* ── THE CONFIRMATION BEFORE A CODE IS SPENT ───────────────────────────────────────────────
+     A QR is a string nobody can read. Every shipped release has said, in the desktop's own
+     Devices pane, that "a device pairing over your network shows these characters before it
+     pairs" — and the phone showed nothing and paired on the scan, which made that sentence
+     false. These are the screen that makes it true. `net/pairing.ts#PairAdmission` holds the
+     reasoning; the key is rendered from `shortPin`, the SAME twelve characters the desktop
+     draws, because two ends of a comparison computed by two rules compare nothing. */
+  pairConfirmTitle: "Pair this phone?",
+  pairConfirmLead:
+    "A code cannot be read by eye, so check what answered before it is spent.",
+  pairConfirmWhatLabel: "What answered",
+  /* THE DOOR'S OWN WORD ABOUT ITSELF, read over the connection this pairing will use — never a
+     name carried in the code. A "display name" in the QR would let a hostile code label a
+     stranger's server "MacBook Pro" on the one screen built to catch it. The default arm is the
+     flavor verbatim: a server this build has never heard of is named, not guessed at. */
+  pairConfirmWhat: (flavor: string) =>
+    flavor === "local" || flavor === "desktop-host"
+      ? "The ohmail app on a computer"
+      : flavor === "selfhost"
+        ? "An ohmail server"
+        : flavor === "managed"
+          ? "The hosted ohmail service"
+          : `An ohmail server (${flavor})`,
+  pairConfirmAddressLabel: "Address",
+  pairConfirmKeyLabel: "Its key",
+  pairConfirmKeyWhy:
+    "The same characters as under Settings \u2192 Devices there. If they differ, something else "
+    + "is answering for that computer \u2014 do not pair.",
+  /* NO KEY ROW WITHOUT A KEY. The desktop pane keeps the same rule for the same reason: a row
+     inviting a comparison against a value nothing shows is a check that cannot be performed. */
+  pairConfirmNoKeyWhy:
+    "This address carries a certificate your phone checks on its own, so there is no key to "
+    + "compare by eye.",
+  pairConfirmGo: "Pair",
+  pairConfirmCancel: "Do not pair",
+
   /* The Freshness Contract's label (INSTANT-ARCH §6.6): content over a stale mirror says how
      old it is, quietly, until a drain settles. `time` arrives sentence-ready from the world
      layer ("Fri 09:00", the reader's zone). Two forms because "catching up" is an ACTIVITY

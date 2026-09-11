@@ -30,6 +30,7 @@ export {
   originNeedsPin,
   pairLink,
   parsePairLink,
+  shortPin,
   type PairLink,
 } from "./pair-link.js";
 

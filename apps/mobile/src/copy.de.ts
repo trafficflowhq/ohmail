@@ -166,6 +166,32 @@ export const DE: Deck = {
   scanManual: "Stattdessen von Hand eingeben",
   scanAgain: "Erneut scannen",
 
+  /* ── DIE BESTÄTIGUNG, BEVOR EIN CODE EINGELÖST WIRD ────────────────────────────────────────
+     Siehe `copy.en.ts` für die Begründung. */
+  pairConfirmTitle: "Dieses Telefon koppeln?",
+  pairConfirmLead:
+    "Einen Code kann man nicht mit dem Auge lesen \u2014 prüfe darum, was geantwortet hat, "
+    + "bevor er eingelöst wird.",
+  pairConfirmWhatLabel: "Was geantwortet hat",
+  pairConfirmWhat: (flavor: string) =>
+    flavor === "local" || flavor === "desktop-host"
+      ? "Die ohmail-App auf einem Computer"
+      : flavor === "selfhost"
+        ? "Ein ohmail-Server"
+        : flavor === "managed"
+          ? "Der gehostete ohmail-Dienst"
+          : `Ein ohmail-Server (${flavor})`,
+  pairConfirmAddressLabel: "Adresse",
+  pairConfirmKeyLabel: "Sein Schlüssel",
+  pairConfirmKeyWhy:
+    "Dieselben Zeichen wie dort unter Einstellungen \u2192 Geräte. Weichen sie ab, antwortet "
+    + "etwas anderes an Stelle dieses Computers \u2014 dann nicht koppeln.",
+  pairConfirmNoKeyWhy:
+    "Diese Adresse hat ein Zertifikat, das dein Telefon selbst prüft; es gibt also keinen "
+    + "Schlüssel zum Vergleichen.",
+  pairConfirmGo: "Koppeln",
+  pairConfirmCancel: "Nicht koppeln",
+
   staleAsOf: (time: string) => `Stand ${time} · wird nachgeholt`,
   staleAsOfIdle: (time: string) => `Stand ${time}`,
 

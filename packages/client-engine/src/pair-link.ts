@@ -28,5 +28,6 @@ export {
   originNeedsPin,
   pairLink,
   parsePairLink,
+  shortPin,
   type PairLink,
 } from "@trafficflow/core/pair-link";
