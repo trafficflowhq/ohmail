@@ -1,42 +1,12 @@
 /**
- * WHERE THE FIRST-RUN FLOW OPENS — derived from truth-conditions, never from a step counter.
- *
- * ── THE RULING THIS FILE IS ────────────────────────────────────────────────────────────────
- *
- * Onboarding state is DERIVED. There is no
- * `onboarding_step` column and there must never be one, because a counter and the facts it
- * claims to summarise drift the moment anything happens outside the flow — a mailbox connected
- * from Settings, a Screener decision taken in the app, an install that organizes the mailbox
- * from another machine. Every one of those moves the person forward, and a counter would not
- * know. So the step is recomputed from what the product actually stored, every render:
- *
- *   current step = the FIRST unmet condition.
- *
- * That single rule is what makes the flow resumable across restarts, re-runnable from Settings
- * pre-filled, and correct on a door where somebody else did half the work.
- *
- * ── WHY THIS IS A PURE FUNCTION IN ITS OWN FILE ────────────────────────────────────────────
- *
- * The inputs come from four places (a polled `GET /mailboxes` row, `GET /consent`, the door's AI
- * posture, the Screener queue) and three doors compose them differently — Cloud reads a REST DTO,
- * the standalone desktop reads the sidecar, the self-host reads both plus `/hello`. Keeping the
- * DECISION separate from all three is what makes the state→condition table testable as a table:
- * every row below is one test with no React, no fetch and no clock. The alternative — the
- * decision spread across the component's render — is the shape in which a table like this stops
- * being checkable, and this one has thirteen rows.
- *
- * ── THE ORDER, AND ONE DIVERGENCE THAT IS DELIBERATE ───────────────────────────────────────
- *
- * The order below is the one the flow's own progress rail shows and the one its screens are
- * numbered in: mailbox → organize → history → AI → pull → decide → done. An alternative ordering
- * was considered that puts the import ahead of the AI question. The two disagree only on RESUME,
- * and only in one state: quit during the first pull with AI still unanswered.
- *
- * The rail wins there, and the reason is what the two screens are. The AI step is an unanswered
- * QUESTION and takes a second; the pull step is a progress bar that needs no input and continues
- * whether or not anybody is looking at it (the status bar carries its counters — {@link
- * ONBOARDING_STATUS_COUNTERS}). Resuming onto the progress bar would park the person in front of
- * a screen that wants nothing from them while an actual question waits behind it.
+ * Where the first-run flow opens — derived from truth-conditions, never a step counter. There is no
+ * `onboarding_step` column and there must never be one: a counter drifts the moment anything happens
+ * outside the flow (a mailbox connected from Settings, a Screener decision, another install
+ * organizing). The step is recomputed every render: the first unmet condition — which makes the flow
+ * resumable, re-runnable pre-filled, and correct when somebody else did half the work. A pure function
+ * in its own file so the thirteen-row table is testable with no React, no fetch, no clock. The order
+ * is the progress rail's (mailbox → organize → history → AI → pull → decide → done); on resume the AI
+ * question outranks the pull's progress bar, which wants nothing from the person.
  */
 
 /**
@@ -62,34 +32,22 @@ export type OnboardingStep =
   | "pair";
 
 /**
- * WHICH DOOR IS ASKING. Not cosmetic: it changes which steps exist at all.
- *
- *  · `local`    — the standalone desktop. The only door with an AI PROVIDER step, because it is
- *                 the only one where the model is a property of the install (`ai-provider.ts`).
- *  · `cloud`    — the managed service. AI is on/off against ohmail's own key; the provider step
- *                 is informational. On this door setup begins only after the account's own email
- *                 address has been verified — a mailbox may not be connected before that — and
- *                 that rule is enforced by the ENTRY POINT, not here: this function is never asked
- *                 about an account that has not verified.
- *  · `selfhost` — like cloud, with the provider step read-only from `/hello`.
+ * Which door is asking — it changes which steps exist at all. `local` is the standalone desktop, the
+ * only door with an AI provider step, because only there the model is a property of the install
+ * (`ai-provider.ts`). `cloud` is the managed service: AI is on/off against ohmail's own key, and setup
+ * begins only after the account's own address is verified — enforced by the entry point, not here;
+ * this function is never asked about an unverified account. `selfhost` is like cloud, with the
+ * provider step read-only from `/hello`.
  */
 export type OnboardingDoor = "local" | "cloud" | "selfhost";
 
 /**
- * THE AI POSTURE, as the four states that select different screens — not a boolean.
- *
- * A boolean cannot express the difference between "nobody has been asked" and "asked, and the
- * answer was no", and those two need opposite behaviour: the first stops the flow to ask, the
- * second walks past. That distinction is the reason this is a union, and collapsing it is how
- * the AI step would either nag somebody who already declined or silently skip somebody who was
- * never asked.
- *
- *  · `unset`          — never answered. The flow asks.
- *  · `off`            — answered no. A COMPLETE answer; the flow continues without AI, and the
- *                       provider step does not exist for this run.
- *  · `on-unconfigured` — answered yes, but no usable provider yet (a local install with no model
- *                       chosen). The provider step is the unmet condition.
- *  · `on`             — answered yes and usable. Nothing left to ask.
+ * The AI posture as four states, not a boolean — a boolean cannot separate "nobody has been asked"
+ * from "asked, and the answer was no", and those need opposite behaviour: the first stops the flow to
+ * ask, the second walks past. `unset` — never answered; the flow asks. `off` — answered no, a complete
+ * answer; the flow continues without AI and the provider step does not exist for this run.
+ * `on-unconfigured` — answered yes but no usable provider yet (a local install with no model chosen);
+ * the provider step is the unmet condition. `on` — answered yes and usable; nothing left to ask.
  */
 export type OnboardingAi = "unset" | "off" | "on-unconfigured" | "on";
 
@@ -126,22 +84,13 @@ export interface OnboardingMailbox {
   /** Whether that holder is still renewing. Read by the SCREEN, not by this derivation. */
   organizerState?: "held" | "stopped" | null;
   /**
-   * WHEN WHAT THIS ROW SAYS ABOUT ITS ORGANIZER LAST CHANGED — the one fact that ORDERS two
-   * reads of the same mailbox, and the reason it is carried here.
-   *
-   * NOT read by this derivation, which is a pure function of one read. It is read by
-   * `firstRunStep`, which is not: two reads of one account can be in flight together and settle
-   * in either order, so an answer prepared before a holder was recorded can land after the one
-   * that showed it — a `nobody` that is true of a moment that has passed, and taking the claim
-   * question away on it puts somebody one press from authorizing a takeover they were never
-   * offered. Every writer that changes the organizing story stamps this in the same statement
-   * (the demotion, the promotion, the release, and the lease read when the state it saw
-   * changed), so a read that carries an older stamp than the one that showed the holder is an
-   * older read.
-   *
-   * `null` is a mailbox nothing has happened to yet; ABSENT is a build that predates the column.
-   * Both mean "no ordering evidence", and the rule that consults it says what it does with that
-   * rather than pretending the evidence exists.
+   * When what this row says about its organizer last changed — the one fact that orders two reads of
+   * the same mailbox. Not read by this derivation (a pure function of one read) but by `firstRunStep`,
+   * which is not: two reads can settle in either order, so a `nobody` prepared before a holder was
+   * recorded can land after the read that showed it, and acting on it puts somebody one press from
+   * authorizing a takeover they were never offered. Every writer that changes the organizing story
+   * stamps this in the same statement, so an older stamp is an older read. `null` is a mailbox nothing
+   * has happened to; absent is a build that predates the column — both mean "no ordering evidence".
    */
   organizerEventAt?: string | null;
   /**
@@ -187,24 +136,12 @@ export interface OnboardingFacts {
 }
 
 /**
- * WHERE THE FLOW OPENS, or `null` when it must not open at all.
- *
- * `null` is a real answer and the most common one: every boot of every account that has been
- * through setup returns it. The caller renders nothing.
- *
- * ── THE TABLE, IN ORDER. Each arm is one row, and one test. ────────────────────────────────
- *
- *  1. completed          → null       the flow has been left; never re-opens by itself
- *  2. no mailbox         → "mailbox"  nothing to organize; the door's first real question
- *  3. a holder is named → "elsewhere" somebody else organizes it — the choice, never a dead end
- *     + no consent
- *  4. no consent         → "consent"  the re-arrangement statement, then the window
- *  5. AI unset           → "ai"       an unanswered question, ahead of the progress bar
- *  6. AI on, no provider → "provider" local door only; elsewhere "on" needs no configuring
- *  7. import not done    → "pull"     the progress bar; leaving it is allowed and expected
- *  8. queue non-empty    → "decide"   the guided first decision
- *  9. otherwise          → "summary"  what ohmail did
- *
+ * Where the flow opens, or `null` when it must not open at all — the most common answer: every boot of
+ * an account that has been through setup. Each arm is one row and one test, in order:
+ *  1. completed → null; 2. no mailbox → "mailbox"; 3. holder named + no consent → "elsewhere" (the
+ *  choice, never a dead end); 4. no consent → "consent"; 5. AI unset → "ai" (a question, ahead of the
+ *  progress bar); 6. AI on, no provider → "provider" (local door only); 7. import not done → "pull"
+ *  (leaving it is allowed); 8. queue non-empty → "decide"; 9. otherwise → "summary".
  * `welcome` and `pair` are never returned — see {@link OnboardingStep}.
  */
 export function deriveOnboardingStep(facts: OnboardingFacts): OnboardingStep | null {
@@ -227,27 +164,16 @@ export function deriveOnboardingStep(facts: OnboardingFacts): OnboardingStep | n
   // `{null,null,null}` from routing everybody through the wrong screen.
   const heldByOther = Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name));
 
-  // ROW 3 — SOMEBODY ELSE ORGANIZES IT. Ahead of consent because the consent screen would be a
-  // lie here: agreeing would not start organizing anything until the claim is taken, and the
-  // claim is what this screen is for. Gated on `!consented` so a mailbox this account HAS
-  // consented to, and that another install later took, is not asked for consent a second time —
-  // its banner and its "Organize here instead" button live in Settings, not in first-run setup.
-  //
-  // ── THE HOLDER IS THE CONDITION. THE ROLE IS NOT, AND ASKING FOR BOTH SKIPPED THIS SCREEN ──
-  //
-  // This arm read `isReader && heldByOther && !consented`, and the extra clause bought nothing
-  // while it could take the screen away. The four holder columns are written by a PEEK — the
-  // APPEND-less lease read (`notePreConsentHolder` on the standalone door,
-  // `refreshReaderHolder` on the hosted one) — and the ROLE is written by a different event
-  // entirely: the stand-down. So on a pre-consent mailbox the two do not move together, and a
-  // build that has looked and seen a live foreign claim must act on what it saw rather than
-  // wait for a demotion that only happens after somebody has already agreed.
-  //
-  // `!consented` carries the whole of the old clause's meaning anyway: a mailbox nobody has
-  // agreed to is by construction not one this install organizes, whatever `organizer_role`
-  // says. The dangerous direction here is the one that was measured — a fresh standalone
-  // connect to a mailbox ohmail Cloud holds walked past this screen, agreed, and stood down to
-  // reader on its next pass, having been shown a consent statement instead of the choice.
+  // Row 3 — somebody else organizes it. Ahead of consent because the consent screen would be a lie
+  // here: agreeing would not start organizing anything until the claim is taken. Gated on `!consented`
+  // so a mailbox this account has consented to, and another install later took, is not asked again —
+  // its banner and "Organize here instead" live in Settings. The holder is the condition and the role
+  // is not: the holder columns are written by a peek (`notePreConsentHolder` / `refreshReaderHolder`)
+  // while the role is written by the stand-down, so on a pre-consent mailbox the two do not move
+  // together — the old `isReader &&` clause skipped this screen, and a fresh standalone connect to a
+  // mailbox ohmail Cloud holds walked past it, agreed, and stood down to reader on its next pass.
+  // `!consented` carries the old clause's meaning: an unconsented mailbox is not one this install
+  // organizes, whatever `organizer_role` says.
   if (heldByOther && !consented) return "elsewhere";
 
   // ROW 4 — NO CONSENT. The re-arrangement statement and, on its heels, the window: they are two
@@ -296,53 +222,27 @@ export function deriveOnboardingStep(facts: OnboardingFacts): OnboardingStep | n
 export function onboardingPath(
   facts: OnboardingFacts,
   /**
-   * IS THIS AN "ADD A MAILBOX" RUN — the third intent, off the route (`Route.firstRunAdd`).
-   *
-   * A standalone install can hold more than one mailbox, and the second one is not a first run.
-   * Four screens come out of the walk and each for its own reason, not as a shortening:
-   *
-   *  · `welcome` — "one sentence about what ohmail does" to somebody who has been using it;
-   *  · `ai` and `provider` — the model is a property of the INSTALL (`ai-provider.ts`), answered
-   *    once when it was set up. Asking again per mailbox would imply a per-mailbox answer that
-   *    nothing stores, and answering "no" here would look like it turned AI off for the install;
-   *  · `pair` — the phone is paired to the install, not to a mailbox, for the same reason.
-   *
-   * What is left is 1, 2, 3, 4, 7, 8, 9: connect it, say who organizes it if somebody does,
-   * agree, choose the window, watch the pull, take a decision, read the summary. The window IS
-   * asked again because it is written by the consent transaction this run performs — it is
-   * pre-filled from `GET /consent` and it writes the ACCOUNT row, which is where the standalone
-   * door's window lives (ruling (a): "a per-mailbox window is REFUSED").
-   *
-   * DEFAULTED FALSE, and that default is the pre-existing behaviour rather than a choice about a
-   * new one: every caller that predates multi-mailbox is a first run or a re-run.
+   * Is this an "add a mailbox" run — the third intent, off the route (`Route.firstRunAdd`). A
+   * standalone install can hold more than one mailbox, and the second is not a first run. Four screens
+   * leave the walk, each for its own reason: `welcome` (the person already uses ohmail); `ai` and
+   * `provider` (the model is a property of the install, `ai-provider.ts` — asking per mailbox implies
+   * a per-mailbox answer nothing stores); `pair` (the phone is paired to the install). The window IS
+   * asked again — it is written by the consent transaction this run performs onto the account row
+   * (ruling (a): a per-mailbox window is refused). Defaulted false: every caller predating
+   * multi-mailbox is a first run or a re-run.
    */
   add = false,
 ): OnboardingStep[] {
   const out: OnboardingStep[] = add ? ["mailbox"] : ["welcome", "mailbox"];
   const mb = facts.mailbox;
-  // The elsewhere screen is in the PATH only when it is actually the situation. Walking somebody
-  // through "somebody else organizes this" when nobody does would be a screen with no content.
-  //
-  // THE HOLDER IS THE CONDITION, and the ROLE is not — row 3's note carries the argument, and it
-  // applies here for the sharper reason: the path decides where `forward()` goes, so a path that
-  // omitted the screen the derivation resumes on would make Continue walk away from the screen
-  // the facts had just selected.
-  //
-  // ── AND IT IS NOT THE HOLDER ALONE, BECAUSE A PROMOTED INSTALL KEEPS ITS OLD HOLDER ──────
-  //
-  // `!consented || isReader`, and the second clause is what row 3 does not need. Row 3 is gated
-  // on `!consented`, so a consented mailbox can never route it wrong; the PATH is walked, and
-  // the two doors clean up differently after a takeover. The hosted worker's
-  // `clearOrganizerStandDown` nulls all four holder columns with the role; the standalone
-  // engine's promote arm writes `organizer_role = 'organizer'` and says in so many words that
-  // "the two clean-up columns are deliberately NOT touched". So a standalone install that HAS
-  // taken a mailbox over is `organizer` with `organized_by_*` still naming the install it took
-  // it from — and on the holder alone this arm would put "somebody else organizes this" into
-  // the walk for a mailbox this machine organizes, one Back press from the re-run's consent
-  // statement, with a claim button that would fire `organize` against itself.
-  //
-  // The re-entry case the clause exists for is unaffected: a mailbox this account consented to
-  // and another install has since TAKEN is a `reader`, which is the arm that screen serves.
+  // The elsewhere screen is in the path only when it is actually the situation. The holder is the
+  // condition (row 3's note), and here it is not the holder alone: `!consented || isReader`, because a
+  // promoted install keeps its old holder columns. The hosted worker's `clearOrganizerStandDown` nulls
+  // all four with the role, but the standalone engine's promote arm writes `organizer_role =
+  // 'organizer'` and deliberately leaves the clean-up columns — so on the holder alone this arm would
+  // put "somebody else organizes this" into the walk for a mailbox this machine organizes, one Back
+  // press from a claim button firing `organize` against itself. The re-entry case the clause serves is
+  // unaffected: a mailbox this account consented to and another install has since taken is a `reader`.
   if (mb
       && Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name))
       && (!mb.organizeConsentedAt || mb.organizerRole === "reader")) {

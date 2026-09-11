@@ -1,86 +1,36 @@
 "use client";
 
 /**
- * SENDING MAIL — the client half of the gated send, and the one action in
- * this app that cannot be taken back.
- *
- * Everything else the shell dispatches is a local edit the server later agrees with; a
- * rejection rolls the overlay back and nothing is lost. A send is not that. So this state
- * machine exists for one reason: **a send that has not been delivered must never look like
- * one that has.** Four outcomes, four different things on screen:
- *
- *   `sending`     the request is out. Send is locked — a second press would mint a second
- *                 Idempotency-Key, which is a second draft AND a second reservation, which
- *                 is a real double-send to a real person.
- *   `queued`      the transport failed or the server said `in_flight`. The intent stands
- *                 (the engine kept the overlay and the key), the editor keeps the text, and
- *                 the copy says "not sent yet" — never "sent". Retried on a backoff below.
- *   `unverified`  SMTP threw AND the server's Sent-folder probe found no copy. Genuinely
- *                 ambiguous: it may have gone out. We do NOT retry — the send path never
- *                 resends on its own when the outcome is ambiguous, because that is how a
- *                 person receives the same mail twice — and we do not lock the button either,
- *                 because the server refuses every further send of THAT draft
- *                 (`send-service.ts:162-168`), so a lock would brick the editor forever after
- *                 one hiccup. The warning stays on screen and the next press is a fresh
- *                 send the user deliberately chose.
- *   `failed`      a definite refusal. Text kept, reason shown, Send live again.
- *
- * ── ONE MACHINE, TWO SURFACES ───────────────────────────────────────────────────────────
- *
- * It shipped serving the inline reply only, and Compose was given this machine rather than one
- * of its own. Nothing above is reply-specific: the lock, the retry driver, the
- * four-outcome reading of the wire and "a 200 is inspected, not trusted" are properties of
- * SENDING, and a second copy of them is a second place for "one press is one delivery" to be
- * true in. The
- * difference between the two callers is one field on the mutation (`inReplyTo`) and one line
- * in `settle` (a reply discharges a triage debt; a compose has none).
- *
- * States are keyed by {@link sendKeyOf}: the parent message id for a reply, the constant
- * {@link COMPOSE_SEND_KEY} for the compose surface, of which there is exactly one.
- *
- * ── WHY THERE IS A RETRY DRIVER HERE ────────────────────────────────────────────────────
- *
- * `OhmailEngine.flushPending()` had NO caller anywhere in the app. A retryable rejection
- * queues the mutation with its key preserved and then nothing ever drains it — so `queued`
- * would have been a permanent state wearing a hopeful label. Convergence is safe on the
- * server's side: while the first invocation lives, a same-key request answers `in_flight`;
- * once it finalizes, the same key replays the terminal outcome; past `SEND_STALE_AFTER_MS`
- * the retry itself triggers verify-by-Sent recovery. ONE timer for the whole queue, because
- * `flushPending` drains all of it.
- *
- * ── COMPLETION IS ROUTED THROUGH HERE, NOT THROUGH THE BUTTON ───────────────────────────
- *
- * A confirmation can arrive from the original `mutate()` OR from a flush minutes later, by
- * which time the user may have closed the editor or walked to another view. Both paths land
- * in `settle`, so the scratch draft is cleared and the triage debt discharged either way, and
- * the surface is
- * closed only if it still happens to be the one on screen.
- *
- * ── THE LOCK IS DURABLE; THE REF IS ADVISORY ────────────────────────────────────────────
- *
- * Everything above was true within one session and false across a reload: `locked` is a `useRef`,
- * and a lock whose lifetime is a component's cannot prevent the double it exists to prevent. The Idempotency-Key is now persisted with the
- * send LANE at the moment it is minted (`shell/send-lock.ts`), synchronously and ahead of the
- * verb, and a press on a lane that already holds a key RESUMES it rather than minting a second
- * one. `locked` stays because it is the only check that is correct inside one tick; the durable
- * key is the one that is correct across a process, and it is the authoritative half.
- *
- * ── THE RESIDUAL, STATED RATHER THAN LEFT TO BE FOUND ───────────────────────────────────
- *
- * There is deliberately no adoption pass at mount, and the reason is that every version of one
- * introduced a worse failure than the one it removed. A restored outbox entry for a `mail_send` is
- * replayed by the ENGINE's drive (`replayOutbox` takes every `restored` entry, owner-settled or
- * not) and its result is routed to no surface, because the surface that owned it died. So a mount
- * that adopted the lane as `queued` would lock a button whose settlement can never arrive through
- * `flushPending` — a wedged Send on a mail client, which is worse than a stale composer.
- *
- * What is left is therefore this: after a reload that the boot replay has already settled, the
- * composer still shows the message until the reader presses Send once more, and that press returns
- * the server's stored outcome for the original send. **Nothing is delivered twice and nothing
- * claims to be sent that was not** — the invariant holds — but the scratch draft is not bound to
- * the send's durable record, so it outlives it. Closing that means binding the scratch buffer to
- * the lane's durable claim and clearing it on the draft row's own `sent` transition (which `/sync`
- * already emits); it is ledgered rather than smuggled in here.
+ * Sending mail — the client half of the gated send, the one action that cannot be taken back: a send
+ * that has not been delivered must never look like one that has. Four outcomes: `sending` (request out,
+ * Send locked — a second press mints a second Idempotency-Key, a real double-send); `queued` (transport
+ * failed or server said `in_flight`; the copy says "not sent yet", retried on a backoff); `unverified`
+ * (SMTP threw and the Sent probe found no copy — never retried on its own, and not locked either: the
+ * server refuses further sends of that draft, `send-service.ts:162-168`; the next press is a deliberate
+ * fresh send); `failed` (definite refusal — text kept, Send live). One machine, both surfaces, keyed by
+ * {@link sendKeyOf}: the parent id for a reply, {@link COMPOSE_SEND_KEY} for the one compose surface.
+ */
+
+/**
+ * The retry driver lives here because `OhmailEngine.flushPending()` had no caller — a retryable
+ * rejection queued the mutation and nothing drained it, so `queued` was a permanent state with a
+ * hopeful label. Convergence is safe server-side: a same-key request answers `in_flight`, replays the
+ * terminal outcome, or past `SEND_STALE_AFTER_MS` triggers verify-by-Sent. One timer for the whole
+ * queue. Completion routes through `settle`, not the button: a confirmation can arrive from `mutate()`
+ * or a flush minutes later, so the scratch is cleared and the triage debt discharged either way, and
+ * the surface closes only if still on screen. The lock is durable (`shell/send-lock.ts`); the
+ * `locked` ref is advisory, correct only within one tick.
+ */
+
+/**
+ * The residual, stated: deliberately no adoption pass at mount — a restored `mail_send` outbox entry
+ * is replayed by the engine's own drive (`replayOutbox`) with its result routed to no surface, so a
+ * mount adopting the lane as `queued` would lock a button whose settlement can never arrive: a wedged
+ * Send, worse than a stale composer. What remains: after a reload the boot replay already settled, the
+ * composer shows the message until the reader presses Send once more, and that press returns the
+ * server's stored outcome. Nothing is delivered twice and nothing claims to be sent that was not; the
+ * scratch draft simply outlives the send's record. Closing that means binding the scratch to the
+ * lane's durable claim and clearing on the row's `sent` transition — ledgered, not smuggled in here.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -106,16 +56,12 @@ import type { SignatureState } from "./signature";
 export type SendPhase = "idle" | "sending" | "sent" | "queued" | "unverified" | "failed" | "duplicate";
 
 /**
- * How long the delivered state is held on screen before the surface closes — the beat.
- *
- * The composer used to close on the confirmation itself, which meant the only thing the reader
- * ever saw of a successful send was the surface disappearing. That reads as "something happened"
- * and not as "this was sent", and on a send that took four seconds it reads as neither. Six
- * hundred milliseconds is long enough for the button's own `sent` state to be seen and short
- * enough that nobody waits for it.
- *
- * It is NOT a delay on the delivery, on the toast, or on the triage discharge: all of those run
- * at the confirmation, exactly as before. Only the closing is on the beat.
+ * How long the delivered state is held before the surface closes — the beat. Closing on the
+ * confirmation itself meant the only thing the reader saw of a successful send was the surface
+ * disappearing, which reads as "something happened", not "this was sent". Six hundred milliseconds
+ * is long enough for the button's own `sent` state to be seen, short enough that nobody waits. It is
+ * not a delay on the delivery, the toast, or the triage discharge — those run at the confirmation;
+ * only the closing is on the beat.
  */
 export const SENT_BEAT_MS = 600;
 
@@ -135,23 +81,14 @@ export interface SendState {
   /** The server's or the transport's own words, for `failed`. */
   reason?: string;
   /**
-   * WHICH `queued` THIS IS, and the difference is the difference between two sentences.
-   *
-   * `true` — THE SERVER ACCEPTED IT. The reservation is committed under this key and the
-   * submission is still being handed to the mail server (the send route's own `queued`, past its
-   * attempt ceiling). What that licenses is one thing only: NOT telling the reader their request
-   * may have failed to arrive, because a committed reservation proves it did. It does NOT
-   * license closing the surface, and it does NOT license "ohmail sends it on its next pass" —
-   * no pass claims an interactive row (`claimDue` requires a `send_key` this send has never
-   * had). See `absorb` and `SendStatus` for both corrections.
-   *
-   * ABSENT — the request may never have arrived. A transport rejection, a replay hold, an
-   * offline press: the intent is in the durable outbox and the retry driver is trying. The only
-   * honest line is "Not sent yet", and the surface stays open.
-   *
-   * Saying "Accepted" about a request nobody received is the exact class of false claim the
-   * four-phase machine exists to prevent, which is why this is a field and not an inference from
-   * the phase.
+   * Which `queued` this is — the difference between two sentences. `true` — the server accepted it:
+   * the reservation is committed under this key and the submission is still being handed to the mail
+   * server. That licenses one thing only: not telling the reader their request may have failed to
+   * arrive. It does not license closing the surface, nor "ohmail sends it on its next pass" — no
+   * pass claims an interactive row (`claimDue` requires a `send_key` this send never had; see `absorb`
+   * and `SendStatus`). Absent — the request may never have arrived (transport rejection, replay hold,
+   * offline press); the only honest line is "Not sent yet" and the surface stays open. A field, not
+   * an inference from the phase: "Accepted" about an unreceived request is the false claim this prevents.
    */
   accepted?: true;
   /** A `sent` that settled a SEND-LATER — the button says "Scheduled", not "Sent". */
@@ -178,49 +115,32 @@ export interface SendState {
    */
   code?: string;
   /**
-   * ── UNRESOLVED SENDS THIS LANE STILL HOLDS, AND WHICH MESSAGES THEY ARE ────────────────────
-   *
-   * A `send_unverified` answer means the reservation may already have delivered and nobody can
-   * tell. The only safe retry reuses the key it went under, so {@link canSend} locks Send — and
-   * it used to lock the LANE, which for the compose surface is every message this browser will
-   * ever write. One ambiguous delivery therefore disabled Send and Send Later for good.
-   *
-   * This names the messages instead, so the uncertain one stays locked and a genuinely different
-   * message sends. Several may be listed: two sends can end unresolved, and both records outlive
-   * every press after them.
-   *
-   * ── ABSENT AND EMPTY ARE DIFFERENT STATEMENTS, ON PURPOSE ──────────────────────────────────
-   *
-   * ABSENT means nobody named the intents — a state assembled by hand, or {@link phaseFor}'s own
-   * answer, which sees a `MutationResult` and not the message it belongs to. An `unverified`
-   * phase with nothing named FAILS CLOSED and locks the surface, exactly as it did before this
-   * field existed. EMPTY means the durable record was read and holds nothing unresolved, which is
-   * the ordinary state and locks nothing.
+   * Unresolved sends this lane still holds, and which messages they are. `send_unverified` means the
+   * reservation may already have delivered; the only safe retry reuses the key, so {@link canSend}
+   * locks Send. Locking the lane — which for compose is every message this browser will ever write —
+   * disabled Send for good after one ambiguous delivery, so this names the messages instead: the
+   * uncertain one stays locked and a genuinely different message sends. Absent and empty differ:
+   * absent means nobody named the intents (a hand-assembled state, or {@link phaseFor}, which sees a
+   * `MutationResult` and not its message) and an `unverified` phase with nothing named fails closed;
+   * empty means the durable record was read and holds nothing unresolved, and locks nothing.
    */
   unresolved?: ReadonlyArray<SendIntent>;
   /**
-   * THE SUBJECT OF THE MESSAGE THIS LANE IS HOLDING RIGHT NOW, when the mutation cannot name it.
-   *
-   * A new compose has no draft row until autosave gives it one, so `sendSubject` cannot name it
-   * from the mutation alone — the name lives beside the scratch draft (`composeSessionId`) and the
-   * hook reads it. Reply and forward name themselves and never need this.
-   *
-   * ABSENT and PRESENT are different statements. Present is the answered case. Absent means the
-   * lane's subject could not be read — a jar this browser cannot write, a state assembled by hand
-   * — and a message whose subject nobody can name is not evidence that it is a NEW one, so the
-   * refusal below fails closed on it whenever the lane holds anything unresolved.
+   * The subject of the message this lane is holding, when the mutation cannot name it: a new compose
+   * has no draft row until autosave, so `sendSubject` cannot name it from the mutation alone — the
+   * name lives beside the scratch draft (`composeSessionId`) and the hook reads it. Reply and forward
+   * name themselves. Absent means the lane's subject could not be read (a jar this browser cannot
+   * write, a hand-assembled state) — not evidence the message is new, so the refusal below fails
+   * closed on it whenever the lane holds anything unresolved.
    */
   session?: string;
   /**
-   * For `duplicate` only: what became of the send this one was refused as a copy of.
-   *
-   * Three states with three different truths — `sent` means a copy is provably out there,
-   * `unverified` means the first attempt's fate is unknown and the Sent folder is worth a look,
-   * `pending` means it is happening as the reader reads this. One sentence for all three would
-   * have to claim something the product does not know in two of them.
-   *
-   * Absent when the server sent a member this build does not recognise, and the surface then says
-   * the one thing true of all of them. See `firstSendStatusOf`.
+   * For `duplicate` only: what became of the send this one was refused as a copy of. Three states,
+   * three truths — `sent` means a copy is provably out there, `unverified` means the first attempt's
+   * fate is unknown and the Sent folder is worth a look, `pending` means it is happening now. One
+   * sentence for all three would claim something the product does not know in two of them. Absent
+   * when the server sent a member this build does not recognise; the surface then says the one thing
+   * true of all of them. See `firstSendStatusOf`.
    */
   firstSend?: "sent" | "unverified" | "pending";
 }
@@ -251,15 +171,11 @@ export interface MailSendApi {
 const IDLE: SendState = { phase: "idle" };
 
 /**
- * THE PHASES IN WHICH A SEND OF THIS LANE'S MESSAGE IS STILL ON THE WIRE OR STILL OWED AN ANSWER.
- *
- * `sending` and `queued` are the two the autosave has to know about, and `sent` is the beat
- * between the confirmation and the surface closing. What they have in common is that a `drafts`
- * row created during any of them is a SECOND row for a message the send is already carrying —
- * the press-before-first-autosave race, measured on the release candidate as one message leaving
- * two rows behind.
- *
- * `unverified` is deliberately NOT here: it is terminal-unknown rather than in flight, and the
+ * The phases in which a send of this lane's message is still on the wire or owed an answer. `sending`
+ * and `queued` are the two the autosave must know about, and `sent` is the beat before the surface
+ * closes; a `drafts` row created during any of them is a second row for a message the send is already
+ * carrying — the press-before-first-autosave race, measured on the release candidate as one message
+ * leaving two rows behind. `unverified` is deliberately not here: it is terminal-unknown, and the
  * message is parked by `holdOf` at that point, which refuses the create for a stronger reason.
  */
 export const SEND_IN_FLIGHT_PHASES: ReadonlySet<SendPhase> = new Set<SendPhase>([
@@ -267,22 +183,14 @@ export const SEND_IN_FLIGHT_PHASES: ReadonlySet<SendPhase> = new Set<SendPhase>(
 ]);
 
 /**
- * ── IS A SEND OF THIS LANE'S MESSAGE STILL IN THE DURABLE OUTBOX? ───────────────────────────
- *
- * The phase set above is React state and starts empty on every mount, so it cannot see the one
- * sequence that has no row at all: press Send BEFORE the first autosave, lose the response,
- * reload. The verb is in the outbox and the replay will create the row server-side; the restored
- * surface holds no row, so its timer creates a SECOND one for the same message, and an edit of
- * that second row can later mint a fresh send key for a message the first has already delivered.
- *
- * THE OUTBOX IS THE EXACT DISCRIMINATOR, and the two weaker ones were tried and refused. The send
- * RECORD cannot do it: with no row its only name is the compose session, and a genuinely new
- * message on the same lane answers to that name too — parking on it refused a message nobody had
- * pressed Send on. A TTL cannot do it either: it bounds wreckage, not this. A pending `mail_send`
- * names the actual verb, and it stops naming it the moment the queue drains.
- *
- * Lane-scoped through `sendKeyOf`, the same derivation the press uses, so a reply's pending send
- * cannot refuse the compose surface's first save.
+ * Is a send of this lane's message still in the durable outbox? The phase set above is React state and
+ * starts empty on every mount, so it cannot see the one sequence with no row at all: press Send before
+ * the first autosave, lose the response, reload — the replay creates the row server-side while the
+ * restored surface's timer creates a second one, and an edit of that second row can mint a fresh send
+ * key for a message already delivered. The outbox is the exact discriminator; the two weaker ones were
+ * refused: the send record's only name with no row is the compose session, which a genuinely new
+ * message answers to as well, and a TTL bounds wreckage, not this. Lane-scoped through `sendKeyOf`,
+ * the same derivation the press uses, so a reply's pending send cannot refuse the compose's save.
  */
 /**
  * DOES THIS UNRESOLVED INTENT NAME THE MESSAGE THE LATCH WAS TAKEN FOR?
