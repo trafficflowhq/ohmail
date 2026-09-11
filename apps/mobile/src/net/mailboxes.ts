@@ -93,14 +93,28 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
     const res = await session.fetch(`${session.profile.origin}/mailboxes`, { method: "GET" });
     if (res.status !== 200) return null;
     const body = (await res.json()) as unknown;
-    /* The route answers a bare array today. A future envelope (`{ mailboxes: [...] }`) is read
-       too, because the alternative is a client that silently reports "no mailboxes" — which is
-       a real answer here — the day the shape grows. Anything else is "could not ask". */
+    /**
+     * ── THE ROUTE ANSWERS `{ items }`, AND THIS READ NAMED EVERY SHAPE BUT THAT ONE ───────────
+     *
+     * It read a bare array and `{ mailboxes }`, and the route has always answered
+     * `jsonResponse({ items })`. So every door's roster read returned `null` — "could not ask" —
+     * and the two surfaces behind it drew nothing at all: the Settings "This phone" panel, which
+     * is gated on `mailboxes.known`, and the More screen's organizer banner. Built, shipped and
+     * unreachable, and invisible here because this file's own fixtures answered a bare array —
+     * the parser and its evidence agreeing with each other. Read on a device, where the panel
+     * that names who organizes the mailbox never appeared.
+     *
+     * All three shapes stay, and that is not indecision: an envelope that grows a second name is
+     * a client reporting "no mailboxes" — a real answer here — rather than one that cannot ask.
+     */
+    const envelope = body as { items?: unknown; mailboxes?: unknown } | null;
     const rows = Array.isArray(body)
       ? body
-      : Array.isArray((body as { mailboxes?: unknown } | null)?.mailboxes)
-        ? (body as { mailboxes: unknown[] }).mailboxes
-        : null;
+      : Array.isArray(envelope?.items)
+        ? envelope.items
+        : Array.isArray(envelope?.mailboxes)
+          ? envelope.mailboxes
+          : null;
     if (rows === null) return null;
     const out: PhoneMailbox[] = [];
     for (const raw of rows) {
