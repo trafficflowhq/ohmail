@@ -89,16 +89,18 @@ export function Facets({ groups, onPick, className }: FacetsProps) {
   );
 }
 
-/*
- * `SearchHit` is retired, and `search.css` is not. `SearchHit` was one `<button class="hit">`
- * with a who/where line and a subject; no product surface ever rendered it. The webapp's row
- * grew a second control — the sender's address, which opens everything from and to it — and a
- * button may not hold interactive content, so the shipped row is a `<div class="hit">` with a
- * stretched `<button class="hit-open">` inside (`SearchHitRow` in
- * `apps/webapp/app/views/SearchView.tsx`). An export with no consumer is a claim that outlives
- * the code — compiled, smoke-tested, advertised by the showcase, unreachable in the product —
- * so it is deleted rather than left as a second answer. `search.css` stays and is still
- * imported below: its `.hit` / `.who` / `.where` / `.subj` / `mark` rules are what the webapp's
- * row is built on, reached through this file's import — deleting it with the component would
- * render as a design regression with every test green.
+/**
+ * `SearchHit` is retired, and `search.css` is not. `SearchHit` was one `<button class="hit">` with a who/where line
+ * and a subject; no product surface ever rendered it. The webapp's row grew a second control — the sender's address,
+ * which opens everything from and to it — and a button may not hold interactive content, so the shipped row is a
+ * `<div class="hit">` with a stretched `<button class="hit-open">` inside (`SearchHitRow` in
+ * `apps/webapp/app/views/SearchView.tsx`).
+ */
+
+/**
+ * An export with no consumer is a claim that outlives the code — compiled, smoke-tested, advertised by the showcase,
+ * unreachable in the product — so it is deleted rather than left as a second answer. `search.css` stays and is still
+ * imported below: its `.hit` / `.who` / `.where` / `.subj` / `mark` rules are what the webapp's row is built on,
+ * reached through this file's import — deleting it with the component would render as a design regression with every
+ * test green.
  */
