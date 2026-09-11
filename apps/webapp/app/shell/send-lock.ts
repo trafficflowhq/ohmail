@@ -1,112 +1,47 @@
 "use client";
 
 /**
- * THE SEND LOCK, WHERE A LOCK BELONGS: ON DISK, NOT IN A REF.
- *
- * ── THE DEFECT THIS CLOSES ──────────────────────────────────────────────────────────────────
- *
- * `useMailSend` holds `queued`, `inFlight` and `locked` in `useRef`,
- * and the file's own comment explains why `locked` had to move OUT of React state: two calls in one
- * tick each read `idle`, each minted an Idempotency-Key, and each delivered — two reservations, two
- * deliveries, to a real person. That argument is correct and it does not go far enough. **A ref
- * dies with its component.** A reload inside the queued window leaves the durable outbox to replay
- * the send under its original key (correct) while the restored composer — the scratch draft is in
- * `localStorage` and is only cleared when the UI observes a confirmation — comes up `idle`, and the
- * next press mints a SECOND key. A second key is a different key, so `idempotency_keys` cannot
- * replay it and `outbound_sends UNIQUE (account_id, idempotency_key)` cannot collapse it: the same
- * message is delivered twice to an external recipient, which is a thing this product cannot take
- * back. One press is one delivery, across a crash, is the guarantee the send path owes; nothing
- * else in this application has an outcome that cannot be rolled back.
- *
- * ── THE FIX: THE DURABLE KEY *IS* THE LOCK ──────────────────────────────────────────────────
- *
- * The Idempotency-Key is persisted with the send LANE at the moment it is minted — synchronously,
- * before the verb reaches the engine — and a press on a lane that already holds one RESUMES that
- * key instead of minting a fresh one (`OhmailEngine.mutate(m, { key })`). From there the server is
- * the authority, and it already has the right answer: `SendService.resumeExisting` replays a `sent`
- * row's stored result without re-sending, reports a `failed` one, answers `in_flight` while the
- * first attempt may still be running, and verify-by-Sent recovers a genuinely orphaned `pending`.
- * **The one thing it never does is send again.**
- *
- * So the in-memory `locked` ref stays and becomes ADVISORY: it is the only check that is correct
- * within a single tick, which is the race it was written for. This is the one that is correct
- * across a process, which is the race it was not.
- *
- * ── WHAT THIS IS NOT ────────────────────────────────────────────────────────────────────────
- *
- * It is not a queue and it is not a retry record — the durable outbox is both of those and owns
- * the verb from the moment `mutate` is called. This holds one fact per SEND: *the key that send is
- * going out under*, with the subject and the fingerprint that say which message it was.
- *
- * A lane therefore holds at most one ordinary claim and every UNRESOLVED record it has collected.
- * That is a change from the one-per-lane rule this paragraph used to state, and the reason is that
- * the two kinds of record have different lifetimes: an ordinary claim is spent by the next press,
- * while an unresolved one is the only evidence a message may already be out there and must outlive
- * every press after it. `confirmed` and `failed` release the record for the message they settle —
- * resuming a spent key would replay the old outcome for ever, a wedged Send button rather than a
- * duplicate mail, but still wrong. `unverified` does NOT release: nobody knows what it did.
- *
- * Owner-keyed, wrapped, `"local"`-defaulted: the same three rules `composeDraftKey` states one file
- * over, for the same reasons. A blocked jar means the lock is only as durable as the tab, which is
- * exactly where this file found it.
- *
- * ══ INVARIANT S — THE ONE RULE THE SEND SEAM OBEYS ═══════════════════════════════════════════
- *
- * Written here, once, because it was NOT written anywhere before and seven consecutive fixes each
- * closed one duplicate route while the next was found: the question "is this message held?" was
- * asked in three places with three answers, and every fix moved WHO the message is rather than
- * WHERE the question is asked.
- *
- * > **S.** A message-in-progress *M* is named by its compose session while unsaved and by its row
- * > id once saved; the durable record carries every name *M* has acquired. At every instant:
- * > **(1)** the account holds at most one `drafts` row whose content is *M*; **(2)** a row past
- * > `draft` (`sending`, `unverified`, `sent`) or one that carries a send record is never PUT to,
- * > never DELETEd by this client, and never recovered into a fresh key; **(3)** a send of *M* that
- * > is not confirmed — `unverified`, transport-`queued`, server-`queued` — is PARKED under *M*'s
- * > names: a press resumes the same Idempotency-Key or is refused, and unchanged content never
- * > mints a second key while a record exists; **(4)** the hold is answered by ONE predicate, and a
- * > jar that cannot be read answers *unknown*, on which every write site fails closed; an EMPTY
- * > jar admits.
- *
- * ══ INVARIANT T — WHAT HAPPENS WHEN M'S FATE BECOMES KNOWN ═════════════════════════════════
- *
- * S says which message a compose is holding. T says what happens when that message's story ends,
- * and it is written here because three separate sequences ended the same way: the fate arrived,
- * the RECORD was tidied up, and the compose was left POPULATED with the delivered text behind a
- * projection reading `idle` — so the next ordinary press or pause treated it as a new message.
- * One of those was a second delivery.
- *
- * > **T.** A compose is BOUND to at most one message *M* (its row id and/or its compose session).
- * > When *M*'s fate resolves — the mirror shows *M*'s row `sent`; the server answers 409
- * > `send_recorded` to a discard of *M*; the durable outbox settles a `mail_send` for the
- * > compose's lane — the bound compose either **(a) ADOPTS** the resolving row, or **(b) CLEARS**
- * > exactly as the live confirmed path clears. It never remains populated with *M*'s text behind a
- * > projection that would admit a fresh key.
- *
- * The resolution is answered by ONE function, `settleCompose(fate)` in `compose-autosave.ts` — the
- * hook owns the binding, so it owns its ending — and every site that releases, adopts or clears a
- * compose ON A FATE goes through it. A door that merely REPLACES the message on screen (the
- * reopen, Write-to, a mail link) is an identity move and not a fate; those keep their own release.
- * The census pins both lists.
- *
- * The one predicate is {@link holdOf}. Every write site consults it — the autosave create, the
- * autosave PUT, the adopt-on-mount, `openDraft`, `writeTo`, the mailto seam, `cancelCompose`, the
- * Send press, the settled discard — and a census in the web application's own suite pins the
- * per-file CALL-SITE COUNT so a new write site has to name itself there. A route a reviewer finds
- * that the census admits is a MISSING CALL SITE, fixed by adding the call, never by a second
- * predicate.
- *
- * TWO DECISIONS THAT LIVE IN THE INVARIANT AND NOT IN A CALLER:
- *
- *  1. **A record resumes across sessions only when it is unresolved.** `r.session === id.session`
- *     OR `r.unverified === true`. An ordinary claim belongs to the message-in-progress it was
- *     pressed in and a different session is a different message; an unresolved record is the only
- *     evidence a message may already be out there, and refusing to resume it is exactly how the
- *     next press mints a fresh key for mail that has already gone.
- *  2. **`unknown` admits the PRESS and refuses every RECOVERY.** A browser that will not let this
- *     app read its own storage must still be able to send — refusing there would leave somebody
- *     with a message the product declines to send and cannot explain. But it must not DISCARD a
- *     row, re-mint a key, or adopt a row into a fresh session on evidence it does not have.
+ * The durable send lock. One press is one delivery, across a crash: the in-memory `locked` ref in
+ * `useMailSend` dies with its component, so a reload inside the queued window left the outbox replaying
+ * the send under its original key while the restored composer came up `idle` — the next press minted a
+ * second Idempotency-Key, a second delivery nothing server-side could collapse. So the key is persisted
+ * with the send lane the moment it is minted, before the verb reaches the engine, and a press on a lane
+ * holding one resumes it (`OhmailEngine.mutate(m, { key })`): the server replays, reports or recovers,
+ * and never sends again. The ref stays as the within-one-tick check. This is not a queue or a retry
+ * record — the durable outbox is both; this holds one fact per send: the key, and the message's names.
+ */
+
+/**
+ * Invariant S. A message-in-progress is named by its compose session while unsaved and by its row id
+ * once saved; the record carries every name it has acquired. (1) The account holds at most one `drafts`
+ * row with its content. (2) A row past `draft`, or one carrying a send record, is never PUT to, never
+ * DELETEd by this client, never recovered into a fresh key. (3) An unconfirmed send is parked under the
+ * message's names: a press resumes the same Idempotency-Key or is refused; unchanged content never
+ * mints a second key while a record exists. (4) One predicate answers the hold — {@link holdOf}; every
+ * write site calls it and a census pins the per-file call-site count, so a route a review finds is a
+ * missing call, never a second predicate. An unreadable jar answers unknown; an empty jar admits.
+ */
+
+/**
+ * Invariant T. A compose is bound to at most one message; when that message's fate resolves — the
+ * mirror shows its row `sent`, the server answers 409 `send_recorded` to a discard, the durable outbox
+ * settles a `mail_send` for the compose's lane — the compose adopts the resolving row or clears exactly
+ * as the live confirmed path clears. It is never left populated with delivered text behind an `idle`
+ * projection that would admit a fresh key. One function answers the fate: `settleCompose(fate)` in
+ * `compose-autosave.ts`; every site that releases, adopts or clears on a fate goes through it. A door
+ * that merely replaces the message on screen (reopen, Write-to, a mail link) is an identity move, not a
+ * fate, and keeps its own release. The census pins both lists.
+ */
+
+/**
+ * Record lifetimes, and the two decisions that live here rather than in a caller. A lane holds at most
+ * one ordinary claim plus every unresolved record: `confirmed` and `failed` release the record for the
+ * message they settle; `unverified` does not — nobody knows what it did. A record resumes across
+ * sessions only when unresolved (`r.session === id.session` or `r.unverified === true`): an ordinary
+ * claim belongs to the session it was pressed in, an unresolved one is the only evidence a message may
+ * already be out. `unknown` admits the press — a browser that blocks storage must still send — and
+ * refuses every recovery: no discard, no re-mint, no adopting a row on evidence it does not have.
+ * Owner-keyed, wrapped, `"local"`-defaulted: the same three rules as `composeDraftKey`.
  */
 
 import type { MailSend } from "./compose";
@@ -114,16 +49,11 @@ import { durableRemove, durableSet, type DurableWrite } from "./durable";
 import { storageOwner } from "./storage-owner";
 
 /**
- * THE RECORD SHAPE THIS BUILD WRITES.
- *
- * `1` was written by every build up to and including 0.14.0 and was NOT bumped when 0.14.1
- * changed what a fingerprint hashes — which is the whole reason the legacy path below cannot key
- * off it and reads the record's SHAPE instead. `2` is this build's, and it is bumped here so the
- * next change to either the fingerprint or the field set has a number to move.
- *
- * Higher values are records from a build this one has never seen. They are carried and never
- * touched: not matched, not rewritten, not deleted. A rolled-back install must not eat the
- * evidence that a newer one left behind.
+ * The record shape this build writes. `1` was every build through 0.14.0 and was not bumped when
+ * 0.14.1 changed what a fingerprint hashes — which is why the legacy path below keys off the record's
+ * shape, not this number. `2` is this build's; the next change to the fingerprint or the field set
+ * bumps it. Higher values are records from a build this one has never seen: carried, never matched,
+ * rewritten or deleted — a rolled-back install must not eat the evidence a newer one left behind.
  */
 export const SEND_LOCK_FORMAT = 3;
 
@@ -166,49 +96,26 @@ export interface SendLock {
    */
   subject?: string;
   /**
-   * THE COMPOSE SESSION THIS SEND WAS PRESSED IN, when the lane has one — the SECOND identity,
-   * and the reason it exists is a measured double delivery.
-   *
-   * `subject` alone is not stable across the life of one message. A compose with no draft row
-   * yet is named `compose:<session>`; the moment autosave gives it a row the same
-   * message-in-progress is named `draft:<id>`, because {@link sendSubject} prefers the row. So an
-   * unresolved send recorded before the row existed parked NOTHING once the row appeared: the
-   * surface presented `idle`, Send lit up, and a press with nothing edited minted a second key
-   * and delivered the message a second time. The recipient held two copies and the sender's Sent
-   * folder held one, so neither side showed the duplicate.
-   *
-   * The session id is minted beside the scratch draft and cleared with it (`composeSessionId`),
-   * so it names the message-in-progress for exactly as long as that message exists — across the
-   * row appearing, across a reload, across the row being REPLACED. Recorded here in addition to
-   * `subject` rather than instead of it, because neither identity is available in every path:
-   * a draft reopened after the session was cleared has only `draft:<id>`, and a compose that
-   * never autosaved has only `compose:<session>`. {@link sendSubjects} reads both and a record
-   * parks a message when the two sets INTERSECT.
-   *
-   * Absent on a record written by a build before this field, and on every lane that is not the
-   * compose surface (a reply and a forward are named by the message they answer, which no
-   * autosave can change).
+   * The compose session this send was pressed in — the second identity. `subject` alone is not stable
+   * across one message's life: unsaved it is `compose:<session>`, after the first autosave
+   * {@link sendSubject} prefers the row and names it `draft:<id>`, so a record written before the row
+   * existed parked nothing once the row appeared and a press re-minted a key for delivered mail. The
+   * session id is minted beside the scratch draft and cleared with it (`composeSessionId`), so it
+   * names the message for exactly as long as it exists. Recorded beside `subject`, not instead of it —
+   * neither identity exists in every path — and {@link sendSubjects} parks when the two sets intersect.
+   * Absent on records from older builds and on every lane that is not the compose surface.
    */
   session?: string;
   /** {@link sendFingerprint} of the message this key was minted for. */
   fp: string;
   /**
-   * THE SAME MESSAGE AS THE COMPOSE BUFFER HOLDS IT — the identity a LATER MOUNT can recompute.
-   *
-   * {@link fp} is the fingerprint of the mutation AS SENT, and a mount coming back after a reload
-   * cannot reproduce it: the press folds the signature into the body and the html
-   * (`withSignature`) and resolves the sending mailbox, and neither of those is in the scratch
-   * buffer. Comparing the buffer against `fp` therefore matches only for an account with no
-   * signature — a guard that silently does not guard for everybody else, which is the same defect
-   * as one that cannot fire at all.
-   *
-   * So the press records the buffer's OWN fingerprint beside the sent one, computed by the single
-   * helper the later mount uses (`composeBufferFingerprint`). One function, two moments, so the
-   * two values cannot drift into different hashes of the same text — which is the mistake this
-   * whole file exists to prevent, made one level up.
-   *
-   * Compose lane only, and absent on a record written before this field: such a record simply
-   * never latches, which is the behaviour that shipped before the latch existed.
+   * The same message as the compose buffer holds it — the identity a later mount can recompute.
+   * {@link fp} is the mutation as sent: the press folds in the signature (`withSignature`) and the
+   * resolved sending mailbox, neither of which is in the scratch buffer, so comparing the buffer
+   * against `fp` matches only for an account with no signature — a guard that silently does not guard.
+   * The press therefore records the buffer's own fingerprint beside the sent one, computed by the one
+   * helper the later mount uses (`composeBufferFingerprint`) — one function, two moments, so the two
+   * values cannot drift. Compose lane only; a record written before this field simply never latches.
    */
   bfp?: string;
   /**
@@ -239,100 +146,42 @@ function fnv1a(s: string): string {
 }
 
 /**
- * WHICH MESSAGE THIS KEY BELONGS TO — the guard that stops a resumed key from swallowing a
- * DIFFERENT message, which is the worse defect a naive durable lock would introduce.
- *
- * Consider the lane alone as the identity. A compose that never autosaved has `draftId: null`,
- * so the lane `"compose"` plus a null draft id is the identity of *every* compose this browser
- * will ever write. Crash between the mint and the terminal outcome, write a NEW message, press
- * Send: the stored key is resumed, the server finds that key already reserved and replays the
- * FIRST send's stored result, the editor reads `confirmed`, clears the scratch and says "Sent."
- * — and the new message was never sent at all. A silently unsent mail is strictly worse than the
- * duplicate this file exists to prevent, so the lock is bound to the message and not just to the
- * surface.
- *
- * A cheap non-cryptographic hash (FNV-1a) over the envelope the user actually composed. It is not
- * a security control and nothing branches on a collision being impossible: a collision would mean
- * two different messages that agree on every recipient, the subject, the body, the parent and the
- * schedule, which is a message being sent twice on purpose. What it has to do is CHANGE when the
- * user changes what they wrote, and it does.
- *
- * ── THE ATTACHMENTS ARE FOLDED IN BY CONTENT, AND THE ARGUMENT FOR LENGTH WAS WRONG ─────────
- *
- * This hashed each attachment's name, type and byte LENGTH, on the reasoning that content hashing
- * was "a cost with no case behind it" because "you cannot alter a picked file in place". The
- * premise is false in this codebase. `ComposeAttach` re-encodes a picked picture in place under
- * its ORIGINAL filename when the quality control moves, and a regenerated document keeps its
- * name — so two different files of the same length under one name were one message. Two sends
- * then shared an Idempotency-Key, and because the server never sends twice under a key it has
- * reserved, the second one had the first's stored result replayed at it: the editor said "Sent."
- * about a file that never left. A silently unsent mail is the worse half of the pair this file
- * exists to prevent, so the content is hashed.
- *
- * The cost is one pass over the base64 per press, bounded by the surface's own cap — 3 MB, or
- * 40 MB for a client permitted to stage. Both the length AND the content hash are folded in, so a
- * collision needs agreement on both.
- *
- * ── AND THE WAY IT WAS REACHED, WHICH THE SERVER CANNOT GUARD ───────────────────────────────
- *
- * The press that finds it is not an edit in place, it is a RE-PICK. Attach `invoice.csv` reading
- * `amount\n100\n`, notice the figure is wrong, re-pick the corrected file, press Send: same name,
- * same type, same length, so the fingerprint matched, the stored key was RESUMED rather than a
- * fresh one minted, and the server replayed the first send's stored `sent` result — correctly,
- * that is what a resumed key is for. The editor read `confirmed`, cleared the scratch and said
- * "Sent." The correction never left and the person was told it had.
- *
- * The server-side guard cannot cover it: a replay returns from the conflict branch and never
- * reaches a content digest at all. This is the client's to close, which is why it is closed here.
+ * Which message this key belongs to. The lane alone is not an identity: a compose that never autosaved
+ * has `draftId: null`, so after a crash a new message's press would resume the stored key and the
+ * server would replay the first send's result — the new mail silently unsent, worse than a duplicate.
+ * FNV-1a over the composed envelope; not a security control — it only has to change when the user
+ * changes what they wrote. Attachments fold in the content hash, not just name/type/length:
+ * `ComposeAttach` re-encodes a picked file in place under its original name, and a re-picked correction
+ * keeps all three — a length-only hash resumed the old key and said "Sent." about a file that never
+ * left, and the server cannot close this (a replay returns from the conflict branch before any digest).
  */
 export function sendFingerprint(m: MailSend): string {
   /**
-   * THE DISPLAY NAME IS PART OF THE RECIPIENT, because it is part of what goes out.
-   *
-   * This read the address alone. The adapter puts the whole `EmailAddress` on the wire — `PUT
-   * /drafts/:id` and `POST /drafts` both send `to: m.to ?? []` — and the name is what the
-   * recipient's client shows, so a message whose only correction was the name it addresses
-   * somebody by hashed as the uncorrected one and could be handed its key.
-   *
-   * `JSON.stringify` over a pair per recipient rather than a delimiter join: a name is free text
-   * and may contain whatever the join used, which would let two different lists agree on one
-   * string. An absent name and a `null` one collapse to the same value on purpose — both record
-   * "no display name", which is the fact the wire carries either way.
-   *
-   * The address keeps its lowercasing: a mailbox is not case-sensitive to the sender's typing,
-   * and a re-send of the same message with the address retyped in another case is the same
-   * message, which is exactly the press that must resume its key.
+   * The display name is part of the recipient, because it is part of what goes out: the adapter puts
+   * the whole `EmailAddress` on the wire (`PUT /drafts/:id` and `POST /drafts` send `to: m.to ?? []`),
+   * so a message whose only correction was the name it addresses somebody by must not hash as the
+   * uncorrected one. `JSON.stringify` over a pair per recipient, not a delimiter join — a name is free
+   * text and could contain the delimiter. An absent name and a `null` one collapse on purpose: both
+   * record "no display name". The address keeps its lowercasing: a re-send with the address retyped
+   * in another case is the same message, which is exactly the press that must resume its key.
    */
   const addrs = (xs: ReadonlyArray<{ name?: string | null; address: string }> | undefined): string =>
     JSON.stringify((xs ?? []).map((a) => [a.name ?? null, a.address.toLowerCase()]));
   /**
-   * ── EVERY FIELD THE WIRE CARRIES, AND THE TWO THAT WERE MISSING ─────────────────────────────
-   *
-   * This hashed `html ?? body` and left `threadId` out. Both are the same defect: a field the
-   * SERVER is given that the fingerprint cannot see, so two different messages hash alike.
-   *
-   *  · `html ?? body` — a rich message carries BOTH, and the plain-text half is what a recipient
-   *    whose client refuses HTML actually reads. It also hid the signature on a rich send: the
-   *    signature is appended to `body` and to `html` (`withSignature`), so a plain-text-only
-   *    change to it was invisible.
-   *  · `threadId` — sent, and never hashed.
-   *
+   * Every field the wire carries is hashed. Two were missing, and both were the same defect — a field
+   * the server is given that the fingerprint cannot see: `html ?? body` hashed one of the two bodies a
+   * rich message carries (the unhashed plain-text half is what a client that refuses HTML reads, and
+   * `withSignature` appends to it too), and `threadId` was sent and never hashed.
    * `sendFingerprintFieldsCovered` in the test dir is the census that keeps this list equal to the
    * mutation's own fields, so a field added to the wire cannot quietly stay out of the identity.
    */
   /**
-   * ── THE DRAFT ROW IS THE CONTAINER, NOT THE CONTENT, AND HASHING IT WAS THE DEFECT ──────────
-   *
-   * `m.draftId ?? ""` used to sit here. A row is not something the person wrote: it appears
-   * part-way through one message's life (the first autosave), it is REPLACED when a send makes
-   * its own, and it is absent entirely for a press that beat the first save. So one unchanged
-   * message hashed as three different messages depending on which moment the press happened in —
-   * and a fingerprint that changes without the content changing is precisely how a resume misses
-   * and a second Idempotency-Key is minted for mail that may already have gone.
-   *
-   * Which ROW a record names is still written down ({@link SendLock.draftId}, kept current by
-   * {@link attachSendLockDraft}); it is diagnostic, and nothing branches on it. Which MESSAGE a
-   * record is of is `subject`/`session` and this hash. `sendFingerprintFieldsCovered` in
+   * The draft row is the container, not the content, and hashing it was the defect: a row appears at
+   * the first autosave, is replaced when a send makes its own, and is absent for a press that beat the
+   * first save — so one unchanged message hashed as three, and a fingerprint that changes without the
+   * content changing is how a resume misses and a second Idempotency-Key is minted for mail that may
+   * already have gone. Which row a record names is still written down ({@link SendLock.draftId}, kept
+   * current by {@link attachSendLockDraft}) but is diagnostic only. `sendFingerprintFieldsCovered` in
    * `send-lock-durable.test.tsx` exempts `draftId` by name for this reason.
    */
   const parts = [
@@ -352,30 +201,14 @@ export function sendFingerprint(m: MailSend): string {
 }
 
 /**
- * ── THE FINGERPRINT 0.14.0 WROTE, KEPT SO ITS RECORDS CAN STILL BE READ ─────────────────────
- *
- * Copied field for field and join for join from `apps/webapp/app/shell/send-lock.ts` at the
- * released `v0.14.0` tag. It is FROZEN: it is not a second implementation of the identity but a
- * decoder for jars that are already on people's disks, and changing it would silently stop
- * matching the records it exists for. `sendFingerprint` above is the live one.
- *
- * What 0.14.0 hashed, and every way it differs from the current algebra:
- *  · recipients by LOWERCASED ADDRESS ONLY, joined with `,` — no display name, no encoding;
- *  · `html ?? body` as ONE field — a rich message's plain-text half was never hashed;
- *  · no `threadId`;
- *  · attachments as `filename:contentType:contentBase64.length`, joined `|` — by SIZE, not
- *    content.
- * Same `\u0000` join of the parts and the same FNV-1a over the result, which is why `fnv1a` is
- * shared rather than re-inlined: 0.14.0's loop is byte for byte the function above.
- *
- * ── WHY A RELEASED BUILD'S RECORD HAS TO BE DECODED AT ALL ──────────────────────────────────
- *
- * The managed web app flips every browser at once. A browser holding an unresolved 0.14.0 record
- * at that moment computes a different fingerprint for the same unchanged message under the new
- * algebra, so the record would not be recognised, a second key would be minted, and where the
- * first send had reached the server the mail would go out twice. The changelog's headline promise
- * for this feature is that a send which could not be confirmed is never sent twice, so this is a
- * release matter and not a tidiness one.
+ * The fingerprint 0.14.0 wrote, kept so its records can still be read. Copied field for field from
+ * send-lock.ts at the released v0.14.0 tag and frozen: it is a decoder for jars already on disks, not
+ * a second implementation — `sendFingerprint` above is the live one. What 0.14.0 hashed differently:
+ * recipients by lowercased address only, joined with `,`; `html ?? body` as one field; no `threadId`;
+ * attachments as `filename:contentType:contentBase64.length` (size, not content). Same `\u0000` join
+ * and the same FNV-1a, which is why `fnv1a` is shared. The managed web app flips every browser at
+ * once: an unresolved 0.14.0 record recognised under the new algebra is the difference between a
+ * resumed key and a second delivery of mail the changelog promises is never sent twice.
  */
 export function legacySendFingerprint_0_14_0(m: MailSend): string {
   const addrs = (xs: ReadonlyArray<{ address: string }> | undefined): string =>

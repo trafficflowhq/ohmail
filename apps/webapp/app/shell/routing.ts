@@ -37,16 +37,10 @@ export const VIEWS = [
    */
   "drafts",
   /**
-   * TRASH — mail you deleted in ohmail, and the one place it can be seen and put back.
-   *
-   * Reached from the palette or `g t` and NOT from a permanent rail row: the rail's places are
-   * where mail IS, and a bin you visit once a month does not earn a line beside the Ohbox. The
-   * rail grows a transient entry for exactly as long as this view is the route (`AppShell`'s
-   * `railGroups`), so the place you are in is nameable in the sidebar and gone the moment you
-   * leave.
-   *
-   * Deliberately NOT one of `PILE_IDS`, so the number keys skip it — for History's and Drafts'
-   * reason: the digits reach the piles, and this is not one.
+   * Trash — mail deleted in ohmail, and the one place it can be seen and put back. Reached from the
+   * palette or `g t`, not from a permanent rail row: the rail's places are where mail is, and the rail
+   * grows a transient entry for exactly as long as this view is the route (`AppShell`'s `railGroups`).
+   * Deliberately not one of `PILE_IDS`, so the number keys skip it — History's and Drafts' reason.
    */
   "trash",
   "settings",
@@ -64,34 +58,22 @@ export const VIEWS = [
 export type ViewId = (typeof VIEWS)[number] | "tag" | "folder" | "address";
 export type ScreenerSegmentId = "waiting" | "screened" | "spam";
 /**
- * WHICH TRIAGE PILE IS OPEN — the thing the route could not say.
- *
- * Reported as: the triage horizons cannot be selected individually, only Answer Later opens,
- * on all three. That was exact. The rail lists three rows — Answer Later, Park, Resurface —
- * and `AppShell` collapsed every id beginning `triage` into `go("triage")`, which is a route
- * with no pile in it at all; `TriageView` then rendered all three stacks as equal peers and
- * `activeRailId` mapped the view back to the literal id `"triage"`, which is the Answer Later
- * row. So all three rows navigated to the identical URL, showed the identical screen, and lit
- * the first row whichever had been clicked. Selecting Park was not merely unbound — it was
- * unrepresentable.
- *
- * The ids are the pile's own names and not the rail's (`triage-aside`), because this is what
- * the URL carries: `#/triage/aside` reads as a place, `#/triage/triage-aside` reads as a bug.
+ * Which triage pile is open — the thing the route could not say. The rail lists Answer Later, Park and
+ * Resurface, and `AppShell` collapsed every id beginning `triage` into `go("triage")`: all three rows
+ * navigated to one URL, showed one screen, and lit the first row whichever was clicked — selecting
+ * Park was not merely unbound, it was unrepresentable. The ids are the pile's own names, not the
+ * rail's (`triage-aside`), because the URL carries them: `#/triage/aside` reads as a place.
  */
 export const TRIAGE_PILES = ["reply", "aside", "resurface"] as const;
 export type TriagePileId = (typeof TRIAGE_PILES)[number];
 
 /**
- * THE SETTINGS PANES, and why the ROUTER owns the list now.
- *
- * `#/settings/<pane>` is a route segment: a settings section is a place — loadable directly,
- * walkable with Back/Forward — and the router must validate it the way it validates a
- * screener segment or a triage pile: an unknown sub-path falls back rather than 404ing, and
- * `normalizedHash` then rewrites the bar to the spelling that reproduces what is on screen. The
- * list lived in `SettingsView` (it predates the segment; `?settings=<pane>` was its one
- * consumer), but a copy in each file is two lists one new pane apart from disagreeing — so the
- * view re-exports THIS one. Which panes EXIST on a given surface is still the view's per-surface
- * clamp; this list is only "what may a URL say".
+ * The settings panes, and why the router owns the list. `#/settings/<pane>` is a route segment, so the
+ * router must validate it like a screener segment or a triage pile: an unknown sub-path falls back
+ * rather than 404ing, and `normalizedHash` rewrites the bar to the spelling that reproduces the screen.
+ * The list lived in `SettingsView`; a copy in each file is two lists one new pane apart from
+ * disagreeing, so the view re-exports this one. Which panes exist on a given surface is still the
+ * view's per-surface clamp; this list is only "what may a URL say".
  */
 export const PANE_IDS = [
   "general", "notifications", "mailboxes", "screener", "ai", "away", "billing", "invites", "tags",
@@ -129,25 +111,14 @@ export interface Route {
   /** The open folder's entity id when `view === "folder"` — `tagId`'s twin, `null` elsewhere. */
   folderId: string | null;
   /**
-   * THE CORRESPONDENT when `view === "address"` — `#/address/<addr>`, DECODED. `null` elsewhere.
-   *
-   * `tagId`'s twin with one difference that decides how it is spelled: a tag id and a folder id
-   * are opaque strings THIS PRODUCT minted, and an address is a string a stranger put in a
-   * header. So it is `decodeURIComponent`d on the way in and `encodeURIComponent`d on the way
-   * out, where the other two are carried raw.
-   *
-   * That is not tidiness. The tail split above cuts on `/`, so a `/` inside a quoted local part
-   * would become a path boundary and the view would open on half an address; a `#` would
-   * truncate the fragment before the browser ever handed it here; and `%` in a real address
-   * would round-trip wrongly if only one side escaped. The encode/decode pair is what makes
-   * `canonicalHash(parseHash(h)) === h` hold for an address, which is what stops
-   * `normalizedHash` rewriting the bar on every render.
-   *
-   * A MALFORMED escape is not a crash and not a fallback to the Ohbox: `decodeURIComponent`
-   * throws `URIError` on a lone `%`, and a hash somebody hand-edited or a link a mail client
-   * mangled must open SOMETHING. The raw segment is used as the address in that case — it will
-   * match no mail, and the view's empty state names the address, which is a true and legible
-   * answer to a broken link.
+   * The correspondent when `view === "address"` — `#/address/<addr>`, decoded; `null` elsewhere.
+   * `tagId`'s twin, except an address is a string a stranger put in a header, not an id this product
+   * minted, so it is `decodeURIComponent`d in and `encodeURIComponent`d out where the other two are
+   * carried raw: a `/` in a quoted local part would become a path boundary, a `#` truncates the
+   * fragment, and `%` round-trips wrongly if only one side escapes. The pair is what makes
+   * `canonicalHash(parseHash(h)) === h` hold, which stops `normalizedHash` rewriting the bar every
+   * render. A malformed escape (`decodeURIComponent` throws on a lone `%`) is not a crash or an Ohbox
+   * fallback: the raw segment is used — it matches no mail and the empty state names the address.
    */
   address: string | null;
   screenerSegment: ScreenerSegmentId;
@@ -173,86 +144,51 @@ export interface Route {
    */
   settingsPane: PaneId | null;
   /**
-   * IS THE FIRST-RUN STAGE OPEN — `#/first-run`, and the one route field that is not about
-   * WHICH VIEW is showing.
-   *
-   * The stage is a dialog OVER the app, so it rides beside {@link view} instead of replacing
-   * it: `#/first-run` parses to the Ohbox with this set, the shell renders both, and leaving
-   * the stage is a hash write that changes nothing else on screen. A `ViewId` member would have
-   * put setup in the rail, in the number keys, and in every `go()` call's type.
-   *
-   * ── THE NAME IS `first-run` AND NOT `setup`, DELIBERATELY ─────────────────────────────────
-   *
-   * `apps/webapp` already serves a top-level `/setup` page — the SELF-HOST first-admin token
-   * screen. A hash route inside `/mailbox` would not technically collide with it, and would read
-   * as the same thing in every conversation and every link. Two different ceremonies may not
-   * share a word.
+   * Is the first-run stage open — `#/first-run`, the one route field not about which view shows. The
+   * stage is a dialog over the app, so it rides beside {@link view}: `#/first-run` parses to the Ohbox
+   * with this set, the shell renders both, and leaving the stage changes nothing else on screen. A
+   * `ViewId` member would have put setup in the rail, the number keys, and every `go()` call's type.
+   * Named `first-run`, not `setup`: `apps/webapp` already serves a top-level `/setup` page (the
+   * self-host first-admin token screen), and two different ceremonies may not share a word.
    */
   firstRun: boolean;
   /**
-   * IS THIS A RE-RUN — `#/first-run/again`, from Settings → Mailboxes.
-   *
-   * It exists because {@link firstRun} alone cannot express it. The flow's opening screen is
-   * DERIVED from truth-conditions, and the first of those is the completion stamp: an account
-   * that has been through setup derives to "nothing to do", which is exactly right for a boot
-   * and exactly wrong for somebody who just pressed "Run setup again". The alternative — clearing
-   * the stamp — would be an un-complete instruction, and there deliberately is none: nothing in
-   * this product un-finishes onboarding, because a control that silently reopens setup on every
-   * future boot is worse than a route segment.
-   *
-   * So the INTENT rides the URL. A re-run opens on the consent statement and walks forward from
-   * there, pre-filled from what the account already stored, and re-stamps completion when it is
-   * left — the same ending as a first run.
+   * Is this a re-run — `#/first-run/again`, from Settings → Mailboxes. {@link firstRun} alone cannot
+   * express it: the flow's opening screen is derived from truth-conditions, and the completion stamp
+   * derives to "nothing to do" — right for a boot, wrong for somebody who pressed "Run setup again".
+   * There is deliberately no way to clear the stamp: nothing un-finishes onboarding, because a control
+   * that silently reopens setup on every boot is worse than a route segment. So the intent rides the
+   * URL: a re-run opens on the consent statement, pre-filled, and re-stamps completion when left.
    */
   firstRunRerun: boolean;
   /**
-   * IS THIS AN "ADD A MAILBOX" RUN — `#/first-run/add`, from Settings → Mailboxes.
-   *
-   * The third intent, and it exists for the same reason {@link firstRunRerun} does: it cannot be
-   * derived. An install that has been through setup carries the completion stamp for ever, so
-   * `deriveOnboardingStep` answers `null` for it — right for a boot, and wrong for somebody who
-   * just pressed "Add mailbox" beside a list of the mailboxes they already have.
-   *
-   * ── AND IT IS NOT THE SAME INTENT AS A RE-RUN, WHICH IS WHY IT IS NOT A FLAG ON ONE ────────
-   *
-   * A re-run opens on the consent statement for a mailbox that EXISTS and walks the window and
-   * the AI question again. An add opens on the connect form for a mailbox that does not exist
-   * yet, and walks neither AI screen — the model is a property of the INSTALL
-   * (`ai-provider.ts`), and this install answered that question when it was set up. They select
-   * different opening screens and different paths, so one boolean could not express both.
-   *
-   * IT ALSO CARRIES THE CONNECT MODE. `FirstRunHost.connect` takes a required
-   * `"seed" | "add"` — `seed` reconfigures the install's own door, `add` posts to
-   * `POST /local/mailboxes` — and this field is where that word comes from. The two paths write
-   * to different places and a default would pick the destructive one: a "seed" connect from the
-   * Add-mailbox screen replaces the engine and then seals the typed password onto the mailbox
-   * the install was already opening.
+   * Is this an "add a mailbox" run — `#/first-run/add`, from Settings → Mailboxes. Like a re-run it
+   * cannot be derived (the completion stamp makes `deriveOnboardingStep` answer `null`), and it is not
+   * a flag on the re-run: a re-run opens on the consent statement for a mailbox that exists and walks
+   * the AI question again; an add opens on the connect form for one that does not exist yet and walks
+   * neither AI screen — the model is a property of the install (`ai-provider.ts`). It also carries the
+   * connect mode: `FirstRunHost.connect` takes a required `"seed" | "add"` — `seed` reconfigures the
+   * install's own door, `add` posts to `POST /local/mailboxes` — and a default would pick the
+   * destructive one: a seed connect from the Add screen replaces the engine and reseals the password.
    */
   firstRunAdd: boolean;
   /**
-   * WHICH MAILBOX THIS RUN IS ABOUT — `?mailbox=<id>`, or `null` when the hash did not say.
-   *
-   * A standalone install can hold more than one mailbox, so "the mailbox the flow is about" stopped
-   * being answerable by taking the first row: `AppShell` reads this id out of `GET /mailboxes` and
-   * falls back to the first row only when the hash names none (or names one this install no longer
-   * has — an id the list does not hold falls back in the shell, exactly as {@link messageId} does).
-   *
-   * `null` and not `""`: the hash either names a mailbox or it does not, and an empty string would
-   * be a third state that both readers would have to know about.
+   * Which mailbox this run is about — `?mailbox=<id>`, or `null` when the hash did not say. A
+   * standalone install can hold more than one mailbox, so `AppShell` reads this id out of
+   * `GET /mailboxes` and falls back to the first row only when the hash names none, or names one the
+   * install no longer has — an id the list does not hold falls back in the shell, as {@link messageId}
+   * does. `null` and not `""`: the hash either names a mailbox or it does not, and an empty string
+   * would be a third state both readers would have to know about.
    */
   firstRunMailboxId: string | null;
 }
 
 /**
- * THE MAILBOX A FIRST-RUN HASH NAMES — `?mailbox=<id>`, or `null`.
- *
- * The hash gained a query because a standalone install can hold more than one mailbox and the
- * flow has to say which one it is about. Only the first-run branch reads it; every other route
- * ignores whatever follows the `?`, which is what it did before this existed (the query was part
- * of the path segment and simply failed to match any view).
- *
- * Blank is `null`, not `""`. `#/first-run?mailbox=` is a hash that names no mailbox, and the
- * caller's fallback is the same one it uses for a hash with no query at all.
+ * The mailbox a first-run hash names — `?mailbox=<id>`, or `null`. The hash gained a query because a
+ * standalone install can hold more than one mailbox and the flow has to say which. Only the first-run
+ * branch reads it; every other route ignores what follows the `?`, as it always did. Blank is `null`,
+ * not `""`: `#/first-run?mailbox=` names no mailbox, and the caller's fallback is the same as for a
+ * hash with no query at all.
  */
 function firstRunMailboxOf(query: string): string | null {
   if (query === "") return null;
