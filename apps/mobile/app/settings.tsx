@@ -31,6 +31,7 @@ import { useWorld } from "../src/state/world";
 import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
+import { organizerRestrictedSaid, stopOrganizerSession } from "../src/engine/organizer-session";
 import { PHONE_CLAIM_NAME, standaloneAvailable } from "../src/engine/standalone-door";
 import { releaseMailbox } from "../src/net/mailboxes";
 import { useConnection } from "../src/net/connection";
@@ -371,6 +372,14 @@ function ThisPhonePanel() {
                 <Txt variant="note" tone="ink2">
                   {platformRuleLine(Platform.OS)}
                 </Txt>
+                {/* BATTERY SAVER, SAID WHERE THE PLATFORM RULE IS — and only once the background
+                    half has actually met it. `organizerRestrictedSaid` is the record
+                    `announceRestricted` writes; the deck's own note says this app organizes while
+                    it is open instead, which contradicts the rule line above it, so it sits
+                    directly under it rather than somewhere else on the screen. */}
+                {organizerRestrictedSaid() ? (
+                  <Txt variant="note" tone="ink2">{Copy.organizerRestricted}</Txt>
+                ) : null}
                 {mayStopHere(claim) ? (
                   <Button
                     label={Copy.settingsStopHere}
@@ -403,6 +412,11 @@ function ThisPhonePanel() {
                  to claim the mailbox is still being filed by a phone that asked to stop. */
               setAsked((cur) => (cur.includes(id) ? cur : [...cur, id]));
               if (session !== null) void releaseMailbox(session, id);
+              /* AND THE NOTIFICATION COMES DOWN WITH THE CLAIM. The release route has removed the
+                 claim and recorded this install as a reader, so a foreground service left standing
+                 would say "Organizing <address>" over a phone that reads — on the one surface a
+                 person cannot argue with. No hand-back here: the claim is already gone. */
+              void stopOrganizerSession();
             }}
           />
           <SheetRow icon="x" label={Copy.settingsStopHereCancel} onPress={() => setConfirming(null)} />

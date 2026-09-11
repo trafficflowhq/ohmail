@@ -30,6 +30,9 @@ takes the mailbox, or the phone stops being able to do the work, it comes down.
 Coming back asks the mailbox who holds it: free, and the phone takes it again; held by your
 computer or by ohmail Cloud, and the phone reads it instead. Nothing is taken from a machine that
 has it.
+"Stop organizing here" in Settings takes the notification down along with the mailbox. If your
+phone's battery settings will not let ohmail work in the background at all, Settings says so
+beside the line that describes what this phone does.
 
 ### Send later on a phone
 

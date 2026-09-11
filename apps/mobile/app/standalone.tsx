@@ -16,6 +16,7 @@ import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { sayRefusal, type Refusal } from "../src/refusal";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
+import { sayOrganizerRestricted } from "../src/engine/organizer-session";
 import { PHONE_CLAIM_NAME, openStandaloneMailbox } from "../src/engine/standalone-door";
 import { useTheme } from "../src/theme";
 import { Button, Panel, Rule, Screen, Scroller, Tap, Txt } from "../src/ui/base";
@@ -134,6 +135,25 @@ function Credentials() {
       },
     });
     if (outcome.ok) {
+      /* ══ THE ENGINE IS NOW WIRED TO THE APP'S OWN LIFECYCLE ═══════════════════════════════
+       *
+       * This is the line `background.ts` was written for and had no call site for. Without it
+       * every arm in that file is unreachable: nothing subscribes to `AppState`, so an Android
+       * phone posts no notification and keeps no service, and an iPhone leaves its claim standing
+       * in `ohmail/_meta` for the whole staleness window while it is suspended — which is the
+       * double-organizer state the fourth door's own sentences promise it avoids.
+       *
+       * The session is MODULE SCOPE and not this component's, because the navigation on the next
+       * line unmounts this screen: a session owned here would be disposed by its own success.
+       * Native for `local-engine-native.ts`'s reason — `AppState` is not loadable under vitest —
+       * and `void`, because a mailbox that is open must not wait on a notification.
+       */
+      const address = fields.address.trim();
+      void import("../src/engine/organizer-session-native")
+        .then((m) => { m.startOrganizerSessionNative(outcome.door, address); })
+        /* A BUILD THAT CANNOT REACH ITS OWN BACKGROUND HALF SAYS SO. Swallowed, this would be an
+           app that looks like it organizes in the background and does not. */
+        .catch(() => { sayOrganizerRestricted(); });
       /* The Ohbox in its first-sync state. Nothing between — the engine's own progress carries the
          wait, and a screen in the middle would be a screen with nothing true to say. */
       router.replace("/");

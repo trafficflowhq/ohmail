@@ -27,7 +27,29 @@ import { portMeansImplicitTls } from "@ohmail/client-engine";
 import { faultDetail, refuse, type Refusal } from "../refusal";
 import type { StandaloneFields } from "../ui/standalone-form";
 
-/** The engine's composition root, as the artifact exports it. Structural: the bundle is not typed. */
+/**
+ * THE RUNNING ENGINE, AS THIS APP USES IT. Structural, because the bundle is not typed — so every
+ * member here is a CLAIM about the artifact, and `test/engine-bundle-loads.test.ts` reads all five
+ * off a real booted one rather than off this declaration.
+ *
+ * The first three are the client's seam. The last two are the background half's: `handBack` and
+ * `resume` are the acts `background.ts` drives at every app-state edge, and `runtimes` is the
+ * three-answer read the claim watch and the reader check both ask. They were absent from this type
+ * while `createBackgroundOrganizing` had no call site, which is what made the omission invisible.
+ */
+export interface StandaloneEngine {
+  handle(req: Request): Promise<Response>;
+  sessionToken: string;
+  stop(): Promise<void>;
+  /** Remove this install's claim on every mailbox and leave the rows alone. */
+  handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
+  /** Force one gated cycle per mailbox, so the lease is re-read now. */
+  resume(): Promise<void>;
+  /** What each mailbox reports — the row's answer, not the gate's optimism. */
+  runtimes(): { organizer: Record<string, { organizing: boolean }> };
+}
+
+/** The engine's composition root, as the artifact exports it. */
 export type StartPhoneEngine = (deps: {
   exec: unknown;
   imap: {
@@ -41,7 +63,7 @@ export type StartPhoneEngine = (deps: {
   machineName: string;
   installId: string;
   keks?: Record<number, string>;
-}) => Promise<{ handle(req: Request): Promise<Response>; sessionToken: string; stop(): Promise<void> }>;
+}) => Promise<StandaloneEngine>;
 
 /** What this module needs of the app. Each one is a seam the suite drives directly. */
 export interface StandaloneDeps {
@@ -112,7 +134,7 @@ export const PHONE_CLAIM_NAME = "ohmail on a phone";
 
 /** What the form does next. A refusal carries the engine's own words, or the missing-field one. */
 export type StandaloneOutcome =
-  | { ok: true; door: { handle(req: Request): Promise<Response>; sessionToken: string; stop(): Promise<void> } }
+  | { ok: true; door: StandaloneEngine }
   | { ok: false; reason: Refusal };
 
 /**
