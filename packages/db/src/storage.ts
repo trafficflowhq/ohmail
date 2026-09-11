@@ -132,33 +132,14 @@ export async function applyBodyBytesDelta(
 }
 
 /**
- * ROLLING-WINDOW EVICTION (ratified 2026-08-21; replaces decline-new as the at-cap behaviour).
- *
- * At the storage cap the OLDEST stored bodies become husks — headers kept, content emptied,
- * `withheld_reason = 'storage_cap'` — so the hosted store holds a rolling window of the newest
- * mail and NEW bodies keep landing. The IMAP originals are never touched: eviction rewrites the
- * hosted COPY only, which is the same sentence the husk's `withheld_reason` already tells the
- * client ("not stored here; the original is in your mailbox"). The marker value is deliberately
- * the existing `'storage_cap'` — the REASON is the cap in both the declined-new and the evicted
- * case, only the mechanism differs — so every consumer of the marker (the client's withheld
- * sentence, the repair passes' skip rule, the 0062 CHECK) is already correct.
- *
- * Two layers share these primitives, and the split is the hysteresis:
- *
- *  · the WORKER's background pass (`apps/worker/src/storage-evict.ts`) trims accounts from
- *    {@link EVICT_HIGH_WATER_RATIO} of cap down to {@link EVICT_LOW_WATER_RATIO}, in bounded
- *    batches — so ingest almost always finds headroom and the band between the two marks is
- *    what stops trim/refill thrash;
- *  · the INGEST fallback ({@link reserveBodyBytesEvicting}) evicts just enough for the one
- *    body in front of it when a burst outruns the background pass, bounded by
- *    {@link EVICT_INLINE_MAX_BODIES}; past that bound the body is withheld exactly as the old
- *    decline-new behaviour withheld it — the pathological ceiling, not the ordinary path.
- *
- * LOCK ORDER: the counter row FIRST (the seam's row lock), then the body rows — the same
- * counter-before-everything order every writer in this module keeps. The repair passes order
- * the other way around (body row, then delta), which is safe only because all per-account
- * worker passes run serially inside one cycle; the eviction pass is registered in that same
- * serial section, never as a global concurrent sweep.
+ * Rolling-window eviction — the at-cap behaviour (2026-08-21), replacing decline-new. At the cap
+ * the OLDEST stored bodies become husks — headers kept, content emptied, `withheld_reason =
+ * 'storage_cap'` — so the hosted store holds a rolling window of the newest mail. The IMAP
+ * originals are never touched: eviction rewrites the hosted COPY only. The marker is the existing
+ * `'storage_cap'`, so every consumer is already correct. Two layers, split by hysteresis: the
+ * background pass trims from the high-water ratio to the low; the ingest fallback evicts just
+ * enough for the one body in front of it. LOCK ORDER: the counter row FIRST — the repair passes
+ * order the other way, safe only because per-account passes run serially.
  */
 
 /** Trim starts once counted bytes reach this fraction of the cap… */
