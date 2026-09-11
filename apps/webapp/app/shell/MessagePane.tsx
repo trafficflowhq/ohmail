@@ -1565,10 +1565,10 @@ export function MessagePane({
           reload), this session's press (they appear the moment it happens), and the account's
           own setting (most readers never see the button); without the second term the button
           would write a row and change nothing on screen, since `hydrateBody` returns early on a
-          `ready` record. `auto` is the product default (mail 0048): it admits PICTURES through
-          the proxy, and the sanitizer still refuses the proxy to a beacon or a 1×1 in both
-          modes. `onLoadRemote` is withheld in auto mode, which removes the button: "Show
-          images" over images already showing does nothing. */}
+          `ready` record. `auto` is the product default (mail 0048): pictures through the proxy,
+          the sanitizer still refusing it to a beacon or a 1×1 in both modes. `onLoadRemote` is
+          withheld in auto mode, which removes the button — "Show images" over images already
+          showing does nothing. */}
       <MessageBody
         messageId={message.id}
         text={body.text}
