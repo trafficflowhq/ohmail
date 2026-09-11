@@ -66,14 +66,14 @@ const TABLE = {
    * those sentences is the same — it keeps a copy; the fourth names this phone and says what it
    * costs ({@link doorPhone}).
    *
-   * ── AND THE LEAD SENTENCE COUNTS NOTHING, WHICH IS NOT A STYLE CHOICE ───────────────────
+   * ── AND THE LEAD SENTENCE COUNTS THE DOORS, WHICH IS RULED COPY ─────────────────────────
    *
-   * It read "One question, three answers" while the chooser rendered three doors, and it was
-   * true. The fourth door is offered on the build's own answer (`standaloneAvailable`) rather
-   * than on a flag, so there are now two states a shipped app can be in and a number in this
-   * sentence is false in one of them — it was measured false on a device the day the engine
-   * started shipping inside the app. A count in prose beside a data-driven list is a claim that
-   * goes stale without anybody editing it; `test/doors.test.ts` holds this one to naming none.
+   * It read "One question, three answers" and went false the day the engine started shipping
+   * inside the app and the fourth tile began to render. The count is ruled — CHOOSER-DESIGN
+   * §7.1 and PHONE-DOOR-DESIGN's copy table both name "One question, four answers" — so the
+   * remedy is the number, not its removal. A count in prose beside a data-driven list goes
+   * stale without anybody editing it, so `test/no-host-census.test.ts` §5 reads the word
+   * against the `<Door>` count in both decks rather than pinning the string.
    *
    * ── THE ORDER IS DIFFERENT FROM THE DESKTOP'S, AND DELIBERATELY SO ──────────────────────
    *
