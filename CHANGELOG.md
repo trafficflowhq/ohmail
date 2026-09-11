@@ -80,10 +80,10 @@ The desktop app's engine now writes its own memory use to its log every five min
 database it keeps your mail in is a separate number on that line rather than part of one total. If
 the app ever feels heavy after a long day, the log says which half grew.
 
-Two things changed behind that. The mail window no longer keeps a copy of its view of the mailbox
-alive after the view has moved on — one such copy was left, and on a large mailbox it was not
-small. And the app's store is a fixed cost measured at about 200 MB whatever the size of your
-mailbox, so it is now written down as one.
+Two things changed behind that. One copy of the mail window's view of the mailbox was being left
+alive after the view had moved on, and on a large mailbox it was not small; it is released now.
+And the app's store is a fixed cost measured at about 200 MB whatever the size of your mailbox, so
+it is now written down as one.
 
 ### A long mail-server command is not cut off by the connection check
 
@@ -93,7 +93,7 @@ pressing Sync now during a big fetch leaves the fetch running. And a link that d
 check has already passed is picked up by the next check, instead of waiting out the connection's
 own timeout.
 
-### The organizer lease is checked at every write
+### A mailbox that changes hands mid-pass stops the old computer within seconds
 
 Exactly one install organizes a mailbox at a time, and which one is recorded in the mailbox itself.
 That record was read at the start of a sync pass and then trusted for the whole of it, so moving a
@@ -149,7 +149,7 @@ limit already said: your other installs are never shown as stopped, and no organ
 made from half a folder. A request that runs out of time says so and closes its connection at
 once, instead of queueing a polite goodbye behind whatever is stuck.
 
-### A sender cannot write their way into your threads or your address book
+### A sender cannot write their way into your threads, or to the top of your suggestions
 
 The headers on an incoming message are written by whoever sent it, and three places treated them as
 facts. A message reusing the Message-ID of one you already have could take its place in a
@@ -311,7 +311,7 @@ It now forwards only the routes the server's own route table marks as forwardabl
 to everything else. Signing in through a browser still tells you, on your own server, to use your
 password and authenticator code instead.
 
-### A release cannot leave a self-hosted install with a new API and an old organizer
+### A release writes every self-host image's version tag before any latest tag moves
 
 A release wrote each self-host image's version tag and its `latest` tag together, one image at a
 time, so a `docker compose pull` during a release could fetch a new server beside an old organizer.
