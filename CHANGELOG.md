@@ -13,6 +13,11 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The phone's chooser counts its own doors
+
+The sentence above the list of places that can organize your mailbox said "One question, three
+answers" while the list offers four. It names four now, in both languages.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
