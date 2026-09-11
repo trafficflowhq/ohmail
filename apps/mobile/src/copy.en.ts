@@ -505,6 +505,18 @@ const TABLE = {
   admitPinNotStored:
     "ohmail could not record this computer's identity on this phone, so it stopped "
     + "rather than connecting without it.",
+  /**
+   * A PINNED CODE FOR A NAMED ADDRESS. The desktop composes a key into a pairing code only for
+   * its same-network address, so a code carrying one for a named address is either a mistake or
+   * somebody else's code. The key cannot be checked there — the address has a certificate of its
+   * own — and showing an unchecked key beside "compare these characters" is the one outcome that
+   * cannot be made honest, so the code is refused instead.
+   */
+  admitPinUnenforceable:
+    "This pairing code carries a key, but the address in it is a named one whose certificate "
+    + "this phone checks for itself \u2014 so the key cannot be checked and ohmail will not "
+    + "show it as if it had been. Use the code shown on the computer or server you mean to pair "
+    + "with.",
 
   pairBadAddress: (origin: string) => `not a server address: "${origin}"`,
   pairEmptyToken: "the pairing code is empty",

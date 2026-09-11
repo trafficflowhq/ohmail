@@ -74,7 +74,7 @@ import {
    programming faults nobody but a developer ever reads. */
 import { Copy } from "../copy";
 import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
-import { dropWakeRow } from "./push.js";
+import { dropWakeRow, type UnifiedPushDistributor } from "./push.js";
 import { resolveApiBase } from "./server-base.js";
 
 /** The hosted service — the managed picker card negotiates against this and nothing else. */
@@ -318,7 +318,40 @@ function isLoopback(host: string): boolean {
  * own trust store exactly as any website is, and a pin there would add a way for the pairing to
  * break on certificate renewal while adding nothing.
  */
-export function admitOrigin(origin: string, pin: string | null): { ok: true } | { ok: false; reason: Refusal } {
+export type Admitted =
+  /**
+   * `enforcedPin` is the key the TLS stack is now ENFORCING for this origin, or `null` where none
+   * is needed because the platform's own trust store verifies it.
+   *
+   * IT IS NOT "the pin that was in the link", and that distinction is the whole reason this type
+   * exists. A link carrying a fingerprint for a DNS-NAMED origin installs nothing — `originNeedsPin`
+   * is false there, correctly — and the confirmation screen was rendering that unenforced value
+   * under "Its key" beside the sentence "the same characters as under Settings → Devices there".
+   * An attacker with a real certificate for their own name and the VICTIM's fingerprint in the
+   * fragment got a screen that told the person to compare, and the comparison MATCHED. The screen
+   * built to catch that was assuring them of it. Only an enforced key may be shown, so only an
+   * enforced key leaves here.
+   */
+  | { ok: true; enforcedPin: string | null }
+  | { ok: false; reason: Refusal };
+
+export function admitOrigin(
+  origin: string,
+  pin: string | null,
+  /**
+   * The pin this phone ALREADY enforces for this origin, when it has one — read from the stored
+   * profile by the caller so this function stays pure.
+   *
+   * A DIFFERENT pin for an origin already paired under another key is refused rather than
+   * installed. `installPin` REPLACES the registry's entry for a (host, port), so without this a
+   * probe nobody confirmed rewrote the trust of a LIVE pairing: an attacker answering that address
+   * on the network offers a link for it carrying their key, the person probes and backs out, and
+   * the next refresh hands the existing bearer to the attacker's machine over a socket the phone
+   * now trusts. A key change is a deliberate re-pair — forget and pair again — and never a side
+   * effect of looking at a code.
+   */
+  knownPin?: string | null,
+): Admitted {
   const normalized = normalizeOrigin(origin);
   const host = normalized.replace(/^https?:\/\//, "").replace(/:\d+$/, "");
   if (normalized.startsWith("http://") && !isLoopback(host)) {
@@ -334,6 +367,19 @@ export function admitOrigin(origin: string, pin: string | null): { ok: true } | 
         reason: refuse("admitNoPin"),
       };
     }
+    /**
+     * A KEY CHANGE IS NOT AN INSTALL, and it is judged BEFORE `canPin()` on purpose.
+     *
+     * `installPin` replaces the registry's entry for a (host, port), so admitting this rewrites a
+     * live pairing's trust before anybody confirms. Two reasons the order is this way round:
+     * refusing a changed key is right whether or not this build can pin at all, and the sentence
+     * a person needs is about their computer's identity rather than about a missing platform half.
+     * Behind `canPin()` the check was also unreachable in the node suite, which is a guard nobody
+     * could watch fail.
+     */
+    if (knownPin !== undefined && knownPin !== null && knownPin !== pin) {
+      return { ok: false, reason: refuse("pinChanged") };
+    }
     if (!canPin()) {
       return {
         ok: false,
@@ -346,8 +392,29 @@ export function admitOrigin(origin: string, pin: string | null): { ok: true } | 
         reason: refuse("admitPinNotStored"),
       };
     }
+    return { ok: true, enforcedPin: pin };
   }
-  return { ok: true };
+  /**
+   * ── AN ORIGIN THAT NEEDS NO PIN ENFORCES NONE, AND THE TWO CASES DIVERGE ────────────────────
+   *
+   * Either way the admission carries NO key, because nothing was enforced and only an enforced
+   * key may be drawn. What differs is whether the code itself is refused, and the split is the one
+   * `originNeedsPin` already argues:
+   *
+   *  · **A DNS NAME is refused.** The desktop composes a key into a code only for its
+   *    same-network address, so a pinned code naming a host is either a mistake or the attack:
+   *    a real certificate for the attacker's own name plus the VICTIM's fingerprint in the
+   *    fragment. Admitting it silently would leave a pairing that works and a person who believes
+   *    they compared a key.
+   *  · **LOOPBACK is admitted, with the pin dropped.** That is an exemption rather than an
+   *    oversight — no network path exists to attack, which is the same reason `originNeedsPin`
+   *    exempts it, and it is where this suite's own servers live. The value is discarded, so the
+   *    confirmation shows its no-key sentence and nothing unchecked reaches a screen.
+   */
+  if (pin !== null && !isLoopback(host)) {
+    return { ok: false, reason: refuse("admitPinUnenforceable") };
+  }
+  return { ok: true, enforcedPin: null };
 }
 
 export interface PairingEnv {
@@ -363,6 +430,15 @@ export interface PairingEnv {
    * vocabulary existed.
    */
   deviceKind?: MobileDeviceKind;
+  /**
+   * The UnifiedPush connector, so a forget can take down the registration that belongs to the
+   * pairing it is forgetting — see {@link forgetProfile}.
+   *
+   * A PORT, absent by default, for the reason `push.ts` states: this module runs under node in the
+   * suite and must not reach a native module. The composition hands the real one in; every test
+   * that does not care about wakes omits it and forgets exactly as before.
+   */
+  distributor?: Pick<UnifiedPushDistributor, "unregister">;
 }
 
 export type PairOutcome =
@@ -418,7 +494,11 @@ function vaultFor(profiles: ServerProfileStore, id: string): RefreshVault {
 export interface PairAdmission {
   /** Lower-cased scheme+host(+port) — where the redeem and every later request will go. */
   origin: string;
-  /** The door's key fingerprint from the link, INSTALLED in the TLS stack. `null` unpinned. */
+  /**
+   * The key the TLS stack is ENFORCING for this origin — `admitOrigin`'s `enforcedPin` — and
+   * never the raw value out of the link. `null` where the platform's trust store verifies the
+   * origin on its own, which is also the only state in which the confirmation shows no key row.
+   */
   pin: string | null;
   /** What `GET /hello` said this is — "local", "desktop-host", "selfhost", "managed". */
   flavor: string;
@@ -462,7 +542,13 @@ export async function probePairing(
   // judged by the platform trust store — which for a self-signed door means it fails, and the
   // person is told the server is unreachable. See {@link admitOrigin} for each refusal.
   const pin = input.pin ?? null;
-  const admitted = admitOrigin(origin, pin);
+  /**
+   * THE PIN THIS PHONE ALREADY ENFORCES FOR THIS ORIGIN, if any. A stored pairing's key is not
+   * this probe's to replace — see `admitOrigin`'s `knownPin`. Read before the first request,
+   * because the install happens before `/hello`.
+   */
+  const stored = (await env.profiles.list()).find((row) => row.origin === origin) ?? null;
+  const admitted = admitOrigin(origin, pin, stored?.pin ?? null);
   if (!admitted.ok) return { kind: "refused", reason: admitted.reason };
 
   // 1 — what is this server, and does it pair? The gate is the same rule the picker renders
@@ -521,7 +607,12 @@ export async function probePairing(
   return {
     kind: "offers",
     admission: {
-      origin, pin, flavor: negotiated.hello.flavor, apiBase: resolved.base, probed: true,
+      origin,
+      // `admitted.enforcedPin`, NOT `pin`: what the screen may show is what the socket checks.
+      pin: admitted.enforcedPin,
+      flavor: negotiated.hello.flavor,
+      apiBase: resolved.base,
+      probed: true,
     },
   };
 }
@@ -543,6 +634,19 @@ export async function pairWithServer(
   const negotiatedFlavor = input.admission.flavor;
   const token = input.token.trim();
   if (token === "") return { kind: "refused", reason: refuse("pairEmptyToken") };
+
+  /**
+   * THE ADMISSION'S PIN IS RE-INSTALLED HERE, and it is not belt-and-braces.
+   *
+   * The registry is keyed by host and port and REPLACES. A second probe between this admission
+   * being shown and this press — another scan, another paste — rewrites the entry, so the socket
+   * the redeem would open could be checked against a key nobody was shown. Re-installing binds
+   * the request to the admission the person actually looked at. `null` ⇒ nothing to install, which
+   * is the trust store's case.
+   */
+  if (pin !== null && !installPin(origin, pin)) {
+    return { kind: "refused", reason: refuse("admitPinNotStored") };
+  }
 
   // 2 — spend the token: its one appearance, in the redeem body. `kind` is this phone's own
   // declaration (the server's whitelist now carries the mobile vocabulary), omitted only when
@@ -860,6 +964,22 @@ export async function forgetProfile(
     // host), so it cannot be a residue that opens anything, and holding the forget open over it
     // would be a take-back refused for a reason nobody could act on.
     if (row !== null) unpin(row.origin);
+    /**
+     * ── AND SO DOES THE WAKE REGISTRATION, which is this profile's own now ──────────────────
+     *
+     * Step 4's `logout` prunes the SERVER's `push_subscriptions` row. The DISTRIBUTOR end is the
+     * phone's and no server can reach it, and it became per-pairing in this slice — so forgetting
+     * one of two pairings left an instance registered for an account this phone can no longer
+     * open, for ever. `wake.tsx` sweeps only when the LAST pairing goes (the distributor CHOICE is
+     * app-wide), and `forgetWake` is reached only by turning wakes off explicitly. Neither is this
+     * path, which is the one a person actually takes.
+     *
+     * Best-effort for the pin's reason: an endpoint nothing POSTs to is not a residue that opens
+     * anything, and a forget must not fail in somebody's face over it.
+     */
+    if (env.distributor) {
+      await env.distributor.unregister(profileId).catch(() => undefined);
+    }
   } catch (err) {
     return {
       kind: "partial",
@@ -1057,7 +1177,9 @@ async function buildSession(
    * A refusal is a refusal to BOOT, never a boot without the pin: the alternative is a phone
    * that, after one restart, accepts any key on the local network for the mailbox it holds.
    */
-  const admitted = admitOrigin(profile.origin, profile.pin);
+  /* The stored pin is BOTH the pin to install and the known one, so a launch can never be read
+     as a key change: a profile's own key is what it is paired under. */
+  const admitted = admitOrigin(profile.origin, profile.pin, profile.pin);
   if (!admitted.ok) return { kind: "refused", reason: admitted.reason };
 
   /**

@@ -242,6 +242,11 @@ export const DE: Deck = {
   admitPinNotStored:
     "ohmail konnte die Identität dieses Computers auf diesem Telefon nicht speichern und hat "
     + "deshalb angehalten, statt ohne sie zu verbinden.",
+  admitPinUnenforceable:
+    "Dieser Kopplungscode enthält einen Schlüssel, aber die Adresse darin ist ein Name, dessen "
+    + "Zertifikat dieses Telefon selbst prüft \u2014 der Schlüssel lässt sich also nicht prüfen, "
+    + "und ohmail zeigt ihn nicht so, als wäre er geprüft. Nimm den Code, den der Computer oder "
+    + "Server anzeigt, mit dem du koppeln willst.",
 
   pairBadAddress: (origin: string) => `keine Serveradresse: „${origin}“`,
   pairEmptyToken: "der Kopplungscode ist leer",

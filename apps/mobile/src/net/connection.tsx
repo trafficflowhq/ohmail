@@ -43,6 +43,7 @@ import { settleInstallGeneration } from "../state/install-marker";
 import { nativeServerProfiles } from "../state/servers-native";
 import { installPinning } from "./host-pinning";
 import { nativeHostPinning } from "./host-pinning-native";
+import { unifiedPushDistributor } from "./unified-push";
 import type { ServerProfile } from "../state/servers";
 import type { FetchLike } from "./bearer";
 import { SyncRunner } from "./drain";
@@ -175,6 +176,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         profiles: nativeServerProfiles(),
         engineDeps: nativeEngineDeps(),
         deviceKind: mobileDeviceKind(Platform.OS),
+        /* THE CONNECTOR, so a forget takes down the wake registration of the pairing it is
+           forgetting. Registrations became per-pairing in this slice, so an orphan is now a real
+           thing to leave behind — `wake.tsx` sweeps only when the LAST pairing goes, because the
+           distributor CHOICE is app-wide. Handed in as a port for the reason every other native
+           thing here is: `net/pairing.ts` runs under node in the suite. */
+        distributor: unifiedPushDistributor(),
       };
     },
     [],
