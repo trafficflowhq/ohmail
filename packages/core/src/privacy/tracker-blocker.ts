@@ -1,51 +1,13 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// The spy-pixel / tracker blocker (core, PURE, no network).
-//
-// Two responsibilities, both pure string→data functions so they are trivially
-// unit-testable and safe to run on any host:
-//   • detectTrackers(html)       — find remote images that look like tracking
-//                                  beacons (1×1 pixels, known tracker hosts,
-//                                  beacon-shaped urls) and return the hits.
-//   • rewriteRemoteImages(html)  — point the remote image references it covers
-//                                  at OUR image proxy so the reader's browser
-//                                  does not connect to the sender directly (the
-//                                  proxy fetches server-side, hiding the
-//                                  reader's IP). data: and cid: URIs are
-//                                  inline/embedded — left as-is.
-//
-// The network fetch that actually hides the IP lives in PrivacyService
-// (packages/services); this file only decides WHAT to block and rewrites the html.
-//
-// ── WHAT rewriteRemoteImages COVERS, STATED EXACTLY, BECAUSE IT IS NOT "EVERY
-//    REMOTE REFERENCE" AND THIS HEADER USED TO SAY IT WAS ────────────────────
-//
-// It rewrites two shapes and only two: an `<img>` tag's `src`, and a CSS
-// `background-image: url(…)` declaration. Everything else that can name a
-// network resource is untouched — `srcset`, the legacy `background` attribute,
-// `image-set()`, the `background:` shorthand, `@import`, `<link href>`,
-// `<video poster>`, `<object data>`, `<embed src>`, `<iframe src>`, SVG
-// `<image href>`/`xlink:href`, `<base>` and `<meta http-equiv=refresh>`. Both
-// matchers are also regular expressions over raw markup, so they disagree with
-// a real parser on quoted urls containing `)` or `>`, on character references,
-// and on CSS escapes.
-//
-// ── THIS IS NOT THE READER'S PRIVACY GATE. DO NOT WIRE IT IN AS ONE. ─────────
-//
-// Nothing on the reader's render path calls this module. What protects a reader
-// opening a message is `MessageBody`, and it is a different and much stronger
-// mechanism: a tag/attribute ALLOW-LIST (so an unlisted element is gone rather
-// than rewritten), an explicit strip of every `src`, `srcset`, `background`,
-// CSS `url()`, `image-set()` and `@import` before the document is built, and a
-// frame CSP of `default-src 'none'` that refuses whatever shape of remote
-// reference the code has not thought of. The gaps listed above are survivable
-// only because that is what actually runs.
-//
-// So this module is a SERVER-SIDE analysis helper — "what did this message try
-// to fetch, and what would a proxied rewrite look like". Routing reader-facing
-// html through it INSTEAD of the allow-list would silently trade a default-deny
-// gate for a default-allow one. If it ever does go on a render path, the list
-// above is the work that has to be done first.
-// ─────────────────────────────────────────────────────────────────────────────
+// The spy-pixel / tracker blocker (core, PURE, no network). Two pure string→data
+// responsibilities: `detectTrackers(html)` finds remote images that look like beacons;
+// `rewriteRemoteImages(html)` points the references it covers at OUR image proxy so the reader's
+// browser never connects to the sender (`data:`/`cid:` are inline, left alone). The network fetch
+// lives in PrivacyService. The rewrite covers exactly two shapes — an `<img>` `src` and a CSS
+// `background-image: url(…)` — everything else is untouched, and both matchers are regexes over
+// raw markup. THIS IS NOT THE READER'S PRIVACY GATE: nothing on the render path calls this — what
+// protects a reader is `MessageBody`: a tag/attribute ALLOW-LIST, an explicit strip of every
+// remote-reference shape, and a frame CSP of `default-src 'none'`. Routing reader html through
+// this instead would trade a default-deny gate for a default-allow one.
 
 /** The stored/surfaced tracker kind. `pixel` = a 1×1/0×0 beacon; `remote_image`
  *  = a remote image from a known tracker host / beacon url that is not a bare
