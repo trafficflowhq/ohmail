@@ -7,6 +7,10 @@
  * mail barrel carries mailparser and `node:crypto` (the note in `MessageBody.tsx` is the
  * measurement). This leaf re-exports exactly the name rules and nothing else — the `/ics`
  * subpath's precedent, for the same reason.
+ *
+ * Because it re-exports (`./types.js`) rather than defining, this subpath carries a `node`
+ * condition naming its compiled twin: Node resolves the `.ts`, strips the types, and then cannot
+ * find `./types.js` beside it. Bundlers read `default` and still get this file.
  */
 export {
   FOLDER_PATH_MAX,

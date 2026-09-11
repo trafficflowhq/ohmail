@@ -18,6 +18,11 @@
  * `./search-rank` — point at `src/` and are therefore always resolvable, with no build and no
  * ordering. That is the first reason.
  *
+ * With one qualification this leaf and `./folder-name` earned the hard way: both re-export from
+ * `./types.js`, and plain NODE cannot follow a relative import out of a `.ts` it resolved from an
+ * exports map — so those two subpaths carry a `node` condition naming their compiled twin. Every
+ * bundler still reads `default` and still gets this file. See `//node-condition` in the manifest.
+ *
  * The second is the one `folder-name.ts` was written for and matters more: the barrel carries
  * `mailparser` and `node:crypto`, so it must stay UNREACHABLE from the browser graph. Making it
  * resolve from the webapp to fix a type error would remove the wall that makes such an import
