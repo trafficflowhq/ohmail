@@ -1,34 +1,14 @@
 "use client";
 
 /**
- * Buying AI suggestions for the Screener — the control that names the cost BEFORE it spends.
- *
- * ── WHY THIS EXISTS SEPARATELY FROM `screener-state.ts` ──────────────────────────────────
- *
- * The waiting rows come from the message mirror, and the mirror has never carried a
- * suggestion: `/sync` is a feed of changes to mail, and advice about mail is not one. So a
- * live account rendered "No suggestion" on every row, the "Apply all" control had nothing to
- * apply, and Enter had nothing to accept — not because the server could not answer, but
- * because nothing ever asked it. This module is the asking.
- *
- * It holds two things and nothing else: the suggestions known so far (joined onto rows by
- * sender address) and the small state machine of one purchase. Decisions, undo and the
- * commit window stay where they were.
- *
- * ── THE SPEND RULE THIS FILE IMPLEMENTS ──────────────────────────────────────────────────
- *
- * Credits are never moved without an action that named the cost first. That is why the flow
- * has a dry run in the middle of it and cannot be collapsed: opening the control prices the
- * exact set that is about to be posted, on the server, and the confirmation shows the number
- * the server answered. A price computed here would be a second implementation of the
- * eligibility rule — is this sender still held, is their mail withheld from the model, has
- * their answer already been bought — and the moment it disagreed with the server's, the
- * button would be quoting one figure and buying another.
- *
- * The batch is composed here for the same reason the endpoint demands an explicit list:
- * "suggest for everyone" over a backlogged mailbox is a four-figure spend behind one click.
- * The senders are taken from the FRONT of the queue in its own order, so the same press
- * twice covers the same senders and a person can predict what they are buying.
+ * Buying AI suggestions for the Screener — the control that names the cost BEFORE it spends. Separate from
+ * `screener-state.ts` because the mirror never carries a suggestion (`/sync` is a feed of changes to mail;
+ * advice about mail is not one), so a live account rendered "No suggestion" on every row until something
+ * asked. This holds the suggestions known so far (joined onto rows by sender address) and one purchase's
+ * state machine. The spend rule: credits never move without an action that named the cost first — the dry
+ * run prices the exact set on the SERVER (a price computed here would be a second eligibility rule that
+ * drifts), and the batch is an explicit list taken from the FRONT of the queue in its own order, so the
+ * same press twice covers the same senders.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -44,49 +24,28 @@ import {
 import type { PendingDecision } from "./screener-state";
 
 /**
- * One sender's suggestion, in the vocabulary the rows already speak.
- *
- * All five piles appear here, because all five are things `POST /screener/:id` can perform: it
- * takes a `dest` and files the sender's held mail there. This comment used to say the wire had
- * only two outcomes and that no finer destination could be shown. That stopped being true when
- * the endpoint learned the full destination set, and the stale sentence had a cost: the surface
- * kept collapsing every answer into "Ohbox" or "Screened out", so a model that said Receipts,
- * Reads or Spam was reported as having said "Screened out" — and the product looked as though it
- * never suggested those three at all.
- *
- * `screener` is the sixth value and it is NOT a filing: it is "leave this one where it already is",
- * which is what the server's `hold` means and what `OhmailView` has always called this pile. It
- * is here because the alternative — collapsing it into one of the two real ones — is the defect
- * this type used to carry. The comment above this interface used to read "the server's own
- * answer is that same yes/no, so nothing is lost in the mapping". The server's answer was
- * six-valued and the collapse behind it was a denylist, so `ohmail/Screener` fell through into
- * `ohbox` — and that is the classifier's OWN label for a first-contact stranger, which is what
- * every row in this queue is, so it was the answer that arrived most often. The surface showed
- * "Ohbox" over a rationale asking for a human.
- *
- * A row carrying `screener` is decidable by a PERSON and never by a bulk control: applying it
- * would move nothing and grant nothing, so it is not an outcome to offer.
+ * One sender's suggestion, in the vocabulary the rows already speak. All five piles appear
+ * because all five are things `POST /screener/:id` can perform (it takes `dest`); the old
+ * two-outcome collapse reported a model that said Receipts, Reads or Spam as "Screened out".
+ * `screener` is the sixth value and NOT a filing: it is "leave this one where it is" — the
+ * server's `hold`. The old denylist collapse dropped `ohmail/Screener` through to `ohbox` — the
+ * classifier's own label for a first-contact stranger, i.e. every row here — so "Ohbox" showed
+ * over a rationale asking for a human. A `screener` row is decidable by a PERSON, never a bulk:
+ * applying it would move nothing and grant nothing.
  */
 export interface SenderSuggestion {
   dest: "ohbox" | "reads" | "receipts" | "screened" | "spam" | "screener";
   confidence: number;
   rationale: string;
   /**
-   * WHY THERE IS NO ANSWER, when there is none.
-   *
-   * A purchase does not always come back with a verdict for every sender it was asked about, and
-   * the surface used to render those rows exactly as it rendered a sender nobody had bought advice
-   * for — blank. The person had paid, watched the run finish, and found rows that looked skipped,
-   * with nothing anywhere saying why.
-   *
-   * It was called `withheld`, and the rename is the AI-OPEN ruling arriving in the type system.
-   * Every remaining reason — the balance ran out, AI is off for the account, the model faulted —
-   * is a fact about the RUN, and every one of them is fixed by pressing again later. None of them
-   * is a fact about the mail, which is what "withheld" said and what this product no longer does
-   * on a path a person asked for.
-   *
-   * Present ⇒ `dest` is `screener` and there is nothing to act on, only something to say. Absent ⇒
-   * this is an ordinary suggestion.
+   * Why there is no answer, when there is none. A purchase does not always
+   * come back with a verdict for every sender, and those rows used to
+   * render blank — paid for, looking skipped, nothing saying why. It was
+   * called `withheld`; the rename is the AI-OPEN ruling in the type system:
+   * every remaining reason (balance ran out, AI off for the account, model
+   * fault) is a fact about the RUN, fixed by pressing again later — never a
+   * fact about the mail. Present ⇒ `dest` is `screener` and there is only
+   * something to say; absent ⇒ an ordinary suggestion.
    */
   noAnswer?: SuggestSkipShown;
 }
@@ -106,15 +65,13 @@ export type SuggestionOverlay = ReadonlyMap<string, SenderSuggestion>;
 export type SuggestPhase = "closed" | "pricing" | "ready" | "running";
 
 /**
- * WHICH SET AN OPEN LADDER IS BOUND TO — the one thing that differs between the two ways in.
- *
- * `new` covers senders with no answer yet; `again` covers senders that already have one. They
- * share every other moving part on purpose: one phase, one quote, one press counter, one chunked
- * purchase. A second state machine for the re-ask would be a second implementation of the spend
- * rule — a second place for a price to be shown that a purchase does not honour.
- *
- * The two sets are disjoint by construction (`ai == null` against `ai != null` over one queue), so
- * a sender is never in both ladders and the mode is the whole of the difference.
+ * Which set an open ladder is bound to — the one thing that differs between
+ * the two ways in. `new` covers senders with no answer yet; `again` covers
+ * senders that already have one. They share every other moving part on
+ * purpose — one phase, one quote, one press counter, one chunked purchase:
+ * a second state machine for the re-ask would be a second implementation of
+ * the spend rule. The two sets are disjoint by construction (`ai == null`
+ * vs `ai != null` over one queue), so the mode is the whole difference.
  */
 export type SuggestMode = "new" | "again";
 
@@ -159,22 +116,14 @@ export interface SuggestBatchControl {
   /** One sentence about the current state, already translated, or null when there is none. */
   notice: string | null;
   /**
-   * HOW FAR A RUNNING PURCHASE HAS GOT, as two numbers rather than as a sentence.
-   *
-   * `notice` already carries "3 of 40 suggested…", and that string is where this fact lived
-   * until now. A translated sentence is the wrong shape for a progress bar: a surface that
-   * wanted a track had to parse English back out of it, and a locale that ordered the numbers
-   * differently would break the parse rather than the sentence. So the numbers are published
-   * beside the sentence, from the same two sources, and neither is derived from the other.
-   *
-   * `null` in every phase but `running`, and cleared — not left at `{done: total}` — when the
-   * run finishes: a filled track that never goes away claims work is still in flight. It is
-   * set at the same two points the notice is (before the first chunk leaves, and after each
-   * chunk lands) so the two can never disagree about a frame.
-   *
-   * `total` is the SET the user consented to, not the number of chunks and not the number of
-   * senders the server ended up quoting — a purchase that halts part-way must still show what
-   * it was aiming at, or "8 of 8" would report a stopped run as a complete one.
+   * How far a running purchase has got, as two numbers rather than a sentence. `notice` already
+   * carries "3 of 40 suggested…", and a translated sentence is the wrong shape for a progress
+   * bar — a surface that wanted a track had to parse English out of it. The numbers are
+   * published beside the sentence, from the same two sources, at the same two points, so they
+   * cannot disagree about a frame. `null` in every phase but `running`, and cleared — not left
+   * at `{done: total}` — when the run finishes. `total` is the set the user consented to, not
+   * chunks and not what the server quoted: a halted purchase must still show what it was aiming
+   * at, or "8 of 8" reports a stopped run as complete.
    */
   progress: { done: number; total: number } | null;
   /** Open the ladder over the senders with no answer yet. */
@@ -194,17 +143,14 @@ export interface SuggestBatchControl {
 }
 
 /**
- * THE OPT-IN'S QUOTE — what turning the automatic batch ON would cost, before it is on.
- *
- * The automatic path has no dry run of its own (see the effect that fires it), and the reason
- * it is allowed not to have one is THIS: the cost was named when the setting was turned on.
- * That sentence was a promise about a control that did not exist — the flag was reachable only
- * by a raw API call — so this is the control that makes it true.
- *
- * It prices and stops. There is no `confirm` here on purpose: the thing being consented to is a
- * SETTING, written through `useConsentState` so the flag the spender reads and the flag the
- * switch shows are one value. A `confirm` on this object would be a second writer and the
- * beginning of the stale-OFF bug — switch off in Settings, Screener still buys.
+ * The opt-in's quote — what turning the automatic batch ON would cost,
+ * before it is on. The automatic path has no dry run of its own, and the
+ * licence for that is THIS: the cost was named when the setting was turned
+ * on — a sentence that was a promise about a control that did not exist
+ * until this one. It prices and stops; no `confirm` here on purpose: the
+ * thing consented to is a SETTING, written through `useConsentState` so the
+ * flag the spender reads and the flag the switch shows are one value — a
+ * second writer is the beginning of the stale-OFF bug.
  */
 export interface AutoOptInControl {
   /**
@@ -236,43 +182,36 @@ export interface AutoOptInControl {
 export interface ScreenerSuggestions {
   suggestions: SuggestionOverlay;
   /**
-   * DECISIONS THIS INSTALL HAS MADE THAT ITS ORGANIZER HAS NOT CARRIED OUT YET — the durable half.
-   *
-   * It rides this hook because this hook already makes the ONE `GET /screener` a session makes,
-   * and a second fetch of the same page to read one more field of it would be a round trip bought
-   * to avoid a seam. What it is NOT is a suggestion: nothing here is bought, priced or spent, and
-   * no control on the suggest surface reads it. `useScreenerState` is the only consumer.
-   *
-   * Empty until that read lands, and empty for ever where it fails or where the server does not
-   * send the field. Both are right: the live half of the same state — a press made in THIS
-   * session — is recorded by `useScreenerState` itself and needs nothing from here.
+   * Decisions this install made that its organizer has not carried out yet
+   * — the durable half. It rides this hook because this hook already makes
+   * the one `GET /screener` a session makes; a second fetch of the same
+   * page to read one more field would be a round trip bought to avoid a
+   * seam. Not a suggestion: nothing here is bought, priced or spent, and
+   * `useScreenerState` is the only consumer. Empty until the read lands,
+   * and empty for ever where it fails or the server lacks the field — the
+   * live half (a press in THIS session) is recorded by `useScreenerState`.
    */
   outstandingDecisions: readonly PendingDecision[];
   /**
-   * PUT ANSWERS INTO THE OVERLAY FROM SOMEWHERE THAT IS NOT THIS HOOK.
-   *
-   * There is exactly one overlay on screen — `useScreenerState` joins it onto the rows, and the
-   * chips, the suggested count, "Apply all" and Enter-accept are all read from it. So a host that
-   * buys suggestions its own way has to land them HERE or they are answers nothing can display:
-   * the desktop app talks to an engine on the same machine over a channel this file cannot use,
-   * and its control is its own (see `apps/desktop/src/local-suggest.tsx`).
-   *
-   * Deliberately the only seam of its kind. It adds no way to spend and no way to decide — it
-   * takes rows that have already been answered for and shows them.
+   * Put answers into the overlay from somewhere that is not this hook.
+   * There is exactly one overlay on screen — `useScreenerState` joins it
+   * onto the rows, and the chips, the suggested count, "Apply all" and
+   * Enter-accept all read it — so a host that buys suggestions its own way
+   * must land them HERE or they are answers nothing can display (the
+   * desktop's control is `apps/desktop/src/local-suggest.tsx`).
+   * Deliberately the only seam of its kind: it adds no way to spend and no
+   * way to decide — it shows rows already answered for.
    */
   absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   /**
-   * Bind the control to a sender list — the waiting rows with no suggestion, in queue order.
-   *
-   * A function rather than a hook argument because the list is computed by
-   * `useScreenerState`, which in turn consumes {@link suggestions}: passing it in would be a
-   * cycle. Called during render, it closes over the list for the one press that follows.
-   *
-   * `resuggestable` is the OTHER half of the same queue — senders that already have an answer —
-   * and it is a second parameter rather than a second call because the two ladders share one
-   * phase, one quote and one press counter. Two calls would mint two controls over one piece of
-   * state, and both would report the other's `pricing`. Omitted ⇒ no re-ask is offered, which is
-   * what every host that does not compute the list gets.
+   * Bind the control to a sender list — the waiting rows with no
+   * suggestion, in queue order. A function rather than a hook argument
+   * because the list is computed by `useScreenerState`, which consumes
+   * {@link suggestions}: passing it in would be a cycle. `resuggestable` is
+   * the other half of the same queue — senders that already have an answer
+   * — and a second parameter rather than a second call because the two
+   * ladders share one phase, quote and press counter: two calls would mint
+   * two controls over one state, each reporting the other's `pricing`. Omitted ⇒ no re-ask is offered.
    */
   forSenders: (addresses: string[], resuggestable?: string[]) => SuggestBatchControl;
   /**
@@ -288,28 +227,14 @@ export interface ScreenerSuggestions {
 }
 
 /**
- * THE TWO CALLS THIS HOOK MAKES, GATHERED INTO SOMETHING A HOST CAN HAND IN.
- *
- * ── WHY THE TRANSPORT IS A PARAMETER AND THE SPEND RULE IS NOT ──────────────────────────────
- *
- * This module reaches a server twice — it prices a set, and it buys one — and until now it reached
- * it exactly one way: the browser's `fetch` to a hosted API base. The desktop app renders this same
- * client against a mail engine running on the same machine, addressed over a pipe rather than a
- * socket, so on that surface the calls above resolve to nothing and the control could not be shown
- * at all. An install pointed at a hosted account has the account, the allowance and the balance
- * that make this control meaningful; what it does not have is the browser's way of asking.
- *
- * The alternative was a second control on that side, with its own quote, its own chunking and its
- * own idempotency keys. That is a second implementation of how money moves, and the two would
- * disagree the first time either was edited — a ladder quoting one figure while a purchase charges
- * another is the exact defect the dry run in the middle of this flow exists to prevent. So what
- * varies is the four lines that carry bytes, and everything above them — when to price, what to
- * consent to, how large a request may be, one key per chunk, halt on the first refusal — is shared
- * and cannot be forked by supplying one of these.
- *
- * Every method here is deliberately shaped like the hosted client's own, because the hosted client
- * IS the default (see {@link CLOUD_WIRE}) and a shape that had to be adapted for it would be a
- * shape invented for the second caller.
+ * The two calls this hook makes, gathered into something a host can hand in. This module reaches a server
+ * twice — it prices a set and it buys one — and the desktop renders this same client against an engine on
+ * the same machine, addressed over a pipe: an install pointed at a hosted account has the allowance and
+ * balance that make the control meaningful, not the browser's way of asking. The alternative — a second
+ * control with its own quote, chunking and keys — is a second implementation of how money moves. What varies
+ * is the four lines that carry bytes; when to price, what to consent to, chunk size, one key per chunk, halt
+ * on first refusal are shared and cannot be forked. Methods are shaped like the hosted client's own, because
+ * that IS the default ({@link CLOUD_WIRE}).
  */
 export interface SuggestWire {
   /**
@@ -358,70 +283,26 @@ const CLOUD_WIRE: SuggestWire = {
 };
 
 /**
- * The per-request CAP — the 413 boundary — to assume before the server has published its own.
- *
- * `GET /screener` answers `suggestable.maxPerRequest` and that number is preferred the moment
- * it arrives; this is the ceiling the control assumes if that read has not landed (offline, or a
- * press faster than the fetch). It is the most a single request may carry before the server
- * REFUSES it, and it is deliberately AT OR BELOW the server's real cap of
- * {@link ../../../packages/services/src/screener-service MAX_SUGGEST_SENDERS} (50) rather than
- * above it: guessing high costs a 413 on a chunk that had already quoted a price.
- *
- * It is NOT the size a request actually carries — that is the smaller {@link SUGGEST_CHUNK_SIZE},
- * and a request is bounded by whichever of the two is lower.
+ * The per-request cap — the 413 boundary — to assume before the server has
+ * published its own. `GET /screener` answers `suggestable.maxPerRequest`
+ * and that number wins the moment it arrives; this is the ceiling assumed
+ * if the read has not landed. Deliberately AT OR BELOW the server's real
+ * cap (`MAX_SUGGEST_SENDERS`, 50): guessing high costs a 413 on a chunk
+ * that had already quoted a price. It is not the size a request actually
+ * carries — that is the smaller {@link SUGGEST_CHUNK_SIZE}; a request is
+ * bounded by the lower of the two.
  */
 const ASSUMED_MAX_PER_REQUEST = 25;
 
 /**
- * HOW MANY SENDERS ONE REQUEST ACTUALLY CARRIES — the latency budget, distinct from the 413 cap.
- *
- * The whole request has to finish inside one serverless invocation (its host runs under a
- * 60-second ceiling), and a sender costs roughly two seconds of model time. What decides how many
- * of those fit is whether the server buys them one at a time.
- *
- * ── IT NO LONGER DOES, AND THAT IS WHY THIS NUMBER MOVED (was 15) ───────────────────────────
- *
- * `ScreenerService.suggest` bought its senders SERIALLY, so fifteen was already thirty seconds —
- * half the budget, with the other half kept for a cold start or a slow sender — and a request the
- * size of the per-request cap would have run past the invocation and returned nothing the control
- * could show: no ticking progress, no chips, just a timeout. That server now buys in bounded lanes
- * (`SUGGEST_LANES`), which took the model waits off the critical path without touching the money:
- * the credit gate serialises on the account's balance row whatever the lanes do.
- *
- * MEASURED against real Postgres on a `max: 1` connection — production's shape — at 2 000 ms per
- * sender: fifteen senders went from **30.3 s to 6.1 s** and fifty from **100.8 s to 20.2 s**, a
- * factor of five in both. Forty is therefore about sixteen seconds of model time: a SMALLER share
- * of the invocation than the old fifteen occupied, while carrying nearly three times as many
- * senders.
- *
- * The consequence for a person is the number of round trips: a four-hundred-sender purchase — the
- * top of {@link OFFERED_SIZES} — is TEN requests instead of twenty-seven, and about three minutes
- * instead of about fourteen.
- *
- * ── AND FORTY IS THE SERVER'S NUMBER, NOT THIS FILE'S ───────────────────────────────────────
- *
- * This constant is now the FALLBACK — fifteen, unchanged, the size that is safe against a server
- * that still buys serially. The forty comes off the wire, as `suggestable.recommendedPerRequest`
- * on `GET /screener`.
- *
- * That indirection is not ceremony. The server and this app are built and released as separate
- * artifacts, so during a rollout — or a rollback — this client can be talking to the PREVIOUS
- * server, which buys its senders one at a time. Forty senders there is ~80 s against a 60 s
- * invocation: killed by the deadline, with a partly debited purchase and no response. And the
- * client cannot tell the two servers apart from `maxPerRequest`, which both publish as 50 — the
- * cap is a 413 boundary and says nothing about how the work is done. So the server that can take
- * forty is the one that says so, and a server that says nothing gets fifteen.
- *
- * Measured against PostgreSQL on a single connection at 2 000 ms per sender: fifteen senders went
- * from 30.3 s to 6.1 s and fifty from 100.8 s to 20.2 s, a factor of five in both. Forty is
- * therefore ~16 s — a smaller share of the invocation than the old fifteen occupied, while carrying
- * nearly three times as many senders — and the largest purchase the ladder offers is TEN requests
- * instead of twenty-seven, minutes instead of a quarter of an hour.
- *
- * So the offered ladder (up to {@link MAX_SUGGEST_BATCH}) is split into requests of at most the
- * lower of the three numbers — this fallback or the server's recommendation, and the 413 cap —
- * each of which reliably completes: a large purchase ticks forward one chunk at a time and its
- * chips land as it goes.
+ * How many senders one request actually carries — the latency budget, distinct from the 413 cap. The request must finish inside
+ * one serverless invocation (60 s) at ~2 s of model time per sender. The server now buys in bounded lanes (`SUGGEST_LANES`; the
+ * credit gate still serialises on the balance row), measured at 15 senders 30.3 s → 6.1 s and 50 senders 100.8 s → 20.2 s — so
+ * forty is ~16 s. This constant is the FALLBACK, fifteen: safe against a server that still buys serially (a rollout or rollback
+ * can pair this client with the previous server, where forty is ~80 s — killed by the deadline with a partly debited purchase;
+ * both servers publish `maxPerRequest: 50`, so the cap cannot tell them apart). The forty comes off the wire as
+ * `suggestable.recommendedPerRequest`: the server that can take it is the one that says so. The ladder is split into requests
+ * of the lowest of the three numbers, each of which completes.
  */
 export const SUGGEST_CHUNK_SIZE = 15;
 
@@ -436,19 +317,14 @@ export const SUGGEST_CHUNK_SIZE = 15;
 const OFFERED_SIZES = [10, 25, 50, 100, 200, 400];
 
 /**
- * THE MOST ONE AUTHORISED PURCHASE MAY BUY — the ladder's ceiling, above the per-request cap.
- *
- * A purchase and a request are different sizes. One request is bounded by {@link SUGGEST_CHUNK_SIZE}
- * (what reliably classifies inside one serverless invocation) and by the server's per-request cap;
- * a purchase can be much larger, and is delivered as a sequence of those requests. Clamping the
- * ladder to a single request's worth is what an earlier control did — a purchase could then never
- * exceed one request, and stretching the request to fit a bigger ladder pushed it past the
- * invocation's deadline. This ceiling decouples the two: it is a number a person can picture
- * spending in one press, and a chosen size larger than one request is SPLIT into chunks that each
- * fit one request. The full set is still priced first (the sum of the chunk quotes), so consent is
- * to the whole, and spend never exceeds that sum.
- *
- * It is the top of {@link OFFERED_SIZES}: the ladder offers up to here and no higher.
+ * The most one authorised purchase may buy — the ladder's ceiling, above the per-request cap. A
+ * purchase and a request are different sizes: one request is bounded by {@link
+ * SUGGEST_CHUNK_SIZE} and the server's cap; a purchase is delivered as a sequence of them.
+ * Clamping the ladder to one request's worth is what an earlier control did — and stretching
+ * the request to fit a bigger ladder pushed it past the invocation's deadline. A chosen size
+ * larger than one request is split into chunks that each fit; the full set is still priced
+ * first (the sum of the chunk quotes), so consent is to the whole and spend never exceeds that
+ * sum. The top of {@link OFFERED_SIZES}.
  */
 export const MAX_SUGGEST_BATCH = 400;
 
@@ -456,41 +332,26 @@ export const MAX_SUGGEST_BATCH = 400;
 const HYDRATE_LIMIT = 200;
 
 /**
- * HOW MANY SENDERS ONE AUTOMATIC BATCH BUYS — the opt-in's entire spend per Screener open.
- *
- * Ten, not the endpoint's cap of fifty and not the largest size the manual control offers. The
- * automatic path spends without a press, so its bound has to be a number somebody can live with
- * being wrong about: at one credit per screened sender, ten is a rounding error against the smallest
- * tier's monthly allowance, and a person who wants the other forty presses the manual control and
- * sees a quote first. A backlog is drained ten at a time across visits rather than in one
- * four-figure purchase nobody authorised individually — the reason the endpoint demands an
- * explicit sender list in the first place (see the header's spend rule).
- *
- * It is also why the flag needs no per-period ceiling stored on the account: the only thing that
- * can spend automatically is a person opening the Screener, and each open buys at most this many.
+ * How many senders one automatic batch buys — the opt-in's entire spend per Screener open. Ten,
+ * not the endpoint's fifty and not the manual ladder's top: the automatic path spends without a
+ * press, so its bound has to be a number somebody can live with being wrong about — a rounding
+ * error against the smallest tier's monthly allowance. A backlog drains ten at a time across
+ * visits rather than in one four-figure purchase nobody authorised (the reason the endpoint
+ * demands an explicit list). Also why the flag needs no per-period ceiling on the account: only
+ * a person opening the Screener can spend automatically, at most this much per open.
  */
 export const AUTO_BATCH_SIZE = 10;
 
-/* ── THE SPEND ANNOUNCEMENT ───────────────────────────────────────────────────────────────
- *
- * A purchase here changes a number that OTHER surfaces are showing — the account's remaining AI
- * allowance, rendered one line under the control that just spent it. That line is not part of
- * this file's tree and cannot be: it reads `GET /billing/subscription`, and `app/shell` may not
- * call the Cloud client. It is injected, it fetches once on mount, and nothing remounts it when
- * a sibling spends — so it went on claiming the balance the session started with, including
- * claiming credits at zero and withholding the exhausted-trial offer until a full reload.
- *
- * The narrowest thing that fixes it is a notification, not a shared store: this file already
- * knows the exact moment the server reported a new balance, and every listener only needs to be
- * told to re-read. No state crosses the seam, so the shell still holds no billing knowledge and
- * the notice remains the only thing that knows what a balance means.
- *
- * Module scope rather than context, because the emitter is a hook the shell instantiates once
- * and the listener is a node handed to it from outside — there is no component that contains
- * both. `subscribe` returns its own unsubscribe, so a listener's `useEffect` cleanup is the whole
- * lifecycle.
- *
- * NOT a poll and not a heartbeat: it fires only after a request that actually moved money. */
+/* The spend announcement. A purchase changes a number OTHER surfaces show —
+ * the remaining AI allowance, rendered one line under the control that
+ * spent it. That line reads `GET /billing/subscription`, is injected,
+ * fetches once on mount, and nothing remounts it when a sibling spends — so
+ * it claimed the session-start balance, including credits at zero, until a
+ * reload. The narrowest fix is a notification, not a shared store: this
+ * file knows the moment the server reported a new balance, and listeners
+ * only need "re-read" — no state crosses the seam, the shell holds no billing knowledge. Module scope rather than context (no component
+ * contains both ends); `subscribe` returns its own unsubscribe. Not a poll:
+ * it fires only after a request that actually moved money. */
 const creditListeners = new Set<() => void>();
 
 /**
@@ -600,29 +461,14 @@ export function useScreenerSuggestions(opts: {
     run: 0,
     hydrated: false,
     /**
-     * THE AUTO LATCH — the whole safety of the automatic path is these three fields.
-     *
-     * `autoFired` goes true before the request leaves, so a re-render, a second effect pass under
-     * StrictMode, or a warming mirror cannot buy a second batch. It is reset when the Screener goes
-     * AWAY, which makes the unit "one batch per Screener-open": a person who comes back later gets
-     * the next few senders, and a backlog drains across visits instead of in one purchase nobody
-     * authorised individually.
-     *
-     * `autoDisarmed` is the refusal latch, and the reset above is what gives it a job. When the
-     * server refuses — no credits (402), managed AI switched off (409), no classifier connected
-     * (503) — the automatic path stops for the whole session and does not try again on the next
-     * visit. Without it, an account with an empty balance would issue one doomed request every
-     * time the Screener was opened: a client hammering a wall it has already been told about, and
-     * for a 503 an automatic loop against a misconfiguration. The manual control still works and
-     * still carries the server's own sentence, so nobody is left without a way in.
-     *
-     * The two were briefly redundant — `autoFired` was never reset, so nothing could reach the
-     * second latch and REMOVING IT LEFT THE SUITE GREEN. That is recorded because a guard nobody
-     * has watched fail is not evidence, and the fix was to give each of them a distinct
-     * reachable state rather than to delete the one that happened to be unreachable.
-     *
-     * `queue` is the sender list the control was last bound to, recorded during render so the
-     * effect below can read it without the render cycle `forSenders` exists to avoid.
+     * The auto latch — the whole safety of the automatic path. `autoFired` goes true before the request
+     * leaves, so a re-render, a StrictMode second pass, or a warming mirror cannot buy a second batch; it
+     * resets when the Screener goes away, making the unit "one batch per open". `autoDisarmed` is the
+     * refusal latch the reset gives a job: on a 402/ 409/503 the automatic path stops for the session —
+     * without it an empty balance issues one doomed request per visit. The two were briefly redundant
+     * (`autoFired` never reset, so removing the second latch left the suite GREEN — recorded because an
+     * unwatchable guard is not evidence; the fix gave each a distinct reachable state). `queue` is the
+     * last bound sender list, recorded during render for the effect.
      */
     autoFired: false,
     autoDisarmed: false,
@@ -637,36 +483,26 @@ export function useScreenerSuggestions(opts: {
      */
     optInRun: 0,
     /**
-     * THE AUTOMATIC BATCH'S OWN COUNTER — deliberately not `run`, for the reason `optInRun` is
-     * not either, and sharing `run` was the self-cancellation bug when it did.
-     *
-     * The automatic batch fires ASYNCHRONOUSLY, gated on `hydrateSettled`, so the first time it
-     * runs is a network round trip after the Screener opens — and an owner who opens the Screener
-     * and presses Suggest is inside that window: the manual purchase is in flight when the batch
-     * fires. Sharing `run` meant the batch's own `++run` invalidated that in-flight manual
-     * purchase, whose `await` then returned, saw the counter had moved, and discarded itself
-     * WITHOUT clearing `running` — the button spun forever. On the next visit the batch's latch
-     * had already fired, so the counter stood still and the same press worked, which is exactly
-     * the "fails once, works on retry" the flake was reported as.
-     *
-     * The manual control's `run` and this are independent purchases with independent idempotency
-     * keys; neither result should ever discard the other. A manual press does not cancel the
-     * automatic batch and the automatic batch does not cancel a manual press.
+     * The automatic batch's own counter — deliberately not `run`; sharing `run` was the
+     * self-cancellation bug. The batch fires asynchronously, gated on `hydrateSettled`, and an
+     * owner who opens the Screener and presses Suggest is inside that window: the batch's
+     * `++run` invalidated the in-flight manual purchase, whose `await` saw the moved counter
+     * and discarded itself WITHOUT clearing `running` — the button spun forever, and worked on
+     * the next visit ("fails once, works on retry"). The two are independent purchases with
+     * independent keys; neither result may discard the other.
      */
     autoRun: 0,
   });
 
   /**
-   * Bumped ONCE, the first time the control is bound to a non-empty queue.
-   *
-   * The automatic batch cannot fire from the first render: the queue comes from the message
-   * mirror, and on a cold tab the mirror is still filling, so `forSenders` is called with an empty
-   * list several times before it has anything. An effect keyed only on `active` would look once,
-   * find nothing and never look again — which is how this feature would ship doing nothing on
-   * every real account and working on every test that pre-warms its fixture.
-   *
-   * One state write per session, guarded by `autoSeen`, purely to give the effect below a
-   * dependency that changes when there is finally something to buy.
+   * Bumped once, the first time the control is bound to a non-empty queue.
+   * The automatic batch cannot fire from the first render: the queue comes
+   * from the mirror, and on a cold tab `forSenders` is called with an empty
+   * list several times. An effect keyed only on `active` would look once,
+   * find nothing and never look again — shipping a feature that does
+   * nothing on every real account and works in every pre-warmed test. One
+   * state write per session, guarded by `autoSeen`, purely to give the
+   * effect a dependency that changes when there is something to buy.
    */
   const [queueReady, setQueueReady] = useState(0);
   const autoSeen = useRef(false);
@@ -675,18 +511,14 @@ export function useScreenerSuggestions(opts: {
   const [hydrateSettled, setHydrateSettled] = useState(false);
 
   /**
-   * `toast` and `t` HELD IN A REF, so the automatic effect does not depend on their identity.
-   *
-   * Not a micro-optimisation — it is what makes the effect's dependency list mean something.
-   * `useTranslations` returns a fresh function every render, and a parent is free to pass a fresh
-   * `toast` arrow, so listing either in the deps re-runs the effect on EVERY render. The batch is
-   * still safe (the latch stops a second purchase), but the cold-mirror behaviour then works by
-   * accident: `queueReady` would be dead weight and the real retrigger would be the parent's
-   * render churn, which is not something this module can promise.
-   *
-   * Measured, not assumed. With these in the deps, deleting the `setQueueReady` bump left the
-   * whole suite GREEN — a guard that cannot fail is not evidence. With them in a ref, that
-   * deletion goes red, which is the assertion the test claims to be making.
+   * `toast` and `t` held in a ref, so the automatic effect does not depend
+   * on their identity. Not a micro-optimisation: `useTranslations` returns
+   * a fresh function every render and a parent may pass a fresh `toast`
+   * arrow, so listing either re-runs the effect every render — the batch
+   * stays safe (the latch), but the cold-mirror behaviour then works by
+   * accident off the parent's render churn. Measured: with these in the
+   * deps, deleting the `setQueueReady` bump left the suite GREEN; with them
+   * in a ref, that deletion goes red — the assertion the test claims to make.
    */
   const notify = useRef({ toast, t });
   notify.current = { toast, t };
@@ -718,19 +550,14 @@ export function useScreenerSuggestions(opts: {
   );
 
   /**
-   * Read what has ALREADY been bought.
-   *
-   * Once per session, when the Screener is first opened, and never again: this is what makes a
-   * suggestion survive a reload. Without it the chips would live only as long as the tab that
-   * bought them, and the user's next press would re-ask the server for answers it is already
-   * holding — free to them (a stored answer is served, not re-bought) but silent, so it would
-   * look like the purchase had failed.
-   *
-   * ONE page. The server's queue is `date desc` and so is the list on screen, so a page covers
-   * the front of both. A backlogged mailbox has more senders than this, and the ones past the
-   * window simply have no chip until they are bought or scrolled to; paging the whole backlog
-   * on every visit would be hundreds of rows of subject and snippet fetched to decorate rows
-   * nobody is looking at.
+   * Read what has already been bought — once per session, when the Screener
+   * is first opened. This is what makes a suggestion survive a reload:
+   * without it the chips lived only as long as the tab that bought them,
+   * and the next press re-asked for answers the server already held — free
+   * (a stored answer is served, not re-bought) but silent, so it looked
+   * like the purchase had failed. ONE page: the server's queue is `date
+   * desc` like the list on screen, so a page covers the front of both;
+   * senders past the window have no chip until bought or scrolled to.
    */
   useEffect(() => {
     if (!active || io.current.hydrated || !link.current.wire.configured()) return;
@@ -791,19 +618,14 @@ export function useScreenerSuggestions(opts: {
   }, [active, merge]);
 
   /**
-   * THE AUTOMATIC BATCH — one per mounted Screener, only when the account opted in.
-   *
-   * Everything this path is allowed to do is buy suggestions. It reaches {@link SuggestWire.suggest}
-   * and nothing else: there is no branch here that can call `POST /screener/:id`, write a rule or
-   * move a message, which is what keeps the opt-in an opt-in to WORK rather than to a decision.
-   * `test/screener-auto-suggest.test.tsx` asserts that by watching the calls, because "I did not write
-   * that line" is not a property a reader can check later.
-   *
-   * There is no dry run in front of it, and that is the one place this path differs from the
-   * manual control. The control prices first because a person is about to press a button and has
-   * to see what it costs; here the cost was named when the setting was turned on, and the batch is
-   * bounded by {@link AUTO_BATCH_SIZE} so the figure quoted then is the figure that applies. A dry
-   * run would double the round trips to re-tell the client something it already fixed.
+   * The automatic batch — one per mounted Screener, only when the account opted in. Everything
+   * this path may do is buy suggestions: it reaches {@link SuggestWire.suggest} and nothing
+   * else — no branch can call `POST /screener/:id`, write a rule or move a message, which keeps
+   * the opt-in an opt-in to WORK rather than to a decision
+   * (`test/screener-auto-suggest.test.tsx` watches the calls). No dry run in front of it, the
+   * one difference from the manual control: the cost was named when the setting was turned on,
+   * and the batch is bounded by {@link AUTO_BATCH_SIZE}, so the figure quoted then is the one
+   * that applies.
    */
   useEffect(() => {
     if (!active) {
@@ -872,17 +694,14 @@ export function useScreenerSuggestions(opts: {
    * than the class of bug that memoising it invites.
    */
   const forSenders = (addresses: string[], resuggestable: string[] = []): SuggestBatchControl => {
-    // The automatic batch's only view of the queue, and it is the UNSUGGESTED list alone.
-    //
-    // Deliberately not widened to include `resuggestable` when the re-ask arrived. The automatic
-    // path spends without a press, and its entire licence is "the cost was named when the setting
-    // was turned on" — a figure quoted over the senders that have no answer yet. Feeding it a set
-    // that includes senders whose newest mail is unbought would make it spend, unpressed, on a
-    // batch nobody priced. The re-ask is a manual affordance and stays one.
-    //
-    // A REF write during render, which is safe — it schedules nothing and changes no output — and
-    // the alternative (passing the list in as a hook argument) is the cycle this function's own
-    // docblock exists to explain.
+    // The automatic batch's only view of the queue: the UNSUGGESTED list
+    // alone, deliberately not widened to `resuggestable`. The automatic
+    // path spends without a press; its entire licence is "the cost was
+    // named when the setting was turned on" — a figure quoted over senders
+    // with no answer yet. Including re-ask senders would spend, unpressed,
+    // on a batch nobody priced; the re-ask stays manual. A ref write during
+    // render is safe here (schedules nothing, changes no output); the
+    // alternative — a hook argument — is the cycle `forSenders` exists to avoid.
     io.current.queue = addresses;
     // One state write, the first time there is anything to buy, so the effect above gets a
     // dependency that changes when the cold mirror finally has senders in it.
@@ -906,17 +725,13 @@ export function useScreenerSuggestions(opts: {
     const chosen = sizes.includes(size) ? size : (sizes[sizes.length - 1] ?? 0);
 
     /**
-     * ONE request carries at most this many senders — the LOWEST of the server's own recommended
-     * size (`suggestable.recommendedPerRequest`, absent on a server deployed before it existed, in
-     * which case {@link SUGGEST_CHUNK_SIZE}'s conservative fallback stands) and the 413 cap
-     * ({@link maxPerRequest},
-     * {@link ASSUMED_MAX_PER_REQUEST} until that read lands). The cap is only the 413 boundary; the
-     * budget is what actually fits one serverless invocation, and it is the smaller of the two in
-     * production — a request the size of the cap would classify past the invocation's deadline and
-     * return nothing (the frozen "0 of N" this split exists to prevent). A price or a purchase
-     * larger than this is split into chunks of at most this size; `chunksOf` is that split, always
-     * in the queue's own order so a chunk is a contiguous prefix-slice and the same press twice
-     * covers the same senders.
+     * One request carries at most this many senders — the lowest of the server's recommended
+     * size (`suggestable.recommendedPerRequest`; {@link SUGGEST_CHUNK_SIZE}'s fallback on an
+     * older server) and the 413 cap ({@link maxPerRequest}; {@link ASSUMED_MAX_PER_REQUEST}
+     * until read). The cap is only the 413 boundary; the budget is what fits one serverless
+     * invocation, the smaller of the two in production — a cap-sized request would classify
+     * past the deadline and return nothing (the frozen "0 of N"). Larger prices and purchases
+     * split via `chunksOf`, always in queue order, so a chunk is a contiguous prefix.
      */
     const chunkSize = Math.max(1, Math.min(maxPerRequest, recommendedPerRequest ?? SUGGEST_CHUNK_SIZE));
     const chunksOf = (set: string[]): string[][] => {
@@ -926,23 +741,14 @@ export function useScreenerSuggestions(opts: {
     };
 
     /**
-     * Price the first `n` of `from` on the SERVER. No model, no debit, nothing stored.
-     *
-     * The set is priced in REQUEST-SIZED chunks and the quotes are SUMMED — the same chunks the
-     * purchase will use, so the number on screen is the exact ceiling the purchase honours.
-     * Consent is to the sum, not to a first chunk that happened to fit one request. Every chunk
-     * checks the press counter on arrival, so a size changed mid-flight discards the whole
-     * half-summed price rather than painting it under the new label.
-     *
-     * `from` and `kind` are ARGUMENTS rather than reads of `target`/`mode`, and that is the whole
-     * of what makes the two entry points safe. `openAgain` calls `setMode("again")` and prices in
-     * the same handler; `mode` is still `new` in that closure, so a `price` that read it would
-     * quote the buy list and label the answer as a re-ask. The parameters are what the caller
-     * already knows for certain.
-     *
-     * A quote of ZERO is a real answer here, not an error: the server prices only what it is not
-     * already holding, so a re-ask over senders whose newest mail is unchanged is honestly free
-     * and honestly buys nothing new. `kind` picks which of those two sentences is true.
+     * Price the first `n` of `from` on the SERVER — no model, no debit, nothing stored. Priced
+     * in request-sized chunks and SUMMED — the same chunks the purchase will use, so the number
+     * on screen is the exact ceiling the purchase honours; every chunk checks the press counter
+     * on arrival, so a size changed mid-flight discards the half-summed price. `from` and `kind`
+     * are ARGUMENTS, not reads of `target`/`mode`: `openAgain` calls `setMode("again")` and
+     * prices in the same handler, where `mode` is still `new` in the closure. A quote of ZERO is
+     * a real answer: the server prices only what it is not already holding, so an unchanged
+     * re-ask is honestly free; `kind` picks the right sentence.
      */
     const price = (n: number, from: string[], kind: SuggestMode) => {
       const set = from.slice(0, n);
@@ -1047,24 +853,14 @@ export function useScreenerSuggestions(opts: {
         setMode("new");
       },
       /**
-       * Buy the chosen set — in REQUEST-SIZED chunks, halting on the first that stops or fails.
-       *
-       * The whole set was priced above (the sum of the chunk quotes), so consent is to the whole
-       * and the money rules are these, in order:
-       *
-       *  - ONE idempotency key PER CHUNK. Each chunk is its own purchase: a retry of a lost chunk
-       *    replays THAT chunk's answer, and a re-press after a mid-run failure re-buys only the
-       *    chunks that never landed — the ones that did answer `duplicate` server-side and cost 0.
-       *    A single key shared across chunks would make chunk 2 replay chunk 1's response.
-       *  - `run` is captured ONCE, here, and every chunk checks it against `io.current.run` on
-       *    arrival. A second press (cancel, or a re-price) bumps the counter and the in-flight loop
-       *    aborts, painting nothing. It is NEVER re-bumped inside the loop — that would make each
-       *    chunk invalidate the next one's check, which is the same self-cancellation
-       *    moved inside a single purchase.
-       *  - Chips land INCREMENTALLY, per chunk, and the notice ticks "X of Y bought". A chunk that
-       *    stops (the gate ran out part-way) or throws HALTS the loop: what earlier chunks bought
-       *    stays on record, the summary names what actually charged, and spend never exceeds the
-       *    sum that was quoted.
+       * Buy the chosen set — in request-sized chunks, halting on the first that stops or fails.
+       * Consent is to the whole (priced above as the sum of chunk quotes); the money rules, in order:
+       * ONE idempotency key PER CHUNK — a retry replays that chunk's answer, a re-press re-buys only
+       * chunks that never landed (landed ones answer `duplicate`, cost 0); a shared key would make
+       * chunk 2 replay chunk 1's response. `run` is captured once and checked per chunk on arrival —
+       * a second press aborts the loop, and it is never re-bumped inside it (self-cancellation moved
+       * inside one purchase). Chips land incrementally; a stopped or thrown chunk halts the loop, the
+       * summary names what actually charged, spend never exceeds the quote.
        */
       confirm: () => {
         // THE SET THE OPEN LADDER QUOTED, whichever it is. Sliced from `target` and not from
@@ -1255,17 +1051,14 @@ export function batchSizes(available: number, maxPerRequest: number): number[] {
 }
 
 /**
- * The server's answer, as a destination — or as the absence of one.
- *
- * `no` is `screened` and not `spam`: a screened-out sender's mail goes to `ohmail/Screened`
- * and stays reversible, which is what the endpoint does. Reading a low-confidence "no" as
- * spam would quarantine a stranger on the model's word.
- *
- * SWITCHED, not a ternary. This was `decision === "yes" ? "ohbox" : "screened"`, which is the
- * shape that turns a new wire value into a silent DECLINE — every `hold` the server started
- * sending would have filed the sender to `ohmail/Screened` with no line of code changed and no
- * test to notice. An exhaustive switch makes the server's third answer a compile error here
- * instead.
+ * The server's answer, as a destination — or the absence of one. `no` is
+ * `screened`, not `spam`: a screened-out sender's mail goes to
+ * `ohmail/Screened` and stays reversible — reading a low-confidence "no" as
+ * spam would quarantine a stranger on the model's word. SWITCHED, not a
+ * ternary: `decision === "yes" ? "ohbox" : "screened"` is the shape that
+ * turns a new wire value into a silent decline — every `hold` would have
+ * filed to Screened with no code changed and no test to notice; an
+ * exhaustive switch makes the third answer a compile error.
  */
 /**
  * The five piles a folder answer maps to, and the only place that mapping is written.
@@ -1384,15 +1177,14 @@ function summarize(
 }
 
 /**
- * The sentence to show for a refusal THE HOSTED TRANSPORT produced — {@link CLOUD_WIRE}'s half of
- * {@link SuggestWire.messageFor}, and never called directly by the flow above.
- *
- * An {@link ApiError} already carries the SERVICE's own message — "this deployment has no AI
- * classifier connected", "managed AI is switched off for this account", "no AI actions remain
- * on this account" — and each of those is a different, actionable fact written by the code
- * that made the decision. Re-deriving them from status codes here is how a user with an empty
- * balance is told the model is down. Anything that is not an `ApiError` is a bug in this
- * client, and there is nothing true to say about it.
+ * The sentence for a refusal the HOSTED transport produced —
+ * {@link CLOUD_WIRE}'s half of {@link SuggestWire.messageFor}, never called
+ * directly by the flow. An {@link ApiError} already carries the service's
+ * own message ("no AI classifier connected", "managed AI is switched off",
+ * "no AI actions remain") — each a different, actionable fact written by
+ * the code that decided. Re-deriving them from status codes is how a user
+ * with an empty balance is told the model is down. Anything that is not an
+ * `ApiError` is a bug in this client, with nothing true to say.
  */
 function apiMessageFor(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;

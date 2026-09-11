@@ -1015,13 +1015,18 @@ export function useScreenerState(
   const undecided = waiting.filter((x) => !s.pending.has(x.id)
     && !decidedElsewhere.has(x.id) && notDecided(x));
   /**
-   * THE DECIDED SENDERS, AS ROWS — the same rows the queue would have shown, on the other side of the line. Built
-   * from `waiting` rather than from the decisions alone, and that is what makes them REAL rows: the mail has not
-   * moved (only the organizer moves mail), so every one of these senders is still in the mirror with their subject,
-   * their time and their held bag. A list rebuilt from the decision records would carry an address and nothing else,
-   * and would have to invent the rest or show less than the row above it. They are out of {@link waiting} and not
-   * finished, which is a third state this queue has never had. Leaving them in would ask the same question twice;
-   * dropping them silently would make a press look like nothing happened.
+   * THE DECIDED SENDERS, AS ROWS — the same rows the queue would have shown, on the other side
+   * of the line.
+   *
+   * Built from `waiting` rather than from the decisions alone, and that is what makes them REAL
+   * rows: the mail has not moved (only the organizer moves mail), so every one of these senders
+   * is still in the mirror with their subject, their time and their held bag. A list rebuilt from
+   * the decision records would carry an address and nothing else, and would have to invent the
+   * rest or show less than the row above it.
+   *
+   * They are out of {@link waiting} and not finished, which is a third state this queue has never
+   * had. Leaving them in would ask the same question twice; dropping them silently would make a
+   * press look like nothing happened.
    */
   const decided = waiting.flatMap((x) => {
     const p = outstandingFor(x.from.address);
@@ -1051,40 +1056,52 @@ export function useScreenerState(
   const suggestedRows = undecided.filter((x) => x.ai != null && x.ai.dest !== "screener");
   const suggestedCount = suggestedRows.length;
   /**
-   * WHICH PILES the press would file into, deduped, in the surface's own reading order. Derived from `suggestedRows`
-   * and not from a second filter, because the label and the number beside it have to describe one set. "Apply 5" over
-   * rows that turn out to be three Reads and two Receipts is a control whose consequence a person cannot picture
-   * before pressing it — they see a count, press, and find five senders filed into piles nobody named. The order is
-   * DECLARED here rather than taken from the queue, so the label is stable: read off row order it would reshuffle
-   * every time a suggestion landed, and a control whose text changes while you look at it reads as a different
-   * control.
+   * WHICH PILES the press would file into, deduped, in the surface's own reading order.
+   *
+   * Derived from `suggestedRows` and not from a second filter, because the label and the number
+   * beside it have to describe one set. "Apply 5" over rows that turn out to be three Reads and
+   * two Receipts is a control whose consequence a person cannot picture before pressing it —
+   * they see a count, press, and find five senders filed into piles nobody named.
+   *
+   * The order is DECLARED here rather than taken from the queue, so the label is stable: read
+   * off row order it would reshuffle every time a suggestion landed, and a control whose text
+   * changes while you look at it reads as a different control.
    */
   const suggestedDests = APPLY_PILE_ORDER.filter(
     (d) => suggestedRows.some((x) => x.ai!.dest === d),
   );
   /**
-   * The buy list, from the SAME set and in the SAME order. Deduped on the normalised address
-   * rather than trusted distinct: the queue is one row per sender, but a spam row pulled back to
-   * Waiting by `notSpamToWaiting` joins this list too, and a batch naming one address twice
-   * would reserve two of the user's 25 slots for one sender. The endpoint dedupes as well —
-   * this is so the COUNT the confirmation shows is the count that gets bought.
-   */
-
-  /**
-   * A sender the gate holds nothing for is not buyable. `gatePhysical: false` is a row whose representative is
-   * physically in the INBOX, minted because the cutline PRESENTS the sender at the gate (#116). The row is decidable
-   * — its commit routes past the gate as a rule — but `POST /screener/suggest` resolves senders through `heldRows`,
-   * which requires `desired_folder = 'ohmail/Screener'`, so the server can only answer `skipped: not_held`, and
-   * `toSkips` drops `not_held` by design (no chip to render for a sender not at the gate). The consequence was a loop
-   * with no exit: every such sender was in every batch, refused every time, never acquired an `ai`, and auto-suggest
-   * re-offered them on a timer, spending quoted slots on senders the endpoint had already declined. Filtering them
-   * here is the whole fix: they keep their row and the manual decision that works, and stop being offered for sale.
-   */
-
-  /**
-   * `!== false` and not `=== true` because a FIXTURE row carries no flag and the demo must keep its behaviour. The
-   * server's `heldRows` is deliberately NOT widened: that is a wire contract, and widening it changes what the gate
-   * means for every caller.
+   * The buy list, from the SAME set and in the SAME order.
+   *
+   * Deduped on the normalised address rather than trusted to be distinct: the queue is one
+   * row per sender, but a spam row pulled back to Waiting by `notSpamToWaiting` joins this
+   * list too, and a batch that named one address twice would reserve two of the user's
+   * chosen 25 slots for one sender. The endpoint dedupes as well — this is so the COUNT the
+   * confirmation shows is the count that gets bought.
+   *
+   * ── AND A SENDER THE GATE HOLDS NOTHING FOR IS NOT BUYABLE ────────────────────────────
+   *
+   * `gatePhysical: false` is a row whose representative is physically in the INBOX, minted
+   * because the cutline PRESENTS that sender at the gate (#116). The row is decidable — its
+   * commit routes past the gate as a rule — but `POST /screener/suggest` resolves senders
+   * through `heldRows`, which requires `desired_folder = 'ohmail/Screener'`, so the server can
+   * only answer `skipped: not_held` for them. `toSkips` then drops `not_held` on the floor,
+   * by design: there is no chip to render for a sender who is not at the gate.
+   *
+   * The consequence was a loop with no exit. Every such sender was in every batch, refused
+   * every time, never acquired an `ai`, and so was still unsuggested on the next pass — which
+   * auto-suggest ran automatically, on a timer, spending the user's quoted slots on senders
+   * the endpoint had already said it cannot speak for. Filtering them here is the whole fix:
+   * they keep their row, they keep the manual decision that works, and they stop being offered
+   * for sale.
+   *
+   * `!== false` and not `=== true`, because a FIXTURE row carries no flag at all and the demo's
+   * rows must keep their existing behaviour. Only a row the projection explicitly marked as
+   * past the gate is excluded.
+   *
+   * The server's `heldRows` is deliberately NOT widened to match. That is a wire contract —
+   * what `POST /screener/:id` and `/suggest` will resolve — and widening it changes what the
+   * gate means for every caller, not just this list.
    */
   const unsuggestedSenders = [
     ...new Set(
@@ -1094,18 +1111,19 @@ export function useScreenerState(
     ),
   ];
   /**
-   * THE RE-ASK LIST — the same buyable set, on the other side of `ai == null`. Every filter above is repeated
-   * deliberately rather than computed as "waiting minus unsuggested": `derived` and `gatePhysical` are facts about
-   * whether the SERVER can speak for this sender at all, and they are as true of a sender who already has an answer
-   * as of one who does not. A complement taken over the whole queue would put fixture rows and past-the-gate rows
-   * into a batch the endpoint can only answer `not_held` for — the exact loop #116 removed from the buy list,
-   * re-created on the re-ask path. `ai != null` and NOT `suggestedRows`' predicate: that set drops `screener`,
-   * because it is the one answer a bulk APPLY refuses to act on.
-   */
-
-  /**
-   * A sender the model declined to place, or one a run could not answer for, is not un-re-askable — it is the case
-   * with the most to gain from being asked again once their next mail arrives.
+   * THE RE-ASK LIST — the same buyable set, on the other side of `ai == null`.
+   *
+   * Every filter above is repeated deliberately rather than computed as "waiting minus
+   * unsuggested": `derived` and `gatePhysical` are facts about whether the SERVER can speak for
+   * this sender at all, and they are as true of a sender who already has an answer as of one who
+   * does not. A complement taken over the whole queue would put fixture rows and past-the-gate
+   * rows into a batch the endpoint can only answer `not_held` for — the exact loop #116 removed
+   * from the buy list, re-created on the re-ask path.
+   *
+   * `ai != null` and NOT `suggestedRows`' predicate: that set drops `screener`, because it is the
+   * one answer a bulk APPLY refuses to act on. A sender the model declined to place, or one a run
+   * could not answer for, is not un-re-askable — it is the case with the most to gain from being
+   * asked again once their next mail arrives.
    */
   const suggestedSenders = [
     ...new Set(
@@ -1167,19 +1185,25 @@ export function useScreenerState(
   };
 
   /**
-   * "Apply all suggestions" may only apply suggestions that exist. Reported from live use: the Screener offered it
-   * while no mail on screen showed what the suggestion would be — and the button was worse than dead. It read
-   * `x.ai?.dest ?? "ohbox"`, and on a live account `x.ai` is ALWAYS null, so the fallback decided every row: one
-   * press meant "accept every waiting stranger into the Ohbox and promote a rule for each", under a label claiming to
-   * apply suggestions the user had never been shown — on a backlogged mailbox, hundreds of senders dispatched 240 ms
-   * apart, with one Undo toast arriving minutes after the first move. A consent gate whose bulk control silently
-   * grants consent is the product inverted.
-   */
-
-  /**
-   * So the fallback is GONE — not replaced: `only` restricts the bulk to rows carrying a suggestion, `dest` is read
-   * from that suggestion with no default, and with no suggestions the set is empty — the surface additionally
-   * declines to render the control (`ScreenerView.tsx`), because an inert button is its own small lie.
+   * "APPLY ALL SUGGESTIONS" MAY ONLY APPLY SUGGESTIONS THAT EXIST.
+   *
+   * Reported from live use: the Screener offers "apply all suggestions" while none of the
+   * mail on screen shows what the suggestion would be. That was right, and the button was
+   * worse than dead. It read `x.ai?.dest ?? "ohbox"`, and on a live account `x.ai` is
+   * ALWAYS null — so the fallback, not the suggestion, decided every row. One press meant
+   * "accept every waiting stranger into the Ohbox and promote a rule for each of them",
+   * under a label that said it was applying suggestions the user had never been shown.
+   *
+   * On a backlogged mailbox that is hundreds of senders and thousands of held messages,
+   * dispatched 240 ms apart, with the single Undo toast arriving minutes after the first
+   * one moved. A consent gate
+   * whose bulk control silently grants consent is the product inverted.
+   *
+   * So the fallback is GONE — not replaced. `only` restricts the bulk to rows that carry a
+   * suggestion, and `dest` is read from that suggestion with no default, so a row this
+   * cannot speak for is never decided by it. With no suggestions anywhere the set is empty
+   * and the whole thing is a no-op; the surface additionally declines to render the control
+   * (`ScreenerView.tsx`), because an inert button is its own small lie.
    */
   const applyAll = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope) =>
     bulk(
@@ -1207,23 +1231,33 @@ export function useScreenerState(
         const unsub = autoUnsubscribe && n("screened") + n("spam") > 0 ? "true" : "false";
         return t("toastBulkDecided", { count: snaps.length, parts: parts.join(" · "), unsub });
       },
-      // `dest !== "screener"` is the second half of the rule above, load-bearing rather than
-      // defensive: the server's `hold` arrives here as `screener`, meaning the classifier
-      // declined to place this sender and left the choice to the person working the queue —
-      // acting on it in bulk is a consent gate granting consent. Without this, the cast above
-      // would send "screener" to `decide` as a `DecisionDestination`, which is not one of the
-      // five.
-
-      // And it is the ONLY exclusion. Spam used to be the second, arguing that spam is a
-      // judgement about a stranger and `markAllSpam` already exists. Reported from live use:
-      // "when auto-applying the AI suggestions it stops at the spam" — a control labelled
-      // "Apply 12" that leaves five rows standing has failed halfway as far as anyone using it
-      // can tell. The safety argument does not survive what the press does: a spam decision is
-      // `{decision:"no", dest:"spam"}` — a MOVE to `ohmail/Quarantine` plus the same rule and
-      // retro pass every destination writes; nothing is deleted, the Spam segment lists the
-      // pile with "Not spam" verbs on every row, and `undo` covers the window. It is exactly as
-      // reversible as the screen-out this control always performed. `markAllSpam` stays: it
-      // answers a different question ("all of this is junk") and needs no suggestions.
+      // `dest !== "screener"` is the second half of the same rule the paragraph above states, and
+      // it is load-bearing rather than defensive: the server's `hold` arrives here as `screener`,
+      // which means the classifier declined to place this sender and left the choice to the
+      // person working the queue. Acting on it in bulk is a consent gate granting consent — the
+      // very thing removing the fallback was meant to end. Without this the cast above would send
+      // the string "screener" to `decide` as a `DecisionDestination`, which is not one of the five.
+      //
+      // ── AND IT IS THE ONLY EXCLUSION. SPAM USED TO BE THE SECOND, AND WAS WRONG ────────────
+      //
+      // This predicate carried `&& x.ai.dest !== "spam"` as well, on the argument that spam is a
+      // judgement about a stranger rather than a filing of their mail, and that `markAllSpam`
+      // already exists for anyone who wants to make it forty at a time. Reported from live use:
+      // "when auto-applying the AI suggestions it stops at the spam and shows one only the
+      // remaining spam messages". That is this line, and the report is the right reading of it —
+      // a control labelled "Apply 12" that leaves five rows standing has failed halfway as far as
+      // anyone using it can tell, whatever the reasoning behind the gap.
+      //
+      // The safety argument does not survive contact with what the press actually does. A spam
+      // decision is `{decision:"no", dest:"spam"}` — a MOVE to `ohmail/Quarantine`, plus the same
+      // rule and the same retro pass every other destination writes. Nothing is deleted; the Spam
+      // segment lists the whole pile with "Not spam → Screener" and "Not spam → Ohbox" on every
+      // row, and `undo` covers the window like any other decision. It is exactly as reversible as
+      // the screen-out this control has always performed, and `markAllSpam` — which judges EVERY
+      // waiting sender with no model behind it — is by any measure the blunter of the two.
+      //
+      // `markAllSpam` stays where it is. It answers a different question ("all of this is junk")
+      // and needs no suggestions to do it.
       (x) => x.ai != null && x.ai.dest !== "screener",
     );
 
@@ -1239,20 +1273,27 @@ export function useScreenerState(
     );
 
   /**
-   * Releasing a sender the Screener already decided about. There is no un-screen endpoint: `decide` resolves `:id`
-   * only against mail whose DESIRED folder is still `ohmail/Screener`, so a screened-out or quarantined
-   * representative is a 404; per-message `move` releases the mail physically filed here. It still creates no rule —
-   * but it RETARGETS the rules holding the sender here (this used to say "it creates no rule" and stop, which made
-   * the release unperformable for a sender whose segment membership came from a rule — see {@link releaseHeld}; live,
-   * 2026-08-19).
-   */
-
-  /**
-   * Retargeting is the reversal of the decision those rows record, and the only rewrite that moves ingest along with
-   * the presentation: a fresh allow rule beside a standing deny rule loses every tie (`compareRules`, deny before
-   * allow before kind), so future mail would have kept arriving in Quarantine. @param segment the pile the sender is
-   * released FROM — named by a refusal, and where they remain if refused. Passed rather than derived because
-   * `release` serves both `allowScreened` (Screened out) and `notSpamToOhbox` (Spam), identical from in here.
+   * Releasing a sender the Screener already decided about.
+   *
+   * There is no un-screen endpoint: `decide` resolves `:id` only against mail whose
+   * DESIRED folder is still `ohmail/Screener`, so a screened-out or quarantined
+   * representative is a 404. Per-message `move` releases the mail physically filed here.
+   *
+   * ── AND THE HOLDING RULE IS RETARGETED, WHICH THIS USED TO NOT DO ─────────────────────────
+   *
+   * This comment said "It creates no rule, and the copy says so instead of promising future
+   * mail will follow" — and for a sender whose segment membership came from a RULE, that made
+   * the release unperformable (see {@link releaseHeld}; live, 2026-08-19). It still creates no
+   * rule. It RETARGETS the rules that hold the sender here — the reversal of the decision those
+   * rows record — which is also the only rewrite that moves ingest along with the presentation:
+   * a fresh allow rule beside a standing deny rule loses every tie (`compareRules`, deny before
+   * allow before kind), so future mail would have kept arriving in Quarantine under a queue
+   * showing the sender released.
+   *
+   * @param segment which pile the sender is being released FROM — the one the refusal names, and
+   * the one they are still in if it is refused. Passed rather than derived because `release`
+   * serves both `allowScreened` (Screened out) and `notSpamToOhbox` (Spam) and the two look
+   * identical from in here.
    */
   const release = (sender: ScreenerSenderDTO, dest: "ohbox" | "reads", segment: "screened" | "spam") => {
     // The RAW mirror, exactly as `commit` re-reads it: rules and physical folders are locations,
@@ -1361,19 +1402,27 @@ export function useScreenerState(
             m.from.address === row.sender.from.address,
         );
       /**
-       * The pin is optimistic state, and it is the one piece the engine cannot roll back. Every other reversal on
-       * this segment is undone for us — the engine drops its overlay and the derived row reappears. The pin is this
-       * session's memory of a spam decision, which `pinnedKeys` uses to hold the derived row for the same address OUT
-       * of the list. "The derived row comes back anyway" is not an argument for dropping it: for a sender with one
-       * quarantined message it returns under the same id, but a sender with OTHER, NEWER quarantined mail gets a row
-       * minted on the newest message (`selectors.ts#screenerSegments`) — an id this press never named, `refusalKeys`
-       * does not cover, and the refusal renders as nothing. Restoring the pin keeps the row that was pressed, with
-       * the id the mark is on and its still-true "You marked this" caption.
-       */
-
-      /**
-       * Restored at its own index (a pin's position is the order the reader marked senders in), guarded on absence so
-       * a re-pinned sender is not listed twice.
+       * THE PIN IS OPTIMISTIC STATE, AND IT IS THE ONE PIECE THE ENGINE CANNOT ROLL BACK.
+       *
+       * Every other reversal on this segment is undone for us: the engine drops its overlay, the
+       * mail is reported where it still is, and the derived row reappears. The pin is ours — this
+       * session's memory of a spam decision, which `pinnedKeys` uses to hold the derived row for the
+       * same address OUT of the list.
+       *
+       * ── AND "THE DERIVED ROW COMES BACK ANYWAY" IS NOT AN ARGUMENT FOR DROPPING IT ────────────
+       *
+       * It does come back, and for one sender with one piece of quarantined mail it comes back under
+       * the very same id, which is why a first pass at the guard for this could not tell the restore
+       * from its absence. The case that separates them is a sender with OTHER, NEWER mail already in
+       * Quarantine from an earlier decision: the derived row is minted on the sender's newest
+       * quarantined message (`selectors.ts#screenerSegments`), so the row that surfaces is one this
+       * press never named, `refusalKeys` does not cover it, and the refusal renders as nothing at
+       * all. Restoring the pin keeps the row that was pressed — with the id the mark is on, and with
+       * its "You marked this" caption, which is still true of a release that was declined.
+       *
+       * Restored at its own index rather than prepended, because a pin's position is the order the
+       * reader marked senders in and a refused release is not a new decision. Guarded on absence so
+       * a sender re-pinned in the meantime is not listed twice.
        */
       const pinAt = s.pins.findIndex((p) => p.id === row.sender.id);
       s.pins = s.pins.filter((p) => p.id !== row.sender.id);
@@ -1428,30 +1477,41 @@ export function useScreenerState(
   };
 
   /**
-   * Decisions this session inherited — the restart half of the durable-intent contract. Loaded
-   * ONCE, then drained as the mirror becomes able to carry each one. Once:
-   * `restoredIntents.current === null` is the latch — without it a remount (strict mode's
-   * double-invoke, a route rebuilding the shell) would re-read the journal while this session's
-   * timers are still armed and dispatch each decision twice; and an id already in `s.pending`
-   * belongs to a live timer, the same rule `OhmailEngine.restoreOutbox` states in its own words.
-   */
-
-  /**
-   * As the mirror becomes able — the failure the fix would otherwise have OPENED, the one that makes a durable replay
-   * worse than none. A derived row's id is a representative MESSAGE id, and at boot the mirror is cold:
-   * `engine.read().get("message", id)` answers nothing until the first drain, so `dispatchDecision` on an absent rep
-   * takes the past-the-gate branch, `senderScreening` answers null, and the decision is REFUSED locally — "Not saved"
-   * on a row nobody is looking at. Replaying at mount would convert "the decision survives a crash" into "the
-   * decision is destroyed on the next boot, looking like a server refusal". So the effect re-runs on `version` — the
-   * mirror's own revision, already this hook's render key — and dispatches only the intents the mirror can now name;
-   * a fixture intent goes on the first pass.
-   */
-
-  /**
-   * Anything undispatched stays IN the journal for the next boot, or is swept by {@link INTENT_TTL_MS}; nothing is
-   * consumed by an attempt that could not be made. No timer and no deadline on purpose: a deadline must choose
-   * between dispatching into a cold mirror and discarding the decision, and the journal already has a bound that
-   * needs neither.
+   * DECISIONS THIS SESSION INHERITED — the restart half of the durable-intent contract.
+   *
+   * Loaded ONCE, then drained as the mirror becomes able to carry each one. Both halves of that
+   * sentence are load-bearing:
+   *
+   * ── ONCE ────────────────────────────────────────────────────────────────────────────────────
+   *
+   * `restoredIntents.current === null` is the latch. Without it a remount (React strict mode's
+   * double-invoke, a route that rebuilds the shell) would re-read the journal while THIS session's
+   * timers are still armed over the same rows and dispatch each decision twice. The same guard
+   * `OhmailEngine.restoreOutbox` states in its own words — *"an entry this session is already
+   * handling is not a restart's entry"* — is applied to the load as well: an id already in
+   * `s.pending` belongs to a live timer and is not this effect's business.
+   *
+   * ── AS THE MIRROR BECOMES ABLE ──────────────────────────────────────────────────────────────
+   *
+   * This is the failure the fix would otherwise have OPENED, and it is worth naming because it is
+   * the one that makes a durable replay worse than no replay. A derived row's id is a representative
+   * MESSAGE id. At boot the mirror is cold: `engine.read().get("message", id)` answers nothing until
+   * the first drain lands. `dispatchDecision` on an absent rep takes the past-the-gate branch,
+   * `senderScreening` answers null, and the decision is REFUSED — locally, with nothing sent, and
+   * marked "Not saved" on a row nobody is looking at. Replaying at mount would therefore have
+   * converted "the decision survives a crash" into "the decision is destroyed on the next boot, in
+   * a way that looks like the server refused it". Red against the wrong dataset, exactly as the
+   * cold-account trap says.
+   *
+   * So the effect re-runs on `version` — the mirror's own revision, already this hook's render key
+   * — and dispatches only the intents the mirror can now name. A non-derived (fixture) intent has
+   * no such dependency and goes on the first pass. Anything still undispatched stays IN the journal
+   * and is offered again next boot, or swept by {@link INTENT_TTL_MS}; nothing is consumed by an
+   * attempt that could not be made.
+   *
+   * There is no timer and no deadline here on purpose. A deadline would have to choose between
+   * dispatching into a cold mirror (the defect above) and discarding the decision (the defect this
+   * whole slice closes), and the journal already has a bound that needs neither.
    */
   const restoredIntents = useRef<ScreenerIntent[] | null>(null);
   /**
@@ -1478,24 +1538,28 @@ export function useScreenerState(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
-    /**
-     * AND NOT ON A MAILBOX THIS INSTALL NO LONGER ORGANIZES. The journal outlives the session that wrote it, so an
-     * install that organized yesterday and is a reader today would replay decisions the engine will not make — the
-     * exact rollback-with-no-reason this slice closes, arriving through the durable path instead of a keypress.
-     * Nothing is consumed: the entries stay in the journal for the next boot, and age out on {@link INTENT_TTL_MS} if
-     * this install never gets the mailbox back. `blocked` ONLY, on the same argument the live guard makes: a decision
-     * restored onto a mailbox whose organizer WILL carry it out is a decision the person made and the product kept,
-     * which is what the journal is for. Only the state with nowhere to send it withholds the replay.
-     */
+    /* AND NOT ON A MAILBOX THIS INSTALL NO LONGER ORGANIZES. The journal outlives the session
+       that wrote it, so an install that organized yesterday and is a reader today would replay
+       decisions the engine will not make — the exact rollback-with-no-reason this slice closes,
+       arriving through the durable path instead of a keypress. Nothing is consumed: the entries
+       stay in the journal for the next boot, and age out on {@link INTENT_TTL_MS} if this install
+       never gets the mailbox back.
+
+       `blocked` ONLY, on the same argument the live guard makes: a decision restored onto a
+       mailbox whose organizer WILL carry it out is a decision the person made and the product
+       kept, which is what the journal is for. Only the state with nowhere to send it withholds
+       the replay. */
     if (role.mode === "blocked") return;
     /**
-     * THE READ HAPPENS AT MOUNT; ONLY THE DISPATCH WAITS FOR THE OTHER TABS. The order matters and getting it wrong
-     * dispatched twice. This effect re-runs on the local tick as well as on the mirror's version, so with the read
-     * behind the handshake's gate the FIRST journal read landed after a press — where the jar still holds this
-     * session's own intent while its commit is in flight (the disarm settles with the mutation, `s.pending` is
-     * already cleared), so the replay took it as stranded and sent it a second time. Measured as a duplicate
-     * `mark_seen` and a duplicate demote in the bulk paths. Read once at mount, before anything can be pressed,
-     * exactly as this effect always did.
+     * THE READ HAPPENS AT MOUNT; ONLY THE DISPATCH WAITS FOR THE OTHER TABS.
+     *
+     * The order matters and getting it wrong dispatched twice. This effect re-runs on the local
+     * tick as well as on the mirror's version, so with the read behind the handshake's gate the
+     * FIRST journal read landed after a press — where the jar still holds this session's own
+     * intent while its commit is in flight (the disarm settles with the mutation, `s.pending` is
+     * already cleared), so the replay took it as stranded and sent it a second time. Measured as a
+     * duplicate `mark_seen` and a duplicate demote in the bulk paths. Read once at mount, before
+     * anything can be pressed, exactly as this effect always did.
      */
     if (restoredIntents.current === null) {
       restoredIntents.current = takeScreenerIntents(Date.now())
@@ -1547,13 +1611,16 @@ export function useScreenerState(
   ];
 
   /**
-   * WHAT A DECIDING VERB DOES ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE — say so, do nothing. ONE sentence for all
-   * seven verbs, and one wall for all seven, which is the point of putting it at the return rather than at the top of
-   * each: the list below is complete by construction, and a verb added later that is not wrapped is a verb visibly
-   * outside the guard rather than one that silently escaped it. `test/screener-reader.test.ts` asserts the exact set.
-   * It raises a toast and does NOT touch `s.refused`: that mark means "the wire would not take your decision", which
-   * is a thing that happened to a row. Nothing happened to a row here — nothing was armed, nothing was dispatched, no
-   * overlay moved, and the queue does not flicker.
+   * WHAT A DECIDING VERB DOES ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE — say so, do nothing.
+   *
+   * ONE sentence for all seven verbs, and one wall for all seven, which is the point of putting
+   * it at the return rather than at the top of each: the list below is complete by construction,
+   * and a verb added later that is not wrapped is a verb visibly outside the guard rather than
+   * one that silently escaped it. `test/screener-reader.test.ts` asserts the exact set.
+   *
+   * It raises a toast and does NOT touch `s.refused`: that mark means "the wire would not take
+   * your decision", which is a thing that happened to a row. Nothing happened to a row here —
+   * nothing was armed, nothing was dispatched, no overlay moved, and the queue does not flicker.
    */
   const refuseReadOnly = (): void => {
     toast(role.name
@@ -1561,14 +1628,17 @@ export function useScreenerState(
       : t("readerRefusedUnknown"));
   };
   /**
-   * WHAT A READER MAY NOT DO WHATEVER ITS ORGANIZER OFFERS — a MOVE, and the sentence says so. Releasing a
-   * screened-out sender, rescuing mail out of Quarantine and deleting it are folder moves against mail another
-   * install is organizing. They are refused for EVERY reader, in both modes, because the channel a decision travels
-   * carries a decision and nothing else: there is no vocabulary for "move this mail" in it, and inventing one here
-   * would put two installs on the same folder at once, which is the invariant the whole organizer lease exists to
-   * hold. Its own sentence, and not the decide refusal's: on a `pending` reader "this computer does not decide about
-   * senders" is FALSE — it does, and the press works. What it does not do is move mail, which is a different thing to
-   * be told.
+   * WHAT A READER MAY NOT DO WHATEVER ITS ORGANIZER OFFERS — a MOVE, and the sentence says so.
+   *
+   * Releasing a screened-out sender, rescuing mail out of Quarantine and deleting it are folder
+   * moves against mail another install is organizing. They are refused for EVERY reader, in both
+   * modes, because the channel a decision travels carries a decision and nothing else: there is
+   * no vocabulary for "move this mail" in it, and inventing one here would put two installs on
+   * the same folder at once, which is the invariant the whole organizer lease exists to hold.
+   *
+   * Its own sentence, and not the decide refusal's: on a `pending` reader "this computer does
+   * not decide about senders" is FALSE — it does, and the press works. What it does not do is
+   * move mail, which is a different thing to be told.
    */
   const refuseMove = (): void => {
     /* THE ACCOUNT-SCOPED FORM, and it stays here rather than moving to the shared predicate.
@@ -1608,15 +1678,17 @@ export function useScreenerState(
     isExiting: (id) => s.pending.has(id),
     refused: (id) => s.refused.has(id),
     bodyStall,
-    /**
-     * THE SEVEN VERBS THAT WRITE, every one behind a wall — but not the SAME wall, and the split is the point rather
-     * than an inconsistency. The first three express a DECISION about a sender, which is the one thing a reader's
-     * organizer will carry out on its behalf, so they are open wherever there is an organizer to carry it out. The
-     * last four MOVE MAIL — a release out of Screened, a rescue out of Quarantine, a delete — and no organizer takes
-     * those from a reader in any mode. `flush` is deliberately outside both. It commits decisions ALREADY armed, so
-     * on a blocked reader there are none and wrapping it would only make a route change raise a sentence about
-     * nothing; on a pending one the armed decisions are exactly the ones that should be sent.
-     */
+    /* THE SEVEN VERBS THAT WRITE, every one behind a wall — but not the SAME wall, and the split
+       is the point rather than an inconsistency.
+
+       The first three express a DECISION about a sender, which is the one thing a reader's
+       organizer will carry out on its behalf, so they are open wherever there is an organizer to
+       carry it out. The last four MOVE MAIL — a release out of Screened, a rescue out of
+       Quarantine, a delete — and no organizer takes those from a reader in any mode.
+
+       `flush` is deliberately outside both. It commits decisions ALREADY armed, so on a blocked
+       reader there are none and wrapping it would only make a route change raise a sentence about
+       nothing; on a pending one the armed decisions are exactly the ones that should be sent. */
     decide: guard(decide),
     applyAll: guard(applyAll),
     markAllSpam: guard(markAllSpam),
