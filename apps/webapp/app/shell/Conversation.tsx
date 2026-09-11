@@ -1,48 +1,24 @@
 "use client";
 
 /**
- * THE CONVERSATION, RENDERED — ONE FULL-BODY PANEL PER MESSAGE.
- *
- * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
- *
- * Threading reached the mirror and the reader never showed it: opening a message that was one
- * of three on its thread rendered one body and no thread count. The data half shipped; the UI
- * half was never in scope. That half is here. It then went through two shapes: a stack of full
- * letters inside ONE article (legible per message, unreadable as a thread), then collapsible
- * peek rows over loaded bodies. The peek rows are gone with the viewer redesign: a thread is a
- * column of PANELS now — every message a full-width panel on the canvas, oldest first, the
- * wrapper the one scroller — so nothing on a thread is one press away from being mail.
- *
- * ── PANELS OVER LOADED BODIES ───────────────────────────────────────────────────────────
- *
- * Every panel's body is already LOADED when it renders (`MessagePane` fires one `hydrateThread`
- * for the whole conversation), so this mapper draws mail that is in hand — no fetch per panel,
- * no placeholder for mail the reader cannot reach. The anti-placeholder guard in
- * `test/conversation.test.ts` holds the stronger line the redesign bought: exactly
- * conversation-length distinct panels, each with its body ON SCREEN, and any peek row,
- * "N earlier" aggregate or count line goes red.
- *
- * ── ONE LIST, FLAT, WITH THE FOCUSED PANEL SLOTTED IN ───────────────────────────────────
- *
- * The mapper walks the WHOLE conversation once, oldest first. The opened message's panel is
- * composed by `MessagePane` (it owns the focused body expression, the protected rule and the
- * attachment strip) and handed in as `focusedPanel`; every other message renders as
- * {@link MessageCard}. One list rather than the old above/below split, so "which one am I
- * reading" is a position in one column, marked by `aria-current` on the focused panel.
- *
- * ── BOTH SIDES OF THE THREAD ────────────────────────────────────────────────────────────
- *
- * This used to render a `ConversationLimit` note saying the user's own replies were not in
- * `messages` at all, because `Sent` was unwatched. The worker watches it now, so the note and the
- * string behind it are gone: they became false the moment the worker shipped, and a claim that
- * has stopped being true is not a caveat, it is an error. The residual limit is a HISTORY DEPTH
- * (the newest `DEFAULT_SENT_HISTORY_MESSAGES` of Sent), recorded beside the ingest constant that
- * sets it rather than stated on every conversation.
- *
- * ── STATE LIVES ABOVE, THIS COMPONENT IS RENDER-ONLY ────────────────────────────────────────
- *
- * The body hydration and the open-at-latest scroll anchor both live in `MessagePane` — the one
- * place that holds the whole thread. This mapper asks for nothing.
+ * The conversation, rendered — one full-body panel per message. Threading reached the mirror and
+ * the reader never showed it; after two shapes (a stack inside one article, then collapsible peek
+ * rows) a thread is a column of PANELS — every message full-width on the canvas, oldest first, the
+ * wrapper the one scroller, so nothing on a thread is one press away from being mail. Panels over
+ * LOADED bodies: `MessagePane` fires one `hydrateThread` for the whole conversation, so this mapper
+ * draws mail in hand — no fetch per panel, no placeholder; the anti-placeholder guard
+ * (`test/conversation.test.ts`) holds exactly conversation-length distinct panels, each body on
+ * screen, and any peek row or "N earlier" aggregate goes red.
+ */
+
+/**
+ * One flat list with the focused panel slotted in: the opened message's panel is composed by
+ * `MessagePane` (it owns the focused body expression, the protected rule, the attachment strip) and
+ * handed in as `focusedPanel`; every other message renders as {@link MessageCard}, and "which one
+ * am I reading" is a position in one column, marked by `aria-current`. The `ConversationLimit`
+ * note ("your own replies are not here") is gone: the worker watches Sent now, and a claim that
+ * has stopped being true is not a caveat, it is an error — the residual limit is a history depth,
+ * recorded beside the ingest constant that sets it. State lives above; this component asks nothing.
  */
 import { Fragment, type ReactNode } from "react";
 import { MessageCard } from "./MessageCard";

@@ -1,47 +1,27 @@
 "use client";
 
 /**
- * THE AUTO-WORK OPT-IN — the only thing in this product that spends credits without a press.
- *
- * ── WHY THIS IS A ROW WITH A CONFIRM AND NOT A SWITCH ───────────────────────────────────
- *
- * Turning it ON authorises every future batch, so it is the one settings write that has to name
- * a price. `mail 0040` shipped the column, the route, the service and the machinery that spends
- * against it, and nothing wrote the flag: the feature was reachable only by a raw API call. This
- * component is the writer, and the reason it is a confirm rather than a bare `Switch` is that a
- * switch which starts spending money on its way up is a control that cost something to discover.
- *
- * The quote is the SERVER's. `control.quote` comes from a `dryRun` against the exact senders the
- * next automatic batch would take, and the confirm is disabled until it lands — see
- * {@link AutoOptInControl}. A number computed here would be a second implementation of the
- * eligibility rule, and the day it disagreed the button would quote one figure and buy another.
- *
- * ── WHAT IT DOES NOT DO, WHICH IS THE POINT ─────────────────────────────────────────────
- *
- * It automates the WORK, never the DECISION. No rule is written, no contact stored, no folder
- * changed, nothing moved or routed — both automatic paths only ever leave an advisory row. So
- * there is nothing to undo, and the only thing spent is credits, which is exactly why it is worth
- * asking about. `suggest.autoDecides` says so on the confirm, next to the price, because that is
- * where somebody is deciding.
- *
- * ── THE SWITCH AUTHORISES TWO PATHS, AND THE COPY HAS TO NAME BOTH ──────────────────────
- *
- * This component's sentences used to describe one: "when you open the Screener, ohmail gets a
- * suggestion for the first ten waiting". That is still what happens to the BACKLOG — the batch
- * this file's `control` prices and buys — but the flag now also authorises the server to suggest
- * for senders as their mail ARRIVES, whether or not anybody opens anything. A consent sentence
- * that describes half of what a switch does is the kind of claim this product treats as a
- * contract, so `suggest.autoWhat`, `suggest.autoCost` and `suggest.autoOn` say both halves, in
- * that order: what happens to new mail, what happens to the queue already waiting, and what it
- * costs. The `since` timestamp is the boundary between them — the server suggests automatically
- * for mail that arrived after it, and never reaches back past it.
- *
- * ── THE SWITCH SHOWS THE STORED VALUE, NEVER THE HOPED-FOR ONE ──────────────────────────
- *
- * Deliberately not optimistic. This switch is the user's only record of whether their money is
- * committed, so it renders what the database answered and nothing else — a switch that moved on
- * the press would claim a commitment the server had not made. Pressing it ON opens the confirm
- * and does NOT move it; the flag turns on when the confirm does.
+ * The auto-work opt-in — the only thing in this product that spends credits without a press. Turning it ON authorises
+ * every future batch, so it is the one settings write that must name a price: a confirm, not a bare `Switch`, because
+ * a switch that starts spending money on its way up is a control that cost something to discover.
+ */
+
+/**
+ * The quote is the SERVER's (`control.quote`, a `dryRun` against the exact senders the next batch would take; the
+ * confirm is disabled until it lands) — a number computed here would be a second implementation of the eligibility
+ * rule. It automates the WORK, never the DECISION: no rule written, no contact stored, nothing moved — both automatic
+ * paths only leave an advisory row, so the only thing spent is credits, which is exactly why it is worth asking about
+ * (`suggest.autoDecides` says so beside the price).
+ */
+
+/**
+ * The switch authorises two paths and the copy names both: the backlog batch this control prices,
+ * AND server-side suggestions for senders as mail ARRIVES — a consent sentence describing half of
+ * what a switch does is the kind of claim this product treats as a contract, so `suggest.autoWhat`,
+ * `autoCost` and `autoOn` say new mail, the waiting queue, and the cost, in that order; the `since`
+ * timestamp is the boundary — the server never reaches back past it. The switch shows the STORED
+ * value, never the hoped-for one: it is the user's only record of whether their money is committed,
+ * so pressing ON opens the confirm and does not move it; the flag turns on when the confirm does.
  */
 
 import { useEffect, useRef, useState } from "react";

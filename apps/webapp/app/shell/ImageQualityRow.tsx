@@ -1,37 +1,19 @@
 "use client";
 
 /**
- * SETTINGS → GENERAL → PICTURE QUALITY.
- *
- * A `SegmentedControl` beside the theme's and the language's, because it is the same class of
- * decision as they are: it changes how this install behaves and nothing about anybody's mail, it is
- * stored in this browser rather than on the account, and it applies to a standalone install exactly
- * as it does to the Cloud client. That is why the row is drawn by the shared file directly instead
- * of being injected by a host the way every account-backed row in this pane is — there is no server
- * in this preference at any point, so there is nothing for a host to supply.
- *
- * ── WHY THE VALUE ARRIVES ONE FRAME LATE ──────────────────────────────────────────────────────
- *
- * The level lives in `localStorage`, which does not exist on the server. Reading it in the initial
- * state would make the server and the client render different markup, and React resolves a
- * hydration mismatch by keeping the SERVER's value — so the stored setting would be read and then
- * silently thrown away. The read is therefore an effect, which is one frame of the default followed
- * by the truth. This is the same shape, for the same reason, as `usePersistedFlag`.
- *
- * ── ONE VALUE PER ACCOUNT, TWO SURFACES ───────────────────────────────────────────────────────
- *
- * The compose attach row surfaces this same dial (`ComposeAttach`), reading and writing the same
- * stored value through the same two functions — so "this one needs to go at full size" is served
- * where the file is being picked, without walking here, and the choice made there is remembered
- * exactly as a choice made here is. The value is keyed by the signed-in account
- * (`owner-cookie.ts` → `readOwner`, the same id the mail mirror is named for), because a browser
- * is not a person: on a shared machine one account's full-size preference must not become
- * another's default. A surface with no account — the standalone desktop, the demo — uses the
- * account-less key, which is also where every pre-scoping choice lives, so nothing resets.
- * What remains deliberately absent is a PER-MESSAGE override: a level that applied to one
- * compose and not the next would turn the stored setting into a default with invisible
- * exceptions. Both controls move the one dial, and a move made in either place is what every
- * later pick obeys.
+ * Settings → General → Picture quality. A `SegmentedControl` beside the theme's and the language's: it changes how
+ * this install behaves and nothing about anybody's mail, stored in this browser rather than on the account — which is
+ * why the row is drawn by the shared file directly instead of injected by a host: there is no server in this
+ * preference, so there is nothing for a host to supply. The value arrives one frame late: `localStorage` does not
+ * exist on the server, and a hydration mismatch keeps the SERVER's value, so the read is an effect —
+ * `usePersistedFlag`'s shape.
+ */
+
+/**
+ * One value per account, two surfaces: `ComposeAttach` surfaces the same dial through the same two functions, keyed
+ * by the signed-in account (`readOwner`, the id the mirror is named for); an accountless surface uses the
+ * account-less key, where every pre-scoping choice lives. Deliberately no PER-MESSAGE override: a level that applied
+ * to one compose and not the next would turn the setting into a default with invisible exceptions.
  */
 
 import { useEffect, useRef, useState } from "react";

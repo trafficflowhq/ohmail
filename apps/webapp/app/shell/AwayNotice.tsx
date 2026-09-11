@@ -1,54 +1,28 @@
 "use client";
 
 /**
- * THE AWAY RESPONDER'S OHBOX NOTICE — the tell for the one thing this product does that sends
- * mail on its own.
- *
- * `AwayResponderRow` (Settings → Away responder) is the control; this is its visibility. Without it,
- * the only state in which mail leaves the account unprompted was legible on exactly one settings
- * pane and nowhere else — least of all on the pane its owner spends the day on. The notice is one
- * quiet line: the fact, the audience it is true for, and the way to the control.
- *
- * ── ONE READ PER TAB, HELD BY THE SHELL ──────────────────────────────────────────────────
- *
- * The responder row is REST-only and deliberately has no `/sync` entity (see the api-client
- * note on `away`), so there is no mirror to read and none may be invented for this. Instead
- * {@link useAwayNotice} issues the same `GET /away-responder` the settings row loads — ONCE per
- * shell mount — and the SHELL holds the answer, so the Ohbox can mount and unmount all day
- * without another round trip. Same-tab edits stay honest through the settings row's `onChanged`
- * echo into {@link AwayNoticeState.update}, never through a refetch. A SECOND tab keeps its
- * stale answer until reload — the same accepted cost `consent-state.ts` states for the dormancy
- * dial, and cheaper here: the stale surface is one advisory line, not a partition.
- *
- * A failed read stays silent and the notice stays absent — the pre-notice surface, not a guess.
- * The direction matters: this line claims mail is being answered on somebody's behalf, and that
- * claim may only ever come from the server's own row. There is no path from "I do not know" to
- * "replies are going out".
- *
- * ── ONE KEY, TWO SELECTS ─────────────────────────────────────────────────────────────────
- *
- * This was two keys, one per audience, because "a single sentence covering both audiences would
- * be false for one of them". That reasoning was right and does not scale: the notice now has to
- * carry the RATE as well, and a key per combination is eight sentences to write, translate and
- * keep in agreement — where the failure mode is one of the eight quietly describing a responder
- * that behaves differently.
- *
- * So it is ONE ICU message with two `select`s, which is what ICU is for: the catalogue holds one
- * sentence whose two variable parts are enumerated, a translator sees the whole sentence rather
- * than eight fragments, and adding a fifth rate is one arm rather than four keys. Both selects
- * fall through to `other` — `screened_in` and `per_day`, the two defaults — so a value this
- * component has not been taught still produces a true sentence rather than an empty one.
- *
- * ── THE SCOPE IS A LIST, NOT A THIRD SELECT ──────────────────────────────────────────────
- *
- * It was a `select` over four derived words while `piles` had two members. With four members
- * there are sixteen subsets, and enumerating them is sixteen sentences to keep true. So the
- * clause names the piles: one key per pile word, joined by `Intl.ListFormat` in the reader's
- * locale. A responder answering NO pile still gets its own sentence — every wording that fits
- * this one is false for it.
- *
- * The claim it makes is a claim about the SERVER's behaviour: the pass's throttle, not this
- * component's. If the throttle's meaning changes, this sentence is edited in the same change.
+ * The away responder's Ohbox notice — the tell for the one thing this product does that sends mail on its own.
+ * `AwayResponderRow` is the control; this is its visibility: one quiet line — the fact, the audience it is true for,
+ * the way to the control.
+ */
+
+/**
+ * One read per tab, held by the shell: the responder row is REST-only with no `/sync` entity, so {@link
+ * useAwayNotice} issues the same `GET /away-responder` once per shell mount; same-tab edits stay honest through the
+ * settings row's `onChanged` echo, and a second tab keeps its stale answer until reload (one advisory line, the
+ * accepted cost). A failed read stays silent and the notice stays absent: this line claims mail is being answered on
+ * somebody's behalf, and there is no path from "I do not know" to "replies are going out".
+ */
+
+/**
+ * One key, two selects: two keys per audience did not scale once the RATE joined the sentence — a
+ * key per combination is eight sentences to keep in agreement. One ICU message with two `select`s:
+ * a translator sees the whole sentence, a fifth rate is one arm, and both selects fall through to
+ * `other` (`screened_in`, `per_day`), so an untaught value still produces a true sentence. The
+ * scope is a LIST, not a third select: four members make sixteen subsets, so the clause names the
+ * piles — one key per pile word, joined by `Intl.ListFormat` in the reader's locale; a responder
+ * answering NO pile gets its own sentence. The claim is about the SERVER's throttle, not this
+ * component's: if the throttle's meaning changes, this sentence is edited in the same change.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";

@@ -1,52 +1,33 @@
 "use client";
 
 /**
- * THE RAIL'S FOLDERS GROUP — the whole feature's rail presence (FOLDERS-SPEC.md §3/§14/§15 and
- * stage 2; the clickable prototype is the interaction reference and this transcribes its
- * verified behaviour into the rail's own vocabulary).
- *
- * Rendered ONLY while "Use folders" is on — the caller withholds the node entirely otherwise,
- * so a flag-off rail is byte-identical to the pre-feature rail (spec §10, guarded by test).
- *
- * What it renders, per mailbox (a small address label above each tree when 2+ mailboxes exist;
- * one mailbox ⇒ no labels at all):
- *
- *  · the folder TREE, first level only by default — a branch with children starts closed and
- *    opens when the user opens it; the state is an OPENED-set persisted per device
- *    (`UI_KEYS.foldersOpened`), so the default needs no seeding and an opened branch survives
- *    a reload. Navigating to a folder opens its ancestors, so a row reached through the filter
- *    is visible in the tree once the filter clears.
- *  · unread badges, with ROLL-UP on a collapsed parent: own + hidden descendants, in the same
- *    badge idiom — collapsing must never hide unread truth. Expanded, every folder shows its
- *    own count again.
- *  · the MANY-FOLDERS treatment above {@link FOLDER_FILTER_AT} roots: a type-to-filter line in
- *    the rail's own inline-input idiom, the first 12 roots + a "Show all N…" expander, and the
- *    expanded list scrolling in its OWN bounded region — the piles, tags, Settings and the
- *    dock never leave reach. Filtered matches render flat wearing their parent path.
- *
- * ── STAGE 2 — THE VERBS (owner-ordered): create, rename, delete, new subfolder ─────────────
- *
- * These are USER-COMMANDED REAL IMAP OPERATIONS in the user's own mailbox; the group only
- * DISPATCHES them (the injected {@link FolderVerbs} — the shell owns the engine) and renders
- * the honest middle:
- *
- *  · `+ New folder` per mailbox section — the create names WHICH mailbox by construction: it
- *    is the section's own affordance (spec §14's per-mailbox "New folder"). The inline-input
- *    idiom is the filter line's own.
- *  · a `…` menu per row (hover/focus-revealed): Rename (inline, in place), New subfolder
- *    (inline, under the parent, which opens), Delete.
- *  · DELETE asks BEFORE the act, inside the menu surface, with the SERVER-truth numbers
- *    ("N messages across M folders move to Trash") — the client mirror is windowed, so only
- *    `GET /folders/:id/summary` can count honestly. The message-delete confirm strip's
- *    ceremony: there is no un-delete on the wire, so the ask precedes the act and no Undo is
- *    offered after it.
- *  · PENDING rows (`op` without `error`) render dimmed with the sentence in their title —
- *    optimistically-pending, never pretended-done; the wake channel settles them in seconds.
- *    FAILED rows (`op.error`) carry the refusal sentence inline and a dismiss — the only way
- *    past a refusal is reading it.
- *  · names are validated with the SAME `folderNameError` the server runs, BEFORE the wire —
- *    the honest sentence appears under the input, and the server's 400 is the race, not the
- *    normal path.
+ * The rail's folders group — the feature's whole rail presence (FOLDERS-SPEC.md §3/§14/§15). Rendered ONLY while "Use
+ * folders" is on — the caller withholds the node, so a flag-off rail is byte-identical to the pre-feature rail (spec
+ * §10, guarded).
+ */
+
+/**
+ * Per mailbox (address labels only when 2+ exist): the folder TREE, first level by default, the opened-set persisted
+ * per device (`UI_KEYS.foldersOpened`), navigation opening ancestors; unread badges with ROLL-UP on a collapsed
+ * parent (own + hidden descendants — collapsing must never hide unread truth); and the many-folders treatment above
+ * {@link FOLDER_FILTER_AT} roots — a type-to-filter line, the first 12 roots plus a "Show all N…" expander scrolling
+ * in its OWN bounded region, so the piles, tags and Settings never leave reach; filtered matches render flat wearing
+ * their parent path.
+ */
+
+/**
+ * Stage 2 — the verbs (owner-ordered): create, rename, delete, new subfolder — user-commanded REAL IMAP operations;
+ * the group only DISPATCHES (the injected {@link FolderVerbs}) and renders the honest middle. `+ New folder` per
+ * mailbox section names WHICH mailbox by construction; a `…` menu per row carries Rename (inline), New subfolder
+ * (inline, parent opens), Delete.
+ */
+
+/**
+ * DELETE asks BEFORE the act with the SERVER-truth numbers ("N messages across M folders move to Trash" — the mirror
+ * is windowed, so only `GET /folders/:id/summary` can count honestly), and no Undo is offered after. PENDING rows
+ * render dimmed with the sentence in their title — never pretended-done; FAILED rows carry the refusal inline with a
+ * dismiss. Names are validated with the SAME `folderNameError` the server runs, before the wire — the server's 400 is
+ * the race, not the path.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";

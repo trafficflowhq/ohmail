@@ -1,31 +1,19 @@
 "use client";
 
 /**
- * "USE FOLDERS" — the folders feature's master toggle (FOLDERS-SPEC.md §6; owner decision 1:
- * fully optional, disabled by default).
- *
- * ── WHAT THE DESCRIPTION MAY NOT SAY ──────────────────────────────────────────────────────────
- *
- * The honest sentence is the prototype's: these are THE REAL FOLDERS ON THE MAIL SERVER, NOT A
- * COPY. ohmail already reads them (the passive presence); this switch only decides whether they
- * are SHOWN — in the rail, as views, with counts. It must not promise filing, rules or AI: the
- * foundation stage ships none of those, and claims are contracts. Turning it off returns the
- * account to today's interface and moves nothing — the mail is in the user's own folders, where
- * the user put it, which is the whole leave-anytime argument (spec §13).
- *
- * ── WHY A PLAIN SWITCH AND NOT A CONFIRM ──────────────────────────────────────────────────────
- *
- * {@link AutoSuggestRow} confirms because ON starts spending. This spends nothing in either
- * direction and writes nothing into the mailbox — ON is a read-only act on a fifteen-year-old
- * mailbox (spec §10) — so a confirm would be a ceremony in front of a view toggle.
- *
- * ── IT WRITES THROUGH THE HOOK ────────────────────────────────────────────────────────────────
- *
- * `setFoldersEnabled` is `useConsentState().setFoldersEnabled`, never `consentApi` directly:
- * `AppShell` gates the rail group, the folder views and this pane's own state on the same hook's
- * `foldersEnabled`, so the rail changes on the same render the server confirms. The switch
- * renders the value the SERVER last answered with, never the optimistic pick — a refused write
- * must not draw a rail the account does not have.
+ * "Use folders" — the folders feature's master toggle (FOLDERS-SPEC.md §6; owner decision 1: fully optional, off by
+ * default). The honest sentence is the prototype's: these are THE REAL FOLDERS ON THE MAIL SERVER, NOT A COPY —
+ * ohmail already reads them, and this switch only decides whether they are SHOWN. It must not promise filing, rules
+ * or AI (the foundation stage ships none), and turning it off moves nothing — the mail is in the user's own folders,
+ * the leave-anytime argument (spec §13).
+ */
+
+/**
+ * A plain switch, not a confirm: this spends nothing and writes nothing into the mailbox, so a confirm would be a
+ * ceremony in front of a view toggle. It writes through `useConsentState().setFoldersEnabled`: `AppShell` gates the
+ * rail group and the folder views on the same hook, so the rail changes on the render the server confirms — and the
+ * switch renders the server's answer, never the optimistic pick: a refused write must not draw a rail the account
+ * does not have.
  */
 
 import { useEffect, useRef, useState } from "react";

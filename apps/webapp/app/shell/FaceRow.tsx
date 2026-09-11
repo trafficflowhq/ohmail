@@ -1,30 +1,19 @@
 "use client";
 
 /**
- * SETTINGS → GENERAL → LOOK — the paper/ohmarchy face, with its scope (OHMARCHY-PLAN.md §3a).
- *
- * A `SegmentedControl` beside the theme's and the language's, because all three are the same
- * class of decision — how the app is drawn, changing nothing about anybody's mail. Drawn by the
- * shared file like `LanguageRow`, and for its reason: BOTH surfaces have a face (a standalone
- * install has no account but it still has eyes), so a node injected by the Cloud host would
- * leave the desktop with no selector. What differs per host is only whether the choice can be
- * made account-wide, and that arrives as {@link applyAllDevices} — null where no transport can
- * store one, which withholds the affordance structurally rather than drawing a control that
- * cannot control.
- *
- * ── THE TWO SCOPES, AND WHICH CONTROL SERVES WHICH ─────────────────────────────────────────────
- *
- * The segmented control is "only this device": it writes the DEVICE PIN through the
- * ThemeProvider, instantly, no server involved — which is why it works identically on the demo,
- * the desktop and a broken connection. The quiet line under it is "apply for all devices": one
- * press PATCHes the account (the same `/consent/settings` surface every knob rides, so the
- * `settings` change row makes it travel), adopts the echo, and CLEARS the pin — the account now
- * governs this device too, which is what the press asked for. A pinned device deliberately
- * ignores account changes made elsewhere; the scope line says which state this device is in.
- *
- * The failure is said and the control does not move wrongly: the device flip cannot fail (it is
- * local); the account write rejects into a toast with the control still showing the device's
- * real face — `LanguageRow`'s contract.
+ * Settings → General → Look — the paper/ohmarchy face, with its scope (OHMARCHY-PLAN.md §3a). A `SegmentedControl`
+ * beside the theme's and the language's: the same class of decision, how the app is drawn. Drawn by the shared file
+ * like `LanguageRow`: both surfaces have a face (a standalone install has no account but it still has eyes), and what
+ * differs per host arrives as {@link applyAllDevices} — null where no transport can store one, withholding the
+ * affordance structurally.
+ */
+
+/**
+ * The segmented control is "only this device": it writes the DEVICE PIN through the ThemeProvider, instantly, no
+ * server — identical on the demo, the desktop and a broken connection. The quiet line under it is "apply for all
+ * devices": one press PATCHes the account, adopts the echo, and CLEARS the pin; a pinned device deliberately ignores
+ * account changes made elsewhere, and the scope line says which state this device is in. The device flip cannot fail;
+ * the account write rejects into a toast with the control still showing the device's real face.
  */
 
 import { useRef, useState } from "react";

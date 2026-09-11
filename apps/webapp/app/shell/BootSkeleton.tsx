@@ -1,78 +1,36 @@
 "use client";
 
 /**
- * THE SHAPE OF THE SCREEN THAT IS COMING — and nothing whatsoever about what will be on it.
- *
- * Two waits in this product are long enough that a person watching one has to be given
- * something, and both of them used to be a single centred sentence over an empty window:
- *
- *  · a STANDALONE FIRST LAUNCH that has to repair itself. An install whose previous run left a
- *    large write-ahead log replays it inside the mail engine's database open, before anything
- *    can serve. It is bounded by the size of that log rather than by the mailbox — measured at
- *    roughly a hundred seconds on a directory that had grown to tens of gigabytes. It happens
- *    ONCE: recovery ends in a checkpoint, and the engine now checkpoints on a timer while it
- *    runs, so no install made after that change accumulates a log like it again.
- *  · a COLD MIRROR in a browser tab. The first `/sync` page has not landed, so the mirror has
- *    not been read and the list is not empty — it is unknown. On a full mailbox the import
- *    behind it runs for minutes.
- *
- * ── THE GEOMETRY IS THE APP'S OWN, NOT A GENERIC ONE — owner report, 2026-08-26 ──────────
- *
- * The first cut of this drew "some skeleton text lines": eight bars for a rail and rows of two
- * anonymous lines, which is a wireframe of no window this product has ever shown. The desktop
- * boot renders it as THE WHOLE WINDOW, so the silhouette is a promise about what the window is
- * about to be — and a promise in the wrong shape is answered by a visible re-layout when the
- * real shell arrives. So every measure below is the live shell's own, by name:
- *
- *  · the three columns are `.deck`'s rail (224px) plus `.view.split`'s `--split`
- *    (`minmax(320px,400px) 1fr`) with the same 16px gaps — rail, list, reading pane, exactly
- *    where the real ones land;
- *  · the rail's insides follow `rail.css`: the wordmark slot, the compose capsule, then groups
- *    of a small label over items in `.ritem`'s own padding and rhythm;
- *  · the list is `.list-col`'s panel with `.vhead`'s title row, and each row is `.row`/`.srow`
- *    verbatim — the 30px lead avatar circle every Ohbox row draws, the sender line with the
- *    time stub at the right, the subject line, the preview line, at `.row`'s 12×14 padding;
- *  · the reading pane is what the real unselected `ReadColumn` is — a quiet lift-1 panel and
- *    nothing in it.
- *
- * The mobile port (`apps/mobile/src/ui/Skeleton.tsx`) reached this standard first — "the row
- * geometry mirrors the REAL list rows, so when content replaces the skeleton, nothing jumps" —
- * and this brings the origin up to its port.
- *
- * ── THIS WAS RULED OUT ONCE, ON THE SAME MEASUREMENT THAT NOW ARGUES FOR IT ──────────────
- *
- * The earlier reading was: an ordinary launch answers in well under a second now that the log is
- * bounded, so a loading skeleton would be a strobe on every healthy boot and buy nothing. That
- * reading was right about the ordinary launch and wrong to stop there — it settled the question
- * of what to draw at zero milliseconds, which is not the question. Both facts are true at once,
- * of different waits, and a constant cannot be right about both.
- *
- * So this is a function of TIME, exactly as `loading-grace.ts` is: below the grace nothing is
- * drawn and a sub-second boot is a quiet frame, as it has always been; above it the window
- * carries the geometry it is about to fill. The reversal costs one timer and the fast path is
- * byte-for-byte what it was.
- *
- * ── WHY THE GRACE IS SHORTER THAN THE SENTENCE'S ────────────────────────────────────────
- *
- * `LOADING_GRACE_MS` is 600 ms and gates WORDS. This one is 300 and gates SHAPE, and the
- * ordering is deliberate: a sentence appearing and being read is a demand on attention, while a
- * shape appearing under one is not, so the cheaper thing may arrive earlier. On a wait that
- * outlives both, the window fills in and then explains itself, which is the order those two
- * things want to happen in.
- *
- * ── AND IT MUST NEVER CARRY CONTENT. THIS IS THE PART THAT IS A RULE ────────────────────
- *
- * `OhboxView` has said for a long time that a placeholder row, an invented count or a skeleton
- * shaped like mail would answer a loading complaint by creating the worst failure this product
- * has: something plausible rendered as if it were the reader's own mail. That rule is not
- * relaxed here, it is the boundary this component is drawn on the safe side of. A silhouette
- * with zero text nodes in it cannot be mistaken for a message, a sender, a subject or a count,
- * because there is nothing in it to mistake. `aria-hidden` says the same thing to the other half
- * of the audience: the shape is not information, the sentence beside it is.
- *
- * The widths below are a fixed table rather than anything derived or random. Derived widths
- * would be content — a bar as long as a real subject line IS a claim about that subject — and
- * random ones would make the same render differ between two paints of one wait.
+ * The shape of the screen that is coming — and nothing whatsoever about what will be on it. Two waits are long enough
+ * to owe a person something: a standalone first launch replaying a large write-ahead log (bounded by the log, once —
+ * measured ~100 s on a directory grown to tens of gigabytes; the engine now checkpoints on a timer), and a cold
+ * mirror in a browser tab (the first `/sync` page has not landed, so the list is not empty — it is unknown).
+ */
+
+/**
+ * The geometry is the app's OWN (owner report, 2026-08-26): a generic wireframe is a promise in the wrong shape,
+ * answered by a visible re-layout — so every measure is the live shell's by name: `.deck`'s 224px rail plus
+ * `.view.split`'s `--split` with the same 16px gaps, the rail's insides per `rail.css`, the list as
+ * `.list-col`/`.vhead`/`.row` verbatim, the reading pane the real unselected `ReadColumn`. The mobile port reached
+ * this standard first; this brings the origin up to its port.
+ */
+
+/**
+ * This was ruled out once, on the measurement that now argues for it: an ordinary launch answers in
+ * under a second, so a skeleton would strobe every healthy boot. Right about the ordinary launch,
+ * wrong to stop there — so this is a function of TIME, exactly as `loading-grace.ts`: below the
+ * grace nothing is drawn, above it the window carries the geometry it is about to fill. The grace
+ * is 300 ms against the sentence's 600, deliberately: a sentence is a demand on attention, a shape
+ * under one is not, so the cheaper thing may arrive earlier.
+ */
+
+/**
+ * It must never carry content — this part is a RULE. A placeholder row, an invented count or a
+ * skeleton shaped like mail is the worst failure this product has: something plausible rendered as
+ * if it were the reader's own mail. A silhouette with zero text nodes cannot be mistaken for a
+ * message; `aria-hidden` says the same to the other half of the audience. The widths are a fixed
+ * table, not derived and not random: derived widths would be content — a bar as long as a real
+ * subject line IS a claim about that subject — and random ones would differ between two paints.
  */
 
 import { useLoadingGrace } from "./loading-grace";
