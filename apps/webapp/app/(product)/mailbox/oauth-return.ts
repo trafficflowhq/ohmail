@@ -1,38 +1,14 @@
 "use client";
 
 /**
- * THE CONSENT CEREMONY COMING BACK — and it must not depend on a screen being open.
- *
- * ══ THE PRODUCTION FAILURE THIS FILE EXISTS FOR ════════════════════════════════════════════
- *
- * A real connect: the tenant's administrator approved the app, the Microsoft consent screen
- * succeeded, and the browser came back to the Ohbox with no mailbox added and nothing said. The
- * ceremony row was still `consumed_at IS NULL`, so `POST …/complete` was never CALLED — this was not
- * a refusal that went unrendered, it was a step that never ran.
- *
- * It never ran because it lived in `MailboxSection`'s mount effect, and that component mounts only
- * when the Settings VIEW is open AND the Mailboxes PANE is selected. The view is selected by the URL
- * FRAGMENT (`shell/routing.ts`), a fragment is never sent to a server, and the bounce reached the app
- * through a second redirect (`/mailbox` → 308 → `/`) whose `Location` carries no fragment of its own.
- * Fragment inheritance across a redirect is a browser SHOULD, and `parseHash("")` is `ohbox`. So one
- * dropped `#` moved the whole ceremony from "finishing" to "silently abandoned", with the
- * authorization code sitting unread in the query.
- *
- * ── SO THE COMPLETION IS NOT A COMPONENT EFFECT ANY MORE ────────────────────────────────────
- *
- * {@link beginOAuthReturn} runs at MODULE SCOPE from `CloudShell`, before anything renders and
- * before any router has read anything. It does three things in this order, and the order is the
- * point: it corrects the route from the QUERY (which every redirect hop preserves), it strips the
- * single-use parameters, and only then does it POST. The outcome goes into a module-level store that
- * outlives every mount, so the pane RENDERS the result rather than being the thing that causes it.
- *
- * The invariant, stated so it can be tested: **landing on the bounce URL completes the ceremony,
- * whatever the fragment said and whether or not the Mailboxes pane is ever shown.**
- *
- * ── WHY THIS FILE IS HERE AND NOT IN `app/shell/` ───────────────────────────────────────────
- *
- * It needs `app/api-client`, which `scripts/publish-desktop.mjs` DENYs from the shared shell. Same
- * seam, same reason as `MailboxSection` itself: this is Cloud-only code.
+ * The consent ceremony coming back — and it must not depend on a screen being open. A real connect approved on
+ * the Microsoft consent screen returned to the Ohbox with no mailbox added: `POST …/complete` never ran,
+ * because it lived in `MailboxSection`'s mount effect, and the view is selected by the URL FRAGMENT — never
+ * sent to a server, and dropped by the bounce's second redirect. {@link beginOAuthReturn} therefore runs at
+ * MODULE SCOPE from `CloudShell`: it corrects the route from the QUERY (which every hop preserves), strips the
+ * single-use parameters, then POSTs; the outcome lives in a module-level store, so the pane renders the result
+ * rather than causing it. The invariant: landing on the bounce URL completes the ceremony, whatever the
+ * fragment said. Cloud-only — it needs `app/api-client`, which the publish denies from the shell.
  */
 
 import { apiConfigured, mailboxes as mailboxApi, messageOf, pendApiOwner } from "../../api-client";
@@ -65,17 +41,13 @@ export function readOAuthReturn(search: string): OAuthReturn {
 }
 
 /**
- * The reason codes this client has copy for. Anything else falls back to one honest sentence.
- *
- * EXPORTED so a test can assert the pair: every member has a `mailboxes.oauth_<code>` key in
- * `en.json`. A member with no key renders the literal key path at a user, which is the failure the
- * fallback exists to prevent and which the fallback cannot catch — a KNOWN reason never reaches it.
- *
- * FOUR, and not one per refusal. These are the only outcomes that arrive as a REDIRECT PARAMETER,
- * where there is no body for the server to put a sentence in. Everything `complete` refuses arrives
- * as a JSON error carrying the server's own sentence, which `messageOf` renders — so a key here for
- * (say) an expired ceremony would be a second English sentence for a failure that already has one.
- * See `OAuthOutcomeCode` in `packages/api/src/routes/mailbox-oauth.ts`.
+ * The reason codes this client has copy for; anything else falls back to one honest sentence.
+ * Exported so a test can assert the pair: every member has a `mailboxes.oauth_<code>` key in
+ * `en.json` — a member with no key renders the literal key path at a user, which the fallback
+ * cannot catch because a known reason never reaches it. Four, not one per refusal: these are the
+ * only outcomes that arrive as a REDIRECT PARAMETER, where no body can carry a sentence; everything
+ * `complete` refuses arrives as a JSON error with the server's own sentence, which `messageOf`
+ * renders. See `OAuthOutcomeCode` in `packages/api/src/routes/mailbox-oauth.ts`.
  */
 export const OAUTH_REASONS = new Set([
   "admin_consent_required", "consent_declined", "consent_failed", "state_invalid",
@@ -124,24 +96,14 @@ export function noOAuthOutcome(): null {
 }
 
 /**
- * PUT THE BROWSER WHERE THE ANSWER WILL BE, AND TAKE THE SINGLE-USE VALUES OUT OF THE URL.
- *
- * One `replaceState` doing both, because they are the same edit to the same URL:
- *
- *  · `?settings=mailboxes` — `SettingsView.initialPaneFromUrl` reads it at mount. Kept in the
- *    address bar afterwards: a pane name is not a credential, and it is only ever consulted once, so
- *    it cannot drag anybody back to a pane they have since clicked away from.
- *  · `#/settings` — the view. SET rather than trusted, which is the fix: the fragment is what the
- *    redirect chain can drop, and it is the only thing that decides which screen this is.
- *  · `oauth`, `state`, `code`, `reason` — REMOVED before the POST, never after. The authorization
- *    code is single-use and must not sit in an address bar for the length of an IMAP probe, and a
- *    reload must not re-POST a state that is already spent (a 400 about a ceremony that succeeded).
- *
- * `history.replaceState` and not `location.hash = …`: assigning the hash pushes a history entry, and
- * a back button that returns to a URL still carrying a spent code is the reload case again. Nothing
- * observes `replaceState`, so a `hashchange` is dispatched by hand for any router that has already
- * read the old fragment — this normally runs before the first render, and the event is what makes it
- * correct even when it does not.
+ * Put the browser where the answer will be, and take the single-use values out of the URL. One `replaceState`
+ * doing both, because they are the same edit: `?settings=mailboxes` is read at mount and kept (a pane name is
+ * not a credential); `#/settings` is SET rather than trusted — the fragment is what the redirect chain can
+ * drop, and it decides which screen this is; `oauth`, `state`, `code`, `reason` are removed BEFORE the POST —
+ * the authorization code is single-use and must not sit in an address bar for the length of an IMAP probe, and
+ * a reload must not re-POST a spent state. `replaceState` and not `location.hash = …`: assigning the hash
+ * pushes a history entry, and Back returning to a URL with a spent code is the reload case again. A
+ * `hashchange` is dispatched by hand for any router that already read the old fragment.
  */
 function landOnMailboxesPane(): void {
   if (typeof window === "undefined" || !window.history?.replaceState) return;

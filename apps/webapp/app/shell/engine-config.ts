@@ -9,31 +9,14 @@ import {
 import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-scheduler";
 
 /**
- * THE ENGINE DECISION, extracted so it can be TESTED rather than described.
- *
- * This function used to live inside `engine.tsx`, which is a `"use client"` module that
- * pulls in React and the whole provider. `test/demo-gate.test.ts` could therefore only assert
- * the demo promise STRUCTURALLY — by matching source text — which proves the code says the
- * right thing and not that it does it. The promise is "`?demo=1` ⇒ fixtures only, zero
- * network, nothing leaves this tab" — a self-contained surface makes no external request at
- * all — and that is a claim about
- * BEHAVIOUR: the only convincing test constructs the engine, runs it, and watches the
- * network.
- *
- * So the decision moved here, to a plain module with no React in it, and
- * `test/demo-zero-network.test.ts` drives it: build with `demo: true`, `start()`, mutate, and
- * assert that `fetch` / `XMLHttpRequest` / `WebSocket` / `EventSource` were touched exactly
- * zero times — with a control that builds the LIVE engine and proves the same assertions
- * would have caught a request. `engine.tsx` imports this and is otherwise unchanged; the
- * "the client may turn the demo ON, never OFF" rule still lives there, where the URL is.
- *
- * ── `env` IS A PARAMETER ────────────────────────────────────────────────────────────────
- *
- * Next inlines `process.env.NEXT_PUBLIC_API_BASE` at BUILD time, so in a bundle it is a
- * literal and cannot be varied. Taking it as an argument (defaulted to the inlined value)
- * changes nothing about the shipped behaviour and is what lets a test exercise both
- * branches in one process — including the branch that must NEVER be taken under `?demo=1`,
- * which is the one that matters.
+ * The engine decision, extracted so it can be TESTED rather than described. Inside `engine.tsx` (a `"use client"`
+ * module) the demo promise could only be asserted structurally, by matching source text; the promise — `?demo=1` ⇒
+ * fixtures only, zero network — is about behaviour. So the decision lives in a plain module and
+ * `test/demo-zero-network.test.ts` drives it: build with `demo: true`, `start()`, mutate, assert
+ * `fetch`/`XMLHttpRequest`/`WebSocket`/`EventSource` were touched exactly zero times, with a control proving the live
+ * engine would have been caught. `env` is a parameter: Next inlines `process.env.NEXT_PUBLIC_API_BASE` at build time,
+ * so taking it as an argument is what lets a test exercise both branches — including the one that must never run
+ * under `?demo=1`. "The client may turn the demo ON, never OFF" still lives in `engine.tsx`, where the URL is.
  */
 export interface EngineEnv {
   NEXT_PUBLIC_API_BASE?: string;
@@ -52,59 +35,28 @@ const BUILD_ENV: EngineEnv = {
 };
 
 /**
- * SHOULD THE SYNC SCHEDULER TREAT "HIDDEN" AS MEANINGFUL AT ALL?
- *
- * `startSyncScheduler` gates on `document.visibilityState`: a browser tab that goes to the
- * background drops to the slow hidden cadence — one drain a minute, no wake stream held
- * (`sync-scheduler.ts`; it was ZERO syncs before the realtime-wake slice). That rule is right
- * for a tab and wrong for the desktop
- * app: a Tauri window the OS composites out of view — occluded by another window, on another
- * Space, or merely unfocused — ALSO reads `visibilityState: "hidden"`, so the shared shell would
- * silently slow a mail client that is supposed to stay current in the background to the
- * background cadence. The symptom is mail that arrives a minute late unless you click the window.
- *
- * The fix is the scheduler's existing seam: passing `visibility: null` tells it "this environment
- * has no visibility model", so `visible()` is always true and the loop never slows for occlusion.
- * `engine.tsx` passes it exactly when this returns true.
- *
- * ── A BUILD FLAG, FOLDED HERE — NOT A PROP ──────────────────────────────────────────────────
- *
- * The desktop-versus-web distinction is a property of the BUILD, so it is a build-time flag read
- * here rather than a prop threaded down from the shell. A prop buys only a silent-omission mode —
- * a shell that forgets to pass it loads fine and then quietly never syncs in the background, which
- * is the very bug re-created as a wiring bug (the same reasoning `engine.tsx` gives for wiring the
- * scheduler inside the provider). The Next web build never defines `NEXT_PUBLIC_DESKTOP`, so this
- * is false there and browser tabs keep their hidden cadence; only a desktop build turns it on.
- * A web-side test (grep `syncsWhileHidden` in this app's test suite) fails if the flag ever leaks
- * into the default (web) environment.
+ * Should the sync scheduler treat "hidden" as meaningful at all? `startSyncScheduler` gates on
+ * `document.visibilityState` — right for a tab, wrong for the desktop app: a Tauri window the OS composites out
+ * of view (occluded, another Space, merely unfocused) also reads `"hidden"`, so the shared shell would slow a
+ * mail client that must stay current to the one-drain-a-minute cadence — mail a minute late unless you click
+ * the window. `visibility: null` is the scheduler's own seam for "this environment has no visibility model". A
+ * BUILD flag, not a prop: a prop buys a silent-omission mode — a shell that forgets it loads fine and quietly
+ * never syncs in the background. The web build never defines `NEXT_PUBLIC_DESKTOP`; a web-side test greps
+ * `syncsWhileHidden` so the flag cannot leak into the default environment.
  */
 export function syncsWhileHidden(env: EngineEnv = BUILD_ENV): boolean {
   return env.NEXT_PUBLIC_DESKTOP === "1";
 }
 
 /**
- * THE WAKE STREAM DECISION — which builds hold an `EventSource` on `/events`, decided here so
- * it can be tested rather than described (this file's whole reason to exist).
- *
- * A factory, or `null` for "this build polls". Three refusals, each a different reason:
- *
- *  · **The desktop build** ({@link syncsWhileHidden}): its API base is the LOCAL engine
- *    process, which serves no `/events` — the hosted door's wake lives in that process
- *    itself, which holds the session and kicks its mirror pull per frame. Opening a stream
- *    here would buy one guaranteed refusal per launch and nothing after it.
- *  · **No API base**: nothing to connect to. (`createEngine` throws for the live path anyway;
- *    this keeps the factory decision total rather than partial.)
- *  · **No `EventSource` in the environment** (SSR, jsdom): the scheduler treats a throwing
- *    factory as a dead stream, but "this build cannot push" is a fact known HERE, and a null
- *    is honest where a throw is an event.
- *
- * The DEMO never reaches this: `engine.tsx` schedules live engines only, and the demo takes
- * the bare `engine.start()` path — a self-contained surface holds no connection to anything.
- *
- * The scheduler owns everything after construction: one stream while visible, none while
- * hidden, permanent fallback to polling on a terminal refusal (the production default — the
- * server's SSE flag is off until the deploy flips it, and the refusal costs one request per
- * session). `sync-scheduler.ts`'s header carries the three-state model.
+ * The wake stream decision — which builds hold an `EventSource` on `/events`, decided here so it
+ * can be tested rather than described. A factory, or `null` for "this build polls". Three
+ * refusals: the desktop build ({@link syncsWhileHidden}) — its API base is the local engine
+ * process, which serves no `/events`; no API base — nothing to connect to; no `EventSource` in the
+ * environment (SSR, jsdom) — a null is honest where a throw is an event. The demo never reaches
+ * this: `engine.tsx` schedules live engines only. The scheduler owns everything after construction
+ * — one stream while visible, none hidden, permanent fallback to polling on a terminal refusal;
+ * `sync-scheduler.ts`'s header carries the three-state model.
  */
 export function cloudWakeStream(
   env: EngineEnv = BUILD_ENV,

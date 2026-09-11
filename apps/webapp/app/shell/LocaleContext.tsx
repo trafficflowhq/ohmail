@@ -1,27 +1,14 @@
 "use client";
 
 /**
- * THE LANGUAGE CONTROL, as a context — the one thing Settings needs and neither host can give it
- * directly.
- *
- * `SettingsView` is shared: the Cloud client renders it and so does the desktop binary, out of the
- * same file, and it may not import `app/api-client` (the publish DENYs it) so it cannot write a
- * preference to an account itself. Every other control in that pane solves this by taking an
- * injected `ReactNode` — `remoteImagesSection`, `awaySection`, `accountSection`. The language row
- * deliberately does NOT, and the reason is that it is the one control both surfaces genuinely have:
- * a standalone install has no account but it still has a language, so a node injected by the Cloud
- * host would leave the desktop with no selector at all.
- *
- * So the ROW is shared and the PERSISTENCE is injected — through this context rather than through a
- * prop, because the provider sits at the root of the tree (it owns which messages are rendered) and
- * the row sits eleven levels down inside a pane. What each host puts in `setLocale`:
- *
- *  · the Cloud client — write the account (`PATCH /consent/settings`), then swap the catalogue;
- *  · the desktop — swap the catalogue, and `localStorage` is the whole of the persistence.
- *
- * Absent provider ⇒ `useAppLocale()` is `null` ⇒ the row is not drawn. That keeps the forty-odd
- * unit tests that render one pane with no provider working unchanged, and it is the honest
- * degradation rather than a selector that cannot select.
+ * The language control, as a context — the one thing Settings needs that neither host can give it directly.
+ * `SettingsView` is shared and may not import `app/api-client` (the publish denies it); every other control there
+ * takes an injected `ReactNode`, but the language row is the one control both surfaces genuinely have — a standalone
+ * install has no account but still has a language, so a Cloud-injected node would leave the desktop with no selector.
+ * So the ROW is shared and the PERSISTENCE is injected — a context, not a prop, because the provider sits at the root
+ * and the row eleven levels down. Cloud: write the account (`PATCH /consent/settings`), then swap the catalogue;
+ * desktop: swap the catalogue, `localStorage` is the whole persistence. Absent provider ⇒ `useAppLocale()` is `null`
+ * ⇒ the row is not drawn — the honest degradation, and forty-odd provider-less unit tests keep working.
  */
 
 import { createContext, useContext } from "react";
@@ -40,35 +27,27 @@ export interface LocaleControls {
    */
   setLocale: (next: AppLocale) => Promise<void>;
   /**
-   * APPLY WITHOUT ASKING THE SERVER — the boot adoption, and a separate verb on purpose.
-   *
-   * When `GET /consent` lands it carries the account's stored locale, which is the value that WINS
-   * over whatever this device had remembered locally (that is the guard: an account preference
-   * follows you to a machine you have never signed in on). Adopting it must not travel back out
-   * through {@link setLocale}, because on the Cloud client that method's whole job is to WRITE the
-   * account — so adoption would PATCH the value it just read, on every tab, on every boot, and a
-   * failed write of a value nobody changed would reject into a control nobody touched.
-   *
-   * So adoption is local-only: remember it on this device, swap the catalogue, and nothing else.
+   * Apply without asking the server — the boot adoption, a separate verb on purpose. When
+   * `GET /consent` lands it carries the account's stored locale, which WINS over what this device
+   * remembered (an account preference follows you to a machine you have never signed in on).
+   * Adopting it must not travel back through {@link setLocale}: on the Cloud client that method's
+   * job is to WRITE the account, so adoption would PATCH the value it just read, on every tab, on
+   * every boot — and a failed write of a value nobody changed would reject into a control nobody
+   * touched. Adoption is local-only: remember on this device, swap the catalogue, nothing else.
    * `AppShell` is the only caller.
    */
   adoptLocale: (next: AppLocale) => Promise<void>;
   /** A switch is in flight — the selector disables itself rather than queueing two. */
   busy: boolean;
   /**
-   * HOW FAR THE CHOICE REACHES, because the row says so and the two hosts differ.
-   *
-   * `account` — the preference is written to the account and follows the person to every browser
-   * they sign in on, which is what "Applies to this app everywhere you sign in" claims.
-   * `install` — `localStorage` IS the persistence. That is the desktop on BOTH its doors: this
-   * build's Cloud adapter is aliased out of the bundle and `apiConfigured()` is false, so even an
-   * install pointed at a hosted account writes the language nowhere but here. The account-wide
-   * sentence was rendered there anyway, and it was false — switching to German on the desktop
-   * changes nothing about the same account in a browser.
-   *
-   * REQUIRED rather than defaulted, and that is the point: a default would have to be `account`,
-   * which is the claim that is wrong on the surface most likely to be added next (a second
-   * standalone host), and an absent field would select it silently.
+   * How far the choice reaches, because the row says so and the two hosts differ. `account` — the
+   * preference is written to the account and follows the person to every browser ("Applies to this
+   * app everywhere you sign in"). `install` — `localStorage` IS the persistence: that is the
+   * desktop on BOTH its doors — the Cloud adapter is aliased out of the bundle and `apiConfigured()`
+   * is false, so even an install pointed at a hosted account writes the language nowhere but here;
+   * the account-wide sentence was rendered there anyway, and it was false. REQUIRED rather than
+   * defaulted: a default would have to be `account`, the claim that is wrong on the surface most
+   * likely to be added next, and an absent field would select it silently.
    */
   scope: "account" | "install";
 }

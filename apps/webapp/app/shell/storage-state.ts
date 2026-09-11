@@ -1,20 +1,14 @@
 import type { SubscriptionStatus } from "../api-client";
 
 /**
- * WHAT TO SAY ABOUT STORAGE — a derivation with NO CLIENT LEFT, kept for one reason.
- *
- * Both panes that rendered a storage row from it have left this tree with the rest of the
- * subscription surface, so nothing here is called by the app any more. It stays because
- * {@link BYTES_PER_STORED_EMAIL_ESTIMATE} is the client-side literal that
- * `test/landing-pricing-matches-plan-card.test.ts` pins against the server's, and the marketing
- * pricing page advertises the count derived from it. Whether the rest is deleted or a storage
- * row returns is not decided here.
- *
- * The states it derives are few by design. Below ninety percent there is nothing worth saying;
- * `near_cap` exists so the first a person hears of a cap is not the moment it bites; `at_cap`
- * says new message CONTENT stops being stored and NOTHING already stored is touched — a storage
- * state must never read as a threat to existing mail. Both numbers must be present: absence
- * means "say nothing", never "0 of 0", which renders an account as at once empty and capped.
+ * What to say about storage — a derivation with NO CLIENT LEFT, kept for one reason: both panes that rendered a
+ * storage row have left this tree with the subscription surface, and {@link BYTES_PER_STORED_EMAIL_ESTIMATE} is
+ * the client-side literal `test/landing-pricing-matches-plan-card.test.ts` pins against the server's — the
+ * marketing page advertises the count derived from it. The states are few by design: below ninety percent there
+ * is nothing worth saying; `near_cap` exists so the first a person hears of a cap is not the moment it bites;
+ * `at_cap` says new message CONTENT stops being stored and nothing already stored is touched — a storage state
+ * must never read as a threat to existing mail. Both numbers must be present: absence means "say nothing",
+ * never "0 of 0".
  */
 export type StorageState =
   | { kind: "near_cap"; usedBytes: number; capBytes: number }
@@ -28,18 +22,14 @@ export const STORAGE_NEAR_CAP_RATIO = 0.9;
 export type StorageFigures = { usedBytes: number; capBytes: number };
 
 /**
- * IS THERE A STORAGE ROW AT ALL — the presence rule, exported because two panes ask it.
- *
- * {@link storageState} answers "what is worth SAYING", and below ninety percent that is
- * deliberately nothing. A pane that keyed its row on `storageState` alone would therefore show
- * storage only to accounts nearly out of it, which is the wrong way round: the numbers are the
- * row, and the sentence is what the last tenth adds. So presence and sentence are two questions
- * and this is the first of them.
- *
- * Both panes used to spell the same three type guards out at the point of render. Two spellings
- * of one rule is the drift this module exists to prevent — and one of them had already grown a
- * redundant `storageState(...) ||` disjunct in front of it, which read as though the sentence
- * could appear without the numbers. It cannot: a non-null {@link storageState} implies this.
+ * Is there a storage row at all — the presence rule, exported because two panes ask it.
+ * {@link storageState} answers "what is worth saying", and below ninety percent that is nothing;
+ * a pane keyed on it alone would show storage only to accounts nearly out of it, the wrong way
+ * round — the numbers are the row, the sentence is what the last tenth adds. Both panes used to
+ * spell the same three type guards at the point of render; two spellings of one rule is the drift
+ * this module prevents, and one had grown a redundant `storageState(...) ||` disjunct, which read
+ * as though the sentence could appear without the numbers. It cannot: a non-null
+ * {@link storageState} implies this.
  */
 export function storageFigures(status: SubscriptionStatus | null): StorageFigures | null {
   if (!status) return null;
@@ -59,29 +49,14 @@ export function storageState(status: SubscriptionStatus | null): StorageState {
 }
 
 /**
- * Bytes for a sentence, in DECIMAL units — the same convention the plan card enforces
- * (`storageBytes` is 2/5/10 × 10⁹ precisely so "2 GB" is the enforced number, with no binary
- * gap to explain). One decimal under 10 GB, whole numbers above; sub-GB values step down so a
- * fresh account reads "12 MB of 2 GB" rather than "0 GB of 2 GB", which would look broken.
- *
- * BYTES are what this renders, deliberately, even though the pricing page advertises an EMAIL
- * COUNT (~80 000 on Solo). The card sells an estimate because nobody knows how many emails fit
- * in a gigabyte; a settings screen reports the real figure, because this is the one place the
- * account's own number is knowable and an estimate would be a worse answer than the truth.
- *
- * ── THE LOCALE IS A REQUIRED ARGUMENT, WHICH IS THE POINT OF IT ─────────────────────────────
- *
- * This used to interpolate the number raw, so "1.5 GB" reached a German pane — where a decimal
- * point is a thousands separator and the row read as fifteen gigabytes. It sat directly beside
- * an email count the catalogue grouped correctly, so one row carried two conventions.
- *
- * The locale is the language the reader chose in the app, which the caller has from its intl
- * provider and this module cannot know. It is REQUIRED rather than defaulted for the reason the
- * count is formatted by the catalogue: `toLocaleString()` with no argument reads the HOST's
- * locale, which is a property of the computer rather than a choice the reader made — German in
- * the app on a US machine would still say "1.5 GB", and switching the app's language would
- * change nothing. A missing argument is a compile error here; a wrong default would have been
- * silent.
+ * Bytes for a sentence, in DECIMAL units — the plan card's convention (`storageBytes` is 2/5/10 × 10⁹ so
+ * "2 GB" is the enforced number). One decimal under 10 GB, whole above; sub-GB steps down so a fresh
+ * account reads "12 MB of 2 GB", not "0 GB of 2 GB". Bytes, deliberately, though the pricing page
+ * advertises an email count: the card sells an estimate, a settings screen reports the real figure. The
+ * locale is REQUIRED, which is the point: this used to interpolate the number raw, so "1.5 GB" reached a
+ * German pane where a decimal point is a thousands separator and the row read as fifteen gigabytes.
+ * `toLocaleString()` with no argument reads the HOST's locale — a property of the computer, not a choice
+ * the reader made; a missing argument is a compile error, a wrong default would have been silent.
  */
 export function formatStorageBytes(bytes: number, locale: string): string {
   const n = (v: number, decimals: number): string =>
