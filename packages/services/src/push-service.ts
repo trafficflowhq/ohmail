@@ -30,15 +30,13 @@ import type {
  */
 export class PushService implements PushServicePort {
   /**
-   * `endpointGuard` is the deployment's UnifiedPush endpoint policy
-   * (`@trafficflow/core/net`'s {@link PushEndpointGuard}) and it is OPTIONAL for one reason and
-   * one only: an ABSENT guard REFUSES every `unifiedpush` registration. That is the safe
-   * direction and it is what lets {@link pushService} keep being a plain singleton for the
-   * webpush/apns callers that predate this, instead of a security-relevant argument every one of
-   * them would have had to be edited to pass. A host that wants wake registrations wires the
-   * guard through {@link makePushService} and says so; a host that forgets gets 400 at
-   * registration, which is visible, rather than an unvalidated endpoint in the table, which is
-   * not.
+   * `endpointGuard` is the deployment's UnifiedPush endpoint policy (`@trafficflow/core/net`'s
+   * `PushEndpointGuard`), OPTIONAL for one reason only: an ABSENT guard REFUSES every
+   * `unifiedpush` registration. The safe direction — it lets `pushService` stay a plain singleton
+   * for the webpush/apns callers that predate this instead of a security-relevant argument each
+   * would have to pass. A host that wants wake registrations wires the guard through
+   * `makePushService`; one that forgets gets 400 at registration, which is visible, rather than
+   * an unvalidated endpoint in the table, which is not.
    */
   constructor(private readonly deps: { endpointGuard?: PushEndpointGuard } = {}) {}
 
@@ -57,31 +55,14 @@ export class PushService implements PushServicePort {
       throw new ServiceError("validation_failed", 400, "apns requires deviceToken");
     }
     /**
-     * ── UNIFIEDPUSH: THE ENDPOINT GOES THROUGH THE SSRF GATE HERE **AND** AT SEND TIME ────────
-     *
-     * BOTH, and neither is redundant:
-     *
-     *  · HERE, because a row that was never cleared is a row a background process will dial. The
-     *    refusal a person can act on is the one that comes back from the request they made, not a
-     *    silent skip in a worker log hours later — and refusing at the door means the table never
-     *    holds an endpoint pointing at `169.254.169.254` in the first place.
-     *  · AT SEND TIME (`apps/worker/src/push-wake.ts`), because this clearance expires the moment
-     *    the name re-resolves. A registration validated in January is dialled in March, and the
-     *    same host can answer differently. Clearing once and trusting the row forever is the
-     *    time-of-check/time-of-use hole with extra steps.
-     *
-     * The guard is the deployment's policy, not this file's (`@trafficflow/core/net`): strict on
-     * the managed host, relaxed only under an operator's explicit `TF_PUSH_ALLOW_PRIVATE=1`. Its
-     * return value — the pin — is discarded here on purpose: we are not dialling anything, and a
-     * pin that will be minutes or months stale by send time is worth nothing to store.
-     *
-     * KEYS ARE OPTIONAL AND STORED WHEN OFFERED, which is a correction to an earlier reading of
-     * this transport as "endpoint, no keys, ever". UnifiedPush 3.x endpoints are Web Push
-     * endpoints, and a UP connector hands the app `{ url, pubKey, auth }` — the exact three
-     * columns `webpush` already uses. The wake this repo sends today is the UNENCRYPTED constant,
-     * so the keys are not read by anything yet; accepting them costs one line and means the
-     * encrypting arm needs no migration and no re-registration on every device. Nothing here
-     * claims they are used — see `apps/worker/src/push-wake.ts` for what actually goes on the wire.
+     * UNIFIEDPUSH: THE ENDPOINT PASSES THE SSRF GATE HERE AND AT SEND TIME. HERE, because an
+     * uncleared row is one a background process will dial; the table never holds
+     * `169.254.169.254`. AT SEND TIME (`apps/worker/src/push-wake.ts`), because clearance expires
+     * when the name re-resolves — validate-once is TOCTOU with extra steps. The guard is the
+     * deployment's policy (relaxed only under `TF_PUSH_ALLOW_PRIVATE=1`); its pin is discarded —
+     * nothing is dialled here. KEYS ARE STORED WHEN OFFERED: UP 3.x endpoints are Web Push
+     * endpoints, the wake today is the unencrypted constant, and keys now spare the encrypting
+     * arm a re-registration.
      */
     if (transport === "unifiedpush") {
       if (!body.endpoint) throw new ServiceError("validation_failed", 400, "unifiedpush requires endpoint");
@@ -109,36 +90,14 @@ export class PushService implements PushServicePort {
       // transports that already used it; the session wins when it names a device.
       let deviceId = body.deviceId ?? null;
       /**
-       * ── `webpush` JOINED THIS, AND IT HAD TO ────────────────────────────────────────────
-       *
-       * It read `unifiedpush` alone for as long as the phone was the only client whose rows were
-       * ever dialled. Browser rows were stored and never sent to, so a `device_id` of null cost
-       * nothing. It costs something now: the sign-out and device-revoke prunes are DEVICE-SCOPED,
-       * so a null there means signing out of a browser leaves its registration live and the
-       * server goes on waking a browser for an account it is no longer signed into.
-       *
-       * ── AND FOR A BROWSER THIS STAMP IS A NO-OP. IT DOES NOT CLOSE THAT CASE. ───────────
-       *
-       * An earlier version of this comment claimed a browser has a device row like any other
-       * client, and it is false in this tree. `AUTO_MINT_DEVICE_LABELS` in
-       * `auth/session-lifecycle.ts` covers the four DESKTOP kinds ONLY, so a browser ceremony
-       * mints no device row and an exchanged web session's `device_id` is null —
-       * `auth-service.test.ts` asserts exactly that through the real ceremony. The guard below is
-       * `if (s?.deviceId)`, so for a browser it never fires and the row stays deviceless.
-       *
-       * What the stamp DOES reach is `unifiedpush`, whose sessions are a paired phone's and do
-       * carry a device. Kept for that, and for any transport whose session later names one.
-       *
-       * A BROWSER'S ROW IS CLOSED FROM THE CLIENT, because the client is the only party that can
-       * name it: the server cannot tell one deviceless registration on an account from another,
-       * and deleting them all would silently end a second browser's notifications. So the browser
-       * keeps the row id this method returns and issues the account-scoped
-       * `DELETE /push/subscriptions/:id` ({@link PushService.unsubscribe}) BEFORE `auth.logout()`
-       * revokes the session that authorizes it. `logout-push-prune.pg.test.ts` holds both halves:
-       * that the device-scoped prune does not reach a deviceless row, and that the client's
-       * delete does.
-       *
-       * `apns` stays out: its identity is the device token it already carries.
+       * `webpush` JOINED THIS, AND IT HAD TO: the sign-out and device-revoke prunes are
+       * DEVICE-SCOPED, so a null `device_id` leaves a signed-out browser's registration live and
+       * still woken. FOR A BROWSER THE STAMP IS A NO-OP: `AUTO_MINT_DEVICE_LABELS` covers the
+       * four DESKTOP kinds only, so a browser session's `device_id` is null
+       * (`auth-service.test.ts` asserts it); what the stamp reaches is `unifiedpush`. A BROWSER'S
+       * ROW IS CLOSED FROM THE CLIENT — only the client can name it — via `DELETE
+       * /push/subscriptions/:id` BEFORE `auth.logout()`; `logout-push-prune.pg.test.ts` holds
+       * both halves. `apns` stays out: its identity is the device token.
        */
       if ((transport === "unifiedpush" || transport === "webpush") && ctx.sessionId) {
         const [s] = await tx.select({ deviceId: sessions.deviceId }).from(sessions)
@@ -162,22 +121,14 @@ export class PushService implements PushServicePort {
       const rowId = inserted[0]?.id ?? (await this.existingId(tx, ctx.accountId, transport, body));
 
       /**
-       * ── A DEDUPED RE-REGISTRATION MUST RE-STAMP THE DEVICE, OR THE REVOKE LOSES ITS HANDLE ────
-       *
-       * `onConflictDoNothing` above is right about the ROW — one endpoint, one registration — and
-       * it was wrong about the device, which is a hole in the take-back rather than a tidiness
-       * point. A UnifiedPush endpoint is stable for the life of an app install, so the second
-       * registration of the same endpoint is the ORDINARY case: the phone was revoked and paired
-       * again, or simply relaunched after a re-pair. The distributor hands back the same URL, the
-       * insert conflicts, and the row keeps pointing at the OLD device id — a device row that a
-       * revoke has already removed. From then on nothing can take that registration down: the
-       * current device's revoke does not match it, and the old device's revoke has already
-       * happened. The endpoint keeps receiving wakes with no surface that can stop it.
-       *
-       * So the stamp is refreshed, in the same transaction, scoped to the row and the account. The
-       * keys travel with it for the same reason — a re-registration is the connector's latest word
-       * on both, and a stale `p256dh` beside a fresh endpoint is a registration that could not be
-       * encrypted to even once there is something to encrypt.
+       * A DEDUPED RE-REGISTRATION MUST RE-STAMP THE DEVICE, OR THE REVOKE LOSES ITS HANDLE.
+       * `onConflictDoNothing` is right about the ROW and was wrong about the device: a
+       * UnifiedPush endpoint is stable for the life of an install, so re-registering the same
+       * endpoint is the ORDINARY case (revoked and paired again). The insert conflicts, the row
+       * keeps the OLD device id — one a revoke already removed — and nothing can take the
+       * registration down: it keeps receiving wakes with no surface to stop it. So the stamp is
+       * refreshed in the same transaction, scoped to row and account; the keys travel with it — a
+       * re-registration is the connector's latest word on both.
        */
       if (transport === "unifiedpush" && inserted[0] === undefined) {
         await tx.update(pushSubscriptions).set({

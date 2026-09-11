@@ -46,20 +46,14 @@ export interface CreateRuleBody {
   priority?: number;
   enabled?: boolean;
   /**
-   * THE SECOND TERM — *from this address AND with this in the subject*. Absent or `null` for a rule
-   * with one term, which is every rule that existed before mail 0050.
-   *
-   * `kind: "sender"` ONLY, and a term on any other kind is a 400 rather than a silently dropped
-   * field. The reason is not squeamishness about scope: a domain rule narrowed by subject is a
-   * coherent thing to want, but nothing composes one — the subject sheet is opened from ONE
-   * message and offers that message's sender — so accepting it would be an untested wire shape
-   * whose only reachable caller is a hand-written request. `header` is refused for the same reason
-   * the engine's `rule_create` has no `header` arm: it names no principal.
-   *
-   * Stored VERBATIM after trimming, and matched case-folded by
-   * `core/src/rules.ts#subjectSatisfies`. The case the user typed is preserved because the rules
-   * surface and the sender sheet both quote it back at them — folding at rest would show somebody
-   * `[ninjafirewall]` for a token they read off their own mail as `[NinjaFirewall]`.
+   * THE SECOND TERM — from this address AND with this in the subject. Absent or `null` for a
+   * one-term rule (every rule before mail 0050). `kind: "sender"` ONLY; a term on any other kind
+   * is a 400, never silently dropped. Not squeamishness: a domain rule narrowed by subject is
+   * coherent, but nothing composes one — the subject sheet opens from ONE message and offers its
+   * sender — so accepting it would be an untested wire shape reachable only by hand. `header` is
+   * refused as the engine's `rule_create` refuses it: it names no principal. Stored VERBATIM
+   * after trimming, matched case-folded by `core/src/rules.ts#subjectSatisfies` — the typed case
+   * is preserved because the surfaces quote it back.
    */
   subjectContains?: string | null;
   /**
@@ -71,19 +65,13 @@ export interface CreateRuleBody {
    */
   bodyContains?: string | null;
   /**
-   * ALSO APPLY THIS RULE TO MAIL THAT IS ALREADY FILED — **defaults to TRUE**.
-   *
-   * A rule is meant to apply to ALL messages, future and previous, by default, so it manages the
-   * mailbox efficiently. The design decision is about the DEFAULT; an opt-in would have changed
-   * nothing about managing a mailbox, so `undefined` means yes and only an explicit `false`
-   * declines.
-   *
-   * What it does here is one column. `retro_requested_at` is stamped inside the create/update
-   * transaction and nothing else happens in this process: the worker's retro-apply pass finds
+   * ALSO APPLY THIS RULE TO MAIL ALREADY FILED — defaults to TRUE. A rule applies to ALL
+   * messages, future and previous, by default; `undefined` means yes and only an explicit `false`
+   * declines. Here it is one column: `retro_requested_at` is stamped inside the create/update
+   * transaction and nothing else happens in this process — the worker's retro-apply pass finds
    * the owed rule on its next per-account cycle and walks the backlog in bounded pages, writing
-   * `folder_state` desired-state that the reconciler turns into real IMAP moves. A rule matching
-   * four thousand messages must not run inside a request, and this is the seam that keeps it out
-   * of one.
+   * `folder_state` desired-state the reconciler turns into IMAP moves. A rule matching four
+   * thousand messages must not run inside a request; this is the seam that keeps it out of one.
    */
   applyRetro?: boolean;
 }
@@ -141,15 +129,12 @@ export interface RuleMutation {
 }
 
 /**
- * THE EDIT WROTE NOTHING HERE — every live mailbox is organized by another install, so the account's
- * own row is deliberately untouched and the edit is waiting on those installs.
- *
- * `pending: true` is the discriminator the route switches its status code on (202), the same shape
- * `MessageService.move` and `ScreenerService.decide` use.
- *
- * `rule` is the UNCHANGED local row for `update` and `remove` — the person is looking at it and it
- * has not changed yet, which is the honest thing to hand back — and absent for `create`, where
- * there is no row at all until an organizer applies the request and republishes.
+ * THE EDIT WROTE NOTHING HERE — every live mailbox is organized by another install; the account's
+ * own row is untouched and the edit waits on those installs. `pending: true` is the discriminator
+ * the route switches its 202 on, the shape `MessageService.move` and `ScreenerService.decide`
+ * use. `rule` is the UNCHANGED local row for `update`/`remove` — the person is looking at it and
+ * it has not changed yet — and absent for `create`, where no row exists until an organizer
+ * applies and republishes.
  */
 export interface RuleRequestResult {
   pending: true;
@@ -176,16 +161,13 @@ export interface RuleRemoval {
  * is indistinguishable from a missing one → 404.
  */
 /**
- * THE WORD A RULE'S DESTINATION TRAVELS AS — never an IMAP path.
- *
- * Same closed table a `message.move` request uses, and for the reason `request-apply.ts` gives at
- * length: a request is a message inside a mailbox anyone with the password can append to, and an
- * install able to name an arbitrary folder could file mail outside the tree this product manages.
- *
- * `trash` is in that table for moves and is REFUSED here. A rule is account-scoped and Trash is
- * discovered per mailbox, so "file every message from this sender to Trash" is delete-on-arrival
- * with a different name — no door offers it, and a payload that could express it would be a
- * capability nobody chose.
+ * THE WORD A RULE'S DESTINATION TRAVELS AS — never an IMAP path. Same closed table a
+ * `message.move` request uses, for `request-apply.ts`'s reason: a request is a message in a
+ * mailbox anyone with the password can append to, and an install able to name an arbitrary folder
+ * could file mail outside the tree this product manages. `trash` is in that table for moves and
+ * REFUSED here: a rule is account-scoped, Trash is discovered per mailbox, and "file every
+ * message from this sender to Trash" is delete-on-arrival under a different name — no door offers
+ * it.
  */
 const RULE_DESTINATION_WORDS: ReadonlyMap<string, string> = new Map([
   ["INBOX", "inbox"],
@@ -220,26 +202,14 @@ interface RuleKeyFields {
 }
 
 /**
- * THE NATURAL KEY A `rule.*` REQUEST TRAVELS UNDER — FOUR fields, not two.
- *
- * Not the rule's id: two installs of one account have separate databases and separate primary keys,
- * so an id names nothing on the other side.
- *
- * ── AND NOT `(kind, match)` EITHER, WHICH IS THE CORRECTION THAT MATTERS ───────────────────
- *
- * There is no unique index on `(account_id, kind, match)`, and that is not an oversight: two rules
- * on one sender differing only by a narrowing term are DIFFERENT rules filing to different places —
- * *from this address AND with this in the subject* beside *from this address* alone. A two-field key
- * collapses them, so the applier would look up one and act on the other, filing mail somewhere the
- * person did not choose while every guard on both sides stayed green. `{ kind, match }` with both
- * terms null is not a different key; it is the BARE (promoted-rule) case of this one.
- *
- * ── ONE PLACE, BECAUSE THE SHAPE IS NOT MINE ───────────────────────────────────────────────
- *
- * The payload is defined by the drain that applies it. Everything composed here is composed
- * in this one function, so when that shape moves, this body changes and no door does. A payload
- * built inline at three call sites is three places to update and two places to forget — which is
- * exactly what would have happened to the key correction above.
+ * THE NATURAL KEY A `rule.*` REQUEST TRAVELS UNDER — FOUR fields, not two. Not the id: two
+ * installs have separate databases and primary keys, so an id names nothing on the other side.
+ * NOT `(kind, match)` either — no unique index on it, and no oversight: two rules on one sender
+ * differing only by a narrowing term are DIFFERENT rules filing to different places. A two-field
+ * key collapses them, so the applier would look up one and act on the other, every guard green.
+ * `{ kind, match }` with both terms null is the BARE (promoted-rule) case of this key. ONE PLACE:
+ * the payload is defined by the drain that applies it; everything composed here is composed in
+ * this one function, so when the shape moves no door changes.
  */
 function ruleRequestPayload(
   key: RuleKeyFields,
@@ -257,17 +227,13 @@ function ruleRequestPayload(
 }
 
 /**
- * A `rule.update` MAY NOT CHANGE WHAT A RULE MATCHES — refused WHOLE, never partly applied.
- *
- * The four key fields identify the rule to the other install. A `set` naming one of them would ask
- * the applier to find a rule by a key and then change that key, which is two operations wearing
- * one: on this install it is an UPDATE, on the other it is "no such rule" or, worse, a rule that
- * now collides with an existing one. Changing what a rule matches is a delete plus a create, and
- * saying so is more honest than accepting a request whose two halves would diverge.
- *
- * Refused whole rather than filtered: silently dropping the key fields from `set` would apply the
- * REST of a mixed patch and report success, so the person's destination change lands and their
- * match change vanishes with nothing said.
+ * A `rule.update` MAY NOT CHANGE WHAT A RULE MATCHES — refused WHOLE, never partly applied. The
+ * four key fields identify the rule to the other install; a `set` naming one would ask the
+ * applier to find a rule by a key and then change that key — an UPDATE here, "no such rule" (or a
+ * collision) there. Changing what a rule matches is a delete plus a create, and saying so is more
+ * honest than accepting a request whose halves diverge. Refused whole rather than filtered:
+ * silently dropping key fields from `set` would apply the REST of a mixed patch and report
+ * success — the destination change lands, the match change vanishes, nothing said.
  */
 const RULE_KEY_FIELDS = ["kind", "match", "subjectContains", "bodyContains"] as const;
 
@@ -340,20 +306,15 @@ export class RulesService {
     const bodyContains = this.validBodyContains(body.bodyContains, kind);
 
     return asTx(ctx).transaction(async (tx) => {
-      /* -- A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (mail 0083, then 0094) --
-       *
-       * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog
-       * a new rule covers, and both run on the organizer's authority inside the organizer's own
-       * cycle. A rule written where nothing organizes is an instruction that is never carried
-       * out — and worse than inert, because the person is told their mail will be filed that way.
-       *
-       * Mail 0083 answered that with ONE account-wide question ("does this install organize
-       * anything") and a refusal. Ruling 6 replaces it with a per-mailbox dispatch, because the
-       * account-wide answer was wrong in both directions: on a MIXED account it PERMITTED the
-       * write and nothing travelled, so the install actually organizing the other mailbox never
-       * heard about the rule while the person was told it was saved; and on an all-reader account
-       * it refused where a request could have gone. `planAccountFanOut` carries the three states,
-       * the onboarding one included.
+      /**
+       * A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (mail 0083, then 0094). A rule
+       * is not a note: `evaluateRules` routes and `rule-retro.ts` re-files, both on the
+       * organizer's authority in the organizer's cycle — a rule written where nothing organizes
+       * is never carried out, and worse than inert: the person is told it will be. Mail 0083
+       * asked ONE account-wide question and refused; the per-mailbox dispatch replaces it because
+       * that answer was wrong both ways — a MIXED account was PERMITTED a write that never
+       * travelled, an all-reader account refused where a request could go. `planAccountFanOut`
+       * carries the three states.
        */
       const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "rule.create");
 
@@ -481,38 +442,14 @@ export class RulesService {
    * or the concurrent case (both lookups miss in autocommit) still emits two changes.
    */
   /**
-   * ── A RETARGET IS A RETROACTIVE REQUEST TOO, AND IT IS THE COMMON PATH ─────────────
-   *
-   * The sender sheet does NOT create a second rule when one already covers the subject — two
-   * `manual` rules with the same kind, match, priority and effect tie all the way down to an
-   * arbitrary ID tie-break in `core/src/rules.ts#compareRules`, so a duplicate would make "future
-   * mail files there too" a coin toss. It PATCHes the existing rule's destination instead. That
-   * is what a user changing their mind about a sender they have already ruled on does, which is
-   * the ordinary case rather than an edge one.
-   *
-   * So a retarget that did not re-request the retroactive pass would apply to future mail only,
-   * while the sheet said the same sentence it says for a fresh rule. The whole retro state is
-   * therefore RESET — cursor and marker cleared, not just the request re-stamped — because the
-   * destination changed: mail this rule already moved to the OLD destination is a candidate
-   * again, and a stale cursor would skip everything before it.
-   *
-   * Only when the destination actually changes. A PATCH that flips `enabled` or nudges
-   * `priority` re-applies nothing, because nothing about where this rule sends mail moved.
-   *
-   * ── AND A SUBJECT TERM CHANGE IS THE SAME KIND OF EVENT (mail 0050) ────────────────────
-   *
-   * `subject_contains` decides WHICH mail this rule is about, so editing it re-opens the backlog
-   * exactly as a destination change does — and in both directions. NARROWING (adding or tightening
-   * a term) leaves mail the rule already moved sitting somewhere it no longer claims; WIDENING
-   * (clearing it) brings mail into scope that the pass has never examined. Neither is fixed by the
-   * arrival path, because that only ever sees new mail.
-   *
-   * So the retro state is reset for a term change on the same reasoning as a retarget: cursor and
-   * marker cleared rather than the request merely re-stamped, because a stale cursor would skip
-   * everything before it. Note the honest limit, which is the one the copy must never overstate: a
-   * message the NARROWED rule moved to the old destination is not moved BACK by this — the pass
-   * writes desired-state for messages a rule now claims and never un-files one it has stopped
-   * claiming. Only some other rule, or the user, moves that mail again.
+   * A RETARGET IS A RETROACTIVE REQUEST TOO, AND IT IS THE COMMON PATH. The sender sheet does not
+   * create a second rule when one covers the subject — duplicates tie down to an arbitrary id
+   * (`core/src/rules.ts#compareRules`); it PATCHes the destination. Without a retro re-request
+   * the retarget would apply to future mail only. So the retro state RESETS — cursor and marker
+   * cleared: mail moved to the OLD destination is a candidate again. Only when the destination
+   * changes; `enabled`/`priority` re-apply nothing. A SUBJECT TERM CHANGE IS THE SAME EVENT (mail
+   * 0050): narrowing leaves mail unclaimed, widening brings unexamined mail into scope — same
+   * reset. The pass never un-files what a rule stopped claiming.
    */
   async update(
     ctx: ServiceContext, id: string, patch: PatchRuleBody,
@@ -527,36 +464,28 @@ export class RulesService {
     const applyRetro = this.validApplyRetro(patch.applyRetro);
 
     return asTx(ctx).transaction(async (tx) => {
-      /* -- A READER'S ACCOUNT WRITES NO RULES (mail 0083) ---------------------------------
-       *
-       * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog
-       * a new rule covers, and both run on the organizer's authority inside the organizer's own
-       * cycle. A rule written where nothing organizes is an instruction that is never carried
-       * out — and worse than inert, because the person is told their mail will be filed that way.
-       *
-       * ACCOUNT-SCOPED, not per-mailbox: rules apply to the account and travel in the profile
-       * document, so the question is whether this install organizes ANYTHING. On a one-mailbox
-       * standalone that collapses to "all refused", which is the honest answer for a door whose
-       * effect would be nil.
+      /**
+       * A READER'S ACCOUNT WRITES NO RULES (mail 0083). A rule is not a note: `evaluateRules`
+       * routes and `rule-retro.ts` re-files, both on the organizer's authority — a rule written
+       * where nothing organizes is never carried out, and worse than inert: the person is told it
+       * will be. ACCOUNT-SCOPED, not per-mailbox: rules apply to the account and travel in the
+       * profile document, so the question is whether this install organizes ANYTHING. On a
+       * one-mailbox standalone that collapses to "all refused" — the honest answer for a door
+       * whose effect would be nil.
        */
       // The per-mailbox dispatch that replaces the account-wide refusal — see `create`'s own note
       // for why the one question was wrong in both directions.
       const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "rule.update");
 
       // Read the CURRENT destination before the write, inside the transaction, so "did the
-      // destination change" is answered against the row this update is about to replace rather
-      // than against a value the caller supplied. A PATCH that sets the destination it already
-      // has re-applies nothing, which is what makes a habit-click cheap.
-      //
-      // `kind` and `subjectContains` join the read for mail 0050. The kind is needed because
-      // `validSubjectContains` refuses a term on anything but `sender` and a PATCH need not carry
-      // the kind at all — validating against the caller's absent field instead of the stored row
-      // is how a domain rule acquires a subject term the API says it will not accept.
-      //
-      // `match` joins them for mail 0094: it is the second of the FOUR fields that identify this
-      // rule to another install, and the key must name the rule as it stands NOW — a request
-      // keyed on the caller's new value would ask the applier to find a rule that does not exist
-      // there yet.
+      // destination change" is answered against the row this update replaces, not a caller value
+      // — a PATCH setting the destination it already has re-applies nothing, which keeps a
+      // habit-click cheap. `kind` and `subjectContains` join the read for mail 0050:
+      // `validSubjectContains` refuses a term on anything but `sender`, and a PATCH need not
+      // carry the kind — validating against the caller's absent field is how a domain rule
+      // acquires a term the API says it refuses. `match` joins for mail 0094: the key must name
+      // the rule as it stands NOW — a request keyed on the new value asks the applier to find a
+      // rule that does not exist there yet.
       const [before] = await tx.select({
         destination: rules.destination, kind: rules.kind, subjectContains: rules.subjectContains,
         bodyContains: rules.bodyContains, match: rules.match,
@@ -678,25 +607,14 @@ export class RulesService {
   }
 
   /**
-   * THE DELETE THAT ANSWERS WRONG. A retried DELETE hits `deleted.length === 0` and
-   * throws `not_found` — telling the user their revoke FAILED for an operation that
-   * SUCCEEDED. The engine's retry queue drains every pending action (`flushPending`), so a
-   * lost response on a revoke reaches this by the ordinary path, not an exotic one.
-   *
-   * ── 204 UNDER A KEY, 404 WITHOUT ONE ─────────────────────────────────────────────────
-   *
-   * Both answers are true of a second DELETE: "the rule is gone, which is what you asked
-   * for" and "there is no such rule". The KEY is what picks between them, exactly as it
-   * does for `create`: presenting one is the caller stating THIS IS A RETRY OF THAT
-   * REQUEST, and honouring it means handing back the first outcome — the same 204 and the
-   * same `X-Sync-Seq`. A caller with no key has offered no evidence it ever performed the
-   * delete, and for an id it never owned (cross-account is indistinguishable from
-   * missing) 404 is the only honest answer. Answering 204 unconditionally would make this
-   * endpoint one that can never say "no such rule".
-   *
-   * A delete that genuinely finds nothing claims NOTHING: the claim is inside the
-   * transaction that throws, so it rolls back with it. The key stays usable, which is
-   * right — a key is a promise about an EFFECT, and there was none.
+   * THE DELETE THAT ANSWERS WRONG: a retried DELETE hits `deleted.length === 0` and throws
+   * `not_found` — the revoke reported FAILED after it SUCCEEDED; the engine's retry queue makes
+   * this the ordinary path. 204 UNDER A KEY, 404 WITHOUT: both are true of a second DELETE, and
+   * the KEY picks — presenting one states THIS IS A RETRY, honoured with the first outcome (same
+   * 204, same `X-Sync-Seq`). No key means no evidence the delete ever ran, and for an id never
+   * owned (cross-account = missing) 404 is the only honest answer. A delete that finds nothing
+   * claims NOTHING: the claim rolls back with the throwing transaction — the key stays usable; a
+   * key promises an EFFECT, and there was none.
    */
   async remove(
     ctx: ServiceContext, id: string,
@@ -828,33 +746,14 @@ export class RulesService {
   }
 
   /**
-   * The second term, or `null`. Four refusals and one normalisation, and the ORDER matters.
-   *
-   *  · `undefined`/`null` ⇒ `null`. Absent means "an ordinary one-term rule"; an explicit `null` is
-   *    a PATCH CLEARING the term, which is a legitimate edit and the only way to widen a narrow rule
-   *    back to its whole sender.
-   *  · A non-string is a 400, never a coercion. `subjectContains: 0` stringified to `"0"` would be
-   *    a rule matching every subject containing a zero, which is not what any caller meant.
-   *  · **A STRING THAT TRIMS TO NOTHING IS A 400, NOT A COERCION TO `null`** — and this line was the
-   *    other way round for an hour, so the reasoning is worth keeping. `""` is a substring of EVERY
-   *    subject, so a blank term stored literally is a rule that matches everything while its row
-   *    reads as specific; that is what the migration's CHECK refuses. Coercing it to `null` here is
-   *    not dangerous in the same way (the result is a bare rule, which is the pre-column behaviour),
-   *    but it is a SILENT WIDENING of exactly the request the caller made: the subject sheet says
-   *    "file just the ones whose subject matches" and the account would get a rule filing all of
-   *    that sender's mail. Refusing is the only answer that cannot surprise anybody, and it makes
-   *    the three layers — CHECK, service, engine — agree on one meaning per input. An explicit
-   *    `null` remains the way to say "no term", so nothing legitimate is unreachable.
-   *  · Over {@link MAX_SUBJECT_CONTAINS_CHARS} is a 400 — checked AFTER trimming, so trailing
-   *    whitespace does not decide it — mirroring the CHECK so the ceiling is a validation error and
-   *    not a constraint violation surfacing as a 500.
-   *  · A term on any kind but `sender` is a 400. It is refused rather than dropped because
-   *    silently discarding a field the caller sent is how a client ends up believing it wrote a
-   *    narrow rule and getting a broad one. See {@link CreateRuleBody.subjectContains} for why the
-   *    other kinds are not offered at all.
-   *
-   * `kind` is the kind the row will HAVE after this write, resolved by the caller — never the
-   * caller's `patch.kind`, which may be absent on a PATCH.
+   * The second term, or `null`. In order: `undefined`/`null` ⇒ `null` (absent = one-term rule;
+   * explicit `null` = a PATCH clearing the term). A non-string is a 400, never coerced (`0`
+   * stringified would match every subject with a zero). A STRING THAT TRIMS TO NOTHING IS A 400,
+   * NOT `null`: `""` is a substring of EVERY subject, and coercing would SILENTLY WIDEN the
+   * request made; refusing keeps CHECK, service and engine on one meaning per input. Over
+   * `MAX_SUBJECT_CONTAINS_CHARS` is a 400, checked AFTER trimming, mirroring the CHECK so the
+   * ceiling is not a 500. A term on any kind but `sender` is a 400 — dropping a sent field breeds
+   * broad rules believed narrow. `kind` is the kind the row will HAVE — never `patch.kind`.
    */
   private validSubjectContains(v: unknown, kind: string): string | null {
     if (v === undefined || v === null) return null;
