@@ -152,6 +152,12 @@ export const AWAY_COPY = {
    * stop saying the request is waiting. An away request that has landed is not still pending.
    */
   applied: "The machine that organizes this mailbox has applied it.",
+  /**
+   * AND THE ROW MOVED WITHOUT BEING OURS. `updatedAt` changing says the row changed, not whose
+   * change it was: a request dropped here while somebody edited the same row at another install
+   * would otherwise be reported as applied. The values shown are the row's either way.
+   */
+  changedElsewhere: "Changed from another computer. These are the away settings it holds now.",
   failed: "That did not save. Nothing changed.",
   incomplete: "Add a message before turning this on.",
   unreachable: "Your away settings could not be read just now. Nothing here has changed.",
@@ -217,6 +223,31 @@ const THROTTLE_IDS: readonly Throttle[] = ["always", "per_message", "per_day", "
  * mailbox, so the interval is the cheaper of the two clocks to be wrong about. The COUNT is the
  * part that matters: a settings row must not leave a timer running for the life of a tab.
  */
+/**
+ * IS THE ROW THAT CAME BACK THE ONE THIS INSTALL ASKED FOR?
+ *
+ * `updatedAt` moving says the row changed; it does not say whose change it was. Compared field by
+ * field, in the spellings the ENDPOINT stores rather than the ones a click sent: dates round-trip
+ * through `new Date(v).toISOString()`, and `piles` is collapsed to a set whose order the server
+ * does not preserve — so a string or array comparison would call a request that landed exactly as
+ * asked somebody else's edit. `body` is stored verbatim, so it compares as written.
+ */
+function sameAsAsked(now: AwayResponderWire, asked: Draft): boolean {
+  const instant = (v: string | null): number | null => {
+    if (v === null) return null;
+    const t = new Date(v).getTime();
+    return Number.isNaN(t) ? null : t;
+  };
+  const set = (v: readonly string[]): string => [...new Set(v)].sort().join("\u001f");
+  return now.enabled === asked.enabled
+    && (now.body ?? null) === (asked.body ?? null)
+    && instant(now.startsAt) === instant(asked.startsAt)
+    && instant(now.endsAt) === instant(asked.endsAt)
+    && now.audience === asked.audience
+    && now.throttle === asked.throttle
+    && set(now.piles ?? AWAY_PILES_DEFAULT) === set(asked.piles ?? AWAY_PILES_DEFAULT);
+}
+
 const ASKED_POLL_MS = 20_000;
 const ASKED_POLL_MAX = 12;
 
@@ -291,7 +322,9 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    * `asked` IS NOT `saved`, and it is the one distinction this row's answer has to carry: on an
    * account another install organizes, the write did not happen here and a request is waiting.
    */
-  const [state, setState] = useState<"idle" | "saved" | "asked" | "applied" | "failed" | "expired">("idle");
+  const [state, setState] = useState<
+    "idle" | "saved" | "asked" | "applied" | "changedElsewhere" | "failed" | "expired"
+  >("idle");
   /**
    * THE READ CAME BACK REFUSED — and this is a state rather than silence BECAUSE THE CONTROL HAS
    * ITS OWN PANE NOW.
@@ -411,7 +444,7 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    * A read that throws is not a state: the request may still land, so the attempt is spent and the
    * wait continues rather than turning a transient refusal into "that did not save".
    */
-  const watchForApplied = (askedAt: string | null): void => {
+  const watchForApplied = (askedAt: string | null, asked: Draft): void => {
     let left = ASKED_POLL_MAX;
     const tick = (): void => {
       askedTimer.current = setTimeout(() => {
@@ -432,7 +465,11 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
                 enabled: now.enabled, audience: now.audience, throttle: now.throttle,
                 piles: now.piles ?? [...AWAY_PILES_DEFAULT],
               });
-              setState("applied");
+              /* WHOSE CHANGE WAS IT. Equal to the request ⇒ the organizer applied ours. Different
+                 ⇒ somebody at another install edited this row and our request is not in it, which
+                 is a different sentence and not `applied`. Either way the values above are the
+                 row's, because that is what is true. */
+              setState(sameAsAsked(now, asked) ? "applied" : "changedElsewhere");
               return;
             }
           } catch {
@@ -456,6 +493,10 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
     setPending(true);
     setState("idle");
     void (async () => {
+      /* THE REQUEST, KEPT. The 202 answers the row UNCHANGED, and `setDraft` below puts those
+         values back — so without this snapshot the pane no longer holds what it asked for and the
+         watcher has nothing to compare against. */
+      const asked: Draft = { ...draft };
       try {
         const stored = await wireOf().save(draft);
         if (!alive.current) return;
@@ -482,7 +523,7 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
              told, which is the same defect the 202 discriminator was added to fix, one step later.
              `watchForApplied` ends it, and the load effect's own read is what ends it for anyone
              who left the pane and came back. */
-          watchForApplied(stored.updatedAt);
+          watchForApplied(stored.updatedAt, asked);
         } else {
           setState("saved");
         }
@@ -717,6 +758,9 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
         ) : null}
         {state === "applied" ? (
           <span className="set-note-inline" role="status">{t("applied")}</span>
+        ) : null}
+        {state === "changedElsewhere" ? (
+          <span className="set-note-inline" role="status">{t("changedElsewhere")}</span>
         ) : null}
         {state === "failed" ? (
           <span className="set-note-inline" role="alert">{complete ? t("failed") : t("incomplete")}</span>
