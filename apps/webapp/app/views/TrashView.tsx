@@ -31,22 +31,41 @@
  *    .destination`). It is the server's resolved answer, not this client's guess: the origin
  *    folder can be gone, and only the server holds the mailbox's folder inventory.
  *
- * ══ AND THE READING PANE HAS ONE VERB ══════════════════════════════════════════════════════
+ * ══ AND A SECOND SECTION FOR THE OTHER POPULATION ══════════════════════════════════════════
  *
- * Restore, plus the read switch. `MessagePane`'s `trash` prop carries it; the argument for one
- * early return rather than eleven gated groups is written at `ActionBar`'s own prop.
+ * Under the mirrored list, what sits in the mail server's OWN Trash — read live through
+ * `useTrashWindow`, never mirrored, never written anywhere. Mail deleted in another mail app is
+ * in that folder and the sync cannot see it, so the view now reads it instead of only saying it
+ * exists. The two sections are independent: a live read that fails renders its own failed
+ * sentence and leaves the mirrored list exactly as it was.
+ *
+ * ══ AND THE READING PANE HAS ONE VERB, OR NONE ═════════════════════════════════════════════
+ *
+ * Over a mirrored row: restore, plus the read switch. `MessagePane`'s `trash` prop carries it;
+ * the argument for one early return rather than eleven gated groups is written at `ActionBar`'s
+ * own prop. Over a LIVE row: nothing — {@link trashReadVerbs} names the empty set, because a
+ * message the mirror has never held records no folder for a restore to aim at.
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { presentsUnread, type EngineMessage, type TagDTO, type TrashRowWire } from "@ohmail/client-engine";
 import { ListPane, ListRows, MessageRow, ReadColumn, Spinner } from "@ohmail/ui";
+import type { TrashWindowItemWire } from "../api-client";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useRowBadgeCopy } from "../shell/row-copy";
-import { avatarOf, agoStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
+import {
+  avatarHue, avatarOf, agoStamp, displayTime, hueOf, initialsOf, placeLabel, rowAddress,
+  senderName, tagsOfMessage,
+} from "../shell/format";
+import { displayAddressee, displayAddressUnder } from "../shell/idn";
+import { BodyText } from "../shell/BodyText";
 import { useZoneNav } from "../shell/zone-nav";
 import { readColumnHidden } from "../shell/narrow";
 import { useListWindow } from "../shell/list-window";
 import type { TrashPage } from "../shell/trash-page";
+import {
+  trashLiveKeyOf, trashLiveState, trashReadVerbs, type TrashWindowControl,
+} from "../shell/trash-window";
 
 /**
  * THE ROW'S STAMP — how long ago it was deleted, plus the exact instant on hover.
@@ -84,6 +103,7 @@ function restoreLabel(row: TrashRowWire): string {
 
 export function TrashView({
   page,
+  live,
   tags,
   threadParticipants,
   now,
@@ -94,6 +114,12 @@ export function TrashView({
   onAddTag,
 }: {
   page: TrashPage;
+  /**
+   * THE LIVE WINDOW onto the mail server's own Trash. Absent — no server to ask, the demo, or
+   * "Use folders" off — and the view is byte-identical to before this section existed, with the
+   * mirror-only foot sentence. Present, it is read-only: the control carries no verb.
+   */
+  live?: TrashWindowControl;
   tags: TagDTO[];
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
   now: Date;
@@ -114,6 +140,8 @@ export function TrashView({
   const tReader = useTranslations("reader");
   const rowBadge = useRowBadgeCopy();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** The live section's pick, by its epoch-scoped key. Null means the reader is in the mirror. */
+  const [liveKey, setLiveKey] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
 
   const rows = page.items;
@@ -121,11 +149,18 @@ export function TrashView({
 
   /* The user's pick, else the URL's open message, else the first row — `FolderView`'s rule, safe
      here for a stronger reason: this list never re-partitions (one flat order, from the server). */
-  const shown =
+  const mirroredShown =
     rows.find((m) => m.id === selectedId)
     ?? (locateId ? rows.find((m) => m.id === locateId) : null)
     ?? rows[0]
     ?? null;
+  /* ONE READING COLUMN, TWO POPULATIONS. A live pick wins while it stands, because the mirrored
+     fallback is the first row and would otherwise keep a deleted message on screen beside the
+     live row somebody just opened. Picking a mirrored row clears the live key, and vice versa. */
+  const openLive = liveKey === null
+    ? null
+    : live?.items.find((i) => trashLiveKeyOf(i) === liveKey) ?? null;
+  const shown = openLive === null ? mirroredShown : null;
 
   /* THE BODY OF A TOMBSTONED ROW. The body route answers for a deleted message by design
      (`schema-mail.ts` states it beside the column), which is what makes this view able to show a
@@ -135,9 +170,26 @@ export function TrashView({
   }, [shown?.id, hydrateBody]);
 
   const openRow = (m: TrashRowWire) => {
+    setLiveKey(null);
     setSelectedId(m.id);
     if (readColumnHidden()) onOpen(m);
   };
+
+  /* THE LIVE BODY, ON OPEN. Keyed on the row's key alone and NOT on the control — the control is
+     a fresh object per render, and this door re-asks a failed key, so a render-keyed effect would
+     be a billed retry loop with nobody behind it (`session-body.ts` records the measurement).
+     There is no narrow-width branch: the Trash view's reading column is not hidden at phone
+     widths, and a live row has no mirror id the reader sheet could open. */
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  const openLiveKey = openLive === null ? null : trashLiveKeyOf(openLive);
+  useEffect(() => {
+    if (openLiveKey === null) return;
+    const held = liveRef.current;
+    const item = held?.items.find((i) => trashLiveKeyOf(i) === openLiveKey);
+    if (item) held?.openBody(item);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openLiveKey]);
 
   const navOrder = rows.map((m) => m.id);
   const navAt = shown ? navOrder.indexOf(shown.id) : -1;
@@ -176,7 +228,7 @@ export function TrashView({
     },
     reader: {
       selector: ".view-trash .read-col",
-      disabled: shown == null,
+      disabled: shown == null && openLive == null,
       onHiddenEnter: () => {
         if (shown) onOpen(shown);
       },
@@ -189,6 +241,8 @@ export function TrashView({
   const locateFound = locateIdx >= 0;
   useEffect(() => {
     if (!locateId || !locateFound) return;
+    // A link names a MIRRORED message, so it takes the reading column back from a live pick.
+    setLiveKey(null);
     setSelectedId(locateId);
     const idx = rows.findIndex((m) => m.id === locateId);
     if (idx >= win.start && idx < win.end) return;
@@ -272,7 +326,11 @@ export function TrashView({
                 </span>
               ) : (
                 <>
-                  {t("foot")}{" "}
+                  {/* THE SCOPE SENTENCE, PER CONFIGURATION. With the live section present it
+                      names both populations and says the second is read-only; without it, it
+                      names the mirror and where the rest of the mail is. Two keys rather than
+                      one, because a single sentence would claim a section that is not there. */}
+                  {live ? t("footLive") : t("foot")}{" "}
                   {page.exhausted ? null : (
                     <button type="button" className="btn ghost" onClick={page.loadMore}>
                       {to("olderAction")}
@@ -282,20 +340,228 @@ export function TrashView({
               )}
             </div>
           ) : null}
+
+          {/* THE SECOND SECTION — the mail server's own Trash, read live. Outside every branch
+              above: `page.available` is about the MIRROR's route, and a client that cannot list
+              ohmail's deletes can still read the folder. */}
+          {live ? (
+            <TrashLiveSection
+              live={live}
+              activeKey={liveKey}
+              now={now}
+              onSelect={(key) => {
+                setSelectedId(null);
+                setLiveKey(key);
+              }}
+            />
+          ) : null}
         </ListRows>
       </ListPane>
       <ReadColumn regionLabel={tReader("pane")}>
-        {shown ? (
-          <MessagePane
-            message={shown.unread === presentsUnread(shown) ? shown : { ...shown, unread: presentsUnread(shown) }}
-            tags={tags}
-            now={now}
-            onAction={(a) => onAction(a, shown)}
-            onAddTag={onAddTag}
-            trash
-          />
+        {/* WHICH VERBS THIS COLUMN OFFERS is decided ONCE, by which population is open, and the
+            decision is the only switch: a mirrored row gets `MessagePane`'s restore bar, a live
+            row gets a pane with no action set at all. Not an omitted prop — `MessagePane` with
+            no `trash` renders the full eleven-group bar, so omission would arm every filing verb
+            over a message the mirror has never held. */}
+        {trashReadVerbs({ live: openLive !== null }).verbs === "restore_and_read" ? (
+          shown ? (
+            <MessagePane
+              message={shown.unread === presentsUnread(shown) ? shown : { ...shown, unread: presentsUnread(shown) }}
+              tags={tags}
+              now={now}
+              onAction={(a) => onAction(a, shown)}
+              onAddTag={onAddTag}
+              trash
+            />
+          ) : null
+        ) : openLive !== null && live !== undefined ? (
+          <TrashLiveRead item={openLive} live={live} now={now} />
         ) : null}
       </ReadColumn>
     </section>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE LIVE SECTION — the mail server's own Trash, read through `useTrashWindow`.
+   Presentational only: every fact comes through {@link TrashWindowControl}, which carries no
+   verb, so there is nothing here to dispatch but a selection, a retry and "show older".
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Newest first, by the message's own date. The server merges each mailbox's page newest-first
+ * but under a per-mailbox sequence-prefix rule, so two mailboxes can interleave slightly out of
+ * date order; the section claims date order, so it sorts. A stable sort, so rows the provider
+ * gave no date keep the server's order among themselves rather than jumping about.
+ */
+function byDateDesc(rows: readonly TrashWindowItemWire[]): TrashWindowItemWire[] {
+  return [...rows]
+    .map((row, at) => ({ row, at, ms: row.date === null ? -1 : Date.parse(row.date) || -1 }))
+    .sort((a, b) => (b.ms - a.ms) || (a.at - b.at))
+    .map((x) => x.row);
+}
+
+function TrashLiveSection({
+  live,
+  activeKey,
+  now,
+  onSelect,
+}: {
+  live: TrashWindowControl;
+  activeKey: string | null;
+  now: Date;
+  onSelect: (key: string) => void;
+}) {
+  const t = useTranslations("trash");
+  /* ONE VERDICT FOR THE WHOLE SECTION (`trashLiveState`), so no two branches here can each
+     decide what the window's silence means. */
+  const verdict = trashLiveState(live).state;
+  const degraded = live.mailboxes.filter((m) => m.window !== "ok");
+  const older = live.nextCursor !== null ? (
+    <div className="trash-live-older">
+      <button
+        type="button"
+        className="btn ghost"
+        onClick={live.loadOlder}
+        disabled={live.olderLoading}
+      >
+        {live.olderLoading ? t("liveOlderLoading") : t("liveOlder")}
+      </button>
+    </div>
+  ) : null;
+
+  return (
+    <div className="trash-live">
+      <h3 className="trash-live-head">{t("liveHead")}</h3>
+
+      {verdict === "loading" ? (
+        <p className="trash-live-note" role="status" aria-busy="true">
+          <span className="mbx-wait">
+            <Spinner className="mbx-spin" />
+            {t("liveLoading")}
+          </span>
+        </p>
+      ) : null}
+
+      {/* FAILED, NEVER EMPTY: "nothing in your mail server's Trash" is an answer, and a read that
+          did not happen has no business giving it. The retry is this press, not a loop. */}
+      {verdict === "failed" ? (
+        <div className="empty" role="status">
+          <span className="glyph" aria-hidden="true">🗑</span>
+          {t("liveFailed")}
+          <button type="button" className="btn ghost" onClick={live.reload}>
+            {t("liveRetry")}
+          </button>
+        </div>
+      ) : null}
+
+      {verdict === "rows"
+        ? byDateDesc(live.items).map((i) => (
+          <MessageRow
+            key={trashLiveKeyOf(i)}
+            id={trashLiveKeyOf(i)}
+            from={displayAddressee(i.from.name, i.from.address)}
+            address={displayAddressUnder(i.from.name, i.from.address)}
+            time={i.date ? displayTime({ date: i.date }, now) : undefined}
+            subject={i.subject}
+            avatarInitial={initialsOf(i.from.name ?? i.from.address)}
+            avatarHue={avatarHue(i.from.address)}
+            /* WHERE IT IS, named on every row — the mirrored rows above gloss where a restore
+               would put them, and these have no such destination to name. */
+            place={t("liveOrigin")}
+            dull
+            selected={trashLiveKeyOf(i) === activeKey}
+            onClick={() => onSelect(trashLiveKeyOf(i))}
+          />
+        ))
+        : null}
+
+      {/* The three quiet answers, each its own sentence: no folder to read, a read that ran past
+          the server's budget, and a folder that was read and is empty. */}
+      {verdict === "unavailable" ? (
+        <p className="trash-live-note">{t("liveUnavailable")}</p>
+      ) : null}
+      {verdict === "read_limited" ? (
+        <p className="trash-live-note" role="status">{t("liveReadLimited")}</p>
+      ) : null}
+      {verdict === "empty" ? <p className="trash-live-note">{t("liveEmpty")}</p> : null}
+
+      {/* Per-mailbox degrades, named under whatever DID load. */}
+      {verdict === "rows"
+        ? degraded.map((m) => (
+          <p key={m.id} className="trash-live-note">
+            {t(m.window === "no_trash_folder" ? "liveNoFolder" : "liveUnreachable", {
+              address: m.address,
+            })}
+          </p>
+        ))
+        : null}
+
+      {verdict === "rows" || verdict === "more_to_read" ? older : null}
+    </div>
+  );
+}
+
+/**
+ * ONE LIVE ROW, READ — the head line, the read-only statement, and the body the route fetched,
+ * as TEXT. Never the sender's html: Trash holds whatever was deleted, spam included, so it
+ * renders on the Junk window's terms — no remote content, no markup, no tracker.
+ *
+ * NO ACTION BAR AND NO `onAction`. The absence is decided by {@link trashReadVerbs} at the
+ * reading column, and the prop does not exist on this component: there is no verb to pass.
+ */
+function TrashLiveRead({
+  item,
+  live,
+  now,
+}: {
+  item: TrashWindowItemWire;
+  live: TrashWindowControl;
+  now: Date;
+}) {
+  const t = useTranslations("trash");
+  const tb = useTranslations("body");
+  const body = live.bodyFor(item);
+  return (
+    <article className="trash-live-read">
+      <header className="trash-live-read-head">
+        <div className="trash-live-read-who">
+          <span className="trash-live-read-from">
+            {displayAddressee(item.from.name, item.from.address)}
+          </span>
+          <span className="trash-live-read-addr">
+            {displayAddressUnder(item.from.name, item.from.address)}
+          </span>
+          {item.date ? (
+            <span className="trash-live-read-time num">{displayTime({ date: item.date }, now)}</span>
+          ) : null}
+        </div>
+        <h2 className="trash-live-read-subj">{item.subject}</h2>
+      </header>
+      <p className="trash-live-note trash-live-readonly">{t("liveReadOnly")}</p>
+      {body.phase === "ready" ? (
+        <BodyText text={body.text} />
+      ) : body.phase === "failed" ? (
+        <p className="trash-live-note" role="status">
+          {t("liveBodyFailed")}{" "}
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => live.openBody(item, { retry: true })}
+          >
+            {tb("retry")}
+          </button>
+        </p>
+      ) : (
+        /* IDLE AND LOADING READ THE SAME HERE: the body is asked for the moment a row is
+           selected, so there is no resting state between the two worth a different sentence. */
+        <p className="trash-live-note" role="status" aria-busy="true">
+          <span className="mbx-wait">
+            <Spinner className="mbx-spin" />
+            {t("liveBodyLoading")}
+          </span>
+        </p>
+      )}
+    </article>
   );
 }

@@ -226,6 +226,7 @@ import { TagView } from "../views/TagView";
 import { FolderView } from "../views/FolderView";
 import { TrashView } from "../views/TrashView";
 import { useTrashPage } from "./trash-page";
+import { useTrashWindow } from "./trash-window";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
 import { DraftsView } from "../views/DraftsView";
@@ -2042,6 +2043,17 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * and the row count in the rail entry can never disagree about how many rows there are.
    */
   const trashPage = useTrashPage(engine, route.view === "trash", restoring.held);
+  /**
+   * THE LIVE TRASH WINDOW — the mail server's own \Trash, read beside the mirrored deletes and
+   * never written anywhere. Gated exactly as the Junk window is: the hook is called
+   * unconditionally and what is CONDITIONAL is `active`, so nothing is read in the demo, with
+   * "Use folders" off, before the first seed, or away from the view. The PROP below adds
+   * `supported` — a build whose api client is a refusing stub would otherwise hold a permanent
+   * loading state over the section.
+   */
+  const trashWindow = useTrashWindow(
+    !demo && consent.foldersEnabled && !seedOwed && route.view === "trash",
+  );
   const folderIdForOlder = route.view === "folder" ? (route.folderId ?? undefined) : undefined;
   /**
    * DELIBERATELY NO CLIENT-DERIVED BOUNDARY for the folder reach-past. The obvious one — the
@@ -8145,6 +8157,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {effectiveView === "trash" ? (
               <TrashView
                 page={trashPage}
+                live={
+                  !demo && consent.foldersEnabled && trashWindow.supported ? trashWindow : undefined
+                }
                 tags={tags}
                 threadParticipants={participantsOf}
                 now={now}

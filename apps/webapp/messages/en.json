@@ -897,7 +897,8 @@
   },
   "trash": {
     "empty": "Nothing in Trash. Mail you delete in ohmail appears here.",
-    "foot": "Mail you deleted in ohmail. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.",
+    "foot": "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.",
+    "footLive": "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Under it, what sits in your mail server's Trash: read-only, because nothing here records where that mail came from. Your mail server decides how long Trash keeps it.",
     "deletedAt": "Deleted {when}",
     "restore": "Restore",
     "restoreKey": "Restore it to where it was",
@@ -906,7 +907,22 @@
     "toastRestoreFailed": "Couldn't restore \u2014 it's still in Trash.",
     "noErase": "ohmail never erases mail \u2014 to remove it for good, use your own mail client.",
     "restoring": "Restoring\u2026",
-    "unavailable": "Trash is not available here."
+    "unavailable": "Trash is not available here.",
+    "liveHead": "In your mail server's Trash",
+    "liveOrigin": "on the server",
+    "liveReadOnly": "Read-only. ohmail can’t put this back — nothing here records where it came from.",
+    "liveLoading": "Reading your mail server’s Trash…",
+    "liveFailed": "Trash on your mail server couldn’t be read just now — your mail server didn’t answer.",
+    "liveRetry": "Try again",
+    "liveEmpty": "Nothing in your mail server’s Trash.",
+    "liveUnavailable": "Your mail server has no Trash folder of its own, so there is nothing to read here.",
+    "liveReadLimited": "Your mail server didn’t answer in time, so nothing could be listed here yet.",
+    "liveNoFolder": "{address} has no Trash folder of its own — there is nothing to show for it.",
+    "liveUnreachable": "{address} couldn’t be read in time.",
+    "liveOlder": "Show older",
+    "liveOlderLoading": "Looking further back…",
+    "liveBodyLoading": "Reading the message from your mail server…",
+    "liveBodyFailed": "The message couldn’t be read from your mail server."
   },
   "tag": {
     "metaCount": "{count, plural, one {1 message} other {# messages}}",

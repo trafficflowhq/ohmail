@@ -897,7 +897,8 @@
   },
   "trash": {
     "empty": "Der Papierkorb ist leer. Mails, die du in ohmail löschst, erscheinen hier.",
-    "foot": "Mails, die du in ohmail gelöscht hast. In anderen Apps gelöschte Mails bleiben im Papierkorb deines Mailservers — und dein Mailserver entscheidet, wie lange er sie behält.",
+    "foot": "Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. In anderen Apps gelöschte Mails bleiben im Papierkorb deines Mailservers — und dein Mailserver entscheidet, wie lange er sie behält.",
+    "footLive": "Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. Darunter, was im Papierkorb deines Mailservers liegt: nur lesbar, denn hier ist nicht festgehalten, wo diese Mails herkamen. Dein Mailserver entscheidet, wie lange er sie behält.",
     "deletedAt": "Gelöscht {when}",
     "restore": "Wiederherstellen",
     "restoreKey": "Dorthin zurücklegen, wo sie war",
@@ -906,7 +907,22 @@
     "toastRestoreFailed": "Konnte nicht wiederhergestellt werden — sie ist noch im Papierkorb.",
     "noErase": "ohmail löscht nie unwiderruflich — zum endgültigen Entfernen nutze deinen eigenen Mail-Client.",
     "restoring": "Wird wiederhergestellt…",
-    "unavailable": "Der Papierkorb ist hier nicht verfügbar."
+    "unavailable": "Der Papierkorb ist hier nicht verfügbar.",
+    "liveHead": "Im Papierkorb deines Mailservers",
+    "liveOrigin": "auf dem Server",
+    "liveReadOnly": "Nur lesbar. ohmail kann diese Mail nicht zurücklegen — hier ist nicht festgehalten, wo sie herkam.",
+    "liveLoading": "Der Papierkorb deines Mailservers wird gelesen…",
+    "liveFailed": "Der Papierkorb deines Mailservers ließ sich gerade nicht lesen — dein Mailserver hat nicht geantwortet.",
+    "liveRetry": "Nochmal versuchen",
+    "liveEmpty": "Im Papierkorb deines Mailservers ist nichts.",
+    "liveUnavailable": "Dein Mailserver hat keinen eigenen Papierkorb-Ordner, hier gibt es also nichts zu lesen.",
+    "liveReadLimited": "Dein Mailserver hat nicht rechtzeitig geantwortet, deshalb konnte hier noch nichts aufgelistet werden.",
+    "liveNoFolder": "{address} hat keinen eigenen Papierkorb-Ordner — hier gibt es dafür nichts zu zeigen.",
+    "liveUnreachable": "{address} ließ sich nicht rechtzeitig lesen.",
+    "liveOlder": "Ältere zeigen",
+    "liveOlderLoading": "Es wird weiter zurückgeschaut…",
+    "liveBodyLoading": "Die Nachricht wird von deinem Mailserver gelesen…",
+    "liveBodyFailed": "Die Nachricht ließ sich nicht von deinem Mailserver lesen."
   },
   "tag": {
     "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
