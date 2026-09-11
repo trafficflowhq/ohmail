@@ -20,6 +20,36 @@ request with an empty 200 — `/version` included, so anything monitoring the in
 server that was serving nothing. That address now reports the build at `/version` and refuses the
 rest with a 421 naming the origin the install answers at.
 
+### Your own address is never a row in your Screener
+
+Mail from one of your own addresses was held out of the Screener queue when it arrived in the
+inbox, but not when it was already sitting in the Screener folder — a message you sent to
+yourself, or a copy your provider filed there, could appear as a sender waiting for a decision.
+The queue now asks who sent a message wherever it sits. Mail already filed in Screened or Spam
+keeps its row, and nothing moves on the server either way.
+
+### Settings rows tell screen readers their state
+
+On Linux, a screen reader now reads the sentence under a settings row's label — whether an update
+is waiting, which mailbox this computer organizes, what your licence is. Before this only the label
+and the value on the right were announced, so an update ready to install was the one thing a reader
+could not hear. Windows already read it. Nothing moves on screen.
+
+### The updater says what it checked and what it decided
+
+The auto-updater wrote nothing to the log, so an update that did not happen left nothing to read.
+It now records the feed it asked, the version it was offered, and whether the update was installed,
+put off or failed. An install that updates through your distribution's packages says it asks no
+feed at all. No addresses beyond the configured feed and no library error text go in, so the log
+is still safe to attach to a bug report.
+
+### Sign out other web sessions, with an age cutoff
+
+`POST /devices/revoke-web-sessions` takes an optional `olderThanDays`, so a server's own tooling
+can clear web sessions last seen more than that many days ago without signing out the ones in use
+today. Sent without it, the verb does exactly what it did before. Named devices are never in
+scope, and the app's own "sign out everywhere else" press is unchanged.
+
 ### Trash also lists what your mail server deleted
 
 The Trash view also lists what sits in your mail server's Trash folder, read-only — mail you
