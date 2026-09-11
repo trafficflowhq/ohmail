@@ -223,25 +223,20 @@ export function legacySendFingerprint_0_14_0(m: MailSend): string {
 }
 
 /**
- * ── THE FINGERPRINT 0.14.1 WROTE, KEPT FOR THE SAME REASON THE 0.14.0 ONE IS ────────────────
- *
- * Copied field for field and join for join from `apps/webapp/app/shell/send-lock.ts` at the
- * released 0.14.1 build. FROZEN: a decoder for jars that are on people's disks right now, not a
- * second implementation of the identity. {@link sendFingerprint} above is the live one.
- *
- * It differs from the live algebra in exactly one place — it folds `m.draftId` into the hash — and
- * that one place is the whole reason for the format bump. A browser holding an unresolved 0.14.1
- * record when the managed web app flips computes a different hash for the same unchanged message
- * under the new algebra; without this the record would not be recognised, a second key would be
- * minted, and the mail would go out twice where the first send had reached the server.
- *
- * A `v: 2` record is compared against THIS; a `v: 3` record against {@link sendFingerprint}. The
- * version is what tells them apart, which is why it was bumped rather than left at 2 as the 0.14.1
- * change itself was — see {@link SEND_LOCK_FORMAT}.
- *
- * `send-lock-durable.test.tsx` pins the OUTPUT of the released build's own code over fixed
- * messages, extracted with `git show` from the 0.14.1 tag's tree and run unmodified, so a
- * transcription slip here shows up as a mismatch rather than as two copies of one assumption.
+ * The fingerprint 0.14.1 wrote, kept for the same reason the 0.14.0 one is. Copied field for field and join for join
+ * from this file at the released 0.14.1 build. FROZEN: a decoder for jars on people's disks right now, not a second
+ * implementation of the identity — {@link sendFingerprint} above is the live one. It differs from the live algebra in
+ * exactly one place — it folds `m.draftId` into the hash — and that is the whole reason for the format bump: a
+ * browser holding an unresolved 0.14.1 record when the managed web app flips computes a different hash for the same
+ * unchanged message under the new algebra; unrecognised, a second key would be minted and the mail would go out
+ * twice. A `v: 2` record is compared against THIS; a `v: 3` record against {@link sendFingerprint} — the version
+ * tells them apart, which is why it was bumped ({@link SEND_LOCK_FORMAT}).
+ */
+
+/**
+ * `send-lock-durable.test.tsx` pins the OUTPUT of the released build's own code over fixed messages, extracted with
+ * `git show` from the 0.14.1 tag's tree and run unmodified, so a transcription slip shows up as a mismatch rather
+ * than two copies of one assumption.
  */
 export function legacySendFingerprint_0_14_1(m: MailSend): string {
   const addrs = (xs: ReadonlyArray<{ name?: string | null; address: string }> | undefined): string =>
@@ -259,25 +254,20 @@ export function legacySendFingerprint_0_14_1(m: MailSend): string {
 }
 
 /**
- * HOW LONG A PERSISTED KEY IS STILL WORTH RESUMING.
- *
- * Seven days, and the number is chosen against the SERVER's horizons rather than invented.
- * `idempotency_keys` expires at 24 h, so past a day a resumed key no longer replays a stored
- * RESPONSE — but `outbound_sends` is a permanent reservation and its `UNIQUE (account_id,
- * idempotency_key)` still refuses a second delivery, which is the half that matters here. Seven
- * days is therefore comfortably inside the guarantee that protects the recipient and well past any
- * window in which a person still believes the message is going.
- *
- * THAT KEY IS NO LONGER THE WHOLE PROTECTION, and this comment used to read as if it were. The
- * uniqueness above is keyed on something the CLIENT holds, so it defends nothing once the client
- * loses it — a reinstall, a cleared jar, a second device, an older build. The server now also
- * claims the message's CONTENT for an hour, independently of any key and of which draft row the
- * send names, and refuses an identical second send as `duplicate_send`. This record still earns
- * its place: within the hour it turns a refusal into a REPLAY of the original outcome, which is
- * the better answer, and past the hour it is the only thing that still resumes.
- *
- * Past it the record is dropped: a week-old unsettled lane is wreckage, and the honest thing is to
- * let the next press be a new send rather than to resume a key whose row nobody will ever look at.
+ * How long a persisted key is still worth resuming. Seven days, chosen against the SERVER's horizons:
+ * `idempotency_keys` expires at 24 h, so past a day a resumed key no longer replays a stored RESPONSE — but
+ * `outbound_sends` is a permanent reservation whose `UNIQUE (account_id, idempotency_key)` still refuses a second
+ * delivery, the half that matters. Seven days is comfortably inside the guarantee protecting the recipient and well
+ * past any window in which a person still believes the message is going. The key is no longer the whole protection:
+ * it is keyed on something the CLIENT holds, so it defends nothing once the client loses it (a reinstall, a cleared
+ * jar, a second device). The server now also claims the message's CONTENT for an hour, independent of any key,
+ * refusing an identical second send as `duplicate_send`.
+ */
+
+/**
+ * This record still earns its place: within the hour it turns a refusal into a REPLAY of the original outcome, and
+ * past the hour it is the only thing that still resumes. Past the TTL the record is dropped: a week-old unsettled
+ * lane is wreckage, and the honest thing is to let the next press be a new send.
  */
 export const SEND_LOCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -315,63 +305,41 @@ function isLock(x: unknown): x is SendLock {
 }
 
 /**
- * ── THE 0.14.0 RECORD IS REWRITTEN ONCE, HERE, AND IT NEVER RESUMES A KEY ───────────────────
- *
- * A record in the pre-0.14.1 shape ({@link mayMatchLegacy}) is an unsettled send from the
- * RELEASED build: 0.14.0 deleted a record at a terminal outcome exactly as this build does, so
- * one that is still in the jar is a send whose fate nobody observed. What this build cannot do
- * is decide that such a record names the message in hand.
- *
- * It used to try. The press decoded the record with 0.14.0's own algebra and, on a match,
- * RESUMED its key — and 0.14.0's algebra is blind in four places this one is not: recipients by
- * address alone (no display name), `html ?? body` as one field, no `threadId`, and an attachment
- * by its byte LENGTH rather than its content. So a message the person had CHANGED in any of those
- * four ways hashed as the unchanged one, was handed the old key, and the server — which never
- * sends twice under a key it has reserved — replayed the first send's stored result at it. The
- * editor read `confirmed`, cleared the scratch and said "Sent." about a message that never left.
- * A silently unsent mail is the worse half of the pair this file exists to prevent.
- *
- * The blind spots cannot be narrowed from this side: the record carries one hash and no evidence
- * of which fields produced it. So the decode answers a smaller question than it used to. The
- * record becomes an UNRESOLVED record of this build's shape carrying its 0.14.0 fingerprint and
- * NO name — no `subject`, no `session`, because 0.14.0 recorded neither and inventing one here
- * would park the wrong message. A nameless unresolved record parks by the only identity it has
- * (`unresolvedNames` in `mail-send.ts` compares BOTH algebras against it), so the surface shows
- * the unconfirmed warning for that message and Send is refused for it. The person checks their
- * Sent folder and decides; a message they change is a different message, gets a key of its own,
- * and goes out once.
- *
- * ── WHY AT `load`, AND WHY IT IS IDEMPOTENT ────────────────────────────────────────────────
- *
- * Every reader comes through here, so the park is established before any press rather than by
- * one — the press is the thing being refused. `v` moves to this build's format, which is what
- * makes {@link mayMatchLegacy} false on the next pass: the rewrite happens once and the second
- * read takes the ordinary path. The fingerprint is NOT touched, and that is deliberate: it is
- * still a 0.14.0 hash and the reader that compares it knows so.
+ * The 0.14.0 record is rewritten once, here, and it never resumes a key. A record in the pre-0.14.1 shape ({@link
+ * mayMatchLegacy}) is an unsettled send from the RELEASED build — one whose fate nobody observed. It used to be
+ * decoded with 0.14.0's own algebra and, on a match, RESUMED its key — and that algebra is blind in four places this
+ * one is not: recipients by address alone, `html ?? body` as one field, no `threadId`, and an attachment by byte
+ * LENGTH rather than content. A message CHANGED in any of those ways hashed as the unchanged one, was handed the old
+ * key, and the server replayed the first send's stored result: the editor read `confirmed`, cleared the scratch and
+ * said "Sent." about a message that never left — the worse half of the pair this file prevents. The blind spots
+ * cannot be narrowed from this side (the record carries one hash and no evidence of which fields produced it).
+ */
+
+/**
+ * So the decode answers a smaller question: the record becomes an UNRESOLVED record of this build's shape carrying
+ * its 0.14.0 fingerprint and NO name — no `subject`, no `session`, because 0.14.0 recorded neither and inventing one
+ * would park the wrong message. A nameless unresolved record parks by the only identity it has (`unresolvedNames` in
+ * `mail-send.ts` compares BOTH algebras), so the surface shows the unconfirmed warning and Send is refused; the
+ * person checks their Sent folder and decides, and a changed message is a different message with a key of its own. At
+ * `load`, and idempotent: every reader comes through here, so the park is established before any press; `v` moves to
+ * this build's format, making {@link mayMatchLegacy} false on the next pass. The fingerprint is NOT touched — it is
+ * still a 0.14.0 hash, and the reader that compares it knows so.
  */
 /**
- * ── `null` IS NOT `[]`, AND COLLAPSING THEM WAS A FAIL-OPEN ─────────────────────────────────
- *
- * This returned `[]` for everything its `catch` swallowed, so a browser that refuses this app
- * access to its own storage — a private window, a profile with site data blocked — read as *a
- * browser with no unresolved sends*. Every reader then answered "nothing is held": the reopen took
- * the recovery door, the autosave minted a row, the settled discard deleted one. Each of those is
- * a decision made on evidence that was never obtained.
- *
- * `null` = THE JAR COULD NOT BE READ. `[]` = the jar was read and holds nothing, which genuinely
- * admits. {@link holdOf} maps the first to `unknown` and every recovery fails closed on it, while
- * the press is still admitted (see invariant S(4) and the header's second decision).
- *
- * ONLY A THROWN ACCESSOR IS `null`. Content that will not parse is a jar that CAN be read whose
- * bytes are garbage: the next write replaces it and the surface recovers, whereas answering
- * `unknown` there would park the composer permanently with no exit — a jar nobody can repair. So
- * a `JSON.parse` failure keeps the old `[]`, and only `localStorage` itself throwing is unknown.
- *
- * ── AND A `v: 2` RECORD IS NOT REWRITTEN ────────────────────────────────────────────────────
- *
- * The decode below is 0.14.0's alone ({@link mayMatchLegacy} names its format). A released 0.14.1
- * record decodes perfectly well under {@link legacySendFingerprint_0_14_1}; rewriting it would
- * throw away the `subject` and `session` that are the only names its message has.
+ * `null` is not `[]`, and collapsing them was a fail-open. This returned `[]` for everything its `catch` swallowed,
+ * so a browser refusing this app its own storage — a private window, site data blocked — read as "a browser with no
+ * unresolved sends": the reopen took the recovery door, the autosave minted a row, the settled discard deleted one,
+ * each decided on evidence never obtained. `null` = the jar could not be read; `[]` = the jar was read and holds
+ * nothing. {@link holdOf} maps the first to `unknown` and every recovery fails closed on it, while the press is still
+ * admitted (invariant S(4)). Only a THROWN accessor is `null`: content that will not parse is a readable jar holding
+ * garbage — the next write replaces it — whereas `unknown` there would park the composer permanently with no exit; so
+ * a `JSON.parse` failure keeps `[]`.
+ */
+
+/**
+ * A `v: 2` record is NOT rewritten: the decode below is 0.14.0's alone, and a released 0.14.1 record decodes fine
+ * under {@link legacySendFingerprint_0_14_1} — rewriting would throw away the `subject` and `session` that are the
+ * only names its message has.
  */
 function load(owner: string | null = storageOwner()): SendLock[] | null {
   let raw: string | null;
@@ -761,31 +729,25 @@ export interface SendIntent {
  * content in hand. Two messages with one subject (an edit) must not share a key; one message pressed twice must.
  */
 /**
- * EVERY NAME THIS MESSAGE ANSWERS TO, most specific first — the identity a park compares.
- *
- * ── WHY IT IS A SET, MEASURED ───────────────────────────────────────────────────────────────
- *
- * {@link sendSubject} returns ONE name and prefers the draft row over the compose session. That
- * preference is right for what to WRITE and wrong for what to COMPARE, because the row appears
- * part-way through the life of a message: a compose pressed with no row is recorded as
- * `compose:<session>`, autosave then creates a row, and the next press of the SAME UNEDITED
- * MESSAGE computes `draft:<id>` — a different string, no match, nothing parked. On a send whose
- * outcome the server could not confirm that is a second delivery: the surface presented `idle`,
- * the button lit up, the press minted a second key, and the recipient held two copies while the
- * sender's Sent folder held one, so neither side revealed it.
- *
- * The two names are not redundant and neither is available everywhere:
- *  · a compose that never autosaved has a session and no row;
- *  · a draft reopened after the compose session was cleared has a row and a NEW session;
- *  · a row that autosave replaces (its create having been undone, or the row consumed by a send)
- *    changes `draft:<id>` under one unchanged session.
- *
- * So both are collected and a record parks a message when the record's set and the message's set
- * INTERSECT. A reply and a forward are named by the message they answer, which nothing can
- * change under them, so they answer to exactly one name and the session is not consulted.
- *
- * EMPTY means this browser can name the message by nothing at all — no row and no session, which
- * is a jar it cannot write. Callers read that as "unnameable", never as "a new message".
+ * Every name this message answers to, most specific first — the identity a park compares. A set,
+ * measured: {@link sendSubject} returns ONE name and prefers the draft row over the compose
+ * session — right for what to WRITE, wrong for what to COMPARE, because the row appears part-way
+ * through a message's life: a compose pressed with no row is recorded as `compose:<session>`,
+ * autosave then creates a row, and the next press of the SAME UNEDITED message computes
+ * `draft:<id>` — no match, nothing parked. On a send the server could not confirm that is a
+ * second delivery: the surface presented `idle`, the press minted a second key, and the
+ * recipient held two copies while the sender's Sent folder held one.
+ */
+
+/**
+ * The two names are not redundant and neither is available everywhere: a compose that never
+ * autosaved has a session and no row; a draft reopened after the session was cleared has a row
+ * and a NEW session; a row autosave replaces changes `draft:<id>` under one unchanged session.
+ * So both are collected, and a record parks a message when the record's set and the message's
+ * set INTERSECT. A reply and a forward are named by the message they answer — which nothing can
+ * change under them — so they answer to exactly one name and the session is not consulted.
+ * EMPTY means this browser can name the message by nothing at all (no row, no session — a jar
+ * it cannot write); callers read that as "unnameable", never as "a new message".
  */
 export function sendSubjects(m: MailSend, session: string | null = null): string[] {
   if (typeof m.forwardOf === "string" && m.forwardOf.length > 0) return [`fwd:${m.forwardOf}`];
@@ -859,40 +821,28 @@ export function unverifiedSendIntents(lane: string, owner: string | null = stora
 }
 
 /**
- * ── IS THIS COMPOSE A MESSAGE WE ARE STILL WAITING TO LEARN THE FATE OF? ────────────────────
- *
- * THE ONE GUARD, and it is one function because it was measured failing in two places that had to
- * agree and did not. Both are moments at which this browser decides whether the message in front
- * of it is a NEW one:
- *
- *  · REOPENING a draft from the list (`openDraft`) — asked with the row and no session, because
- *    the session at that moment is still the one being left behind and every draft in the account
- *    would answer to it. The row alone decides which message is being opened.
- *  · COMING BACK after a reload (`useComposeAutosave`'s adoption) — asked with the row this
- *    surface was holding AND the session it came back to, because a send pressed before autosave
- *    had written anything is named by the session alone and there is no row to ask about.
- *
- * Answering `true` means: do not mint a row for this, do not start a new session for it, and do
- * not treat it as recovered. It is the message the record names, it is parked, and the surface
- * says so.
- *
- * ── WHAT WENT WRONG WHEN THE TWO SITES DID NOT SHARE IT ────────────────────────────────────
- *
- * Measured end to end, twice, one recipient holding two copies each time. The reopen minted a row
- * and re-minted the session, so neither name the record carried was on the message any more. And
- * EARLIER than that, the reload alone did it: the adoption found the row moved past `draft`,
- * dropped it, and let the next pause create a fresh one — so the drafts list held TWO rows for one
- * message before anybody reopened anything, and the fresh row was a message the record could not
- * recognise.
- *
- * A row is matched by either name a record can carry it under: the subject it was minted with
- * (`draft:<id>`), and the row it ACQUIRED afterwards ({@link attachSendLockDraft}). They usually
- * agree; when the row moves they do not, and the row still in the drafts list is the one named by
- * the subject. That reading is {@link unresolvedSendRows}, called from here rather than repeated.
- *
- * A record may name NO row — a send pressed before autosave had written anything carries
- * `draftId: null` and `compose:<session>` — so the session arm is not a fallback for the row arm.
- * It is the only name that message will ever have.
+ * Is this compose a message we are still waiting to learn the fate of? THE one guard, one function because it was
+ * measured failing in two places that had to agree and did not — both moments where this browser decides whether the
+ * message in front of it is NEW: reopening a draft from the list (`openDraft`, asked with the row and no session —
+ * the session at that moment is the one being left behind, and every draft would answer to it), and coming back after
+ * a reload (`useComposeAutosave`'s adoption, asked with row AND session — a send pressed before autosave wrote
+ * anything is named by the session alone). Answering `true` means: do not mint a row, do not start a new session, do
+ * not treat it as recovered — it is the message the record names, it is parked, and the surface says so.
+ */
+
+/**
+ * What went wrong when the two sites did not share it — measured end to end, twice, one recipient holding two copies
+ * each time. The reopen minted a row and re-minted the session, so neither name the record carried was on the message
+ * any more; and earlier, the reload alone: the adoption found the row moved past `draft`, dropped it, and let the
+ * next pause create a fresh one — two rows for one message before anything was reopened. A row is matched by either
+ * name a record can carry it under: the subject it was minted with (`draft:<id>`) and the row it ACQUIRED afterwards
+ * ({@link attachSendLockDraft}); when the row moves they disagree, and the row still in the drafts list is the one
+ * named by the subject — that reading is {@link unresolvedSendRows}, called from here rather than repeated.
+ */
+
+/**
+ * A record may name NO row (`draftId: null`, `compose:<session>`), so the session arm is not a fallback: it is the
+ * only name that message will ever have.
  */
 export function parkedComposeMessage(
   lane: string,
@@ -999,36 +949,24 @@ export interface HoldMirror {
 }
 
 /**
- * ── IS THIS MESSAGE HELD? THE ONE PREDICATE — invariant S(4) ────────────────────────────────
- *
- * Every write site in the shell asks THIS and nothing else: the autosave create, the autosave PUT,
- * the adopt-on-mount, `openDraft`, `writeTo`, the mailto seam, `cancelCompose`, the Send press,
- * the settled discard. A census in the web application's own suite pins the per-file call-site
- * COUNT, because a census over file MEMBERSHIP cannot see a missing call.
- *
- * ── WHY IT IS ONE FUNCTION AND NOT THREE ────────────────────────────────────────────────────
- *
- * It was three — `parkedHere` in the autosave, `parkedComposeRecord` + `composeMessageHeld` at the
- * reopen, and the send gate's own reading — and each of the seven fixes before this one closed the
- * duplicate route the previous one had left. Every one of those routes was the same shape: two of
- * the three agreed that a message was held and the third wrote anyway. The write is what matters,
- * so the answer is computed in one place and the sites consume it.
- *
- * ── THE THREE ANSWERS, AND WHY `unknown` IS NOT `free` ──────────────────────────────────────
- *
- * The record is asked FIRST, because it speaks for a row the server still calls `draft` and for a
- * message with no row at all. The mirror's status is asked SECOND, because it speaks for the row
- * the adapter made for itself, whose id this browser is never told.
- *
- * `parked/status` is every status that is not `draft` — `sending`, `unverified`, `sent`. It used
- * to be `unverified` alone, so a STRANDED `sending` row (a send whose answer never arrived, its
- * record swept or never written) read as an ordinary draft: reopening it took the recovery door,
- * and one press delivered the message a second time. `sent` is in the list for the same reason and
- * costs nothing — such a row is not offered in Drafts.
- *
- * A row the mirror cannot NAME is `unknown`, never `free`. Absent and "not loaded yet" look
- * identical through `get`, and on the path this exists for — a reload — the mirror is empty at
- * mount.
+ * Is this message held? The one predicate — invariant S(4). Every write site in the shell asks THIS and nothing else:
+ * the autosave create, the autosave PUT, the adopt-on-mount, `openDraft`, `writeTo`, the mailto seam,
+ * `cancelCompose`, the Send press, the settled discard. A census in the webapp's own suite pins the per-file
+ * call-site COUNT, because a census over file membership cannot see a missing call. One function and not three,
+ * because it was three (`parkedHere` in the autosave, `parkedComposeRecord` + `composeMessageHeld` at the reopen, the
+ * send gate's own reading) and each of the seven fixes before this closed the duplicate route the previous one left —
+ * every route the same shape: two of the three agreed a message was held and the third wrote anyway.
+ */
+
+/**
+ * The three answers, and why `unknown` is not `free`. The record is asked FIRST — it speaks for a row the server
+ * still calls `draft` and for a message with no row at all; the mirror's status SECOND — it speaks for the row the
+ * adapter made for itself, whose id this browser is never told. `parked/status` is every status that is not `draft`
+ * (`sending`, `unverified`, `sent`): it used to be `unverified` alone, so a STRANDED `sending` row (its answer never
+ * arrived, its record swept) read as an ordinary draft — reopening took the recovery door and one press delivered the
+ * message a second time; `sent` is in the list for the same reason and costs nothing. A row the mirror cannot NAME is
+ * `unknown`, never `free`: absent and "not loaded yet" look identical through `get`, and on the path this exists for
+ * — a reload — the mirror is empty at mount.
  */
 export function holdOf(
   engine: HoldMirror,
@@ -1046,28 +984,19 @@ export function holdOf(
     };
   }
   /**
-   * ── NO ROW IS NOT A HOLD, AND WHAT COVERS THE SEQUENCE THAT HAS NO ROW ───────────────────
-   *
-   * A compose that has never been saved is named by its session alone, and the record arm above is
-   * the only thing in the jar that can speak for it.
-   *
-   * There IS a sequence with no row that needs covering — press Send before the first autosave,
-   * lose the response, reload: the record this browser wrote is ORDINARY (nothing observed an
-   * outcome, so nothing marked it `unverified`), and while the outbox replays that send the
-   * restored surface's timer can create a second row for the same message.
-   *
-   * PARKING ON THAT RECORD WAS TRIED HERE AND IS WRONG, which the suite proved rather than a
-   * reading: with no row the record's only name is the compose SESSION, and a genuinely new
-   * message written on the same lane answers to that name too — so the park refused a message
-   * nobody had ever pressed Send on ("a DIFFERENT message written after the crash gets a key of
-   * its own", red). A guard that refuses the right person is the failure this file's own header
-   * warns about.
-   *
-   * The discriminator that is exact is not in the jar at all: it is whether the durable OUTBOX
-   * still holds a `mail_send` for this lane. That names the actual pending verb, cannot mistake a
-   * new message for an old one, and is bounded by the queue draining rather than by a seven-day
-   * TTL. It is read where the surface already reads the engine — `sendInFlight` in `AppShell.tsx`
-   * — and refuses the CREATE there.
+   * No row is not a hold, and the sequence with no row is covered elsewhere. A compose never saved is named by its
+   * session alone, and the record arm above is the only thing in the jar that can speak for it. The sequence needing
+   * cover — press Send before the first autosave, lose the response, reload: the record is ORDINARY (nothing observed
+   * an outcome), and while the outbox replays that send the restored surface's timer can create a second row. Parking
+   * on that record was tried HERE and is wrong, proved by the suite: with no row the record's only name is the
+   * compose SESSION, and a genuinely new message on the same lane answers to it too — the park refused a message
+   * nobody had pressed Send on ("a DIFFERENT message written after the crash gets a key of its own", red).
+   */
+
+  /**
+   * The exact discriminator is not in the jar: it is whether the durable OUTBOX still holds a `mail_send` for this
+   * lane — names the actual pending verb, cannot mistake a new message for an old one, bounded by the queue draining.
+   * Read where the surface already reads the engine (`sendInFlight` in `AppShell.tsx`), refusing the CREATE there.
    */
   if (q.draftId === null) return { kind: "free" };
   const row = engine.read().get<{ status?: unknown }>("draft", q.draftId);
