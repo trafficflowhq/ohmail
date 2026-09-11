@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A self-hosted install's front door reports its version
+
+Dialled by its IP address instead of the name in `OHMAIL_ORIGIN`, the front door answered every
+request with an empty 200 — `/version` included, so anything monitoring the install read a healthy
+server that was serving nothing. That address now reports the build at `/version` and refuses the
+rest with a 421 naming the origin the install answers at.
+
 ### Trash also lists what your mail server deleted
 
 The Trash view also lists what sits in your mail server's Trash folder, read-only — mail you
