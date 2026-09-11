@@ -2,34 +2,13 @@ export const DB_VERSION = "0.0.0";
 
 /**
  * The RUNTIME surface of `@trafficflow/db`: the MAIL schema, the change-log primitive, the
- * idempotency primitive and the small shared vocabularies. Nothing here touches `node:fs` or
- * the migrator.
- *
- * Migration / provisioning lives in `@trafficflow/db/admin` — see the doc comment there for
- * why it is not re-exported from this root (serverless cold-start weight and bundle
- * tracing). Tests, CLIs and provisioning import that subpath explicitly.
- *
- * ── THE CLOSURE RULE, AND WHY IT IS A RULE AND NOT A PREFERENCE ────────────────────────────
- *
- * **No module named from this file may reach `schema.js`, `schema-cloud.js`, or anything that
- * imports them.** This barrel is inside the desktop engine's import closure, the engine is
- * SHIPPED, and the .app conveys whatever its bundle contains.
- *
- * It is a rule because the intuitive version of it is wrong in a way that compiles, passes every
- * test, and is invisible to a reader. Three lines that each looked like a type-only or
- * name-only reference were measured to put the whole Cloud schema into the artifact:
- *
- *  · `export { schema } from "./schema.js"` — every consumer writes `typeof schema`, so this
- *    reads as a type position. A re-export is a RUNTIME edge regardless of how consumers use it.
- *  · `export { makeDb, … } from "./client.js"` — the engine never calls any of them, but
- *    `client.ts` names the combined `schema` to construct its handle, and an unused re-export is
- *    still an edge: absent a `sideEffects` declaration a bundler must keep the module's bytes.
- *  · `export { acquireImapSlot, … } from "./imap-admission.js"` — a counter, apparently neutral,
- *    over a per-address attempt table, which the Cloud journal creates.
- *
- * All three now live on `@trafficflow/db/cloud`. The measurement that settles it is
- * the engine build's census over the finished artifact, and a test runs that same census
- * in the suite so the next one fails here rather than at a build somebody remembers to run.
+ * idempotency primitive and the small shared vocabularies. Nothing here touches `node:fs` or the
+ * migrator; migration and provisioning live on `@trafficflow/db/admin`. THE CLOSURE RULE: no
+ * module named from this file may reach `schema.js`, `schema-cloud.js`, or anything that imports
+ * them — this barrel is inside the desktop engine's import closure, and the engine SHIPS. The
+ * intuitive version is wrong in ways that compile: a re-export is a RUNTIME edge however
+ * consumers use it, and an unused re-export still keeps the module's bytes. The hosted exports
+ * live on `@trafficflow/db/cloud`; the engine build's census runs in the suite.
  */
 /* THE MAIL SCHEMA, not the barrel. `./schema.js` re-exports both halves, so exporting it here
  * put every Cloud table into every consumer of this package — including the desktop engine's
@@ -130,21 +109,16 @@ export {
   type StandDownSendsInput, type StandDownSendsResult, type RemovedMailboxSendsInput,
 } from "./stand-down-sends.js";
 
-// The ONE spelling of "somebody else organizes this mailbox"  — the same argument as
-// the two lines above: the worker may not import services at runtime, the sidecar's gate and the
-// hosted gate both write the holder columns, and eleven service write doors share one refusal.
-// Reaches `schema-mail.js`, `change-log.js` and `mailbox-errors.js` alone — the third for
-// `standDownMemory`, which composes the same closed set `disabled_reason` carries and checks its
-// own answer against it rather than casting. `mailbox-errors.js` is a LEAF (zero imports), so it
-// widens the graph by one file and by nothing behind it.
-//
-// WHAT CHECKS THAT, precisely, because the obvious answer is wrong: NOT
-// `desktop-engine-closure.test.ts` — that walker starts at `@trafficflow/db/journal`, the narrow
-// entry, and never reaches this module at all (planting a `schema-cloud.js` import in
-// `organizer-role.ts` leaves all six of its tests green — run, not assumed). What does check it is
-// `publish-desktop.mjs`'s bundle pass, which walks the ENGINE's real closure and refuses any input
-// outside the published payload. The sentence above is otherwise a source fact a reader verifies
-// by reading the imports, and it is written here so nobody mistakes it for a guarded one.
+// The ONE spelling of "somebody else organizes this mailbox" — the worker may not import services
+// at runtime, the sidecar's gate and the hosted gate both write the holder columns, and eleven
+// service write doors share one refusal. Reaches `schema-mail.js`, `change-log.js` and
+// `mailbox-errors.js` alone — the third for `standDownMemory`, which composes the same closed set
+// `disabled_reason` carries; `mailbox-errors.js` is a LEAF, so it widens the graph by one file
+// and nothing behind it. What checks this, precisely, because the obvious answer is wrong: NOT
+// `desktop-engine-closure.test.ts` — that walker starts at `@trafficflow/db/journal` and never
+// reaches this module (measured: a planted `schema-cloud.js` import leaves its tests green). What
+// does is `publish-desktop.mjs`'s bundle pass, which walks the engine's real closure and refuses
+// any input outside the published payload.
 export {
   assertOrganizerRole, assertAccountOrganizes, readOrganizerRole, organizerDisplayName,
   OrganizedElsewhereError, MailboxNotFoundError,
@@ -261,18 +235,13 @@ export {
 } from "./ledger-source.js";
 
 /**
- * THE AI SPEND GATE'S PORT — the question, never the answer.
- *
- * The gate itself is whoever operates the service, reached over HTTP. But the code that CALLS
- * it is shared: the ingest pipeline, the Screener and the drafting path are the same modules in
- * a hosted deployment that meters AI and in a local install that has nobody to ask. Those
- * modules must be able to say "I may be handed a gate" without depending on the half that
- * answers.
- *
- * Nothing here constructs a gate and nothing here has a default. A deployment that supplies none
- * supplies none, and every caller already treats that as "skip the AI" rather than "proceed
- * unmetered" — which is what keeps the no-cost-without-revenue rule structural rather than a
- * matter of remembering to wire something up.
+ * The AI spend gate's PORT — the question, never the answer. The gate is whoever operates the
+ * service, reached over HTTP; the code that CALLS it is shared — the ingest pipeline, the
+ * Screener and the drafting path are the same modules in a hosted deployment that meters AI and
+ * in a local install with nobody to ask, so they must be able to say "I may be handed a gate"
+ * without depending on the half that answers. Nothing here constructs a gate and nothing has a
+ * default: a deployment that supplies none supplies none, and every caller treats that as "skip
+ * the AI" rather than "proceed unmetered" — what keeps no-cost-without-revenue structural.
  */
 export type {
   AiCreditGate, AiSpendOutcome, AiRefusalReason, EntitlementReason,

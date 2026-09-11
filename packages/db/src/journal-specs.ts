@@ -1,24 +1,12 @@
 /**
- * `journal-specs.ts` — the migration journals as DATA: their folders and their pinned
- * migrations tables, and nothing that runs one.
- *
- * ## Why the specs are a leaf of their own
- *
- * A journal spec is three strings — a name, a folder, a migrations schema. Running a journal is
- * a different thing entirely: it opens a `postgres` server connection, takes an advisory lock and
- * replays SQL. Those two used to live in one module, so every consumer that only needed the
- * folder path dragged the server driver in behind it.
- *
- * That is invisible in a service we deploy whole and expensive in one we do not. The desktop mail
- * engine migrates its on-disk database with PGlite's own migrator; it needs `MAIL_JOURNAL` — a
- * name and a directory — and never opens a `postgres` connection in its life. Keeping the specs
- * here, importing nothing but `node:path` and the spec's own type, lets the engine reach them
- * without the server driver, the SOCKS client and the IP-address parser that a `postgres` import
- * pulls along. `migrate.ts` imports these to run them; hosts and tests still reach them through
- * `migrate.ts`'s re-export, unchanged.
- *
- * `HERE` is `packages/db/src` under the test runner and `packages/db/dist` after a build — both
- * one level under `packages/db`, so every relative folder below resolves the same either way.
+ * The migration journals as DATA — their folders and pinned migrations tables, and nothing that
+ * runs one. A journal spec is three strings; running a journal opens a `postgres` connection,
+ * takes an advisory lock and replays SQL. The two used to live in one module, so every consumer
+ * that only needed the folder path dragged the server driver in. Expensive in a shipped program:
+ * the desktop engine migrates with PGlite's own migrator, needs `MAIL_JOURNAL` — a name and a
+ * directory — and never opens a `postgres` connection. This file imports nothing but `node:path`
+ * and the spec's type. `HERE` is `src` under the test runner and `dist` after a build, both one
+ * level under `packages/db`, so relative folders resolve the same.
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

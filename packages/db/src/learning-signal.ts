@@ -4,26 +4,14 @@ import type { Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE LEARNING SIGNAL WRITE, ON ITS OWN LEAF — MOVED DOWN THE SPINE FOR `flag-intent.ts`'s REASON
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * `LearningService.recordOn` (`packages/services/src/learning-service.ts`) is the only writer
- * this had, and it still is the CALLER — this module is not a second implementation, it is the
- * first one moved to where a second caller can reach it without importing `@trafficflow/services`.
- * The organizer's request drain (`apps/worker/src/request-drain.ts`, 0.14.1) applies a reader's
- * screener decision — one of `ScreenerService.decide`'s effects, alongside the promoted rule and
- * the re-route — and the worker may not import the services package at runtime
- * (`apps/worker/package.json` "//services-is-test-only": a CJS `sanitize-html` re-entering an ESM
- * `htmlparser2` mid-evaluation is a hard `ERR_REQUIRE_CYCLE_MODULE` on Node 23). `screener-suggestion.ts`
- * beside this file states the identical argument for the identical reason.
- *
- * So the SQL lives here, where both the service layer and the worker can reach it (`@trafficflow/core`
- * and `@trafficflow/db` are the worker's whole runtime closure), and `LearningService.recordOn`
- * becomes a thin wrapper that calls it — one implementation, not two spellings of the same insert
- * and counter bump. Everything else `LearningService` does (`promoteOrDemote`, `isGraduated`, the
- * graduation/demotion sweep) reads `graduations` rather than writing `learning_signals` on this
- * path and stays exactly where it is; only the write this second caller needs moved.
+ * The learning-signal write, on its own leaf — moved down the spine for `flag-intent.ts`'s
+ * reason. `LearningService.recordOn` is still the CALLER; this is the first implementation moved
+ * to where a second caller reaches it without importing `@trafficflow/services`: the organizer's
+ * request drain applies a reader's screener decision, and the worker may not import the services
+ * package at runtime (a hard `ERR_REQUIRE_CYCLE_MODULE` on Node 23); `screener-suggestion.ts`
+ * states the identical argument. The SQL lives here, where the service layer and the worker both
+ * reach it, and `LearningService.recordOn` is a thin wrapper — one implementation, not two
+ * spellings of one insert. Only the write this second caller needs moved.
  */
 
 /** Net (positives − negatives) a (pattern, action) must reach before it graduates. */
@@ -89,16 +77,11 @@ export function patternKeyFor(
 }
 
 /**
- * Advance the (pattern, action='route') counters entirely in SQL — see
- * `LearningService.bumpCounter`'s original docblock, reproduced here verbatim because the
- * reasoning is unchanged by the move:
- *
- *   positives = positives + 1   (or negatives = negatives + 1)
- *
- * and flip `graduated` in the same statement, guarded so it is sticky once set and only trips
- * when net (positives − negatives) reaches the threshold. Because the increment and the flip are
- * one `ON CONFLICT DO UPDATE`, two concurrent writers serialize on the row lock and neither loses
- * an increment.
+ * Advance the (pattern, action='route') counters entirely in SQL: positives = positives + 1 (or
+ * negatives), and flip `graduated` in the same statement, guarded so it is sticky once set and
+ * only trips when net (positives − negatives) reaches the threshold. Because the increment and
+ * the flip are one `ON CONFLICT DO UPDATE`, two concurrent writers serialize on the row lock and
+ * neither loses an increment.
  */
 async function bumpCounter(tx: Tx, accountId: string, patternKey: string, label: LearningLabel): Promise<void> {
   // The current instant is spelled by the store, not by this module: the server has `now()` and
@@ -157,19 +140,14 @@ export async function recordLearningSignal(tx: Tx, accountId: string, s: Learnin
 }
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE OVERRIDE — A PERSON'S OWN HAND OUTRANKS A GRADUATED ROUTE FROM THEN ON
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Graduation is earned and it has to be undoable, by the only evidence that settles it: the
- * person moving the mail somewhere else. {@link recordRouteOverride} is the ONE definition of
- * "this move contradicts a route", and {@link demoteGraduatedRoute} the ONE effect — so a second
- * write site cannot mean something slightly different by either.
- *
- * `learning_signals.triggering_action_id` already specified this signal's identity —
- * `move:<msgId>:<seq>` in `schema-mail.ts`'s own column comment, beside `kind = 'external_move'`
- * — and nothing wrote it. That shape is kept, because it is what makes a replayed adoption count
- * once: the unique is `(account_id, triggering_action_id)`.
+ * The override — a person's own hand outranks a graduated route from then on. Graduation is
+ * earned and has to be undoable, by the only evidence that settles it: the person moving the mail
+ * somewhere else. {@link recordRouteOverride} is the ONE definition of "this move contradicts a
+ * route", and {@link demoteGraduatedRoute} the ONE effect — a second write site cannot mean
+ * something slightly different by either. `learning_signals.triggering_action_id` already
+ * specified this signal's identity (`move:<msgId>:<seq>`, beside `kind = 'external_move'`) and
+ * nothing wrote it; the shape is kept because it makes a replayed adoption count once — the
+ * unique is `(account_id, triggering_action_id)`.
  */
 
 /** `move:<messageId>:<discriminator>` — the schema's own spelling, composed in one place. */
@@ -289,17 +267,13 @@ async function countOverridesInWindow(
 }
 
 /**
- * THE PREDICATE. An externally observed move away from where a GRADUATED route filed this
- * message is an override of that route; enough of them inside the window demote it.
- *
- * `null` means there was nothing to contradict — no graduated route filed the message to
- * `filedTo`, which is every ordinary adoption — or the move was a replay. Both are silence
- * rather than a verdict, because an adoption is a commonplace event and this seam sits on the
- * ingest path.
- *
- * The SENDER key is asked before the DOMAIN key: it is the specific pattern and the one the
- * pipeline itself auto-applies on, and asking the domain only when no sender route graduated is
- * what stops an account holding both from counting one move twice.
+ * THE PREDICATE. An externally observed move away from where a GRADUATED route filed this message
+ * is an override of that route; enough of them inside the window demote it. `null` means there
+ * was nothing to contradict — no graduated route filed the message to `filedTo` (every ordinary
+ * adoption) — or the move was a replay; both are silence rather than a verdict, because adoption
+ * is commonplace and this seam sits on the ingest path. The SENDER key is asked before the DOMAIN
+ * key: it is the specific pattern and the one the pipeline auto-applies on, and asking the domain
+ * only when no sender route graduated stops an account holding both from counting one move twice.
  */
 export async function recordRouteOverride(
   tx: Tx, accountId: string, input: RouteOverrideInput,

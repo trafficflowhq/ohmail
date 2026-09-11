@@ -36,13 +36,27 @@ export function clientIdempotencyKey(headerValue: string): IdempotencyKey {
 
 /**
  * The `source` NAMESPACE — the ledger's idempotency identity, in one place so its namespaces
- * cannot drift. `UNIQUE (account_id, source)` means "this economic event happened at most once";
- * each namespace keys the PRODUCING system's retry unit to one source value:
- * `invoice:<stripe_invoice_id>` (webhooks are redelivered), `expiry:<prior invoice id>`,
- * `classify:<message_id>`, `draft:<draft_id>:<hashed attempt key>`, `propose:<proposal_run_id>`,
- * `workflow_run:<run_id>:<step_index>`, `refund:<original_source>`, `admin:<uuid>`,
- * `trial:<account_id>`. The prefixes are not a convention: the source-reason CHECK pins each
- * `reason` to its namespace.
+ * cannot drift.
+ *
+ * `UNIQUE (account_id, source)` means "this economic event happened at most once for this
+ * account". Each namespace is keyed so that the natural retry/replay unit of the PRODUCING
+ * system maps to exactly ONE source value:
+ *
+ * | reason | source | why THIS identity |
+ * |---|---|---|
+ * | `invoice_grant` | `invoice:<stripe_invoice_id>` | Stripe retries webhooks and `stripe events resend` exists; the invoice id is the unit of "this money was received once". |
+ * | `period_expiry` | `expiry:<prior_stripe_invoice_id>` | The expiry means "the credits bought by THAT invoice are over" — self-explanatory in the ledger, and replay-safe together with the composition contract. |
+ * | `debit_classify` | `classify:<message_id>` | The worker reprocesses messages BY DESIGN (restart, `reconcileOnRestart`, re-sync). The message is the unit of "one AI classification of this mail". |
+ * | `debit_draft` | `draft:<draft_id>:<hashed attempt key>` | A user may legitimately buy a SECOND AI draft of the same draft row, so the draft id alone is too coarse. See {@link ledgerSources.draft}. |
+ * | `debit_propose` | `propose:<proposal_run_id>` | One proposer pass = one charge, however often its cron is re-entered. |
+ * | `debit_workflow` | `workflow_run:<run_id>:<step_index>` | Mirrors the existing `workflow_dedup_key` crash-resume convention: a re-drained run re-executes steps idempotently, so the charge is per STEP, not per drain. |
+ * | `refund` | `refund:<original_source>` | One refund per original charge, structurally — a crashed-and-retried refund path cannot refund twice because its own source collides. A refund-origin trigger additionally requires the original to be a real DEBIT on the same account, so a refund of nothing (and a refund of a refund) is refused by the database. |
+ * | `adjustment_credit` / `adjustment_debit` | `admin:<uuid>` | Each staff adjustment is its own event (uuid minted per adjustment, staff user id in `meta`). |
+ * | `trial_grant` | `trial:<account_id>` | The trial bounty is ONE event in an account's whole life, so the ACCOUNT is the identity. See {@link ledgerSources.trialGrant}. |
+ *
+ * These prefixes are not a convention: the source-reason CHECK constraint pins each `reason`
+ * to its namespace, so a debit physically cannot be written under an `invoice:` source and be
+ * reported back as a harmless `duplicate`.
  */
 /**
  * How long a charged `draft` attempt keeps paying for free retries.

@@ -7,131 +7,16 @@ import {
   totpSecrets, staffUsers, mailboxOauthCeremonies, mailboxOauthDeviceCeremonies, oauthProviderConfig,
 } from "./schema-cloud.js";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE KEK RE-WRAP PASS — what makes rotation a revocation instead of a gesture
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   ── THE FINDING ────────────────────────────────────────────────────────────────────────────
-
-   A security review found that rotation, as `crypto.ts` documents it, is "add
-   `TF_KEK_V{n+1}` to both hosts, redeploy". That protects NEW writes and nothing else. Every
-   unchanged row keeps its `key_version = 1` envelope, the version-1 key keeps decrypting it, and
-   that key therefore
-   cannot be removed from any host or from secret history without breaking those rows. So after a
-   leak of the version-1 key the rotation you reach for is a no-op against every secret that
-   already existed —
-   which is all of them. The recorded decision is a re-wrap pass, plus a
-   definition of incident-rotation as *run the pass, verify zero rows reference N, only then
-   remove N*.
-
-   This module is both halves: {@link kekRewrapCensus} answers "does anything still reference N",
-   and {@link runKekRewrap} moves rows off N.
-
-   ── WHY THIS IS A RUNNER AND NOT A JOURNAL MIGRATION ───────────────────────────────────────
-
-   The finding calls it a "re-wrap migration" and it must not be one, for three reasons that are
-   each independently disqualifying:
-
-     · **The keys are not in the database.** Re-wrapping means decrypt-then-encrypt under KEK
-       material that lives in the host's environment, in Node. There is no SQL statement that can
-       do it, with or without an extension.
-     · **The journal applies all its pending entries in ONE transaction** (`src/migrate.ts`, and
-       cloud 0014's header states the consequence for lock duration). A pass over every stored
-       secret inside a deploy's single transaction holds row locks on `mailbox_credentials` and
-       `totp_secrets` for its whole length, and a mid-flight death rolls back every row it did —
-       so the pass would be neither pageable nor resumable, which are the two properties it most
-       needs.
-     · **A migration cannot report.** This pass has to be rehearsable against a copy, has to
-       print what it found before it writes anything, and has to be re-runnable after a partial
-       failure. `0056_screening_baseline`'s census entry in `journal-split.test.ts` records this
-       exact ruling for a far less dangerous backfill: "A migration is none of those things."
-
-   So there is NO new `.sql` file and no journal entry, and therefore no census: this slice adds
-   no DDL at all. It reads and rewrites columns five existing migrations already created.
-
-   ── RESUMABILITY IS `key_version` ITSELF, NOT A CURSOR ──────────────────────────────────────
-
-   There is no progress table, no checkpoint file and no `rewrapped_at` column, because the
-   column that has to be written anyway IS the progress marker. A row is outstanding exactly
-   while `key_version < target`; a row this pass finished no longer matches the candidate query.
-   A pass killed at any instant therefore resumes by simply being run again, and running it twice
-   over a finished database is a pair of SELECTs.
-
-   That is also why the per-row transaction boundary is not a performance choice: it is what makes
-   the marker true. Each row's decrypt → re-encrypt → verify → write is one transaction, so at
-   every instant every row in the database is wholly at its old version or wholly at its new one,
-   under an envelope that has been proven to decrypt. There is no third state to recover from.
-
-   ── FAIL CLOSED, IN THREE PLACES ───────────────────────────────────────────────────────────
-
-     1. **A value that does not decrypt is REPORTED AND SKIPPED.** Never dropped, never
-        blank-written, never re-encrypted from a partial plaintext. `no KEK for version N` and a
-        GCM authentication failure both land here, and both leave the row exactly as it was. The
-        pass's `failed` count is what an operator reads; the row keeps working for whatever host
-        still holds the version it names.
-     2. **The new envelope is decrypted and compared BEFORE the old one is overwritten**, inside
-        the same transaction (see {@link rewrapOneRow}). An encrypt that silently produced an
-        envelope this ring cannot open would otherwise destroy the secret — the one failure mode
-        here with no recovery, since the plaintext exists nowhere else.
-     3. **The candidate snapshot is never the thing that gets re-wrapped**, so a secret rewritten
-        by the live system between selection and re-wrap is not reverted. Two independent
-        mechanisms enforce that; see the paragraph below, which is the subtle one.
-
-   ── THE SNAPSHOT IS A LOST UPDATE, AND PGlite CANNOT SEE IT ────────────────────────────────
-
-   The obvious implementation selects `(key, ciphertext, key_version)` for every candidate and
-   then re-wraps from that snapshot. It is wrong, and it is wrong in the direction that destroys
-   user data: between the SELECT and the UPDATE the live system can rewrite the very same row —
-   `mailbox_credentials` on a password change or an SMTP re-probe, and `mailbox_credentials`
-   again on every Microsoft refresh-token rotation (`core/src/oauth/microsoft.ts` persists the
-   new token the instant Azure hands one back). Re-wrapping the snapshot writes the OLD secret
-   back under the new key: a correct-looking envelope, a current `key_version`, and a password
-   or refresh token that is silently one generation stale.
-
-   TWO MECHANISMS STOP IT, AND EITHER ONE IS SUFFICIENT — which is a measurement, not a design
-   intention, and it corrects what this comment said when it was first written:
-
-     · the row is **re-read inside the transaction under `FOR UPDATE`** and the snapshot's values
-       are discarded, so the plaintext that gets re-sealed is the current one and a row that has
-       already reached the target is counted `raced`;
-     · the UPDATE carries a **compare-and-swap** on the ciphertext and version it read, so even a
-       decrypt of a stale value cannot land: under READ COMMITTED the UPDATE re-evaluates its
-       predicate against the committed row version, finds the ciphertext changed, and matches
-       nothing.
-
-   Measured by mutation against real Postgres: removing EITHER one alone leaves
-   `kek-rewrap.pg.test.ts` green, and removing BOTH turns it red with the defect stated —
-   `expected 'old-password' to be 'new-password'`. The first draft of this comment named the
-   locked re-read as the guard and the CAS as belt-and-braces; the experiment says they are peers,
-   so both stay and neither may be removed on the grounds that the other covers it.
-
-   **This is precisely the class PGlite cannot test.** One in-process connection has nothing to
-   interleave, so a snapshot implementation passes there identically. The decisive case runs on
-   :5433 over separate connections.
-
-   ── WHAT IS NOT TOUCHED: `updated_at` ──────────────────────────────────────────────────────
-
-   Four of the five sites carry an `updated_at`, and `oauth_provider_config` carries an
-   `updated_by` naming the staff actor beside it. None is written here. A re-wrap changes the
-   representation of a secret and not the secret, so bumping the timestamp would file a
-   maintenance pass as a user's password change and as an operator's edit of the OAuth
-   registration — the one field on that row whose whole job is to say who last changed it. The
-   columns this pass writes are exactly the ciphertext and its version.
-
-   ── NEVER LOG KEY MATERIAL, AND THE PRIMARY KEY IS PART OF THAT ────────────────────────────
-
-   No plaintext, no ciphertext and no envelope fragment is returned or logged; failures carry a
-   {@link RewrapFailureReason} from a CLOSED set rather than a driver message, so a future error
-   string that happens to embed a value cannot reach a log through this path. `SECRET_VALUE_PATTERNS`
-   in `log.ts` is deliberately not relied on — its own header names its limits.
-
-   The sharp edge is the row identifier. Four sites key on a uuid or a provider name, which are
-   fine to print. `mailbox_oauth_ceremonies` keys on `state`, which the schema describes as "the
-   CSRF token of the redirect AND the single-use consumption key" — a live secret. Printing it to
-   identify a failing row would put a redeemable authorization key in a log. That site declares
-   {@link WrappedSecretSite.keyIsSecret}, and its rows are named by a salted-domain SHA-256
-   prefix instead: enough to correlate two log lines about the same row, useless for redeeming it.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * The KEK re-wrap pass — what makes rotation a revocation instead of a gesture. Env-var rotation
+ * protects new writes only: unchanged rows keep the old envelope, so the leaked key cannot be
+ * removed. {@link kekRewrapCensus} answers "anything still on N?"; {@link runKekRewrap} moves
+ * rows off it. A runner, not a journal migration: the keys live in the host's environment, and a
+ * migration cannot report or resume. Resumability is `key_version` itself: one transaction per
+ * row, each wholly old or wholly new, the new envelope verified BEFORE the old is overwritten.
+ * The snapshot race is closed twice — a `FOR UPDATE` re-read and a compare-and-swap,
+ * mutation-tested as peers on real Postgres. `updated_at` is untouched. Never log key material.
+ */
 
 /**
  * The envelope operations this pass needs — structurally, so `@trafficflow/db` does not grow a
@@ -237,19 +122,14 @@ export const WRAPPED_SECRET_SITES: readonly WrappedSecretSite[] = [
 ];
 
 /**
- * Resolve a declared property to its drizzle column, or throw at import time.
- *
- * The question is about the DECLARATION — does this property name a column at all — and it is
- * asked of a table whose declaration is compiled into two twins, one per store. Asking it as
- * `instanceof PgColumn` answered a second question nobody meant to ask: which STORE the table
- * belongs to. That made this line throw at module load in the test run that substitutes the
- * device twin, for a module a device never loads at all, and the failure named a column instead
- * of naming the substitution.
- *
- * `Column` is the class both twins descend from, so a typo, a missing column and a property that
- * is not a column are all still refused here, at import, exactly as before. The cast is safe on
- * the only store this module runs against: every deployment that has a KEK to rotate has
- * Postgres, and the sites above are Cloud tables.
+ * Resolve a declared property to its drizzle column, or throw at import time. The question is
+ * about the DECLARATION — does this property name a column — asked of a table compiled into two
+ * twins, one per store. `instanceof PgColumn` answered a different question (which STORE the
+ * table belongs to) and threw at module load in the test run that substitutes the device twin,
+ * for a module a device never loads, naming a column instead of the substitution. `Column` is the
+ * class both twins descend from, so a typo, a missing column and a non-column property are all
+ * still refused at import. The cast is safe on the only store this module runs against: every
+ * deployment with a KEK to rotate has Postgres.
  */
 function resolveColumn(site: WrappedSecretSite, prop: string): PgColumn {
   const c = (site.table as unknown as Record<string, unknown>)[prop];
@@ -452,17 +332,13 @@ export interface KekRewrapResult {
 export const REWRAP_BATCH_LIMIT = 5_000;
 
 /**
- * Move every stored envelope onto the current KEK version.
- *
- * ONE TRANSACTION PER ROW (see the header): the pass's recoverability rests on every row being
- * wholly old or wholly new at every instant, and a single transaction over the population would
- * both destroy that and hold row locks on `mailbox_credentials` against a live worker for the
- * length of the run.
- *
- * A row that fails does NOT stop the pass. That is isolation and not tolerance — the alternative
- * is one undecryptable row denying rotation to every row after it, which is the failure this
- * whole slice exists to remove. Every failure is counted, labelled and reported; the run finishes
- * and says what it could not do.
+ * Move every stored envelope onto the current KEK version. ONE TRANSACTION PER ROW (see the
+ * header): recoverability rests on every row being wholly old or wholly new at every instant, and
+ * a single transaction over the population would destroy that and hold row locks on
+ * `mailbox_credentials` against a live worker for the length of the run. A row that fails does
+ * NOT stop the pass — isolation, not tolerance: the alternative is one undecryptable row denying
+ * rotation to every row after it, the failure this pass exists to remove. Every failure is
+ * counted, labelled and reported; the run finishes and says what it could not do.
  */
 export async function runKekRewrap(deps: KekRewrapDeps): Promise<KekRewrapResult> {
   const { db, keyProvider, apply } = deps;
