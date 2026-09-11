@@ -60,6 +60,7 @@ export function dismissDurabilityLost(): void {
   raise({ store: "dismissed" });
 }
 
+/** The notice rides `window`: the shell that draws it is a browser, and only a browser has one. */
 function raise(detail: DurabilityLostDetail): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new DurabilityLostEvent(detail));
@@ -71,10 +72,19 @@ function lost(store: string): DurableWrite {
   return "lost";
 }
 
+/**
+ * THE JARS COME OFF `globalThis`, NOT `window` — and the difference is not cosmetic here.
+ *
+ * In a browser they are the same object. This door is imported by the client engine now, whose
+ * mirror-registry tests run on node and stand a `localStorage` up on `globalThis`: reading
+ * `window` there would answer "lost" for every write and the registry would silently record
+ * nothing, which is the state the registry exists to prevent.
+ */
+
 /** Write one key, and say whether it landed. */
 export function durableSet(key: string, value: string, store: string): DurableWrite {
   try {
-    window.localStorage.setItem(key, value);
+    globalThis.localStorage.setItem(key, value);
     return "stored";
   } catch {
     return lost(store);
@@ -89,7 +99,7 @@ export function durableSet(key: string, value: string, store: string): DurableWr
  */
 export function durableRemove(key: string, store: string): DurableWrite {
   try {
-    window.localStorage.removeItem(key);
+    globalThis.localStorage.removeItem(key);
     return "stored";
   } catch {
     return lost(store);
@@ -108,7 +118,7 @@ export function durableRemove(key: string, store: string): DurableWrite {
  */
 export function durableSessionSet(key: string, value: string, store: string): DurableWrite {
   try {
-    window.sessionStorage.setItem(key, value);
+    globalThis.sessionStorage.setItem(key, value);
     return "stored";
   } catch {
     return lost(store);
@@ -118,7 +128,7 @@ export function durableSessionSet(key: string, value: string, store: string): Du
 /** Remove one per-tab key, and say whether it landed. See {@link durableRemove}. */
 export function durableSessionRemove(key: string, store: string): DurableWrite {
   try {
-    window.sessionStorage.removeItem(key);
+    globalThis.sessionStorage.removeItem(key);
     return "stored";
   } catch {
     return lost(store);
@@ -136,9 +146,9 @@ export function durableSessionRemove(key: string, store: string): DurableWrite {
  */
 export function durableProbe(key: string): boolean {
   try {
-    window.localStorage.setItem(key, "1");
-    const ok = window.localStorage.getItem(key) === "1";
-    window.localStorage.removeItem(key);
+    globalThis.localStorage.setItem(key, "1");
+    const ok = globalThis.localStorage.getItem(key) === "1";
+    globalThis.localStorage.removeItem(key);
     return ok;
   } catch {
     return false;
@@ -194,15 +204,25 @@ export function storageDoor(jar: Storage | null, store: string): StorageDoor {
   };
 }
 
-/** The door over this window's `localStorage` — what a host hands `ThemeProvider`. */
+/**
+ * The door over this window's `localStorage` — what a host hands `ThemeProvider`.
+ *
+ * THE JAR IS RESOLVED PER CALL, not captured. Hosts build this at module scope so the prop has a
+ * stable identity, and a client module is evaluated on the server too: a jar read once, there,
+ * would be `null` for the life of the page and answer "lost" for every write after hydration.
+ */
 export function localStorageDoor(store: string): StorageDoor {
-  let jar: Storage | null = null;
-  try {
-    jar = typeof window === "undefined" ? null : window.localStorage;
-  } catch {
-    jar = null; // a profile with site data blocked throws on the property itself
-  }
-  return storageDoor(jar, store);
+  return {
+    get(key) {
+      try {
+        return globalThis.localStorage?.getItem(key) ?? null;
+      } catch {
+        return null; // storage blocked — "no stored value" is the honest answer for a read
+      }
+    },
+    set: (key, value) => durableSet(key, value, store),
+    remove: (key) => durableRemove(key, store),
+  };
 }
 
 /**
@@ -221,17 +241,19 @@ export function localStorageDoor(store: string): StorageDoor {
  */
 export function durableIdbCommit(tx: IDBTransaction, store: string): Promise<DurableWrite> {
   return new Promise((resolve) => {
-    // `onerror` and `onabort` both fire for one failed transaction; the verdict is settled once so
-    // a single lost commit raises a single event.
+    /* `onerror` and `onabort` BOTH fire for one failed transaction, so the verdict settles once —
+       and the verdict is passed as a THUNK rather than a value. Measured: `done(lost(store))`
+       evaluates `lost` before `done` can look at the latch, so one failed transaction raised two
+       events while the promise resolved once. */
     let settled = false;
-    const done = (verdict: DurableWrite) => {
+    const settle = (verdict: () => DurableWrite) => {
       if (settled) return;
       settled = true;
-      resolve(verdict);
+      resolve(verdict());
     };
-    tx.oncomplete = () => done("stored");
-    tx.onabort = () => done(lost(store));
-    tx.onerror = () => done(lost(store));
+    tx.oncomplete = () => settle(() => "stored");
+    tx.onabort = () => settle(() => lost(store));
+    tx.onerror = () => settle(() => lost(store));
   });
 }
 
