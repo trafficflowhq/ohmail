@@ -158,6 +158,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // reads
   "findByDedupKey", "findByMessageIdHeader", "listMessageFailures", "primaryInstanceVanished",
   "getFolderState", "listRules", "knownSenders", "findThreadParent", "listThreadBacklog",
+  // `away_replies`, one column, `LIMIT 1` — a table this projection does not join at all.
+  "isOwnAwayReply",
   "isGraduated", "getMailbox", "listScreenerBacklog", "getMailboxFolders", "listKnownLocators",
   "listPendingFolderStates", "listPendingFlagStates",
   // the mail-0065 junk/delete wave's reads — special-folder discovery, the AI-authored

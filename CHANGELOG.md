@@ -133,6 +133,8 @@ you do.
 - Away replies go only to the piles you chose, and never to a site's own notification mailbox —
   `wordpress@`, `root@` and the rest of a server's mail. Addresses that merely start with one of
   those names are people, and still get a reply.
+- A bounce for an away reply no longer lands in your Ohbox. It files to Receipts, and the responder
+  stops writing to that address. Bounces for mail you sent yourself still reach you.
 
 ### Sync now says what it did
 

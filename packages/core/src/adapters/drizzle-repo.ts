@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
+import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -1921,6 +1921,32 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       if (hit) return { messageId: hit.id, threadId: hit.threadId };
     }
     return null;
+  }
+
+  /**
+   * ONE indexed-by-account probe over the away ledger, `LIMIT 1`, and it only ever runs when a
+   * message was already DSN-shaped — so ordinary mail pays nothing for it.
+   *
+   * `lower()` on BOTH sides and not an exact match on the column. The ledger stores what
+   * `mintMessageId` produced, whose domain comes from `mailboxes.address` unnormalised, so a
+   * mailbox whose address was stored with capitals mints a mixed-case id, while the candidates
+   * were lower-cased by `parseMessageIds`. An exact comparison agrees with that right up to the
+   * first such mailbox and then misses in silence, which on this path reads as "no responder ever
+   * wrote to them". `lower()` is in both dialects, so this needs no branch.
+   *
+   * `mintedMessageId` is NULL for a row that never dialled (`throttled` cleared it on purpose), so
+   * those rows cannot match and no outcome filter is needed to exclude them.
+   */
+  async isOwnAwayReply(accountId: string, candidates: readonly string[]): Promise<boolean> {
+    if (candidates.length === 0) return false;
+    const rows = await this.db.select({ id: awayReplies.id })
+      .from(awayReplies)
+      .where(and(
+        eq(awayReplies.accountId, accountId),
+        inArray(sql`lower(${awayReplies.mintedMessageId})`, candidates.map((c) => `<${c}>`)),
+      ))
+      .limit(1);
+    return rows.length > 0;
   }
 
   /**

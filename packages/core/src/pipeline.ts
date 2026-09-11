@@ -1222,8 +1222,26 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     // `message/rfc822-headers` part, which the parser does not flatten into `textBody`.
     const dsn = dsnVerdict(normalized, change.raw);
     let ownBounce = false;
+    /* ── AND A BOUNCE FOR AN AWAY REPLY IS NOT THE READER'S MAIL AT ALL ───────────────────
+     *
+     * The arm above is right that this is our own bounce and wrong about whose business it is.
+     * Nobody composed the message that failed: the responder did, and it already records the
+     * dead address on `away_sender_state.undeliverable_at` and writes there no more. So the one
+     * delivery report the product acts on by itself was the one it put in somebody's Ohbox,
+     * once per throttle interval for the length of a trip.
+     *
+     * `isOwnAwayReply` and not the quoted `Auto-Submitted: auto-replied`, which sits in the
+     * report's own bytes and is therefore a string its sender writes — routing on it would let a
+     * stranger lift their mail out of `ohmail/Screener` into a real pile, which is the consent
+     * bypass this whole block exists to refuse, merely pointing the other way. The minted id is
+     * a uuid THIS account generated, and it is the same join `markUndeliverableFromBounces`
+     * uses, so "is this our away reply" has one encoding rather than two that can drift.
+     */
+    let awayReplyBounce = false;
     if (dsn) {
-      ownBounce =
+      awayReplyBounce = dsn.originalMessageIds.length > 0
+        && await repo.isOwnAwayReply(accountId, dsn.originalMessageIds);
+      ownBounce = awayReplyBounce ||
         dsn.failedRecipients.some((a) => known.has(a)) ||
         (dsn.originalMessageIds.length > 0 &&
           (await repo.findThreadParent(accountId, dsn.originalMessageIds)) !== null);
@@ -1233,6 +1251,14 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       decision.destination !== null && effectForDestination(decision.destination) === "deny";
     /** A corroborated bounce the account has expressed no opinion about. */
     const admitBounce = ownBounce && decision.matchedRuleId === null
+      && (!deniedByConsent || decision.source === "screener");
+    /**
+     * The responder's own bounce, filed to `ohmail/Receipts` — kept, findable, out of the way.
+     *
+     * Subordinate to the USER's decision on exactly the terms `admitBounce` is, and for the same
+     * reason: a daemon somebody quarantined must not be re-filed by us, in either direction.
+     */
+    const fileBounceAsReceipt = awayReplyBounce && decision.matchedRuleId === null
       && (!deniedByConsent || decision.source === "screener");
 
     /* ── THE GATE DOES NOT REACH BACK PAST THE SCREENING BASELINE ────────────────────────────
@@ -1286,11 +1312,17 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       && decision.source === "screener"
       && authVerdict !== "fail";
 
-    let desired: string = (sensitivity.sensitive && !deniedByConsent) || admitBounce
-      ? "INBOX"
-      : preBaselineBacklog || heldForImport
-        ? change.locator.folder
-        : decision.destination ?? change.locator.folder;
+    /* AHEAD OF `sensitive`, which is the one ordering choice here worth stating. A sensitivity
+       reading is a heuristic over text; this is a lookup that says what the failed message WAS.
+       And the text it would be reading is the user's own out-of-office message, so a code-shaped
+       false positive in it costs nothing to file as a receipt. */
+    let desired: string = fileBounceAsReceipt
+      ? "ohmail/Receipts"
+      : (sensitivity.sensitive && !deniedByConsent) || admitBounce
+        ? "INBOX"
+        : preBaselineBacklog || heldForImport
+          ? change.locator.folder
+          : decision.destination ?? change.locator.folder;
 
     let ai: AiPlan | undefined;
     // The identity of ONE classification of THIS mail — the mailbox and the hashed dedup key,

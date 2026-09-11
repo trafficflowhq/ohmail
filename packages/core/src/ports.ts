@@ -588,6 +588,21 @@ export interface RepoPort {
    */
   findThreadParent(accountId: string, candidates: readonly string[]): Promise<ThreadParent | null>;
   /**
+   * Is one of `candidates` the Message-ID this account's AWAY RESPONDER minted for a reply it
+   * sent? Account-scoped, for the same reason {@link findThreadParent} is.
+   *
+   * The question exists so `pipeline.ts` can tell a bounce the reader must see from a bounce the
+   * product already handles by itself, and the answer has to be a fact a stranger cannot
+   * manufacture. A delivery report quotes the failed message's headers, so `Auto-Submitted:
+   * auto-replied` is readable straight out of a report anybody can write; the minted
+   * `<uuid@domain>` is a value THIS account generated and stored before it dialled.
+   *
+   * `candidates` arrive as `parseMessageIds` writes them — bracket-free and lower-cased — while
+   * the ledger stores the id verbatim, brackets and the mailbox address's own domain case
+   * included. The implementation normalises; a caller must not.
+   */
+  isOwnAwayReply(accountId: string, candidates: readonly string[]): Promise<boolean>;
+  /**
    * Find-or-create the conversation anchored at `rootMessageIdHeader`.
    *
    * Must be a single `INSERT … ON CONFLICT (account_id, root_message_id_header)` and not a
