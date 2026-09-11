@@ -121,29 +121,19 @@ export const COPY: typeof EN = liveCopy("mailBody", EN, {
 // ── the allow-lists ────────────────────────────────────────────────────────────────────
 
 /**
- * THE TAGS A MAIL MAY USE. An allow-list, so a tag nobody has thought about is absent by
- * default rather than present by default.
- *
- * `style` is here and it is the interesting one — see the header: a stylesheet that cannot
- * leave its document is what makes a newsletter look like a newsletter. Its TEXT is still
- * rewritten ({@link neutraliseCss}) so it cannot name a remote url — BEFORE this list is
- * applied, never after. That ordering is the whole of the mutation-XSS rule stated on
- * {@link sanitizeMailHtml}.
- *
- * Everything a mail client's own bug reports are made of is absent BY OMISSION: `script`,
- * `iframe`, `frame`, `frameset`, `object`, `embed`, `applet`, `form`, `input`, `button`,
- * `select`, `textarea`, `base`, `link`, `meta`, `noscript`, `template`, `svg`, `math`,
- * `audio`, `video`, `source`, `canvas`.
- *
- * ── A `FORBID_TAGS` LIST STOOD HERE AND WAS DELETED, BECAUSE IT COULD NOT BE WATCHED ────
- *
- * It named those same tags a second time. The mutation test says what that was worth:
- * emptying `FORBID_TAGS` altogether left the suite GREEN, because an allow-list already
- * refuses everything it does not name. So it was the shape this repo keeps warning about —
- * "two overlapping guards read as belt-and-braces and behave as neither: deleting one
- * leaves the test green, so neither one is ever proven to do anything". One list, one
- * deletion point: `test/message-body.test.ts` mutates by ADDING `iframe`, `form` and `object`
- * to this array, and that goes red.
+ * The tags a mail may use. An allow-list, so a tag nobody has thought about is absent by default. `style` is the
+ * interesting one — a stylesheet that cannot leave its document is what makes a newsletter look like a newsletter;
+ * its TEXT is still rewritten ({@link neutraliseCss}) so it cannot name a remote url — BEFORE this list is applied,
+ * never after: the mutation-XSS rule stated on {@link sanitizeMailHtml}. Everything a mail client's bug reports are
+ * made of is absent by omission: `script`, `iframe`, `form`, `object`, `embed`, `base`, `link`, `meta`, `svg`, `math`
+ * and the rest. A `FORBID_TAGS` list stood here and was deleted because it could not be watched: emptying it left the
+ * suite GREEN — an allow-list already refuses everything it does not name, so the pair read as belt-and-braces and
+ * behaved as neither.
+ */
+
+/**
+ * One list, one deletion point: `test/message-body.test.ts` mutates by ADDING `iframe`, `form` and `object` to this
+ * array, and that goes red.
  */
 const ALLOWED_TAGS = [
   "a", "abbr", "acronym", "address", "area", "article", "aside", "b", "bdi", "bdo", "big",
@@ -210,34 +200,29 @@ const REMOTE_URL = /^https?:\/\//i;
 const CID_URL = /^cid:/i;
 
 /**
- * THE ONLY URL SCHEMES A STYLESHEET MAY NAME, and it is a POSITIVE list on purpose.
- *
- * {@link SAFE_HREF} is the positive list DOMPurify applies to `href`/`src`/`background`, so
- * `<img src="/api/x">` loses its attribute. The CSS path gets neither check: `style` is in
- * DOMPurify's own `URI_SAFE_ATTRIBUTES` and a `<style>` element is TEXT, so the only url policy
- * on that path is {@link neutraliseCss}. Its final branch asked "is this remote?" and kept
- * everything else verbatim, which is a different question from the one its comment answered —
- * a RELATIVE url is not `https?://` and is not inert either.
- *
- * What that admitted, once the reader loads images: a srcdoc document has no `<base>` (the head
- * is discarded, see the sanitize call), so it resolves against the EMBEDDER. `url(/api/…)`
- * becomes `https://ohmail.app/api/…` — permitted by the frame's own `img-src data: 'self'` as
- * it then was, and a cookie-bearing request because the sandbox keeps `allow-same-origin`.
- * `url(//host/x)` becomes `https://host/x`, a remote fetch that passed neither the proxy nor
- * the counter. Sender-authored mail could therefore issue an unbounded number of authenticated
- * same-origin GETs on open, and none of them appeared in the blocked list the reader is shown.
- *
- * **That ending is now closed at the policy as well**: `img-src` names the proxy's own path
- * rather than `'self'` ({@link proxyImgSource}), so the same payload against a reverted
- * version of this branch fetches nothing. This branch is still the one that keeps the COUNT
- * honest, which the policy cannot do — a refusal the reader is never told about is a
- * blocked-content bar that says zero while the browser refuses five.
- *
- * So the question the branch asks is now "is this inert?" rather than "is this not remote?".
- * `data:` carries its own bytes and `cid:` names a part of this very message; both fetch
- * nothing. Everything else — relative, protocol-relative, scheme-relative, a fragment, an
- * unknown scheme — becomes `none`, and the counter-case in `test/message-body.test.ts` is what
- * stops this from degenerating into "delete every url".
+ * The only url schemes a stylesheet may name, and it is a POSITIVE list on purpose. {@link SAFE_HREF} is the positive
+ * list DOMPurify applies to `href`/`src`/`background`; the CSS path gets neither check — `style` is in DOMPurify's
+ * own `URI_SAFE_ATTRIBUTES` and a `<style>` element is TEXT — so the only url policy there is {@link neutraliseCss}.
+ * Its final branch asked "is this remote?" and kept everything else verbatim, a different question from the one its
+ * comment answered: a RELATIVE url is not `https?://` and is not inert either.
+ */
+
+/**
+ * What that admitted once the reader loads images: a srcdoc document has no `<base>`, so it resolves against the
+ * EMBEDDER — `url(/api/…)` became a cookie-bearing `https://ohmail.app/api/…` GET (the sandbox keeps
+ * `allow-same-origin`), `url(//host/x)` a remote fetch past both the proxy and the counter — unbounded,
+ * authenticated, and absent from the blocked list the reader sees.
+ */
+
+/**
+ * That ending is now closed at the policy as well: `img-src` names the proxy's own path rather
+ * than `'self'` ({@link proxyImgSource}), so the same payload against a reverted version of
+ * this branch fetches nothing. This branch still keeps the COUNT honest, which the policy
+ * cannot — a refusal the reader is never told about is a blocked-content bar saying zero while
+ * the browser refuses five. So the question is now "is this inert?": `data:` carries its own
+ * bytes and `cid:` names a part of this very message; both fetch nothing. Everything else —
+ * relative, protocol-relative, a fragment, an unknown scheme — becomes `none`, and the
+ * counter-case in `test/message-body.test.ts` stops this degenerating into "delete every url".
  */
 const INERT_CSS_URL = /^(?:data:|cid:)/i;
 
@@ -1024,29 +1009,20 @@ const PAINTS_THE_PAGE = new Set([
 const BG_SCAN_LIMIT = 40;
 
 /**
- * ── THE MAIL'S EFFECTIVE PAPER, FROM THE DOCUMENT AND NOT FROM A GUESS ──────────────────
- *
- * Three places a mail says what it is painted on, in the order they actually win:
- *
- *   1. `<body bgcolor>` / `<body style>`. The most explicit statement there is, and it is read
- *      from the PARSED document rather than the sanitized one — DOMPurify returns the body's
- *      CONTENT, so the body element's own attributes never survive to be inspected later.
- *   2. A `html{…}` or `body{…}` rule in the mail's own stylesheet, which is how a designed
- *      newsletter says the same thing.
- *   3. The outermost container that declares one. Document order is the wrapper chain in a
- *      table-based mail, so the first hit IS the outermost — the element that paints the page.
- *
- * `null` means the mail declared nothing, which is the ordinary case and is not a failure: mail
- * that names no background is drawn on the browser's white, and {@link mailIsLight} says so.
- *
- * ── WHAT IT CANNOT SEE, STATED RATHER THAN PAPERED OVER ─────────────────────────────────
- *
- * There is no layout here and there cannot be — this runs before the frame exists — so
- * "dominant" is decided by depth and tag, not by painted area. A mail whose outermost wrapper
- * is a narrow dark bar over a white page will be read as dark and left alone. The cost of that
- * is one mail rendered in its original colours in a dark theme, which is a rendering the reader
- * can already ask for by name; the cost of the opposite error is a white flash. The reading is
- * therefore biased on purpose, and the per-message toggle is the exit.
+ * The mail's effective paper, from the document and not from a guess. Three places a mail says what it is painted on,
+ * in the order they win: `<body bgcolor>` / `<body style>` — the most explicit statement, read from the PARSED
+ * document because DOMPurify returns the body's CONTENT and the body element's own attributes never survive; a
+ * `html{…}` or `body{…}` rule in the mail's own stylesheet — how a designed newsletter says it; and the outermost
+ * container that declares one — document order is the wrapper chain in a table-based mail, so the first hit IS the
+ * outermost. `null` means the mail declared nothing, the ordinary case: such mail is drawn on the browser's white,
+ * and {@link mailIsLight} says so. What it cannot see, stated: there is no layout here — this runs before the frame
+ * exists — so "dominant" is decided by depth and tag, not painted area.
+ */
+
+/**
+ * A mail whose outermost wrapper is a narrow dark bar over a white page reads as dark and is left alone; that costs
+ * one mail its original colours in a dark theme (a rendering the reader can ask for by name), while the opposite
+ * error is a white flash. Biased on purpose, and the per-message toggle is the exit.
  */
 export function effectiveBackground(
   parsedBody: Element | null,
@@ -1137,68 +1113,42 @@ export function cssColor(c: Rgb): string {
 // ── simple or rigid: which of the two layouts this mail is ─────────────────────────────
 
 /**
- * ── REFLOW, DON'T SHRINK. WHICH MAIL GETS WHICH, AND WHY THERE ARE ONLY TWO ANSWERS ─────
- *
- * Scale-to-fit was the only answer this viewer had, and it was the wrong one for most mail: it
- * produced messages that scrolled sideways and messages set in type too small to read
- * comfortably, which are two symptoms of one mechanism. The frame is measured, found wider than
- * the column, and the WHOLE DOCUMENT is shrunk — text included, whatever made it wide. A plain
- * business letter carrying one long tracked link measured wide for that one link and was then
- * rendered at 0.6 for its entire length.
- *
- * So the mail is classified first, and the two classes get different treatment:
- *
- *   SIMPLE  no fixed canvas. Personal, business and transactional mail — the overwhelming
- *           majority of a real mailbox. It is REFLOWED: every declared width is capped at the
- *           column, long words break, and the text renders at the app's own reading size. A
- *           document with no fixed canvas has nothing to lose by reflowing, so this costs the
- *           sender's design nothing and buys the reader a native-sized, unscrolled column.
- *
- *   RIGID   a fixed layout canvas wider than a reading column — the 600/700 px newsletter
- *           grid. Reflowing one of those does not produce a narrower newsletter, it produces
- *           a collapsed pile of cells, so it keeps the shipped scale-to-fit with its
- *           {@link MIN_FIT_SCALE} floor. Nothing about that path changes.
- *
- * ── ONE RULE DECIDES IT, AND IT IS THE ONE THE SENDER ACTUALLY WRITES ───────────────────
- *
- * A fixed newsletter canvas is always DECLARED — `<table width="600">`, `style="width:600px"`,
- * or `.card{width:600px}` in the sender's own stylesheet. That declaration is the class. There
- * is no heuristic about cell counts or nesting depth: a two-column grid built at percentages
- * reflows perfectly well and is SIMPLE, and a single-column card declared at 600 px is RIGID
- * even though it has one column, because shrinking it is what keeps its padding and its images
- * in proportion.
- *
- * `max-width` is deliberately NOT a fixed width. `max-width:600px` is a cap that already
- * reflows below its value — it is the responsive spelling, and treating it as rigid would put
- * the best-behaved mail in the class built for the worst-behaved.
- *
- * READ FROM THE FINAL DOCUMENT AND THE NEUTRALISED STYLESHEET, for the reason {@link
- * SanitizedMail.light} is: the answer has to be about the document the frame will build, not
- * about the html that arrived.
+ * Reflow, don't shrink. Scale-to-fit was the only answer this viewer had, and it was wrong for most mail: the frame
+ * is measured, found wider than the column, and the WHOLE DOCUMENT is shrunk — text included, whatever made it wide.
+ * A plain business letter carrying one long tracked link measured wide for that link and rendered at 0.6 for its
+ * entire length. So the mail is classified first: SIMPLE (no fixed canvas — personal, business and transactional
+ * mail, the overwhelming majority) is REFLOWED — every declared width capped at the column, long words break, text at
+ * the app's own reading size; a document with no fixed canvas has nothing to lose by reflowing. RIGID (a fixed layout
+ * canvas wider than a reading column — the 600/700 px newsletter grid) keeps the shipped scale-to-fit with its {@link
+ * MIN_FIT_SCALE} floor, because reflowing one produces a collapsed pile of cells, not a narrower newsletter.
+ */
+
+/**
+ * One rule decides it, and it is the one the sender actually writes: a fixed newsletter canvas is always DECLARED —
+ * `<table width="600">`, `style="width:600px"`, or `.card{width:600px}` in the sender's own stylesheet. No heuristic
+ * about cell counts or nesting depth: a two-column grid built at percentages reflows perfectly well and is SIMPLE,
+ * and a single-column card declared at 600 px is RIGID, because shrinking is what keeps its padding and images in
+ * proportion. `max-width` is deliberately NOT a fixed width — it is a cap that already reflows below its value, the
+ * responsive spelling, and treating it as rigid would put the best-behaved mail in the class built for the
+ * worst-behaved. Read from the final document and the neutralised stylesheet, for {@link SanitizedMail.light}'s
+ * reason: the answer has to be about the document the frame will build, not the html that arrived.
  */
 export const RIGID_MIN_PX = 520;
 
 /**
- * ── AND THE UPPER BOUND, WHICH IS THE HALF REAL MAIL FORCED ─────────────────────────────
- *
- * A canvas is a READING COLUMN somebody designed, and designed reading columns have a range.
- * Mail templates declare theirs in a narrow, well-known range: `<table width="600">` above all,
- * with 624, 640, 700 and 800 making up nearly all of the rest. Nothing designed for mail is
- * wider, because nothing designed for mail can assume a wider window — a reading column that
- * did would be side-scrolled in every client that renders it.
- *
- * What IS wider is markup that was never a mail design at all. The case that found this: two
- * ordinary business replies — German prose, a quoted thread, a sign-off — classified rigid on a
- * single `<div style="width:1578px">` belonging to a chunk of WooCommerce ADMIN HTML the sender
- * had pasted in. There is no design there to preserve, and treating it as one is actively worse
- * than ignoring it: the rigid path is scale-to-fit, so a 1578 px declaration renders the entire
- * message — the sender's actual sentences included — at about 0.4, which is precisely the
- * "shrunk until it cannot be read" failure the reflow class was introduced to end.
- *
- * So rigidity is a BAND, not a floor. Below {@link RIGID_MIN_PX} there is no canvas; above this
- * there is no mail design either, and the honest treatment for both is to reflow. 1000 rather
- * than a tighter number because the widest genuine canvas measured is 800 and a 960-grid
- * template is a thing that exists; 1578 is comfortably outside either.
+ * And the upper bound, which is the half real mail forced. A canvas is a reading column somebody designed, and mail
+ * templates declare theirs in a narrow, well-known range: `<table width="600">` above all, with 624, 640, 700 and 800
+ * making up nearly all the rest — nothing designed for mail is wider, because it would side-scroll in every client.
+ * What IS wider is markup that was never a mail design: the case that found this was two ordinary business replies
+ * classified rigid on a single `<div style="width:1578px">` of pasted WooCommerce admin HTML — no design to preserve,
+ * and the rigid path rendered the sender's actual sentences at about 0.4, precisely the "shrunk until it cannot be
+ * read" failure the reflow class ended.
+ */
+
+/**
+ * So rigidity is a BAND, not a floor: below {@link RIGID_MIN_PX} there is no canvas, above this there is no mail
+ * design either, and both reflow. 1000 because the widest genuine canvas measured is 800 and a 960-grid template
+ * exists; 1578 is comfortably outside either.
  */
 export const RIGID_MAX_PX = 1000;
 
@@ -1246,57 +1196,45 @@ function widthAttrPx(v: string | null): number | null {
 }
 
 /**
- * ── THE FRAME IS THE EXCEPTION, AND RIGIDITY IS THE WHOLE TEST ────────────────────────────
- *
- * `prose` — "render this as {@link BodyText} over the message's TEXT part, in the app's own
- * type" — is now exactly `!`{@link isRigidLayout}. One reading of one document decides all
- * three of {@link SanitizedMail.reflow}, {@link SanitizedMail.prose} and, with it, whether a
- * frame is built at all.
- *
- * Most mail between people is a paragraph and a sign-off. It arrives as html because every
- * client sends html, not because anything about it is designed — and putting it in a sandboxed
- * iframe costs a document, a stylesheet, a measurement pass and a resize observer to draw
- * something the app can set in its own type. Worse, it draws it in the SENDER's type: their font
- * stack, their line height, their idea of a link colour, inside a product that has its own.
- *
- * ── THE THREE TESTS THAT WERE HERE AND ARE GONE, AND WHY ────────────────────────────────
- *
- * This used to be four tests: not rigid, no picture, no background image, and a stylesheet under
- * a length threshold. The last three were calibrated against fixtures and they do not survive
- * real mail. The shape that breaks them is the commonest message there is: a business reply
- * carrying a table for the quoted thread, a signature logo, and the `<style>` block a desktop
- * client emits about its own paragraph classes. That fails the picture test and the style-length
- * test, and was therefore rendered in a frame, in the sender's type, for no design that existed.
- * The tests were answering "did the sender's client emit markup?", which is always yes, rather
- * than "did the sender lay something out?".
- *
- * A DECLARED CANVAS is the only evidence of the second question. `isRigidLayout` finds a fixed
- * width at or past {@link RIGID_MIN_PX} — the newsletter's 600 px table, the template's
- * `max-width` — and that, and only that, is a design the frame exists to render faithfully.
- * Everything else is a letter: tables, inline images, signature logos and all.
- *
- * ── WHAT THE READER LOSES, SAID PLAINLY ────────────────────────────────────────────────
- *
- * A picture in a non-rigid mail is not drawn. `cid:` inline images were never drawn in the frame
- * either (nothing in this build resolves them), so that half costs nothing; a REMOTE picture the
- * reader has consented to load is the half that does, and the render branch at the bottom of this
- * component hands those messages back to the frame rather than letting "Show images" become a
- * button that does nothing. Beacons are excluded from that test, because a beacon is not a
- * picture: it renders as nothing, and letting one drag a letter into a frame would undo this
- * whole rule for a thing the reader cannot see.
- *
- * ── THE ONE THING THIS MUST NEVER BECOME ────────────────────────────────────────────────
- *
- * **No untrusted markup STRING ever reaches a DOM sink — no `dangerouslySetInnerHTML`, no
- * `innerHTML`, no srcdoc-in-the-app-document.** The `srcdoc` sandbox is where the sanitizer's
- * OUTPUT STRING renders, and "the sanitizer said it was fine, so we can inline it" is the
- * sentence that removes that boundary. What the prose class renders natively is not that
- * string: {@link buildRichNodes} walks the sanitized DOM through a second, narrower allow-list
- * and emits DATA — text runs, bounded ints, gated hrefs — which `BodyText` turns into elements
- * it constructs itself. Sender bytes enter the app document only as React text nodes, and
- * every attribute on the constructed elements is a value this code computed.
- * `test/message-body-prose.test.ts` holds both halves: the structure renders, and no sender markup,
- * class, style, id or handler exists anywhere in the app's tree.
+ * The frame is the exception, and rigidity is the whole test. `prose` — render as
+ * {@link BodyText} over the message's TEXT part, in the app's own type — is now exactly
+ * `!`{@link isRigidLayout}: one reading of one document decides {@link SanitizedMail.reflow},
+ * {@link SanitizedMail.prose} and whether a frame is built at all. Most mail between people is
+ * a paragraph and a sign-off, html only because every client sends html — and a sandboxed
+ * iframe costs a document, a stylesheet, a measurement pass and a resize observer to draw it in
+ * the SENDER's type inside a product that has its own.
+ */
+
+/**
+ * Three tests were here and are gone: no picture, no background image, and a stylesheet under a length threshold.
+ * Calibrated against fixtures, they do not survive real mail — the commonest message there is (a business reply with
+ * a table for the quoted thread, a signature logo, and the `<style>` block a desktop client emits) failed two of them
+ * and was rendered in a frame, in the sender's type, for no design that existed. They answered "did the sender's
+ * client emit markup?", which is always yes, rather than "did the sender lay something out?" — and a DECLARED CANVAS
+ * is the only evidence of the second: `isRigidLayout` finds a fixed width at or past {@link RIGID_MIN_PX}, and that
+ * alone is a design the frame exists to render faithfully. Everything else is a letter: tables, inline images,
+ * signature logos and all.
+ */
+
+/**
+ * What the reader loses, said plainly: a picture in a non-rigid mail is not drawn. `cid:`
+ * images were never drawn in the frame either, so that half costs nothing; a REMOTE picture the
+ * reader consented to load is the half that does, and the render branch at the bottom hands
+ * those messages back to the frame rather than letting "Show images" become a button that does
+ * nothing. Beacons are excluded from that test: a beacon is not a picture — it renders as
+ * nothing, and letting one drag a letter into a frame would undo this rule for a thing the
+ * reader cannot see.
+ */
+
+/**
+ * The one thing this must never become: no untrusted markup STRING ever reaches a DOM sink — no
+ * `dangerouslySetInnerHTML`, no `innerHTML`, no srcdoc-in-the-app-document. The `srcdoc` sandbox is where the
+ * sanitizer's OUTPUT STRING renders, and "the sanitizer said it was fine, so we can inline it" is the sentence that
+ * removes that boundary. What the prose class renders natively is not that string: {@link buildRichNodes} walks the
+ * sanitized DOM through a second, narrower allow-list and emits DATA — text runs, bounded ints, gated hrefs — which
+ * `BodyText` turns into elements it constructs itself. Sender bytes enter the app document only as React text nodes,
+ * and every attribute is a value this code computed. `test/message-body-prose.test.ts` holds both halves: the
+ * structure renders, and no sender markup, class, style, id or handler exists anywhere in the app's tree.
  */
 
 /**
@@ -1325,34 +1263,24 @@ export function isRigidLayout(root: Element, styleText: string | readonly string
 }
 
 /**
- * Does a chunk of css declare a RESPONSIVE canvas — a `max-width` in the same band?
- *
- * ── THE SAME DECLARATION, SPELLED THE WAY TEMPLATES SPELL IT NOW ────────────────────────
- *
- * A fixed-width newsletter used to say `<table width="600">`. The responsive successor says
- * `<table width="100%" style="max-width:600px">` — one hundred percent of the column, capped at
- * the designed reading width — and hides its fixed `width="600"` twin inside an `<!--[if mso]>`
- * conditional comment for Outlook, WHICH THE SANITIZER STRIPS AS A COMMENT. So the only canvas
- * declaration that survives into the document this classifier reads is the `max-width`, and a
- * rule that refuses it classifies precisely the best-built marketing mail as a letter.
- *
- * That is not hypothetical; it is the reported defect. A real marketing message (nested
- * borderless layout tables, `width="100%"` wrappers, `max-width:580px` cards) walked into the
- * prose renderer, which set every layout cell in the app's own table typography — a border
- * drawn around each nesting level of a design that draws none.
- *
- * ── WHY THIS IS **NOT** PART OF {@link isRigidLayout} ───────────────────────────────────
- *
- * `declaresCanvas` deliberately refuses `max-width`, and that refusal stays right for what
- * RIGID decides: rigid mail is scale-to-fit, and a `max-width` document already reflows below
- * its cap, so shrinking it would shrink a document that fits. This predicate feeds the OTHER
- * decision — framed versus prose — where the question is not "must this be shrunk" but "did
- * the sender lay something out". A `max-width` canvas answers yes to the second and no to the
- * first, which is exactly the divergence {@link SanitizedMail.prose} reserved room for.
- *
- * Anchored at a declaration boundary like `declaresCanvas`, and for the same two near-misses:
- * `@media (max-width:620px)` is a QUERY about the viewport — inside `(`, which is not a
- * boundary — and every responsive template contains one.
+ * Does a chunk of css declare a RESPONSIVE canvas — a `max-width` in the same band? A
+ * fixed-width newsletter used to say `<table width="600">`; the responsive successor says
+ * `<table width="100%" style="max-width:600px">` and hides its fixed twin inside an
+ * `<!--[if mso]>` conditional the sanitizer strips as a comment. So the only canvas declaration
+ * surviving into the document this classifier reads is the `max-width`, and a rule refusing it
+ * classifies precisely the best-built marketing mail as a letter — the reported defect: a real
+ * marketing message (nested borderless tables, `max-width:580px` cards) walked into the prose
+ * renderer, which drew a border around each nesting level of a design that draws none.
+ */
+
+/**
+ * NOT part of {@link isRigidLayout}: `declaresCanvas` deliberately refuses `max-width`, and that stays right for what
+ * RIGID decides — rigid mail is scale-to-fit, and a `max-width` document already reflows below its cap, so shrinking
+ * it would shrink a document that fits. This predicate feeds the OTHER decision — framed versus prose — where the
+ * question is not "must this be shrunk" but "did the sender lay something out": a `max-width` canvas answers yes to
+ * the second and no to the first, exactly the divergence {@link SanitizedMail.prose} reserved room for. Anchored at a
+ * declaration boundary like `declaresCanvas`, for the same near-miss: `@media (max-width:620px)` is a QUERY about the
+ * viewport — inside `(`, not a boundary — and every responsive template contains one.
  */
 function declaresResponsiveCanvas(css: string): boolean {
   const re = /(?:^|[;{])\s*max-width\s*:\s*(\d+(?:\.\d+)?)\s*px/gi;
