@@ -1,84 +1,14 @@
 import { sql, type SQL } from "drizzle-orm";
 
 /**
- * DUPLICATE ACTIVE MAILBOXES — detected before the migrator runs, resolved by a human.
- *
- * ══ WHY THIS EXISTS OUTSIDE THE JOURNAL ═══════════════════════════════════════════════════
- *
- * Mail migration `0021_mailbox_address_unique` installs a partial unique index on
- * `(account_id, lower(address)) WHERE status <> 'disabled'`. `CREATE UNIQUE INDEX` fails
- * outright against data that already violates it, so the migration opens with a dedup prelude:
- * rank the duplicates, **keep the OLDEST**, disable the rest and delete their credentials.
- *
- * An independent review found that rule to be a data-loss hazard, and it is right. "Oldest" is
- * not evidence of health. The sequence is ordinary rather than exotic:
- *
- *   row A — created in March, credentials since expired, `status='error'`, last sync in April.
- *   row B — the user's working replacement: current credentials, `status='connected'`, syncing.
- *
- * The prelude keeps A, disables B, and DELETES B's credentials — which are envelope-encrypted
- * and not recoverable from anywhere else. The new index then refuses to let B be re-enabled
- * until A is disabled. The user's mail stops, and the migration reports success.
- *
- * ══ WHY A MIGRATION IS NOT THE FIX — THE ARGUMENT, WITH ITS LOOPHOLE NAMED ════════════════
- *
- * `0021` HAS ALREADY BEEN APPLIED to deployed databases and cannot be edited. The obvious next
- * move is a corrective migration, and the obvious reason it fails is: **an APPENDED entry always
- * runs too late.** drizzle 0.36.4 reads `max(created_at)` once and applies every entry above it,
- * so anything appended must sit above `0021`'s `when` to run on an already-migrated database at
- * all — and on the one population that matters (a populated database that has NOT taken `0021`
- * yet) the migrator therefore runs `0021` first, destroys the working row, and only then reaches
- * the correction.
- *
- * That argument is true only for APPENDED entries, and the qualifier matters, because there is
- * a loophole and it should be rejected on its merits rather than by an argument that overstates
- * itself. `readMigrationFiles` ignores `idx` and applies entries in journal ARRAY ORDER against
- * that single snapshot, so an entry INSERTED into the array before `0021`, with a `when` between
- * `0020`'s and `0021`'s, would run before `0021` on every pending database and be skipped on
- * every database that has already taken it. It is mechanically possible. It is still the wrong
- * answer:
- *
- *  · **SQL can only RAISE here, never resolve.** Choosing a survivor needs evidence a human
- *    weighs; a migration has no way to receive that. So the very best a guard migration buys is
- *    the fail-loud property this module already has, at a much higher price.
- *  · **The price is journal surgery.** Inserting mid-array means editing the sha-pinned scaffold
- *    (`POST_SPLIT_STATEMENTS`), four literal journal counts, and living with a permanent
- *    idx/tag anomaly — on the one artefact in this repository whose ordering being wrong is
- *    silent and permanent.
- *  · **Where it would beat this module, it is worse.** The only caller a TS guard misses is the
- *    Desktop local engine's own migrate loop, and a `RAISE` there bricks a stranger's local
- *    database with an error they cannot act on.
- *
- * And one fact strengthens the conclusion rather than the loophole: all pending entries apply
- * inside ONE transaction, so an appended corrective migration would run after the prelude in the
- * same transaction and could not even DETECT the destruction — a row the prelude disabled and
- * stripped is, by then, indistinguishable from a tombstone that was always there.
- *
- * So the resolution has to happen BEFORE the migrator, which is what this module is:
- * {@link assertNoActiveAddressDuplicates} is called by `runMigrations` ahead of the mail pass
- * and REFUSES to migrate a database whose duplicates `0021` would silently resolve, and
- * {@link resolveActiveAddressDuplicates} is the operator's tool for resolving them.
- *
- * **It does not cover every path into the mail journal, and that is stated rather than assumed.**
- * `runMigrations` is production's only route and the one ~30 real-Postgres test files take.
- * The in-memory test harness and `apps/sidecar/src/db.ts` compose `adoptBaseline` + `migrate`
- * themselves and never reach it. For the in-memory test database that is irrelevant (it is empty
- * every time). For the sidecar it is a real gap with an empty population — no desktop build
- * predating `0021` exists, so every local database is created with the index already in the
- * journal and the prelude runs against empty tables. The functions are exported from
- * `@trafficflow/db/admin`, the seam the sidecar already imports `JOURNALS` from, so wiring it in
- * is one line the next time that file is edited. This remaining gap is tracked as deferred work.
- *
- * ══ IT DOES NOT GUESS, AND THAT IS THE DESIGN ═════════════════════════════════════════════
- *
- * The obvious improvement — rank by credentials, then by `last_sync_at`, then by status — is
- * still a guess, and a guess that deletes a credential is the same class of defect at a better
- * hit rate. Every ordering has a case where it is wrong: a user who just re-entered a password
- * on the OLD row, a replacement created by a double-submit that never synced, two rows that
- * both work because the address is genuinely reachable twice. So the resolver reports the
- * EVIDENCE and requires the operator to name a keeper per group. This is a rare, manual,
- * one-database-at-a-time event; the cost of asking is a few minutes and the cost of guessing
- * is somebody's mailbox credential.
+ * Duplicate active mailboxes — detected before the migrator runs, resolved by a human. Mail
+ * 0021's unique index opens with a dedup prelude that keeps the OLDEST duplicate and deletes the
+ * others' credentials — but "oldest" is not evidence of health: a stale error row outranks the
+ * working replacement, whose credentials are then unrecoverable. A corrective migration cannot
+ * fix it, so the resolution happens BEFORE the migrator: {@link assertNoActiveAddressDuplicates}
+ * refuses to migrate, and {@link resolveActiveAddressDuplicates} is the operator's tool. It does
+ * not guess — a guess that deletes a credential is the same defect at a better hit rate; the
+ * resolver reports EVIDENCE and requires a named keeper.
  */
 
 /** The index `0021` installs. Its ABSENCE plus live duplicates is what the guard fires on. */
