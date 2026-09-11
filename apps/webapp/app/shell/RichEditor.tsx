@@ -16,81 +16,25 @@ import {
 } from "./rich-text";
 
 /**
- * THE COMPOSE AND REPLY EDITOR — eight controls, and a list of what they refuse.
- *
- * ── THE GRAMMAR IS THE PRODUCT DECISION ──────────────────────────────────────────────────
- *
- * Bold, italic, strike, link, bullet list, numbered list, block quote, and code — an inline
- * mark for a selection inside ONE line, a code BLOCK for one that spans lines (see
- * {@link applyCode}). No fonts, no colours, no sizes, no alignment, no tables, no images. That
- * is not a first cut waiting to be extended — it is the same list the server's outbound-HTML
- * sanitiser will accept, and the two are one decision written in two places because they are
- * enforced at two different trust boundaries. A control offered here that the server strips
- * would be a button that silently does nothing, which is worse than no button.
- *
- * THE INVARIANT RUNS BOTH WAYS, AND THAT IS WHAT ADMITTED THE CODE BLOCK. `StarterKit`'s
- * `codeBlock` was switched off here *because* `outbound-html.ts` had `code` in its allowlist
- * and no `pre` — so the only honest way to offer it was to move both ends together: the node
- * here, `pre` there, and the `<pre>` rendering in `htmlToPlainText` that keeps the two parts of
- * a `multipart/alternative` saying the same thing. Either half alone is a defect: the node
- * without the tag is a control whose output the server flattens into a run-on line, and the tag
- * without the node is an allowlist entry nothing can produce.
- *
- * The remaining refusals are stated as configuration rather than left to the defaults.
- * `StarterKit` ships headings and horizontal rules, and both would round-trip through the
- * editor, look right on screen, and then be discarded by the sanitizer on the way out.
- * Switching them off here is what makes the editor's own behaviour honest.
- *
- * ── MARKDOWN INPUT RULES COME FREE, AND THAT IS WHY THEY ARE HERE ────────────────────────
- *
- * `**bold**`, `- `, `1. `, `> `, `` `code` `` and ```` ``` ```` are TipTap's own input rules,
- * shipped with the extensions above. They are the reason this editor needs almost no toolbar:
- * somebody who writes mail in Markdown never has to look at one, and somebody who does not can
- * press the buttons. Cmd/Ctrl+B and +I are likewise the extensions'; Cmd/Ctrl+K is ours, below,
- * because a link needs a destination and TipTap has no opinion about where that comes from.
- *
- * ── HOW IT TALKS TO THE SCRATCH BUFFERS ──────────────────────────────────────────────────
- *
- * `onChange` fires with BOTH halves on every keystroke — `{text, html}` — and the caller
- * stores that verbatim. `text` is `editor.getText()`, the editor's own plain rendering; it is
- * what the send path's local checks read and what the optimistic draft row shows. It is NOT
- * what the recipient's plaintext client will see: the server derives that from the sanitized
- * markup, so the two parts of the multipart cannot be made to disagree by a client. Having
- * both here is what lets Send stay disabled on an empty editor without asking the server.
- *
- * ── WHY `value` IS NOT A CONTROLLED PROP IN THE REACT SENSE ──────────────────────────────
- *
- * ProseMirror owns a document and a selection; re-setting its content from a prop on every
- * render would move the caret to the end on every keystroke. So the incoming `value.html` is
- * applied ONLY when it differs from what the editor currently holds, which is exactly the
- * cases that must work — restoring a scratch buffer, and an AI draft landing in an open reply
- * — and never the case that must not, a re-render caused by the user's own typing.
+ * The compose and reply editor — eight controls: bold, italic, strike, link, bullet list, numbered list,
+ * block quote, code. No fonts, colours, sizes, alignment, tables, images: the same list the server's
+ * outbound-HTML sanitiser accepts — one decision at two trust boundaries, both ways (the code block was
+ * admitted by moving both ends together; headings are switched off because the sanitizer discards them).
+ * Markdown input rules come free from TipTap — why there is almost no toolbar. `onChange` fires `{text,
+ * html}` per keystroke; `text` is the editor's own plain rendering, never what the recipient's plaintext
+ * client sees (the server derives that). `value` is not React-controlled: incoming html is applied only
+ * when it differs, or every keystroke would move the caret.
  */
 
 /**
- * ENTER IS A SINGLE LINE BREAK, NOT A NEW PARAGRAPH.
- *
- * ── THE BUG THIS CLOSES ──────────────────────────────────────────────────────────────────
- *
- * StarterKit binds Enter to "split the paragraph", so a message someone types line by line
- * leaves as one `<p>` per line. The outbound sanitiser keeps `<p>`, and a `<p>` renders with a
- * top/bottom margin in every mail client — so a note that looked single-spaced on screen arrives
- * at the recipient double-spaced, a gap between every line. There is no way to close that from
- * the html side: the one thing that would (an inline `margin:0` style) is exactly what the
- * outbound allow-list strips, and rightly. The break has to be a `<br>` at the source.
- *
- * So Enter inserts a hard break — one `<br>`, single-spaced, inside the paragraph — which is
- * what a plain-text-minded mail composer has always meant by Enter. A blank line is two of them
- * in a row (`<br><br>`), which renders as the gap the author actually asked for. `outbound-html.ts`
- * mirrors this into the text/plain half: one break is one newline, a doubled break is a blank
- * line, so both parts of the alternative show the same spacing.
- *
- * ── WHY IT DEFERS INSIDE LISTS AND QUOTES ─────────────────────────────────────────────────
- *
- * Enter already has a job in a list item (start the next item) and a block quote (the built-in
- * exit behaviour), and stealing it would break both. The handler returns `false` there, which
- * lets the default keymap run — `ListItem.splitListItem` and the rest. The high priority is so
- * this binding is consulted before those and can decline, rather than never being reached.
+ * Enter is a single line break, not a new paragraph. StarterKit binds Enter to "split the
+ * paragraph", so a note typed line by line left as one `<p>` per line — and a `<p>` renders with
+ * margins in every mail client, so the single-spaced note arrived double-spaced, with no html-side
+ * fix (the inline `margin:0` is exactly what the outbound allow-list strips). So Enter inserts a
+ * hard break — one `<br>`; a blank line is two (`<br><br>`), and `outbound-html.ts` mirrors this
+ * into the text/plain half. It defers inside lists and quotes, where Enter already has a job: the
+ * handler returns `false` there and the default keymap runs; the high priority is so this can
+ * decline rather than never be reached.
  */
 const EnterAsHardBreak = Extension.create({
   name: "enterAsHardBreak",
@@ -208,45 +152,23 @@ export function RichEditor({
   const emitted = useRef<string>(richToHtml(value));
 
   /**
-   * ── A MESSAGE WITH NO FORMATTING IN IT REPORTS NO MARKUP, AND THAT IS LOAD-BEARING ──────
-   *
-   * `getHTML()` answers `<p>hi</p>` for a document nobody formatted, so emitting it verbatim
-   * would make `html` non-empty for EVERY non-empty editor. Three things downstream read
-   * "there is markup" as a decision rather than as a detail, and all three would be wrong:
-   * `compose.ts` would put `html` on the wire instead of `body`, so a plain note would leave
-   * as a `multipart/alternative` and the recipient's plain part would be the server's
-   * re-rendering of markup nobody wrote; `serializeRichValue` would store an envelope for
-   * every reply, and its bare-string branch — the one that keeps a plain draft readable by
-   * the bundle that predates this editor — would become unreachable code that no test could
-   * distinguish from working; and a plain send would stop being byte-identical to the one
-   * this change replaced, which is the difference between adding a feature and changing
-   * everybody's mail.
-   *
-   * THE TEST IS THE ROUND TRIP, not a hand-written "does it contain a tag". `richToHtml` is
-   * how a value becomes a document, so a document that serialises to exactly what that helper
-   * would have produced from the text alone carries nothing the text does not already say —
-   * hard breaks and paragraph splits included, which is why this is not `getText()`-only
-   * comparison of the visible characters. A second predicate could disagree with the loader,
-   * and the disagreement would surface as somebody's line breaks vanishing on reload; asking
-   * the loader is the only check that cannot drift from it. Same discipline, and the same
-   * sentence, as `serializeRichValue`.
+   * A message with no formatting reports no markup, and that is load-bearing: `getHTML()` answers
+   * `<p>hi</p>` for an unformatted document, and three consumers read "there is markup" as a
+   * decision — `compose.ts` would send a plain note as `multipart/alternative`,
+   * `serializeRichValue`'s bare-string branch would become unreachable, and a plain send would stop
+   * being byte-identical to before. The test is the ROUND TRIP, not a hand-written "contains a
+   * tag": a document serialising to exactly what `richToHtml` would produce from the text alone
+   * carries nothing the text does not say — asking the loader is the only check that cannot drift
+   * from it (drift would surface as line breaks vanishing on reload).
    */
   /**
-   * WHAT THE CALLER ALREADY KNOWS — updated on render AND inside `emit`, and the second half
-   * is not redundant.
-   *
-   * The no-op guard below compares against this. Tracking only the `value` PROP looks
-   * equivalent and is not: a prop refreshes on render, so two transactions inside one tick are
-   * both measured against the state before the first of them. Measured in production, on the
-   * live build, before this line existed: `setContent` → `toggleBold` → `clearContent` in one
-   * block wrote the text, wrote the formatted envelope, and then SILENTLY DROPPED the clear,
-   * because emptying the editor produced the same `{"",""}` the stale prop still held. The
-   * scratch buffer kept a reply that was no longer on screen.
-   *
-   * A person cannot do that — React flushes between discrete events, so each keystroke gets its
-   * own render — but a program can, and several already do: a generated draft landing at a
-   * caret, a paste handler, a future clear button. Recording what we told the caller, at the
-   * moment we tell them, is exact in both cases and costs one assignment.
+   * What the caller already knows — updated on render AND inside `emit`, and the second half is not
+   * redundant: the no-op guard compares against this, and a prop refreshes only on render, so two
+   * transactions inside one tick are both measured against the state before the first. Measured in
+   * production: `setContent → toggleBold → clearContent` in one block silently dropped the clear
+   * (emptying produced the same `{"",""}` the stale prop held), and the scratch buffer kept a reply
+   * no longer on screen. A person cannot do that — React flushes between events — but a program
+   * can: a generated draft, a paste handler, a future clear button.
    */
   const told = useRef<RichValue>(value);
   told.current = value;
@@ -267,20 +189,13 @@ export function RichEditor({
     // in both branches, which is what makes one ref serve both.
     emitted.current = markup;
     /**
-     * A TRANSACTION THAT PRODUCED THE VALUE THE CALLER ALREADY HAS IS NOT A CHANGE.
-     *
-     * TipTap emits `update` for things that are not edits — `setEditable` does it by default,
-     * and that one cost a real draft (see the effect below). The caller cannot tell such an
-     * emission from a keystroke, and it must not have to: what it does with a change is
-     * WRITE THE SCRATCH BUFFER, whose rule is that an empty value removes the key. So one
-     * spurious empty emission on mount is somebody's unsent message, deleted by the editor
-     * that was opening to show it to them.
-     *
-     * Compared against what the caller KNOWS (`told`) rather than against `emitted.current`:
-     * that ref holds the document's serialisation, which is a different question — it answers
-     * "would re-setting the content be a no-op", not "would the caller's state change". They
-     * disagree for a plain document, where `emitted.current` is `<p>hi</p>` and the caller was
-     * told `html: ""`.
+     * A transaction that produced the value the caller already has is not a change. TipTap emits
+     * `update` for things that are not edits (`setEditable` by default), the caller cannot tell
+     * such an emission from a keystroke, and what it does with a change is WRITE THE SCRATCH
+     * BUFFER, whose rule is that an empty value removes the key — one spurious empty emission on
+     * mount is somebody's unsent message, deleted by the editor opening to show it. Compared
+     * against what the caller KNOWS (`told`), not `emitted.current`, which answers a different
+     * question and disagrees for a plain document (`<p>hi</p>` vs `html: ""`).
      */
     if (text === told.current.text && html === told.current.html) return;
     told.current = { text, html };
@@ -305,21 +220,13 @@ export function RichEditor({
     editorProps: {
       attributes: {
         /**
-         * ── THE BODY IS A MULTI-LINE TEXT BOX, AND IT HAS TO SAY SO ──────────────────────────
-         *
-         * ProseMirror's surface is a `contenteditable` `<div>`. `contenteditable` is not part of
-         * any implicit role mapping, so the element arrived in the accessibility tree as a plain
-         * group carrying a name: a reader landing on it was told what it is called and not that
-         * it can be typed into, and nothing said the return key inserts a line rather than
-         * submitting. Both facts are attributes, and neither was present.
-         *
+         * The body is a multi-line text box, and it has to say so. ProseMirror's surface is a
+         * `contenteditable` `<div>`, which maps to no implicit role: a reader landing on it was
+         * told its name and not that it can be typed into, nor that Return inserts a line.
          * `role="textbox"` with `aria-multiline="true"` is the pair the platforms read — UIA
-         * reports an Edit control with the multiline pattern, AT-SPI an editable text object —
-         * and it is what makes the body findable by role at all rather than only by its text.
-         * The name is `ariaLabel`, which every caller has always been required to pass.
-         *
-         * Declared BEFORE `aria-label` for no reason but reading order; nothing here depends on
-         * the order and the spread below cannot reach these two.
+         * reports an Edit control with the multiline pattern, AT-SPI an editable text object — and
+         * it makes the body findable by role. The name is `ariaLabel`, which every caller passes.
+         * Order before `aria-label` is reading order only.
          */
         role: "textbox",
         "aria-multiline": "true",
@@ -360,20 +267,13 @@ export function RichEditor({
    */
   useEffect(() => {
     /**
-     * `emitUpdate: false` — THE SECOND ARGUMENT IS LOAD-BEARING AND ITS DEFAULT IS WRONG HERE.
-     *
-     * `setEditable(editable)` defaults to emitting an `update` (`@tiptap/core`, `setEditable`:
-     * `if (emitUpdate) this.emit("update", …)`), and this effect runs on mount. So a freshly
-     * mounted editor announced a change it had not had, carrying the empty document it starts
-     * with — and Compose's `onChange` writes the scratch buffer, whose rule is that an empty
-     * form removes the key. Opening Compose therefore DELETED the half-written message it was
-     * about to restore. Measured, not reasoned about: the buffer held
-     * `{"body":"Halb fertig."…}` before the remount and nothing after it, and the stack ran
-     * `setEditable → emit(update) → onChange → writeComposeDraft → removeItem`.
-     *
-     * Editability changes no content, so it has no business reporting one. The guard in `emit`
-     * closes the same hole from the other side, and both are kept: this one states the local
-     * fact, that one refuses to believe any emission that says nothing changed.
+     * `emitUpdate: false` — the second argument is load-bearing and its default is wrong here.
+     * `setEditable(editable)` defaults to emitting an `update`, and this effect runs on mount: a
+     * freshly mounted editor announced a change it had not had, carrying its empty starting
+     * document — and Compose's `onChange` writes the scratch buffer, whose rule removes the key for
+     * an empty form. Opening Compose therefore DELETED the half-written message it was about to
+     * restore (measured: the buffer held text before the remount and nothing after). The guard in
+     * `emit` closes the same hole from the other side; both are kept.
      */
     editor?.setEditable(editable, false);
   }, [editor, editable]);
@@ -427,17 +327,13 @@ export function RichEditor({
   };
 
   /**
-   * THE PLACEHOLDER IS A CLASS ON THE WRAPPER, not TipTap's `Placeholder` extension.
-   *
-   * That extension lives in `@tiptap/extensions`, which is a transitive dependency here rather
-   * than a declared one — reaching into it would make the editor's behaviour depend on a
-   * package this app does not name. `.rte-surface::before` reads the `data-placeholder`
-   * attribute already on the surface and is shown only while this class is on, which needs no
-   * new dependency and no plugin in the transaction pipeline.
-   *
-   * Emptiness is decided on the TEXT, by the same predicate that decides whether there is
-   * anything to send or to keep: an empty ProseMirror document serialises to `<p></p>`, so a
-   * markup test would hide the placeholder the moment the editor mounted.
+   * The placeholder is a class on the wrapper, not TipTap's `Placeholder` extension: that lives in
+   * `@tiptap/extensions`, a transitive dependency this app does not name, and reaching into it
+   * would tie the editor's behaviour to a package outside the manifest. `.rte-surface::before`
+   * reads the `data-placeholder` attribute already on the surface — no new dependency, no plugin in
+   * the transaction pipeline. Emptiness is decided on the TEXT, by the same predicate that decides
+   * whether there is anything to send: an empty document serialises to `<p></p>`, so a markup test
+   * would hide the placeholder on mount.
    */
   const cls = [
     "rte",
@@ -447,25 +343,14 @@ export function RichEditor({
   ].filter(Boolean).join(" ");
 
   /**
-   * `rte-body` — THE MIDDLE LINK OF THE CHAIN, AND THE REASON THE BOX HAD A DEAD ZONE.
-   *
-   * `EditorContent` renders a plain `<div>` of its own and appends ProseMirror's
-   * `contenteditable` INSIDE it (`@tiptap/react`, `PureEditorContent.render`). So the flex
-   * child of `.rte` is that div — not the surface — and it was unclassed: `.compose-editor
-   * .rte-surface{flex:1}` in `app.css` therefore named an element whose parent was not a flex
-   * container, which is a declaration that computes and does nothing. The surface stayed at its
-   * content height, the panel kept the rest, and a click below the first line landed on the
-   * wrapper rather than on anything editable — a 220px box that only took a click on the line
-   * of text in it. Reported as "the textbox can't be clicked fully, only the first text line".
-   *
-   * The fix is the chain, not a handler: `.rte` → `.rte-body` → `.rte-surface` are all flex
-   * columns that pass the height down, so the contenteditable genuinely fills its box. Once it
-   * does, nothing else is needed — a click inside a `contenteditable` is the browser's own
-   * caret placement, and ProseMirror maps it to the nearest document position, which for a
-   * click in the padding under the last line is the end of that line. A click-to-focus handler
-   * would have been the other option and it is the wrong one: it fights the browser for
-   * selection, breaks click-and-drag, and would have left the real defect — a one-line-tall
-   * surface inside a frame at least 220px tall — in place underneath it.
+   * `rte-body` — the middle link of the chain, and the reason the box had a dead zone. `EditorContent`
+   * renders a `<div>` of its own and appends the `contenteditable` INSIDE it, so the flex child of `.rte`
+   * is that div — and it was unclassed: `.compose-editor .rte-surface{flex:1}` named an element whose
+   * parent was not a flex container, the surface stayed at content height, and a click below the first
+   * line landed on the wrapper ("the textbox can't be clicked fully"). The fix is the chain, not a
+   * handler: `.rte` → `.rte-body` → `.rte-surface` all pass the height down; a click inside a
+   * `contenteditable` is then the browser's own caret placement. A click-to-focus handler would fight the
+   * browser for selection and leave the real defect underneath.
    */
   return (
     <div className={cls}>
@@ -484,16 +369,14 @@ export function RichEditor({
 }
 
 /**
- * The toolbar, and why it is fixed rather than a bubble menu.
- *
- * A bubble menu appears on selection, which means the controls are invisible until you already
- * know they exist — fine for a document editor somebody lives in, wrong for a reply box a
- * person opens twice a day. Eight buttons in a row, always in the same place, is the smaller
- * thing to learn. It is also the accessible one: a menu that materialises near a selection is
- * a focus-order problem, and this is a plain row of buttons in the tab order.
- *
- * Each button reports its own pressed state from the editor, so the row says what the cursor
- * is standing in rather than what was last clicked.
+ * The toolbar, and why it is fixed rather than a bubble menu. A bubble menu
+ * appears on selection, so the controls are invisible until you already
+ * know they exist — fine for a document editor somebody lives in, wrong for
+ * a reply box opened twice a day. Eight buttons in a row, always in the
+ * same place, is the smaller thing to learn, and the accessible one: a menu
+ * that materialises near a selection is a focus-order problem; this is a
+ * plain row in the tab order. Each button reports its pressed state from
+ * the editor, so the row says what the cursor is standing in.
  */
 function Toolbar({ editor, editable, linkOpen, onLinkToggle, onLinkClose }: {
   editor: Editor | null;
@@ -505,17 +388,13 @@ function Toolbar({ editor, editable, linkOpen, onLinkToggle, onLinkClose }: {
   const t = useTranslations("compose");
 
   /**
-   * The pressed states, SUBSCRIBED rather than read during render.
-   *
-   * `useEditor` does not re-render its owner on every transaction — that is a deliberate
-   * performance decision in TipTap 3, and it means a toolbar that called `editor.isActive()`
-   * straight in its render body would paint the state as of the last React render and then sit
-   * there while the caret moved. Measured, not assumed: the first version of this component did
-   * exactly that, and its test read `aria-pressed="false"` immediately after a successful
-   * `toggleBold` — the editor was right and the toolbar was stale.
-   *
-   * `useEditorState` subscribes to the transactions and re-renders only when one of these eight
-   * booleans actually changes, which is the whole reason to select them rather than the editor.
+   * The pressed states, subscribed rather than read during render. `useEditor` does not re-render
+   * its owner on every transaction (a deliberate TipTap 3 decision), so a toolbar calling
+   * `editor.isActive()` in its render body paints the state as of the last React render and sits
+   * there while the caret moves — measured: the first version's test read `aria-pressed="false"`
+   * immediately after a successful `toggleBold`. `useEditorState` subscribes to the transactions
+   * and re-renders only when one of these eight booleans changes, which is the whole reason to
+   * select them rather than the editor.
    */
   const active = useEditorState({
     editor,

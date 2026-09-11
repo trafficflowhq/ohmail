@@ -1,43 +1,14 @@
 "use client";
 
 /**
- * ═══ THE COMPOSE FORM BECOMES A ROW ON THE ACCOUNT ════════════════════════════════════════
- *
- * A message somebody is writing used to live in exactly one place: `localStorage`, under one
- * key, in this browser. That is enough to survive navigating away and a reload — which is what
- * it was built for — and it is not enough for anything else. Close the tab on a phone and the
- * draft is on the laptop's disk. Clear site data and it is gone. Open the account anywhere else
- * and there is nothing there. `compose.ts`'s own header says so in as many words and calls
- * server drafts "a later phase"; this is that phase.
- *
- * The scratch buffer STAYS, and is not a duplicate of this. It is written on every keystroke and
- * costs nothing; this writes to the account on a two-second pause. Between the two, a crashed
- * tab loses at most the local buffer's last keystroke and the account's last two seconds, and
- * the local one is what restores instantly on reload with no round trip.
- *
- * ── ONE ROW, FIRST KEYSTROKE TO DELIVERY ────────────────────────────────────────────────
- *
- * The first meaningful edit creates a `drafts` row and this hook ADOPTS its server id
- * (`MutationResult.entityId`). Every later save PUTs that row. Send takes the same id — the
- * mutation carries `draftId`, the adapter skips its own create and sends what is already there.
- * Discard deletes it. There is no point at which a compose corresponds to two rows, and no path
- * that leaves an abandoned one behind.
- *
- * ── WHAT COUNTS AS A MEANINGFUL EDIT ────────────────────────────────────────────────────
- *
- * The same rule `writeComposeDraft` applies, and deliberately the same one: some text in a
- * recipient field, the subject or the body. A sender pick on an untouched form is not a draft —
- * saving it would put a row on the account for every visit to Compose, which is the write storm
- * `compose.ts` was right to refuse. `html` does not count either: an empty ProseMirror document
- * serialises to `<p></p>`, so testing it would make merely OPENING Compose write a draft.
- *
- * ── WHY IT IS DEBOUNCED, AND WHY IT ALSO DEDUPES ────────────────────────────────────────
- *
- * The debounce (2 s after the last change) is the obvious half. The dedupe is the half that
- * matters: React re-renders for reasons that have nothing to do with typing — a sync drain, a
- * theme change, another pane — and a save keyed on "the effect ran" would PUT the same text
- * repeatedly for as long as the form was open. So the last saved value is remembered and an
- * identical form writes nothing at all.
+ * The compose form becomes a row on the account. The scratch buffer stays and is not a duplicate: it is written
+ * per keystroke and restores instantly on reload; this writes to the account on a two-second pause — a crashed
+ * tab loses at most the buffer's last keystroke and the account's last two seconds. One row, first keystroke to
+ * delivery: the first meaningful edit creates a `drafts` row and this hook adopts its server id; later saves
+ * PUT it; Send carries the same `draftId`; Discard deletes it — no path leaves an abandoned row. A meaningful
+ * edit is `writeComposeDraft`'s rule: text in a recipient field, subject or body (`html` does not count — an
+ * empty document serialises to `<p></p>`). Debounced AND deduped: React re-renders for reasons unrelated to
+ * typing, so the last saved value is remembered and an identical form writes nothing.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -67,15 +38,14 @@ export function worthSaving(f: ComposeFields): boolean {
 }
 
 /**
- * WOULD REOPENING A ROW WRITE OVER WHAT IS ON SCREEN?
- *
- * The reopen writes the row's stored fields over the form and the scratch buffer, and for a PARKED
- * message that buffer is the only copy of anything typed since — its saves are refused. The old
- * question was "is a DIFFERENT row on screen", which the held message's own row answers no to, so
- * its text went. This asks about the buffer's DRIFT from the row instead.
- *
- * Recipients compare as ADDRESSES, never as chip text: the row stores parsed addresses and the
- * buffer holds what somebody typed, so a formatting round-trip must not read as an edit.
+ * Would reopening a row write over what is on screen? The reopen writes the
+ * row's stored fields over the form and the scratch buffer, and for a
+ * PARKED message that buffer is the only copy of anything typed since (its
+ * saves are refused). The old question — "is a DIFFERENT row on screen" —
+ * answered no for the held message's own row, so its text went. This asks
+ * about the buffer's DRIFT from the row instead. Recipients compare as
+ * ADDRESSES, never chip text: the row stores parsed addresses, the buffer
+ * holds what somebody typed, and a formatting round-trip is not an edit.
  */
 export function reopenWouldOverwrite(buffer: ComposeFields, seeded: ComposeFields): boolean {
   const files = buffer.attachments?.length ?? 0;
@@ -99,22 +69,14 @@ export function reopenWouldOverwrite(buffer: ComposeFields, seeded: ComposeField
 }
 
 /**
- * ── WHAT IS WORTH *CREATING* A ROW FOR, WHICH IS NOT THE SAME QUESTION ──────────────────────
- *
- * A RECIPIENT IS NOT A MESSAGE. Every door that opens a compose with somebody already in the To
- * line — a contact's Write, a `mailto:` link from outside the app — seeds a form that
- * {@link worthSaving} calls worth saving, so the first two-second pause after the door POSTed a
- * row with no subject and no body. Measured on the release candidate: the Drafts list filled with
- * "(no subject)" rows, one per use of the door, none of which anybody had written anything into.
- *
- * So a CREATE additionally requires something the person typed: a subject or a body. The UPDATE
- * arm keeps {@link worthSaving} unchanged — once a row exists, clearing the subject and the body
- * out of it is an edit that must be stored, not a reason to stop saving — and that asymmetry is
- * the whole rule. Invariant S(1) is the reason it matters: a row minted by a door is a second row
- * for a message that has not started, and the send then has two.
- *
- * `html` is deliberately not counted: an empty rich editor serialises to `<p></p>`, so testing it
- * would put the write storm straight back.
+ * What is worth CREATING a row for — not the same question as {@link worthSaving}. A recipient is
+ * not a message: every door that opens a compose with somebody in the To line (a contact's Write, a
+ * `mailto:`) seeds a form `worthSaving` accepts, so the first pause POSTed a row with no subject
+ * and no body — measured on the release candidate, the Drafts list filled with "(no subject)" rows.
+ * A CREATE additionally requires something the person typed: a subject or a body. The UPDATE arm
+ * keeps `worthSaving` unchanged — clearing the subject and body out of an existing row is an edit
+ * to store — and that asymmetry is the whole rule (invariant S(1): a door-minted row is a second
+ * row for an unstarted message). `html` is not counted: `<p></p>` would restore the write storm.
  */
 export function worthCreating(f: ComposeFields): boolean {
   return f.subject.trim() !== "" || f.body.trim() !== "";
@@ -133,16 +95,13 @@ function signatureOf(f: ComposeFields): string {
 }
 
 /**
- * HOW A BOUND COMPOSE'S MESSAGE ENDED — the input to {@link ComposeAutosave.settleCompose}.
- *
- * Two arms are built. The THIRD that invariant T names — the durable outbox settling a `mail_send`
- * for this lane whose owner died — is NOT here, and its absence is deliberate and recorded: the
- * engine keeps no settled-mutation stream a later mount can read. `replayOutboxInner` dispatches a
- * restored entry and DISCARDS the result; `lateResults` is written only on the timeout path, for
- * the surface that is still waiting; and `flushPending()` is a destructive pull already read by
- * `useMailSend.flush`, so a second consumer would swallow settlements meant for the first.
- * `mail-send.ts`'s own header states the same fact from the other side. Polling cannot recover a
- * result that was never retained, so the seam is reported rather than worked around.
+ * How a bound compose's message ended — the input to {@link ComposeAutosave.settleCompose}. Two
+ * arms are built; the third that invariant T names — the durable outbox settling a `mail_send`
+ * whose owner died — is NOT here, deliberately and recorded: the engine keeps no settled-mutation
+ * stream a later mount can read (`replayOutboxInner` discards results; `lateResults` is written
+ * only on the timeout path; `flushPending()` is a destructive pull owned by `useMailSend.flush`).
+ * Polling cannot recover a result that was never retained, so the seam is reported rather than
+ * worked around.
  */
 export type ComposeFate =
   /**
@@ -163,16 +122,14 @@ export interface ComposeAutosave {
    */
   draftId: string | null;
   /**
-   * Take over an existing draft — opening one from the Drafts list. The caller sets the form
-   * fields; this adopts the id and marks the current text as already-saved, so opening a draft
-   * and closing it again writes nothing.
-   *
-   * THE ROW MUST BE IN THE MIRROR. `mutationEffects` resolves an update against it and answers
-   * no effects for an id it does not know, which the engine reports as `not_found` WITHOUT going
-   * near the wire. That is the right refusal — a draft another device deleted while this tab was
-   * typing must not be resurrected by a PUT — and it is only safe because the one caller is the
-   * Drafts list, which is built from that same mirror. An id from anywhere else would fail
-   * silently, so there is deliberately no other caller.
+   * Take over an existing draft — opening one from the Drafts list. The
+   * caller sets the form fields; this adopts the id and marks the current
+   * text as already-saved, so opening and closing a draft writes nothing.
+   * The row must be in the mirror: `mutationEffects` answers no effects for
+   * an unknown id and the engine reports `not_found` without touching the
+   * wire — the right refusal (a draft another device deleted must not be
+   * resurrected by a PUT), and safe only because the one caller is the
+   * Drafts list, built from that same mirror. Deliberately no other caller.
    */
   adopt: (draftId: string, fields: ComposeFields) => void;
   /**
@@ -183,37 +140,24 @@ export interface ComposeAutosave {
   /** Delete the row, if there is one. Returns once the mutation has been dispatched. */
   discard: () => Promise<void>;
   /**
-   * ── M'S FATE BECAME KNOWN — invariant T's one function ───────────────────────────────────────
-   *
-   * Every ending of a bound compose comes through here, and it exists because three of them did
-   * not. Each arrived at the same wrong state by a different road: the fate resolved, the durable
-   * record was tidied away, and the compose stayed POPULATED with the message's text behind a
-   * projection reading `idle` — after which an ordinary press minted a fresh Idempotency-Key for
-   * a message that had already gone (the mirror-`sent` reload) or an ordinary pause wrote a second
-   * row for it (the 409 that restored the row after the binding was dropped).
-   *
-   * `sentByMirror` IS THE LIVE CONFIRMED PATH, not a second implementation of it: `onSendSettled`
-   * calls this same function, so the reload arm cannot drift from the live one again — which is
-   * exactly how the two came to disagree. It deliberately does NOT show a "sent" beat; the live
-   * path does not, and a visible one is new design rather than a fix.
+   * M's fate became known — invariant T's one function. Every ending of a bound compose comes
+   * through here, because three endings did not, each arriving at the same wrong state: fate
+   * resolved, durable record tidied, compose still POPULATED behind an `idle` projection — after
+   * which an ordinary press minted a fresh Idempotency-Key for a delivered message, or an ordinary
+   * pause wrote a second row. `sentByMirror` IS the live confirmed path, not a second
+   * implementation: `onSendSettled` calls this same function, so the reload arm cannot drift from
+   * the live one again. It shows no "sent" beat; the live path does not either.
    */
   settleCompose: (fate: ComposeFate) => void;
   /**
-   * A COMPOSE SEND CONFIRMED — release the row if the send used it, DELETE it if the send made
-   * its own.
-   *
-   * `sentDraftId` is the `draftId` the settled mutation carried. When it names this hook's row,
-   * the row has become the sent message and is released exactly as before. When the send carried
-   * NO id while this hook holds one, the press beat the first save's round trip: the mutation
-   * was built before the create confirmed, the adapter made a second row and sent THAT, and the
-   * row adopted here belongs to a message that has been delivered. Releasing it — which is what
-   * this path did — leaves the sent message in Drafts as a phantom, reopenable with Send live:
-   * a double-send invite that survives reload and re-auth, because the server legitimately
-   * holds the row as a draft and no sync can know it was superseded. The window is real, not
-   * theoretical — press Send inside the create's round trip (the timer fires two seconds after
-   * the last change) and the mutation is built before the row id exists. The create that
-   * confirms only AFTER the settle is the epoch guard's case and is undone there; this handles
-   * the one that confirmed BEFORE.
+   * A compose send confirmed — release the row if the send used it, DELETE it if the send made its
+   * own. `sentDraftId` is the settled mutation's `draftId`: naming this hook's row, the row became
+   * the sent message and is released. When the send carried NO id while this hook holds one, the
+   * press beat the first save's round trip — the adapter made a second row and sent that, so the
+   * row adopted here belongs to a delivered message: releasing it leaves a phantom in Drafts,
+   * reopenable with Send live — a double-send invite no sync can detect. The window is real: press
+   * Send inside the create's round trip. A create confirming AFTER the settle is the epoch guard's
+   * case; this handles the one that confirmed BEFORE.
    */
   settled: (sentDraftId: string | null) => void;
 }
@@ -273,16 +217,13 @@ export function useComposeAutosave(opts: {
   /** One save at a time: a second create while the first is in flight is a second row. */
   const inFlight = useRef(false);
   /**
-   * WHICH FORM THE IN-FLIGHT SAVE BELONGS TO — bumped by `adopt`, `release` and `discard`.
-   *
-   * The debounce is two seconds and a create takes a round trip, so there is a real window in
-   * which the form is abandoned WHILE ITS FIRST SAVE IS ON THE WIRE: press Discard, or Send, at
-   * 2.01s. `release()` clears `draftId`, the create then confirms, and the old code adopted its
-   * `entityId` — pointing the next compose at a row nobody asked for, or, once the view had
-   * unmounted, leaving that row on the account with no surface that knows about it. It is
-   * invisible: the Drafts list simply grows a copy of a message you discarded or sent.
-   *
-   * Cancel is what makes the window easy to hit, which is why it is closed in the same slice.
+   * Which form the in-flight save belongs to — bumped by `adopt`, `release` and `discard`. The
+   * debounce is two seconds and a create takes a round trip, so a form can be abandoned WHILE its
+   * first save is on the wire: press Discard or Send at 2.01 s, `release()` clears `draftId`, the
+   * create then confirms, and the old code adopted its `entityId` — pointing the next compose at a
+   * row nobody asked for, or leaving that row on the account with no surface that knows it (the
+   * Drafts list grows a copy of a message you discarded). Cancel makes the window easy to hit,
+   * which is why it is closed in the same slice.
    */
   const epoch = useRef(0);
 
@@ -305,57 +246,14 @@ export function useComposeAutosave(opts: {
   }, []);
 
   /**
-   * ── THE ROW THIS SURFACE WAS HOLDING WHEN THE TAB DIED, ADOPTED ON MOUNT ───────────────────
-   *
-   * A reload restores the message's TEXT from the scratch buffer and used to restore nothing
-   * about its row, so the first pause afterwards CREATED one. The durable send record still named
-   * the row the press had carried, and one message under two rows is what unlocked Send for a
-   * send whose outcome nobody could confirm — the reviewed sequence: send from saved draft `d1`,
-   * unverified, reload, autosave mints `d2`, press, second delivery.
-   *
-   * ── IT ADOPTS ONLY WHAT THE MIRROR CALLS A DRAFT ───────────────────────────────────────────
-   *
-   * The same rule {@link ComposeAutosave.adopt} states, applied to an id nobody re-checked. The
-   * mirror is the authority for two different refusals and both matter here: an id it does not
-   * know at all resolves an update to no effects and the engine answers `not_found` without going
-   * near the wire (a row another device deleted must not be resurrected by a PUT), and a row past
-   * `draft` — `unverified`, or a stranded `sending` — is one the server refuses to send under any
-   * key, so adopting it would point every autosave PUT and the Send press at that refusal.
-   *
-   * Not adopting is safe rather than merely tolerable: the compose SESSION is what parks an
-   * unresolved send (`mail-send.ts`), and it survives the reload whether or not a row does.
-   *
-   * ── EXCEPT FOR A MESSAGE WE ARE STILL WAITING ON, WHERE DROPPING WAS THE DEFECT ────────────
-   *
-   * That last sentence was true and incomplete, and the gap between the two was a second copy in
-   * a recipient's mailbox. The session does keep such a message parked — but dropping its row
-   * let the next pause CREATE one, so the drafts list held two rows for one message before
-   * anybody reopened anything, and the surface presented the fresh row as the message. Measured
-   * on the release candidate: park a send from saved draft `d1`, reload, one press, total 2.
-   *
-   * So {@link holdOf} is asked first, and while it answers anything but `free` this surface takes
-   * no row at all: the stored id is kept, nothing is adopted, and the save effect creates nothing.
-   * It is the same predicate `openDraft`'s parked door reads, which is the point — the two were
-   * measured disagreeing, twice, and each disagreement was a second copy in a mailbox.
-   *
-   * ── AND "THE MIRROR HAS NOT LOADED YET" IS NOT "THERE IS NO SUCH ROW" ─────────────────────
-   *
-   * The two look identical through `get`, which answers nothing for both — and on the path this
-   * exists for, a reload, the mirror is EMPTY at mount: the shell starts the engine in an effect
-   * and the rows arrive from storage afterwards. A first version of this asked once and threw the
-   * stored id away on a miss, which is the fix defeating itself on precisely the cold start it
-   * was written for. `holdOf` answers `unknown` for it, and `unknown` WAITS — the engine's own
-   * notifications drive the retry. Waiting for ever is the safe direction: the stored id is
-   * cleared by every door that replaces the form and by a confirmed send, so nothing accumulates.
-   *
-   * A ROW PAST `draft` IS NO LONGER DROPPED, and that is the change invariant S(2) makes here.
-   * Dropping it let the next pause mint a fresh row for a message the server is still deciding
-   * about — one message, two rows, and the fresh one presented as the message. `holdOf` calls
-   * every non-`draft` status `parked`, so the row is kept written down and the question stays
-   * open: a late confirmation or a sweep resolves it and the row is adopted then.
-   *
-   * Once. The stored id is the state the reload came back to; anything after that is this hook's
-   * own doing and is already in `draftId`.
+   * The row this surface was holding when the tab died, adopted on mount. A reload restored the TEXT and
+   * nothing about the row, so the first pause created one — one message under two rows, which unlocked
+   * Send for an unverified send. It adopts only what the mirror calls a draft: an unknown id answers
+   * `not_found` off the wire, and a row past `draft` is one the server refuses to send. A parked message
+   * is neither adopted nor dropped ({@link holdOf} first; dropping minted the measured duplicate — the
+   * same predicate `openDraft`'s parked door reads). "Mirror not loaded" is not "no such row": the mirror
+   * is EMPTY at mount on a reload, so `unknown` WAITS — the engine's notifications drive the retry, and
+   * every form-replacing door clears the stored id. Once.
    */
   const settledRef = useRef<(sentDraftId: string | null) => void>(() => {});
   /* LATE-BOUND, and not decoration: the adoption effect below is declared ABOVE `settleCompose`
@@ -373,17 +271,16 @@ export function useComposeAutosave(opts: {
     }
     /** `true` = the question is answered, whichever way; `false` = the mirror cannot say yet. */
     const settle = (): boolean => {
-      /* ── A MESSAGE WE ARE STILL WAITING ON IS NEITHER ADOPTED NOR DROPPED ──────────────────
-         The row is kept written down and the question is left open. Dropping it is what let the
-         next pause mint a second row for this one message, which is the measured duplicate; and
-         adopting it would point every PUT, and a Discard's DELETE, at a row the server may be
-         sending right now. So this surface takes no row at all while the park lasts — the same
-         thing `openDraft`'s parked door does, from the same predicate — and the send stays named
-         by the session, which is what refuses the press.
-
-         `false` for `unknown` too, so the engine's own notifications ask again: the mirror is
-         empty at mount on a reload, and the record can be resolved (a late confirmation, a sweep)
-         while this compose is still on screen. */
+      /* A message we are still waiting on is neither adopted nor dropped:
+         the row is kept written down and the question left open. Dropping it
+         let the next pause mint a second row for this one message (the
+         measured duplicate); adopting it would point every PUT, and a
+         Discard's DELETE, at a row the server may be sending right now. So
+         this surface takes no row while the park lasts — the same thing
+         `openDraft`'s parked door does, from the same predicate — and the
+         send stays named by the session, which refuses the press. `false`
+         for `unknown` too, so the engine's notifications ask again: the
+         record can resolve while this compose is still on screen. */
       const hold = holdOf(engine, {
         lane: COMPOSE_SEND_KEY, draftId: held, session: composeSessionId(),
       });
@@ -427,17 +324,14 @@ export function useComposeAutosave(opts: {
   const discard = useCallback(async () => {
     const id = draftId;
     /**
-     * ── A HELD ROW IS RELEASED, NEVER DELETED — invariant S(2) ────────────────────────────────
-     *
-     * The guard is HERE, in the primitive, rather than at each door that calls it: `cancelCompose`
-     * calls this, and so does {@link ComposeAutosave.settled}'s phantom-copy branch, and a door
-     * added later would call it too. A row whose send may already have gone is the only surviving
-     * copy of that message and the account's only record that the send happened — deleting it on
-     * an abandoned compose is how a message that WAS delivered stops being findable, and it is the
-     * client half of the `send_recorded` 409 the server now answers.
-     *
-     * `unknown` is refused for the same reason it is everywhere else: a browser that cannot read
-     * its own record has no evidence this row is free, and a delete cannot be taken back.
+     * A held row is released, never deleted — invariant S(2). The guard is here, in the primitive,
+     * rather than at each door: `cancelCompose` calls this, so does {@link
+     * ComposeAutosave.settled}'s phantom-copy branch, and a later door would too. A row whose send
+     * may already have gone is the only surviving copy of that message and the account's only
+     * record the send happened — deleting it on an abandoned compose is how a delivered message
+     * stops being findable (the client half of the server's `send_recorded` 409). `unknown` is
+     * refused: a browser that cannot read its own record has no evidence the row is free, and a
+     * delete cannot be taken back.
      */
     const hold = holdOf(engine, {
       lane: COMPOSE_SEND_KEY, draftId: id ?? readComposeRow(), session: composeSessionId(),
