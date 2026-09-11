@@ -1,13 +1,13 @@
 /**
- * THE TWO BADGES A MESSAGE ROW WEARS, IN WORDS.
- *
- * `MessageRow` used to print "protected" and "{n} held" itself. Both are one-word English
- * literals inside `packages/ui`, which is the one place in this tree that cannot read a
- * catalogue — so every German list showed an English capsule on exactly the rows that matter
- * most: the ones a rule is holding and the ones whose remote content was blocked.
- *
- * Seven views render the row. Rather than seven `useTranslations("message")` calls and seven
- * chances to word it differently, they take the words from here.
+ * THE TWO BADGES A MESSAGE ROW WEARS, IN WORDS. `MessageRow` used to print "protected" and "{n} held" itself. Both
+ * are one-word English literals inside `packages/ui`, which is the one place in this tree that cannot read a
+ * catalogue — so every German list showed an English capsule on exactly the rows that matter most: the ones a rule is
+ * holding and the ones whose remote content was blocked.
+ */
+
+/**
+ * Seven views render the row. Rather than seven `useTranslations("message")` calls and seven chances to word it
+ * differently, they take the words from here.
  */
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
