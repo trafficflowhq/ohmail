@@ -43,7 +43,10 @@ import { SEND_LOCKS_PREFIX } from "../../../webapp/app/shell/send-lock";
 import { setStorageOwner } from "../../../webapp/app/shell/storage-owner";
 import { BearerManager } from "./bearer.js";
 import { PairScreen } from "./PairScreen.js";
-import { mailboxFactsOverBearer, olderBodyOverBearer, profileImportOverBearer } from "./transports.js";
+import {
+  junkOverBearer, mailboxFactsOverBearer, olderBodyOverBearer, profileImportOverBearer,
+  trashOverBearer,
+} from "./transports.js";
 
 /**
  * The host door's send-surface ceiling in raw attachment bytes — the FORM-side twin of
@@ -164,6 +167,10 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
   const mailboxFacts = useMemo(() => mailboxFactsOverBearer(bearer), [bearer]);
   const profileImport = useMemo(() => profileImportOverBearer(bearer), [bearer]);
   const olderBody = useMemo(() => olderBodyOverBearer(bearer), [bearer]);
+  /* The two live windows' wires, memoised for the reason above: both hooks treat the wire as the
+     dependency that decides whether the section is supported at all. */
+  const junk = useMemo(() => junkOverBearer(bearer), [bearer]);
+  const trash = useMemo(() => trashOverBearer(bearer), [bearer]);
 
   /**
    * WHOSE `localStorage` PARTITION THE SHARED SHELL USES ON THIS DOOR — established in render,
@@ -227,6 +234,13 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
          needs one at all: its `api-client` is the refusing stub, so the shared shell's Cloud
          fallback never arms here. */
       olderBodyWire={olderBody}
+      /* THE TWO LIVE WINDOWS, as a pair — the Screener's Junk segment and the Trash view's
+         second section, both reading a folder the mirror never holds. This page's `api-client`
+         is the refusing stub, so without these the shared hooks report "no server" and the
+         shell withholds both sections. See `junkOverBearer` for why they arrive together and
+         for what the flag in front of them still decides. */
+      junkWire={junk}
+      trashWire={trash}
     />
   );
 }

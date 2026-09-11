@@ -9,12 +9,16 @@
  * header and the one 401 recovery.
  */
 
+import type { JunkWire } from "../../../webapp/app/shell/junk-window";
 import type { MailboxFacts } from "../../../webapp/app/shell/mail-state";
 import type { ProfileImportTransport } from "../../../webapp/app/shell/ProfileImportCard";
 import type { OlderBodyWire } from "../../../webapp/app/shell/older-body";
+import type { TrashWire } from "../../../webapp/app/shell/trash-window";
 import { readMailboxFactsVia } from "../DesktopMailboxes.js";
+import { junkVia } from "../local-junk.js";
 import { olderBodyVia } from "../local-older-body.js";
 import { profileImportVia } from "../local-profile-import.js";
+import { trashVia } from "../local-trash.js";
 import type { BearerManager } from "./bearer.js";
 
 /** The sync strip's mailbox facts — `GET /mailboxes` over the bearer, window rules verbatim. */
@@ -40,4 +44,31 @@ export function profileImportOverBearer(bearer: BearerManager): ProfileImportTra
  */
 export function olderBodyOverBearer(bearer: BearerManager): OlderBodyWire {
   return olderBodyVia(bearer.fetch);
+}
+
+/**
+ * THE TWO LIVE WINDOWS OVER THE BEARER — Junk and Trash, and never one of them.
+ *
+ * Both read a folder the mirror never holds (the provider's own \Junk and \Trash), so neither can
+ * be answered from this page's in-memory mirror; `desktopHostRoutes` spreads `localRoutes`, which
+ * mounts both groups, so the host's engine serves all four reads one hop away. Without a wire the
+ * shared hooks fall back to `api-client` — the refusing stub in this artifact — report "no server"
+ * and the shell withholds both sections with nothing on screen naming why.
+ *
+ * Handed in as a PAIR because they are one absence: fixing either alone leaves the other silently
+ * missing on the same door for the same reason. Like every wire here, only the transport is
+ * supplied — the paths, the status contracts and the read-only rule are `junkVia`'s and
+ * `trashVia`'s, so this door cannot ask for a route the desktop window does not.
+ *
+ * What each section then DOES is the flag's, not the wire's: both sit behind "Use folders", which
+ * a host engine cannot store (`withoutFoldersFlag` strips the field — it serves no folder verb),
+ * exactly as on the desktop's own standalone door. The wire is handed in regardless, so the day
+ * that door grows the verbs the sections follow the switch with no change here.
+ */
+export function junkOverBearer(bearer: BearerManager): JunkWire {
+  return junkVia(bearer.fetch);
+}
+
+export function trashOverBearer(bearer: BearerManager): TrashWire {
+  return trashVia(bearer.fetch);
 }
