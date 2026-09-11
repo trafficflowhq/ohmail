@@ -107,10 +107,10 @@ export function normalizePathname(pathname: string): string {
  * `normalizeRequest` used to live here and now lives in `normalize.ts`, moved for a deploy
  * break: it grew a body door needing `@trafficflow/api`, and the web app's tests import
  * `API_PREFIX` from HERE (so the browser rewrite and the stripped prefix cannot drift) — that
- * import made `@trafficflow/api` part of the web app's TypeScript program, which does not
- * declare it, and its production build failed with "Cannot find module". It passed locally:
- * in a workspace checkout the package resolves through the repository root whether or not the
- * app declares it; only a clean install scoped to one app — the build server — stops the
- * accident. Keeping this module free of workspace imports is what makes it safe to import
+ * import made `@trafficflow/api` part of the web app's program, which does not declare it —
+ * its production build failed with "Cannot find module". It passed locally: in a workspace
+ * checkout the package resolves through the repository root whether or not the app declares
+ * it; only a clean install scoped to one app — the build server — stops the accident.
+ * Keeping this module free of workspace imports is what makes it safe to import
  * from another app's tests. Path normalization only.
  */
