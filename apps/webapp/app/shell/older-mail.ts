@@ -117,27 +117,24 @@ export function useOlderMail(
   startBelow?: { date: string | null; id: string },
   /**
    * "Must this fetched row stay out of the tail right now?" — asked per render, of the LIVE
-   * mirror, never remembered. The wrong shapes each lie: a filter against the surface's own list
-   * resurfaces a row moved out of scope, and a remembered accept-time discard makes mail vanish
-   * when the windowed mirror later hard-prunes the live row. So the fetched copies are all kept and
-   * this predicate answers four verdicts: `"hide"` — the mirror positively shows the row in this
-   * scope (the surface renders it; any latch clears); `"ban"` — the mirror shows the row has LEFT
+   * mirror, never remembered (a filter against the surface's own list resurfaces a row moved out of
+   * scope; a remembered accept-time discard makes mail vanish when the mirror later hard-prunes the
+   * live row). Fetched copies are all kept; four verdicts: `"hide"` — the mirror positively shows
+   * the row in this scope (the surface renders it; any latch clears); `"ban"` — the row has LEFT
    * this scope, so the stale pre-move copy is latched out and a later hard-prune cannot revive it;
-   * `"hold"` — the render cannot judge the scope (folder entity absent): the row stays out and the
-   * latch is untouched, because a defensive hide is not an observation; `"show"` — the mirror does
-   * not hold the row (evicted, or genuinely older), so the fetched copy renders unless latched.
+   * `"hold"` — the render cannot judge the scope (folder entity absent): the row stays out, latch
+   * untouched — a defensive hide is not an observation; `"show"` — the mirror does not hold the
+   * row (evicted, or genuinely older), so the fetched copy renders unless latched.
    */
 
   /**
-   * The latch fires on observation and clears only on the opposite observation (a `"hide"`): the
-   * mirror is overlay-aware, so a pending optimistic move also answers `"ban"`, and a
-   * hard-rejected move rolls the row back — neither may leave a stale latch outliving a later
-   * eviction. `"hold"` is what makes the clear safe: without it, defensive hides (folders toggled
-   * off and on over an open URL) would count as returns and release latches the scope never
-   * re-earned; what happens inside such a gap is settled by `scopeEpoch` below. The one residual
-   * the latch cannot close: a change applied and hard-pruned inside a single render tick of an open
-   * scope, indistinguishable from eviction by any reader of the live mirror — named, not papered
-   * over.
+   * The latch fires on observation and clears only on the opposite observation (a `"hide"`): the mirror is
+   * overlay-aware, so a pending optimistic move also answers `"ban"`, and a hard-rejected move rolls the row back —
+   * neither may leave a stale latch outliving a later eviction. `"hold"` is what makes the clear safe: without it,
+   * defensive hides (folders toggled off and on over an open URL) would count as returns and release latches the
+   * scope never re-earned; what happens inside such a gap is settled by `scopeEpoch` below. The one residual the
+   * latch cannot close: a change applied and hard-pruned inside a single render tick of an open scope,
+   * indistinguishable from eviction by any reader of the live mirror — named, not papered over.
    */
   suppress?: (id: string) => "show" | "hide" | "ban" | "hold",
   /**

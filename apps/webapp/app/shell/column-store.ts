@@ -1,16 +1,14 @@
 "use client";
 
 /**
- * The three columns' widths — one contract, four readers: `ColumnHandles` (writes live during a
- * drag, persists on release); the web door's pre-paint script (`columnsBootScript`, inlined by
- * `(product)/providers.tsx` — a served page has no bundle yet, so the widths are stamped or the
- * first frame is the default and the second the truth); the desktop window and served host client
- * (`stampColumns` — their CSP forbids inline scripts, so they call the function before
- * `createRoot`); and `BootSkeleton` via `app.css`, reading the same two custom properties. Plain
- * functions, no React — four callers must agree. Per machine, never per account: a column width is
- * a fact about the screen, so it is origin `localStorage`, unkeyed by owner, and survives sign-out
- * like the face pin and the rail disclosures; the sidecar's settings hold mailbox and AI facts, and
- * window chrome gets no route there.
+ * The three columns' widths — one contract, four readers: `ColumnHandles` (writes live during a drag, persists on
+ * release); the web door's pre-paint script (`columnsBootScript`, inlined by `(product)/providers.tsx` — a served
+ * page has no bundle yet, so the widths are stamped or the first frame is the default and the second the truth); the
+ * desktop window and served host client (`stampColumns` — their CSP forbids inline scripts, so they call the function
+ * before `createRoot`); and `BootSkeleton` via `app.css`, reading the same two custom properties. Plain functions, no
+ * React — four callers must agree. Per machine, never per account: a column width is a fact about the screen, so it
+ * is origin `localStorage`, unkeyed by owner, and survives sign-out like the face pin and the rail disclosures; the
+ * sidecar's settings hold mailbox and AI facts, and window chrome gets no route there.
  */
 
 /**
