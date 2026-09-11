@@ -1,49 +1,28 @@
 "use client";
 
 /**
- * THE DEVICE'S COPY OF A SERVER ANSWER THE BOOT RENDER NEEDS — per account, read at boot,
- * overwritten by every fresh answer, wiped on sign-out.
- *
- * ── THE DEFECT THIS EXISTS FOR — measured live ────────────────────────────────────────────
- *
- * The warm open paints the mirror from IndexedDB in the first frame, but the consent partition
- * (`consentPartition` — the projection that decides where every message PRESENTS) is keyed on
- * two scalars only the server holds: the account's dormancy window and its screening baseline.
- * Until `GET /consent` answered, `AppShell` rendered the piles over the RAW mirror — and the raw
- * Screener is "every sender whose mail physically sits in `ohmail/Screener`", which includes
- * every sender the user has long since decided about, because deciding writes a rule and the
- * product deliberately never moves the old mail. So every reload resurrected the same set of
- * already-handled Screener rows and held them until the consent answer landed.
- *
- * Verified by holding the consent response open on a live session: the stale rows survived
- * three completed `/sync` drains untouched, then collapsed within 100 ms of the answer
- * arriving. Sync was never the fixer; the missing partition inputs were the whole defect.
- *
- * ── THE TRUST MODEL: A CACHED ANSWER, NEVER A GUESS ───────────────────────────────────────
- *
- * The partition refuses to run on a guessed window (`AppShell`'s known-gate), and this cache
- * does not weaken that: what it stores is the account's OWN last answer, written only after a
- * real `GET /consent` (or `GET /mailboxes`) succeeded, keyed by the server-issued account id.
- * That is the same staleness class `consent-state.ts` already accepts for a second open tab —
- * the dial moves in one tab and the other keeps the old window until reload. A fresh answer
- * overwrites both the state and the cache, so a device converges on its next round trip.
- *
- * What may be cached is bounded by one rule: NOTHING THAT AUTHORISES. A cached flag must never
- * be able to spend money (`autoSuggest`) or load a sender's remote content
- * (`blockRemoteImages`); those keep their safe resting values until the live answer, and
- * `test/consent-boot-cache.test.tsx` watches that boundary.
- *
- * ── MECHANICS ─────────────────────────────────────────────────────────────────────────────
- *
- * localStorage, per the `persisted-ui.ts` rules: reads happen in post-mount effects (the server
- * renders no localStorage, and a hydration-render read is discarded as a mismatch), and every
- * access is wrapped because Safari private mode throws on write and a site-data-blocked browser
- * throws on read. A refused store simply means the next boot pays the round trip again — which
- * is exactly the pre-cache behaviour.
- *
- * Keys are namespaced `ohmail.boot.<scope>.<owner>` so two accounts on one browser can never
- * read each other's answer, and so `clearBootCaches` (sign-out) can drop everything under the
- * prefix without knowing who wrote it.
+ * The device's copy of a server answer the boot render needs — per account, read at boot,
+ * overwritten by every fresh answer, wiped on sign-out. The warm open paints the mirror in the
+ * first frame, but `consentPartition` is keyed on two scalars only the server holds (the dormancy
+ * window, the screening baseline); until `GET /consent` answered, the piles rendered over the RAW
+ * mirror — and the raw Screener includes every sender long since decided about, because deciding
+ * writes a rule and never moves old mail. Verified live: the stale rows survived three completed
+ * `/sync` drains untouched, then collapsed within 100 ms of the consent answer. Sync was never the
+ * fixer; the missing partition inputs were the whole defect.
+ */
+
+/**
+ * A cached ANSWER, never a guess: what is stored is the account's own last answer, written only after a real `GET
+ * /consent` (or `GET /mailboxes`) succeeded, keyed by the server-issued account id — the staleness class
+ * `consent-state.ts` already accepts for a second tab. Bounded by one rule: NOTHING THAT AUTHORISES — a cached flag
+ * must never spend money (`autoSuggest`) or load a sender's remote content (`blockRemoteImages`); those keep their
+ * safe resting values until the live answer (`test/consent-boot-cache.test.tsx` watches the boundary).
+ */
+
+/**
+ * Mechanics: localStorage per the `persisted-ui.ts` rules (post-mount reads, wrapped access); a refused store means
+ * the next boot pays the round trip again. Keys are `ohmail.boot.<scope>.<owner>`, so two accounts never read each
+ * other's answer and `clearBootCaches` can drop the prefix blind.
  */
 
 import { durableSet } from "./durable";

@@ -1,39 +1,24 @@
 /**
- * HOW TWO MAILBOX ROWS ARE DECIDED TO BE ONE ADDRESS — for every surface, not one.
- *
- * ── WHY THIS FILE EXISTS AT ALL ─────────────────────────────────────────────────────────────
- *
- * It was `MailboxSection.tsx`'s private helper, and it stayed private for as long as one surface
- * needed it. Then a second one did — `mail-state.ts`'s stand-down arm has to know whether a
- * stood-down row's address has come BACK, or it reports a tombstone's organizer conflict over the
- * live mailbox that replaced it — and the two surfaces are on ONE SCREEN. A rail that folds one
- * way and a pane that folds another puts two contradictory sentences about a single mailbox in
- * front of the same person, which is the exact defect the stand-down arm was written to end.
- *
- * So the rule is one function with two callers rather than two functions that agree today. The
- * shell is where it lives because the import direction is product → shell and never back.
- *
- * ── THE RULE, AND IT IS THE INDEX'S ─────────────────────────────────────────────────────────
- *
- * `lower()` ONLY, AND NOT `trim()`. The key is exactly `mailboxes_active_address_uq`'s
- * (`packages/db/src/schema-mail.ts`), deliberately: that index is `unique (account_id,
- * lower(address)) where status <> 'disabled'`, so two rows differing only in case CANNOT both be
- * active, and treating them as one address is safe.
- *
- * `canonicalAddress` (`mailbox-service.ts`) trims on the way IN, so a stored address has no
- * surrounding space and the trim would be a no-op — but if one ever did exist it would be a row
- * Postgres considers DISTINCT and is willing to keep ACTIVE, and folding it here would hide a real
- * mailbox. **A grouping may be narrower than the constraint; it may never be wider.** That
- * sentence is the whole of why this is not `trim().toLowerCase()`, and it is the rule a reviewer
- * should check any change to this file against.
- *
- * `lower()` inherits the index's own documented caveat — collation-dependent, not RFC
- * canonicalization; `mailbox-service.ts:93-104` sets out at length that `lower(address)` is one
- * account's connect form rather than physical mailbox identity, and that the ORGANIZER LEASE is
- * where that identity actually lives. Inheriting the caveat is the point: these surfaces and that
- * index answer the same question and must answer it the same way. A surface that invented a
- * third, "more correct" answer would disagree with the database and with the other surface, and
- * would be wrong in a new way rather than right.
+ * How two mailbox rows are decided to be one address — for every surface, not one. It was
+ * `MailboxSection.tsx`'s private helper until `mail-state.ts`'s stand-down arm needed the same rule
+ * (has a stood-down row's address come BACK?), and the two surfaces are on one screen: a rail that
+ * folds one way and a pane that folds another puts two contradictory sentences about a single
+ * mailbox in front of the same person. One function, two callers; it lives in the shell because the
+ * import direction is product → shell and never back.
+ */
+
+/**
+ * The rule is the INDEX's: `lower()` only, and NOT `trim()`. The key is exactly `mailboxes_active_address_uq`
+ * (`unique (account_id, lower(address)) where status <> 'disabled'`), so two rows differing only in case cannot both
+ * be active — folding them is safe. A stored address has no surrounding space (`canonicalAddress` trims on the way
+ * in), but if one ever did it would be a row Postgres keeps ACTIVE and DISTINCT, and folding it here would hide a
+ * real mailbox: a grouping may be NARROWER than the constraint, never wider — the rule to check any change against.
+ */
+
+/**
+ * `lower()` inherits the index's own caveat (collation-dependent, not RFC canonicalization; the organizer lease is
+ * where physical identity lives), and inheriting it is the point: a surface that invented a third, "more correct"
+ * answer would disagree with the database and the other surface.
  */
 
 /** The grouping key: `lower(address)`, exactly `mailboxes_active_address_uq`'s. Never trim. */

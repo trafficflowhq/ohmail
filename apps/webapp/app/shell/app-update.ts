@@ -1,31 +1,16 @@
 /**
- * A NEWER OHMAIL EXISTS — the one fact, and the rules about how often a person may be told it.
- *
- * ── WHY ONE MODULE FOR TWO VERY DIFFERENT DOORS ───────────────────────────────────────────
- *
- * The browser and the desktop app answer "is there something newer?" in completely different
- * ways. A tab compares the build it LOADED against the build the origin is SERVING now; the
- * desktop asks a signed release feed through its own native process and never lets the page
- * near it. Nothing about those two mechanisms is shared and nothing here tries to share them.
- *
- * What IS shared is everything a person experiences: one quiet strip, in the same place, with
- * the same shape, saying one sentence — and, above all, the same restraint. "At most once in
- * twenty-four hours, per thing being offered" is a rule about people, not about feeds, and a
- * rule written twice is a rule that drifts. So the sources are separate, the surface reads
- * this store, and the arithmetic below is the only copy of the restraint that exists.
- *
- * ── WALL CLOCK, NEVER TICKS ───────────────────────────────────────────────────────────────
- *
- * Every interval here is measured as a difference between two wall-clock instants and never
- * as a count of timer firings. A laptop that is shut for thirty hours fires no timers at all;
- * an interval-counting cadence would then wait another full day after it woke, which is the
- * exact case a daily check exists for. Comparing instants makes suspend and resume a
- * non-event: whatever the machine did in between, the next evaluation sees the true gap.
- *
- * The same choice creates the one hazard worth guarding, and {@link periodElapsed} guards it:
- * a wall clock can move BACKWARDS. A stamp that lies in the future would otherwise hold the
- * next check off for as long as the jump was large, so a stamp ahead of now is treated as
- * elapsed rather than trusted.
+ * A newer ohmail exists — the one fact, and the rules about how often a person may be told it. The browser and the
+ * desktop answer "is there something newer?" in unrelated ways (a tab compares the build it loaded against the one
+ * the origin serves; the desktop asks a signed feed through its native process) and nothing here tries to share the
+ * mechanisms. What IS shared is everything a person experiences: one quiet strip, one sentence — and the restraint.
+ */
+
+/**
+ * "At most once in twenty-four hours, per thing being offered" is a rule about people, not feeds, and a rule written
+ * twice drifts; the arithmetic below is the only copy. Wall clock, never ticks: a laptop shut for thirty hours fires
+ * no timers, and an interval-counting cadence would wait another full day after waking — comparing instants makes
+ * suspend a non-event. The one hazard that creates is a clock moving BACKWARDS, and {@link periodElapsed} guards it:
+ * a stamp ahead of now is treated as elapsed.
  */
 import { durableSet } from "./durable";
 

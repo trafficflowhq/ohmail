@@ -1,17 +1,13 @@
 "use client";
 
 /**
- * WHO OWNS AN OPEN UNDO WINDOW — one tab, asked before another replays it.
- *
- * The journal is per ORIGIN, so a second tab's boot read finds a decision the FIRST tab is still
- * counting down and commits it: the mail is filed, the sender unsubscribed, and the first tab's
- * Undo then reports "Undone — 1 waiting again." over an act that has happened. Measured in jsdom
- * with two mounts over one jar.
- *
- * So a tab that opens a window says so, and a tab about to replay ASKS first — a claim broadcast
- * after the fact cannot reach a tab that was not yet open. Ownership expires with the window
- * itself (the caller passes its own length), which is what keeps a tab that died mid-window from
- * withholding a decision for ever.
+ * Who owns an open undo window — one tab, asked before another replays it. The journal is per
+ * ORIGIN, so a second tab's boot read finds a decision the FIRST tab is still counting down and
+ * commits it: the mail is filed, the sender unsubscribed, and the first tab's Undo then reports
+ * "Undone" over an act that has happened (measured in jsdom with two mounts over one jar). So a
+ * tab that opens a window says so, and a tab about to replay ASKS first — a claim broadcast after
+ * the fact cannot reach a tab that was not yet open. Ownership expires with the window itself (the
+ * caller passes its own length), which keeps a tab that died mid-window from withholding for ever.
  */
 
 import { storageOwner } from "./storage-owner";

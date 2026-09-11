@@ -1,34 +1,18 @@
 "use client";
 
 /**
- * "A NEWER OHMAIL IS AVAILABLE" — one quiet strip, wherever you are standing.
- *
- * ── WHY THE SHELL AND NOT A VIEW ───────────────────────────────────────────────────────────
- *
- * `SyncBar.tsx` carries the long version of this argument and it applies here unchanged: a
- * sentence that belongs to the APP rather than to any one pile has to be rendered by the shell,
- * or the only people who ever see it are the ones who happen to be standing in the view that
- * remembered to render it. So this is a `flex: none` sibling of the deck, outside every list's
- * scroller by construction, and it renders nothing at all when there is nothing to say — there
- * is no permanent "you are up to date" chrome to learn to ignore.
- *
- * ── ONE STRIP, TWO COMPLETELY DIFFERENT DOORS ──────────────────────────────────────────────
- *
- * In a tab the newer thing is a build the origin is already serving, and the remedy is a
- * reload. In the desktop app it is a signed release the native process has already fetched and
- * verified, and the remedy is a restart. This component knows neither. It reads the one offer
- * in `app-update.ts` and calls the callback that offer carries — the shared shell can therefore
- * not name a feed, a version or an install, which is the boundary the desktop updater is built
- * around (`apps/desktop/src/update.ts`).
- *
- * ── AND IT WAITS FOR A MESSAGE BEING WRITTEN ───────────────────────────────────────────────
- *
- * A strip appearing above somebody mid-sentence moves the whole layout under their cursor, and
- * the one press it offers throws the draft's window away. `quiet` holds it — the offer is not
- * withdrawn and not re-decided, it simply is not drawn until the compose is closed. Waiting is
- * the right shape rather than suppressing: the once-a-day restraint has already been spent by
- * the source that armed the offer, so a suppressed notice would be a day of silence bought by a
- * person happening to be typing.
+ * "A newer ohmail is available" — one quiet strip, wherever you are standing. The shell renders it (`SyncBar.tsx`
+ * carries the argument): a sentence that belongs to the APP has to be rendered by the shell or only the people in the
+ * remembering view ever see it — a `flex: none` sibling of the deck, nothing at all when there is nothing to say.
+ */
+
+/**
+ * One strip, two doors: in a tab the newer thing is a build the origin is serving and the remedy is a reload; on the
+ * desktop it is a signed release the native process verified and the remedy is a restart — this component knows
+ * neither, it reads the one offer in `app-update.ts` and calls the callback it carries, so the shared shell can never
+ * name a feed, a version or an install. It waits for a message being written: `quiet` holds it — the offer is not
+ * withdrawn, just not drawn until the compose closes; the once-a-day restraint was already spent by the source, so a
+ * suppressed notice would be a day of silence bought by typing.
  */
 
 import { useEffect, useState } from "react";

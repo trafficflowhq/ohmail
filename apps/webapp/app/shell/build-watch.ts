@@ -1,36 +1,16 @@
 /**
- * IS THIS TAB STILL THE APP THIS ORIGIN IS SERVING?
- *
- * A browser client is a program that was downloaded once and then left running, and mail is the
- * kind of application people leave open for weeks. The build in the tab is frozen at the moment
- * it loaded; the build the origin serves moves whenever anything ships. Nothing about that
- * divergence announces itself — the app keeps working, against a server that has moved on, until
- * something it calls answers a shape it does not know.
- *
- * So the tab asks, occasionally, which build the origin is serving now, and compares it with the
- * one it is. Different means a newer ohmail exists and the whole remedy is a reload.
- *
- * ── WHAT IS ASKED, AND WHY IT IS NOT THE COMMIT ────────────────────────────────────────────
- *
- * `/version` answers a short digest of the running build rather than the build itself — see
- * `buildToken` in `app-update.ts`. The comparison only needs to know whether two builds are the
- * same, and a digest answers that exactly as well as a commit id while telling a stranger
- * nothing about this deployment's history.
- *
- * ── WHY A POLL AND NOT A PUSH ──────────────────────────────────────────────────────────────
- *
- * Because a poll costs one small request an hour and cannot break anything, and because the
- * alternative — a socket held open for the life of a tab, for a fact that changes a few times a
- * week — is a great deal of machinery for a sentence. The tab also asks when it comes BACK to
- * the foreground, which is when a stale tab is most likely to be stale and exactly when a person
- * is about to use it.
- *
- * ── AND IT NEVER RUNS IN THE DESKTOP WINDOW ────────────────────────────────────────────────
- *
- * Nothing here is armed by the shared shell. The browser client arms it; the desktop app arms
- * its own cadence against a signed release feed instead, and its window reaches no network at
- * all (`offline-guard.ts` seals `fetch` inside the page). A build watch there would be a request
- * that cannot be made, for a build that does not update that way.
+ * Is this tab still the app this origin is serving? A browser client is downloaded once and left running for weeks;
+ * the build in the tab is frozen while the origin's moves, and nothing announces the divergence — the app keeps
+ * working until something it calls answers a shape it does not know. So the tab asks occasionally which build the
+ * origin serves and compares: different means a newer ohmail exists and the whole remedy is a reload.
+ */
+
+/**
+ * It asks `/version`, a digest and not the commit (`buildToken` in `app-update.ts`): the comparison only needs "same
+ * or not". A poll, not a push: one small request an hour cannot break anything, and a socket held open for the life
+ * of a tab is a great deal of machinery for a sentence — it also asks when the tab returns to the foreground, exactly
+ * when a stale tab is about to be used. Never armed in the desktop window: its window reaches no network at all
+ * (`offline-guard.ts`), and it updates by signed feed instead.
  */
 import {
   announceUpdate,

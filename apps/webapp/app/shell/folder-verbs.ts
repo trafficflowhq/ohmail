@@ -1,25 +1,18 @@
 "use client";
 
 /**
- * THE FOLDER VERBS' SHELL HALF (FOLDERS-SPEC.md stage 2) — the dispatch seam between the rail's
- * Folders group and the engine's `folder_*` mutations, plus the ONE read the ceremony needs.
- *
- * It lives beside `junk-window.ts` and not in `AppShell.tsx` for `junk-window.ts`'s reason: the
- * shared shell never imports `app/api-client` itself — the desktop build aliases that module to
- * a stub whose calls refuse (`apps/desktop/vite.config.ts`), and the discipline that keeps the
- * boundary legible is that only sibling hook modules touch it, each degrading honestly when the
- * stub answers. Here the degrade is exactly one surface: `summary` (the delete confirm's
- * server-truth numbers) answers `null` where no API client exists, and the confirm states its
- * sentence WITHOUT numbers rather than inventing any. The verbs themselves ride the ENGINE —
- * every host's engine carries its own wire — so create/rename/delete work on every door the
- * folders group renders on.
- *
- * ── THE ROLLBACK SENTENCE (the composer lane's pattern) ────────────────────────────────────
- *
- * Every verb awaits its mutation and speaks ONLY on `rolled_back`: the optimistic marker has
- * already been taken back whole by the engine, and the toast's job is to say that nothing
- * changed — a silent rollback is the interface lying by omission. Success says nothing; the
- * pending row itself is the feedback, and it settles through the wake channel in seconds.
+ * The folder verbs' shell half (FOLDERS-SPEC.md stage 2) — the dispatch seam between the rail's Folders group and the
+ * engine's `folder_*` mutations, plus the ONE read the ceremony needs. Beside `junk-window.ts` and not in
+ * `AppShell.tsx` for its reason: the shared shell never imports `app/api-client` itself — only sibling hook modules
+ * touch it, each degrading honestly when the desktop's stub answers.
+ */
+
+/**
+ * The degrade here is one surface: `summary` (the delete confirm's server-truth numbers) answers `null` where no API
+ * client exists, and the confirm states its sentence WITHOUT numbers rather than inventing any; the verbs ride the
+ * ENGINE, so they work on every door. The rollback sentence (the composer lane's pattern): every verb awaits its
+ * mutation and speaks ONLY on `rolled_back` — a silent rollback is the interface lying by omission; success says
+ * nothing, the pending row is the feedback, settled through the wake channel in seconds.
  */
 
 import { useMemo } from "react";

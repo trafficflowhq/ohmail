@@ -1,51 +1,27 @@
 "use client";
 
 /**
- * ═══ DRAG-TO-FILE — a list row, dragged onto the rail ══════════════════════════════════════
- *
- * ONE SEMANTIC, NEW GESTURE. A drop dispatches exactly what the equivalent existing control
- * dispatches — the pill's Move / Later / Set aside / Resurface for one message, the bulk bar's
- * verbs for a selection, the tag picker's apply for a tag — through the very callbacks those
- * controls call. This module owns only the GESTURE: the movement threshold, the ghost, the
- * target highlight, the commit/cancel choreography. What a drop MEANS is the caller's, stated
- * once in `onDrop`, and nothing here mints a mutation of its own.
- *
- * ── POINTER EVENTS, NOT HTML5 DRAG-AND-DROP ────────────────────────────────────────────────
- *
- * The desktop shell runs this same file inside WKWebView and WebView2, where the HTML5 drag
- * events are unreliable (WKWebView in particular routes them through the OS drag machinery,
- * which a `WKWebView` without file-drop entitlements answers inconsistently). Pointer events
- * are plain input: they work identically in every browser this shell ships in, they give the
- * threshold test for free, and nothing here depends on an API a desktop WebView lacks —
- * `document.elementFromPoint` is the one lookup, and it is read optionally (absent means
- * "over nothing", which is also what a browser answers between targets).
- *
- * ── THE GESTURE MUST NOT TAX THE LIST ──────────────────────────────────────────────────────
- *
- * Until the pointer has really MOVED (`DRAG_SLOP_PX`), nothing happens: no preventDefault, no
- * state, no render — a press that ends inside the slop is a plain click and takes the row's
- * own path. Past the threshold the whole gesture lives outside React: the ghost is an
- * imperative DOM node moved by `transform`, the highlight is a class toggled on the rail row
- * under the pointer, and the ONLY React work is the final `onDrop`. j/k, the dwell, the seen
- * sweep and the stream window never see any of it.
- *
- * TOUCH IS EXCLUDED on purpose: with a finger, dragging a list is scrolling it, and the rail
- * is hidden behind a drawer at those widths anyway. Mouse and pen only.
- *
- * ── WHICH RAIL ROWS ARE TARGETS ────────────────────────────────────────────────────────────
- *
- * The places a message can be FILED, and nothing else: the three stream piles (the pill's
- * `move:` destinations that have a rail row), the three triage horizons (the pill's own "Not
- * now" verbs), and the tags (the picker's apply). The Screener row is deliberately not one —
- * screening is a consent decision about SENDERS with a confirm ceremony of its own, the same
- * reason `BulkAction` excludes it. History, Search, Drafts and Settings are not places mail
- * is filed. A row outside the map never lights and never accepts.
- *
- * Legality mirrors the existing controls' own enablement (`dropLegal`): the move panel
- * excludes the message's current folder, a horizon the message is already resting in is not
- * an answer, and a tag every dragged message already carries has nothing left to apply. Over
- * a set the question is "would this change anything at all" — the same rule the bulk move
- * and `bulkToggleTag` apply by skipping members that already agree.
+ * Drag-to-file — a list row, dragged onto the rail. ONE SEMANTIC, NEW GESTURE: a drop dispatches
+ * exactly what the equivalent existing control dispatches — the pill's Move / Later / Set aside /
+ * Resurface, the bulk bar's verbs, the tag picker's apply — through the very callbacks those
+ * controls call; this module owns only the GESTURE (threshold, ghost, highlight, commit/cancel) and
+ * mints no mutation of its own. Pointer events, not HTML5 drag-and-drop: the desktop shell runs
+ * this file inside WKWebView and WebView2, where HTML5 drag is unreliable; pointer events work
+ * identically everywhere, and `document.elementFromPoint` is the one lookup, read optionally.
+ */
+
+/**
+ * The gesture must not tax the list: until the pointer has really moved (`DRAG_SLOP_PX`) nothing happens — a press
+ * ending inside the slop is a plain click; past the threshold the gesture lives outside React (an imperative ghost
+ * moved by `transform`, a class toggled on the rail row), and the only React work is the final `onDrop`. Touch is
+ * excluded on purpose: with a finger, dragging a list is scrolling it.
+ */
+
+/**
+ * Targets are the places a message can be FILED and nothing else — the three stream piles, the three triage horizons,
+ * the tags; the Screener row is deliberately not one (screening is a consent decision about SENDERS with its own
+ * confirm, `BulkAction`'s reason). Legality mirrors the existing controls' own enablement (`dropLegal`): over a set
+ * the question is "would this change anything at all", the bulk verbs' own rule.
  */
 
 import { useCallback, useEffect, useRef } from "react";

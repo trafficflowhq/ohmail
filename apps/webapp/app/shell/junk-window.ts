@@ -1,68 +1,39 @@
 "use client";
 
 /**
- * THE JUNK WINDOW'S CLIENT STATE — a live, un-mirrored view of the provider's own \Junk
- * (FOLDERS-SPEC.md §16.2), behind "Use folders".
- *
- * ── WHY THIS IS NOT IN `screener-state.ts` ────────────────────────────────────────────────
- *
- * Everything that hook holds comes from the MESSAGE MIRROR, and the whole point of the Junk
- * window is that Junk never enters it: the segment reads the folder itself, on request, through
- * `GET /screener/junk`. So this module owns the asking — one page on segment entry, explicit
- * "Show older" pagination, a body per open — and holds what it learned for THIS SESSION only.
- * Closing the app forgets it; nothing here writes to the mirror, and nothing the mirror does can
- * make this data stale in a way a reload of the window would not fix.
- *
- * ── THE HONEST STATES (§16.2's table) ─────────────────────────────────────────────────────
- *
- * A window that cannot read SAYS SO: `phase: "failed"` renders the failed sentence and a retry,
- * never an empty list — an empty list is the answer "your Junk is empty", which a dead dial has
- * no business claiming. Per-mailbox degrades ride the answer itself (`window: "no_junk_folder" |
- * "unreachable"`), so an account whose one mailbox has no native \Junk gets the stated absence
- * rather than an error.
- *
- * ── THE RESCUE, AND ITS SECOND VERB ───────────────────────────────────────────────────────
- *
- * "Not junk" is ONE server-side move out of Junk (the un-training gesture); the message then
- * re-enters through the NORMAL pipeline — a first-time sender waits in the Screener, an allowed
- * one lands in the Ohbox. The row leaves this list on success. A 410 — the provider removed the
- * message first — also removes the row (it IS gone from Junk) but says what happened; any other
- * failure keeps the row and says so, because a row that silently vanished on a failed rescue
- * would be this window inventing the provider's state.
- *
- * "Not junk, always allow" (`rescue(item, { allow: true })`) is the same press plus one statement
- * about the SENDER: the server switches off their spam-promoting rule and mints their allow before
- * the move (junk-window.ts on the API side argues both halves). The sentences differ because the
- * outcomes differ — and on a 410 the allow still stands, so that sentence says both.
- *
- * ── THE SEARCH-APPEND (§16.2's table: "async search-append with a timeout") ───────────────
- *
- * Typing filters the LOADED window instantly and locally — no request. Only when that filter
- * finds nothing does the hook ask the server (`GET /screener/junk/search`, debounced, once per
- * settled query), and the hits are APPENDED under whatever the local filter kept: `visible` is
- * the one list the view renders, so a server hit is selectable, openable and rescuable exactly
- * like a loaded row. The first paint never waits on the search; a mailbox that did not answer in
- * time is stated ("could not be searched"), and a search that found nothing says so plainly —
- * never a spinner that outlives its promise.
- *
- * ── THE ONE-TIME SWEEP OFFER (§16.1) ───────────────────────────────────────────────────
- *
- * With the window's first page the hook also reads the sweep PREVIEW — how much mail from
- * earlier verdicts still sits in `ohmail/Quarantine`, invisible from this segment now that it
- * reads native Junk. Above zero, the segment offers the one press; the press records the
- * command (`POST /screener/junk/sweep`) and the worker executes it, so the offer shows "queued"
- * and polls the preview until the pile is empty ("done"). "Never offered twice unless there is
- * new content" is the candidate count itself: a dismissal remembers the count it dismissed
- * (`localStorage`, per browser), and the offer returns only when the pile has GROWN past it.
- *
- * ── THE WIRE IS A SEAM ────────────────────────────────────────────────────────────────────
- *
- * Every call goes through {@link JunkWire}. Absent, it is the browser's Cloud client — gated on
- * `apiConfigured()`, answered by the module that owns the client (the shared shell never imports
- * it). The desktop hands in its bridge (`local-junk.ts`): its window aliases the Cloud client to
- * a refusing stub, and on its hosted door the engine forwards these routes to the account. The
- * STATES and their sentences are decided above the seam and cannot vary by wire — the
- * `ConsentTransport` rule.
+ * The Junk window's client state — a live, un-mirrored view of the provider's own \Junk
+ * (FOLDERS-SPEC.md §16.2), behind "Use folders". Not in `screener-state.ts` because everything
+ * that hook holds comes from the MESSAGE MIRROR, and the whole point of the Junk window is that
+ * Junk never enters it: the segment reads the folder itself through `GET /screener/junk` — one page
+ * on entry, explicit "Show older", a body per open, held for THIS SESSION only. The honest states:
+ * `phase: "failed"` renders the failed sentence and a retry, never an empty list (an empty list
+ * claims "your Junk is empty", which a dead dial has no business saying); per-mailbox degrades
+ * ride the answer (`"no_junk_folder" | "unreachable"`).
+ */
+
+/**
+ * The rescue and its second verb: "Not junk" is ONE server-side move out of Junk, and the message
+ * re-enters through the NORMAL pipeline; the row leaves on success. A 410 (the provider removed it
+ * first) also removes the row but says what happened; any other failure keeps the row and says so —
+ * a row that silently vanished on a failed rescue would be this window inventing the provider's
+ * state. "Not junk, always allow" is the same press plus one statement about the SENDER (the
+ * server switches off the spam-promoting rule and mints the allow before the move); on a 410 the
+ * allow still stands, so that sentence says both.
+ */
+
+/**
+ * The search-append: typing filters the LOADED window locally; only when that finds nothing does the hook ask `GET
+ * /screener/junk/search` (debounced, once per settled query), and hits are APPENDED under whatever the local filter
+ * kept — `visible` is the one list the view renders, so a server hit is selectable and rescuable like a loaded row; a
+ * mailbox that did not answer is stated, never a spinner outliving its promise.
+ */
+
+/**
+ * The one-time sweep offer (§16.1): the first page also reads the sweep preview — mail from earlier verdicts still in
+ * `ohmail/Quarantine`; above zero the segment offers one press, the worker executes, and the offer polls until
+ * "done". A dismissal remembers the count it dismissed, and the offer returns only when the pile has GROWN past it.
+ * Every call goes through {@link JunkWire}: absent is the browser's Cloud client; the desktop hands in its bridge —
+ * the states and sentences are decided above the seam.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

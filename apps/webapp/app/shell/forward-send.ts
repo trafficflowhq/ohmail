@@ -1,30 +1,19 @@
 "use client";
 
 /**
- * THE INLINE FORWARD'S PLAN AND WIRE — one derivation for the lock and the send.
- *
- * A forward used to be reachable only by leaving the thread for the compose screen; it is the
- * reply editor's sibling now (reported from real use: "it should happen inside the thread"), and
- * this module is the forward's half of the discipline `replyEnvelopePlan` states for replies —
- * `InlineReply` judges the Send lock with these two functions and `AppShell.sendReply`'s forward
- * arm builds the mutation from them, so the button and the envelope cannot reach different
- * verdicts.
- *
- * WHAT A FORWARD IS ON THE WIRE (`types.ts`, `mail_send.forwardOf`): `inReplyTo: null`, the
- * original's id in `forwardOf`, recipients the USER picked, and the user's own note as the body.
- * The quoted original and its attachments are the SERVER's to assemble — a client-built quote is
- * the seam a redacted sensitive body would escape through — so nothing here reads the original's
- * body, and the editor's honesty line (`compose.forwardingNote`) says what will ride along.
- *
- * ── RECIPIENTS ARE NEVER DERIVED ────────────────────────────────────────────────────────────
- *
- * `forwardMessage` (the compose seed) states the rule: a forward goes to somebody the user
- * picks, and seeding the original's sender is how "forward this to my colleague" becomes a
- * reply nobody meant to send. So the untouched plan carries `to: []` — which `canSend`'s
- * non-reply branch REFUSES — and the editor opens with the recipient rows already showing.
- * An edit parses through the reply plan's own edited path (`replyEnvelopePlan` with no parent:
- * the parent only feeds the DERIVED arm, which a forward never takes), keeping the compose
- * form's whole-envelope-or-nothing typo rule.
+ * The inline forward's plan and wire — one derivation for the lock and the send. A forward is the reply editor's
+ * sibling now (reported from real use), and this module is the forward's half of the discipline `replyEnvelopePlan`
+ * states: `InlineReply` judges the Send lock with these two functions and `AppShell.sendReply`'s forward arm builds
+ * the mutation from them, so the button and the envelope cannot reach different verdicts.
+ */
+
+/**
+ * On the wire (`mail_send.forwardOf`): `inReplyTo: null`, the original's id in `forwardOf`, recipients the USER
+ * picked, the user's note as body — the quoted original and its attachments are the SERVER's to assemble (a
+ * client-built quote is the seam a redacted body would escape through), and `compose.forwardingNote` says what rides
+ * along. Recipients are never derived: seeding the original's sender is how "forward this to my colleague" becomes a
+ * reply nobody meant, so the untouched plan carries `to: []`, which `canSend` refuses, and the editor opens with the
+ * recipient rows showing.
  */
 import { forwardSubject, type ComposeAttachment, type EngineMessage } from "@ohmail/client-engine";
 import {
