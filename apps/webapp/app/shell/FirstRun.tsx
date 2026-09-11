@@ -1,36 +1,14 @@
 "use client";
 
 /**
- * THE FIRST-RUN STAGE — the screens a person meets between installing ohmail and taking their
- * first Screener decision.
- *
- * ── WHAT MAKES THIS ONE COMPONENT AND NOT ELEVEN ROUTES ───────────────────────────────────
- *
- * It is a DIALOG over the app, at `#/first-run`, and the app is behind it the whole time. That
- * is not decoration: "Open ohmail meanwhile" on the pull screen has to leave the flow without
- * ending it, and a person who wanders into Settings and comes back has to find the same run
- * where they left it. A stack of routes would have to reconstruct that; an overlay over a live
- * shell already is it.
- *
- * ── THE STEP IS DERIVED. THERE IS NO COUNTER, AND {@link at} IS NOT ONE ───────────────────
- *
- * `deriveOnboardingStep` (`onboarding.ts`) answers "where does this run RESUME" from the facts
- * the product actually stored, and it is the authority here. {@link at} is a CURSOR INSIDE ONE
- * RUN — what "Back" and "Continue" move — and it exists because three screens are not resume
- * targets and cannot be: `welcome` is shown once at the top of a run with nothing behind it,
- * `window` shares one write with `consent` (so there is no truth-condition between them to
- * resume on), and `pair` is offered after the flow is otherwise finished.
- *
- * **Every write clears the cursor**, which is what "re-derive after every write" means here
- * concretely: the derivation, not this component, decides what comes next the moment anything
- * is stored. A cursor that survived a write would be a step counter with extra steps.
- *
- * ── THE FOOT IS THE SAME ON EVERY SCREEN, AND THAT IS THE PROMISE ─────────────────────────
- *
- * Cancel and Start over are on every screen that has a foot; Back is there wherever a step has
- * one before it. Both destructive verbs confirm IN PLACE — a second dialog stacked over a
- * dialog is how a person loses track of which one Escape closes, and there is exactly one
- * Escape binding here (`overlay` scope, so it beats every view binding underneath).
+ * The first-run stage — the screens between installing ohmail and the first Screener decision. One component, not
+ * eleven routes: it is a DIALOG over the app at `#/first-run`, and the app is behind it the whole time — "Open
+ * ohmail meanwhile" leaves the flow without ending it, and a wander into Settings comes back to the same run. The
+ * step is DERIVED: `deriveOnboardingStep` (`onboarding.ts`) answers "where does this run resume" from stored facts
+ * and is the authority; {@link at} is a cursor inside one run (what Back and Continue move) for the three screens
+ * that are not resume targets. Every write clears the cursor — the derivation, not this component, decides what
+ * comes next. The foot is the same on every screen; both destructive verbs confirm IN PLACE, and there is exactly
+ * one Escape binding (`overlay` scope).
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -73,20 +51,14 @@ const ALL_RAIL: Array<{ id: string; steps: OnboardingStep[] }> = [
 ];
 
 /**
- * THE RAIL THIS RUN ACTUALLY WALKS — the groups above, filtered by the path.
- *
- * The list above is every phase the flow HAS. It is not every phase a given run walks, and until
- * this function existed the rail drew all seven whatever the path said. That made the rail's own
- * docblock false the moment a run dropped a step: it promises a phase that will never arrive, and
- * `n / 7` reports a total the person will never reach.
- *
- * The ADD run is where it became visible — no AI question and no pairing, so two of the seven dots
- * were decoration — but it was already wrong on a run whose Screener queue is empty, where the
- * `decide` step is skipped SILENTLY and its dot sat there unlit for ever.
- *
- * A phase survives when the path still contains at least ONE of its steps, which is what keeps
- * the groups meaningful: `ai`/`provider` are one question and its answer, and a door that has the
- * question without the form still has the phase.
+ * The rail this run actually walks — the groups above, filtered by the path. The list above is
+ * every phase the flow HAS, not every phase a run walks: the rail used to draw all seven
+ * whatever the path said, promising phases that never arrive and an `n / 7` total the person
+ * never reaches (visible on the ADD run — no AI question, no pairing — and already wrong on a
+ * run whose empty Screener queue skips `decide` silently). A phase survives when the path still
+ * contains at least one of its steps, which keeps the groups meaningful: `ai`/`provider` are
+ * one question and its answer, and a door with the question but not the form still has the
+ * phase.
  */
 function railFor(path: readonly OnboardingStep[]): Array<{ id: string; steps: OnboardingStep[] }> {
   return ALL_RAIL.filter((r) => r.steps.some((step) => path.includes(step)));
@@ -177,15 +149,14 @@ export interface FirstRunProps {
    */
   add?: boolean;
   /**
-   * A MAILBOX WAS JUST CONNECTED BY THIS RUN — the id, the moment the create answers.
-   *
-   * The stage cannot follow the row it just made without help. `AppShell` resolves "the mailbox
-   * this run is about" from the ROUTE's `?mailbox=<id>`, and an add run begins with no id in the
-   * hash at all (there is no row yet). Told here, the caller re-points the route at the new row
-   * and every later screen — consent, window, pull, summary — is about the mailbox that was
-   * added rather than about whichever row happens to be first.
-   *
-   * Absent on the doors and the runs where it is not needed: a first run's row IS the first row.
+   * A mailbox was just connected by this run — the id, the moment the
+   * create answers. The stage cannot follow the row it just made without
+   * help: `AppShell` resolves "the mailbox this run is about" from the
+   * route's `?mailbox=<id>`, and an add run begins with no id in the hash
+   * (there is no row yet). Told here, the caller re-points the route at the
+   * new row and every later screen — consent, window, pull, summary — is
+   * about the mailbox that was added rather than whichever row is first.
+   * Absent on the doors and runs where it is not needed.
    */
   onConnected?: (mailboxId: string) => void;
   /**
@@ -206,22 +177,14 @@ export interface FirstRunProps {
  * cursor/derivation interaction is the part with rows, and rows are what a table test is for.
  */
 /**
- * IS THIS READ AT LEAST AS NEW AS THE ONE THAT SHOWED THE HOLDER?
- *
- * The whole of the ordering rule, in one place so its three degenerate cases are visible
- * together rather than spread through a condition:
- *
- *  · NO BASELINE — the read that showed the holder carried no stamp (a mailbox nothing had
- *    happened to, or a build predating the column). There is nothing to order against, so the
- *    explicit verdict stands on its own. That is the pre-ordering behaviour, kept exactly where
- *    no evidence exists rather than replaced by a refusal that could park somebody on the claim
- *    question for ever.
- *  · A BASELINE AND NO STAMP NOW — the row went backwards, which only a read issued before the
- *    stamp existed can do. OLDER.
- *  · BOTH — later or equal is current; equal because a read can legitimately repeat a stamp
- *    while some other column moves, and refusing an equal one would refuse the ordinary case.
- *
- * Unparseable is treated as absent on both sides, which lands each in the case above it.
+ * Is this read at least as new as the one that showed the holder? The whole ordering rule, with
+ * its three degenerate cases together: NO BASELINE — the holder read carried no stamp (nothing
+ * had happened to the mailbox, or a pre-column build); nothing to order against, so the explicit
+ * verdict stands — the pre-ordering behaviour, kept rather than a refusal that could park
+ * somebody on the claim question for ever. A BASELINE AND NO STAMP NOW — the row went backwards,
+ * which only a read issued before the stamp existed can do: OLDER. BOTH — later or equal is
+ * current (equal because a read can repeat a stamp while another column moves). Unparseable is
+ * treated as absent on both sides.
  */
 export function readIsNotOlder(readAt?: string | null, baseline?: string | null): boolean {
   const base = baseline ? Date.parse(baseline) : Number.NaN;
@@ -232,17 +195,14 @@ export function readIsNotOlder(readAt?: string | null, baseline?: string | null)
 }
 
 /**
- * THE FLOOR ONLY EVER MOVES UP.
- *
- * The floor is remembered from the reads that showed a holder, and those arrive out of order for
- * the same reason the `nobody` ones do — so an EARLIER holder read can land after a later one
- * and, assigned rather than raised, would LOWER the floor to its own older stamp. A `nobody`
- * carrying that same older stamp then passes the comparison, and the screen goes: the ordering
- * rule defeated by the very disorder it was written for, one read earlier.
- *
- * A stamped floor is never lowered by an unstamped read either — a read that carries nothing is
- * no evidence about which read is newer, and taking it as a reset would undo the floor for the
- * cases most likely to have one.
+ * The floor only ever moves up. It is remembered from the reads that showed
+ * a holder, and those arrive out of order too — an EARLIER holder read
+ * landing after a later one, assigned rather than raised, would LOWER the
+ * floor to its own older stamp, and a `nobody` carrying that same older
+ * stamp would then pass the comparison: the ordering rule defeated by the
+ * very disorder it was written for. A stamped floor is never lowered by an
+ * unstamped read either — a read that carries nothing is no evidence about
+ * which read is newer.
  */
 export function raiseStamp(floor: string | null, seen?: string | null): string | null {
   const at = seen ? Date.parse(seen) : Number.NaN;
@@ -263,137 +223,55 @@ export function firstRunStep(
    */
   heldStamp: string | null = null,
   /**
-   * HAS THE CLAIM QUESTION BEEN ON SCREEN WITH A HOLDER ON IT IN THIS RUN, for this mailbox.
-   *
-   * The cursor is not the only way somebody arrives on that screen. The DERIVATION puts them
-   * there straight after a connect, before any press, and on that path `at` is still null — so
-   * the release rule below, written against the cursor alone, did not run at all, and a stale or
-   * empty read carried the run on to the consent statement with the question never answered.
-   *
-   * The witness is the ref the floor comes from, which is written only while the question is
-   * rendered with a holder, and keyed by mailbox. `heldStamp` itself cannot serve: it is null on
-   * a host that sends no `organizerEventAt`, which is a run that WAS asked.
+   * Has the claim question been on screen with a holder on it in this run, for this mailbox.
+   * The cursor is not the only way somebody arrives there: the DERIVATION puts them there
+   * straight after a connect, before any press, where `at` is still null — so a release rule
+   * written against the cursor alone did not run, and a stale or empty read carried the run on
+   * with the question never answered. The witness is the ref the floor comes from — written
+   * only while the question is rendered with a holder, keyed by mailbox. `heldStamp` cannot
+   * serve: it is null on a host that sends no `organizerEventAt`, which is a run that WAS
+   * asked.
    */
   asked = false,
 ): OnboardingStep | null {
   const derived = deriveOnboardingStep(facts);
   /**
-   * IS THERE A CLAIM QUESTION OUTSTANDING — read from the FACTS, not from `derived`.
-   *
-   * `derived` cannot answer this on the path that needs it most. Row 1 returns `null` for any
-   * account carrying a completion stamp, so on `#/first-run/again` the guard below would be
-   * structurally inert — and the walk that reaches it is short: connect a mailbox somebody else
-   * holds, CANCEL on the consent screen (cancel stamps completion, which is the whole point of
-   * the stamp), then press "Run setup again". The re-run arm opens on the consent statement, the
-   * claim question is never shown, and Agree writes a consent the lease is about to decline.
-   * That is the measured defect arriving through the other door.
-   *
-   * `flowIsOpen` keeps row 1's authority where row 1 has it: on a BOOT the completion stamp
-   * still closes the stage, so the reader ending — which leaves the mailbox a consent-less
-   * reader with a holder for ever — does not re-open this screen at every launch.
+   * Is there a claim question outstanding — read from the FACTS, not from `derived`, which
+   * cannot answer on the path that needs it most: row 1 returns `null` for any account carrying
+   * a completion stamp, so on `#/first-run/again` the guard below would be structurally inert —
+   * and the walk is short: connect a mailbox somebody else holds, CANCEL on the consent screen
+   * (cancel stamps completion), press "Run setup again" — the re-run opens on the consent
+   * statement and Agree writes a consent the lease is about to decline. `flowIsOpen` keeps row
+   * 1's authority on a BOOT: the reader ending does not re-open this screen at every launch.
    */
   const mb = facts.mailbox;
   const claimPending = mb !== null
     && Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name))
     && !mb.organizeConsentedAt;
   const flowIsOpen = rerun || add || derived !== null;
-  /* ── THE CLAIM QUESTION IS NOT SKIPPABLE, AND THE CURSOR USED TO SKIP IT SILENTLY ────────
-   *
-   * MEASURED on the released 0.13.6, on a fresh standalone connect to a mailbox ohmail Cloud
-   * holds the lease on: the flow opened on the consent statement (correct at that instant — the
-   * pre-consent PEEK had not landed yet, so no holder was named), the person pressed Continue,
-   * and from that press onward `at` was non-null. The peek then landed, the derivation started
-   * answering "elsewhere", and the arm below returned the cursor instead — so the one screen
-   * built for this situation never rendered. The person agreed, the install stood down to
-   * reader on its next pass, and the summary reported the organizing it had just been refused.
-   *
-   * The cursor is a navigation aid, not evidence. It may carry a run through screens the
-   * derivation cannot name; it may not carry a run PAST a question nobody answered. So while
-   * the facts say somebody else holds this mailbox and the claim question has not been
-   * answered in this run, the question wins over the cursor.
-   *
-   * `claimAnswered` is what makes that a guard rather than a loop — and the loop is the failure
-   * mode this codebase keeps producing, so it is spelled out: "Organize here instead" moves the
-   * cursor to `consent`, the consent stamp is not written until the window screen's press two
-   * screens later, and the derivation therefore still answers "elsewhere" for that whole
-   * stretch. Without the flag the person would be thrown back to the choice they just made, on
-   * every render, for ever.
-   *
-   * The three cursors exempted are the ones at or BEFORE this screen in the path
-   * (`onboardingPath`: welcome → mailbox → elsewhere). Back has to work.
+  /* The claim question is not skippable, and the cursor used to skip it
+   * silently. Measured on 0.13.6: the flow opened on the consent statement
+   * (the pre-consent peek had not landed), Continue made `at` non-null, the
+   * peek then named a holder — and the arm below returned the cursor, so the one screen built for this situation never rendered; the person
+   * agreed, the install stood down to reader, and the summary reported the organizing it had just been refused. The cursor is a navigation aid,
+   * not evidence: it may carry a run through screens the derivation cannot
+   * name, never PAST a question nobody answered. `claimAnswered` makes this
+   * a guard rather than a loop — "Organize here instead" moves the cursor to `consent` while the derivation still answers "elsewhere" until the
+   * window press two screens later. The three exempted cursors are at or before this screen in the path; Back has to work.
    */
   if (flowIsOpen && claimPending && !claimAnswered
       && at !== "welcome" && at !== "mailbox" && at !== "elsewhere") {
     return "elsewhere";
   }
-  /* ── AND THE CURSOR MAY NOT KEEP THAT SCREEN UP AFTER ITS SUBJECT IS GONE ────────────────
-   *
-   * The guard above is one direction of one rule: the claim question wins over the cursor while
-   * somebody else holds the mailbox. This is the other direction, and it was missing.
-   *
-   * `elsewhere` is written for ONE situation — another install organizes this mailbox — and every
-   * sentence on it is about that install: the title, the lead, and both choices ("let them keep
-   * it" / "take it from them"). The derivation never opens it without a holder; row 3 requires
-   * one. The CURSOR does: `at` outranks the derivation for every screen, so once somebody is
-   * standing on this one the holder can go away underneath them — a release on the other machine,
-   * a claim that lapsed — and the screen stays, offering a choice between two installs when there
-   * is one. The banner inside it already tells the truth for that state, which is what makes the
-   * rest of the screen contradict itself rather than merely be wrong.
-   *
-   * The answer is not to reword four sentences into a state they were not written for: it is that
-   * this is not the screen for this state. The cursor releases and the derivation says where the
-   * run actually is — the consent statement, the window, the pull, or nothing left to do.
-   *
-   * `holderVerdict` and NOT `readerHolder`, and NOT `claimPending`'s `kind || name`: three
-   * questions, three answers, and this is the only one about which SCREEN somebody sees.
-   *
-   *  · `claimPending`'s test asks whether a holder was NAMED, because row 3 decides whether to put
-   *    a whole screen in front of somebody who has not been asked yet.
-   *  · `readerHolder` asks which SENTENCE is true, and deliberately collapses "no field" into
-   *    "nobody" — for a sentence that is right, since neither names an install.
-   *  · This asks whether a read ANSWERED, and that collapse is the defect here. It read "this
-   *    build has not been told" as "the mailbox is free" and took the screen away: with the run
-   *    parked on the claim question and the mailbox absent from the facts — a removal from
-   *    another surface, a stale or failing list, an add that has not created — the cursor was
-   *    released and the run resumed on the consent statement, where Continue and then Agree
-   *    authorize a takeover with the choice never having been shown.
-   *
-   * A holder recorded with neither kind nor name is still `somebody`: the screen's legacy label is
-   * written for exactly that, and an empty name is not an empty mailbox.
-   *
-   * ── AND A `nobody` THAT IS STALE IS NOT AN ANSWER EITHER ───────────────────────────────────
-   *
-   * Two reads of one account can be in flight together and settle in either order, so an answer
-   * issued before the holder was recorded can land AFTER the one that showed it: a `nobody` that
-   * was true of a moment that has passed, and at this seam indistinguishable from a current one
-   * by its content alone. The verdict above cannot see it — both reads say the same thing.
-   *
-   * `organizerEventAt` orders them. Every writer that changes the organizing story stamps it in
-   * the same statement, so the read that showed the holder H fixes a floor, and a `nobody`
-   * carrying an older stamp is a late arrival rather than news. {@link readIsNotOlder} holds the
-   * rule and names what it does when there is no floor to compare against.
-   *
-   * The floor is remembered by the SCREEN and not derived here, because it is a fact about this
-   * run rather than about this read — see {@link heldStamp} and the ref that fills it.
-   *
-   * ── TWO WAYS THE QUESTION IS UP, AND ONE WAY IT COMES DOWN ───────────────────────
-   *
-   * All of the above was written against the CURSOR, so it only ever ran for somebody who had
-   * pressed something. The question is also put on screen by the DERIVATION — row 3, on the
-   * connect path, where `at` is still null because nothing has been pressed — and that is the
-   * ORDINARY first run: connect, the peek lands, the screen appears. There this rule did not
-   * apply, so a `nobody` prepared before the peek, or a read carrying no row for this mailbox,
-   * moved the run on to the consent statement, where Continue and then Agree authorize the
-   * takeover the choice was never kept on screen for. Measured on the 0.14.2 candidate.
-   *
-   * So the question is UP in either of two ways — the cursor names the screen, or the derivation
-   * has already put it there in this run and nobody has answered it ({@link asked}) — and it
-   * comes DOWN one way in both: a fresh, explicit `nobody`, ordered by the floor.
-   *
-   * `!claimAnswered` is what keeps the second way from becoming a loop. "Organize here instead"
-   * moves the cursor to `consent` while the holder is still recorded, and a write on that stretch
-   * clears the cursor (`setAt(null)`), which without the flag would land straight back here —
-   * the loop the guard above documents, arriving through the new door.
+  /* And the cursor may not keep that screen up after its subject is gone —
+   * the other direction of the same rule. `elsewhere` is written for one situation (another install organizes this mailbox) and the cursor can hold it up after the holder went away; the screen then offers a choice
+   * between two installs when there is one. The release is judged by `holderVerdict` — did a read ANSWER — not `readerHolder` (which collapses "no field" into "nobody", right for its sentence and the
+   * defect here: with the mailbox absent from the facts the cursor was released and the run resumed on consent, where Agree authorizes a
+   * takeover the choice was never shown for). A holder with neither kind nor name is still `somebody`. A stale `nobody` is not an answer either:
+   * two reads can settle in either order, so `organizerEventAt` orders them — the holder read fixes a floor ({@link readIsNotOlder}), remembered by
+   * the SCREEN ({@link heldStamp}) because it is a fact about this run. The
+   * question is UP two ways (the cursor names it, or the derivation put it there and nobody answered — {@link asked}) and comes DOWN one way: a
+   * fresh, explicit `nobody`, ordered by the floor. `!claimAnswered` keeps the second way from looping (measured on the 0.14.2 candidate).
    */
   const questionUp = at === "elsewhere" || (at === null && asked && !claimAnswered);
   const cursor = questionUp
@@ -401,73 +279,41 @@ export function firstRunStep(
       ? null
       : "elsewhere")
     : at;
-  /* ── A RE-RUN IS AN INTENT, AND IT OUTRANKS THE COMPLETION STAMP ─────────────────────────
-   *
-   * `rerun` comes from the ROUTE (`#/first-run/again`), which is the only place it can come
-   * from: an account that has been through setup derives to "nothing to do", correctly, and
-   * that is exactly what somebody who just pressed "Run setup again" does not want. The
-   * alternative would be to CLEAR the stamp, and there is deliberately no instruction to do
-   * that — nothing un-finishes onboarding, because a control that silently reopens setup on
-   * every future boot is worse than a route segment.
-   *
-   * It opens on the consent statement, not on the welcome and not on the derived step. A re-run
-   * is for the three things a person comes back to change — what ohmail files, how far back, and
-   * AI — and it is pre-filled from what the account already stored. The one exception is an
-   * account with no mailbox, where there is nothing to re-run and the flow is a first run.
+  /* A re-run is an intent, and it outranks the completion stamp. `rerun`
+   * comes from the route (`#/first-run/again`) — the only place it can: a
+   * finished account derives to "nothing to do", correctly, which is
+   * exactly what somebody pressing "Run setup again" does not want. The
+   * alternative — clearing the stamp — deliberately has no instruction:
+   * nothing un-finishes onboarding. It opens on the consent statement (the
+   * three things a person comes back to change: what ohmail files, how far
+   * back, AI), pre-filled from what the account stored. The one exception
+   * is an account with no mailbox, where the flow is a first run.
    */
   if (rerun) {
     if (cursor !== null) return cursor;
     return facts.mailbox === null ? "mailbox" : "consent";
   }
-  /* ── AN ADD IS AN INTENT TOO, AND IT OPENS ON THE CONNECT FORM ───────────────────────────
-   *
-   * Same argument as the re-run above and one difference. The stamp closes the flow for an
-   * install that has been set up, which is right for every boot and wrong for the press beside a
-   * list of mailboxes that says "Add mailbox"; the intent therefore rides the route.
-   *
-   * WHERE IT OPENS is the difference. A re-run is about a mailbox that exists, so it opens on
-   * the consent statement. An add is about one that does not, so it opens on the form — and it
-   * keeps opening there until the create has answered, which is what `facts.mailbox === null`
-   * means on this run: `AppShell` withholds the mailbox while the route names none, precisely so
-   * that this screen is a form and not the statement it becomes once a row exists.
-   *
-   * AFTER the create the cursor carries the run forward (`onConnected` re-points the route, the
-   * facts arrive, and `at` is whatever `forward()` set). The derivation is consulted for the
-   * resume, so quitting mid-add and coming back through this route lands on the first thing the
-   * new mailbox still needs — consent, the window, or the pull.
+  /* An add is an intent too, and it opens on the connect form. Same
+   * argument as the re-run, one difference: a re-run is about a mailbox
+   * that exists, an add about one that does not — and it keeps opening on
+   * the form until the create has answered, which is what
+   * `facts.mailbox === null` means on this run (`AppShell` withholds the
+   * mailbox while the route names none). After the create the cursor
+   * carries the run forward (`onConnected` re-points the route); the
+   * derivation is consulted for the resume, so quitting mid-add and coming
+   * back lands on the first thing the new mailbox still needs.
    */
   if (add) {
     if (cursor !== null) return cursor;
-    /* THE TWO FACTS THIS RUN IS NOT ABOUT ARE WITHHELD, and each for its own reason.
-     *
-     *  · `account.onboardingCompletedAt` is about the INSTALL. It is set — this install has been
-     *    through setup, which is precisely why "Add mailbox" is a control somebody can see — and
-     *    row 1 would therefore answer `null` for every add run, at every resume.
-     *  · `ai` is about the install too (`ai-provider.ts`, "a property of the INSTALL"), and rows
-     *    5 and 6 would put the AI question and the provider form into a walk that does not
-     *    contain them (`onboardingPath`'s `add` arm) — a step the path cannot navigate away from.
-     *    Reported as `on` rather than skipped afterwards, so the derivation flows on to rows 7-9
-     *    instead of being clamped to one of them.
-     *
-     * What is left is the mailbox's own truth-conditions.
-     *
-     * ── AND THIS DOES NOT DESCRIBE A RESUME, WHICH IS WHAT IT USED TO CLAIM ──────────────────
-     *
-     * It said: "quit halfway through adding a mailbox, come back through the same route, and land
-     * on the first thing THAT mailbox still needs". No entry point produces that. Coming back
-     * means pressing "Add mailbox", which navigates to `#/first-run/add` with NO `?mailbox=` —
-     * so the run is pending, the mailbox is withheld, and the screen is the connect form again;
-     * re-typing the same mailbox then meets `POST /local/mailboxes`'s `same_login` refusal.
-     *
-     * The half-added mailbox is recovered from its own ROW instead — it is in the pane by then,
-     * and its "Run setup" opens the re-run on the consent statement, which is the first thing it
-     * still needs. That is the honest sentence, and the claim is corrected rather than the code:
-     * a route that resumed an add would have to name the row, and the row already has a control
-     * that does.
-     *
-     * What this arm is actually for is the run in FLIGHT: once `onConnected` has put the new id in
-     * the hash, every later render of the same run derives from that mailbox's own conditions
-     * rather than from the install's.
+    /* The two facts this run is not about are withheld, each for its own
+     * reason: `account.onboardingCompletedAt` is about the INSTALL — it is set (that is why "Add mailbox" is visible), so row 1 would answer
+     * `null` for every add run; `ai` is about the install too, and rows 5-6
+     * would put the AI question into a walk that does not contain it —
+     * reported as `on` so the derivation flows to rows 7-9. What is left is
+     * the mailbox's own truth-conditions. This does NOT describe a resume (the old claim): coming back means pressing "Add mailbox" with no
+     * `?mailbox=`, so the screen is the connect form again, and re-typing
+     * the same mailbox meets `same_login`; the half-added mailbox is recovered from its own row (`Run setup` → the re-run). This arm is
+     * for the run in FLIGHT, once `onConnected` has put the id in the hash.
      */
     return deriveOnboardingStep({ ...facts, account: {}, ai: "on" }) ?? "mailbox";
   }
@@ -499,26 +345,14 @@ export function FirstRun({
   const ids = useId();
 
   /**
-   * WHAT THE CONSENT CALL JUST PROVED — applied to the facts BEFORE the derivation reads them.
-   *
-   * ── WHY THE RE-READ IS NOT ENOUGH ON ITS OWN ──────────────────────────────────────────────
-   *
-   * "Re-derive after every write" needs the write to be VISIBLE, and `onRefresh` is a request,
-   * not a fact: the facts this stage renders come from `GET /mailboxes` on the hosted door and
-   * from the local mirror on the standalone one, and neither is guaranteed to have caught up by
-   * the render that follows the press. Row 4 of the derivation is `if (!consented) return
-   * "consent"` — so for as long as the read lags, a person who has just agreed is put back on
-   * the screen asking them to agree, with the button they pressed still on it. That is the same
-   * loop the re-run had, arriving through a different door, and on a slow read it does not end.
-   *
-   * So the answer the server gave is applied to the local copy. It only ever ASSERTS SOMETHING
-   * TRUE — the organize call returned `stored`, which means consent is recorded — and it stops
-   * mattering the moment the read catches up, because the override is only consulted while the
-   * wire still says null.
-   *
-   * KEYED BY MAILBOX, and that is not decoration: "Start over → forget this mailbox" and a
-   * reconnect inside one mount would otherwise carry this assertion onto a NEW row that nobody
-   * has consented to, and skip the consent screen on a mailbox that needs it.
+   * What the consent call just proved — applied to the facts BEFORE the derivation reads them.
+   * "Re-derive after every write" needs the write to be VISIBLE, and `onRefresh` is a request, not a
+   * fact: neither the hosted `GET /mailboxes` nor the local mirror is guaranteed to have caught up by
+   * the next render, and row 4 is `if (!consented) return "consent"` — so a person who just agreed was
+   * put back on the screen asking them to agree, for as long as the read lagged. The override only ever
+   * asserts something true (the organize call returned `stored`) and stops mattering when the read
+   * catches up. KEYED BY MAILBOX: "Start over → forget this mailbox" plus a reconnect would otherwise
+   * carry the assertion onto a new row nobody consented to.
    */
   const [consented, setConsented] = useState<{ mailboxId: string; at: string } | null>(null);
   const facts = useMemo(() => {
@@ -537,33 +371,26 @@ export function FirstRun({
   /** A write that failed, in the server's own words. Cleared by the next attempt. */
   const [problem, setProblem] = useState<string | null>(null);
   /**
-   * WHICH MAILBOX'S CLAIM QUESTION HAS BEEN ANSWERED IN THIS RUN — the flag `firstRunStep`'s
-   * guard reads, and the thing that keeps that guard from becoming a loop.
-   *
-   * KEYED BY MAILBOX, on `consented`'s rule and for the same measured reason: "Start over →
-   * forget this mailbox" and a reconnect inside one mount would otherwise carry an answer given
-   * about one mailbox onto a NEW row whose holder nobody has been told about — which is exactly
-   * the state the guard exists for.
-   *
-   * Deliberately NOT persisted. A run abandoned on the consent screen and resumed tomorrow gets
-   * the question again: the safe direction, and the same trade the AI posture's union
-   * documents — being asked twice costs a screen, not being asked costs a mailbox.
+   * Which mailbox's claim question has been answered in this run — the flag
+   * `firstRunStep`'s guard reads, and what keeps that guard from becoming a
+   * loop. Keyed by mailbox, on `consented`'s rule and for the same measured
+   * reason: "Start over → forget this mailbox" plus a reconnect would carry
+   * an answer about one mailbox onto a new row whose holder nobody has been
+   * told about — exactly the state the guard exists for. Deliberately NOT
+   * persisted: a run abandoned on the consent screen and resumed tomorrow
+   * gets the question again — being asked twice costs a screen, not being asked costs a mailbox.
    */
   const [claimAnsweredFor, setClaimAnsweredFor] = useState<string | null>(null);
 
   /**
-   * THE READ THAT PUT A HOLDER ON THE CLAIM QUESTION, as a floor for every later read.
-   *
-   * A REF AND NOT STATE, and written from an effect rather than during render: nothing on screen
-   * depends on it — it only ever refuses a transition — so a re-render would be work for no
-   * frame, and the value is needed on the render AFTER the one that showed the holder, which is
-   * exactly when an effect has already run. StrictMode's double invocation writes the same value
-   * twice, which is why it is an assignment rather than an accumulation.
-   *
-   * KEYED BY MAILBOX, on `consented` and `claimAnsweredFor`'s rule and for their measured reason:
-   * "Start over → forget this mailbox" and a reconnect inside one mount would otherwise hold a
-   * floor taken from one row against the reads of another, and the two rows' stamps have nothing
-   * to do with each other.
+   * The read that put a holder on the claim question, as a floor for every
+   * later read. A ref, not state, written from an effect: nothing on screen
+   * depends on it — it only refuses a transition — and the value is needed
+   * on the render AFTER the one that showed the holder, which is when an
+   * effect has run. StrictMode's double invocation writes the same value
+   * twice, which is why it is an assignment, not an accumulation. Keyed by
+   * mailbox, on `consented` and `claimAnsweredFor`'s rule: a floor taken
+   * from one row must not be held against the reads of another.
    */
   const heldStampRef = useRef<{ mailboxId: string | null; at: string | null } | null>(null);
   const heldStamp = heldStampRef.current !== null && heldStampRef.current.mailboxId === mailboxId
@@ -598,28 +425,14 @@ export function FirstRun({
   const path = useMemo(() => onboardingPath(facts, add === true), [facts, add]);
 
   /**
-   * EVERY WRITE GOES THROUGH HERE, and every write clears the cursor.
-   *
-   * The `finally` is what makes the clear unconditional, and that is deliberate even for a
-   * FAILED write: a refusal may still have changed something (a claim the worker took while
-   * the request was in flight), and the derivation is the only thing entitled to say where the
-   * flow stands afterwards. Re-deriving after a failure costs a render; NOT re-deriving after
-   * one leaves the person on a screen whose question the facts have already answered.
-   *
-   * ── EXCEPT ON A RE-RUN, WHERE A CLEARED CURSOR IS AN INFINITE LOOP ────────────────────────
-   *
-   * `firstRunStep` answers `consent` for a re-run whose cursor is null. That is right for an
-   * ENTRY — a re-run opens on the consent statement — and it is fatal for a WRITE, because a
-   * finished account derives to "nothing to do" and the cursor is therefore the re-run's only
-   * navigation. So on `#/first-run/again` every write walked back to the screen before it:
-   * pressing "Agree and start organizing" stored the window, cleared the cursor, and returned to
-   * the consent statement, for ever. Measured on a released build by somebody who had opened
-   * setup again on a mailbox that was already organized.
-   *
-   * A re-run's SUCCESS therefore names its next screen (the caller's `keepCursor`, which on that
-   * path is not optional), and a re-run's FAILURE stays where it is, on the screen carrying the
-   * sentence that explains it. A first run is untouched: there the derivation is the authority
-   * and a null cursor is how it is asked.
+   * Every write goes through here, and every write clears the cursor. The `finally` makes the clear
+   * unconditional, even for a FAILED write: a refusal may still have changed something (a claim taken
+   * mid-flight), and the derivation is the only thing entitled to say where the flow stands. EXCEPT on a
+   * re-run, where a cleared cursor is an infinite loop: a finished account derives to "nothing to do", so the
+   * cursor is the re-run's only navigation — every write walked back to the screen before it ("Agree and start
+   * organizing" stored the window and returned to the consent statement, for ever; measured on a released
+   * build). A re-run's SUCCESS names its next screen (`keepCursor`, not optional there); its FAILURE stays on
+   * the screen carrying the explaining sentence. A first run is untouched.
    */
   const run = useCallback(async (write: () => Promise<void>, keepCursor?: OnboardingStep) => {
     /* THE FORM'S GENERATION AT THE MOMENT THIS STARTED. `retireTest` advances it on every edit, so
@@ -674,15 +487,13 @@ export function FirstRun({
   }, [host, onLeave, run]);
 
   /**
-   * THE ONE ESCAPE BINDING, at `overlay` scope.
-   *
-   * `overlay` beats every `view` binding underneath (`keymap.tsx` argues why that rank exists),
-   * so Escape here is not competing with the Ohbox's selection-clearing Escape. It ASKS rather
-   * than acts: this flow's cancel writes a stamp, and a keystroke that silently ends setup is
-   * the kind of thing a person does not know they did.
-   *
-   * `inInput` because the mailbox step is a form — a field you cannot leave is a trap, which is
-   * the rule the registry states for exactly this key.
+   * The one Escape binding, at `overlay` scope — it beats every `view`
+   * binding underneath (`keymap.tsx` argues the rank), so it is not
+   * competing with the Ohbox's selection-clearing Escape. It ASKS rather
+   * than acts: this flow's cancel writes a stamp, and a keystroke that
+   * silently ends setup is the kind of thing a person does not know they
+   * did. `inInput` because the mailbox step is a form — a field you cannot
+   * leave is a trap, the registry's rule for exactly this key.
    */
   useKeyBindings(
     useMemo(() => [{
@@ -716,19 +527,14 @@ export function FirstRun({
    */
   const testSeq = useRef(0);
   /**
-   * RETIRE WHATEVER IS IN FLIGHT, and clear what is on screen — one act, because they are one
-   * fact: this form no longer describes the thing that was asked about.
-   *
-   * The generation counter alone does NOT do this, and believing it did was the defect a third
-   * review round found in the second round's fix. Advancing the sequence only when a test STARTS
-   * orders concurrent presses and nothing else: press Test for A, edit the host to B while it is
-   * pending, and A's answer still carries the current generation, so it lands — over B, with the
-   * gate on "Connect and continue" opening for a configuration nobody proved. The clear has to
-   * advance the sequence too, which is what makes an EDIT invalidate a request rather than merely
-   * blank the screen.
-   *
-   * `setTesting(false)` with it: the request is no longer ours, so the pending line must not go on
-   * describing it.
+   * Retire whatever is in flight, and clear what is on screen — one act, because they are one
+   * fact: this form no longer describes what was asked about. The generation counter alone does
+   * NOT do this (the defect a third review round found in the second's fix): advancing the
+   * sequence only when a test STARTS orders concurrent presses and nothing else — press Test for
+   * A, edit the host to B while pending, and A's answer still carries the current generation, so
+   * it lands over B with the gate opening for a configuration nobody proved. The clear advances
+   * the sequence too, making an EDIT invalidate a request. `setTesting(false)` with it: the
+   * pending line must not go on describing a foreign request.
    */
   const retireTest = useCallback(() => {
     testSeq.current += 1;
@@ -822,15 +628,14 @@ export function FirstRun({
   /* ── THE WINDOW AND THE AI ANSWER ──────────────────────────────────────────────────── */
 
   /**
-   * THE WINDOW, pre-filled from truth on a re-run and 365 on a first run.
-   *
-   * 365 is written EXPLICITLY rather than left to the product default, which is 60 and is pinned
-   * twice elsewhere: the dial a person sees on this screen and the dial that gets stored have to
-   * be the same number, and a first run that showed one and stored the other would be exactly the
-   * lie this flow's copy is written against.
-   *
-   * A stored value that is not one of the four offered rungs falls to the nearest OFFER rather
-   * than to the default — somebody who set 120 in Settings should not be shown "One year".
+   * The window, pre-filled from truth on a re-run and 365 on a first run.
+   * 365 is written explicitly rather than left to the product default
+   * (which is 60, pinned twice elsewhere): the dial a person sees and the
+   * dial that gets stored have to be the same number — a first run showing
+   * one and storing the other is exactly the lie this flow's copy is
+   * written against. A stored value that is not one of the four offered
+   * rungs falls to the nearest OFFER, not the default: somebody who set 120
+   * in Settings should not be shown "One year".
    */
   const [win, setWin] = useState<WindowChoice>(() => initialWindow(screening));
   const [ai, setAi] = useState<"yes" | "no">(
@@ -877,22 +682,14 @@ export function FirstRun({
   const etaMs = pullEtaMs(remaining, rate);
 
   /**
-   * THE DEFAULT IS THE CHOICE A FIRST RUN IS ABOUT, AND IT IS NO LONGER WITHHELD.
-   *
-   * It used to follow a predicate — would the lease decline this press? — because a hosted claim
-   * outranked a local one and a standalone install had no path over a live one whatever was
-   * authorized. On those rows the pre-selected option would have been the refused one, so the
-   * default moved to "just read it" and a block under the control said why.
-   *
-   * An explicit press outranks a claim that carries none now, whichever machine wrote it, so
-   * there is no refused case left. `here` is the default again on every door — somebody running
-   * this flow is setting ohmail up to organize their mail — and any press still writes
-   * `elsewhereChoicePicked`, which wins from then on.
-   *
-   * What the screen owes instead is the CONSEQUENCE, and it is stated on the choice itself
-   * (`elsewhereChoiceHereWhy`): the install holding the mailbox stops organizing within a minute
-   * and goes on reading it, keeping its copy of the mail. That sentence is what makes this a
-   * decision rather than a discovery, and it is the half that has to be there before the press.
+   * The default is the choice a first run is about, and it is no longer withheld. It used to follow a
+   * predicate — would the lease decline this press? — because a hosted claim outranked a local one;
+   * on those rows the pre-selected option would have been the refused one. An explicit press outranks
+   * a claim that carries none now, whichever machine wrote it, so there is no refused case left:
+   * `here` is the default on every door, and any press still writes `elsewhereChoicePicked`, which
+   * wins from then on. What the screen owes is the CONSEQUENCE, stated on the choice itself
+   * (`elsewhereChoiceHereWhy`): the holding install stops organizing within a minute and goes on
+   * reading — the half that has to be there before the press.
    */
   const elsewhereChoice: "here" | "read" = elsewhereChoicePicked ?? "here";
   /**
@@ -906,21 +703,14 @@ export function FirstRun({
    */
   const held = readerHolder(facts.mailbox?.organizedBy);
   /**
-   * IS THERE A DATE TO PRINT — the second fact the two reader surfaces below select on, and the
-   * second one that was being answered by something else.
-   *
-   * `AppShell` withholds {@link FirstRunProps.organizedSince} when the DTO names no instant, and
-   * says so where it mounts this screen: the sites are to "keep their own 'we do not know' arm
-   * instead of printing an empty one". They had no such arm. Both interpolated
-   * `organizedSince ?? ""` into a template that opens with the date, so a real holder whose
-   * `since` column was never written rendered "Since . This computer reads the mailbox…" and
-   * "Since  · ohmail Cloud." — a sentence that reads as a fault in the mailbox rather than as
-   * missing copy, and the same shape as the em dash the desktop pane printed for it.
-   *
+   * Is there a date to print — the second fact the two reader surfaces select on, and the second
+   * answered by something else. `AppShell` withholds {@link FirstRunProps.organizedSince} when
+   * the DTO names no instant, telling the sites to keep their own "we do not know" arm; they had
+   * none — both interpolated `organizedSince ?? ""`, so a real holder with no `since` rendered
+   * "Since . This computer reads the mailbox…", a sentence that reads as a fault in the mailbox.
    * The rule is the holder's rule one field over: no date line where there is no date.
-   * `readerReadsOnly` is the dated sentence with its date clause removed, so the two states
-   * cannot come to say different things about what this computer actually does. The holder's NAME
-   * is not lost with the date — the label carries it, on every arm.
+   * `readerReadsOnly` is the dated sentence minus its date clause, so the two states cannot
+   * diverge; the holder's NAME stays on the label.
    */
   const dated = Boolean(organizedSince);
   /**
@@ -951,18 +741,13 @@ export function FirstRun({
   /* THE RAIL THIS RUN WALKS, not every phase the flow has — see {@link railFor}. */
   const rail = useMemo(() => railFor(path), [path]);
   /**
-   * WHERE THE RUN IS ON ITS OWN RAIL — and never `-1`, which used to be unreachable and is not.
-   *
-   * Against the full seven-group list this always matched, because every step belongs to a group.
-   * Against the PATH-FILTERED rail it can miss: a step the path has since dropped is still the
-   * step on screen for one render — the reachable case is `decide`, whose group leaves the rail
-   * the moment a background pass drains the Screener queue to zero. `-1` then printed "0 / 6"
-   * with no dot lit.
-   *
-   * Clamped to the last phase rather than the first: a run whose remaining step just disappeared
-   * is at the END of what it has left to do, and the screen it is on is the one before the
-   * summary. (The body of that screen going empty when `decide` loses its subject is a separate,
-   * pre-existing strand — this is about the numbering.)
+   * Where the run is on its own rail — and never `-1`, which used to be unreachable and is not.
+   * Against the full seven-group list every step matched; against the PATH-FILTERED rail it can
+   * miss: a step the path has since dropped is still on screen for one render — reachably
+   * `decide`, whose group leaves the rail the moment a background pass drains the Screener
+   * queue to zero; `-1` then printed "0 / 6" with no dot lit. Clamped to the LAST phase: a run
+   * whose remaining step just disappeared is at the end of what it has left, on the screen
+   * before the summary. (That screen's body going empty is a separate strand.)
    */
   const railFound = rail.findIndex((r) => r.steps.includes(step));
   const railAt = railFound === -1 ? Math.max(0, rail.length - 1) : railFound;
