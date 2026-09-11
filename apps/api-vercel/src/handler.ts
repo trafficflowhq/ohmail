@@ -6,21 +6,14 @@ import { MalformedPathError } from "./prefix.js";
 import { normalizeRequest } from "./normalize.js";
 
 /**
- * THE dispatch point. `app/[[...path]]/route.ts` is a thin shim over this; all of the
- * behaviour is here so it can be tested without a Next runtime.
- *
- * Order matters and is fixed:
- *   1. mint a request id (so even a pre-pipeline failure is traceable),
- *   2. resolve the host state (once per cold instance; a config fault becomes a clean 503),
- *   3. NORMALIZE the request URL — exactly once, before anything reads the path (`prefix.ts`),
- *   4. build `ApiDeps` for this request,
- *   5. `app.handle` (with HEAD dispatched as GET),
- *   6. `Cache-Control: no-store` on anything that did not set its own.
- *
- * Step 3 is before step 4 on purpose: `buildDeps` reads the `Host` header for the cookie
- * decision, and the idempotency hash reads the path — both must see the same canonical
- * request the router does. And the canonical path is computed ONCE and passed onward; nothing
- * downstream re-normalizes (see {@link misconfigured}).
+ * The dispatch point. `app/[[...path]]/route.ts` is a thin shim over this so behaviour is
+ * testable without a Next runtime. The order is fixed: mint a request id; resolve host state
+ * (once per cold instance — a config fault becomes a clean 503); normalize the request URL
+ * exactly once, before anything reads the path (`prefix.ts`); build `ApiDeps`; `app.handle`
+ * (HEAD dispatched as GET); `Cache-Control: no-store` on anything that did not set its own.
+ * Normalization precedes `buildDeps` on purpose: the cookie decision reads the Host and the
+ * idempotency hash reads the path, and both must see the same canonical request the router
+ * does. Nothing downstream re-normalizes (see {@link misconfigured}).
  */
 
 const app = createApp(apiRoutes);
@@ -79,17 +72,13 @@ export async function handleApiRequest(req: Request): Promise<Response> {
     return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
   } catch (err) {
     /**
-     * THE BUSY-CONNECTION ANSWER, AS A BACKSTOP FOR THE PIPELINES THAT HAVE NO ENVELOPE.
-     *
-     * `withErrorEnvelope` maps this to 503 `db_busy`, but it is installed in `FULL_PIPELINE` only:
-     * `RAW_PIPELINE` and `ANONYMOUS_PIPELINE` (`packages/api/src/app.ts`) deliberately carry no
-     * envelope, so a busy session lookup on `/events`, `/oauth/authorize` or an attachment byte
-     * route lands HERE instead — and `internal()` below would call it a 500. That is the wrong
-     * answer twice over: it reports a route fault for connection contention, and it hands a
-     * monitor a status that says "this endpoint is broken" rather than "come back shortly".
-     *
-     * The same function the envelope uses, imported rather than reimplemented, because two
-     * spellings of one answer is how the two halves drift apart.
+     * The busy-connection answer, as a backstop for pipelines with no envelope.
+     * `withErrorEnvelope` maps this to 503 `db_busy`, but it is installed in `FULL_PIPELINE`
+     * only: `RAW_PIPELINE` and `ANONYMOUS_PIPELINE` (`packages/api/src/app.ts`) carry no
+     * envelope, so a busy session lookup on `/events`, `/oauth/authorize` or an attachment
+     * byte route lands here — and `internal()` would call it a 500, reporting a route fault
+     * for connection contention. The same function the envelope uses, imported rather than
+     * reimplemented, so the two halves cannot drift.
      */
     if (isDbBusy(err)) {
       console.warn(JSON.stringify({
@@ -113,18 +102,12 @@ export async function handleApiRequest(req: Request): Promise<Response> {
 /**
  * The last line before the platform's own HTML error page, which an API client cannot parse.
  * `withErrorEnvelope` already maps everything a handler throws, so reaching here means the
- * failure was OUTSIDE the pipeline (a middleware itself, or a raw route, which has no envelope
- * above it).
- *
- * The log line is STRUCTURED AND SANITIZED. It used to be `console.error("[api-vercel]
- * unhandled", err)` — the whole error object, in a comment that itself acknowledged the value
- * may carry a connection string. A driver error's `message` routinely contains `host=…&user=…`
- * and a `postgres` error carries the failing query; Vercel's log drain keeps all of it, so that
- * one line could publish the production credential to anyone with log access. What an operator
- * actually needs is WHICH request, WHERE, and WHAT CLASS of failure — the error's class name
- * and its `code`, both enumerable — plus the route. The message and the stack are deliberately
- * omitted: if class + code + route is not enough to reproduce, the fix is a test, not a fuller
- * log line.
+ * failure was outside the pipeline (a middleware, or a raw route with no envelope above it).
+ * The log line is structured and sanitized: a driver error's `message` routinely contains
+ * `host=…&user=…` and a `postgres` error carries the failing query, and the log drain keeps
+ * all of it. What an operator needs is which request, where, and what class of failure —
+ * the error's class name and `code`, plus the route. Message and stack are deliberately
+ * omitted: if class + code + route cannot reproduce it, the fix is a test.
  */
 function internal(requestId: string, req: Request, err: unknown): Response {
   const e = err as { name?: unknown; code?: unknown; constructor?: { name?: string } } | null;

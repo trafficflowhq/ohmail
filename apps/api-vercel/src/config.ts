@@ -21,55 +21,26 @@ import { makeAuthConfig, type AuthConfig } from "@trafficflow/services";
  */
 
 /**
- * Prod default for the browser surfaces.
- *
- * The rpID is the REGISTRABLE DOMAIN `ohmail.app` because one credential store has to span
- * the product AND `admin.ohmail.app` — a passkey scoped to the product's own host alone
- * would be refused by the browser on the admin console, and staff would need a second one.
- * `origins.ts` enforces the coverage relation at construction.
- *
- * **`https://ohmail.app` IS the product origin now — the single-origin merge made it so —
- * and that is a deliberate reversal.** It used to be refused outright: the landing lived
- * there, and the standing rule was that the landing is never an auth origin. The landing and the app are the same
- * deployment on the same hostname today, so that rule has no subject left — `origins.ts`
- * (`NEVER_AUTH_HOSTS`) works through what replaced it and what was genuinely lost.
- *
- * `admin.ohmail.app` is NOT defaulted here and is added through `TF_AUTH_ORIGINS` on the
- * deployment that wants it, unchanged by the merge.
+ * Prod default for the browser surfaces. The rpID is the registrable domain
+ * `ohmail.app` because one credential store has to span the product and
+ * `admin.ohmail.app`; a passkey scoped to the product host alone would be
+ * refused on the admin console. `origins.ts` enforces the coverage relation
+ * at construction. `https://ohmail.app` is the product origin since the
+ * single-origin merge (`NEVER_AUTH_HOSTS` in `origins.ts` covers what
+ * replaced the old landing rule). `admin.ohmail.app` is not defaulted here;
+ * it is added via `TF_AUTH_ORIGINS` on the deployment that wants it.
  */
 export const DEFAULT_RP_ID = "ohmail.app";
 export const DEFAULT_ORIGINS = ["https://ohmail.app"];
 /**
- * Hosts on which the `tf_session` COOKIE is an accepted credential.
- *
- * All three are browser surfaces: `ohmail.app` and `admin.ohmail.app` are where the
- * session is used, and `api.ohmail.app` is the target of the webapp's same-origin rewrite
- * — a rewrite sends the proxied request with the API's own Host, so the API sees
- * `api.ohmail.app` for traffic whose cookies are genuinely first-party to `ohmail.app`.
- *
- * It is an ALLOW-list, so anything not on it — the platform's own deployment URL, any
- * preview alias, a host we have not thought about yet — is bearer-only. That is the safe
- * direction: a forgotten surface cannot accidentally start honouring an ambient browser
- * credential.
- *
- * **`app.ohmail.app` was removed in the single-origin merge and its absence is the assertion.** It is a 308 to
- * `ohmail.app` now and serves nothing, so a request asserting it is either a stale client
- * or a forgery; either way it must not be a cookie surface. Since `allowCookieAuthForRequest`
- * requires EVERY asserted host to be listed, leaving it on would also have meant a proxy
- * still forwarding `X-Forwarded-Host: app.ohmail.app` could keep cookie mode alive on a
- * hostname nobody serves.
- *
- * **What the single-domain rename cost here, stated rather than buried.** Under the
- * previous domain the API answered on TWO hostnames: `api.mailoh.app` for the browser (on
- * this list) and `api.mailoh.io` for native/desktop clients (deliberately NOT on it, so
- * an ambient cookie could not be a credential on the surface the native apps use). The
- * rename to one main domain leaves a single `api.ohmail.app`, so that structural split is
- * gone: native clients now reach a host that IS a cookie host. In practice they still
- * authenticate by bearer — macOS/Tauri/Expo hold no cookie jar for this origin and send
- * no `Origin` header — so nothing changes about how they authenticate; what is lost is
- * the guarantee that they COULDN'T have used a cookie. Restoring it means giving the
- * native surface its own hostname again; that is a deliberate follow-up, not an oversight,
- * and the single-origin merge explicitly did NOT touch the API host while changing the browser one.
+ * Hosts on which the `tf_session` cookie is an accepted credential. All three
+ * are browser surfaces: `ohmail.app`, `admin.ohmail.app`, and
+ * `api.ohmail.app` — the target of the webapp's same-origin rewrite, which
+ * forwards with the API's own Host. An allow-list: anything not on it (the
+ * platform's deployment URL, a preview alias) is bearer-only, so a forgotten
+ * surface cannot honour an ambient browser credential. `app.ohmail.app` is a
+ * 308 now and must stay off the list: `allowCookieAuthForRequest` requires
+ * every asserted host to be listed. Native clients authenticate by bearer.
  */
 export const DEFAULT_COOKIE_HOSTS = ["api.ohmail.app", "ohmail.app", "admin.ohmail.app"];
 
@@ -83,19 +54,12 @@ const LOOPBACK_COOKIE_HOSTS = ["localhost", "127.0.0.1", "[::1]", "::1"];
 export const PERMITTED_COOKIE_HOSTS = [...DEFAULT_COOKIE_HOSTS, ...LOOPBACK_COOKIE_HOSTS];
 
 /**
- * `TF_COOKIE_HOSTS` may only SELECT from {@link PERMITTED_COOKIE_HOSTS}; it may not extend it.
- *
- * Without this the bearer-only boundary is a convention: one environment edit — or one bad
- * paste — could add a surface that has no CSRF story at all (the platform's own deployment
- * URL, a preview alias, the legacy `api.mailoh.*` names shipped clients are pinned to) and
- * it would start honouring an ambient browser cookie. Nothing in the deployment would
- * report it, because "the allow-list is what decides" was the whole design.
- *
- * There is deliberately NO env-var escape hatch. Adding a genuine new browser surface is
- * never an env-only change anyway — it needs `TF_AUTH_ORIGINS` (the auth config validates
- * rpID against the public-suffix list), the webapp's rewrite target, and DNS — so an override would buy no operational
- * speed and would reintroduce exactly the hole it is guarding. Widening the product means
- * editing this list, in a commit, in review.
+ * `TF_COOKIE_HOSTS` may only select from {@link PERMITTED_COOKIE_HOSTS}; it
+ * may not extend it. Otherwise one environment edit could add a surface with
+ * no CSRF story and it would start honouring an ambient browser cookie.
+ * There is deliberately no env-var escape hatch: a genuine new browser
+ * surface needs `TF_AUTH_ORIGINS`, the webapp rewrite and DNS anyway, so
+ * widening the product means editing this list, in a commit, in review.
  *
  * @throws when any listed host is not a compiled browser surface.
  */
@@ -139,21 +103,14 @@ export const PROD_SSE_POLL_MS = 8_000;
 export const DEFAULT_SSE_ENABLED = false;
 
 /**
- * SSE stream lifetime in production — how long one `/events` invocation runs before it closes
- * cleanly and lets `EventSource` reconnect on the `retry:` hint.
- *
- * `DEFAULT_SSE.lifetimeMs` is 30 s, which was chosen to fit under the catch-all route's
- * `maxDuration = 60` and is the right size for a deterministic test. As a production cadence
- * it means every open tab re-invokes the function twice a minute — 120 cold-ish starts an hour
- * per stream, each one a new baseline `max(seq)` read. `/events` now has its OWN route module
- * (`app/events/route.ts`, `maxDuration` {@link EVENTS_MAX_DURATION_S}) so the stream may run
- * long: 270 s keeps a 30-second margin under the route's 300, and the margin is the point —
- * the server must end the stream, not the platform, because a platform kill is a dropped
- * socket the client reads as an error, while a clean close is an ordinary reconnect.
- *
- * `TF_SSE_LIFETIME_MS` overrides it (integer, 5 s to {@link MAX_SSE_LIFETIME_MS}); the ceiling
- * is validated here precisely so a generous-looking value cannot silently hand the close back
- * to the platform's timer.
+ * SSE stream lifetime in production: how long one `/events` invocation runs
+ * before closing cleanly so `EventSource` reconnects on the `retry:` hint.
+ * `/events` has its own route module (`app/events/route.ts`, `maxDuration`
+ * {@link EVENTS_MAX_DURATION_S}); 270 s keeps a 30-second margin under the
+ * route's 300, and the margin is the point — the server must end the stream,
+ * not the platform: a platform kill is a dropped socket the client reads as
+ * an error, a clean close is an ordinary reconnect. `TF_SSE_LIFETIME_MS`
+ * overrides it (integer, 5 s to {@link MAX_SSE_LIFETIME_MS}).
  */
 export const PROD_SSE_LIFETIME_MS = 270_000;
 /** `maxDuration` of `app/events/route.ts`, in seconds. Named here so config can respect it. */
@@ -162,20 +119,14 @@ export const EVENTS_MAX_DURATION_S = 300;
 export const MAX_SSE_LIFETIME_MS = (EVENTS_MAX_DURATION_S - 10) * 1_000;
 
 /**
- * THE LISTEN CONNECTION — `DATABASE_URL_SESSION`, or `null` when this deployment has none.
- *
- * `/events` gets its pushed wakes from a per-instance `LISTEN ohmail_change_log`
- * (`src/wake-hub.ts`), and that LISTEN cannot ride the runtime connection: `DATABASE_URL_POOLED`
- * is a TRANSACTION-mode pooler, which multiplexes statements across backends, so a LISTEN
- * there subscribes a backend the next statement has already left — it fails silently, which is
- * the worst available way for it to fail. Session mode (port 5432 on the same pooler host) pins
- * one backend per client connection, so notifications flow for the connection's whole life.
- *
- * Absent ⇒ `null` ⇒ streams run on their poll loop alone: a legitimate state (it is exactly the
- * pre-push behaviour), so it must not throw. PRESENT BUT TRANSACTION-MODE throws at load: that
- * is a deployment someone configured wrong, and the failure it would otherwise produce — wakes
- * that never arrive, on a host that looks healthy — cannot be diagnosed later. The same
- * some-is-a-throw / none-is-a-null rule every other block here follows.
+ * The LISTEN connection — `DATABASE_URL_SESSION`, or `null` when this
+ * deployment has none. `/events` gets pushed wakes from a per-instance
+ * `LISTEN ohmail_change_log` (`src/wake-hub.ts`), and that LISTEN cannot ride
+ * `DATABASE_URL_POOLED`: a transaction-mode pooler multiplexes statements
+ * across backends, so the LISTEN subscribes a backend the next statement has
+ * already left — it fails silently. Session mode pins one backend per client
+ * connection. Absent ⇒ `null` ⇒ streams run on their poll loop alone (a
+ * legitimate state); present but transaction-mode throws at load.
  */
 export function loadSseListenUrl(env: NodeJS.ProcessEnv): string | null {
   const raw = (env.DATABASE_URL_SESSION ?? "").trim();
@@ -254,67 +205,44 @@ export interface HostConfig {
   /** Why {@link HostConfig.staffDb} is null. Carried into `adminError` when the console asked. */
   staffDbError: string | null;
   /**
-   * The ENV BOOTSTRAP for the Microsoft application registration (cloud migration 0009
-   * created the row it defers to).
-   *
-   * ALWAYS PRESENT and possibly all-empty, unlike {@link HostConfig.admin} and
-   * {@link HostConfig.entitlements}, which are `null` when unarmed. The difference is that those
-   * two decide what a SURFACE ANSWERS (a 404 for a console nobody armed, unbounded limits for a
-   * host that meters nothing), and this decides nothing: the authority is the
-   * `oauth_provider_config` row, and env is only what a deployment with no row falls back to. A
-   * `null` here would make "no env" and "no host support" the same value, and the onboarding route's
-   * refusal already distinguishes the three real states through `ResolvedOAuthConfig.source`.
-   *
-   * The variable NAMES — including the `MICROSOFT_*` aliases — are resolved by `msOAuthEnv` in
-   * `packages/db`, which the WORKER also calls, so the two hosts cannot accept different sets.
+   * The env bootstrap for the Microsoft application registration (cloud
+   * migration 0009 created the row it defers to). Always present and possibly
+   * all-empty, unlike {@link HostConfig.admin} and
+   * {@link HostConfig.entitlements}: the authority is the
+   * `oauth_provider_config` row, and env is only what a deployment with no
+   * row falls back to; `ResolvedOAuthConfig.source` distinguishes the states.
+   * The variable names — `MICROSOFT_*` aliases included — are resolved by
+   * `msOAuthEnv` in `packages/db`, which the worker also calls.
    */
   msOAuth: MsOAuthBootstrap;
   /**
-   * WHAT THE VENDORS CHARGE — the credentials the six-hourly platform-cost pass asks with.
-   *
-   * ALWAYS PRESENT and possibly all-empty, on {@link HostConfig.msOAuth}'s terms rather than
-   * {@link HostConfig.admin}'s: `null` here would make "no credential" and "this host does not
-   * do costs" the same value, and those are different states that the cost board is required to
-   * tell apart. A host that composes NO PORT AT ALL answers `200 {skipped}` on
-   * `/internal/platform-costs/run` and writes nothing — the desktop engine's shape. A host that
-   * composes a port with no credential ASKS, gets `unconfigured` from each adapter, and the
-   * board renders "not configured". This deployment is always the second one: it is the hosted
-   * API, the surface the console reads, so it always has an opinion about the bill even when
-   * that opinion is "nobody gave me a key".
-   *
-   * Read HERE and nowhere else, on {@link AdminConfig}'s rule: a route or a service reaching
-   * into `process.env` makes every test of it depend on the runner's ambient variables and makes
-   * a host unable to state what it is configured with.
+   * What the vendors charge — the credentials the six-hourly platform-cost
+   * pass asks with. Always present and possibly all-empty: `null` would make
+   * "no credential" and "this host does not do costs" the same value, and the
+   * cost board must tell them apart. A host composing no port answers
+   * `200 {skipped}` on `/internal/platform-costs/run`; one with a port and no
+   * credential asks, gets `unconfigured`, and the board renders "not
+   * configured". Read here and nowhere else — a route reaching into
+   * `process.env` makes every test depend on the runner's ambient variables.
    */
   /**
-   * `CRON_SECRET` — the platform's own scheduler credential, held at the TOP LEVEL and not
-   * inside {@link alerts}.
-   *
-   * It lives here because the cost pass is a scheduled route that has nothing to do with
-   * alerting, and reading the credential off the alerting block made an unrelated optional
-   * feature decide whether costs were ever collected: with `TF_ALERT_SECRET` unset the pass
-   * answered 404 to every invocation, no vendor was ever asked, and the board went on calling a
-   * fully configured vendor "not configured". `alerts.cronSecret` is the same value and is kept
-   * for the alerting routes; this one is what a route may use without depending on that block.
-   *
-   * `null` when unset or shorter than 24 characters — same rule as everywhere else, because
-   * there is no rate limit behind the compare on a public URL.
+   * `CRON_SECRET` — the platform's own scheduler credential, at the top level
+   * and not inside {@link alerts}: the cost pass is a scheduled route with
+   * nothing to do with alerting, and reading the credential off the alerting
+   * block let an unrelated optional feature decide whether costs were
+   * collected at all. `alerts.cronSecret` is the same value, kept for the
+   * alerting routes. `null` when unset or shorter than 24 characters — there
+   * is no rate limit behind the compare on a public URL.
    */
   cronSecret: string | null;
   /**
-   * WHERE THIS DEPLOYMENT'S APP LIVES — the absolute origin the OAuth bounce redirects a browser to.
-   *
-   * `TF_APP_URL`, through {@link assertAppUrl}, which already validates exactly this: a bare
-   * first-party `https` origin with no path, query, fragment or embedded credentials, *"because it
-   * is a REDIRECT TARGET, so it is validated like one"*. The consent bounce is a high-trust
-   * moment where an arbitrary string would be an open redirect.
-   *
-   * `null` ⇒ the route falls back to `defaultOrigin(authConfig)`, the first `TF_AUTH_ORIGINS` entry.
-   * That fallback is SAFE rather than merely convenient: `assertOriginConfig` validates it at boot
-   * and the rpID must cover it, so it cannot be a foreign host. It is a fallback and not the primary
-   * source because `TF_AUTH_ORIGINS` is a LIST whose ordering nothing else depends on, and a
-   * redirect target inherited from position 0 of an unrelated list is a value nobody would think to
-   * check when reordering it.
+   * The absolute origin the OAuth bounce redirects a browser to. `TF_APP_URL`
+   * through {@link assertAppUrl}: it is a redirect target, so it is validated
+   * like one — an arbitrary string here is an open redirect on a high-trust
+   * moment. `null` ⇒ the route falls back to `defaultOrigin(authConfig)`, the
+   * first `TF_AUTH_ORIGINS` entry — safe because `assertOriginConfig`
+   * validates it at boot and the rpID must cover it, so it cannot be a
+   * foreign host.
    */
   appOrigin: string | null;
   /**
@@ -339,42 +267,33 @@ export interface HostConfig {
   dbProvider: string;
   /**
    * Transactional customer mail, or `null` when this deployment has no
-   * `RESEND_API_KEY` + `MAIL_FROM`.
-   *
-   * Deliberately promoted OUT of {@link AlertsHostConfig}, where it first lived. The mailer
-   * predates alerting and is not part of it: it is what sends the waitlist confirmation and
-   * the beta invite, and gating those on `TF_ALERT_SECRET` — the pager's shared secret —
-   * would have meant that arming or disarming the pager silently turned CUSTOMER mail on or
-   * off. `loadAlertsConfig` now reads this same block rather than building its own, so the
-   * two can no longer disagree about which mailer key or which link origins are in use.
+   * `RESEND_API_KEY` + `MAIL_FROM`. Kept out of {@link AlertsHostConfig}: the
+   * mailer sends the waitlist confirmation and the beta invite, and gating
+   * those on `TF_ALERT_SECRET` would let arming the pager silently turn
+   * customer mail on or off. `loadAlertsConfig` reads this same block, so the
+   * two cannot disagree about the mailer key or link origins.
    */
   mail: MailHostConfig | null;
   /**
-   * The validated `ANTHROPIC_API_KEY`, or `null` on a deployment with no managed AI.
-   *
-   * `null` is a legitimate state (a preview, a rules-only deployment): `POST /messages/:id/draft`
-   * answers **503 `drafter_unconfigured`** (this doc once claimed 500 `drafter_unconfigured` while the
-   * code actually threw 500 `internal`; the two now agree). It also now costs more than the
-   * AI suggestion: `POST /workflows/:id/run` REFUSES a workflow containing a `draft_reply` step
-   * with the same 503 rather than answering 202 for work the drain cannot do. A key that is
-   * PRESENT but not shaped like an Anthropic key throws at load — see {@link loadAnthropicKey}.
-   *
-   * Set this on the WORKER and on this host in the SAME change: the API's copy is
-   * only a proxy for the worker's, and the two divergent states are described in
-   * `WorkflowsService.assertRunnable`.
+   * The validated `ANTHROPIC_API_KEY`, or `null` on a deployment with no
+   * managed AI. `null` is legitimate: `POST /messages/:id/draft` answers
+   * 503 `drafter_unconfigured`, and `POST /workflows/:id/run` refuses a
+   * workflow containing a `draft_reply` step with the same 503 rather than
+   * answering 202 for work the drain cannot do. A key present but not shaped
+   * like an Anthropic key throws at load — {@link loadAnthropicKey}. Set it
+   * on the worker and on this host in the same change; the divergent states
+   * are described in `WorkflowsService.assertRunnable`.
    */
   anthropicApiKey: string | null;
   /**
-   * WHERE STAGED ATTACHMENT BYTES GO, or `null` on a deployment with no object storage.
-   *
-   * `null` is a legitimate state and it degrades honestly: `POST /attachments/staging` answers
-   * 503 `unavailable`, the browser falls back to putting attachment bytes in the send request as
-   * it always did, and everything under the old 3 MB request-body ceiling keeps working. What is
-   * lost is exactly what staging bought — a send bigger than the serverless body limit.
-   *
-   * ALL-OR-NOTHING, like {@link HostConfig.entitlements}: a URL with no service key is a
-   * deployment that would mint grants nothing can sign, so the three variables are read as one
-   * block.
+   * Where staged attachment bytes go, or `null` on a deployment with no
+   * object storage. `null` degrades honestly: `POST /attachments/staging`
+   * answers 503 `unavailable`, the browser falls back to inline attachment
+   * bytes, and everything under the 3 MB request-body ceiling keeps working —
+   * what is lost is a send bigger than the serverless body limit.
+   * All-or-nothing like {@link HostConfig.entitlements}: a URL with no
+   * service key would mint grants nothing can sign, so the three variables
+   * are read as one block.
    */
   attachmentStaging: AttachmentStagingHostConfig | null;
   /** `production` / `preview` / `development` — the first word of every alert. */
@@ -382,15 +301,13 @@ export interface HostConfig {
 }
 
 /**
- * The staging bucket and the credential that reaches it.
- *
- * `serviceKey` is the SERVICE-ROLE key, and it is the only credential that touches this bucket:
- * the bucket is private, has no public read, and no anon-key policy grants anything on it. The
- * browser receives a signed URL minted with this key and scoped to one object — never the key.
- *
- * A DEDICATED bucket, never one anything else writes to. Its contents are other people's
- * outgoing attachments for 24 hours, and a bucket shared with, say, avatars would put a retention
- * sweep with a `DELETE` in it next to objects nobody meant to expire.
+ * The staging bucket and the credential that reaches it. `serviceKey` is the
+ * service-role key and the only credential that touches the bucket: it is
+ * private, no public read, no anon-key policy. The browser receives a signed
+ * URL scoped to one object — never the key. A dedicated bucket, never one
+ * anything else writes to: its contents are outgoing attachments for 24
+ * hours, and a shared bucket would put the retention sweep's `DELETE` next
+ * to objects nobody meant to expire.
  */
 export interface AttachmentStagingHostConfig {
   /** `https://<ref>.supabase.co` — the project origin, no path. */
@@ -432,37 +349,26 @@ export interface AlertsHostConfig {
   operatorEmail: string | null;
   mail: MailHostConfig | null;
   /**
-   * The PUSH arm — the pager's SECOND VENDOR
-   * (`TF_ALERT_TELEGRAM_BOT_TOKEN` + `TF_ALERT_TELEGRAM_CHAT_ID`), or `null`.
-   *
-   * This host is the ONLY observer of `worker_down`, so its own delivery path being
-   * single-vendor is the sharper version of the same problem: a mail-vendor outage that
-   * coincides with a dead worker is total silence, and those two are not independent events —
-   * a bad enough day takes both. The push arm shares nothing with the mailer: another company,
-   * another network, another credential, and a device push rather than a message into a
-   * mailbox this product serves.
-   *
-   * NOT all-or-nothing, unlike {@link MailHostConfig}: neither variable exists for any other
-   * purpose here, so a half-set pair is a fault to name rather than a mailer to protect. The
-   * arm itself refuses every delivery and says which half is missing — `alert-push.ts` rules
-   * the states, and the same object arms the worker.
+   * The push arm — the pager's second vendor (`TF_ALERT_TELEGRAM_BOT_TOKEN` +
+   * `TF_ALERT_TELEGRAM_CHAT_ID`), or `null`. This host is the only observer
+   * of `worker_down`, and a mail-vendor outage that coincides with a dead
+   * worker is total silence, so the push arm shares nothing with the mailer:
+   * another company, another network, another credential. Not all-or-nothing,
+   * unlike {@link MailHostConfig}: a half-set pair is a fault to name — the
+   * arm refuses every delivery and says which half is missing
+   * (`alert-push.ts` rules the states; the same object arms the worker).
    */
   telegram: { botToken: string | null; chatId: string | null } | null;
 }
 
 /**
- * What this host needs to serve the six admin READS.
- *
- * ONE field since the pager/console split. It used to carry `databaseUrl` too, which is how the console's
- * credential ended up gating the construction of a handle the PAGER also needs: see
- * {@link loadStaffDbConfig} for the split and the outage shape it removes. The blind
- * connection is now {@link HostConfig.staffDb}, loaded on its own; this block is the console's
- * credential and nothing else.
- *
- * The console's server-side proxy presents the secret as `Authorization: Bearer …`; no browser
- * ever holds it, and no session is ever consulted on those routes
- * (`packages/api/src/routes/admin.ts` explains why that is the whole authorization model and
- * what its ceiling is).
+ * What this host needs to serve the six admin reads. One field since the
+ * pager/console split: the blind connection is {@link HostConfig.staffDb},
+ * loaded on its own ({@link loadStaffDbConfig}), and this block is the
+ * console's credential and nothing else. The console's server-side proxy
+ * presents the secret as `Authorization: Bearer …`; no browser ever holds
+ * it, and no session is consulted on those routes
+ * (`packages/api/src/routes/admin.ts` states the authorization model).
  */
 export interface AdminHostConfig {
   /** `TF_ADMIN_SECRET`. A DIFFERENT value from `TF_ALERT_SECRET` — see {@link loadAdminConfig}. */
@@ -529,30 +435,14 @@ const csv = (raw: string | undefined): string[] =>
   (raw ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 
 /**
- * A `BUILD_VERSION` file at this app's project root — `apps/api-vercel/BUILD_VERSION` — written
- * into the deployed tree at deploy time, exactly as `apps/worker/src/build-version.ts` reads
- * `apps/worker/BUILD_VERSION` for the Railway image.
- *
- * `process.cwd()`, not `__dirname` and not `import.meta.url`. Two reasons, both checked rather
- * than assumed:
- *
- *  1. **`import.meta` does not compile here.** This package carries no `"type": "module"`
- *     (unlike the worker's), so `tsc -b tsconfig.check.json` treats it as CommonJS and refuses
- *     `import.meta` outright (`TS1470`) — proven by running that exact check.
- *  2. **`__dirname` resolves to the wrong directory once webpack bundles this module into a
- *     shared chunk.** Verified by building this app locally with a placeholder file present and
- *     inspecting the compiled output: the `join(__dirname, ...)` call DOES get traced into the
- *     route's `route.js.nft.json` (Node File Trace is conservative about what it includes), but
- *     at runtime `__dirname` inside the bundled chunk is the chunk's OWN directory
- *     (`.next/server/chunks/`), not this source file's — Vercel's own guidance names this exact
- *     failure ("Vercel with Next.js examines static `process.cwd()` calls … it's crucial to use
- *     `process.cwd()` instead of `__dirname`"). `process.cwd()` is the officially documented,
- *     traced-and-supported pattern for reading a project-root file from a Vercel Function, and
- *     it is stable across bundling because it is a runtime call, not a build-time path.
- *
- * This app's Vercel project Root Directory is `apps/api-vercel` (the runbook's third artifact,
- * separate from `ohmail-landing` and `ohmail-admin`), so `process.cwd()` in the deployed
- * function is this app's own root — the same directory the deploy step writes the file into.
+ * A `BUILD_VERSION` file at this app's project root, written into the
+ * deployed tree at deploy time (as `apps/worker/src/build-version.ts` reads
+ * the worker's). `process.cwd()`, not `__dirname` and not `import.meta.url`:
+ * this package is CommonJS, so `tsc -b tsconfig.check.json` refuses
+ * `import.meta` (TS1470), and `__dirname` inside a webpack chunk is the
+ * chunk's own directory, not this source file's. `process.cwd()` is the
+ * platform's documented pattern; this app's Vercel Root Directory is
+ * `apps/api-vercel`, the directory the deploy step writes the file into.
  */
 const buildVersionFile = (): string => {
   try {
@@ -563,30 +453,14 @@ const buildVersionFile = (): string => {
 };
 
 /**
- * WHICH BUILD THIS IS, and the ORDER of the three sources is the whole design — the same
- * argument as the worker's `buildIdentityOf` (`apps/worker/src/build-version.ts`), restated here
- * because this host resolves it independently:
- *
- *  1. `VERCEL_GIT_COMMIT_SHA` — the platform's own git metadata. Present only on a deploy the
- *     platform built from a source it can name; nothing can make it disagree with what is
- *     running, so it wins whenever it is there. **Absent on a `git archive` deploy** — the
- *     extracted tree carries no `.git`, so the platform has nothing to read, and every such
- *     deploy used to fall straight through to the variable below.
- *  2. {@link buildVersionFile} — written into the tree that gets deployed, so it is an input to
- *     the artifact rather than state beside it.
- *  3. `TF_BUILD_VERSION`, last — an operator-set project variable. It lives BESIDE the artifact,
- *     and the two go out of step in the direction that matters: bump the variable, have the
- *     deploy fail or ship from a stale tree, and the OLD build keeps serving while reporting the
- *     NEW sha — a health endpoint that lies with more confidence than the silence it replaces.
- *     Measured live 2026-09-03: the first 0.14 API deploy answered `version 64249869…` (the
- *     0.13.8 sha) while `schemaMarkers` read 127/127 through a marker that exists only in 0.14 —
- *     both cannot be true of one build, and the variable was the only source that had ever been
- *     written.
- *
- * Every term is trimmed, including the file read: a `BUILD_VERSION` holding only whitespace is
- * still truthy untrimmed, and a blank label must fall through to the next source rather than
- * be published as an identity — the same trap `vercel env add` has via stdin (silently stores an
- * empty value that `env ls` then lists as present and Encrypted).
+ * Which build this is; the source order is the design (the worker's
+ * `buildIdentityOf` argues the same):
+ *  1. `VERCEL_GIT_COMMIT_SHA` — the platform's git metadata; it cannot
+ *     disagree with what runs. Absent on a `git archive` deploy (no `.git`).
+ *  2. {@link buildVersionFile} — an input to the artifact, not state beside it.
+ *  3. `TF_BUILD_VERSION`, last — an operator variable that can report a new
+ *     sha while an old build serves. Every term is trimmed: a whitespace-only
+ *     value must fall through, not become an identity.
  */
 export const buildIdentityOf = (
   env: NodeJS.ProcessEnv,
@@ -605,27 +479,14 @@ export const buildVersion = (env: NodeJS.ProcessEnv, file: () => string = buildV
   buildIdentityOf(env, file).version;
 
 /**
- * A PRODUCTION deployment must be able to say which build it is, AND say so honestly.
- *
- * `version: "dev"` in production means none of the three sources answered, so the first
- * question of any incident — "which build is serving this?" — has no answer, and the
- * KEK/schema comparisons `/health` publishes lose the anchor that makes them comparable between
- * hosts. This is reported, not thrown: darkening the host over a missing label would be absurd,
- * and `/health` is the only channel that can say it. `VERCEL_ENV` is set by the platform
- * (`production` / `preview` / `development`), so previews and local runs are unaffected.
- *
- * ── THE SECOND ARM, AND THE INCIDENT THAT ADDED IT ─────────────────────────────────────────
- *
- * A `source: "variable"` answer is the state this whole module exists to make rare: `version`
- * carries a real-looking sha, `buildError` used to read `null`, and the label named a build this
- * deployment was never built from — measured 2026-09-03, the old rule fired only on the literal
- * string `"dev"`, so a stale
- * variable defeated the detector it was supposed to trigger. `version` still carries the
- * variable's value — it is the operator's stated intent, and suppressing it would lose the one
- * clue to what they meant — but the JSON stops presenting it as an identity read out of the
- * artifact. **Do not close this by updating `TF_BUILD_VERSION`** — that makes one `/health` read
- * honest and leaves the defect: the next deploy from a git-archived tree with no
- * `apps/api-vercel/BUILD_VERSION` term reports the SAME false confidence.
+ * A production deployment must say which build it is, honestly. `version:
+ * "dev"` in production means no source answered — "which build is serving?"
+ * has no answer and `/health`'s KEK/schema comparisons lose their anchor.
+ * Reported, not thrown; `VERCEL_ENV` gates it, so previews are unaffected.
+ * A `source: "variable"` answer is reported too: the value is the operator's
+ * intent, not an identity read out of the artifact — and do not close it by
+ * updating `TF_BUILD_VERSION`; the next git-archive deploy with no
+ * `BUILD_VERSION` file reports the same false confidence.
  */
 export const buildIdentityError = (
   env: NodeJS.ProcessEnv,
@@ -646,21 +507,14 @@ export const buildIdentityError = (
 };
 
 /**
- * Reject a connection that cannot serve as the POOLED one — a direct database endpoint, or
- * a pooler in session mode.
- *
- * The mirror image of `assertSessionUrl` in `packages/db/src/setup-prod.ts`. Handing the
- * direct URL to `makePooledDb` "works" — which is exactly the problem: every warm
- * serverless instance then holds a real Postgres backend instead of a pooler slot, and the
- * failure shows up as the provider refusing connections under precisely the concurrency the
- * pooler exists to absorb.
- *
- * **This used to be scoped to one provider's hostnames and therefore stopped guarding the
- * day production moved to another provider** — measured, not supposed. The rule now lives in
- * `runtimeUrlReason` (`packages/db/src/session-url.ts`), which recognises the managed poolers
- * by their URL shapes and still fails OPEN on an unrecognised host, so it cannot false-positive
- * on a local Postgres under `pnpm dev` or on a provider it never named. That fail-open property
- * is what makes it safe for this function to THROW.
+ * Reject a connection that cannot serve as the pooled one — a direct
+ * database endpoint, or a pooler in session mode. The mirror image of
+ * `assertSessionUrl` in `packages/db/src/setup-prod.ts`: handing the direct
+ * URL to `makePooledDb` "works", then every warm instance holds a real
+ * Postgres backend instead of a pooler slot and the provider refuses
+ * connections under load. The rule lives in `runtimeUrlReason`
+ * (`packages/db/src/session-url.ts`), which recognises managed poolers by
+ * URL shape and fails open on an unrecognised host, making a throw safe.
  */
 export function assertPooledUrl(url: string): string {
   const reason = runtimeUrlReason(url);
@@ -685,34 +539,14 @@ export function allowCookieAuthFor(host: string | null, cookieHosts: string[]): 
 }
 
 /**
- * Every hostname this request ASSERTS it was addressed to, normalized the way
- * {@link allowCookieAuthFor} compares them. Three READ SITES, but only two distinct facts:
- *
- *  1. **the request URL's host** — `req.url` is absolute here, and under a Node server the
- *     framework CONSTRUCTS it from the inbound `Host` header, so sources 1 and 2 normally
- *     carry the identical value. It is read separately anyway because it is the only one
- *     that survives `new Request(url, …)`: `Host` is a FORBIDDEN header name in fetch, so a
- *     Request constructed in-process carries none at all, and reading the header alone made
- *     every unit-level request look hostless (= bearer-only) no matter which host it named.
- *  2. **the `Host` header**, when the runtime exposes one.
- *  3. **every `X-Forwarded-Host` value** — a request through the webapp's rewrite carries
- *     two truths: the socket was opened to `api.ohmail.app`, and the browser typed
- *     `ohmail.app`. Proxies comma-join when they append, so the header is split.
- *
- * So the only genuinely INDEPENDENT input is `X-Forwarded-Host`, and the `every` in
- * {@link allowCookieAuthForRequest} makes it strictly subtractive — it can turn cookies off
- * and never on. `Host` itself is not defended against and cannot be: on Vercel it is the
- * platform's ROUTING KEY, so a request claiming `Host: api.ohmail.app` is delivered to
- * whatever project owns that name — "arrive on the bearer-only host while asserting the
- * cookie host" is not a reachable state in production. (It is reachable under a bare
- * `next start`, which serves every Host; that is an artefact of self-hosting, and it grants
- * nothing, since forging Host requires already holding the session value, which authenticates
- * by `Authorization: Bearer` on every host regardless. A browser cannot forge Host at all,
- * and the cookie this split protects is host-only + SameSite=Strict, so it is never sent
- * anywhere but its own origin.)
- *
- * A hostless or unparseable URL contributes nothing rather than throwing; an empty result
- * is what {@link allowCookieAuthForRequest} turns into a refusal.
+ * Every hostname this request asserts, normalized the way
+ * {@link allowCookieAuthFor} compares them: the request URL's host (the only
+ * one that survives `new Request(url, …)` — `Host` is a forbidden fetch
+ * header), the `Host` header when the runtime exposes one, and every
+ * `X-Forwarded-Host` value (proxies comma-join, so it is split). Only
+ * `X-Forwarded-Host` is independent input; the `every` in
+ * {@link allowCookieAuthForRequest} makes a forged value strictly
+ * subtractive. A hostless URL contributes nothing; empty ⇒ refusal.
  */
 export function assertedHosts(req: Request): string[] {
   let fromUrl = "";
@@ -732,31 +566,14 @@ export function assertedHosts(req: Request): string[] {
 }
 
 /**
- * THE cookie-auth decision for a request. One function, so the rule is mechanical.
- *
- * **The rule: EVERY asserted host must be on the allow-list, and there must be at least
- * one.** Anything else is bearer-only.
- *
- * Why "every" and not "the Host header":
- *  - Through the webapp rewrite the pair is (`api.ohmail.app`, `ohmail.app`) and BOTH are
- *    listed, so the intended path works whether or not Vercel forwards the original host.
- *  - `X-Forwarded-Host` is a header a client can simply type. Honouring it alone would let
- *    `curl -H 'X-Forwarded-Host: api.ohmail.app' https://api.ohmail.app/...` switch the
- *    bearer-only surface into cookie mode — the single thing this split exists to prevent.
- *    Requiring agreement makes a forged value strictly subtractive: it can only ever turn
- *    cookies OFF.
- *  - A preview deployment (the platform's generated preview hostname) proxying to the
- *    production API therefore gets bearer-only rather than a live cookie surface. That is
- *    deliberate: preview aliases are not auth origins, and `TF_AUTH_ORIGINS` would refuse
- *    them anyway.
- *
- * **Unknown host ⇒ BEARER-ONLY, not 421/404.** The alternative — refusing to serve a host
- * we do not recognise — would take out the platform's own deployment URL (which every
- * rollback and every platform health probe uses) and every future host on the day it is
- * added rather than the day it is misconfigured. Bearer-only is the fail-closed direction
- * that still serves: an unrecognised surface cannot honour an ambient browser credential,
- * so `withCsrf` is unreachable there by construction, and a native client keeps working.
- * The cost of the other choice is an outage; the cost of this one is nothing.
+ * The cookie-auth decision. The rule: every asserted host must be on the
+ * allow-list, and there must be at least one; anything else is bearer-only.
+ * "Every", not "the Host header": the webapp-rewrite pair (`api.ohmail.app`,
+ * `ohmail.app`) is fully listed, while a typed `X-Forwarded-Host` can only
+ * turn cookies off — honoured alone it would switch the bearer-only surface
+ * into cookie mode. Unknown host ⇒ bearer-only, not 421/404: refusing would
+ * take out the platform's own deployment URL, while bearer-only still serves
+ * and cannot honour an ambient browser credential.
  */
 export function allowCookieAuthForRequest(req: Request, cookieHosts: string[]): boolean {
   const asserted = assertedHosts(req);
@@ -816,19 +633,14 @@ export function appOriginOf(env: NodeJS.ProcessEnv): string | null {
 export const APP_URL_ALLOWED_DOMAINS = ["ohmail.app"] as const;
 
 /**
- * `TF_APP_URL` is a REDIRECT TARGET, so it is validated like one.
- *
- * It becomes the absolute origin the OAuth consent bounce sends a browser to and the base of
- * every transactional-mail link. Accepting an arbitrary string there is an open redirect on a
- * high-trust moment, and a typo'd or hostile value cannot be detected later: the redirect looks
- *
- * Refused, each for its own reason: a non-`https` scheme (`javascript:`/`data:` are redirect
- * payloads); embedded credentials (`https://a:b@host`, which browsers render deceptively); a
- * query or fragment (they would collide with the params consumers append); a PATH (the value is
- * interpolated as `${appUrl}/<route>`, so a path is either silently dropped or silently doubled
- * — refusing says so at boot instead of at the end of a flow); and any host outside the
- * first-party registrable domains, which is the check that actually stops the redirect leaving
- * the product. A bare trailing slash is fine and the result is normalized to an origin.
+ * `TF_APP_URL` is a redirect target, so it is validated like one: it becomes
+ * the origin the OAuth consent bounce sends a browser to and the base of
+ * every transactional-mail link. Refused: a non-`https` scheme, embedded
+ * credentials, a query or fragment (they collide with appended params), a
+ * path (the value is interpolated as `${appUrl}/<route>`), and any host
+ * outside the first-party registrable domains — the check that stops the
+ * redirect leaving the product. A bare trailing slash is fine; the result is
+ * normalized to an origin.
  */
 export function assertAppUrl(raw: string): string {
   let url: URL;
@@ -858,15 +670,12 @@ export function assertAppUrl(raw: string): string {
 }
 
 /**
- * **THIS HOST HOLDS NO PAYMENT CREDENTIAL, AND A LEFTOVER ONE IS A REFUSED DEPLOY.**
- *
- * There is no payments code on this server. A `STRIPE_*` variable in this environment is
- * therefore not configuration — it is either a live secret that should have been removed (a
- * credential parked on a host that cannot read it) or the first half of somebody re-arming
- * something that is not here. Neither may be silent.
- *
- * Matched by PREFIX, not by a fixed list, so any spelling is caught. The message names
- * VARIABLES and never a value (the rule with no exceptions): it surfaces in `/health`'s
+ * This host holds no payment credential, and a leftover one is a refused
+ * deploy: there is no payments code on this server, so a `STRIPE_*` variable
+ * here is either a live secret that should have been removed or the first
+ * half of re-arming something that is not here — neither may be silent.
+ * Matched by prefix, not a fixed list, so any spelling is caught. The
+ * message names variables and never a value: it surfaces in `/health`'s
  * `detail`, which is public.
  */
 export function assertNoStaleStripeEnv(env: NodeJS.ProcessEnv): void {
@@ -900,15 +709,12 @@ export interface EntitlementsHostConfig {
 const ENTITLEMENTS_VARS = ["ENTITLEMENTS_URL", "BILLING_PLANE_SECRET"] as const;
 
 /**
- * The entitlements block, validated on {@link loadBillingPlaneConfig}'s exact terms.
- *
- * `ENTITLEMENTS_URL` UNSET ⇒ no client, and this host answers from its own tables — which is the
- * state until the cutover. SET without the secret is a host someone tried to configure and got
- * wrong, and it is refused at cold start rather than at request time: a client whose every call
- * 401s would fail OPEN by design — every account allowed, silently, which is the one failure
- * nobody notices from the outside.
- *
- * Every message names the VARIABLE and never the value.
+ * The entitlements block, validated on {@link loadBillingPlaneConfig}'s
+ * terms. `ENTITLEMENTS_URL` unset ⇒ no client and this host answers from its
+ * own tables. Set without the secret is a host someone configured wrong,
+ * refused at cold start rather than request time: a client whose every call
+ * 401s would fail open — every account allowed, silently. Every message
+ * names the variable and never the value.
  */
 export function loadEntitlementsConfig(env: NodeJS.ProcessEnv): EntitlementsHostConfig | null {
   if ((env.ENTITLEMENTS_URL ?? "").trim() === "") return null;
@@ -942,28 +748,14 @@ export function loadEntitlementsConfig(env: NodeJS.ProcessEnv): EntitlementsHost
 }
 
 /**
- * `TF_INVITE_CODES`, and A HARD REFUSAL TO BOOT PRODUCTION WITH ONE.
- *
- * The static bootstrap set is a plaintext, reusable, non-expiring code bound to no address.
- * `AuthService.register` consults it whenever the `invites` table does not recognise a code,
- * so a holder can register ARBITRARY addresses — and read the 201-vs-409 answer as a clean
- * account-existence oracle over any address they care to type. That primitive is the exact
- * one migration 0020's email-bound invite rows were built to remove; the bootstrap path
- * re-opens it for as long as the variable is set.
- *
- * The docs already said "production runs with it empty". Nothing enforced that. The default
- * being empty is not enforcement — it is a hope about which environment variables somebody
- * sets in a dashboard at 2am, and the failure mode is silent: no log line, no health signal,
- * an oracle that nobody notices is open. So the deployment refuses to start instead.
- *
- * The escape hatch is a FIRST BOOT, not an environment: to open the very first account on a
- * fresh database, deploy once with `TF_INVITE_BOOTSTRAP_ACK` set to the same value, register,
- * then remove BOTH. Two variables rather than one because the point is that it cannot happen
- * by accident, and an acknowledgement that has to be typed twice is not an accident.
- *
- * Non-production (`preview`, `development`, a test env) is unchanged: the whole value of the
- * bootstrap is having a way in on a database with no invite rows, and a preview deployment is
- * where that is legitimate.
+ * `TF_INVITE_CODES`, and a hard refusal to boot production with one. A
+ * static bootstrap code is plaintext, reusable, non-expiring and bound to no
+ * address: `AuthService.register` consults it when the `invites` table does
+ * not recognise a code, so a holder can register arbitrary addresses and
+ * read 201-vs-409 as an account-existence oracle — what migration 0020's
+ * email-bound invites removed. The escape hatch is a first boot: deploy once
+ * with `TF_INVITE_BOOTSTRAP_ACK` set to the same value, register, remove
+ * both. Non-production is unchanged; there the bootstrap is legitimate.
  */
 export function assertBootstrapInvites(env: NodeJS.ProcessEnv): Set<string> {
   const codes = csv(env.TF_INVITE_CODES);
@@ -986,16 +778,12 @@ export function assertBootstrapInvites(env: NodeJS.ProcessEnv): Set<string> {
 
 /**
  * `TF_PUBLIC_SIGNUP_CAP`, the capacity valve behind open registration.
- *
- * Absent or empty ⇒ `null` ⇒ uncapped, which is the honest default: a cap nobody chose is
- * not a safety feature, it is a number waiting to lock the product's own funnel at an
- * arbitrary moment.
- *
- * A malformed value THROWS rather than falling back to uncapped. That direction is the
- * whole point: an operator who typed `TF_PUBLIC_SIGNUP_CAP=1oo` is trying to LIMIT signups,
- * and silently reading their typo as "no limit at all" would do the exact opposite of what
- * they asked for, with no signal. The variable is NAMED and its value is never echoed —
- * the same rule `TF_SSE_POLL_MS` states, for the same reason.
+ * Absent or empty ⇒ `null` ⇒ uncapped — a cap nobody chose is a number
+ * waiting to lock the funnel. A malformed value throws rather than falling
+ * back to uncapped: an operator who typed `1oo` is trying to limit signups,
+ * and reading the typo as "no limit" does the opposite of what they asked,
+ * with no signal. The variable is named and its value never echoed — the
+ * same rule as `TF_SSE_POLL_MS`.
  */
 export function publicSignupCap(env: NodeJS.ProcessEnv): number | null {
   const raw = (env.TF_PUBLIC_SIGNUP_CAP ?? "").trim();
@@ -1123,19 +911,14 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
 }
 
 /**
- * The staging bucket's three variables, read as ONE BLOCK.
- *
- * All three or none. A URL with no key mints grants nothing can sign; a key with no bucket names
- * no destination. Half a configuration would produce a deployment whose mint route answers 201 and
- * whose uploads then fail in the browser — a failure one step removed from its cause, which is
- * exactly the shape {@link loadBillingPlaneConfig}'s all-or-nothing rule exists to refuse.
- *
- * It does NOT throw on a partial configuration. That is the difference from
- * {@link loadAnthropicKey}, and the reason is what each absence costs: a mistyped Anthropic key
- * produces a host that charges nothing and tells every customer to try again later, forever, while
- * a missing staging variable produces a host whose sends over 3 MB are refused at the compose form
- * — visible immediately, and no worse than the state before this existed. A boot refusal here
- * would take the whole API down for a feature the product worked without.
+ * The staging bucket's three variables, read as one block — all three or
+ * none. A URL with no key mints grants nothing can sign; a key with no
+ * bucket names no destination; half a configuration is a mint route that
+ * answers 201 while uploads fail in the browser. It does not throw on a
+ * partial configuration, unlike {@link loadAnthropicKey}: a missing staging
+ * variable costs only sends over 3 MB, visible at the compose form, and a
+ * boot refusal would take the whole API down for a feature the product
+ * worked without.
  */
 function loadAttachmentStagingConfig(
   env: NodeJS.ProcessEnv,
@@ -1151,18 +934,13 @@ function loadAttachmentStagingConfig(
 }
 
 /**
- * The Anthropic key, validated at BOOT.
- *
- * Absent ⇒ `null`, and this host simply has no drafter (the state it has shipped in until now).
- * Present ⇒ it must be shaped like an Anthropic key, and if it is not the host refuses to
- * start — the rule the plane applies to `STRIPE_SECRET_KEY` on its own host, for the same reason: a
- * deployment handed the wrong secret cannot detect it later. Here the undetectable version is
- * worse than usual, because the drafting path answers **503 `ai_unavailable`** on a model
- * fault: a mailer key pasted into this row would produce a host that looks healthy, charges
- * nothing, and tells every customer who asks for a draft to try again later, for ever.
- *
- * The message names the VARIABLE and never the value — config errors surface in `/health`'s
- * `detail`, which is public.
+ * The Anthropic key, validated at boot. Absent ⇒ `null`: this host has no
+ * drafter. Present ⇒ it must be shaped like an Anthropic key or the host
+ * refuses to start: a deployment handed the wrong secret cannot detect it
+ * later — the drafting path answers 503 `ai_unavailable` on a model fault,
+ * so a mailer key pasted here would look healthy and tell every customer to
+ * try again later, forever. The message names the variable and never the
+ * value; config errors surface in `/health`'s public `detail`.
  */
 export function loadAnthropicKey(env: NodeJS.ProcessEnv): string | null {
   const raw = (env.ANTHROPIC_API_KEY ?? "").trim();
@@ -1171,36 +949,14 @@ export function loadAnthropicKey(env: NodeJS.ProcessEnv): string | null {
 }
 
 /**
- * Load the alerting block, or `null`.
- *
- * `TF_ALERT_SECRET` is the switch: absent ⇒ `null` ⇒ `POST /internal/alerts` answers 404 and
- * this deployment has no alerting surface. That is the honest default for a host nobody has
- * configured a pager for, and it is strictly safer than exposing an endpoint whose
- * authentication is an empty string.
- *
- * The mail sink is all-or-nothing, exactly like the plane block: `TF_ALERT_EMAIL` without a
- * `RESEND_API_KEY` builds nothing rather than building a mailer that answers `skipped` for
- * ever — which would look configured and deliver nothing, the precise failure mode alerting
- * exists to remove.
- *
- * A short secret is REFUSED — the endpoint runs four aggregate queries and can send mail, and
- * a four-character shared secret on a public URL is a brute-force target with no lockout
- * behind it.
- *
- * ── AND IT REFUSES BY RETURNING null, NOT BY THROWING ────────────────────────────────────
- *
- * Every other loader in this file throws, because every other one guards something whose
- * misconfiguration must stop the host (a poisoned KEK, a half-configured entitlements block).
- * This one
- * must not: a throw here reaches `loadHostState`, which turns it into `ok: false`, which
- * answers **503 to every request on the deployment**. Letting the ALERTING configuration
- * darken the product would be an observability feature causing the outage it exists to
- * report — a strictly worse failure than the one it prevents.
- *
- * Refusing quietly is not silent either, and that is the point of the third ring: with no
- * alerts config the endpoint answers 404, the scheduled GitHub workflow's `curl` gets a
- * non-2xx, the run goes red, and GitHub emails the operator. The misconfiguration is
- * reported by the one system that is not ohmail.
+ * Load the alerting block, or `null`. `TF_ALERT_SECRET` is the switch:
+ * absent ⇒ `null` ⇒ `POST /internal/alerts` answers 404. The mail sink is
+ * all-or-nothing (`TF_ALERT_EMAIL` without `RESEND_API_KEY` builds nothing
+ * rather than a mailer that answers `skipped` forever). A short secret is
+ * refused — a public URL with no lockout. It refuses by returning null, not
+ * throwing: a throw reaches `loadHostState` and 503s every request, and
+ * alerting must never cause the outage it exists to report. The refusal is
+ * visible anyway: the endpoint 404s and the scheduled workflow's curl goes red.
  */
 export function loadAlertsConfig(env: NodeJS.ProcessEnv): AlertsHostConfig | null {
   const secret = env.TF_ALERT_SECRET?.trim();
@@ -1227,68 +983,24 @@ export function loadAlertsConfig(env: NodeJS.ProcessEnv): AlertsHostConfig | nul
 }
 
 /**
- * The transactional mailer block, or `null`.
- *
- * ALL-OR-NOTHING on the two things a send physically needs (`RESEND_API_KEY`, `MAIL_FROM`):
- * a half-configured mailer would construct, answer `skipped` for ever, and look configured
- * — the failure mode that is indistinguishable from working until somebody asks why nobody
- * ever got their invite.
- *
- * Everything else has a first-party default, and the defaults are the product's real
- * origins. They are not merely conventions: `MailService`'s constructor validates every
- * base against `DEFAULT_LINK_ORIGINS` at boot, so a `MAIL_APP_URL` pointing somewhere else
- * fails loudly at composition rather than rendering a plausible ohmail invite that links to
- * a stranger's site.
- *
- * It does NOT throw on a partial block, for the same reason `loadAlertsConfig` does not: a
- * missing mail configuration must never darken the whole API. It degrades to "signups are
- * recorded, mail is not sent", which `WaitlistService` reports honestly as `mailed: false`.
+ * The transactional mailer block, or `null`. All-or-nothing on the two
+ * things a send physically needs (`RESEND_API_KEY`, `MAIL_FROM`): a
+ * half-configured mailer would construct, answer `skipped` forever, and look
+ * configured. Everything else defaults to the product's real origins, and
+ * `MailService`'s constructor validates every base against
+ * `DEFAULT_LINK_ORIGINS` at boot. It does not throw on a partial block, for
+ * `loadAlertsConfig`'s reason: missing mail must never darken the whole API —
+ * it degrades to "signups recorded, mail not sent" (`mailed: false`).
  */
 /**
- * Load the CONTENT-BLIND STAFF CONNECTION, or say why there is none.
- *
- * ── WHY THIS IS ITS OWN LOADER, WHICH IS THE WHOLE OF THE PAGER/CONSOLE SPLIT ─────────────
- *
- * It used to live inside {@link loadAdminConfig}, after that function's three `TF_ADMIN_SECRET`
- * refusals. That ordering made the PAGER's database handle conditional on the ADMIN CONSOLE's
- * credential: a production host with a perfect alerting configuration and a missing, short, or
- * pager-shared `TF_ADMIN_SECRET` got `admin: null`, therefore no `adminDb`, therefore three
- * dark `/internal/alerts*` routes — while `/health` answered 200 and named a *console* fault.
- *
- * The two things are not one capability. `TF_ADMIN_SECRET` is a CREDENTIAL: who may call
- * `/admin/*`. `DATABASE_URL_ADMIN` is a CAPABILITY: what any staff surface, console or pager,
- * is allowed to see. Splitting them means `/internal/alerts*` arms on the alert credential plus
- * this connection, and an unarmed console cannot silence the pager.
- *
- * It does NOT move the pager onto {@link HostConfig.databaseUrlPooled}. The pager is a staff
- * surface by audience and keeps the blind handle: it needs aggregates plus `alert_state`
- * writes, which `STAFF_TABLE_GRANTS` already names. Putting the unrestricted handle back into a
- * staff-triggered graph is the disease the console's own read path just had removed from `/admin/*`.
- *
- * ── THE THREE REFUSALS ────────────────────────────────────────────────────────────────────
- *
- * **Not set.** The staff surfaces read on a second, content-blind connection; with no URL there
- * is nothing to build one from and there is deliberately no fallback to `DATABASE_URL_POOLED`.
- *
- * **Equal to `DATABASE_URL_POOLED`.** The cheap, static half of the accident the whole seam is
- * designed around — runtime credentials pasted into the admin variable. It catches only the
- * literal case; the expensive half, which catches every other spelling of the same mistake, is
- * the boot attestation in `adminDbFor`, which asks the DATABASE for the connected role's entire
- * effective capability set — every column, table privilege, role membership, relation ownership
- * and `SECURITY DEFINER` routine it can reach — and refuses to build a handle holding anything
- * the staff allowlist does not name.
- *
- * **A URL that cannot serve the serverless runtime** — a direct database endpoint, or a
- * pooler in session mode — for `assertPooledUrl`'s reason and by the same `runtimeUrlReason`
- * predicate, except that here it is reported rather than thrown, because no staff surface is
- * worth a deployment-wide 503.
- *
- * All three are STATICALLY CHECKABLE, which is why `next.config.mjs:assertAlertingArmed`
- * duplicates them and why `test/alerting-armed.test.ts` runs a behavioural parity check over
- * the pair: a build gate that accepts an environment this loader refuses is the same
- * "deployed but not watching" state in a new costume.
- *
- * Every message names the VARIABLE and never its value: `/health` publishes this string.
+ * The content-blind staff connection. Its own loader, apart from {@link loadAdminConfig}:
+ * `TF_ADMIN_SECRET` is a credential (who may call `/admin/*`), `DATABASE_URL_ADMIN` a
+ * capability (what any staff surface may see) — split so an unarmed console cannot silence
+ * the pager. Refused: unset (deliberately no fallback to `DATABASE_URL_POOLED`), equal to
+ * `DATABASE_URL_POOLED` (the boot attestation in `adminDbFor` catches every other spelling),
+ * or unusable for the serverless runtime (`runtimeUrlReason` — reported, not thrown; no staff
+ * surface is worth a deployment-wide 503). `test/alerting-armed.test.ts` checks parity with
+ * the `next.config.mjs` build gate; every message names the variable, never its value.
  */
 export function loadStaffDbConfig(env: NodeJS.ProcessEnv): StaffDbLoad {
   const refuse = (refusal: string): StaffDbLoad => ({ staffDb: null, refusal });
@@ -1318,38 +1030,14 @@ export function loadStaffDbConfig(env: NodeJS.ProcessEnv): StaffDbLoad {
 }
 
 /**
- * Load the admin CONSOLE's block, or say why there is none.
- *
- * **BOTH `TF_ADMIN_SECRET` AND A USABLE {@link loadStaffDbConfig} ARE REQUIRED.** Either absent
- * ⇒ `admin: null` ⇒ every `GET /admin/*` answers 404 and this deployment has no admin console.
- *
- * The dependency runs one way only, and the pager/console split is what made that true: the console requires the
- * blind connection, the blind connection does not require the console. `/internal/alerts*` is
- * therefore unaffected by anything in this function.
- *
- * Refusing by returning null rather than throwing follows `loadAlertsConfig` exactly and for
- * the same reason: a throw reaches `loadHostState`, which answers **503 to every request on the
- * deployment**, and letting the ops console's configuration darken the product would be
- * strictly worse than the thing it guards. `/health` names the reason instead.
- *
- * ── ITS OWN TWO REFUSALS, AND WHY EACH IS SILENT-BUT-VISIBLE ──────────────────────────────
- *
- * **A secret shorter than 24 characters.** These six endpoints project every account on the
- * platform and there is no rate limit and no lockout behind the compare, so the secret's LENGTH
- * is the only thing between a guesser and the roster. The failure is visible immediately and
- * unmistakably: the console renders error panels naming the endpoint, on the first page load
- * after the deploy.
- *
- * **A secret equal to `TF_ALERT_SECRET`.** Sharing one value would mean rotating the pager
- * revokes staff access and rotating staff access silences the pager — two independent
- * credentials with one lifetime, discovered at the worst possible moment. It is refused here
- * rather than documented, because the way this happens is somebody pasting the value they
- * already had.
- *
- * The three connection refusals belong to {@link loadStaffDbConfig} and are reported verbatim,
- * so `/health`'s `adminFault` still names the missing variable.
- *
- * Every message names the VARIABLE and never its value: `/health` publishes this string.
+ * Load the admin console's block, or say why there is none. Both `TF_ADMIN_SECRET` and a
+ * usable {@link loadStaffDbConfig} are required; either absent ⇒ `admin: null` ⇒ every
+ * `GET /admin/*` answers 404. The dependency runs one way — the console requires the blind
+ * connection, never the reverse — so `/internal/alerts*` is unaffected by this function.
+ * Refuses by returning null, not throwing (`loadAlertsConfig`'s rule: a throw would 503 the
+ * deployment). Its own refusals: a secret shorter than 24 characters (no rate limit or
+ * lockout behind the compare) and a secret equal to `TF_ALERT_SECRET` (one value would give
+ * two credentials one lifetime). Every message names the variable, never its value.
  */
 export function loadAdminConfig(env: NodeJS.ProcessEnv): AdminLoad {
   const unarmed = (reason: string): AdminLoad => ({ admin: null, unarmed: reason });

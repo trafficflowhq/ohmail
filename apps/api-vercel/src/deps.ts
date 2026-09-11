@@ -44,22 +44,12 @@ import { allowCookieAuthForRequest, type HostConfig } from "./config.js";
 import { makeChangeWakeHub } from "./wake-hub.js";
 
 /**
- * The per-request {@link ApiDeps} for the serverless host.
- *
- * Two lifetimes, deliberately separated:
- *
- *  • **Per cold instance** — the service bag and the pooled `Db`. Services are stateless
- *    (`ServiceContext` carries the request's identity, clock and requestId), and
- *    `makePooledDb` is module-cached per connection string precisely so a WARM instance
- *    reuses one connection instead of opening a new one per invocation and storming the pooler.
- *    Rebuilding either per request would be pure waste — and in `makeAuthService`'s case
- *    actively harmful: it memoises the decoy password hash per HASHER to keep the
- *    unknown-email path constant-time, and a fresh service per request is what turned that
- *    into a ~2× timing oracle before the auth hardening pass.
- *
- *  • **Per request** — `session` (filled by `withSession`), `requestId` (by
- *    `withRequestId`), `idempotency` (by `withIdempotency`), and `allowCookieAuth`, which
- *    depends on the HOST the request arrived on.
+ * The per-request {@link ApiDeps} for the serverless host. Two lifetimes: per cold instance,
+ * the service bag and the pooled `Db` (`makePooledDb` is module-cached per connection string
+ * so a warm instance reuses one connection; `makeAuthService` memoises the decoy password
+ * hash per hasher to keep the unknown-email path constant-time — rebuilding it per request
+ * is a timing oracle); per request, `session`, `requestId`, `idempotency`, and
+ * `allowCookieAuth`, which depends on the host the request arrived on.
  */
 
 let servicesCache: { key: object; services: ApiServices } | null = null;
@@ -79,19 +69,13 @@ function wakeHubFor(cfg: HostConfig): ChangeWakeHub {
 }
 
 /**
- * Where a billing failure becomes something a human can find.
- *
- * The webhook's failure path was correct and completely silent: 500, `billing_events.status =
- * 'failed'`, retried by Stripe for ~3 days, and then nothing — a customer who paid, a grant that
- * never landed, and a green test suite. This is the one place in the host that turns that into an
- * external signal.
- *
- * `console.error` is not a placeholder for "we will do this properly later": on this host it is
- * the log stream Vercel indexes and alerts on, so a single grep-able token (`billing_alert`) with
- * a fixed shape is exactly what a log-drain rule needs. What it may carry is bounded by the
- * `BillingAlert` type — a code, an event id, a type, an account id — and never a payload, a
- * message, or anything that could quote a connection string. A real pager still belongs
- * to the observability owner; this makes the gap actionable instead of invisible in the meantime.
+ * Where a billing failure becomes something a human can find: the webhook's failure path is
+ * correct and silent (500, `billing_events.status = 'failed'`, retried by Stripe, then
+ * nothing), and this is the one place that turns it into an external signal. `console.error`
+ * is the log stream the platform indexes, so a single greppable token (`billing_alert`) with
+ * a fixed shape is what a log-drain rule needs. What it may carry is bounded by the
+ * `BillingAlert` type — a code, an event id, a type, an account id — never a payload or
+ * anything that could quote a connection string.
  */
 /**
  * The service bag. Keyed on the config object so a test that loads a different environment
@@ -105,19 +89,12 @@ function servicesFor(cfg: HostConfig): ApiServices {
 }
 
 /**
- * Turn one bag entry into a LAZY, memoised getter.
- *
- * Most services in this bag are stateless singletons that cost nothing to name, but two are
- * not: `makeAuthService` runs scrypt over a decoy password on construction (the constant-time
- * unknown-email path) and `makeMailboxService`/`makePrivacyService` pull their own dependency
- * graphs. Building all of them eagerly meant a bare `GET /health` — a probe that touches no
- * service at all — paid for the scrypt warm-up on every cold start, on the critical path of the
- * one request that must answer fast.
- *
- * The getter memoises on first access, so the property that matters is preserved exactly: the
- * decoy hash is computed ONCE PER HASHER and shared by every later request on this instance.
- * Rebuilding per request is what turned the unknown-email path into a ~2× timing oracle, and
- * this is not that — it is the same single construction, deferred until something needs it.
+ * Turn one bag entry into a lazy, memoised getter. Two services are expensive to build:
+ * `makeAuthService` runs scrypt over a decoy password on construction, and building
+ * everything eagerly made a bare `GET /health` pay that warm-up on every cold start. The
+ * getter memoises on first access, so the decoy hash is still computed once per hasher and
+ * shared by every later request on this instance — the same single construction, deferred.
+ * Rebuilding per request is what makes the unknown-email path a timing oracle.
  */
 function lazily<T>(bag: Record<string, unknown>, name: string, build: () => T): void {
   let built: { value: T } | null = null;
@@ -134,18 +111,13 @@ function lazily<T>(bag: Record<string, unknown>, name: string, build: () => T): 
 function buildServices(cfg: HostConfig): ApiServices {
   const { authConfig, keyProvider } = cfg;
   /**
-   * THE COST RECORDER, built once per configuration and shared by both AI clients below.
-   *
-   * `makePooledDb` memoises by URL, so this names the SAME connection `buildDeps` hands every
-   * request — a second pool for one process's bookkeeping would be the `max: 1` budget spent
-   * twice.
-   *
-   * `host: "api"` is a LITERAL, never derived from the environment: it is in the cost table's
-   * primary key, and three processes writing under one name would make "which arm stopped
-   * recording" — the only question worth asking when the figure looks wrong — unanswerable. On
-   * this host the recorder writes per call and returns the promise, which the client awaits: a
-   * serverless process can be frozen the instant its response is written, so a floating write is
-   * a write that may never land.
+   * The cost recorder, built once per configuration and shared by both AI clients below.
+   * `makePooledDb` memoises by URL, so this names the same connection `buildDeps` hands every
+   * request. `host: "api"` is a literal, never derived from the environment: it is in the
+   * cost table's primary key, and three processes writing under one name would make "which
+   * arm stopped recording" unanswerable. On this host the recorder writes per call and the
+   * client awaits the promise: a serverless process can be frozen the instant its response
+   * is written, so a floating write may never land.
    */
   const onUsage = (r: AnthropicCallReport): void => {
     console.log(JSON.stringify({ event: "ai_call", ...r }));
@@ -170,18 +142,12 @@ function buildServices(cfg: HostConfig): ApiServices {
     // same reason the image proxy names it — the SSRF gate's DNS port is required at construction so
     // it can never quietly default to `node:dns`. The desktop engine wires ALLOW_ANY instead.
     probeHostGuard: makeProbeHostGuard(nodeHostResolver),
-    // THIS HOST HAS A REQUEST-BODY LIMIT, AND THIS IS IT, IN RAW ATTACHMENT BYTES.
-    //
-    // Attachment bytes ride the send request base64-encoded, so their total has to clear the
-    // platform's ~4.5 MB body cap with room for the JSON envelope and the ~1.33× inflation; 3 MB
-    // of raw bytes encodes to about 4 MB. `SendService` then caps a send at the SMALLER of this
-    // and what the sending mailbox's own submission server announced, so a provider that accepts
-    // less than this binds the send to the provider's number rather than to ours.
-    //
-    // Declared rather than left to the default, even though the default is this same constant. The
-    // absent case exists for a host that has not been read and must therefore get the strict
-    // branch; this deployment HAS been read, and a reader should be able to see which of the two
-    // states it is in.
+    // This host's request-body limit, in raw attachment bytes. Attachment bytes ride the send
+    // request base64-encoded, so their total must clear the platform's ~4.5 MB body cap with
+    // room for the JSON envelope and the ~1.33× inflation; 3 MB raw encodes to about 4 MB.
+    // `SendService` caps a send at the smaller of this and what the sending mailbox's own
+    // submission server announced. Declared even though it equals the default: the absent case
+    // exists for a host that has not been read, and this deployment has been.
     sendSurfaceMaxTotalBytes: SEND_ATTACHMENT_MAX_TOTAL_BYTES,
     // THE METERED STORAGE CAP — this is the hosted deployment, the one composition that reads
     // the subscription row instead of typing UNMETERED_STORAGE_CAP. It feeds the send route's
@@ -195,18 +161,13 @@ function buildServices(cfg: HostConfig): ApiServices {
       const cap = verdict.ok ? verdict.limits.storageBytes : null;
       return cap === null ? UNMETERED_STORAGE_CAP : cap;
     },
-    // ── AND THIS IS THE WAY ROUND IT ────────────────────────────────────────────────────
-    //
-    // The ceiling above is a fact about this host's REQUEST BODY, so the way past it is a
-    // transport with no request body in it: the browser mints a grant here, PUTs the bytes
-    // straight into a private bucket, and the send carries a reference. `SendService` then reads
-    // the surface as explicitly uncapped for such a send and the sending mailbox's own announced
-    // `SIZE` is the only ceiling left.
-    //
-    // A FACTORY over the request's database handle: the bag is per cold
-    // instance and a handle is not. ABSENT on a deployment with no storage environment, and the
-    // absence is load-bearing — the mint route answers 503, the client falls back to inline
-    // bytes, and a send naming staged references is refused rather than sent without its files.
+    // The way around that ceiling: a transport with no request body in it. The browser mints a
+    // grant here, PUTs the bytes straight into a private bucket, and the send carries a
+    // reference; `SendService` reads the surface as uncapped for such a send and the mailbox's
+    // own announced `SIZE` is the only ceiling left. A factory over the request's database
+    // handle — the bag is per cold instance, a handle is not. Absent on a deployment with no
+    // storage environment, and the absence is load-bearing: the mint route answers 503, the
+    // client falls back to inline bytes, and a send naming staged references is refused.
     ...(cfg.attachmentStaging
       ? {
         attachmentStaging: (db: Tx) => makeAttachmentStagingPort({
@@ -249,18 +210,14 @@ function buildServices(cfg: HostConfig): ApiServices {
     proposals: proposalsService,
   };
 
-  // The CONSTRUCTED ones, deferred. `auth` is the expensive one (scrypt over the decoy
-  // password); the other three build dependency graphs no health probe needs.
-  // `mail` is handed in so `register`'s public path can send the verification (or
-  // `account_exists`) mail that is the ONLY continuation of a constant 202, and so
-  // `verifyEmail`/`resendVerification` exist at all. It is the same cached `MailService` the
-  // waitlist uses, never a bare `ResendMailer` (a service holding the port holds an unthrottled
-  // mail-bomb primitive — `packages/services/src/mail/port.ts` states the rule).
-  //
-  // `null` on a deployment with no mailer, and `AuthService.register` turns that into
-  // `503 signup_unavailable` when the open gate is on rather than creating accounts whose
-  // verification link can never be sent. `customerMailerFor` cannot throw, so a malformed
-  // `MAIL_APP_URL` costs the deployment its open signup and nothing else.
+  // The constructed services, deferred: `auth` runs scrypt over the decoy password; the others
+  // build dependency graphs no health probe needs. `mail` is handed in so `register` can send
+  // the verification (or `account_exists`) mail that is the only continuation of a constant
+  // 202 — the same cached `MailService` the waitlist uses, never a bare `ResendMailer` (a
+  // service holding the port holds an unthrottled mail-bomb primitive; see
+  // `packages/services/src/mail/port.ts`). `null` with no mailer: `AuthService.register`
+  // answers 503 `signup_unavailable` rather than creating accounts whose verification link
+  // can never be sent. `customerMailerFor` cannot throw.
   lazily(bag, "auth", () => makeAuthService({
     config: authConfig, keyProvider, passwordHasher: scryptHasher,
     mail: customerMailerFor(cfg),
@@ -299,44 +256,25 @@ function buildServices(cfg: HostConfig): ApiServices {
        desktop engine's import closure. Passed BY REFERENCE, so the wiring is greppable. */
     lastOrganizerCycleAt: organizerCycleReader,
   }));
-  // NO adapter injected, so a screener or approval decision leaves
-  // `folder_state` pending and the WORKER applies the IMAP move. The serverless host never
-  // opens IMAP to apply organization — one organizer per mailbox is the rule.
-  //
-  // The screener gate is `debit_classify`, not `debit_draft`: its pre-suggestion IS a
-  // classification, and the meter was wired here BEFORE the model, so the day the classifier
-  // landed the charge was already in front of it. That day is now: suggestions are persisted
-  // and generation happens only on `POST /screener/suggest` over an explicit, priced sender
-  // set — the two prerequisites the old "deliberately not wired" note in the drafter block
-  // named. `list` cannot reach the classifier at all (it is destructured out of the read-only
-  // deps), so wiring it here cannot recreate the model-call-per-scroll defect.
-  //
-  // Per-call budget: a batch is at most `MAX_SUGGEST_SENDERS` serial classifies inside one
-  // Vercel invocation (`maxDuration 60`), and the run is resumable — spend is recorded per
-  // message, and the client renders a partial run honestly. So each call gets a TIGHT
-  // deadline and one retry rather than the worker's patient 30 s: a slow model fails one
-  // sender's suggestion, never the invocation.
+  // No adapter injected: a screener or approval decision leaves `folder_state` pending and
+  // the worker applies the IMAP move — the serverless host never opens IMAP to apply
+  // organization; one organizer per mailbox. The screener gate is `debit_classify`, not
+  // `debit_draft`: its pre-suggestion is a classification. Suggestions are persisted and
+  // generated only on `POST /screener/suggest` over an explicit, priced sender set; `list`
+  // cannot reach the classifier (destructured out of the read-only deps), so wiring it here
+  // cannot recreate a model call per scroll. A batch is at most `MAX_SUGGEST_SENDERS` serial
+  // classifies inside one invocation (`maxDuration 60`), spend recorded per message, so each
+  // call gets a tight deadline and one retry — a slow model fails one sender, never the run.
   const anthropicApiKey = cfg.anthropicApiKey;
-  // ── THE ARMING GUARD: the PRODUCTION managed-AI arm refuses a FLAT debit schedule ──────────
-  //
-  // "Managed AI must not arm before the weighted prices land" was a rule in prose, which is to
-  // say it was one revert away from being untrue. Here it is mechanical, and it sits at the
-  // hoist rather than at each arm so that BOTH the Screener's classifier below and the drafter
-  // further down are covered by one statement — a guard per arm is a guard the third arm forgets.
-  //
-  // The condition is the PRODUCTION shape specifically: a model key AND the billing plane. The
-  // plane is what makes this host the metered one — it is where subscriptions, invoices and
-  // therefore the allowance actually exist. A host holding a key with no plane is a preview or a
-  // self-host shape, where there is no ledger for a mis-priced debit to land in and refusing to
-  // boot would buy nothing.
-  //
-  // A hard throw, against the standing counter-argument that `loadAlertsConfig` answers with a
-  // soft `null` because a throw here means 503 on every request. That trade is right for alerting
-  // and wrong for this: a deployment that can call a model and prices a draft like a
-  // classification charges a fifteenth of its cost to every customer for as long as it serves,
-  // and unlike a missing alert route that is not recoverable after the fact. Refusing to serve is
-  // the cheaper failure. After the weighted schedule shipped it passes by construction; it exists
-  // for the revert.
+  // The arming guard: the production managed-AI arm refuses a flat debit schedule. It sits at
+  // the hoist so both the screener's classifier and the drafter are covered by one statement.
+  // The condition is the production shape: a model key AND the billing plane (the plane is
+  // where subscriptions and the allowance exist; a key with no plane is a preview or
+  // self-host shape with no ledger for a mis-priced debit). A hard throw, unlike
+  // `loadAlertsConfig`'s soft null: a deployment that prices a draft like a classification
+  // undercharges every customer for as long as it serves, and that is not recoverable after
+  // the fact. After the weighted schedule shipped it passes by construction; it exists for
+  // the revert.
   if (anthropicApiKey && cfg.entitlements) assertWeightedScheduleActive();
   /**
    * THE SPEND HALF OF WHATEVER THIS HOST DECLARED, or nothing when it meters nothing.
@@ -350,21 +288,13 @@ function buildServices(cfg: HostConfig): ApiServices {
     return composed !== undefined && isMetered(composed) ? composed : undefined;
   };
   lazily(bag, "screener", () => makeScreenerService({
-    /* -- THIS HOST IS KILLED BY A PLATFORM, AND IT IS THE ONLY ONE THAT IS -------------------
-     *
-     * `maxDuration = 60` on the catch-all route this bag serves. `ScreenerService.suggest` admits
-     * a sender's purchase only while there is time left to finish the model call and the write
-     * that follows it, and that window means nothing without this number — so it is stated here,
-     * beside the route that declares it, rather than assumed inside the service. The self-hosted
-     * server and the desktop's own engine state nothing and are admitted without a deadline,
-     * which is correct: nothing kills a request in either of them.
-     *
-     * `API_MAX_DURATION_MS` and NOT a literal: it is the canonical spelling of that ceiling, the
-     * route's own `maxDuration` is already pinned to it (`host-wiring.test.ts`), and the pool
-     * timeouts are derived from it too. A second copy here would drift the day the duration
-     * changes — and it would drift SILENTLY in the dangerous direction, since a duration that is
-     * REDUCED leaves the admission window too wide and puts charged work back on the wrong side
-     * of the kill.
+    /* This host is killed by a platform, and it is the only one that is: `maxDuration = 60`
+     * on the catch-all route this bag serves. `ScreenerService.suggest` admits a sender's
+     * purchase only while there is time to finish the model call and the write after it, and
+     * that window means nothing without this number, so it is stated beside the route that
+     * declares it. `API_MAX_DURATION_MS` and not a literal: it is the canonical spelling, the
+     * route's `maxDuration` is pinned to it (`host-wiring.test.ts`), and the pool timeouts
+     * derive from it — a second copy would drift silently when the duration changes.
      */
     invocationBudgetMs: API_MAX_DURATION_MS,
     /* THE SCREENER'S TERMS ARE THE ACTION'S, and this is where they used to be chosen.
@@ -406,32 +336,15 @@ function buildServices(cfg: HostConfig): ApiServices {
     resolver: nodeHostResolver,
   }));
 
-  // ── AUTO-UNSUBSCRIBE, WIRED. THIS HOST ANSWERED 503 UNTIL NOW ──────────────────────────
-  //
-  // `POST /messages/:id/unsubscribe` has been mounted and unreachable in production since the
-  // service landed: `shared.ts#unsubscribes` throws 503 `unsubscribe_unconfigured` when the bag
-  // has no service, and this bag had none. The route was not broken — it was never built.
-  //
-  // The second real outbound port on this host, after the image proxy, and it takes the SAME
-  // `nodeHostResolver` for the same reason: the SSRF gate's DNS port is required at
-  // construction so it can never quietly default to `node:dns` inside a service. A sender's
-  // one-click URL is a caller-influenced host, so the gate is the only thing standing between a
-  // `List-Unsubscribe` header and a request to the metadata service.
-  //
-  // ── PER-MAILBOX AUTHSERV TRUST — the empty literal that used to sit here was the gap ────
-  //
-  // `trustedAuthservIds: NO_TRUSTED_AUTHSERV_IDS` stood here, correctly documented as "this
-  // deployment has not decided whose `Authentication-Results` to believe" — and the residual it
-  // named (a forged `From` chooses whose list the button leaves) stayed live until this line.
-  // The decision is now made, and it is per MAILBOX rather than per deployment, because one
-  // service instance serves mailboxes at different providers: `mailboxProviderAuthservIds`
-  // reads the IMAP host off the message's own mailbox credential row and maps Gmail/Microsoft
-  // to their signing authserv-id. Unknown providers still resolve to the empty set, and the
-  // authenticity policy's demote-only rule means that blocks nothing — the self-hosted tail
-  // routes exactly as before, pending its own decision.
-  //
-  // Lazy like the rest: `makeNodeOneClickPost` builds an AbortController factory and a fetch
-  // closure a `GET /health` cold start has no reason to pay for.
+  // Auto-unsubscribe. The second real outbound port on this host, after the image proxy, and
+  // it takes the same `nodeHostResolver` for the same reason: the SSRF gate's DNS port is
+  // required at construction so it can never quietly default to `node:dns` inside a service —
+  // a sender's one-click URL is a caller-influenced host, so the gate is what stands between
+  // a `List-Unsubscribe` header and a request to the metadata service. Authserv trust is per
+  // mailbox, not per deployment: `mailboxProviderAuthservIds` reads the IMAP host off the
+  // message's own credential row and maps Gmail/Microsoft to their signing authserv-id;
+  // unknown providers resolve to the empty set, and the demote-only rule means that blocks
+  // nothing. Lazy like the rest: a `GET /health` cold start builds none of it.
   lazily(bag, "unsubscribe", () => makeUnsubscribeService({
     post: nodeOneClickPost,
     resolver: nodeHostResolver,
@@ -454,47 +367,29 @@ function buildServices(cfg: HostConfig): ApiServices {
   };
   lazily(bag, "entitlementsPort", () => entitlementsComposition());
 
-  // WHAT THE PLATFORM SERVED — the 5xx poller's read port (cloud 0030).
-  //
-  // COMPOSED UNCONDITIONALLY, and the unconditional part is the decision. The port itself decides
-  // whether it is configured, and it answers `unconfigured` when the platform token is absent —
-  // which is production's state today. Gating the composition on the token instead would collapse
-  // the two states this seam exists to separate: a host with no port answers `skipped` ("nobody
-  // wired the question"), and a host whose port says `unconfigured` answers "we asked, there is
-  // no token" — and only the second can be rendered honestly as "5xx: not measured".
-  //
-  // It reads `process.env` directly rather than taking a `HostConfig` field, deliberately and
-  // narrowly: the platform token is not a value this host's config validates or refuses at cold
-  // start (`config.ts` has no opinion about an observability credential), and adding one would
-  // make an absent token a boot-time concern for a host that must boot fine without it.
-  //
-  // Lazy, like every other constructed service: a `GET /health` cold start has no reason to build
-  // a closure it will not call.
+  // What the platform served — the 5xx poller's read port (cloud 0030). Composed
+  // unconditionally: the port itself decides whether it is configured and answers
+  // `unconfigured` without a token. Gating composition on the token would collapse the two
+  // states this seam separates — no port answers `skipped` ("nobody wired the question"),
+  // a port with no token answers "we asked" — and only the second renders honestly as
+  // "5xx: not measured". It reads `process.env` directly and narrowly: the platform token is
+  // not a value `config.ts` validates, and adding one would make an absent token a boot-time
+  // concern for a host that must boot fine without it. Lazy, like every constructed service.
   lazily(bag, "platformSignals", () => makePlatformSignalPort({
     VERCEL_TOKEN: process.env.VERCEL_TOKEN,
     VERCEL_TEAM_ID: process.env.VERCEL_TEAM_ID,
     VERCEL_SIGNAL_PROJECTS: process.env.VERCEL_SIGNAL_PROJECTS,
   }));
 
-  // THE LIVE DRAFTER. `POST /messages/:id/draft` calls this; absent, the route 500s
-  // cleanly, which is the state this host shipped in until now.
-  //
-  // Lazy, like every other constructed service: `makeAnthropicClient` builds a closure and a
-  // retry policy that a `GET /health` cold start has no reason to pay for.
-  //
-  // `onUsage` goes to BOTH the `console.log` line (Vercel's log drain makes `ai_call` greppable,
-  // and it carries Anthropic's `request-id`) and to `ai_usage_daily` through the recorder built
-  // at the top of this function. See the recorder's own note for why the write is awaited here
-  // and buffered on the worker.
-  //
-  // THE SCREENER'S CLASSIFIER IS DELIBERATELY NOT WIRED IN THIS BLOCK, and the reason is
-  // written down so nobody "finishes the job" by adding one. The hazard this guarded against —
-  // a model call per eligible held row on EVERY `list`, re-fetched on every poll, scroll and
-  // reload, charged once and billed to us for ever — was closed by persisting suggestions and
-  // generating them only on `POST /screener/suggest` over an explicit, priced sender set; the
-  // classifier is therefore constructed inside the screener block above, behind that surface,
-  // and `list` cannot reach it at all. This client here is tuned for a single drafting call
-  // (25 s, one retry), not for a batch of classifications.
+  // The live drafter. `POST /messages/:id/draft` calls this; absent, the route 500s cleanly.
+  // Lazy: `makeAnthropicClient` builds a closure and retry policy no health probe needs.
+  // `onUsage` goes both to the `console.log` line (`ai_call` is greppable in the log drain
+  // and carries Anthropic's request id) and to `ai_usage_daily` through the recorder above —
+  // awaited here, buffered on the worker. The screener's classifier is deliberately not
+  // wired in this block: a model call per eligible held row on every `list` was the hazard,
+  // closed by persisting suggestions behind `POST /screener/suggest`; the classifier is
+  // constructed inside the screener block above, and this client is tuned for one drafting
+  // call (25 s, one retry), not a batch of classifications.
   if (anthropicApiKey) {
     lazily(bag, "drafter", () => makeSonnetDrafter(makeAnthropicClient({
       apiKey: anthropicApiKey,
@@ -520,22 +415,13 @@ function buildServices(cfg: HostConfig): ApiServices {
 }
 
 /**
- * The `MailService` customer mail goes through, or `null`.
- *
- * Separate from {@link alertSinksFor}'s instance on purpose: that one is constructed with an
- * `operatorEmail` and exists to reach a pager, this one has none and exists to reach a
- * customer. Sharing it would mean `sendOperatorAlert`'s "the recipient is configuration,
- * never an argument" guarantee and the waitlist's recipient handling lived in one object
- * whose configuration served two different threat models.
- *
- * ── IT CANNOT THROW ──────────────────────────────────────────────────────────────────────
- *
- * Same rule as the alert sinks, and for a stronger reason. `MailService`'s constructor
- * validates its link bases at boot and throws on a bad one — correct for a mail composition
- * root, catastrophic here, because this runs inside `buildServices` on the path of every
- * request. A malformed `MAIL_APP_URL` must cost the deployment its outbound mail, not its
- * availability. A service that could not be built is simply absent, and `WaitlistService`
- * already treats that as "record the row, report `mailed: false`".
+ * The `MailService` customer mail goes through, or `null`. Separate from
+ * {@link alertSinksFor}'s instance: that one is constructed with an `operatorEmail` and
+ * exists to reach a pager; sharing one object would put two threat models in one
+ * configuration. It cannot throw: `MailService`'s constructor validates its link bases and
+ * throws on a bad one — correct for a composition root, catastrophic here on the path of
+ * every request. A malformed `MAIL_APP_URL` must cost the deployment its outbound mail, not
+ * its availability; `WaitlistService` treats the absence as "record the row, `mailed: false`".
  */
 let customerMailCache: { key: object; mail: MailService | null } | null = null;
 
@@ -567,23 +453,13 @@ function customerMailerFor(cfg: HostConfig): MailService | null {
 }
 
 /**
- * The alert sinks this host can actually reach, built once per cold instance.
- *
- * TWO of them, on purpose, and they share no vendor: a JSON webhook (a phone push) and
- * operator mail. The redundancy exists because a delivery path that fails silently is
- * indistinguishable from no delivery path, so the pager does not get to have exactly one.
- *
- * Cached on the config object like the service bag: `new ResendMailer(...)` builds an HTTP
- * client, and the alert route is called every few minutes by a scheduler on a warm instance.
- *
- * ── IT CANNOT THROW, AND THAT IS DELIBERATE ──────────────────────────────────────────────
- *
- * `MailService`'s constructor validates its link bases at boot and throws on a bad one — the
- * right behaviour for the composition root of a mail feature, and the wrong behaviour here.
- * This runs inside `buildDeps`, on the path of EVERY request, so a malformed `TF_ADMIN_URL`
- * would 500 the entire deployment. An observability feature must never be able to cause the
- * outage it exists to report, so a sink that cannot be constructed is simply not added: the
- * pass then reports `undeliverable`, the scheduled workflow sees it, and the product serves.
+ * The alert sinks this host can reach, built once per cold instance. Two, sharing no vendor
+ * (a JSON webhook push and operator mail): a delivery path that fails silently is
+ * indistinguishable from none, so the pager does not get exactly one. Cached on the config
+ * object like the service bag. It cannot throw: this runs inside `buildDeps` on the path of
+ * every request, and an observability feature must never cause the outage it exists to
+ * report — a sink that cannot be constructed is not added, the pass reports `undeliverable`,
+ * and the product serves.
  */
 let sinksCache: { key: object; sinks: AlertSink[] } | null = null;
 
@@ -620,17 +496,11 @@ function alertSinksFor(cfg: HostConfig): AlertSink[] {
             operatorEmail: alerts.operatorEmail,
           },
         });
-        // A LIMITER, NOT A DATABASE.
-        //
-        // This used to be `db: makePooledDb(cfg.databaseUrlPooled) as never`: the unrestricted
-        // runtime handle, captured for the lifetime of the process inside a graph that only
-        // ever runs behind a staff credential, with a double assertion silencing the type that
-        // said so. `sendOperatorAlert` uses it for exactly one thing — claiming an
-        // `auth_throttle` slot — so that is what it is handed. The connection stays here, in
-        // the composition root, which is the same shape the `/admin/*` callbacks take.
-        //
-        // It cannot move onto the blind handle instead: `ohmail_admin` has no grant on
-        // `auth_throttle`, and inventing one would widen the staff role to buy nothing.
+        // A limiter, not a database: `sendOperatorAlert` uses it for exactly one thing —
+        // claiming an `auth_throttle` slot — so that is what it is handed; the unrestricted
+        // runtime handle stays here in the composition root, the shape the `/admin/*`
+        // callbacks take. It cannot move onto the blind handle: `ohmail_admin` has no grant
+        // on `auth_throttle`, and inventing one would widen the staff role to buy nothing.
         sinks.push(mailAlertSink(service, {
           limiter: dbRecipientLimiter(makePooledDb(cfg.databaseUrlPooled)),
           now: () => new Date(),
@@ -701,21 +571,12 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
       // Reads the SAME config member `buildServices` arms from, so the marker cannot disagree
       // with the wiring.
       entitlements: cfg.entitlements ? "configured" : "unmetered",
-      // THE PAGER'S ARMS, published where an operator already looks. The worker announces its
-      // arms in a startup line and warns when there is exactly one; this host has no startup
-      // line, so until now its per-arm delivery health was reachable only through the
-      // `/internal/alerts` response — behind the scheduler's credential, on the one host that is
-      // the sole observer of a dead worker.
-      //
-      // UNCONDITIONAL, `cfg.alerts` null included, and that is the deliberate half: `arms: []` is
-      // then the loud statement that this hosted deployment cannot page anybody. Gating it on
-      // `cfg.alerts` would make the key vanish in exactly that state, and nothing else reports it
-      // — `alertsError` only fires when the alert credential IS configured, so a deployment that
-      // lost `TF_ALERT_SECRET` would read as a healthy one with a shorter body.
-      //
-      // A closure, so the streak is read at `/health` time rather than frozen per request, and
-      // `alertSinksFor` is the same cached list `deps.alerts` hands the pass — one composition,
-      // not a second opinion about what this host's arms are.
+      // The pager's arms, published where an operator already looks. Unconditional,
+      // `cfg.alerts` null included: `arms: []` is the loud statement that this deployment
+      // cannot page anybody, and gating on `cfg.alerts` would make the key vanish in exactly
+      // that state — `alertsError` only fires when the credential is configured. A closure,
+      // so the streak is read at `/health` time, and `alertSinksFor` is the same cached list
+      // `deps.alerts` hands the pass — one composition, not a second opinion.
       alertSinks: () => apiAlertSinkSummary(alertSinksFor(cfg)),
     },
     /**
@@ -832,19 +693,13 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
      * `new URL(path, "")` throw inside a redirect handler. */
     appOrigin: cfg.appOrigin ?? undefined,
     /**
-     * The OAuth token source, now WIRED. An earlier phase left this absent with a note saying it
-     * would be wired "when onboarding lands"; onboarding has landed.
-     *
-     * PER INVOCATION, which is the whole reason it is built here and not in `servicesFor`: the token
-     * cache is keyed by mailbox and a serverless invocation serves one request, so a per-request
-     * instance is exactly the right lifetime — it spares a redundant token POST when the same
-     * mailbox is dialled twice in one request (a send that also appends to Sent) and caches nothing
-     * across requests, where a stale token would be a liability rather than a saving.
-     *
-     * Built UNCONDITIONALLY, for the reason the worker's own construction states: the refusal for a
-     * missing client secret has to NAME the missing variable, and that only happens if the provider
-     * exists to be asked. A password-only deployment never invokes it — an `authType: "oauth2"`
-     * credential row is the only thing that reaches `fetchAccessToken`.
+     * The OAuth token source, per invocation — the token cache is keyed by mailbox and a
+     * serverless invocation serves one request, so a per-request instance spares a redundant
+     * token POST when the same mailbox is dialled twice (a send that also appends to Sent)
+     * and caches nothing across requests, where a stale token is a liability. Built
+     * unconditionally: the refusal for a missing client secret has to name the variable,
+     * which only happens if the provider exists to be asked; a password-only deployment
+     * never invokes it.
      */
     oauth: oauthProviderFor(cfg, db),
     /* The token-endpoint port. Production is Node's global `fetch`; it is left ABSENT
@@ -853,15 +708,11 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
 }
 
 /**
- * The per-invocation Microsoft token source.
- *
- * `resolveClient` reads the CONFIG STORE on every refresh, with env as the fallback, through the same
- * resolver the worker and the onboarding routes use. That is what makes a client secret rotated in
- * the admin console take effect without a redeploy — and, more importantly, what makes it impossible
- * for this host and the worker to sign with different clients.
- *
- * The rotation write targets the mailbox's OWN imap credential row and is the only write this port
- * makes, identical to the worker's.
+ * The per-invocation Microsoft token source. `resolveClient` reads the config store on every
+ * refresh, env as fallback, through the same resolver the worker and onboarding routes use —
+ * a client secret rotated in the admin console takes effect without a redeploy, and this
+ * host and the worker cannot sign with different clients. The rotation write targets the
+ * mailbox's own imap credential row and is the only write this port makes.
  */
 function oauthProviderFor(cfg: HostConfig, db: ApiDeps["db"]): MicrosoftTokenProvider {
   const updateSecret: UpdateSecretPort = (mailboxId, ciphertextEnc, keyVersion) =>
@@ -874,18 +725,12 @@ function oauthProviderFor(cfg: HostConfig, db: ApiDeps["db"]): MicrosoftTokenPro
     defaultTenant: cfg.msOAuth?.tenant || "common",
     resolveClient: async (want) => {
       /*
-       * THIS HOST HAS ONE DOOR, AND SAYS SO.
-       *
-       * The managed deployment serves the REDIRECT ceremony and does not mount the device-code
-       * routes, so no mailbox here can hold a token from the public registration — and it reads no
-       * `MS_DEVICE_CLIENT_ID`, because a variable nothing here would use is a variable that does
-       * nothing. A `want` of `"public"` therefore means something impossible has happened (a row
-       * carrying a `clientKind` this host never wrote), and the honest answer is to resolve the
-       * confidential registration and let the token client refuse the mismatch by name — which it
-       * does, before any request reaches Microsoft, rather than sending a doomed refresh whose
-       * `invalid_client` would read as a Microsoft outage.
-       *
-       * `kind` is stated rather than left to default for exactly that check's benefit.
+       * This host has one door: the managed deployment serves the redirect ceremony and does
+       * not mount the device-code routes, so no mailbox here holds a token from the public
+       * registration, and it reads no `MS_DEVICE_CLIENT_ID`. A `want` of `"public"` means a
+       * row carrying a `clientKind` this host never wrote; the honest answer is to resolve
+       * the confidential registration and let the token client refuse the mismatch by name —
+       * before any request reaches Microsoft. `kind` is stated for that check's benefit.
        */
       void want;
       const resolved = await resolveOAuthProviderConfig({
