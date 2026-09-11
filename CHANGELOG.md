@@ -13,6 +13,14 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Building from source is pinned end to end
+
+`apps/desktop` carries a lockfile, so `npm ci` installs the dependency tree this app was built and
+tested against rather than whatever its ranges resolve to on the day. The Node runtime the app
+bundles can be vendored from archives you already have — point `OHMAIL_NODE_ARCHIVES` at a
+directory holding them and nothing is downloaded — and the engine's bundler is a pinned dependency
+of the workspace, so the build instructions no longer ask you to install one off to one side.
+
 ### The phone shows History
 
 The phone shows History — old mail from senders you never screened — like the desktop does.
