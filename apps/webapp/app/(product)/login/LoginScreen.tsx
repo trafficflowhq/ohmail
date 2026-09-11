@@ -140,28 +140,24 @@ export function LoginScreen() {
   }, [configured, router]);
 
   /**
-   * A FRESH SELF-HOST SERVER HAS NOBODY TO SIGN IN. Self-host builds only (compile-time —
+   * A fresh self-host server has nobody to sign in. Self-host builds only (compile-time —
    * `SELF_HOST_BUILD` is false on the managed bundle, so this effect costs it nothing): when
    * `/hello` reports `needsSetup: true` there are zero accounts and every credential this form
    * could take would be refused, so the honest screen is the first-run ceremony at `/setup`.
    * The answer is the server's, asked fresh on every mount — `needsSetup` flips false the
-   * moment the first account exists, after which this form is the front door it always was.
-   * Any failure to learn the state falls through to the form, which is never wrong.
-   *
-   * ── IT BELONGS TO THE CEREMONY TOO, AND IT DID NOT ────────────────────────────────────────
-   *
-   * This is a SECOND request off this page, and the ladder above knew nothing about it. Two
-   * consequences, one of them expensive:
-   *
-   *  · a refresh nobody ordered. `api()` refreshes and retries on a 401, and a refresh rewrites
-   *    every session cookie whenever its response lands. A delayed 401 here therefore rewrote
-   *    the jar underneath a sign-in the ceremony had carefully ordered itself behind. That half
-   *    is fixed where it belongs — `/hello` is in `NEVER_REFRESH` (`session-refresh.ts`), so no
-   *    caller of it can start one — because this page is not the only place it is asked.
-   *  · a navigation from behind a password. `router.replace("/setup")` arriving mid-ceremony
-   *    takes the person off a form they have already submitted. The ladder's own two guards are
-   *    the right ones: `submittedRef` refuses to start once a ceremony owns the page, and the
-   *    signal is aborted when one begins, so a late answer navigates nothing.
+   * moment the first account exists. Any failure to learn the state falls through to the form,
+   * which is never wrong.
+   */
+
+  /**
+   * It belongs to the ceremony too, and it did not: this is a second request off this page, and the ladder above knew
+   * nothing about it. Two consequences, one expensive. A refresh nobody ordered — `api()` refreshes and retries on a
+   * 401, and a refresh rewrites every session cookie when its response lands, so a delayed 401 here rewrote the jar
+   * underneath a sign-in the ceremony had ordered itself behind; fixed where it belongs — `/hello` is in
+   * `NEVER_REFRESH` (`session-refresh.ts`) — because this page is not the only asker. And a navigation from behind a
+   * password: `router.replace("/setup")` arriving mid-ceremony takes the person off a form they already submitted;
+   * the ladder's own guards are the right ones — `submittedRef` refuses to start once a ceremony owns the page, and
+   * the signal is aborted when one begins, so a late answer navigates nothing.
    */
   useEffect(() => {
     if (!SELF_HOST_BUILD || !configured) return;

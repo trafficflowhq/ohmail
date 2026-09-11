@@ -330,41 +330,35 @@ export function ComposeAttach({
   }, []);
 
   /**
-   * RE-ENCODE THE PICTURES ALREADY ATTACHED at the level the dial just moved to — the other half
-   * of the dial, and the half it long disclaimed ("files already attached keep their size").
-   * Owner ruling: the setting applies to what is on the message, not only to the next pick.
-   *
-   * ── FROM THE SOURCE, ALWAYS ────────────────────────────────────────────────────────────────
-   * Every candidate is re-run through {@link compressImage} over its retained PRISTINE source
-   * (see `sources`), never over the current encode: encode-of-encode is generational loss, and
-   * a move to Original must yield the exact picked bytes — which it does here, because
-   * `compressImage(source, "original")` answers the source identically. A file with no retained
-   * source (a list restored without bytes) and a file whose re-encode equals what it already
-   * carries are left untouched, OBJECT IDENTITY INCLUDED, so non-images and incompressible
-   * files pass through a move as if it never happened.
-   *
-   * ── ONE ATOMIC COMMIT, RECONCILED, GENERATION-GUARDED ──────────────────────────────────────
-   * The pass is async and the composer stays live under it, so three races are closed by
-   * construction rather than by luck:
-   *   · A SEND mid-pass reads the caller's state, which this pass has not touched yet — the
-   *     settled pre-move encodes. The commit is a single `onChange` carrying every replacement
-   *     at once, so no observable list ever mixes two levels for one source. Pinned by test.
-   *   · A PICK or REMOVE mid-pass lands in `attachmentsRef` before the commit reads it: the
-   *     commit maps over the LATEST list, replacing only rows it re-encoded and keeping
-   *     everything else — including rows added mid-pass, which the pick already encoded at the
-   *     new level (`onFiles` reads `levelRef` at pick time).
-   *   · A SECOND MOVE mid-pass bumps `requalifyGen`; the older pass notices and yields — its
-   *     superseded encodes are discarded, never committed over the newer level.
-   *
-   * ── THE CAP STILL GOVERNS, OVER THE WHOLE LIST ─────────────────────────────────────────────
-   * A move UP (toward Original) can grow the total past the cap. Admission is judged against the
-   * PROJECTED FINAL TOTAL of the whole list — a prefix walk admitted a grow before it had counted
-   * the untouched rows behind it, and the committed list then exceeded the cap the send enforces
-   * (review finding). Shrinks land first (they only make room), then grows in list order while
-   * the projection holds; a row whose re-encode would cross the cap keeps its previous bytes —
-   * the least destructive honest answer (the file was admitted; a dial move must not eject it) —
-   * and the refusal is said on screen with the same number the send enforces, read at COMMIT
-   * time, because an inline reply's mailbox can change under the pass.
+   * Re-encode the pictures already attached at the level the dial just moved to — the other
+   * half of the dial (owner ruling: the setting applies to what is on the message, not only the
+   * next pick). Every candidate re-runs through {@link compressImage} over its retained
+   * PRISTINE source (`sources`), never the current encode: encode-of-encode is generational
+   * loss, and a move to Original must yield the exact picked bytes — `compressImage(source,
+   * "original")` answers the source identically. A file with no retained source and a file
+   * whose re-encode equals what it carries are left untouched, object identity included, so
+   * non-images and incompressible files pass through a move as if it never happened.
+   */
+
+  /**
+   * One atomic commit, reconciled, generation-guarded — the pass is async and the composer stays live under it, so
+   * three races are closed by construction. A SEND mid-pass reads the caller's state, untouched by the pass — the
+   * settled pre-move encodes; the commit is a single `onChange` carrying every replacement at once, so no observable
+   * list mixes two levels for one source (pinned by test). A PICK or REMOVE mid-pass lands in `attachmentsRef` before
+   * the commit reads it: the commit maps over the LATEST list, replacing only rows it re-encoded (a mid-pass pick was
+   * already encoded at the new level — `onFiles` reads `levelRef` at pick time). A SECOND MOVE bumps `requalifyGen`;
+   * the older pass yields and its superseded encodes are never committed.
+   */
+
+  /**
+   * The cap still governs, over the whole list. A move UP can grow the total past the cap, and
+   * admission is judged against the PROJECTED FINAL TOTAL — a prefix walk admitted a grow
+   * before counting the untouched rows behind it, and the committed list exceeded the cap the
+   * send enforces (review finding). Shrinks land first (they only make room), then grows in
+   * list order while the projection holds; a row whose re-encode would cross the cap keeps its
+   * previous bytes — the least destructive honest answer, since a dial move must not eject an
+   * admitted file — and the refusal is said on screen with the same number the send enforces,
+   * read at COMMIT time, because an inline reply's mailbox can change under the pass.
    */
   const requalify = useCallback(
     async (nextLevel: ImageQualityLevel, over?: readonly ComposeAttachment[]) => {

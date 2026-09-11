@@ -1327,27 +1327,18 @@ export const mailboxes = {
   create: (b: CreateMailboxBody) => api<MailboxDTO>("/mailboxes", { method: "POST", body: b }),
 
   /**
-   * TEST A CONNECTION WITHOUT CREATING ANYTHING — `POST /mailboxes/probe`.
-   *
-   * `connection`-classed and `stepUp`-gated with {@link create}, because the body carries a
-   * mailbox password; it has no `:id` because the whole point is that no row exists yet. It
-   * writes nothing at all — no mailbox, no credential, no folder.
-   *
-   * ── THE FAILURE SHAPE IS `create`'s, BY CONSTRUCTION ────────────────────────────────────
-   *
-   * The server throws the SAME `mailbox_probe_failed` refusal with the same seven-member
-   * `details.reason` taxonomy, so `probeReasonOf` classifies both and every surface that renders
-   * a connect failure renders a test failure with no new copy. Only SUCCESS is new: nothing in
-   * this product could previously produce one.
-   *
-   * ── AND SUCCESS CARRIES A FOLDER COUNT, WHICH IS THE CHECKABLE PART ────────────────────
-   *
-   * A greeting and an accepted LOGIN prove the host, the port, the TLS mode and the password.
-   * They do not prove the account can READ anything, and "Connected" is a claim nobody can check.
-   * The LIST runs inside the connection that proved the password — a second dial would be a
-   * second login, outside the admission slot and charged again by providers that rate-limit auth.
-   * `folders` is `null` where no count was taken; a renderer shows a verdict with no number
-   * rather than "0 folders".
+   * Test a connection without creating anything — `POST /mailboxes/probe`. `connection`-classed and `stepUp`-gated
+   * with {@link create}, because the body carries a mailbox password; no `:id` because no row exists yet, and it
+   * writes nothing at all. The failure shape is `create`'s by construction: the server throws the same
+   * `mailbox_probe_failed` refusal with the same seven-member `details.reason` taxonomy, so `probeReasonOf`
+   * classifies both and every connect-failure surface renders a test failure with no new copy. Only SUCCESS is new,
+   * and it carries a folder count — the checkable part: a greeting and an accepted LOGIN prove host, port, TLS and
+   * password but not that the account can READ anything. The LIST runs inside the connection that proved the password
+   * (a second dial would be a second login, charged again by providers that rate-limit auth).
+   */
+
+  /**
+   * `folders` is `null` where no count was taken; a renderer shows a verdict with no number rather than "0 folders".
    */
   probe: (b: {
     address: string;

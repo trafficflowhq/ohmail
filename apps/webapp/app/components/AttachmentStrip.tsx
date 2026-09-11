@@ -315,32 +315,24 @@ function Leaf({ item }: { item: AttachmentItem }) {
 /* ── one attachment ─────────────────────────────────────────────────────────────────── */
 
 /**
- * ── TWO VERBS, AND ONLY ONE OF THEM IS THE TILE ──────────────────────────────────────────
- *
- * ── THE TWO VERBS, AND THEY TRADED PLACES ────────────────────────────────────────────────
- *
- * The tile is LOOK, wherever looking is possible: a press opens the PDF, the picture or the text
- * part in the overlay, and the reader decides from what they can see whether they want it on
- * their disk. SAVE is the smaller control in the corner.
- *
- * They used to be the other way round, on the argument that saving is what people come to an
- * attachment for and nobody should have to learn which types this app can draw first. The
- * argument was half right and the half it got wrong is the expensive one: an attachment is
- * usually opened to be READ, once, and a press that puts a file in ~/Downloads instead of on the
- * screen makes the reader do the work — find the file, open it in another app, and then delete
- * it. Where this app can draw the file, drawing it is the answer to the press. Where it cannot,
- * the tile still saves, so the rule "a press does the useful thing" holds for every type; what
- * changes is what useful means for the types that can be shown.
- *
- * ── WHAT DID NOT MOVE: WHICH FILES MAY BE DRAWN AT ALL ──────────────────────────────────
- *
- * `canPreview` is still asked and still owned one layer up (`isPreviewable`, which refuses SVG
- * for being a document that executes script, and everything else this app cannot render). An SVG,
- * a docx and a zip have no viewer and their tile saves, exactly as before. The security
- * judgement is untouched by the swap — only the geometry of the two controls is.
- *
- * The corner control is a separate `<button>` beside the tile rather than inside it: a button
- * within a button is invalid, and the browser would give the press to whichever it felt like.
+ * Two verbs, and they traded places. The tile is LOOK, wherever looking is possible: a press
+ * opens the PDF, picture or text part in the overlay, and the reader decides from what they see
+ * whether they want it on disk; SAVE is the smaller control in the corner. They used to be the
+ * other way round, arguing that saving is what people come for — half right, and the wrong half
+ * is expensive: an attachment is usually opened to be READ, once, and a press that puts a file
+ * in ~/Downloads makes the reader find it, open it elsewhere, then delete it. Where this app
+ * cannot draw the file, the tile still saves, so "a press does the useful thing" holds for
+ * every type.
+ */
+
+/**
+ * What did not move: which files may be drawn at all. `canPreview` is still asked and owned one
+ * layer up (`isPreviewable`, which refuses SVG for being a document that executes script, and
+ * everything else this app cannot render); an SVG, a docx and a zip have no viewer and their
+ * tile saves, exactly as before — the security judgement is untouched, only the geometry of the
+ * two controls. The corner control is a separate `<button>` beside the tile rather than inside
+ * it: a button within a button is invalid, and the browser would give the press to whichever it
+ * felt like.
  */
 function Tile({
   item,

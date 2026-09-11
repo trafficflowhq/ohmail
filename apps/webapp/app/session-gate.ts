@@ -184,29 +184,23 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
-    // Timeout, DNS, TLS, an aborted edge invocation — indistinguishable from here and
-    // all of them mean the same thing: we cannot prove a session RIGHT NOW.
-    //
-    // WITH THE MARKER, THAT IS A "resume", AND THE TIMEOUT IS THE CASE THAT FORCED IT.
-    // The API is a serverless function and this gate's budget is {@link SESSION_TIMEOUT_MS};
-    // the first request after a deploy pays a cold start that can exceed it, and API
-    // deploys are routine. The old answer here was "marketing", so the
-    // person who hit that first request — a signed-in customer opening ohmail.app — was
-    // handed the pitch, and their manual reload (against the instance their first attempt
-    // had just warmed) landed in the app. Observed live as exactly that pattern.
-    //
+    // Timeout, DNS, TLS, an aborted edge invocation — indistinguishable from here, and all
+    // meaning the same thing: we cannot prove a session RIGHT NOW. With the marker that is a
+    // "resume", and the timeout is the case that forced it: the API is serverless, this gate's
+    // budget is {@link SESSION_TIMEOUT_MS}, and the first request after a deploy pays a cold
+    // start that can exceed it. The old answer was "marketing", so a signed-in customer hitting
+    // that first request was handed the pitch, and their manual reload (against the instance
+    // their attempt had just warmed) landed in the app — observed live as exactly that pattern.
+
     // The splash can prove what this gate cannot: its `POST /auth/refresh` runs with the
-    // browser's own budget, not this 1.5s clamp (a resume guard pins the absence
-    // of an artificial timeout there), so a cold-but-alive API succeeds and `reload()`
-    // re-runs a now-warm gate. And it cannot loop — the earlier version of this comment
-    // refused "resume" fearing "a retry loop dressed as a page", but a failed resume exits
-    // to `/login`, never back to `/`, and the splash's sessionStorage stamp turns a second
-    // pass inside ten seconds into an honest failure card (`ResumeScreen`). Worst case of
-    // resuming during a real outage: one quiet splash, then the truth. Worst case of not
-    // resuming: every API blink logs the front door out.
-    //
-    // WITHOUT the marker there is nothing to resume and no standing to assume: the landing
-    // stays the answer, which also keeps this branch worthless to anyone spraying
+    // browser's own budget, not this 1.5s clamp (a resume guard pins the absence of an
+    // artificial timeout there), so a cold-but-alive API succeeds and `reload()` re-runs a
+    // now-warm gate. It cannot loop: a failed resume exits to `/login`, never back to `/`, and
+    // the splash's sessionStorage stamp turns a second pass inside ten seconds into an honest
+    // failure card (`ResumeScreen`). Worst case of resuming during a real outage: one quiet
+    // splash, then the truth; worst case of not resuming: every API blink logs the front door
+    // out. WITHOUT the marker there is nothing to resume and no standing to assume — the
+    // landing stays the answer, which also keeps this branch worthless to anyone spraying
     // cookie-shaped values during an outage.
     return resumable ? "resume" : "marketing";
   }

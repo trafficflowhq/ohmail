@@ -47,28 +47,20 @@ function applyDemoTheme(doc: Document, tokens: Record<string, string> | null): v
     warn. The component still server-renders — just without the geometry. */
 const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
-/* ── the annotations ──────────────────────────────────────────────────
-   Each card points at a REGION OF THE DEMO, not at a decorative spot on
-   the frame: `sel` is resolved inside the iframe's own document (same
-   origin, so this is a plain querySelector) and the leader is drawn from
-   the card to that element's outlined box. `fallback` is a fraction of
-   the frame used when the element is missing, scrolled out of the demo's
-   viewport, or the document could not be read — the annotation still
-   points at the right neighbourhood rather than at nothing.
+/**
+ * The annotations. Each card points at a REGION OF THE DEMO, not a decorative spot on the frame: `sel` resolves
+ * inside the iframe's own document (same origin, plain querySelector) and the leader is drawn from the card to that
+ * element's outlined box; `fallback` is a fraction of the frame used when the element is missing, scrolled out, or
+ * unreadable — the annotation still points at the right neighbourhood. Sides follow where the target lives: the two
+ * rail entries are reachable from the left gutter in ~40px of leader, while the two right-side cards (owner review
+ * 2026-08-31) point at the LIST's group labels — "New" and "Earlier", the Ohbox model itself — so their leaders cross
+ * the reading pane as calm hairlines; that length is the price of pointing at the true anchor.
+ */
 
-   Sides are chosen by where the target lives: the two rail entries are
-   reachable from the left gutter in ~40px of leader. The two right-side
-   cards (owner review 2026-08-31) point at the LIST's group labels — the
-   Ohbox model itself, "New" on top and "Earlier" under it — so their
-   leaders cross the reading pane as calm hairlines and land on the label
-   each claim is about; that length is the price of pointing at the true
-   anchor rather than at a nearer decoration.
-
-   The whole layer — cards, leaders and rings together — retires on the
-   visitor's first real interaction with the demo (see onFrameLoad). The
-   card and its pointer are one object: a card that outlives its leader is
-   an unanchored note about a chip that has since scrolled away.
-   ──────────────────────────────────────────────────────────────────── */
+/**
+ * The whole layer retires on the visitor's first real interaction with the demo (see onFrameLoad): a card that
+ * outlives its leader is an unanchored note about a chip that has since scrolled away.
+ */
 type Side = "left" | "right";
 
 interface Anno {
