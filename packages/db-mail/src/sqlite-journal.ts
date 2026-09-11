@@ -1,17 +1,12 @@
 /**
- * THE SQLITE JOURNAL, INLINED — the same files, as a module a device bundler can see.
+ * The sqlite journal, inlined: a device bundler resolves imports, not
+ * directory listings, so a migrator reading `.sql` files off disk would pass
+ * every test and find nothing on a phone. These are the same files as
+ * `drizzle-sqlite/`, compiled into this module.
  *
- * The store on a phone is migrated by the same journal a checkout holds in `drizzle-sqlite/`,
- * and it cannot be READ from there: the bundler that builds the application resolves imports, not
- * directory listings, so a migrator that opened `.sql` files off disk would work in every test
- * and find nothing on a device. The files are therefore compiled into this module.
- *
- * GENERATED FROM THE DIRECTORY, NEVER EDITED. Two copies of the same SQL is exactly the shape
- * that drifts, so `sqlite-journal-inlined.test.ts` reads the directory and compares it with what
- * is here, byte for byte and in order, and fails on any difference — a file added, a file
- * changed, or a file this module still carries after it was removed.
- *
- * Regenerate with `node scripts/gen-sqlite-journal.mjs` after touching the directory.
+ * Generated, never edited: `sqlite-journal-inlined.test.ts` compares this
+ * module with the directory byte for byte, in order. Regenerate with
+ * `node scripts/gen-sqlite-journal.mjs` after touching the directory.
  */
 
 /** One journal entry: the file it came from and the statements it applies, in order. */
