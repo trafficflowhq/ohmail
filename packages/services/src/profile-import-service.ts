@@ -7,7 +7,7 @@ import {
   recordChanges,
   type ChangeInput, type Tx,
 } from "@trafficflow/db";
-import { DESTINATIONS } from "@trafficflow/core/mail";
+import { DESTINATIONS, isAwayPile } from "@trafficflow/core/mail";
 import {
   ProfileUnavailableError, profileFingerprint,
   type OrganizerProfileDoc, type ProfileReadResult, type ProfileRuleEntry,
@@ -627,6 +627,13 @@ export class ProfileImportService {
              writer it exists for. An import that lands on an account whose responder is ALREADY ON
              must not move the floor, or importing settings mid-trip would strand exactly the
              backlog `enabled_at` was added to keep answerable. */
+          /* THE SCOPE (mail 0096), and only when the document STATES one. An absent field is a
+             document written before the field existed — it says nothing about scope, so the stored
+             value is left alone rather than reset to the column's Ohbox default, which would
+             narrow the responder on every adoption from an older install. Unrecognised members are
+             dropped, on the same argument the audience and throttle are narrowed on: a value this
+             build cannot act on must not reach a column whose CHECK refuses it. */
+          const piles = a.piles === undefined ? undefined : a.piles.filter(isAwayPile);
           const [prevAway] = await tx.select({ enabledAt: awayResponders.enabledAt })
             .from(awayResponders).where(eq(awayResponders.accountId, ctx.accountId)).limit(1);
           const enabledAt = nextEnabledAt(prevAway?.enabledAt ?? null, enabled, now);
@@ -635,6 +642,7 @@ export class ProfileImportService {
             body: a.body,
             startsAt, endsAt,
             audience, throttle, enabledAt, updatedAt: now,
+            ...(piles === undefined ? {} : { piles }),
           }).onConflictDoUpdate({
             target: awayResponders.accountId,
             // `subject` is neither read from the document nor written: the responder is reply-only
@@ -643,6 +651,7 @@ export class ProfileImportService {
             set: {
               enabled, body: a.body,
               startsAt, endsAt, audience, throttle, enabledAt, updatedAt: now,
+              ...(piles === undefined ? {} : { piles }),
             },
           });
         }

@@ -219,6 +219,16 @@ export interface ProfileAwayResponder {
   endsAt: string | null;
   audience: string;
   throttle: string;
+  /**
+   * WHICH PILES THE RESPONDER ANSWERS (mail 0096) — and OPTIONAL, which is the whole of its
+   * compatibility rule.
+   *
+   * A document written before this field existed is not saying "answer the Ohbox"; it is saying
+   * nothing about scope. Absent therefore means UNSTATED and the reader leaves what it has stored
+   * alone, where a default would silently narrow every adoption from an older install. An explicit
+   * empty list is a real answer — "answer nobody" — and is kept.
+   */
+  piles?: string[];
 }
 
 /** The configuration itself — everything that travels, and nothing else. */
@@ -363,6 +373,13 @@ export function canonicalizeProfilePayload(p: OrganizerProfilePayload): Organize
       endsAt: p.awayResponder.endsAt,
       audience: p.awayResponder.audience,
       throttle: p.awayResponder.throttle,
+      /* SORTED, because the value is a SET and the endpoint does not preserve order — two
+         payloads meaning the same scope must not hash differently. ABSENT WHEN ABSENT, for the
+         reason the signature field spells out one key below: adding a key here for a document
+         that never had one would change the fingerprint of every profile an older ohmail wrote. */
+      ...(p.awayResponder.piles === undefined
+        ? {}
+        : { piles: [...new Set(p.awayResponder.piles)].sort(byCodeUnit) }),
     },
     tagNames: [...p.tagNames].sort(byCodeUnit),
     /* `?? null` RATHER THAN A PASS-THROUGH, and it is the fingerprint that needs it. An in-memory
@@ -552,6 +569,11 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
       // fills in an absent one, and the two are separate on purpose (a member we do not know is a
       // newer ohmail's, and is a different fact from a field that was never written).
       throttle: asString(o.throttle) ?? "per_day",
+      // ABSENT STAYS ABSENT. See the field: no default here, because "unstated" and "the Ohbox"
+      // are different facts and only the importer can tell what to do with the first.
+      ...(Array.isArray(o.piles)
+        ? { piles: o.piles.filter((v): v is string => typeof v === "string") }
+        : {}),
     };
   }
   const tagNames: string[] = Array.isArray(raw.tagNames)

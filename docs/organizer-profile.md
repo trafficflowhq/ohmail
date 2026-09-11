@@ -71,7 +71,8 @@ One RFC822 message in `ohmail/_meta`:
     "startsAt": "<ISO 8601 or null>",
     "endsAt": "<ISO 8601 or null>",
     "audience": "screened_in" | "everyone",
-    "throttle": "always" | "per_message" | "per_day" | "per_week"
+    "throttle": "always" | "per_message" | "per_day" | "per_week",
+    "piles": ["INBOX" | "ohmail/Reads" | "ohmail/Receipts" | "ohmail/Screener", …]
   },
   "tagNames": ["<tag name>", …],   // the names of this mailbox's tags
   "signature": "<string or null>"  // the sign-off on mail sent from this address
@@ -125,6 +126,7 @@ The envelope:
 | `endsAt` | ISO 8601 or null | When it stops. |
 | `audience` | `"screened_in"` \| `"everyone"` | Who gets an answer. |
 | `throttle` | `"always"` \| `"per_message"` \| `"per_day"` \| `"per_week"` | How often one person may be answered. `"per_message"` means once until the text changes. Absent in a document written by an older ohmail, which reads as `"per_day"`. |
+| `piles` | array of `"INBOX"` \| `"ohmail/Reads"` \| `"ohmail/Receipts"` \| `"ohmail/Screener"` | Which piles the responder answers. A SET: duplicates are collapsed and order carries no meaning. An empty array means it answers nobody. **Absent means unstated, not the default** — a document written by an older ohmail says nothing about scope, and a reader applying one leaves its own stored value alone rather than narrowing it. Members a reader does not recognise are dropped. |
 
 The responder is reply-only: it answers in the correspondent's own thread under `Re: ` plus their
 subject, so there is no subject to carry. A document written by an older ohmail may contain a
@@ -233,7 +235,11 @@ The format: versioned JSON, documented in ohmail's published source
     "startsAt": "2026-08-24T00:00:00.000Z",
     "endsAt": "2026-09-02T00:00:00.000Z",
     "audience": "screened_in",
-    "throttle": "per_day"
+    "throttle": "per_day",
+    "piles": [
+      "INBOX",
+      "ohmail/Reads"
+    ]
   },
   "tagNames": [
     "kiln",
