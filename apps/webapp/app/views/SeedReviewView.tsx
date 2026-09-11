@@ -1,42 +1,27 @@
 "use client";
 
 /**
- * THE SENT-MAIL SEED — "you've written to these people; shall I let them through?"
- *
- * The first question a new mailbox is asked cannot be "who do you want to hear from", because
- * nobody can answer that against fifteen thousand messages. The strongest thing anybody has
- * done towards a correspondent is WRITE TO THEM, and that is already sitting in the mailbox.
- *
- * ── THE LIST IS SHOWN BEFORE IT ACTS, AND THAT IS THE WHOLE SCREEN ────────────────────────
- *
- * Everything here exists so the confirmation is informed rather than assumed:
- *
- *   · the count is stated first, and it is the count of PEOPLE, not of messages;
- *   · every row is unticked-able, and the button says how many are ticked right now;
- *   · the robot filter's removals are DISCLOSED, collapsed, with the reason it gave — a
- *     filter nobody can inspect is a filter nobody can correct;
- *   · the sentence above the button says what pressing it will do, and what it will not do.
- *
- * The last one is the one worth being stubborn about. This writes rules and moves nothing:
- * confirming consent for four hundred people must never turn into four hundred moves inside
- * somebody's real mailbox, and somebody about to press a button that could is entitled to
- * know it will not before they press it rather than after.
- *
- * ── A FAILED CONFIRM KEEPS THE CURATION ───────────────────────────────────────────────────
- *
- * Someone who has just gone down a list of two hundred people unticking the twelve they would
- * rather screen has done real work, and it exists nowhere but in this component. The failure
- * path therefore keeps the review AND the tick state and renders the error above the list, so
- * "try again" is one press. It used to replace the whole screen with an apology and a way out,
- * which threw the curation away — and losing somebody's work is worse than the failure that
- * caused it, because the failure was usually transient and the work is not recoverable.
- *
- * ── AND THE CONFIRM MAY BE PRESSED MORE THAN ONCE ─────────────────────────────────────────
- *
- * The server writes a rule for whoever does not have one and skips whoever does, so a second
- * press adds nothing and a retry is safe. The idempotency key this screen mints per press is
- * still the thing that separates "the user pressed twice" from "the first response never
- * arrived": a retry of the same press replays its answer rather than re-running the question.
+ * The sent-mail seed — "you've written to these people; shall I let them through?" The first question a new mailbox
+ * is asked cannot be "who do you want to hear from" against fifteen thousand messages; the strongest thing anybody
+ * has done towards a correspondent is WRITE TO THEM.
+ */
+
+/**
+ * The list is shown before it acts, and that is the whole screen: the count is of PEOPLE, not messages; every row is
+ * untickable and the button says how many are ticked; the robot filter's removals are disclosed, collapsed, with the
+ * reason it gave — a filter nobody can inspect is a filter nobody can correct; and the sentence above the button says
+ * what pressing will do and what it will not — this writes rules and MOVES NOTHING, and somebody about to press a
+ * button that could must know it will not, before rather than after.
+ */
+
+/**
+ * A failed confirm keeps the curation: someone who unticked twelve of two hundred people has done
+ * real work that exists nowhere but this component, so the failure path keeps the review and the
+ * tick state and renders the error above the list — "try again" is one press. It used to replace
+ * the screen with an apology, which threw the curation away; losing somebody's work is worse than
+ * the failure that caused it. The confirm may be pressed more than once: the server writes a rule
+ * for whoever lacks one and skips whoever has one, and the idempotency key minted per press is what
+ * separates "pressed twice" from "the first response never arrived" — a retry replays its answer.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";

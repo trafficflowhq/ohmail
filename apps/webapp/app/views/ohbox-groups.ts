@@ -1,42 +1,26 @@
 import type { EngineMessage } from "@ohmail/client-engine";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   CONVERSATION ROWS FOR THE OHBOX LIST
-   ══════════════════════════════════════════════════════════════════════════════════════════
+/*
+ * Conversation rows for the Ohbox list. Five unread replies in one conversation used to be five
+ * rows in "New for you"; every mirror row carries `threadId`, and this module is the missing
+ * view-layer step — it folds one SECTION's rows into one row per conversation, client-side.
+ * Grouping is per section, not per mailbox: the caller groups "New for you" and "Earlier"
+ * separately, AFTER session placement, so a thread with unread mail in New and read history in
+ * Earlier shows one row in each — the sections answer different questions, and collapsing across
+ * them would make a conversation's unread row disappear because its history was long. Resurfaced
+ * rows and the server-paged "Older" tail are deliberately not grouped.
+ */
 
-   Five unread replies in one conversation used to be five rows in "New for you" — the list
-   rendered one row per unread MESSAGE by design, and the only thing that ever grouped was the
-   demo world (whose fixtures carry a `threadCount` no live row has). The data was never the
-   gap: every mirror row carries `threadId`. This module is the missing view-layer step — it
-   folds one SECTION's rows into one row per conversation, derived entirely client-side.
-
-   ── GROUPING IS PER SECTION, NOT PER MAILBOX ────────────────────────────────────────────────
-
-   The caller groups "New for you" and "Earlier" separately, AFTER the view's session placement
-   has decided which rows each section shows. A thread with unread mail in New and read history
-   in Earlier therefore shows one row in each — the sections answer different questions ("what
-   is waiting" / "what was read"), and collapsing across them would make a conversation's unread
-   row disappear because its history was long. Resurfaced rows and the server-paged "Older" tail
-   are deliberately NOT grouped: a resurfaced row is a per-message "you asked to see this again",
-   and the tail is a bounded server page whose membership this client cannot see all of.
-
-   PER-SECTION GROUPING IS ALSO WHAT MAKES READING THROUGH A CONVERSATION BEHAVE. Reading one of
-   five unread replies moves that MESSAGE to "Earlier" — the unit the read state lives on — so the
-   New row is folded from four members instead of five and its count says so, while the Earlier row
-   for the same thread gains the one that was read. The conversation stops being listed as waiting
-   only when its last unread member has gone, which is the sentence "New for you" is making.
-
-   ── ORDER: THE FIRST MEMBER KEEPS THE ROW'S PLACE ───────────────────────────────────────────
-
-   A group renders at its first member's position in the section's own order, so grouping never
-   re-sorts a section. The section's order is the view's session placement, which merges a live
-   arrival in at the slot the selector's date order gives it — the top, for genuinely new mail
-   (see `reconcile` in `OhboxView.tsx`) — so a new unread reply SURFACES its conversation's row:
-   the fold keys the row at the first member it meets, which is now the arrival. An OLD member
-   delivered late (a mirror backfill) merges in below the row's existing members and moves
-   nothing: the row keeps the highest slot any member holds. Either way the count and the newest
-   snippet update and no second row appears.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/*
+ * Per-section grouping is also what makes reading through a conversation behave: reading one of
+ * five unread replies moves that MESSAGE to "Earlier" (the unit the read state lives on), so the
+ * New row folds from four members and its count says so — the conversation stops being listed as
+ * waiting only when its last unread member has gone. Order: a group renders at its first member's
+ * position in the section's own order, so grouping never re-sorts a section; a live arrival merges
+ * in at the slot the selector's date order gives it, so a new unread reply SURFACES its
+ * conversation's row, while an old member delivered late (a mirror backfill) merges below and moves
+ * nothing. Either way the count and newest snippet update and no second row appears.
+ */
 
 /** One rendered row of a grouped section: a conversation, or a lone message. */
 export interface OhboxRowGroup {

@@ -1,65 +1,32 @@
 "use client";
 
 /**
- * RULES — what the consent gate remembered, and the only way to take it back.
- *
- * ── THE DEFECT THIS EXISTS TO CLOSE ─────────────────────────────────────────────────────
- *
- * `POST /screener/:id` writes a `rules` row on EVERY decision, and four controls reach it: the
- * DecisionBar, "apply to all", "mark all spam" and the sender menu. The server's five `/rules`
- * endpoints were mounted, contract-tested and referenced by nothing; `/rules` had zero
- * occurrences anywhere in the client; the `rule` entity had been syncing into the client mirror
- * since the first release and was read by no selector. In a product whose thesis is a gate that
- * remembers your decisions, "and you can never see or undo them" is the part that compounds —
- * a real account had four invisible rules on it before this shipped.
- *
- * ── WHY IT IS A MANAGEMENT SURFACE, NOT A FLAT LIST ─────────────────────────────────────
- *
- * The first cut was `rules.map(row)` with a Change and a Revoke on each. Correct for four rules,
- * and the moment a heavy account has two hundred it is a wall of identical rows with no way to
- * find one or act on many. So this is now a surface you SEARCH (by sender or domain, client-side
- * over the list), FACET (by where a rule files — the frozen {@link RULE_DESTINATIONS}), and act
- * over in bulk. The list is WINDOWED through {@link useListWindow} — the same idiom History uses
- * for the one other unbounded pile — so a thousand rows mount as the ~twenty on screen plus two
- * spacers, not as a thousand nodes.
- *
- * Bulk revoke acts over the FILTERED set, not the whole list: the filter IS the selection, which
- * is why there is no checkbox column. Each rule in that set is revoked through the SAME per-rule
- * `onRevoke` path a single revoke uses — there is no second, weaker consent route — and the same
- * two-click disclosure stands before it fires.
- *
- * ── WHAT IT SAYS, AND THE THREE THINGS IT REFUSES TO SAY ────────────────────────────────
- *
- * 1. NO MESSAGE COUNT. `RuleDTO.stats` offers `hits`, `lastHitAt` and `demotions`; nothing
- *    anywhere has ever written one. The columns are declared and faithfully reported, and
- *    every value is still the insert default. A rule that has quietly filed three thousand
- *    messages would render "0". So the note says the count is not recorded, which is true,
- *    instead of a number that is not. The counts this surface DOES show — how many rules are in
- *    the set you are about to bulk-revoke — are the length of a client-side array, not `stats`,
- *    and they appear only where you are consenting to act on exactly that many.
- *
- * 2. NO PROMISE ABOUT WHERE FUTURE MAIL GOES. A revoked rule stops deciding — it does not
- *    put the sender back at the gate. A promoted YES also inserted a `contacts` row
- *    (`screener-service.ts:360`), and the pipeline routes on known senders independently of
- *    rules, so that sender stays known after their rule is gone; a promoted NO wrote no
- *    contact and genuinely does return to the Screener. Two outcomes from one control, and
- *    the row cannot tell which without reading a table it does not have. It therefore claims
- *    only the half that is true of both: this rule stops deciding.
- *
- * 3. NO RETROACTIVE MOVE, STATED BEFORE THE ACT AND NOT AFTER. `RulesService.remove` is one
- *    transaction over `rules` + `change_log` and never touches `folder_state`, so every
- *    message the rule ever filed stays exactly where it is. That is the RIGHT behaviour —
- *    reversing a rule and silently re-sorting a backlog is a worse surprise than the rule
- *    was — but it is only honest if the confirm step says so before the user commits, which
- *    is why revoking is two clicks and the second one is under that sentence. Bulk revoke keeps
- *    the same clause, pluralised; the disclosure does not weaken because it is applied to many.
- *
- * ── WHY IT IS ITS OWN FILE AND NOT INLINE IN `SettingsView` ─────────────────────────────
- *
- * `SettingsView` renders it as a pane, because a top-level view would need `shell/routing.ts`
- * and the rail. Keeping the component here means a test imports THIS and not the whole
- * settings screen, and it means domain rules over all mail — past and future, as the default
- * — can promote it to a route by adding one branch, with no code moving.
+ * Rules — what the consent gate remembered, and the only way to take it back. `POST /screener/:id` writes a `rules`
+ * row on every decision, and the five `/rules` endpoints were referenced by nothing: in a product whose thesis is a
+ * gate that remembers your decisions, "and you can never see or undo them" is the part that compounds — a real
+ * account had four invisible rules before this shipped.
+ */
+
+/**
+ * A management surface, not a flat list: SEARCH (by sender or domain, client-side), FACET (by destination — the
+ * frozen {@link RULE_DESTINATIONS}), act in bulk, and the list is windowed through {@link useListWindow} (History's
+ * idiom). Bulk revoke acts over the FILTERED set — the filter IS the selection, so there is no checkbox column —
+ * through the SAME per-rule `onRevoke` path a single revoke uses, behind the same two-click disclosure.
+ */
+
+/**
+ * Three things it refuses to say. (1) No message count: `RuleDTO.stats` is declared and nothing has ever written one,
+ * so a rule that filed three thousand messages would render "0" — the note says the count is not recorded, which is
+ * true; the counts shown are the length of a client-side array, only where you consent to act on exactly that many.
+ */
+
+/**
+ * (2) No promise about where future mail goes: a promoted YES also inserted a `contacts` row and the pipeline routes
+ * on known senders independently of rules, so that sender stays known after the rule is gone, while a promoted NO
+ * genuinely returns to the Screener — the row cannot tell which, so it claims only the half true of both: this rule
+ * stops deciding. (3) No retroactive move, stated BEFORE the act: `RulesService.remove` never touches `folder_state`,
+ * and revoking is two clicks with the second under that sentence — pluralised for bulk, never weakened. A pane of
+ * `SettingsView`, its own file so a test imports THIS and a route promotion is one branch.
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";

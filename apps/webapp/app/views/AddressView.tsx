@@ -1,53 +1,28 @@
 "use client";
 
 /**
- * ═══ EVERYTHING FROM AND TO ONE ADDRESS — `#/address/<addr>` ═══════════════════════════════
- *
- * One list, newest first, of the mail one address sent and the mail sent to it, with a toggle that
- * narrows to either direction. It consumes `shell/address-view.ts` and nothing else: the device's
- * rows and counts, the archive's answer, and `coverage` — the field that says whether the archive's
- * answer covers the direction on screen. That module's header explains why the two halves are
- * unequal (the archive is searchable by SENDER only); this file is about what a person sees.
- *
- * ── THE ANATOMY, top to bottom ─────────────────────────────────────────────────────────────
- *
- *   the header     the person: their name when any of their mail carries one, the address beside
- *                  it in the header's meta type; the address alone when there is no name. A
- *                  long address WRAPS rather than overflowing a 390px pane.
- *   the toggle     All · From them · To them, the segmented control every other filter in this
- *                  product uses, with the number of rows each direction would show right now.
- *   the count line the two totals, device first — "3 on this device · 40 in the archive (by
- *                  sender)" — because the device half answers instantly and is the number a
- *                  reader can check by counting; the archive slot fills in beside it without
- *                  moving it. On To them the archive slot is a NAMED line, never a number that
- *                  would have to be zero: "the archive cannot be searched by recipient yet".
- *                  The "(by sender)" and the named line each carry a Gloss with the one-sentence
- *                  reason, so the caveat costs no line of the surface.
- *   the list       the search result row (`SearchHitRow`), so a message looks the same wherever
- *                  it is found. A sent copy reads "Sent" in its meta line — the row labels by
- *                  `placeLabel`, which falls through to the folder's leaf for a folder no view
- *                  owns. The row's own address is printed, not linked: it is this view.
- *   the empty      names the address in the direction's own words — "Nothing sent to
- *                  anna@acme.test." — with the count line under it, so an empty list while the
- *                  archive is still answering never reads as an empty corpus.
- *
- * ── WHICH ROWS THE ARCHIVE MAY ADD ─────────────────────────────────────────────────────────
- *
- * The archive answers ONE direction — `from`. Its rows belong under All (which includes what they
- * sent) and under From them, and not under To them, where they would be mail the address SENT
- * listed as mail sent TO it: the false claim the contract's own header warns against.
- *
- * {@link archiveRowsBelong} is that rule, and it is applied TWICE on purpose. The contract holds
- * the rows back where they do not belong, so `items` is already right; this file applies the same
- * rule to what it renders, and uses it a third time for the toggle's numbers, where it is the only
- * thing deciding them. The named line says why the list is device-only under To them.
- *
- * ── KEYBOARD ───────────────────────────────────────────────────────────────────────────────
- *
- * Tab order is the reading order: the toggle, then each row's address link and open control.
- * Escape leaves the view through `onExit` (the shell decides where to) and is listed in the `?`
- * sheet under Navigate; `/` is the shell's own binding and still opens Search from here. Nothing
- * here binds `j`/`k` — those follow pile order by ruling, and this is not a pile.
+ * Everything from and to one address — `#/address/<addr>`: one list, newest first, with a direction toggle. It
+ * consumes `shell/address-view.ts` and nothing else; that module's header explains why the halves are unequal (the
+ * archive is searchable by SENDER only) — this file is what a person sees.
+ */
+
+/**
+ * The anatomy: the header (name when any mail carries one, address beside it; a long address wraps at 390px); the
+ * toggle (All · From them · To them, with live counts); the count line (device first — the number a reader can check
+ * by counting — the archive slot filling in beside it, and on To them a NAMED line, never a number that would have to
+ * be zero: "the archive cannot be searched by recipient yet", each caveat carrying a Gloss); the list
+ * (`SearchHitRow`, a sent copy reading "Sent" via `placeLabel`); the empty state names the address in the direction's
+ * own words, with the count line under it, so an empty list mid-answer never reads as an empty corpus.
+ */
+
+/**
+ * Which rows the archive may add: it answers ONE direction (`from`), so its rows belong under All
+ * and From them, never under To them — mail the address SENT listed as mail sent TO it is the false
+ * claim the contract's header warns against. {@link archiveRowsBelong} is that rule, applied twice
+ * on purpose (the contract holds rows back; this file applies the same rule to what it renders) and
+ * a third time for the toggle's numbers, where it is the only thing deciding them. Keyboard: tab
+ * order is the reading order; Escape leaves through `onExit` and is in the `?` sheet; `/` still
+ * opens Search. Nothing binds `j`/`k` — those follow pile order by ruling, and this is not a pile.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";

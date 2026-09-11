@@ -1,30 +1,18 @@
 "use client";
 
 /**
- * TAG — one tag, across everything.
- *
- * ── READ IN PLACE, NOT JUMP-TO-HOME ─────────────────────────────────────────────────────────
- *
- * This used to open a row with `openMessage`, which navigates to the message's HOME view and
- * selects it there — so clicking a tagged Receipt threw you out of the tag and into Receipts,
- * an aliasing that defeats the lens: a tag is a lens over everything, and following a row
- * out of it leaves the tag behind. It reads in place now, the way History does: the Ohbox's
- * two-pane composition — a list beside a reading column — with a click selecting into the
- * column. The message is read where the tag shows it and the tag never leaves the screen.
- *
- * The `List` / `Split` segmented control that used to sit above the rows is gone, along with the
- * solo mode it defaulted to. It offered a choice between the two-pane shape and a centred list
- * that raised a reader sheet per message, defaulted to the slower one, and reset on every visit,
- * so the choice was re-made every arrival. Under 900px the reading column is `display:none` and
- * a click still raises the shell's sheet — which is why `readColumnHidden()` outlives the modes.
- *
- * ── AND THE TAG IS MANAGED FROM ITS OWN PAGE ────────────────────────────────────────────────
- *
- * Rename and Delete live here as well as in Settings — this is the page a taxonomy is actually
- * built on, and the verbs (`tag_rename`, `tag_delete`, wired through `tagAdmin`) already exist.
- * Delete states the count and that the messages do not move BEFORE it asks, the same standard
- * the Settings pane and the rules pane hold: a tag is ohmail's own row and deleting it removes
- * the labels, never the mail.
+ * Tag — one tag, across everything. Read in place, not jump-to-home: opening a row used to navigate to the message's
+ * HOME view, so clicking a tagged Receipt threw you out of the tag — an aliasing that defeats the lens. It reads in
+ * place now, History's way: the Ohbox's two-pane composition, a click selecting into the column, the tag never
+ * leaving the screen.
+ */
+
+/**
+ * The `List`/`Split` control is gone with the solo mode it defaulted to (the slower shape, re-chosen every visit);
+ * under 900px the reading column is `display:none` and a click raises the shell's sheet — why `readColumnHidden()`
+ * outlives the modes. The tag is managed from its own page: Rename and Delete live here as well as Settings
+ * (`tag_rename`/`tag_delete` via `tagAdmin`), and Delete states the count and that the messages do not move BEFORE it
+ * asks — a tag is ohmail's own row.
  */
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";

@@ -1,30 +1,19 @@
 "use client";
 
 /**
- * ═══ THE EVENT CARD — a calendar invitation, readable instead of merely saveable ═══════════
- *
- * Renders one parsed calendar part ({@link import("@trafficflow/core/ics").IcsEventPreview})
- * as the event it carries: what, when, where, who — and the METHOD said plainly, because the
- * method IS the message: a REQUEST is an invitation, a COUNTER is a proposed new time (with
- * the time it would replace struck through beneath, when the sender carried it), a CANCEL is
- * a cancellation, a REPLY is the answer it contains.
- *
- * ── EVERY FIELD IS TEXT ───────────────────────────────────────────────────────────────────
- *
- * SUMMARY, LOCATION and every CN below arrive from whoever knows the address; they render as
- * React text nodes, never markup. ORGANIZER/ATTENDEE values are shown as names or plain
- * addresses — never as links: the parser already refuses every scheme but `mailto:` and this
- * card renders no anchor at all, so a crafted CAL-ADDRESS cannot become something pressable.
- *
- * ── TIME, IN THE READER'S CLOCK ───────────────────────────────────────────────────────────
- *
- * A resolved instant is formatted in the READER's zone and locale (`activeFormatZone`/
- * `activeFormatLocale`, the same seams every stamp in `format.ts` reads) — an invitation for
- * 14:00 Zurich reads "8:00 AM" to a reader in New York, which is when their meeting is. The
- * honest degradations, in order: an all-day date formats in UTC (it is a calendar day, not an
- * instant); a FLOATING time (no zone claimed) formats verbatim — RFC 5545 says it means the
- * observer's local clock; a time in a zone this runtime cannot resolve formats verbatim WITH
- * its zone label appended, which states exactly what is known and no more.
+ * The event card — a calendar invitation, readable instead of merely saveable. Renders one parsed calendar part as
+ * the event it carries: what, when, where, who — and the METHOD said plainly, because the method IS the message:
+ * REQUEST an invitation, COUNTER a proposed new time (the replaced time struck through beneath when the sender
+ * carried it), CANCEL a cancellation, REPLY the answer.
+ */
+
+/**
+ * Every field is text: SUMMARY, LOCATION and every CN render as React text nodes, never markup; ORGANIZER/ATTENDEE
+ * values are names or plain addresses, never links — the parser refuses every scheme but `mailto:` and this card
+ * renders no anchor, so a crafted CAL-ADDRESS cannot become pressable. Time in the reader's clock
+ * (`activeFormatZone`/`activeFormatLocale`); honest degradations in order: an all-day date formats in UTC (a calendar
+ * day, not an instant), a FLOATING time formats verbatim (RFC 5545: the observer's clock), a zone this runtime cannot
+ * resolve formats verbatim WITH its zone label — exactly what is known and no more.
  */
 
 import { useMemo } from "react";

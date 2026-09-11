@@ -1,45 +1,28 @@
 "use client";
 
 /**
- * ═══ THE ATTACHMENT STRIP ══════════════════════════════════════════════════════════════
- *
- * What a mail client owes a message that carries files: show them, and when there is more
- * than one, offer to take them all at once — the neat rounded rectangle Apple Mail puts them
- * in.
- *
- * That rectangle is taken as INTENT — a tangible object you can act on — and translated into
- * Blanc's own physics, where presence is encoded by light falloff:
- *
- *   · idle       — a flat impression in the surface (`--tint`, no shadow). The bytes are
- *                  NOT here; they are in the user's mailbox, and the tile says so in
- *                  words. A thing that has not been fetched must not stand like one that
- *                  has.
- *   · loading    — the impression breathes between the two neutral tints (the exact
- *                  `send-working` vocabulary) under a sentence that names the wait:
- *                  "Fetching from your mailbox…". On-demand IMAP fetch is the product
- *                  telling the truth about where mail lives, so the wait is shown, named,
- *                  and never dressed as an anonymous spinner.
- *   · ready      — the object RISES onto the panel (`--panel` + `--lift-0`, the small
- *                  `rise` entrance): fetched means standing on the surface, and hover
- *                  lifts it further like every other Blanc object. Images show their own
- *                  pixels in the leaf — the bytes come from the user's mailbox, which is
- *                  the one source consent-first allows.
- *   · failed     — the accent-soft ground with a hairline, exactly the `send-status.warn`
- *                  register: a condition inviting one action (the tile is the retry).
- *   · too_large  — honest and inert: not a button, no hover, the size and the fact.
- *                  Dressing it as openable would be a lie the first press exposes.
- *
- * NOTHING HERE TOUCHES THE NETWORK. `objectUrl` is accepted only when it is `blob:` or
- * `data:` — bytes the app already holds from the user's own mailbox. A remote URL in that
- * field renders the type glyph instead, so a tracker can never ride in through this prop
- * (the same posture `test/no-third-party.test.ts` holds the rest of the app to).
- *
- * COPY IS RENDERED FROM HERE, NOT YET FROM THE TRANSLATION CATALOGUE — with one exit.
- * Every sentence below already has its key in `messages/en.json`, under the `attachments`
- * namespace and spelled the same way, so the remaining step is swapping `COPY` for
- * `useTranslations("attachments")` — one change, in one place. Until then a copy edit has to
- * land in both, and a new sentence gets its key at the same time as its constant, which is
- * why each one names its key. Same shim-with-one-exit pattern as `ActionBar`'s `copy()`.
+ * The attachment strip — what a mail client owes a message that carries files: show them, and offer to take them all
+ * at once.
+ */
+
+/**
+ * Apple Mail's rounded rectangle is taken as INTENT and translated into Blanc's physics, where presence is light
+ * falloff: idle — a flat impression (`--tint`, no shadow): the bytes are NOT here, they are in the user's mailbox,
+ * and the tile says so; loading — the impression breathes between the two neutral tints under "Fetching from your
+ * mailbox…" (the wait is named, never an anonymous spinner); ready — the object RISES onto the panel (`--panel` +
+ * `--lift-0`): fetched means standing on the surface; failed — the accent-soft warn register, the tile is the retry;
+ * too_large — honest and inert, the size and the fact, because dressing it as openable is a lie the first press
+ * exposes.
+ */
+
+/**
+ * Nothing here touches the network: `objectUrl` is accepted only as `blob:` or `data:` — bytes the
+ * app already holds from the user's own mailbox — and a remote URL in that field renders the type
+ * glyph instead, so a tracker can never ride in through this prop (the `no-third-party` posture).
+ * Copy is rendered from a local table with one exit: every sentence already has its key in
+ * `messages/en.json` under `attachments`, spelled the same way, so the remaining step is swapping
+ * `COPY` for `useTranslations("attachments")` — one change, one place; until then a copy edit
+ * lands in both, and each constant names its key. The `ActionBar` `copy()` pattern.
  */
 import { useMemo, type ReactNode } from "react";
 import { isCalendarMime, parseIcsEvent } from "@trafficflow/core/ics";
@@ -60,36 +43,19 @@ export interface AttachmentItem {
 }
 
 /**
- * ═══ THE LIST HAS A STATE OF ITS OWN, AND SILENCE IS ONLY ONE OF ITS ANSWERS ══════════════
- *
- * Before this the strip took `AttachmentItem[]` and the shell flattened everything that was
- * not `ready` to `[]`. So a metadata read that FAILED drew exactly what an inline-only message
- * draws: nothing, under a paperclip. Two different sentences rendered as one silence — and the
- * silent-but-fine case is the COMMON one, not the edge: the paperclip is set from the presence
- * of any non-inline part, so a large share of the messages that carry one hold nothing a reader
- * could download.
- *
- * ── WHY THIS IS THE `items` PROP AND NOT A NEW ONE ────────────────────────────────────────
- *
- * `MessagePane` is the only consumer and it passes `items={attachments.itemsOf(message.id)}`.
- * A NEW prop would have to be added there to ever render — and this repo has shipped
- * "built, tested, unreachable" seven times, most recently a strip whose update signal could not
- * see its own state. Widening the type of the wire that ALREADY runs makes the fix reachable
- * without editing that file, and makes the reverse unbuildable: flatten `itemsOf` back to an
- * array and `next build` fails in `MessagePane.tsx`, a file the reverting change never touched.
- *
- * ── WHAT EACH STATE DRAWS, AND WHY ────────────────────────────────────────────────────────
- *
- *   · unavailable    — nothing. No server to ask (demo/desktop); the shell normally withholds
- *                      the whole chrome, and this arm is the render-time race with that check.
- *   · loading        — nothing. The read is ONE INDEXED ROW and never touches IMAP; a skeleton
- *                      on every message open would be noise on a wait nobody sees.
- *   · loading+retry  — the failure row, still standing, saying it is asking again. Going silent
- *                      the instant somebody presses "Try again" would read as success.
- *   · ready, empty   — nothing. "No files on this message" is TRUE and ORDINARY, and a message
- *                      whose only parts are a signature logo must not grow a notice about it.
- *   · ready, items   — the strip.
- *   · failed         — one sentence, and a retry ONLY when retrying could work.
+ * The list has a state of its own, and silence is only one of its answers. The strip used to take `AttachmentItem[]`
+ * with everything non-`ready` flattened to `[]`, so a FAILED metadata read drew what an inline-only message draws:
+ * nothing, under a paperclip. It is the `items` prop and not a new one because `MessagePane` already passes
+ * `attachments.itemsOf(message.id)` — a new prop would have to be added there to ever render, and this repo has
+ * shipped "built, tested, unreachable" seven times; widening the wire that ALREADY runs makes the reverse
+ * unbuildable.
+ */
+
+/**
+ * What each state draws: `unavailable` — nothing (no server to ask); `loading` — nothing (one indexed row, no IMAP; a
+ * skeleton per open would be noise); loading+retry — the failure row still standing, saying it is asking again;
+ * ready+empty — nothing (true and ordinary); ready+items — the strip; failed — one sentence, and a retry only when
+ * retrying could work.
  */
 export type AttachmentsView =
   | { state: "unavailable" }

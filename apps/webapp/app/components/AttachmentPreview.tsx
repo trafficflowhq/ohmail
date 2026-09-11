@@ -1,52 +1,34 @@
 "use client";
 
 /**
- * ═══ QUICK LOOK: WHAT A PRESS DOES ════════════════════════════════════════════════════════
- *
- * The macOS gesture, brought to the web client. Pressing an attachment this app can draw opens
- * it HERE — over the current view, downloading nothing — dismissed with Space or Esc, moved
- * through with ←/→, a PDF paged with ↑/↓. Saving is the smaller control in the tile's corner,
- * and this overlay carries a Download of its own for the reader who has looked and now wants
- * the file. The bytes are the same on-demand IMAP fetch the strip already makes; the overlay
- * opens at once and fills in when they land.
- *
- * The two verbs used to be the other way round, and the header of `AttachmentStrip`'s `Tile`
- * records why they swapped. A file this app CANNOT draw is unaffected either way: its tile
- * saves, and it never reaches this surface at all.
- *
- * ── THE ONE SECURITY RULE, STATED ONCE: ATTACHMENT BYTES NEVER BECOME A DOCUMENT ─────────
- *
- * An attachment is untrusted content from a stranger. Every other client bug in this space is
- * the same shape — hostile bytes handed to something that will EXECUTE them — so this surface
- * hands them to nothing that can. There is no `<iframe src=blob:>`, no `<embed>`, no
- * `<object>`, no navigation to a `blob:` URL (which would inherit this origin and run an SVG's
- * or a PDF's script as ohmail, with the host-only session cookie in scope). Only three inert
- * shapes ever render a byte:
- *
- *   · image  — an `<img>`. The browser decodes pixels; an `<img>` never runs SVG script, and
- *              the engine already refuses to type an SVG blob as an image anyway
- *              (`RENDERABLE_MIME`), so an SVG press is a DOWNLOAD, never a render.
- *   · pdf    — pdf.js (Apache-2.0). The CORE api used here (`getDocument` → `page.render`)
- *              never executes a PDF's embedded JavaScript: Acrobat scripting lives only in the
- *              separate viewer/`pdf.sandbox` layer, which is not loaded. It rasterises one page
- *              to a `<canvas>`; the PDF never becomes a live document, the canvas is pixels. The
- *              app CSP carries no `'unsafe-eval'`, so pdf.js's internal font-eval path cannot run
- *              either — it detects the block and falls back to the non-eval renderer.
- *   · text   — a React text node inside `<pre>`, escaped by construction, capped.
- *
- * Everything else — a docx, a zip, an SVG — shows a "download to open" card and never a
- * rendered byte. The app's own CSP is the belt under these braces: `object-src 'none'` and a
- * `frame-src 'self'` that does not match `blob:` mean the document-shaped branches above are
- * refused at the platform level even if this file ever grew one by mistake.
- *
- * ── NO NETWORK REACHES A SENDER ──────────────────────────────────────────────────────────
- *
- * The bytes come from the engine's retained Blob (`attachments.blobOf`), never a re-`fetch` of
- * the object URL — `connect-src 'self'` refuses a `blob:` fetch on the live host, and there is
- * nothing to fetch off-origin regardless. pdf.js is told to fetch nothing (`disableAutoFetch`,
- * `disableStream`, no cMap/font CDN); its worker is a same-origin static asset,
- * admitted by `worker-src 'self'`. Opening a preview makes ZERO requests to any host the
- * sender could name.
+ * Quick Look: pressing an attachment this app can draw opens it HERE — over the current view,
+ * downloading nothing — dismissed with Space or Esc, moved through with ←/→, a PDF paged with ↑/↓;
+ * saving is the smaller corner control, and the overlay carries a Download of its own. The bytes
+ * are the strip's same on-demand IMAP fetch; the overlay opens at once and fills in. A file this
+ * app cannot draw never reaches this surface — its tile saves.
+ */
+
+/**
+ * The one security rule, stated once: attachment bytes never become a document. There is no `<iframe src=blob:>`, no
+ * `<embed>`, no `<object>`, no navigation to a `blob:` URL (which would inherit this origin and run an SVG's or a
+ * PDF's script as ohmail, session cookie in scope).
+ */
+
+/**
+ * Three inert shapes render a byte: image — an `<img>` (never runs SVG script, and the engine types an SVG blob
+ * `application/octet-stream` anyway, so an SVG press is a download); pdf — pdf.js's core api (`getDocument` →
+ * `page.render`), which never executes a PDF's JavaScript (Acrobat scripting lives in the separate viewer/sandbox
+ * layer, not loaded) and rasterises one page to a `<canvas>`; the CSP carries no `'unsafe-eval'`, so the font-eval
+ * path falls back too; text — a React text node inside `<pre>`, capped. Everything else shows a "download to open"
+ * card. The CSP is the belt under the braces: `object-src 'none'` and a `frame-src` that does not match `blob:`.
+ */
+
+/**
+ * No network reaches a sender: the bytes come from the engine's retained Blob
+ * (`attachments.blobOf`), never a re-`fetch` of the object URL — `connect-src 'self'` refuses a
+ * `blob:` fetch regardless. pdf.js is told to fetch nothing (`disableAutoFetch`, `disableStream`,
+ * no cMap/font CDN); its worker is a same-origin static asset admitted by `worker-src 'self'`.
+ * Opening a preview makes ZERO requests to any host the sender could name.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

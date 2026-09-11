@@ -1,53 +1,33 @@
 "use client";
 
 /**
- * THE BLOCKING DISCLOSURE, WORN AS A GLYPH — one component for every sentence the sanitizer has
- * to say about what it refused.
- *
- * `MessageBody` renders a mail and, above it, used to say a bar: "A tracking pixel was blocked."
- * — or "3 remote images blocked. One of them is a tracking pixel." or "A remote stylesheet was
- * blocked, so this message may look plain." In the reading STREAM that was a full-width boxed
- * line above every such card, spending a line of a surface built for skimming on a fact that is
- * true, rarely wanted, and identical from card to card. In the reading pane, on a conversation
- * panel and in the Screener it was one strip per message — cheaper, and still a second shape for
- * the same fact once the stream had moved it into the card's head.
- *
- * So every surface states it in its own meta line — the stream card's sender · address · time
- * line, the right cluster of the message header the reading pane and a conversation panel share,
- * the Screener card's head line — as a two-word caption and the (i) glyph, with the whole
- * sentence in the glyph's card (`Gloss`, the shared detail-on-demand primitive: hover, focus and a
- * press open it; Escape and a press outside close it; it is reachable by keyboard and by a
- * finger, and its sentence is the trigger's accessible description while the card is closed, so a
- * screen reader announces the caption and then the sentence). Where the header has a "details"
- * disclosure it prints the sentence in full as well. The fact does not get quieter than that: it
- * is in the DOM and in the accessibility tree for every affected message, and "blocked" stays
- * true of the document — this file changes where the sentence stands, never whether the block
- * happens. `test/block-notice-surfaces.test.tsx` holds every surface that mounts the viewer to it.
- *
- * ── ONE COMPONENT, ONE CAPTION SLOT, THREE SIBLINGS ─────────────────────────────────────────
- *
- * The bar composes its sentence from eight catalogue keys in `mailBody`; every one of them is a
- * NOTICE (a statement that something was refused) and every one headlines one of three captions:
- *
- *   pixel    a tracking pixel was among what was refused — the privacy fact this product is named
- *            for leads even when pictures were refused beside it ("Tracker blocked")
- *   images   remote pictures were refused and none of them was a beacon ("Images blocked")
- *   sheet    only a remote stylesheet was refused ("Stylesheet blocked")
- *
- * The table below is that mapping and it is the CENSUS: `test/tracking-notice.test.tsx` holds
- * every `mailBody` sentence that says something was blocked against it, and every caption it names
- * against both catalogues. A sibling added to the bar without a row here is red before it ships,
- * which is the point — the treatment is one shape, never a fourth.
- *
- * The caption is a NAME, not the sentence shortened, and never a colour that reads as an error:
- * a block is the product doing what it says, not a fault. There is no warning sibling among these
- * eight — a failed block or a phishing signal would keep a visible line, and none exists in the
- * namespace today.
- *
- * COPY-FREE, deliberately. `MessageBody` owns the `mailBody` namespace (its `COPY` table is the
- * parity oracle, `test/locale-shim-parity.test.ts`), so the resolved caption and sentence arrive
- * here already read; this file only knows the shape and the key names. That is also what keeps
- * the import graph a tree: `MessageBody` imports the table from here, never the other way round.
+ * The blocking disclosure, worn as a glyph — one component for every sentence the sanitizer has to say about what it
+ * refused. The full-width bar above every affected card spent a line of a skimming surface on a fact that is true,
+ * rarely wanted, and identical from card to card; every surface now states it in its own meta line as a two-word
+ * caption plus the (i) glyph, with the whole sentence in the glyph's `Gloss` card (hover, focus and press open;
+ * keyboard and finger reachable; the sentence is the trigger's accessible description).
+ */
+
+/**
+ * Where the header has a "details" disclosure it prints the sentence in full as well. The fact gets no quieter: it is
+ * in the DOM and the accessibility tree for every affected message, and "blocked" stays true of the document — this
+ * changes where the sentence stands, never whether the block happens (`test/block-notice-surfaces.test.tsx` holds
+ * every mounting surface).
+ */
+
+/**
+ * One component, one caption slot, three siblings: `pixel` — a tracking pixel was among what was refused (the privacy
+ * fact leads even when pictures were refused beside it); `images` — remote pictures, none a beacon; `sheet` — only a
+ * remote stylesheet. The table below is the CENSUS: `test/tracking-notice.test.tsx` holds every `mailBody`
+ * blocked-sentence against it and every caption against both catalogues, so a sibling added without a row here is red
+ * before it ships.
+ */
+
+/**
+ * The caption is a NAME, never a colour that reads as an error — a block is the product doing what it says; no
+ * warning sibling exists in the namespace today. Copy-free, deliberately: `MessageBody` owns the `mailBody`
+ * namespace, so caption and sentence arrive resolved — which also keeps the import graph a tree (`MessageBody`
+ * imports the table from here, never the other way).
  */
 
 import { Gloss } from "@ohmail/ui";
