@@ -1962,18 +1962,17 @@ export function MailboxSection() {
                   )}
                 </>
               ) : null}
-              {/* ── THE FORWARDING-DETECTION NOTICE (mail 0078) ──────────────────────────────
-                  A quiet, dismissible fact about a HEALTHY row: the worker judged this mailbox
-                  to have received essentially nothing for a generous window while syncing fine —
-                  the shape a provider-level forward without "keep a copy" leaves, which once
-                  cost two days of debugging pointed at ohmail when the answer was upstream.
-                  `showInboundQuiet` (exported above, bitten by the suite) carries the whole
-                  gate: health on screen, and the dismissal-vs-episode comparison that makes a
-                  dismissal durable until genuine inbound actually flows again. `mbx-sub`, not
-                  `mbx-bad`: nothing is broken, and alarm styling would make the first sentence
-                  a lie. Two keys because "the last mail came {when}" is false for a mailbox
-                  that never received any — the pass stamps `createdAt` there, and the DTO's own
-                  `createdAt` tells the two apart by identity. */}
+              {/* The forwarding-detection notice (mail 0078) — a quiet, dismissible fact about
+                  a HEALTHY row: the worker judged this mailbox to have received essentially
+                  nothing for a generous window while syncing fine — the shape a provider-level
+                  forward without "keep a copy" leaves, which once cost two days of debugging
+                  pointed at ohmail when the answer was upstream. `showInboundQuiet` (exported
+                  above, bitten by the suite) carries the whole gate: health on screen, and the
+                  dismissal-vs-episode comparison that keeps a dismissal durable until genuine
+                  inbound flows again. `mbx-sub`, not `mbx-bad`: nothing is broken, and alarm
+                  styling would make the first sentence a lie. Two keys because "the last mail
+                  came {when}" is false for a mailbox that never received any — the pass stamps
+                  `createdAt` there, and the DTO's own `createdAt` tells the two apart. */}
               {/* ── WHO ORGANIZES THIS ONE, AND THE VERB THAT CHANGES IT ────────────────
                   The row above answers "is my mail coming down?"; this answers the other question
                   somebody with two machines has — which one files it — and it never disappears.
@@ -2057,26 +2056,19 @@ export function MailboxSection() {
               ) : null}
             </div>
             <div className="mbx-state">
-              {/* ── THE ROW'S STATES, AND WHY "Waiting for first sync" IS GONE ─────────────
-                  This read `status === 'connected' && lastSyncAt === null` and said "Waiting
-                  for first sync" — ONE sentence for every state a first sync can be in.
-                  Measured on a live account: it sat on this row for half an hour while the
-                  first import poured messages in, and it was still on it once mail had
-                  already landed. Two reasons, both in the column:
-
-                   · `last_sync_at` is stamped for every mailbox a cycle served in ONE
-                     `UPDATE … WHERE id IN (…)` (`apps/worker/src/mailboxes.ts`), which is why
-                     two rows can report an identical age to the second; and
-                   · it is pushed even when the cycle ended with `hasBacklog` true
-                     (`apps/worker/src/index.ts:1281`), so it lands EARLY mid-import — which
-                     means the `syncedAgo` branch below would otherwise say "Synced just now"
-                     thirty seconds into a thirty-minute import.
-
-                  So the row decides nothing about progress any more. It renders what is
-                  strictly PER-MAILBOX — error, block, queued, connected-at — and the
-                  account-wide "the mirror is growing" answer comes from the single derivation
-                  in the shell (`shell/mail-state.ts`), which this pane reads and never
-                  re-derives. */}
+              {/* The row's states, and why "Waiting for first sync" is gone. This read
+                  `status === 'connected' && lastSyncAt === null` and said one sentence for every
+                  state a first sync can be in — measured live, it sat on this row for half an
+                  hour while the first import poured messages in. Two reasons, both in the
+                  column: `last_sync_at` is stamped for every mailbox a cycle served in one
+                  `UPDATE … WHERE id IN (…)` (`apps/worker/src/mailboxes.ts`), which is why two
+                  rows can report an identical age; and it is pushed even when the cycle ended
+                  with `hasBacklog` true (`apps/worker/src/index.ts:1281`), landing EARLY
+                  mid-import — the `syncedAgo` branch would say "Synced just now" thirty seconds
+                  into a thirty-minute import. So the row decides nothing about progress: it
+                  renders what is strictly per-mailbox (error, block, queued, connected-at), and
+                  the account-wide "the mirror is growing" answer comes from the single
+                  derivation in the shell (`shell/mail-state.ts`), never re-derived here. */}
               {m.status === "disabled" ? null : m.status === "error" ? (
                 /**
                  * ── A DISCONNECTED MAILBOX REPORTS NO PROGRESS. FIRST, SO IT CANNOT BE OUTVOTED
@@ -2343,21 +2335,18 @@ export function MailboxSection() {
               <Button variant="primary" icon="plus" onClick={() => { setError(null); setMsAppPassword(false); setStage("form"); }}>
                 {t("connect")}
               </Button>
-              {/* CONNECT OUTLOOK — beside the password form and not instead of it.
-                  It is a SECOND door and not a provider inside the first: the password ceremony asks
-                  for an address, a host and a password, and this one asks for none of them. Microsoft
-                  states the address in the token it issues, the host is fixed by the token issuer, and
-                  there is no password to have — putting this behind the provider picker would mean a
-                  form that empties itself when somebody chose Microsoft.
-                  A modern Microsoft 365 tenant refuses basic IMAP authentication outright, so for
-                  those accounts this is not an alternative to the password path but the only path.
-                  `secondary`, because the generic path is still the one most mailboxes take.
-                  GATED ON EITHER DOOR being armed, so this is never a button whose press returns a
-                  raw 503 — and ONE button rather than two, because "Connect Outlook" is one thing a
-                  person wants and which ceremony runs is the server's business, not theirs. The
-                  password door beside it is unaffected: it needs no server-side registration.
-                  THE PRESS OPENS THE DISCLOSURE ABOVE, which names the ceremony that will actually
-                  run; only its continue starts anything. */}
+              {/* Connect Outlook — beside the password form, not instead of it. A SECOND door,
+                  not a provider inside the first: the password ceremony asks for an address, a
+                  host and a password, and this one asks for none of them — Microsoft states the
+                  address in the token, the host is fixed by the issuer, and there is no password
+                  to have; behind the provider picker it would be a form that empties itself. A
+                  modern Microsoft 365 tenant refuses basic IMAP outright, so for those accounts
+                  this is the only path. `secondary`, because the generic path is still the one
+                  most mailboxes take. Gated on EITHER door being armed, so it is never a button
+                  whose press returns a raw 503 — and ONE button rather than two, because
+                  "Connect Outlook" is one thing a person wants and which ceremony runs is the
+                  server's business. The press opens the disclosure above, which names the
+                  ceremony that will run; only its continue starts anything. */}
               {oauthAvailable || deviceAvailable ? (
                 <Button
                   icon="open"
@@ -2681,26 +2670,18 @@ export function MailboxSection() {
         </form>
       ) : null}
 
-      {/* ══ THE REMOVAL CONFIRMATION ═══════════════════════════════════════════════════════
-          A real confirmation, which means it states CONSEQUENCES rather than asking "are you
-          sure". Every line is a statement about what the server actually does, and the set is
-          chosen by what a person is about to lose track of:
-
-           · organizing stops — the visible change.
-           · THE MAIL IS UNTOUCHED. This is the one somebody is actually afraid of, and it is the
-             product's central promise: `MailboxService.delete` does not open an IMAP connection
-             at all, so no folder and no message on their server is reachable from this press.
-           · the stored password is deleted — the thing that cannot be undone by reconnecting
-             without typing it again.
-           · scheduled sends are closed rather than sent — a consequence with no other surface,
-             and one a person who has queued mail would otherwise discover in Drafts.
-           · THE COPY ALREADY SYNCED STAYS. Said plainly because it is true and unflattering:
-             erasure here is account-scoped and there is no per-mailbox purge, so a confirmation
-             claiming the local copy goes would be exactly the false statement this panel exists
-             to avoid. It names the thing that does remove it.
-
-          `role="alertdialog"` and the safe answer first in the DOM, the delete strip's discipline
-          one surface over. */}
+      {/* The removal confirmation — a real one, stating CONSEQUENCES rather than asking "are
+          you sure". Every line is what the server actually does, chosen by what a person is
+          about to lose track of: organizing stops (the visible change); THE MAIL IS UNTOUCHED —
+          the one somebody is actually afraid of, and the product's central promise
+          (`MailboxService.delete` opens no IMAP connection, so no folder or message on their
+          server is reachable from this press); the stored password is deleted — the thing a
+          reconnect cannot undo without typing it again; scheduled sends are closed rather than
+          sent — a consequence with no other surface; and THE COPY ALREADY SYNCED STAYS, said
+          plainly because it is true and unflattering — erasure is account-scoped with no
+          per-mailbox purge, and a claim that the local copy goes would be exactly the false
+          statement this panel exists to avoid. `role="alertdialog"` and the safe answer first
+          in the DOM, the delete strip's discipline one surface over. */}
       {stage === "remove" && removing ? (
         <div className="acct-confirm" role="alertdialog" aria-label={t("removeTitle", { address: removing.address })}>
           <h3 className="acct-sub">{t("removeTitle", { address: removing.address })}</h3>
@@ -2831,21 +2812,16 @@ export function MailboxSection() {
         </p>
       ) : null}
 
-      {/* ── RUN SETUP AGAIN ──────────────────────────────────────────────────────────────────
-       *
-       * The way back into the first-run flow for somebody who has already been through it. It
-       * opens on the consent statement and walks forward from there — what ohmail files, how far
-       * back it screens, and AI — with what is set now filled in from what the account stored,
-       * and nothing is written until the person agrees.
-       *
-       * ONLY WITH A MAILBOX. The flow's later screens are ABOUT a mailbox: the window is measured
-       * from the consent on one, and the summary reports what happened to one. With none
-       * connected, the row would open a re-run that immediately becomes a first run — which is
-       * what "Connect a mailbox" above already is, said once instead of twice.
-       *
-       * `#/first-run/again` and not `#/first-run`: a finished account derives to "nothing to do",
-       * correctly, so the RE-RUN INTENT has to ride the route. The bare hash would open, find the
-       * completion stamp, and close again on the same render. */}
+      {/* Run setup again — the way back into the first-run flow for somebody who has been
+       * through it. It opens on the consent statement and walks forward — what ohmail files,
+       * how far back it screens, and AI — with what is set now filled in from the account, and
+       * nothing written until the person agrees. Only with a mailbox: the flow's later screens
+       * are ABOUT one (the window is measured from its consent, the summary reports what
+       * happened to it), and with none connected the row would open a re-run that immediately
+       * becomes a first run — which "Connect a mailbox" above already is. `#/first-run/again`
+       * and not `#/first-run`: a finished account derives to "nothing to do", correctly, so the
+       * re-run intent has to ride the route — the bare hash would open, find the completion
+       * stamp, and close again on the same render. */}
       {stage === "list" && connected.length > 0 ? (
         <SettingsRow
           label={t("setupAgain")}
@@ -2969,33 +2945,25 @@ const TICK_MS = 10_000;
 const DEVICE_POLL_FLOOR_MS = 5_000;
 
 /**
- * WHERE A LIVE DEVICE CEREMONY'S HANDLE SURVIVES A RELOAD — `sessionStorage`, per tab.
- *
- * ── WHY THIS EXISTS, AND WHY IT IS NOT OPTIONAL POLISH ─────────────────────────────────────
- *
- * The ceremony lives for about fifteen minutes on the server and the person is being asked to go to
- * another device and type a code. A reload in that window — an accidental refresh, a restored tab,
- * a phone rotating — used to lose the browser's ONLY copy of the handle, and nothing could recover
- * it: the code and the URI are re-supplied by a poll, but there was no handle left to poll with. The
- * grant then sat at Microsoft until it expired while the pane offered to start a new one.
- *
- * A review caught that the comments in this file already PROMISED reload recovery, which made them
- * false rather than merely optimistic. Comments here are the claim under test, so the promise is
+ * Where a live device ceremony's handle survives a reload — `sessionStorage`, per tab. The
+ * ceremony lives ~fifteen minutes on the server and the person is being asked to go to another
+ * device and type a code: a reload in that window used to lose the browser's only copy of the
+ * handle, unrecoverably — the code and URI are re-supplied by a poll, but there was no handle
+ * left to poll with, so the grant sat at Microsoft until it expired while the pane offered to
+ * start a new one. A review caught that the comments here already PROMISED reload recovery,
+ * making them false rather than optimistic; comments are the claim under test, so the promise is
  * implemented instead of softened.
- *
- * ── WHY `sessionStorage`, AND WHY STORING THIS IS SAFE ─────────────────────────────────────
- *
- * Per TAB and cleared when the tab closes, which matches the ceremony's own lifetime far better than
- * `localStorage` would: an abandoned ceremony should not greet somebody a week later.
- *
- * The handle is NOT a credential. The `device_code` — the bearer value that redeems the grant — is
- * sealed in the database and never reaches the browser at all. This is a 43-character lookup key
- * whose every use is re-checked against the session's own account server-side, so a reader who could
- * take it out of this tab's storage already holds the session that makes it useless to them.
- *
- * Every access is wrapped: a private window, a browser configured to refuse site data, or a
- * thumbnail capture can make the accessor itself throw, and a settings pane must not fail to render
- * because a storage read did.
+ */
+
+/**
+ * `sessionStorage` because per-tab, cleared on close, matches the ceremony's lifetime — an
+ * abandoned ceremony should not greet somebody a week later. Storing it is safe because the
+ * handle is NOT a credential: the `device_code` that redeems the grant is sealed in the database
+ * and never reaches the browser; this is a 43-character lookup key whose every use is re-checked
+ * against the session's own account server-side, so a reader who could take it out of this
+ * tab's storage already holds the session that makes it useless. Every access is wrapped: a
+ * private window, a browser refusing site data, or a thumbnail capture can make the accessor
+ * itself throw, and a settings pane must not fail to render because a storage read did.
  */
 const DEVICE_STORE_KEY = "ohmail.deviceCeremony";
 
