@@ -399,19 +399,28 @@ function targetsOf(m: EngineMutation): string[] {
 }
 
 /**
- * When a newer verb retires an abandoned one, and the two reasons it may. SAME KIND, SHARED TARGET: an
- * absolute-valued verb replaces its own earlier value — deliberately narrow, because sharing a target is NOT enough
- * on its own: a queued tag assignment and a later triage of the same message are independent intentions, and retiring
- * one for the other silently throws away work.
- */
-
-/**
- * THE DESTRUCTIVE ASYMMETRIES, each a judgement with the OLDER record as the destructive one: a `draft_discard` is
- * retired by a later `draft_save` of that draft (the person came back to it); a `message_delete`, `folder_delete` or
- * `tag_delete` is retired by ANYTHING later on that target (a newer intent on a thing the record wants to destroy
- * says it should still exist); a `mail_send` naming a draft is retired by a later verb on that draft (a record that
- * would re-send a body the person has since changed is the worst kind of stale). Everything else is left alone:
- * retiring too eagerly is invisible — an intent disappears and nobody is told — while a stale record is something the
+ * ── WHEN A NEWER VERB RETIRES AN ABANDONED ONE, AND THE TWO REASONS IT MAY ────────────────────
+ *
+ * SAME KIND, SHARED TARGET. An absolute-valued verb replaces its own earlier value: the newer
+ * triage, move, rename or destination IS the whole intent, so the older one has nothing left to
+ * say. This is the ordinary case and it is deliberately narrow — sharing a target is NOT enough on
+ * its own. A queued tag assignment and a later triage of the same message are independent
+ * intentions, and retiring one because the other happened to name the same message silently
+ * throws away work nobody asked to discard.
+ *
+ * THE DESTRUCTIVE ASYMMETRIES, named one at a time because each is a judgement rather than a rule,
+ * and each has the OLDER record as the destructive one — these are records whose replay does
+ * something that cannot be taken back, so a newer intent on the same target outranks them:
+ *  · a `draft_discard` is retired by a later `draft_save` of that draft — the person came back to
+ *    it, so the discard is not what they want any more;
+ *  · a `message_delete`, `folder_delete` or `tag_delete` is retired by ANYTHING later on that
+ *    target — a newer intent on a thing the record wants to destroy says plainly that it should
+ *    still exist;
+ *  · a `mail_send` naming a draft is retired by a later verb on that draft, because a record that
+ *    would re-send a body the person has since changed is the worst kind of stale.
+ *
+ * Everything else is left alone. The cost of retiring too eagerly is invisible — an intent
+ * disappears and nobody is told — while the cost of retiring too little is a stale record the
  * person can see and discard themselves.
  */
 const DESTRUCTIVE_KINDS = new Set(["message_delete", "folder_delete", "tag_delete"]);
@@ -775,20 +784,27 @@ export const BODIES_IDS_MAX = 20;
 export type SnapshotFn = (params: { cursor?: string; limit?: number }) => Promise<SyncSnapshotPage>;
 
 /**
- * The adapter capability the cold-start path reaches for. Declared STRUCTURALLY, exactly as {@link
- * ServerSearchCapableAdapter} is: absence is a real answer, not a broken adapter — the FixturesAdapter has no server
- * and a `?demo=1` tab must issue zero requests, and an older HttpAdapter simply has no `snapshot`, so the engine
- * falls back to `since=0`, which converges to the same mirror. The wiring risk this shape carries: an adapter WRAPPER
- * that rebuilds the surface as an object literal silently drops it and still satisfies `EngineAdapter` —
- * `sync-scheduler.ts`'s `guard` is exactly such a wrapper, and `fetchBody`, `searchServer` and the three attachment
- * methods each shipped unforwarded on the LIVE path for precisely this reason (the demo is unwrapped, so every test
- * stayed green).
- */
-
-/**
- * A wrapper must spread it conditionally (`...(adapter.snapshot ? { snapshot: adapter.snapshot.bind(adapter) } :
- * {})`), never unconditionally — defining it always would make a gated fixtures adapter claim a snapshot endpoint it
- * has no server for.
+ * The adapter capability the cold-start path reaches for.
+ *
+ * Declared STRUCTURALLY here, exactly as {@link ServerSearchCapableAdapter} is, and for the same
+ * reason: absence is a real answer, not a broken adapter. The FixturesAdapter has no server and a
+ * `?demo=1` tab must issue zero requests; an older HttpAdapter, or a Cloud that has
+ * not deployed the route, simply has no `snapshot` — and the engine falls back to `since=0`, which
+ * is the path every client used before this existed and still converges to the same mirror.
+ *
+ * ── THE WIRING RISK THIS SHAPE CARRIES ────────────────────────────────────────────────────
+ *
+ * Because it is structural rather than a member of `EngineAdapter`, an adapter WRAPPER that
+ * rebuilds the surface as an object literal will silently drop it and still satisfy
+ * `EngineAdapter`. `apps/webapp/app/shell/sync-scheduler.ts` has exactly such a wrapper (`guard`),
+ * and `fetchBody`, `searchServer` and the three attachment methods each shipped unforwarded on the
+ * LIVE path at some point for precisely this reason — the demo is unwrapped, so every test stayed
+ * green. A wrapper must spread it the way it spreads the others:
+ *
+ *     ...(adapter.snapshot ? { snapshot: adapter.snapshot.bind(adapter) } : {})
+ *
+ * conditionally, never unconditionally: defining it always would make a fixtures adapter behind a
+ * gate claim a snapshot endpoint it has no server for.
  */
 interface SnapshotCapableAdapter {
   snapshot?: SnapshotFn;
@@ -1082,19 +1098,27 @@ export type AttachmentsOutcome =
   | { state: "loading"; retrying?: boolean }
   | { state: "ready"; items: AttachmentItem[] }
   /**
-   * `code` and `retryable` are the SERVER'S own classification, carried through rather than re-derived from the
-   * sentence — before that, only `error` survived the catch and the surface could not tell "you are offline" from
-   * "that message is not yours". What can actually land here, because copy written for the wrong failure is a lie:
-   * this route is `cost: "read"` and opens no IMAP adapter, so the 429 `mailbox_busy` refusal cannot reach it — what
-   * does is `code: "network"` (the fetch itself rejected), a 5xx from ohmail's own API, or a definite 4xx (401 after
-   * a session ends, 404 for a message this account cannot see). `retryable` is TRUE for anything the client could not
-   * classify: an unclassified throw never established that the server refused, and re-asking costs one indexed row.
-   */
-
-  /**
-   * `code: "timeout"` is the third arrival — a request the server accepted and never answered used to produce no
-   * outcome at all; it now arrives bounded and aborted from `HttpAdapter.withDeadline`, retryable for the strongest
-   * version of the reason above: nothing refused us, nothing even spoke.
+   * `code` and `retryable` are the SERVER'S OWN CLASSIFICATION, carried through rather than
+   * re-derived from the sentence. Before that, only `error` survived the catch and the surface
+   * had no way to tell "you are offline" from "that message is not yours".
+   *
+   * WHAT CAN ACTUALLY LAND HERE, because copy written for the wrong failure is a lie:
+   * `GET /messages/:id/attachments` is `cost: "read"` and `AttachmentsService.listForMessage`
+   * opens no IMAP adapter, so this call NEVER touches the user's mail server. The 429
+   * `mailbox_busy` refusal therefore cannot reach it — that one belongs to the two
+   * `cost: "connection"` byte routes. What reaches it is `code: "network"`
+   * (the fetch itself rejected — `HttpAdapter.request`), a 5xx from ohmail's own API, or a
+   * definite 4xx refusal (401 after a session ends, 404 for a message this account cannot see).
+   *
+   * `retryable` is TRUE for anything the client could not classify: an unclassified throw means
+   * we never established that the server refused, and re-asking costs one indexed row.
+   *
+   * `code: "timeout"` is the THIRD thing that lands here, and it exists only because the list read
+   * was eventually given a deadline:
+   * a request the server accepted and never answered used to produce no outcome at all, because
+   * `fetch` has no deadline and neither did anything on this path. It now arrives bounded and
+   * aborted from `HttpAdapter.withDeadline`, retryable for the strongest version of the reason
+   * above — nothing refused us, nothing even spoke.
    */
   | { state: "failed"; error: string; code: string | null; retryable: boolean };
 
@@ -1408,36 +1432,55 @@ const MODELLED_WAIT_CODES = new Set([
 ]);
 
 /**
- * The give-up ceiling, and why a durable outbox needs one. A retryable rejection used to re-queue with no counter and
- * no end — right for the offline laptop, wrong for a verb the server refuses identically for ever: `HttpAdapter`
- * classifies any unhandled 500 as retryable, so one mis-shaped request could become a permanent background loop
- * surviving restarts, holding the overlay open and telling nobody. So: {@link OUTBOX_MAX_SERVER_FAILURES}
- * SERVER-ANSWERED failures and the verb is abandoned — visibly, into {@link OUTBOX_ABANDONED_TYPE}, where a person
- * retries or discards. Only a server-answered failure counts, and that distinction is the design: `code: "network"`
- * and `"timeout"` never count — an offline laptop must retry for ever; the verb is fine, the wire is not.
- */
-
-/**
- * Nor does a refusal naming its own interval — a `503 db_busy` with `Retry-After` is a server declining work it KNOWS
- * it cannot do yet, and without that carve-out a twenty-minute pool outage would abandon every legitimate verb in
- * flight. The counter counts only evidence that the server looked at this verb and failed in a way nobody modelled.
+ * ── THE GIVE-UP CEILING, AND WHY A DURABLE OUTBOX NEEDS ONE ──────────────────────────────────
+ *
+ * A retryable rejection used to re-queue with no counter, no delay and no end: `queue.push(p)`,
+ * re-persist, and the next drive tries again. That is right for the case it was written for — a
+ * laptop with no network — and wrong for the case nobody had seen yet, which is a verb the server
+ * will refuse identically for ever. `HttpAdapter` classifies any unhandled 500 as retryable by
+ * default (`retryable ?? (status >= 500 || status === 429)`), so a single mis-shaped request could
+ * become a permanent background loop that survives restarts, holding the user's overlay open the
+ * whole time and telling them nothing.
+ *
+ * So: {@link OUTBOX_MAX_SERVER_FAILURES} SERVER-ANSWERED failures and the verb is abandoned —
+ * visibly, into {@link OUTBOX_ABANDONED_TYPE}, where a person can retry or discard it.
+ *
+ * ── ONLY A SERVER-ANSWERED FAILURE COUNTS, AND THAT DISTINCTION IS THE WHOLE DESIGN ──────────
+ *
+ * `code: "network"` and `code: "timeout"` never count. An offline laptop must retry for ever, as it
+ * always has: the verb is fine, the wire is not, and a ceiling there would throw away work for the
+ * exact reason the durable outbox exists. Nor does a refusal that names its own interval — a
+ * `503 db_busy` carrying `Retry-After` is a server declining work it KNOWS it cannot do yet, so it
+ * waits that long and spends none of the queue's patience. Without that carve-out a twenty-minute
+ * connection-pool outage would abandon every legitimate verb in flight, which is a far worse defect
+ * than the one this ceiling closes.
+ *
+ * The counter is therefore not "attempts" in the ordinary sense. It counts only the evidence that
+ * the SERVER looked at this verb and failed in a way nobody modelled.
  */
 export const OUTBOX_MAX_SERVER_FAILURES = 8;
 
 /**
- * The first backoff after a server-answered failure, doubling to {@link OUTBOX_BACKOFF_CAP_MS}. 30 s rather than
- * brisk because the retry buys nothing on its own: the verb already has its Idempotency-Key, so there is no race to
- * win, and a poisoned verb retried quickly is just a faster loop. The window is ~63 MINUTES, and this comment once
- * said four hours: eight failures means seven waits (30 s, 1, 2, 4, 8, 16, 32 minutes = 3 810 s), so the cap is never
- * reached by a countable failure and binds only a server-named `Retry-After`. An hour is the right span — a brief
- * incident repairs inside the window, and somebody returning after lunch is told rather than left with a spinner. If
- * it should be longer, the ceiling is the knob — and doubling it adds EIGHT hours, not four: failures 8 through 15
- * each wait the full cap.
- */
-
-/**
- * Stated because the last version was arithmetic nobody had done, and a number that sounds measured is taken on
- * trust.
+ * The first backoff after a server-answered failure, doubling to {@link OUTBOX_BACKOFF_CAP_MS}.
+ *
+ * 30 s rather than something brisk because the retry buys nothing on its own: the verb already has
+ * its Idempotency-Key, so there is no race to win, and a poisoned verb retried quickly is just a
+ * faster loop.
+ *
+ * ── THE WINDOW IS ~63 MINUTES, AND THIS COMMENT SAID FOUR HOURS ────────────────────────────
+ *
+ * Eight failures means SEVEN waits: 30 s, 1, 2, 4, 8, 16 and 32 minutes — 3 810 s, a little over an
+ * hour. The cap is therefore never reached by a countable failure; it binds only a `Retry-After` a
+ * server names. The earlier claim of "a little over four hours" was arithmetic nobody did, and it
+ * is the kind of number a reader takes on trust because it sounds like it was measured.
+ *
+ * An hour is still the right span for what this is for — long enough that a brief server-side
+ * incident is repaired inside the window and the verb lands on its own, short enough that somebody
+ * returning after lunch is told rather than left with a spinner. If it should be longer, the
+ * ceiling is the knob — and doubling it adds EIGHT hours, not four: failures 8 through 15 each
+ * wait the full one-hour cap. (The first seven are the only ones the doubling is still climbing
+ * through.) Stated because the last version of this sentence was arithmetic nobody had done,
+ * and a number that sounds measured is taken on trust.
  */
 export const OUTBOX_BACKOFF_BASE_MS = 30_000;
 
@@ -1544,25 +1587,6 @@ const MAX_CONCURRENT_BODIES = 4;
  * reader is looking at.
  */
 export const RENDERED_PINS = 64;
-
-/**
- * HOW MANY HYDRATED BODIES THE MIRROR KEEPS — the bound on the reading session's memory.
- *
- * A `message_body` is client-local, so `/sync` can never remove one; before the window reached the
- * desktop nothing removed one at all, and a session's bodies grew for as long as it stayed open.
- * Each is a whole mail: measured at 57 KB apiece on realistic HTML with an inline image, so the
- * eager pass's thousand alone is 54.5 MB and a long reading session was unbounded.
- *
- * THE BOUND IS THE EAGER WINDOW, AND NOT {@link RENDERED_PINS}, BECAUSE OF A LOOP. An evicted body
- * is an ABSENT record, which `bodyPlan` reads as "never asked" — correct, and what lets the next
- * open re-fetch it from the store on this machine. But `prefetchRecentBodies` asks for the newest
- * {@link EAGER_BODIES_MAX} after every settled drain, so a bound below that would have the eager
- * pass re-fetching what the evictor had just dropped, for ever. Sized here so the two agree: the
- * steady state after an eager pass is exactly full, nothing is dropped that the pass will
- * immediately ask for again, and a reader who opens more than this many messages in one session
- * pays for the most recent thousand rather than for all of them.
- */
-export const BODY_CACHE_MAX = EAGER_BODIES_MAX;
 
 /**
  * HOW LONG AN OPTIMISTIC SENT COPY STANDS before it is dropped on TTL alone. The overlay's real job is to bridge the
@@ -1730,20 +1754,6 @@ export class OhmailEngine {
    * {@link OhmailEngine.hydrateBody}, which is the call every reading surface already makes.
    */
   private readonly renderedIds = new Set<string>();
-
-  /**
-   * Hydrated bodies in read order, newest last — the LRU the {@link BODY_CACHE_MAX} trim evicts
-   * from. Separate from `renderedIds`, which is a 64-deep hold for the windowed prune: this one is
-   * as deep as the body cache and is the only thing that knows which mail was read longest ago.
-   */
-  private readonly bodyRecency = new Set<string>();
-
-  /**
-   * One trim at a time. Body batches run concurrently (four slots), so two `putBodies` can reach
-   * the trim together, read the same `held` list and both choose the same victims — the second
-   * commit would then delete rows the first already took and over-evict by its whole batch.
-   */
-  private trimmingBodies = false;
   /**
    * In-flight body fetches, and the ones waiting for a slot. See {@link bodySlot}.
    *
@@ -1821,19 +1831,25 @@ export class OhmailEngine {
    */
   private readonly attachmentLists = new Map<string, AttachmentsOutcome>();
   /**
-   * The sent-copy seeds — which {@link attachmentLists} entries were written by {@link
-   * OhmailEngine.materializeSentOverlay} from the send's own bytes, keyed by the optimistic copy's message id,
-   * expiring with its {@link optimisticSent} entry. The copy's id exists on no server, so a metadata read against it
-   * can only 404 — a reader opening the message they just sent watched its attachment vanish until the real Sent row
-   * was opened. The seed is the answer the engine already holds; this map is its LIFECYCLE: while `live`, {@link
-   * OhmailEngine.releaseAttachments} declines to drop it (a pane unmount must not turn a re-open back into the 404),
-   * `reconcileOptimisticSent` clears `live` when the copy retires, and the TTL sweep is the backstop.
-   */
-
-  /**
-   * `forwardOf` marks a FORWARD's copy, whose delivered message carries parts this client never held: its seed
-   * composes `composeItems` plus the parent's own metadata ({@link OhmailEngine.recomposeForwardSeed}), and its
-   * metadata reads delegate to the parent's REAL id — the one id a server can answer for.
+   * THE SENT-COPY SEEDS — which entries in {@link attachmentLists} were written by
+   * {@link OhmailEngine.materializeSentOverlay} from the send's own bytes, keyed by the optimistic
+   * Sent copy's message id, with the same expiry as its {@link optimisticSent} entry.
+   *
+   * The copy's id exists on no server, so a metadata read against it can only 404 — which is what
+   * used to happen: a reader opening the message they had just sent watched its attachment vanish
+   * until the real Sent row (a different id) was opened instead. The seed is the answer the engine
+   * already holds, and this map is its LIFECYCLE: while `live`, {@link
+   * OhmailEngine.releaseAttachments} declines to drop the seed (a pane unmount must not turn a
+   * re-open of the still-standing copy back into the 404), and {@link reconcileOptimisticSent}
+   * clears `live` when the copy retires — after which the pane's ordinary release frees the bytes,
+   * with the TTL sweep as the backstop for a send nobody opened.
+   *
+   * `forwardOf` marks the copy of a FORWARD, whose delivered message carries parts this client
+   * never held: the server streams the original's attachments onto the outgoing mail
+   * (`SendService.streamForwardParts`). A seed for one is composed from `composeItems` PLUS the
+   * parent's own metadata list — see {@link OhmailEngine.recomposeForwardSeed} — and the copy's
+   * metadata reads delegate to the parent's REAL id, which is the one id on this subject a server
+   * can answer for.
    */
   private readonly sentAttachmentSeeds = new Map<string, {
     live: boolean;
@@ -1917,24 +1933,40 @@ export class OhmailEngine {
   // ── lifecycle ────────────────────────────────────────────────────────────
 
   /**
-   * Read the device's copy of the mailbox into memory — and SAY SO. `store.load()` reads the whole
-   * persisted mirror and notifies nobody (the listener set lives here, not in the store), so a
-   * returning user's mailbox was hydrated into memory and the UI was never told —
-   * `useSyncExternalStore` holds its last snapshot, and the rows appeared only when the first
-   * `/sync` page landed: on a slow connection the screen said "Nothing in your Ohbox." over mail
-   * already on the device. Measured: two messages readable, store version 0 → 1000003, listeners
-   * fired: 0 — mail sometimes appearing earlier was luck (any unrelated re-render re-reads).
-   */
-
-  /**
-   * Single-flight, cleared in `finally` — `syncOnce()`'s pattern: concurrent callers coalesce, and
-   * the promise is cleared even on REJECTION, so a failed hydration (IndexedDB blocked) can be
-   * tried on the next wake — a memoized-forever version turns one transient storage error into a
-   * mirror that can never be read for the life of the tab. `notify()` fires only on success: a
-   * failed read changed nothing, and the scheduler counts the rejection as a failed tick, which is
-   * what makes the retry happen. Re-hydrating mid-session is not reachable today (the scheduler
-   * latches; `start()` runs this before its only drain) — noted rather than guarded, because a
-   * guard nothing can trigger is a claim no test can put under load.
+   * READ THE DEVICE'S COPY OF THE MAILBOX INTO MEMORY — **and say so.**
+   *
+   * ── THE DEFECT THIS METHOD EXISTS FOR ───────────────────────────────────
+   *
+   * `store.load()` reads the whole persisted mirror and bumps the store's version. It notifies
+   * NOBODY: the listener set lives here, not in the store, and {@link OhmailEngine.notify} was
+   * reachable only from `drain()` and the mutation paths. So a returning user's entire mailbox
+   * was hydrated out of IndexedDB into memory and the UI was never told — `useSyncExternalStore`
+   * holds the snapshot it last read, and the rows appeared only when the FIRST `/sync` page
+   * landed. On a slow connection that is the second of two serial round trips, and the screen
+   * says "Nothing in your Ohbox." for the whole of it, over mail that is already on the device.
+   *
+   * Measured: seed a store, close it, open a new engine over the same database, `load()` →
+   * two messages readable, store version 0 → 1000003, **listeners fired: 0**.
+   *
+   * That the mail sometimes appeared earlier was luck, not design — any unrelated re-render
+   * re-reads the snapshot, and the mailbox probe landing was usually the one that did it.
+   *
+   * ── SINGLE-FLIGHT, AND CLEARED IN `finally` ─────────────────────────────
+   *
+   * `syncOnce()`'s exact pattern, for the first of its reasons and one of its own. Concurrent
+   * callers coalesce onto one read; and the promise is CLEARED when it settles, including when
+   * it REJECTS, so a hydration that failed (IndexedDB blocked, storage refused) can be tried
+   * again on the next wake. A memoized-forever "idempotent" version would turn one transient
+   * storage error into a mirror that can never be read for the lifetime of the tab.
+   *
+   * `notify()` fires only on success. A failed read changed nothing, so there is nothing to
+   * publish — and the scheduler counts the rejection as a failed tick, which is what makes the
+   * retry happen.
+   *
+   * Re-hydrating mid-session (a second call after a drain has applied pages) is not reachable
+   * today: the scheduler latches after the first success and `start()` runs this before its
+   * only drain. It is noted rather than guarded, because a guard nothing can trigger is a claim
+   * no test can put under load.
    */
   async hydrate(): Promise<void> {
     if (this.hydrating) return this.hydrating;
@@ -2104,9 +2136,8 @@ export class OhmailEngine {
     if (this.queue.length === 0) return;
     // THE GATE, around the whole batch. The body re-reads the hold at release — see the gate's
     // own note: a dispatch this batch queued behind may have timed out and armed one, and
-    // replaying behind a request still in the air is the reordering the barrier exists to stop.
-    // Order within the batch is user order and the batch must not be interleaved with a
-    // `mutate` or a `flushPending` — a fresh verb landing between two
+    // replaying behind a request still in the air is the reordering the barrier exists to stop. Order within the batch is user order and the batch must
+    // not be interleaved with a `mutate` or a `flushPending` — a fresh verb landing between two
     // replayed ones can commit first and be overwritten when the older one lands, which is
     // user-always-wins violated in exactly the window nobody watches. This road was the last one
     // outside the gate; `replayActive` was its private stand-in, and a private stand-in only
@@ -2154,20 +2185,33 @@ export class OhmailEngine {
       // the whole reason the deferred mode exists, and it is why `owed` is ignored here alone.
       const { timedOut, held, result } = await this.dispatchOnLane(p);
       /**
-       * The replay's answer is kept, exactly as a late answer is. This loop used to throw the RESULT away, and for a
-       * restored entry that result is the only thing anyone will ever know: its owner died with the previous session.
-       * For a send that is a second delivery — press Send before the first autosave, lose the response, reload: the
-       * replay delivers it, drops the `sent` answer and the `entityId`, the create gate opens, the next pause writes
-       * a second row, and an edit un-matches the fingerprint so Send goes out under a fresh key. `lateResults` is
-       * where an answer with no waiting caller belongs (the timeout path writes exactly this) and `flushPending()` is
-       * its single destructive reader; the two writers are mutually exclusive per call.
-       */
-
-      /**
-       * ONLY a settled answer: a `queued` result is the ABSENCE of an answer — the entry went back on the outbox —
-       * and keeping it poisons the reader (measured: a 410 mid-drive test read the stale `queued` as the flush's
-       * verdict; one level out, the compose adoption would settle a message on a send that has not settled — the
-       * false "Sent." this seam prevents).
+       * ── THE REPLAY'S ANSWER IS KEPT, EXACTLY AS A LATE ANSWER IS ─────────────────────────────
+       *
+       * This loop read `{ timedOut, held }` and threw the RESULT away, and for a restored entry
+       * that result is the only thing anyone will ever know about the verb: its owner died with
+       * the previous session, so no `mutate()` promise is waiting for it and nothing else in the
+       * engine records it.
+       *
+       * For a send that is a second delivery. Press Send before the first autosave (the mutation
+       * carries no row, so the ADAPTER makes one), lose the response, reload: this loop delivers
+       * it and drops the `sent` answer AND the `entityId` of the row it was delivered from. The
+       * composer still holds the text, the queue is now empty so the create gate opens, and the
+       * next pause writes a second row. Edit that text — nobody has been told it went out — and
+       * the fingerprint no longer matches the durable record, so the stored key is dropped as a
+       * mismatch and Send goes out under a fresh one. Two copies at the recipient.
+       *
+       * `lateResults` is where an answer with no waiting caller already belongs — see the timeout
+       * path, which writes exactly this — and `flushPending()` is its single, destructive reader.
+       * The two writers are mutually exclusive per call: a timed-out dispatch returns a `null`
+       * result here and writes from its own continuation, so nothing is recorded twice.
+       *
+       * ONLY A SETTLED ANSWER, and this is not a refinement — a `queued` result is the ABSENCE of
+       * an answer. The entry went back on the outbox and is still pending; keeping that as a late
+       * result poisons the map's one reader, because `flushPending()` returns what it drained
+       * BEFORE what it dispatches. Measured: "a 410 mid-drive does not take the persisted verbs
+       * with it" read the stale `queued` as the flush's verdict for a verb the network had since
+       * accepted. One level out it is worse — the compose adoption pass would settle a message on
+       * a send that has not settled, which is the false "Sent." this seam exists to prevent.
        */
       if (result !== null && result.status !== "queued") {
         this.lateResults.set(p.id, result);
@@ -2195,19 +2239,27 @@ export class OhmailEngine {
   }
 
   /**
-   * Re-arm the durable outbox from the mirror store — the restart half of the contract. Reads every persisted {@link
-   * PersistedOutboxEntry}, restores the queue in `(at, n)` order, and re-applies each verb's overlay so the BOOT
-   * RENDER already carries the user's un-sent intents (INSTANT-ARCH §8 stage 1). Synchronous on purpose: everything
-   * it reads is in memory once the store has loaded. Idempotent via a latch, called from three places so every
-   * construction order is covered: `hydrate` (the webapp path), `drive` (an engine never hydrated), and directly by a
-   * host that loaded the store first (the mobile boot) — a drive on an unloaded store latches over an empty set; the
-   * entries replay next boot.
-   */
-
-  /**
-   * An entry whose shape this build does not recognise is left in place, not replayed — it waits for a build that
-   * understands it; an entry whose overlay cannot be recomputed (target pruned from a windowed mirror) still REPLAYS
-   * — only the local paint is skipped.
+   * RE-ARM THE DURABLE OUTBOX FROM THE MIRROR STORE — the restart half of the contract.
+   *
+   * Reads every persisted {@link PersistedOutboxEntry}, restores the queue in `(at, n)` order,
+   * and re-applies each verb's optimistic overlay so the BOOT RENDER already carries the
+   * user's un-sent intents — never a flash of the pre-verb state (INSTANT-ARCH §8 stage 1's
+   * proof obligation). Synchronous on purpose: everything it reads is in memory once the
+   * store has loaded, so the platforms can run it before their first paint.
+   *
+   * Idempotent via a latch, and called from three places so every construction order is
+   * covered: {@link OhmailEngine.hydrate} (after `store.load()` — the webapp scheduler's
+   * path), {@link OhmailEngine.drive} (an engine driven without ever hydrating), and directly
+   * by a host that loaded the store BEFORE constructing the engine (the mobile boot). A drive
+   * on a store that has not loaded yet latches over an empty record set — the entries are not
+   * lost (they are on disk and replay next boot), but the honest contract is: load the store,
+   * then construct/hydrate, then drive.
+   *
+   * An entry whose shape this build does not recognise ({@link isPersistedOutboxEntry}) is
+   * left in place and not replayed — a verb written by a newer build waits for a build that
+   * understands it. An entry whose overlay cannot be recomputed (its target pruned from a
+   * windowed mirror) still REPLAYS — the server-side target usually exists; only the local
+   * paint is skipped.
    */
   restoreOutbox(): void {
     // Calling this IS the statement that the store was loaded first, so it also arms the drive's
@@ -2372,19 +2424,37 @@ export class OhmailEngine {
 
       if (this.store.getCursor() === "0" && this.snapshotFn) await this.runSnapshot();
 
-      // Rules before mail, on the degraded bootstrap. The snapshot path delivers the whole rule set in page 1 ("a
-      // partial rule set is worse than none"), so a mid-bootstrap render never sees a message whose sender's decision
-      // is missing; the `since=0` replay interleaves by seq, so a sender decided AFTER their mail arrived replays
-      // mail-first and the consent cutline reads the absent rule as "undecided" — an already-screened sender in the
-      // Screener until the replay catches up. Unknown is not undecided, so the fallback drains the rule type to its
-      // horizon first, rows only (the cursor stays put; the per-entity seq guard absorbs the repeat).
-
-      // Two ways in: a cold mirror whose snapshot failed page 1, and a resumed incomplete bootstrap, where the
-      // committed pages may hold mail whose rule sits beyond the interruption (with a healthy route
-      // `freshenStaleResume()` already applied page 1; this arm is the degraded completion plus the belt for a
-      // freshen that failed). Deliberately NOT before `hydrate()`: holding the offline-first paint on a network drain
-      // trades a bounded interim state for a blank screen on a dead network. Gated on a snapshot route EXISTING: the
-      // route-less adapters are the demo (never partitioned) and servers that no longer exist.
+      // RULES BEFORE MAIL, on the degraded bootstrap. The snapshot path already delivers the
+      // account's whole rule set in page 1 (`sync-service.ts` — "a partial rule set is worse than
+      // none"), so a render mid-bootstrap never sees a message whose sender's decision is missing.
+      // The `since=0` replay has no such property: it interleaves by seq, and a sender decided
+      // AFTER their mail arrived replays as mail-first — the consent cutline then reads the absent
+      // rule as "undecided" and presents an already-screened sender in the Screener until the
+      // replay reaches the rule. Unknown is not undecided, so the fallback earns the same ordering
+      // the snapshot has: drain the rule type to its horizon first, rows only (the cursor stays
+      // put; the main replay re-delivers every rule change and the per-entity seq guard absorbs
+      // the repeat).
+      //
+      // TWO ways in:
+      //  · a COLD mirror whose snapshot failed page 1 (`snapshotUnavailable`) — the live way onto
+      //    the `since=0` path, which must not misclassify senders while it streams;
+      //  · a RESUMED incomplete bootstrap (`resumedIncomplete`) — the pages an earlier session
+      //    committed may hold mail whose sender's rule sits beyond the interruption point, and
+      //    the resumed replay would serve that mail's stretch first. With a HEALTHY snapshot
+      //    route `freshenStaleResume()` has already applied page 1 (the whole rule set) before
+      //    this loop; this arm is the degraded completion of that heal, plus the belt for a
+      //    freshen that failed and swallowed. A post-snapshot catch-up that never stamped pays
+      //    one redundant rules page here, which is the cheap direction.
+      //
+      // Deliberately NOT before `hydrate()`: hydration is the offline-first paint of last
+      // session's persisted state — the same one-round-trip staleness the consent boot-cache
+      // documents — and holding it on a network drain would trade a bounded interim state for a
+      // blank screen on a dead network. The prefetch bounds the misclassification to the first
+      // drain's opening request instead of the whole resumed replay.
+      //
+      // Gated on a snapshot route EXISTING, not on every snapshot-less adapter: the adapters
+      // with no route at all are the FixturesAdapter — the demo, which `AppShell` never
+      // partitions — and servers older than the route, which no longer exist.
       let resp;
       try {
         // INSIDE the try, deliberately: a later prefetch page can 410 exactly as the delta can
@@ -2517,19 +2587,27 @@ export class OhmailEngine {
   // ── eager recent-window hydration ──────────────────────────────────────────
 
   /**
-   * Start (or queue) one eager pass — see {@link EngineOptions.eagerBodies} and the {@link EAGER_BODIES_MAX}/{@link
-   * EAGER_BODIES_SLICE} bounds. Called by the SHELL's scheduler after a settled drain, deliberately not by `drain()`
-   * itself: the engine owns the mechanism, the driver owns WHEN background work is welcome — the first wiring had
-   * `drain()` fire it, and every bare `syncOnce()` in a test (and every discarded engine whose drain settled after
-   * teardown) issued body fetches from behind the caller's back, the "requests on behalf of nobody" shape the gate
-   * refuses; the opt-in flag makes even the ask a no-op until the embedder means it.
-   */
-
-  /**
-   * Single-flight with ONE queued re-run: a kick during a pass must not stack passes, and must not be lost either —
-   * the drain that kicked may have applied mail the running pass's snapshot predates; one boolean is exactly "run
-   * once more with fresh eyes", and a settled mailbox's re-run costs nothing (every id plans to `skip`). Never
-   * rejects: failures land as per-id `failed` records exactly as an explicit open's would.
+   * Start (or queue) one eager pass. See {@link EngineOptions.eagerBodies} for what it is for
+   * and {@link EAGER_BODIES_MAX}/{@link EAGER_BODIES_SLICE} for the bounds.
+   *
+   * CALLED BY THE SHELL'S SCHEDULER after a settled drain — deliberately NOT by `drain()`
+   * itself. The engine owns the MECHANISM (bounded, admission-gated, abortable); WHEN background
+   * work is welcome is the driver's knowledge, exactly the split the sync gate already draws.
+   * The first wiring had `drain()` fire it, and what that shipped was a transport nothing could
+   * reason about: every bare `syncOnce()` in a test — and every discarded engine whose drain
+   * settled after teardown — issued body fetches from behind the caller's back, which is the
+   * same "requests on behalf of nobody" shape the gate exists to refuse. An engine an embedder
+   * drives by hand (apps/mobile's loop, a bare `engine.start()`) prefetches exactly when and if
+   * it is asked to, and the OPT-IN flag makes even that ask a no-op until the embedder means it.
+   *
+   * SINGLE-FLIGHT WITH ONE QUEUED RE-RUN: every settled drain kicks, and a kick during a pass
+   * must not stack passes — but it must not be LOST either, because the drain that kicked may
+   * have applied new mail the running pass's snapshot of the mirror predates. One boolean is
+   * exactly "run once more with fresh eyes", and a settled mailbox's re-run costs nothing —
+   * every id plans to `skip`.
+   *
+   * NEVER REJECTS: failures land as per-id `failed` records exactly as an explicit open's would.
+   * The returned promise settles when the pass this call joined (or started) is done.
    */
   prefetchRecentBodies(): Promise<void> {
     if (!this.eagerBodiesOn) return Promise.resolve();
@@ -2603,30 +2681,59 @@ export class OhmailEngine {
   }
 
   /**
-   * A stale resume fetches the newest page before it replays its backlog. The delta feed is ascending-seq, so a
-   * mirror resuming days stale replays oldest-first: the mail a returning user is looking for is in the LAST page.
-   * Measured in production (2026-08-10): a full-log replay took 4 pages and 28.5 s, the newest message applying at
-   * the very end, while `GET /sync/snapshot` page 1 (the newest messages plus ALL small state) answered in 509 ms —
-   * on a real mailbox that reads as "the app takes minutes to show what I did on the other machine". So when {@link
-   * LAST_DRAIN_AT_META} says no drain completed within {@link STALE_RESUME_MS}, snapshot page 1 is applied ROWS-ONLY
-   * before the delta loop: Ohbox, counts and Screener are current after one round trip, and the backlog replays
-   * behind content that is already right.
-   */
-
-  /**
-   * Applying a snapshot page over a warm mirror is sound: snapshot rows carry `seq === asOfSeq`, ≥ every seq in the
-   * backlog, so the backlog's replay of the same rows is refused by the older-or-equal guard; anything after the
-   * snapshot read has a higher seq and wins; a row deleted while away is absent from the snapshot and the delta's
-   * tombstone removes it. The CURSOR is never touched — committing `asOfSeq` here would skip every tombstone in the
-   * backlog and keep ghosts for ever; the delta replay from the OLD cursor stays the mechanism of record, and
-   * mutations are untouched (this is a READ overlay). Failure is swallowed and must not latch {@link
-   * snapshotUnavailable} — that latch is the BOOTSTRAP probe's, and latching here on a transient would push a later
-   * 410 re-bootstrap onto the full `since=0` replay for the life of the tab.
-   */
-
-  /**
-   * A missing stamp on a warm cursor is stale: every pre-upgrade mirror, exactly the mailboxes that reported the
-   * symptom; the arm fires at most once per such mirror.
+   * A STALE RESUME FETCHES THE NEWEST PAGE BEFORE IT REPLAYS ITS BACKLOG.
+   *
+   * ## THE DEFECT THIS EXISTS FOR — measured, not assumed (2026-08-10, production)
+   *
+   * The delta feed is ascending-seq by contract, so a warm mirror that resumes hours or days
+   * stale replays its backlog OLDEST-FIRST: the thing a returning user is looking for — the mail
+   * that arrived while they were away, the triage they did on another device — is in the LAST
+   * page of the drain, behind every page of history before it. Against a live account, a
+   * full-log replay took 4 pages and 28.5 s of wall clock, and the newest message's create
+   * applied at +28.5 s — the very end — while `GET /sync/snapshot` page 1 (the newest page of
+   * messages, every live thread, ALL small state: rules, message_states, decisions, approvals,
+   * drafts, tags) answered in 509 ms. On a real mailbox the same shape reads as "the app takes
+   * minutes to show what I did on the other machine".
+   *
+   * So: when the stamp {@link LAST_DRAIN_AT_META} says this mirror has not completed a drain
+   * within {@link STALE_RESUME_MS}, fetch snapshot page 1 and apply it ROWS-ONLY before the
+   * delta loop runs. Ohbox above the fold, unread counts and the Screener are current after one
+   * round trip; the backlog then replays behind content that is already right.
+   *
+   * ## WHY APPLYING A SNAPSHOT PAGE OVER A WARM MIRROR IS SOUND
+   *
+   * Snapshot rows carry `seq === asOfSeq`, the consistent point the server read them at, which
+   * is ≥ every seq in the backlog. The apply contract does the rest:
+   *
+   *  · the backlog's replay of those same rows — every intermediate state, ending at or below
+   *    `asOfSeq` — is refused by the older-or-equal guard, so history cannot un-freshen them;
+   *  · anything that changes AFTER the snapshot read arrives with a seq above `asOfSeq` and
+   *    wins, exactly as it would have without this;
+   *  · a row deleted while the client was away is simply absent from the snapshot — nothing
+   *    shields the stale copy, and the delta's tombstone removes it when the replay gets there.
+   *
+   * ## THE CURSOR IS NEVER TOUCHED — this is `applyChanges`, deliberately
+   *
+   * Committing `asOfSeq` here would be the unsound version: a snapshot page carries live rows
+   * only, so jumping the cursor over the backlog skips every tombstone in it and the mirror
+   * keeps ghosts of everything deleted while it was away, forever. The delta replay from the OLD
+   * cursor stays the one mechanism of record; this method only decides what the user is looking
+   * at while it runs. (Mutations are untouched for the same reason: this is a READ overlay — the
+   * queue's write ordering never passes through here.)
+   *
+   * ## FAILURE IS SWALLOWED, AND MUST NOT LATCH {@link snapshotUnavailable}
+   *
+   * Freshness is an optimization; the delta is the contract. A resume against a server without
+   * the route costs its head start and nothing else. And it must not latch the unavailable flag:
+   * that latch belongs to the BOOTSTRAP path's page-1 probe — latching it here on a transient
+   * failure would push a later 410 re-bootstrap onto the full `since=0` log replay for the life
+   * of the tab.
+   *
+   * ## A MISSING STAMP ON A WARM CURSOR IS STALE
+   *
+   * That is every mirror persisted before this shipped, resuming for the first time — exactly
+   * the mailboxes that reported the symptom. Within a session the stamp always exists after the
+   * first completed drain, so this arm fires at most once per pre-upgrade mirror.
    */
   /**
    * IS THIS DRAIN A STALE RESUME — a warm cursor whose last completed drain is older than
@@ -2659,69 +2766,125 @@ export class OhmailEngine {
   }
 
   /**
-   * Fetch `GET /sync/snapshot` to completion, committing the cursor with the LAST page and not one page earlier.
-   * Every page but the last goes through `applyChanges` (writes rows, never the cursor); only the last goes through
-   * `applyResponse`, whose single flush carries the rows and the cursor together (contract §3.3 step 3). A restart
-   * can observe two states only: cursor "0" — a prefix of the snapshot present, and the next drain re-snapshots (rows
-   * carry `seq === asOfSeq`, so a re-read skips or overwrites them; it converges) — or cursor `asOfSeq`, the whole
-   * snapshot landed. The fatal third state — a cursor past rows that never arrived — is unreachable, because nothing
-   * but the final page can write the cursor at all.
+   * FETCH `GET /sync/snapshot` TO COMPLETION, COMMITTING THE CURSOR WITH THE LAST PAGE AND NOT
+   * ONE PAGE EARLIER.
+   *
+   * ## THE ATOMICITY THAT MAKES A CRASH SAFE
+   *
+   * Every page but the last goes through `applyChanges`, which writes rows and DOES NOT TOUCH THE
+   * CURSOR. Only the last page goes through `applyResponse`, whose single flush carries the rows
+   * and `String(asOfSeq)` together (contract §3.3 step 3). So the mirror is only ever in one of
+   * two states a restart can observe:
+   *
+   *  · cursor "0" — some prefix of the snapshot is present, and the next drain re-snapshots. The
+   *    rows already written are not wasted and not wrong: they carry `seq === asOfSeq`, so a
+   *    re-snapshot at the same point skips them on the seq guard and a re-snapshot at a LATER
+   *    point overwrites them. Either way it converges, which is what makes "just do it again" a
+   *    complete recovery rather than a hope.
+   *  · cursor `asOfSeq` — the whole snapshot landed, and the delta drain resumes from a point the
+   *    mirror genuinely holds.
+   *
+   * There is no third state. The one that would be fatal — a cursor past rows that never
+   * arrived — is unreachable, because nothing but the final page can write the cursor at all.
+   *
+   * ## WHY RESUMING AT `asOfSeq` MISSES NOTHING
+   *
+   * `asOfSeq` is the point the snapshot was READ at, identical on every page, not "where paging
+   * got to". Changes committed while the pages were being fetched have seqs above it and are
+   * still in the log, so the delta drain that follows picks them up. A cursor of "the last page's
+   * high-water mark" would be the version of this that silently loses writes.
+   *
+   * ## THE PAGING TOKEN IS NEVER THE CURSOR, AND THE CURSOR IS NOT A DECIMAL
+   *
+   * `nextCursor` is the server's opaque paging state and is passed straight back; it is not
+   * written to the mirror and has no relationship to a `/sync` cursor. Conflating the two would
+   * put a token `/sync` cannot read into `since=`.
+   *
+   * The cursor written for `asOfSeq` is {@link encodeSeqCursor}'s base64url, NOT `String(seq)`.
+   * This was measured, not assumed: `String(asOfSeq)` is what the first version committed, and
+   * `contract.test.ts` — which drives a real backend — turned eight tests red with
+   * `CursorExpiredError`, because `SyncService.decodeCursor` base64url-decodes what it is given
+   * and treats a non-numeric result as an expired cursor. A bare "900" decodes to bytes that are
+   * not digits, so every drain after a snapshot 410'd. The two encoders are the same function on
+   * both sides of the wire and must stay that way.
+   *
+   * ## A FIRST-PAGE FAILURE FALLS BACK; A LATER ONE DOES NOT
+   *
+   * This route is newer than the clients that call it, and an engine whose cold start HARD-FAILS
+   * when it is missing or misbehaving is a mailbox that renders empty in silence —
+   * `http-adapter-binding.test.ts` exists because that exact thing shipped once already. So a
+   * failure on page 1 latches {@link snapshotUnavailable} and returns, and the caller proceeds
+   * down the `since=0` path that every client used before this existed.
+   *
+   * That swallow cannot hide an outage, which is the only reason it is acceptable: the very next
+   * thing the drain does is call `/sync` on the same origin, so a server that is down, refusing,
+   * or unreachable still rejects the drain a moment later, through the path that has always
+   * reported it.
+   *
+   * ## AND AN ABANDONED ATTEMPT'S ROWS DO NOT SURVIVE INTO THE NEXT ONE
+   *
+   * See {@link OhmailEngine.claimSnapshotPrefix}. A mid-stream failure leaves rows at the OLD
+   * `asOfSeq` in the mirror; a later attempt reads at a NEWER one and cannot mention anything the
+   * server deleted in between, so without the sweep those rows would ride into a completed
+   * bootstrap and the cursor would then commit PAST their tombstones.
+   *
+   * A failure on a LATER page is different in kind and is rethrown. Rows carrying `seq ===
+   * asOfSeq` are already in the mirror, and `since=0` over them would be silently WRONG: the seq
+   * guard drops every replayed change at or below `asOfSeq`, so the pages the snapshot had not
+   * reached yet would never be delivered by either path, and the mirror would settle into a
+   * permanently truncated state that looks healthy. Rethrowing leaves the cursor at "0", so the
+   * next drain re-snapshots from page 1 — and if the route really has gone, that page-1 attempt
+   * takes the fallback above.
    */
-
   /**
-   * Resuming at `asOfSeq` misses nothing: it is the point the snapshot was READ at, identical on every page; changes
-   * committed while paging have seqs above it and the delta drain picks them up.
-   */
-
-  /**
-   * The paging token is never the cursor (`nextCursor` is opaque server state, passed straight
-   * back), and the cursor is not a decimal: it is {@link encodeSeqCursor}'s base64url, NOT
-   * `String(seq)` — measured, not assumed: the first version committed `String(asOfSeq)` and eight
-   * `contract.test.ts` tests went red with `CursorExpiredError`, because `SyncService.decodeCursor`
-   * base64url-decodes what it is given and a bare "900" decodes to non-digits, so every drain
-   * after a snapshot 410'd. The two encoders are the same function on both sides of the wire and
-   * must stay that way.
-   */
-
-  /**
-   * A first-page failure falls back; a later one does not. Page 1 failing latches {@link snapshotUnavailable} and the
-   * caller takes the `since=0` path every client used before — an engine whose cold start hard-fails on a missing
-   * route is a mailbox rendering empty in silence (`http-adapter-binding.test.ts` exists because that shipped once).
-   * The swallow cannot hide an outage: the very next call is `/sync` on the same origin, which still rejects through
-   * the path that has always reported it. A LATER page's failure is rethrown, different in kind: rows carrying `seq
-   * === asOfSeq` are already in the mirror, and `since=0` over them would be silently wrong — the seq guard drops
-   * every replayed change at or below `asOfSeq`, so the unreached pages would never be delivered by either path and
-   * the mirror would settle into a permanently truncated state that looks healthy.
-   */
-
-  /**
-   * Rethrowing leaves the cursor at "0", so the next drain re-snapshots from page 1. An abandoned attempt's rows do
-   * not survive into the next one — see {@link OhmailEngine.claimSnapshotPrefix}.
-   */
-  /**
-   * Claim this snapshot's seq, and sweep an earlier attempt's rows before writing over them. A
-   * snapshot says nothing about what it OMITS: attempt A (asOfSeq 100) applies pages 1–3 holding
-   * message M, page 4 fails, cursor stays "0"; M is deleted at seq 150; attempt B (asOfSeq 200)
-   * never mentions M — a snapshot states LIVE state — completes, and commits the cursor at 200. M
-   * is now in the mirror for ever: its delete sits at 150, below the adopted cursor, and `/sync`
-   * sends a delta once. Deleted mail comes back and stays — the store.ts persistence class, the
-   * falsified fact being "the rows on disk belong to the snapshot the cursor names".
-   */
-
-  /**
-   * The predicate is the seq: every row a snapshot emits carries that snapshot's `asOfSeq`, so one seq names one
-   * attempt's output exactly. The seq of the on-disk prefix is written to {@link SNAPSHOT_PREFIX_SEQ_META} BEFORE the
-   * first row is applied, and an attempt finding a DIFFERENT seq sweeps those records first ({@link
-   * MirrorStore.pruneBySeq}, a hard delete — anything the new snapshot still carries is re-materialized by its own
-   * pages). The alternative, remembering applied ids in a field, is the defect in another shape: the failure is a
-   * process that stopped, and a list in that process's memory stops with it. `pruneBySeq` refuses seq 0, which
-   * protects the durable outbox and hydrated bodies (client-local by construction); an empty log answers `asOfSeq: 0`
-   * and is a no-op on both halves.
-   */
-
-  /**
-   * The marker is NOT cleared on completion, deliberately: after the last page it is a true statement, its only
-   * reader is this method at cursor "0", and `resetForBootstrap` clears meta anyway.
+   * CLAIM THIS SNAPSHOT'S SEQ, AND SWEEP AN EARLIER ATTEMPT'S ROWS BEFORE WRITING OVER THEM.
+   *
+   * ── THE DEFECT: A SNAPSHOT SAYS NOTHING ABOUT WHAT IT OMITS ──────────────────────────────
+   *
+   * A cold bootstrap that fails mid-stream is documented above as safe, and for its own rows it
+   * is: they carry `seq === asOfSeq`, the cursor stays "0", and a re-snapshot converges. The
+   * argument has one hole, and it is about the rows the SECOND snapshot does not mention.
+   *
+   *   1. attempt A reads at `asOfSeq` 100 and applies pages 1…3. Message M is in page 2, so the
+   *      mirror holds it at seq 100. Page 4 fails and is rethrown; the cursor is still "0".
+   *   2. the user deletes M — or the provider expunges it — and the log records that at seq 150.
+   *   3. attempt B reads at `asOfSeq` 200. A snapshot is a statement of LIVE state, so M is
+   *      simply absent from it; nothing in B refers to M at all. B completes and its last page
+   *      commits the cursor at 200.
+   *
+   * M is now in the mirror for ever: the row that carries it was never overwritten, and the
+   * `delete` change that would remove it sits at 150, below the cursor the client just adopted.
+   * `/sync` sends a delta once. **Deleted mail comes back and stays.** It is the same class as
+   * the persistence contract in `store.ts` — a cursor advancing on something that is not a
+   * fact — with the falsified fact being "the rows on disk belong to the snapshot the cursor
+   * names".
+   *
+   * ── THE FIX, AND WHY THE PREDICATE IS THE SEQ ────────────────────────────────────────────
+   *
+   * Every row a snapshot emits carries that snapshot's `asOfSeq`, so ONE seq value names ONE
+   * attempt's output exactly. The seq of the attempt whose prefix is on disk is written to
+   * {@link SNAPSHOT_PREFIX_SEQ_META} BEFORE the first row of that attempt is applied, and an
+   * attempt that finds a DIFFERENT seq there sweeps those records out first
+   * ({@link MirrorStore.pruneBySeq}) — a hard delete, so anything the new snapshot does still
+   * carry is simply re-materialized by the page that follows.
+   *
+   * The alternative — remembering the applied ids in a field — is the defect in a different
+   * shape: the whole failure is a process that stopped, and a list in that process's memory
+   * stops with it.
+   *
+   * **`pruneBySeq` refuses seq 0**, which is what protects the durable outbox and the hydrated
+   * bodies: they are client-local records and live there by construction. An account whose log is
+   * empty answers `asOfSeq: 0` and is a no-op on both halves, correctly — there is nothing to
+   * sweep and nothing to claim.
+   *
+   * ## THE MARKER IS NOT CLEARED WHEN THE SNAPSHOT COMPLETES, AND THAT IS DELIBERATE
+   *
+   * After the last page the mirror holds the WHOLE snapshot at that seq, so the key is a true
+   * statement, not a leftover. It is also unreadable from anywhere else: this method is the only
+   * reader, `runSnapshot` is the only caller, and the drain reaches it only at cursor "0" — a
+   * state a completed bootstrap can return to only through `resetForBootstrap`, which clears meta
+   * along with everything else. Clearing it would buy one extra flush on every cold boot and
+   * close no window.
    */
   private async claimSnapshotPrefix(asOfSeq: number): Promise<void> {
     const prior = this.store.getMeta<number>(SNAPSHOT_PREFIX_SEQ_META);
@@ -2776,23 +2939,41 @@ export class OhmailEngine {
   // ── the windowed store: keeping only part of the mailbox on disk ─────────
 
   /**
-   * Evict the messages this client has chosen not to keep; returns whether anything went. The
-   * shape is {@link OhmailEngine.purgeProtectedBodies}'s: one pass computing a victim list, then
-   * the store write. It runs after a drain, not on a timer: a timer would evict mid-bootstrap, and
-   * "we are caught up" is the only moment the newest-N half of the window means what it says. The
-   * rule: keep the newest `minRows` whatever their age (what stops a quiet mailbox evicting itself
-   * down to an empty app); of the rest, keep anything newer than `days`; evict the remainder.
-   */
-
-  /**
-   * Minus the pin set, which is the part that matters: a message the product is still USING must never be evicted for
-   * being old — the thing referencing it renders from the mirror and would render a hole. Five references pin: a
-   * surface currently RENDERING it (nothing in the mirror points at an open message — see {@link
-   * OhmailEngine.pinnedMessageIds}); a `draft` replying to it (a reply-later draft outlives the window); a
-   * `message_state` that is not `none` (every triage pile IS a set of these, and `bubbled_up` is a TIMER on an old
-   * message — evicting it deletes the reminder); a `routing_decision` still `pending_approval`; and an `approval`
-   * still `pending` — both unanswered questions, unanswerable without the mail. Anything resolved does NOT pin: it is
-   * history, and history is what the window is for.
+   * EVICT THE MESSAGES THIS CLIENT HAS CHOSEN NOT TO KEEP. Returns whether anything went.
+   *
+   * The shape is {@link OhmailEngine.purgeProtectedBodies}'s: one pass over the mirror computing
+   * a victim list, then the store write. It runs after a drain rather than on a timer because a
+   * timer would evict rows in the middle of a bootstrap, and because "we are caught up" is the
+   * only moment at which the newest-N half of the window means what it says.
+   *
+   * ── THE RULE ────────────────────────────────────────────────────────────────────────────
+   *
+   * Keep the newest `minRows` messages whatever their age; of the rest, keep anything newer than
+   * `days`; evict what is left. `minRows` is not a nicety — it is what stops a mailbox that has
+   * been quiet for a month from evicting itself down to nothing and rendering an empty app.
+   *
+   * ── MINUS THE PIN SET, WHICH IS THE PART THAT MATTERS ───────────────────────────────────
+   *
+   * A message the product is still USING must never be evicted for being old, because the thing
+   * referencing it renders from the mirror and would render a hole. Five references pin, and the
+   * FIRST of them is not a row in the mirror at all:
+   *
+   *  · a surface currently RENDERING it — the message the reader has open. Nothing in the mirror
+   *    points at it (reading is not a mutation), so the four record clauses below could all be
+   *    satisfied while the prune deleted the mail on screen mid-read. See
+   *    {@link OhmailEngine.pinnedMessageIds} for why `hydrateBody` is the signal;
+   *
+   *  · a `draft` replying to it (`inReplyToMessageId`) — the compose view shows what is being
+   *    replied to, and a reply-later draft can easily outlive the window;
+   *  · a `message_state` that is not `none` — every triage pile IS a set of these, and
+   *    `bubbled_up` in particular is a TIMER on an old message: the whole point is that it is old
+   *    and comes back. Evicting it would delete the reminder;
+   *  · a `routing_decision` still `pending_approval`, and
+   *  · an `approval` still `pending` — both are questions the user has not answered yet, and the
+   *    question is unanswerable without the mail it is about.
+   *
+   * Anything already resolved (`approved`, `rejected`, `expired`, `auto_applied`) does NOT pin:
+   * it is history, and history is what the window is for.
    */
   private async pruneToPolicy(): Promise<boolean> {
     const policy = this.storePolicy;
@@ -2826,9 +3007,6 @@ export class OhmailEngine {
    * re-opened is held again rather than ageing out mid-read.
    */
   private noteRendered(messageId: string): void {
-    // A rendered message is also the most recently READ body, so the two orders move together —
-    // otherwise the trim would evict the body of a message the reader just opened.
-    this.touchBody(messageId);
     this.renderedIds.delete(messageId);
     this.renderedIds.add(messageId);
     while (this.renderedIds.size > RENDERED_PINS) {
@@ -2843,14 +3021,26 @@ export class OhmailEngine {
     const pinned = new Set<string>();
 
     /**
-     * The message on screen, which nothing in the mirror references. Every other clause reads a ROW that points at a
-     * message; an open message is pointed at by nothing (reading is not a mutation), so the four record clauses could
-     * all be satisfied while the windowed prune hard-deleted, cascade included, the mail under the reader's eyes.
-     * `hydrateBody` is the signal and not a new registration call: every reading surface already tells the engine
-     * which message it renders, from an effect keyed on the open id — that call IS the statement "I am rendering this
-     * body", so honouring it needs no second seam a surface could forget. Not a promise that everything ever opened
-     * survives: the hold is capped ({@link RENDERED_PINS}) and lives only in this tab — what the surfaces are
-     * showing, not a second retention policy.
+     * ── THE MESSAGE ON SCREEN, WHICH NOTHING IN THE MIRROR REFERENCES ───────────────────────
+     *
+     * Every other clause below reads a ROW that points at a message. An open message is pointed
+     * at by nothing: reading is not a mutation, the Screener's preview is deliberately
+     * side-effect-free, and a message the reader has merely opened has no draft, no triage
+     * state and no pending question. So the four record clauses could all be satisfied and the
+     * windowed prune would still hard-delete, with its `message_body` cascade, the mail
+     * currently under the reader's eyes — mid-read, on the drain that follows.
+     *
+     * WHY `hydrateBody` IS THE SIGNAL AND NOT A NEW REGISTRATION CALL. The engine holds no view
+     * state and should not start. But every reading surface ALREADY tells it which message it is
+     * rendering, from an effect keyed on the open id: the Ohbox selection and the reader sheet
+     * (`AppShell`), the Screener's selected sender, the Reads/Receipts/History cards. That call
+     * is the statement "I am rendering this message's body" — not a proxy for it — so honouring
+     * it needs no second seam that a surface could forget to call, and no shell knows about the
+     * prune at all.
+     *
+     * WHAT IT IS NOT: a promise that everything ever opened survives. The hold is capped
+     * ({@link RENDERED_PINS}) and lives only in this tab, so it is "what the surfaces are
+     * showing", not a second retention policy competing with the window.
      */
     for (const id of this.renderedIds) pinned.add(id);
 
@@ -2873,39 +3063,76 @@ export class OhmailEngine {
   }
 
   /**
-   * A drain guaranteed to have STARTED AFTER the caller's write committed. `syncOnce()` coalesces —
-   * right for a poll, wrong for a mutation reconciling its own write: a drain issued BEFORE the
-   * POST committed read the log below the mutation's row and cannot carry it, however long it
-   * takes; `dispatch` awaited it anyway, dropped the overlay, and the mail snapped back until the
-   * next 8 s poll. Reported twice as "when I select one as ohbox, it does not seem to work" — and
-   * then it does: it depends on whether a poll was in flight when the click landed, intermittent by
-   * construction.
-   */
-
-  /**
-   * "Started after the POST returned" is sufficient because the server allocates each seq through an `UPDATE …
-   * RETURNING` on the account's `account_sync_state` row inside the mutation's own transaction, so seq order equals
-   * COMMIT order per account: a drain issued after our POST returned reads a log in which our row is visible. The
-   * argument rests entirely on that row lock — a future `bigserial` seq would leave every test green and make this
-   * silently unsound. Deliberately NOT a wait for `cursor >= outcome.seq`: the cursor is the max seq RETURNED after
-   * the `types` filter, so with `EngineOptions.types` set the wait never terminates; it also needs a fallback anyway
-   * (`seq: null` on a stripped header), and a wait loop is unbounded requests with nobody behind them, where this is
-   * exactly one drain.
-   */
-
-  /**
-   * Cost: nothing in the common case — no drain in flight means `syncOnce()` starts one NOW, the same single drain
-   * the mutation always paid for. A drain in flight means ONE follow-up, shared by every mutation landing in the
-   * window (three clicks during one poll are three overlays and one extra drain). The bound comes from `syncOnce()`
-   * itself: the waiting callbacks run as consecutive microtasks, the first assigns `this.syncing` synchronously,
-   * every sibling coalesces — proven by experiment, the remembered-drain field removed with the suite green. Drains
-   * never overlap (concurrency 1, `sync-liveness.test.ts`).
-   */
-
-  /**
-   * Two accepted costs: a mutation landing during the cold bootstrap waits for it plus a follow-up (it already did,
-   * through coalescing), and a POST that returned before the current drain started chains one drain it did not need —
-   * sound, bounded at one, and distinguishing it would need a wall clock.
+   * A drain that is guaranteed to have STARTED AFTER the caller's write committed.
+   *
+   * ## THE DEFECT THIS EXISTS FOR
+   *
+   * `syncOnce()` coalesces: a second caller gets the drain already running. For a poll or a wake
+   * that is exactly right — they only ever want "catch up", and one drain does. For a mutation
+   * reconciling its own write it is WRONG, and wrong in the way that is hardest to see: a drain
+   * issued BEFORE the POST committed read the change log at a seq below the mutation's row, so it
+   * cannot carry it however long it takes to come back. `dispatch` awaited it anyway, concluded
+   * the write had landed, deleted the optimistic overlay — and the mail snapped back to the
+   * Screener until the next 8 s poll.
+   *
+   * Reported twice from real use, as "when I select one as ohbox, it does not seem to work" —
+   * and then it does. It depends on whether a poll happens to be in flight when the click lands, which
+   * is why it looked intermittent: unpredictable by construction, not by luck.
+   *
+   * ## WHY "STARTED AFTER THE POST RETURNED" IS SUFFICIENT — AND WHAT WOULD BREAK IT
+   *
+   * The server allocates each sequence number through an `UPDATE … RETURNING`
+   * on the account's `account_sync_state` row, inside the mutation's own transaction, and
+   * appends the `change_log` row in that same transaction. So the row lock makes
+   * seq order equal COMMIT order per account: seq N is durable before N+1 is ever handed out. A
+   * drain issued after our POST returned therefore reads a log in which our row is already
+   * visible, and no concurrent drain can move the cursor PAST our seq while our row is still
+   * invisible. That is the whole argument, and it rests entirely on that lock — a future
+   * `bigserial` seq (allocated outside the transaction, committed out of order) would leave every
+   * test here green while making this silently unsound.
+   *
+   * This is deliberately NOT a wait for `cursor >= outcome.seq`. That is unsound in a way this is
+   * not: `SyncService` sets the cursor to the max seq actually RETURNED, computed after the
+   * `types` filter, so with `EngineOptions.types` set a seq belonging to a filtered-out entity
+   * type is never reached and the wait never terminates. It also needs a fallback anyway —
+   * `rule_delete`'s 404 and any absent or non-finite `X-Sync-Seq` give `seq: null` — and a wait
+   * loop is unbounded requests — API cost with nobody behind it — where this is exactly one
+   * drain.
+   *
+   * ## WHAT IT COSTS, WHICH IS NOTHING IN THE COMMON CASE
+   *
+   * No drain in flight ⇒ `syncOnce()` starts one NOW, which is already "after". That is the same
+   * single drain the mutation paid for before this existed: no extra round trip, no doubled
+   * request rate.
+   *
+   * A drain in flight ⇒ ONE follow-up, chained behind it and shared by every mutation that lands
+   * in the same window. Three clicks during one poll are three overlays and one extra drain, not
+   * three.
+   *
+   * That bound comes from `syncOnce()` itself and needs no bookkeeping here, which is worth
+   * stating because the obvious "remember the queued drain" field is redundant and was removed
+   * after being written: every mutation waiting on the same in-flight drain has its callback on
+   * that ONE promise's reaction list, so the callbacks run as consecutive microtasks; the first
+   * calls `syncOnce()`, which assigns `this.syncing` SYNCHRONOUSLY before returning; every
+   * sibling therefore finds it set and coalesces. No macrotask can interleave between adjacent
+   * microtasks, and a drain cannot finish inside that window because its own first step is an
+   * `await`. Proven by experiment rather than argued: with the sharing field disabled the whole
+   * suite — including the three-clicks-in-one-window bound — stayed green.
+   *
+   * Drains therefore never overlap. NOT because of `getCursor()`, which is a plain synchronous
+   * field read that serializes nothing, but because the follow-up is created by calling
+   * `syncOnce()` from inside a `.then` on the drain it is waiting for, so the single-flight is
+   * never bypassed. Concurrency stays 1, which is the property
+   * `apps/webapp/app/shell/sync-scheduler.ts` states and `sync-liveness.test.ts` asserts.
+   *
+   * Two costs are accepted rather than engineered away. A mutation that lands during the ~37-page
+   * cold bootstrap now waits for the bootstrap AND a follow-up before it confirms — the overlay
+   * keeps the screen correct throughout, and the mutation was already hostage to that bootstrap
+   * through `syncOnce`'s coalescing. And a POST that returned before the current drain STARTED
+   * chains one drain it did not need: the client cannot tell that case from the broken one,
+   * because the only happens-before it owns is "the POST returned". The over-approximation is
+   * sound and bounded at one drain; distinguishing it would need a wall clock, and the only clock
+   * here is the injectable `now` seam that fixtures freeze.
    */
   private syncFresh(): Promise<void> {
     const inFlight = this.syncing;
@@ -2980,36 +3207,71 @@ export class OhmailEngine {
   // ── message bodies ───────────────────────────────────────────────────────
 
   /**
-   * Fetch one message's body, on explicit intent — the capability behind every reading surface (before it, the wire
-   * carried `snippet` only, so every stream card measured "short" and the Expand pill never appeared). The result
-   * goes into a client-local `message_body` record ({@link MessageBodyRecord}), never onto the message row.
-   * Idempotent, single-flight: two surfaces render the same message at once, so concurrent callers join one request,
-   * and a `ready` body is never re-fetched. A `loading` record with no promise behind it (a tab died mid-request; the
-   * record persists, the promise does not) IS re-fetched — that cannot loop, because a `loading` record this engine
-   * writes always has an in-flight entry above it; the map is the dedup, and deciding from the record alone would
-   * make a zombie `loading` a permanent spinner.
-   */
-
-  /**
-   * `retry` — why a failure is not retried by default: most callers are React effects that re-run
-   * whenever inputs change, and a failed fetch writes a record, bumps the version, re-renders — a
-   * `failed` state that re-fetched on the default path is a billed request loop against a server
-   * already refusing (found by exactly that: a 500-ing adapter under a per-render callback spun
-   * until the test timed out). The rule is about WHO asks: an automatic trigger asks once; a HUMAN
-   * act passes `retry` and asks again, which also makes the failed state's exit a thing the user
-   * chose. It never rejects: the outcome is the RECORD (`ready` or `failed`), a thing the UI
-   * renders — reported on screen, not thrown at the DOM.
-   */
-
-  /**
-   * `urgent` — a message somebody is looking at does not wait behind a backlog. {@link bodySlot}
-   * runs four fetches and queues the rest, FIFO with no notion of what is on screen, so the
-   * message just SELECTED could queue behind a Screener preview nobody is watching. `urgent`
-   * jumps that queue, passed by the shell's two selection effects and nothing else — "this is the
-   * message being opened" is knowledge only the selection has. A separate flag from `retry`,
-   * deliberately: `retry` also jumps the queue, but it ALSO bypasses the failed-guard, so a
-   * selection effect carrying it would re-ask a refusing server on every render — exactly the
-   * billed poll the guard prevents. Two facts, two flags.
+   * FETCH ONE MESSAGE'S BODY, ON EXPLICIT INTENT.
+   *
+   * The one capability behind every reading surface. Before it, the wire `MessageDTO`
+   * carried `snippet` and never `body`, so on a live account `m.body ?? m.snippet` rendered
+   * a single line in the Ohbox, in Reads, in Receipts and in the Screener; every
+   * `StreamCard` measured "short"; and `.scast.short .sc-x{display:none}` hid the Expand
+   * pill. There was no pill because there was nothing to expand.
+   *
+   * ── THE RESULT DOES NOT GO ON THE MESSAGE ROW ──────────────────────────────────────────
+   *
+   * It goes into a client-local `message_body` record — see {@link MessageBodyRecord} for
+   * the mechanism and for the live-only bug that shape makes unreachable. Nothing here
+   * touches `message`.
+   *
+   * ── IDEMPOTENT, SINGLE-FLIGHT ──────────────────────────────────────────────────────────
+   *
+   * Two surfaces can want the same body at once — the Ohbox read column and the reader sheet
+   * render the same message simultaneously — so concurrent callers join one request. A body
+   * already `ready` is never re-fetched.
+   *
+   * A `loading` record with no promise behind it — a tab that died mid-request; the record
+   * persists, the promise does not — IS re-fetched. That cannot loop, because a `loading`
+   * record written by THIS engine always has an entry in the in-flight map above it. The map
+   * is the dedup that matters; deciding from the record's state alone would make a zombie
+   * `loading` a permanent spinner with no way out.
+   *
+   * ── `retry` — WHY A FAILURE IS NOT RETRIED BY DEFAULT ───────────────────────────────────
+   *
+   * Most callers are React effects: "the card became current", "this sender was selected".
+   * They re-run whenever their inputs change, and a failed fetch writes a record, which bumps
+   * the mirror version, which re-renders — so a `failed` state that re-fetched on the default
+   * path would be a request loop against a server that is already refusing, billed per
+   * attempt, for as long as the view stays open, with nobody behind any of it. Found by exactly
+   * that: a
+   * 500-ing adapter under a view whose callback identity changed per render spun until the
+   * test timed out.
+   *
+   * So the rule is about WHO is asking, not about the state. An automatic trigger asks once
+   * and reports the failure; a HUMAN act — re-expanding a card, pressing Retry — passes
+   * `retry` and asks again. That also makes the failed state's exit a thing the user chose,
+   * which is what a control on screen is for.
+   *
+   * ── WHY IT NEVER REJECTS ───────────────────────────────────────────────────────────────
+   *
+   * Every caller is a React effect or a click handler; a rejection there is an unhandled
+   * promise and, at worst, an error boundary over somebody's mailbox. The outcome is the
+   * RECORD — `ready` or `failed` — which is a thing the UI can render. The failure is
+   * reported on screen, not thrown at the DOM.
+   *
+   * ── `urgent` — A MESSAGE SOMEBODY IS LOOKING AT DOES NOT WAIT BEHIND A BACKLOG ────────────
+   *
+   * {@link bodySlot} lets four fetches run at once and queues the rest, which is what keeps a
+   * forty-message sender from opening forty connections. But the queue is FIFO and has no notion
+   * of what is on screen, so the message the reader just SELECTED could be queued behind a
+   * Screener preview's backlog that nobody is watching — the one body that is the whole screen
+   * waiting on bodies that are not.
+   *
+   * `urgent` jumps that queue. It is passed by the shell's two selection effects and by nothing
+   * else, because "this is the message being opened" is knowledge only the selection has.
+   *
+   * IT IS A SEPARATE FLAG FROM `retry`, DELIBERATELY. `retry` also jumps the queue — a human
+   * pressing "try again" must not wait — and overloading it here would have been one word
+   * shorter and wrong: `retry` ALSO bypasses the failed-guard above, so a selection effect
+   * carrying it would re-ask a refusing server on every render, which is exactly the billed
+   * poll-with-nobody-behind-it that guard exists to prevent. Two facts, two flags.
    */
   async hydrateBody(messageId: string, opts: { retry?: boolean; urgent?: boolean } = {}): Promise<void> {
     /**
@@ -3093,29 +3355,61 @@ export class OhmailEngine {
     }
     const held = this.read().get<MessageBodyRecord>("message_body", messageId);
     /**
-     * Already ready — AND from a build that knew about `html`. The html renderer shipped, and a message already
-     * opened was still a text dump: `message_body` records persist, one written by an older build has no `html` key
-     * at all, `ready` suppressed the fetch, and every message the reader had already opened stayed frozen in the
-     * pre-fix shape — while new mail rendered correctly, which is why the product looked unfixed only to the people
-     * already using it. `html !== undefined` and NOT `!= null`, and the difference is the whole of it: `undefined` —
-     * no build ever answered; ask now. `null` — a build asked and the answer was "no html" (a plain-text mail, or a
-     * sensitive one whose html is deliberately not stored); re-asking is a permanent billed poll.
-     */
-
-    /**
-     * A re-read, not a migration ({@link MessageBodyRecord} says why inventing `html: null` is forbidden) and not a
-     * sweep — one extra request per message the reader opens again. It terminates because `fetchBodyInto` always
-     * writes the key; `body-hydration.test.ts` asserts the COUNT, not just the outcome.
+     * ── ALREADY READY — **AND FROM A BUILD THAT KNEW ABOUT `html`** ─────────────────────
+     *
+     * The html part and a renderer for it shipped together, and a message already opened was
+     * STILL a text dump ending in a tracking pixel's url. Not a stale deploy (the live mailbox
+     * chunk contains the renderer) and not a missing server field (that message's `html` was
+     * there, and long): it was THIS LINE.
+     *
+     * `message_body` records are persisted (`IndexedDbMirrorStore`), and one written by any
+     * build from before it is `{messageId, state, text}` with no `html` key at all. `ready`
+     * suppressed the fetch, `bodyOf` read `rec.html ?? null`, and every message the reader had
+     * already opened stayed frozen in the pre-fix shape for ever — while newly-arrived mail
+     * rendered correctly, which is why the product looked unfixed only to the people already
+     * using it.
+     *
+     * `html !== undefined` and NOT `html != null`, and the difference is the whole of it:
+     *
+     *   `undefined`  no build ever answered this record's question. Ask now.
+     *   `null`       a build DID ask, and the answer was "this message has no html" — a
+     *                plain-text mail, or a sensitive one whose html is deliberately not stored
+     *                (`pipeline.ts`). Re-asking would be a permanent billed poll with nobody
+     *                behind it, against a server that will keep answering the same thing.
+     *
+     * It is a re-read, not a migration: {@link MessageBodyRecord} says why inventing `html:
+     * null` for these rows is forbidden — it is indistinguishable from a message that genuinely
+     * has none. And it is not a sweep. `hydrateBody` is called per message on explicit intent,
+     * so this costs ONE extra `GET /messages/:id/body` per message the reader opens again,
+     * once, and nothing for mail they never open.
+     *
+     * IT TERMINATES BECAUSE `fetchBodyInto` ALWAYS WRITES THE KEY — `HttpAdapter.fetchBody`
+     * normalises a missing wire field to `null`, and the `failed` arm sets it explicitly — so
+     * no transport can produce a record that lands back in this branch. `body-hydration.test.ts`
+     * asserts the count, not just the outcome, for exactly that reason.
      */
     if (held?.state === "ready" && held.html !== undefined) {
       /**
-       * The one ready record still worth asking about: a record from a build predating the storage-cap marker cannot
-       * be told from a genuinely empty message — `{state: "ready", text: "", html: null}` is exactly what a pre-slice
-       * client persists for a body the server has begun WITHHOLDING. Left alone, `bodyOf` reports `full` over nothing
-       * for ever. `withheld === undefined` is the discriminator, and it works only because both write sites now
-       * ALWAYS set the key — one re-ask heals the record and it can never match this branch again. Narrow on purpose:
-       * only `text === ""` AND `html === null` qualifies (the withheld shape); a plain-text mail with real text must
-       * never become a request, and `bodyHealed` bounds it to once per engine even if the mirror write is refused.
+       * ── THE ONE READY RECORD THAT IS STILL WORTH ASKING ABOUT ───────────────────────────────
+       *
+       * A record written by a build that predates the storage-cap marker cannot be told from a
+       * genuinely empty message: `{state: "ready", text: "", html: null}` is exactly what a
+       * pre-slice client persists for a body the server has begun WITHHOLDING, because it drops
+       * the wire field it does not know. Left alone, the clause above skips it for ever and
+       * `bodyOf` reports `full` over nothing — the marker's whole purpose defeated, permanently,
+       * for every tab that was open across the deploy.
+       *
+       * `withheld === undefined` is the discriminator, and it exists only because both write
+       * sites now ALWAYS set the key (`null` for an ordinarily stored body). So this is not a
+       * poll: one re-ask heals the record, the answer writes the key either way, and the record
+       * can never match this branch again.
+       *
+       * NARROW ON PURPOSE — the cost argument above is load-bearing. Only `text === ""` AND
+       * `html === null` qualifies, which is the shape a withheld body has. A plain-text mail with
+       * real text and `html: null` is the common `html`-absence case and must never become a
+       * request; a record already carrying the key, in either value, has been answered by a build
+       * that could tell. And `bodyHealed` bounds it to ONCE per engine even if the mirror write
+       * is refused, exactly as the `failed` arm below does.
        */
       const preCapEmpty = held.text === "" && held.html === null && held.withheld === undefined;
       if (!preCapEmpty || this.bodyHealed.has(messageId)) return { kind: "skip" };
@@ -3177,14 +3471,26 @@ export class OhmailEngine {
   }
 
   /**
-   * `held` is here so a re-read does not take the message off the screen. The write used to be unconditional, and
-   * that is destructive: `bodyOf` answers a `loading` record with the SNIPPET, so a message being read collapsed to
-   * one line the instant anything asked again — and the legacy re-read fires on exactly the message the reader just
-   * opened; if the fetch then failed, they had LOST a body they already had. A `ready` record is left alone until
-   * there is something better to put in its place. The refusal is swallowed, and that is not a tidy-up: this write
-   * sits outside `fetchBodyInto`'s try, so an unguarded IndexedDB rejection (full quota, private window, a
-   * version-changed connection) would propagate out of `hydrateBody` and break its never-rejects contract in a React
-   * effect. The fetch still goes ahead: a mirror that cannot hold a marker can very well hold the answer.
+   * ── `held` IS HERE SO A RE-READ DOES NOT TAKE THE MESSAGE OFF THE SCREEN ────────────────
+   *
+   * This write used to be unconditional, and that is destructive: `bodyOf` answers a `loading`
+   * record with the SNIPPET, so a message the reader is looking at collapsed to one line the
+   * instant anything asked for it again. The re-read above (`ready` with no `html` key, from a
+   * build that predates the html part) is exactly such a caller, and it fires on a message the
+   * reader has just opened — so the visible effect of fixing that record was the body
+   * disappearing first. If the fetch then failed or hung, they had LOST a body they already had.
+   *
+   * A record that is already `ready` is therefore left alone until there is something better to
+   * put in its place. The reader keeps reading; the swap happens when the answer arrives.
+   *
+   * ── AND THE REFUSAL IS SWALLOWED, WHICH IS NOT A TIDY-UP ────────────────────────────────
+   *
+   * `putBody` reaches IndexedDB, and IndexedDB refuses: a quota that is full, a private window, a
+   * connection closed by a version change, an `IdbMirrorStore` whose owner moved. This write now
+   * sits OUTSIDE `fetchBodyInto`'s try, so an unguarded rejection here would propagate out of
+   * `hydrateBody` — breaking its "WHY IT NEVER REJECTS" contract, in a React effect, where the
+   * outcome is an unhandled rejection over somebody's mailbox. The fetch still goes ahead: a
+   * mirror that cannot hold a marker can very well hold the answer.
    */
   private async markLoading(messageId: string, held: MessageBodyRecord | undefined): Promise<void> {
     if (held?.state === "ready") return;
@@ -3198,46 +3504,29 @@ export class OhmailEngine {
   }
 
   /**
-   * ONE MARKER FOR A WHOLE BATCH — the chunk twin of {@link markLoading}.
+   * ── ONE REQUEST FOR A WHOLE CONVERSATION ────────────────────────────────────────────────
    *
-   * A body used to be written twice per id (this marker, then the answer), so a 20-id chunk cost
-   * 40 whole-mirror derivations; a batch now costs two, whatever its size. A `ready` body is
-   * skipped exactly as it is above, and a chunk in which every id is already ready commits nothing
-   * and bumps nothing. Swallowed for `markLoading`'s reason: a mirror that cannot hold a marker
-   * can still hold the answer, so the fetch goes ahead either way.
-   */
-  private async markLoadingBatch(
-    chunk: ReadonlyArray<{ id: string; held: MessageBodyRecord | undefined }>,
-  ): Promise<void> {
-    const markers = chunk
-      .filter((c) => c.held?.state !== "ready")
-      .map((c) => ({
-        id: c.id,
-        record: {
-          messageId: c.id, state: "loading" as const, text: "", html: null, loadedRemoteContent: false,
-        },
-      }));
-    try {
-      await this.putBodies(markers);
-    } catch {
-      /* the mirror refused the markers; ask anyway — see above, never rethrow */
-    }
-  }
-
-  /**
-   * One request for a whole conversation. Opening a thread needs every sibling's body, and the surface used to ask
-   * one at a time through a four-wide limiter — eight siblings were eight requests, the last two not even STARTING
-   * until a round trip finished, and the reader watched the conversation assemble in steps; the batch route answers
-   * all in one. It changes nothing else: admission is `hydrateBody`'s own through {@link bodyPlan} (a demo row is not
-   * asked, a protected sibling is PURGED rather than fetched — why the ids are passed in, not filtered by the caller
-   * — a `ready` body with an `html` key is left alone, a failure re-asks only across a session boundary); markers are
-   * written for the whole set BEFORE anything leaves, and the single-flight entries register synchronously so a
-   * double-invoked effect produces one request.
-   */
-
-  /**
-   * Not required to exist: an adapter with no batch route falls back to per-message, and a server that ignores the
-   * parameter is merely slower — unanswered ids are fetched singly below.
+   * Opening a thread needs every sibling's body, and until this existed the surface asked for them
+   * one at a time from a single effect: eight siblings were eight `GET /messages/:id/body` calls
+   * through a four-wide limiter, so the last two did not even START until a full round trip had
+   * finished, and the reader watched the conversation assemble itself in visible steps. The
+   * batch route answers all of them in one.
+   *
+   * ── WHAT THIS DOES NOT CHANGE ───────────────────────────────────────────────────────────
+   *
+   * The admission rules are `hydrateBody`'s own, through {@link bodyPlan}: a demo row that carries
+   * its body is not asked for, a protected sibling is PURGED rather than fetched (which is why
+   * these ids are passed in rather than filtered by the caller), a `ready` body with an `html` key
+   * is left alone, and a failure is re-asked only across a session boundary. The markers are
+   * written for the whole set BEFORE anything leaves, for the reason {@link startBody} gives, and
+   * the single-flight entries are registered synchronously so that React's double-invoked effect
+   * produces one request rather than two.
+   *
+   * ── AND IT IS NOT REQUIRED TO EXIST ─────────────────────────────────────────────────────
+   *
+   * An adapter with no batch route falls back to asking per message — the FixturesAdapter, the
+   * desktop shell, a test with a bare double. That fallback is also what makes a server which
+   * ignores the parameter merely slower: ids the answer did not carry are fetched singly below.
    */
   hydrateThread(messageIds: string[]): Promise<void> {
     return this.hydrateMany(messageIds, { rendered: true });
@@ -3314,7 +3603,7 @@ export class OhmailEngine {
     for (let i = 0; i < take.length; i += BODIES_IDS_MAX) {
       const chunk = take.slice(i, i + BODIES_IDS_MAX);
       const chunkIds = chunk.map((c) => c.id);
-      const run = this.markLoadingBatch(chunk)
+      const run = Promise.all(chunk.map((c) => this.markLoading(c.id, c.held)))
         .then(() => this.bodySlot(false, () => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped), chunkIds))
         .finally(() => {
           for (const id of chunkIds) this.bodyRequests.delete(id);
@@ -3344,31 +3633,28 @@ export class OhmailEngine {
     try {
       rows = await fetchBodies(ids);
     } catch (err) {
-      await this.failBodies(ids, err);
+      await Promise.all(ids.map((id) => this.failBody(id, err)));
       return;
     }
     // `null` ⇒ this adapter serves no bodies. Same meaning and same handling as `fetchBody`'s
     // `null`: tombstone the markers rather than leave a surface saying "loading…" for ever.
     if (rows === null) {
-      // One bump for the whole batch — see `putBodies`. Swallowed as the per-id write was.
-      try { await this.putBodies(ids.map((id) => ({ id, record: null }))); } catch { /* the mirror refused; nothing to report */ }
+      for (const id of ids) {
+        try { await this.putBody(id, null); } catch { /* the mirror refused; nothing to report */ }
+      }
       return;
     }
     const byId = new Map(rows.map((r) => [r.messageId, r]));
     const missing: string[] = [];
-    // COLLECTED, THEN COMMITTED ONCE. This loop used to `await putBody` per id, which bumped the
-    // mirror version and re-derived the whole mailbox once per body.
-    const answered: Array<{ id: string; record: MessageBodyRecord | null }> = [];
     for (const id of ids) {
       const wire = byId.get(id);
       if (wire === undefined) { missing.push(id); continue; }
-      // The same record `fetchBodyInto` writes, field for field — including the `?? null`
-      // normalisations, which are about the KEY existing rather than about the value. See
-      // there: a record that could leave `html` absent lands back in the re-read branch and
-      // polls for ever.
-      answered.push({
-        id,
-        record: {
+      try {
+        // The same record `fetchBodyInto` writes, field for field — including the `?? null`
+        // normalisations, which are about the KEY existing rather than about the value. See
+        // there: a record that could leave `html` absent lands back in the re-read branch and
+        // polls for ever.
+        await this.putBody(id, {
           messageId: id,
           state: "ready",
           text: wire.text,
@@ -3381,15 +3667,10 @@ export class OhmailEngine {
           // such build ever touched, which is what makes the pre-slice heal terminate. The batch
           // path and the single path must agree; see `MessageBodyRecord.withheld`.
           withheld: withheldMarkerOf(wire.withheld),
-        },
-      });
-    }
-    try {
-      await this.putBodies(answered);
-    } catch (err) {
-      // The commit is all-or-nothing, so a refusal leaves NONE of them written — every id the
-      // batch answered gets the `failed` record it would have got asking alone.
-      await this.failBodies(answered.map((a) => a.id), err);
+        });
+      } catch (err) {
+        await this.failBody(id, err);
+      }
     }
     /*
      * THE PER-ID TAIL, AND IT IS INTERRUPTIBLE. "Shorter than asked" is a normal answer — the
@@ -3406,19 +3687,31 @@ export class OhmailEngine {
   }
 
   /**
-   * How many bodies may be in the air at once. `bodyRequests` single-flights per MESSAGE — the wrong axis for the
-   * caller that matters: the Screener preview hydrates every held message of a sender in one effect, so forty held
-   * messages opened forty requests in one tick, none of them duplicates. On screen that was the reported defect: a
-   * burst overrunning the connection limit turns into plain-text dumps beside one or two rendered frames — it looks
-   * like the viewer failing on threads; it is the fan-out.
-   */
-
-  /**
-   * A human jumps the queue on either fact that means somebody is waiting for THIS message: `retry: true` (a person
-   * pressing "try again") and `urgent: true` (the shell saying a message was just OPENED — the body that is the whole
-   * screen must not queue behind a preview backlog); both arrive as one `urgent` parameter, two flags at the call
-   * site because only one may also re-ask a server that refused (`hydrateBody`). The slot is released in `finally`,
-   * including on rejection — a leaked slot starves every later hydration, silently.
+   * ── HOW MANY BODIES MAY BE IN THE AIR AT ONCE ──────────────────────────────────
+   *
+   * `bodyRequests` single-flights per MESSAGE, which is the wrong axis for the caller that
+   * matters. The Screener preview hydrates every held message of the selected sender in one
+   * effect, so a sender with forty held messages opened forty `GET /messages/:id/body` requests
+   * in a single tick — none of them duplicates, so nothing above deduplicated them.
+   *
+   * What that looks like on screen is the reported defect. `fetchBodyInto` writes `failed` on any
+   * throw, `bodyOf` answers `html: null` for a record that is not `ready`, and `MessageBody`
+   * renders its text fallback when `html` is null — so a burst that overruns the browser's or the
+   * server's connection limit turns into a preview of plain-text dumps beside one or two properly
+   * rendered frames. It looks like the viewer failing on threads. It is the fan-out.
+   *
+   * A HUMAN JUMPS THE QUEUE, on either of the two facts that mean somebody is waiting for THIS
+   * message. `retry: true` is a person pressing "try again" on a message in front of them, and
+   * making that wait behind an automatic backlog would make the one control that exists for this
+   * feel broken. `urgent: true` is the shell saying a message has just been OPENED — the body
+   * that is the entire screen must not queue behind a Screener preview's backlog nobody is
+   * watching. Both arrive here as the same `urgent` parameter, because to the limiter they are
+   * one fact; they are two flags at the call site because only one of them may also re-ask a
+   * server that refused (see `hydrateBody`).
+   *
+   * The slot is released in `finally`, including on rejection. A limiter that leaked a slot on
+   * failure would starve every later hydration and do it silently — the same class of defect as
+   * the one above, reached from the other side.
    */
   private bodySlot<T>(urgent: boolean, run: () => Promise<T>, ids: readonly string[] = []): Promise<T> {
     if (urgent || this.bodyActive < MAX_CONCURRENT_BODIES) {
@@ -3443,14 +3736,26 @@ export class OhmailEngine {
   }
 
   /**
-   * Let a waiting request for this message go NOW — the other half of "an open always jumps". `hydrateBody`
-   * single-flights per message, and the eager pass registers hundreds of ids queued NON-urgently — so opening one of
-   * those found the existing promise and waited behind slots of work nobody was watching: urgency was decided at
-   * creation and never revisited, making "urgent opens jump the queue" false in exactly the case the prefetch
-   * created. So urgency is re-decided on demand: the entry is pulled out of the queue and started immediately,
-   * including exceeding {@link MAX_CONCURRENT_BODIES} by one, which is what "urgent" has always meant here. A no-op
-   * when the id is not waiting (running already, or done). A BATCH entry is promoted whole — its ids travel in one
-   * request, the same shape a thread open has always had.
+   * LET A WAITING REQUEST FOR THIS MESSAGE GO NOW — the other half of "an open always jumps".
+   *
+   * ── THE DEFECT THIS CLOSES ──────────────────────────────────────────────────────────────
+   *
+   * `hydrateBody` single-flights on `bodyRequests`: a request already in the air for a message is
+   * JOINED rather than duplicated, which is right. But the eager pass registers hundreds of ids
+   * that way, and a request registered by a background pass is queued NON-urgently — so opening
+   * one of those messages found the existing promise, returned it, and waited behind up to four
+   * slots of work nobody was looking at. The urgency was decided when the request was created and
+   * never revisited, which made "urgent opens always jump the queue" false in exactly the case
+   * the prefetch created: the message the reader picked is the one most likely to be queued.
+   *
+   * So urgency is re-decided on demand. The entry is pulled out of the queue and started
+   * immediately — the same bypass an urgent request gets at creation, including exceeding
+   * {@link MAX_CONCURRENT_BODIES} by one, which is what "urgent" has always meant here.
+   *
+   * A no-op when the id is not waiting: it may be running already (nothing to do), or done. A
+   * BATCH entry is promoted whole, because its ids travel in one request and there is no way to
+   * extract one — the reader's message arrives with a handful of siblings, which is the same
+   * shape a thread open has always had.
    */
   private promoteBodyRequest(messageId: string): void {
     const at = this.bodyQueue.findIndex((e) => e.ids.includes(messageId));
@@ -3485,19 +3790,31 @@ export class OhmailEngine {
   private async fetchBodyInto(messageId: string): Promise<void> {
     try {
       const wire = await this.adapter.fetchBody(messageId);
-      // `null` ⇒ this adapter serves no bodies (the fixtures world): tombstone the loading marker rather than leaving
-      // a surface saying "loading…" for ever — `bodyOf` falls back to the snippet, the honest answer for an adapter
-      // with no endpoint. `html` rides along UNTOUCHED: this is the one hop between the wire and the renderer and it
-      // must stay a carry — sanitizing here would put attacker markup through a transform no surface can see, written
-      // into the mirror. `?? null` is about the KEY existing, not the value: it maps `undefined` (a field this
-      // adapter did not answer) onto the `null` that MEANS "no html", so a record this engine wrote always carries
-      // the key — `hydrateBody` decides a record predates the html part from `html === undefined`, and a write that
-      // left the field absent would poll for ever.
-
-      // `EngineAdapter.fetchBody` is a seam with four implementations and no compiler check, so loop termination must
-      // be the engine's property, not one adapter's manners — proven: this file's own double answers `{ text }`
-      // alone, and two "a READY body is not re-fetched" tests went red the moment `hydrateBody` learned to distrust
-      // an absent key.
+      // `null` ⇒ this adapter serves no bodies (the fixtures world). Tombstone the loading
+      // marker rather than leaving a surface saying "loading…" forever; `bodyOf` then falls
+      // back to the snippet, which is the honest answer for an adapter with no endpoint.
+      //
+      // `html` rides along, UNTOUCHED. This is the one hop between the wire and the
+      // renderer and it must stay a carry: sanitizing here would put attacker markup through
+      // a transform in the engine, where no surface can see what it did and where the result
+      // would be written into the mirror. What is stored is what the sender wrote.
+      //
+      // ── `?? null` IS ABOUT THE KEY EXISTING, NOT ABOUT THE VALUE ────────────────────────
+      //
+      // No string is altered by it: it maps `undefined` — a field this adapter did not answer —
+      // onto the `null` that MEANS "there is no html", so that a record THIS ENGINE WROTE
+      // always carries the key. `hydrateBody` decides a record predates the html part, and
+      // re-fetches it,
+      // from `html === undefined`; a write that could leave the field absent would land back in
+      // that branch on the next open and poll for ever.
+      //
+      // `HttpAdapter.fetchBody` already normalises, so the shipped path never needed this — and
+      // that is exactly the argument against relying on it. `EngineAdapter.fetchBody` is a seam
+      // with four implementations and no compiler check that a value is present rather than
+      // `undefined`, so the termination of a loop must be a property of the engine and not of
+      // one adapter's manners. Proven, not assumed: this file's own test double answers
+      // `{ text }` alone, and with the plain carry two long-standing "a READY body is not
+      // re-fetched" tests went red the moment `hydrateBody` learned to distrust an absent key.
       await this.putBody(
         messageId,
         wire === null
@@ -3539,120 +3856,26 @@ export class OhmailEngine {
    */
   private async failBody(messageId: string, err: unknown): Promise<void> {
     try {
-      await this.putBody(messageId, this.failedBodyRecord(messageId, err));
+      await this.putBody(messageId, {
+        messageId,
+        state: "failed",
+        text: "",
+        html: null,
+        loadedRemoteContent: false,
+        error: err instanceof Error ? err.message : String(err),
+        // WHEN, so a reload can tell this failure apart from one this session already made and
+        // refused to repeat. See {@link MessageBodyRecord.failedAt} and `bodyPlan`'s failed arm.
+        failedAt: this.now().getTime(),
+      });
     } catch {
       /* the mirror refused the failure record too; see above — never rethrow */
-    }
-  }
-
-  /**
-   * A WHOLE BATCH'S REFUSAL, UNDER ONE BUMP. One request carried every id, so its throw is each
-   * of their refusals — and writing them one at a time would re-derive the mailbox once per id on
-   * the arm that is already going badly. Swallowed for {@link failBody}'s reason: this reaches the
-   * same mirror that may be the thing failing, and a throw here would escape into an unhandled
-   * rejection over somebody's mailbox.
-   */
-  private async failBodies(ids: ReadonlyArray<string>, err: unknown): Promise<void> {
-    try {
-      await this.putBodies(ids.map((id) => ({ id, record: this.failedBodyRecord(id, err) })));
-    } catch {
-      /* the mirror refused the failure records too; see above — never rethrow */
     }
   }
 
 
   private async putBody(messageId: string, record: MessageBodyRecord | null): Promise<void> {
     await this.store.putLocal("message_body", messageId, record);
-    if (record?.state === "ready") this.touchBody(messageId);
     this.notify();
-    await this.trimBodyCache();
-  }
-
-  /**
-   * MANY BODIES, ONE VERSION BUMP — the batch twin of {@link putBody}.
-   *
-   * Every `putLocal` bumps the mirror version and every `notify` re-runs the shell's whole-mirror
-   * derivations, so a per-body write makes the eager pass a derivation storm: measured on a large
-   * mailbox, every body was written twice and every write cost a whole-mirror pass — minutes of one
-   * core, and resident memory from 177 MB to 1.5 GB. `commitLocal` already writes an
-   * array under one `ver++`, so a batch costs one pass whatever its size. An empty batch writes
-   * nothing and bumps nothing — `commitLocal` returns early, which is what keeps a chunk whose
-   * every id was skipped from re-deriving the mailbox.
-   */
-  private async putBodies(
-    entries: ReadonlyArray<{ id: string; record: MessageBodyRecord | null }>,
-  ): Promise<void> {
-    if (entries.length === 0) return;
-    await this.store.commitLocal(
-      entries.map((e) => ({ type: "message_body", id: e.id, entity: e.record })),
-      [],
-    );
-    for (const e of entries) if (e.record?.state === "ready") this.touchBody(e.id);
-    this.notify();
-    await this.trimBodyCache();
-  }
-
-  /** Newest last. A re-read moves an id back to the newest end, exactly as `noteRendered` does. */
-  private touchBody(messageId: string): void {
-    this.bodyRecency.delete(messageId);
-    this.bodyRecency.add(messageId);
-  }
-
-  /**
-   * DROP THE LEAST RECENTLY READ BODIES BACK TO {@link BODY_CACHE_MAX}.
-   *
-   * A DELETE and not a tombstone: an absent record is "never asked", so the next open re-fetches
-   * the body from the store on this machine, while a tombstone would read as "asked, and there is
-   * nothing" and the mail would render empty for ever. Never evicts a message the reader is looking
-   * at — `renderedIds` is the same hold that keeps the windowed prune off those rows — and one
-   * `commitLocal` for the lot, so a trim costs one derivation rather than one per body.
-   */
-  private async trimBodyCache(): Promise<void> {
-    if (this.trimmingBodies) return; // a concurrent batch is already trimming — see the latch
-    if (this.bodyRecency.size <= BODY_CACHE_MAX) return;
-    /**
-     * COUNTED FROM THE RECENCY INDEX, NEVER FROM A STORE SCAN. `entries("message_body")` goes
-     * through `bucketsOf`, which rebuilds every type bucket whenever the version has moved — and
-     * the write that brought us here just moved it. Scanning per body would put the O(N) cost back
-     * that batching the writes removed.
-     */
-    const victims: string[] = [];
-    const owed = this.bodyRecency.size - BODY_CACHE_MAX;
-    for (const id of this.bodyRecency) {
-      if (victims.length >= owed) break;
-      // Never the mail under the reader's eyes: the same hold that keeps the windowed prune off
-      // those rows (`renderedIds`). A pinned id stays and a later one is evicted in its place.
-      if (this.renderedIds.has(id)) continue;
-      victims.push(id);
-    }
-    if (victims.length === 0) return;
-    this.trimmingBodies = true;
-    try {
-      await this.store.commitLocal([], victims.map((id) => ({ type: "message_body", id })));
-      for (const id of victims) this.bodyRecency.delete(id);
-      this.notify();
-    } finally {
-      this.trimmingBodies = false;
-    }
-  }
-
-  /**
-   * The `failed` record, without writing it — so the batch arm can commit many under one bump and
-   * the single arm can keep its own guarded write. See {@link failBody} for why that write is
-   * swallowed.
-   */
-  private failedBodyRecord(messageId: string, err: unknown): MessageBodyRecord {
-    return {
-      messageId,
-      state: "failed",
-      text: "",
-      html: null,
-      loadedRemoteContent: false,
-      error: err instanceof Error ? err.message : String(err),
-      // WHEN, so a reload can tell this failure apart from one this session already made and
-      // refused to repeat. See {@link MessageBodyRecord.failedAt} and `bodyPlan`'s failed arm.
-      failedAt: this.now().getTime(),
-    };
   }
 
   // ── optimistic mutations ─────────────────────────────────────────────────
@@ -3678,19 +3901,25 @@ export class OhmailEngine {
         .filter((msg) => msg.folder === folder && msg.unread)
         .map((msg) => msg.id);
       /**
-       * A glance reads; it does not spend the pin — and the server knows the difference. `feed_mark_seen` is the
-       * involuntary read (the per-card dwell, the leave-commit), and this seam used to FILTER resurfaced ids out of
-       * it so the PATCH could not reach `MessageService.spendResurface` — protecting the pin by DROPPING THE READ:
-       * the flip-back reported live (2026-08-26), a pinned row presented read while open and turning back to unread
-       * on leave because the read never landed. The rule now: a resurfaced message keeps its genuine read state, and
-       * the glance itself goes on the wire — `HttpAdapter` sends `via: "glance"` and the server marks read WITHOUT
-       * spending the pin; only dealing with the row takes the pin down (the read pill, `⇧I`, bulk, read-all, filing,
-       * the settled reply, Done).
-       */
-
-      /**
-       * The id list is still frozen HERE: the enriched mutation is what the overlay, the demo echo and the adapters
-       * all read afterwards — one list, no divergence.
+       * ── A GLANCE READS; IT DOES NOT SPEND THE PIN — AND THE SERVER KNOWS THE DIFFERENCE ─────
+       *
+       * `feed_mark_seen` is the client's INVOLUNTARY read: the per-card dwell mark fires while
+       * somebody is merely scrolling, and the leave-commit fires because they left. This seam
+       * used to FILTER resurfaced ids out of it entirely (`withoutPins`) so the per-id PATCH
+       * could not reach `MessageService.spendResurface` — which protected the pin by DROPPING
+       * THE READ. That is the flip-back reported from live use (2026-08-26): a pinned row
+       * presented as read while open and turned back to unread on leave, because the read never
+       * landed anywhere.
+       *
+       * The rule that replaced it: a resurfaced message keeps its GENUINE read state, and
+       * reading it sticks like anywhere else. So the ids all travel now, and the glance itself
+       * is what goes on the wire — `HttpAdapter` sends `via: "glance"` on this verb's PATCHes,
+       * and the server marks read WITHOUT spending the pin. What survives of the old rule is
+       * exactly its narrow half: a glance still cannot take the pin down; only dealing with the
+       * row does (the read pill, `⇧I`, bulk, read-all, filing, the settled reply, Done).
+       *
+       * The id list is still frozen HERE, because the enriched mutation is what the overlay,
+       * the demo backend's echo and the adapters all read afterwards — one list, no divergence.
        */
       return { ...m, messageIds: given };
     }
@@ -3726,19 +3955,30 @@ export class OhmailEngine {
   }
 
   /**
-   * Apply locally NOW, fire the request, reconcile on the echo. Hard rejection ⇒ overlay rolled back; retryable
-   * failure ⇒ the mutation stays queued and visible (user-always-wins) for `flushPending()` with the SAME key.
-   * `opts.key` is for a caller that already owns an Idempotency-Key, and the one that needs it is the send:
-   * `useMailSend` persists the key with the send lane the moment it is minted, ahead of this call, because a send's
-   * lock must outlive the component — a reload inside the queued window used to let the restored editor mint a SECOND
-   * key and deliver the same mail twice. Resuming the stored key makes the server's same-key branch
-   * (`SendService.resumeExisting` — replay, report, or verify-by-Sent, never a blind resend) the authority on whether
-   * that mail has gone.
-   */
-
-  /**
-   * Not restricted to `mail_send` in the signature — the rule is "the caller owns this verb's identity" — but a key
-   * must be durable at the caller before it is handed over, or this is just a slower `uuid()`.
+   * Apply locally NOW, fire the request, reconcile on the echo. Hard rejection
+   * ⇒ overlay rolled back; retryable failure ⇒ mutation stays queued (and
+   * visible — user-always-wins) for flushPending() with the SAME key.
+   *
+   * ── `opts.key` — A CALLER THAT ALREADY OWNS AN IDEMPOTENCY-KEY ───────────────────────────
+   *
+   * Normally the engine mints one and that is the whole story: the key is born with the verb,
+   * lives in the durable outbox beside it, and a replay after a restart is the same request the
+   * server may already have seen.
+   *
+   * One caller needs it the other way round, and it is the send. `useMailSend` persists the key
+   * with the send LANE the moment it is minted, ahead of this call, because a send's lock has to
+   * outlive the component holding it: a reload inside the queued window used to leave the restored
+   * editor free to press Send again, mint a SECOND key, and deliver the same mail twice — a second
+   * key is a different key, so neither `idempotency_keys` nor `outbound_sends UNIQUE (account_id,
+   * idempotency_key)` can collapse it. Resuming the stored key is what makes the server's own
+   * same-key branch (`SendService.resumeExisting`: `sent` ⇒ replay the stored result, `failed` ⇒
+   * report it, `pending` ⇒ in-flight or verify-by-Sent, NEVER a blind resend) the authority on
+   * whether that mail has already gone out.
+   *
+   * It is deliberately not restricted to `mail_send` in the signature — the rule it encodes is
+   * "the caller owns this verb's identity", and any surface that persists a key before expressing
+   * a verb is entitled to the same guarantee. What IS restricted is who may pass one: a key must
+   * be durable at the caller before it is handed over, or this is just a slower `uuid()`.
    */
   async mutate(m: EngineMutation, opts: { key?: string } = {}): Promise<MutationResult> {
     const enriched = this.enrich(m);
@@ -3773,18 +4013,26 @@ export class OhmailEngine {
     this.notify();
 
     /**
-     * The verb is durable before it is sent — the outbox write ahead of the wire POST (INSTANT-ARCH §6.2(b)). The
-     * order is the guarantee: a process killed between this line and the server's answer restarts with the entry
-     * still in the mirror store, replays it under the SAME Idempotency-Key, and the verb lands exactly once. When the
-     * write is refused, the verb decides: for almost everything the failure is swallowed and the verb goes on the
-     * wire — a `triage_set` sent twice sets the same state twice, and refusing would cost a real action to protect
-     * nothing. A SEND is not that verb: its key is the only thing between "retry" and a second message in someone's
-     * inbox, and the key lives in the row that just failed — dispatch anyway and a death before the answer leaves the
-     * next boot with no record, the user resends, and the server delivers twice with no key to match.
-     */
-
-    /**
-     * So a send whose durable record was refused is rolled back and says so; the composer still holds the text.
+     * THE VERB IS DURABLE BEFORE IT IS SENT — the durable outbox's write, ahead of the wire
+     * POST on purpose (INSTANT-ARCH §6.2(b), stage 1). The order is the guarantee: a process
+     * killed between this line and the server's answer — a tab closed mid-`pagehide` flush, an
+     * app swiped away with a verb in flight — restarts with the entry still in the mirror
+     * store, replays it under the SAME Idempotency-Key, and the verb lands exactly once. The
+     * write is one small commit; on the in-memory store it is free.
+     *
+     * ── WHEN THE WRITE IS REFUSED, THE VERB DECIDES ────────────────────────────────────────
+     *
+     * For almost everything the failure (a full quota, a private window) is swallowed and the
+     * verb goes on the wire anyway: a `triage_set` that gets sent twice sets the same state twice,
+     * and refusing to send it would cost the user a real action to protect them from nothing.
+     *
+     * A SEND IS NOT THAT VERB. Its Idempotency-Key is the only thing standing between "retry" and
+     * "a second message in someone's inbox", and the key lives in the row that just failed to be
+     * written. Dispatch it anyway and the sequence is: POST issued, process dies before the
+     * answer, next boot has no record the send was ever expressed, the user sends it again — and
+     * the server, with no key to match, delivers twice. There is no recovery from a delivered
+     * message. So a send whose durable record was refused is rolled back and says so, which the
+     * composer can act on (it still holds the text) in a way a duplicate delivery can never be.
      */
     const pending: PendingMutation = {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
@@ -3855,20 +4103,25 @@ export class OhmailEngine {
     }
 
     /**
-     * The fresh verb takes the same gate as every other road. It was the last dispatch outside {@link outboxGate},
-     * waiting on a private `replayActive` deferred — serialized against the drive's replay and nothing else, so two
-     * dispatches could be on the wire together; for the read verbs, whose supersession key is `null`, ordering IS the
-     * contract (a newer unread landing before an older read leaves the server at the older value, silently). Joining
-     * the chain is what "wait out whatever is in flight" means, bounded through {@link dispatchWithDeadline}. The
-     * hold is still read synchronously FIRST, deliberately: it may stand for minutes and a person pressing Send must
-     * not sit through it — the verb waits in the QUEUE (expressed, painted, persisted) and the hold's settle chains
-     * the drive.
-     */
-
-    /**
-     * The one exception is the caller-settled create (`draft_save`, draftId null): its caller adopts `entityId` from
-     * THIS result and has no retry path, so it joins the gate and waits — a late-adopted draft id is correct; an
-     * orphaned `queued` create is a twin factory.
+     * ── THE FRESH VERB TAKES THE SAME GATE AS EVERY OTHER ROAD ─────────────────────────────
+     *
+     * This was the last dispatch outside {@link outboxGate}. It waited out a private
+     * `replayActive` deferred instead, which serialized it against the DRIVE's replay and
+     * against nothing else — so a `mutate` and a `flushPending`, or two `mutate`s, could be on
+     * the wire together. For the read verbs, whose supersession key is `null`, ordering IS the
+     * contract: a newer unread landing before an older read leaves the server at the older
+     * value, and nothing afterwards notices.
+     *
+     * Joining the chain is what "wait out whatever is in flight" now means, and it is bounded —
+     * every dispatch on the chain goes through {@link dispatchWithDeadline}.
+     *
+     * THE HOLD IS STILL READ SYNCHRONOUSLY, FIRST, and that asymmetry is deliberate: it may
+     * stand for minutes, and a person pressing Send must not sit through it. The verb waits in
+     * the QUEUE instead — expressed, painted, persisted, not yet on the wire — and the hold's
+     * own settle chains the drive that delivers it. The one exception is the caller-settled
+     * create (`draft_save`, draftId null): its caller adopts `entityId` from THIS result and has
+     * no retry path of its own, so it joins the gate and waits however long. A late-adopted
+     * draft id is correct; an orphaned `queued` create is a twin factory.
      */
     const awaitsHold = enriched.kind === "draft_save" && enriched.draftId === null;
     const queued = (): MutationResult => {
@@ -3970,20 +4223,33 @@ export class OhmailEngine {
    * boot), and becomes the order barrier {@link outboxHold} names, so no other outbox dispatch may start behind it.
    */
   /**
-   * The one dispatch every road takes. Round four found the gate global but two riders not: `retryAbandoned` and
-   * `flushPendingInner` had neither the release-time hold check nor `deferReconcile`, because both were added to
-   * `mutate` by hand — this method makes that shape impossible, and a source census asserts nothing calls {@link
-   * dispatchWithDeadline} except this. It owns two rules: the RELEASE-TIME hold check — a hold can be armed by the
-   * very dispatch a caller queued behind, so checking on entry would release into the race the barrier prevents
-   * (`held` says so; each road answers its own way); and `deferReconcile`, ALWAYS — the reconcile drain must not run
-   * while the lane is held, else the deadline times the DRAIN and a completed POST reports `queued`; the caller gets
-   * `owed` back.
-   */
-
-  /**
-   * Deliberately NOT the gate: the unit of work owns that — batches hold it whole (a fresh verb landing between two
-   * replayed ones puts a newer write ahead of older ones), singles take it themselves; taking it here would have each
-   * batch queue behind itself, a deadlock a nested-flag cannot fix.
+   * ── THE ONE DISPATCH EVERY ROAD TAKES ────────────────────────────────────────────────────
+   *
+   * Round four found the gate global but two of the things that ride on it not: `retryAbandoned`
+   * and `flushPendingInner` had neither the release-time hold check nor `deferReconcile`, because
+   * both were added to `mutate` by hand and not carried across. That is the shape this method
+   * exists to make impossible — there is one place to add such a rule now, and a source census
+   * below the tests asserts nothing calls {@link dispatchWithDeadline} except this.
+   *
+   * It owns two rules and deliberately not a third:
+   *
+   *  · THE RELEASE-TIME HOLD CHECK. A caller joins the chain when it calls and is released when
+   *    everything ahead has settled — and a hold can be armed in between, by the very dispatch it
+   *    queued behind. Checking on entry would read `null` and release into the race the barrier
+   *    exists to prevent. `held` says so; each road answers in its own way, because what to do
+   *    about a hold differs (a fresh verb queues, a flush answers per entry, a drive skips).
+   *  · `deferReconcile`, ALWAYS. The reconcile drain must not run while the lane is held: inside
+   *    it, the deadline times the DRAIN rather than the dispatch, a completed POST can be reported
+   *    `queued`, and a slow drain arms a barrier that has nothing to do with the wire. The caller
+   *    gets `owed` back and issues the drain after releasing.
+   *
+   *  · NOT the gate. The unit of work owns that — `replayOutboxInner` and `flushPendingInner`
+   *    hold it across a whole BATCH, because a fresh verb landing between two replayed ones would
+   *    put a newer write ahead of older ones, and the batch is in user order. `mutate` and
+   *    `retryAbandoned` are single verbs and take it themselves. Taking the gate here as well
+   *    would have each batch queue behind itself, which is a deadlock, and a boolean "am I
+   *    nested" flag is not a fix — it reads true while a holder is merely suspended, so a
+   *    genuinely concurrent caller would take it as permission to run alongside.
    */
   private async dispatchOnLane(
     p: PendingMutation,
@@ -4098,19 +4364,33 @@ export class OhmailEngine {
   }
 
   /**
-   * Hard-delete one outbox entry on its terminal outcome (best-effort). It stayed on `prune` when the rest of the
-   * outbox moved to `commitLocal`: three callers are synchronous `void` functions that read the store immediately
-   * after, which works only because `prune` evicts from `records` BEFORE its first await — moving it to `commitLocal`
-   * pushed the eviction two microtasks later and the row was still readable after the sweep that retired it (seven
-   * kill-restart failures in `durable-outbox.test.ts`). Supersession's delete is NOT here any more: it is one half of
-   * a replacement, and gone-from-memory/still-on-disk is exactly the wrong failure there — it rides the newer verb's
-   * own transaction. A LONE delete has nothing to be atomic with and memory-first fails safe: a row that outlives its
-   * delete replays under its original key.
-   */
-
-  /**
-   * `prune` is also the only primitive that evicts `unflushed` (`store.ts`), which a bare `transact` would leave to
-   * the next carry-forward.
+   * Hard-delete one outbox entry on its terminal outcome (best-effort, same reasoning).
+   *
+   * ── WHY THIS ONE STAYED ON `prune` WHEN THE REST OF THE OUTBOX MOVED TO `commitLocal` ──────
+   *
+   * `commitLocal` is write-then-publish: memory changes only once the storage transaction has
+   * resolved. That is the whole point of it for the PAIRED writes — `abandon` must never be
+   * observable with the verb in both collections or in neither. But three callers of this method
+   * are synchronous `void` functions that cannot await anything: `sweepAwaitingEcho` and
+   * `restoreOutboxOnce`'s expired-create arm. They call it as `void this.dropOutbox(id)` and read
+   * the store immediately afterwards, which works only because `prune` evicts from `records`
+   * BEFORE its first await.
+   *
+   * SUPERSESSION USED TO BE HERE AND IS NOT ANY MORE. Its delete is one half of a replacement, so
+   * the direction that fails safe for a terminal delete — gone from memory, still on disk, replayed
+   * under the same key — is exactly the wrong one there: the replay puts the stale verb back over
+   * newer state. It now rides the newer verb's own transaction. The exception below is for
+   * genuinely terminal deletes and nothing else. Moving this line to `commitLocal` pushed the eviction two
+   * microtasks later and the row was still readable after the sweep that retired it — measured as
+   * seven kill-restart failures in `durable-outbox.test.ts`, none of which is about storage.
+   *
+   * A LONE DELETE HAS NOTHING TO BE ATOMIC WITH, and memory-first fails in the safe direction
+   * here: memory says gone, disk may still hold the row, and a row that outlives its delete
+   * replays under its original Idempotency-Key. The direction `commitLocal` exists to forbid is
+   * the opposite one — memory publishing a write that storage refused — and no delete can produce
+   * it. So this is not the migration left half-finished; `prune` is the correct primitive for a
+   * single-key terminal delete, and it is also the only one that evicts `unflushed` (`store.ts`),
+   * which a bare `transact` would leave to the next carry-forward.
    */
   private async dropOutbox(id: string): Promise<void> {
     try {
@@ -4170,14 +4450,27 @@ export class OhmailEngine {
     p: PendingMutation, attempts: number, err: MutationRejectedError,
   ): Promise<MutationResult> {
     /**
-     * Giving up on a send is not proof it did not leave: eight answers this client could not model are eight
-     * unknowns, and reporting a `mail_send` as a generic `rolled_back` says the opposite — the composer treats it as
-     * failure and the next press mints a FRESH key, a second delivery of mail the reservation may already have sent.
-     * So a send is recoded to `send_unverified`, the gated send's own terminal ambiguity, which the compose surface
-     * already renders ("check your Sent folder before retrying"). The recode applies to BOTH the returned result and
-     * the persisted `lastError` — the two are read by different people at different times, and either saying "failed"
-     * is enough to buy a duplicate. Try again then means "ask the server what happened under this key": the same-key
-     * replay is verify-before-resend, never a second message.
+     * ── GIVING UP ON A SEND IS NOT PROOF IT DID NOT LEAVE ────────────────────────────────────
+     *
+     * Eight answers this client could not model are eight unknowns, not evidence of
+     * non-delivery. Reporting a `mail_send` as a generic `rolled_back` says the opposite: the
+     * composer treats it as a failure, and the next press is free to mint a FRESH key — a second
+     * `POST /drafts` and a second delivery of mail the reservation may already have sent.
+     *
+     * So a send is recoded to the vocabulary the product already has for exactly this state.
+     * `send_unverified` is the gated send's own terminal ambiguity — SMTP threw AND the Sent
+     * probe found nothing — and `phaseFor` in the compose surface already renders it: "we could
+     * not confirm this send; check your Sent folder before retrying". That surface was built for
+     * this and was simply unreachable from here.
+     *
+     * The recode is applied to BOTH the returned result and the persisted `lastError`, because
+     * the two are read by different people at different times: the result by whoever pressed, the
+     * record by whoever opens the list tomorrow. One of them saying "failed" is enough to buy a
+     * duplicate.
+     *
+     * Try again on such a record then means "ask the server what happened under this key" — the
+     * same-key replay is verify-before-resend, so its outcomes are `confirmed`, `send_failed`, or
+     * still unverified, and never a second message.
      */
     const isSend = p.mutation.kind === "mail_send";
     const reported = isSend
@@ -4317,19 +4610,31 @@ export class OhmailEngine {
   }
 
   /**
-   * Put one given-up verb back — under its ORIGINAL Idempotency-Key, through the one dispatch road. It RETURNS the
-   * result: it answered a boolean once, and a retried send answering `send_unverified` showed nothing — no warning,
-   * no record, a person free to press send again on mail that may already have left; the sheet row is the only thing
-   * waiting, so the row is where the answer lands. One record, and only this record: queue-wide `flushPending()`
-   * ignored every client backoff, so retrying A dispatched unrelated Q early and could spend Q's last attempt — a
-   * foreground press compressing another verb's hour of patience into seconds; now it dispatches exactly `p` under
-   * the same `outboxGate`.
-   */
-
-  /**
-   * Order of operations, each step chosen for its failure: refuse first (record flagged un-retryable so the button
-   * stops lying); rebuild the overlay (intent visible while the request is open); `putOutbox`, which THROWS here (the
-   * abandoned row is about to be deleted, and losing both has no recovery); only then prune, then dispatch.
+   * PUT ONE GIVEN-UP VERB BACK — under its ORIGINAL Idempotency-Key, through the one dispatch road.
+   *
+   * ── IT RETURNS THE RESULT, AND THAT IS THE POINT ────────────────────────────────────────
+   *
+   * This answered a boolean and the surfaces threw it away. A retried send answering
+   * `send_unverified` therefore showed nothing at all — no warning, no record (it had been deleted
+   * before dispatch), and a person free to press send again on mail that may already have left.
+   * For a verb `ownerSettled` covers, the sheet row is the only thing waiting on the result, so
+   * the row is where the answer has to land.
+   *
+   * ── ONE RECORD, AND ONLY THIS RECORD ────────────────────────────────────────────────────
+   *
+   * It used to call queue-wide `flushPending()`, which ignores every client backoff. Retrying A
+   * therefore dispatched unrelated Q early, and if Q sat at seven failures that collateral attempt
+   * spent its eighth and abandoned it — a foreground press compressing another verb's hour of
+   * patience into seconds. Now it dispatches exactly `p`, through `dispatchWithDeadline`, under the
+   * same `outboxGate` every other road takes, and touches no other record's `nextAt` or `attempts`.
+   *
+   * ── ORDER OF OPERATIONS, EACH STEP CHOSEN FOR ITS FAILURE ───────────────────────────────
+   *
+   * Refuse first (a coded `rolled_back`, the record flagged un-retryable on disk so the button
+   * stops lying). Then rebuild the overlay, so the intent is visible again while the request is
+   * open rather than absent until a restart. Then `putOutbox` — which THROWS here rather than
+   * swallowing, because the abandoned row is about to be deleted and losing both is the one
+   * outcome with no recovery. Only then prune the abandoned row, and only then dispatch.
    */
   async retryAbandoned(id: string): Promise<MutationResult> {
     const refuse = async (
@@ -4489,20 +4794,30 @@ export class OhmailEngine {
   }
 
   /**
-   * A newer verb retires the queued older verb it supersedes — user-always-wins applied to the outbox itself: a
-   * queued `mark_seen(read)` replayed after the user's newer `mark_seen(unread)` committed would put the SERVER back
-   * at the older value, so retiring it IS honoring their latest word — for the drive's replay and `flushPending`
-   * alike.
-   */
-
-  /**
-   * What "supersedes" may mean, deliberately narrow: SAME KIND, SAME SCALAR TARGET ({@link supersedeKey}) —
-   * absolute-valued verbs where the newer value is the whole intent (`tag_assign` keys on the MESSAGE alone: its
-   * enriched `labels` already carries the union); READ-FLAG ID SUBTRACTION — a newer `mark_seen` subtracts its ids
-   * from queued `mark_seen` AND `feed_mark_seen`, a newer `feed_mark_seen` only from `feed_mark_seen` (a glance must
-   * never cancel a queued deliberate unread) — rewriting a narrowed body under the SAME key is safe on exactly these
-   * routes (`PATCH /messages` stores no idempotency row); and NOTHING ELSE — cross-kind conflicts converge through
-   * the server's write ownership, `mail_send` is never touched, creates supersede nothing.
+   * A NEWER VERB RETIRES THE QUEUED OLDER VERB IT SUPERSEDES — the user-always-wins rule
+   * applied to the outbox itself. Without this, a queued `mark_seen(read)` replayed after the
+   * user's newer `mark_seen(unread)` committed would put the SERVER back at the older value:
+   * the replay is ordered against other queued verbs, but a live verb that already landed is
+   * not in the queue for order to protect. The user superseded the old intent by expressing
+   * the new one, so retiring it here IS honoring their latest word — for the drive's replay
+   * and for `flushPending` alike.
+   *
+   * What "supersedes" is allowed to mean, deliberately narrow:
+   *  · SAME KIND, SAME SCALAR TARGET ({@link supersedeKey}) — absolute-valued verbs where the
+   *    newer value is the whole intent (triage, move, decide, rename, recolor, destination,
+   *    a draft body autosave). `tag_assign` keys on the MESSAGE alone because its enriched
+   *    `labels` is the complete list computed over the older overlay — the newer verb already
+   *    carries the union.
+   *  · READ-FLAG ID SUBTRACTION — a newer `mark_seen` removes its ids from queued `mark_seen`
+   *    AND queued `feed_mark_seen` lists (an explicit read/unread outranks both); a newer
+   *    `feed_mark_seen` subtracts only from queued `feed_mark_seen` (a glance must never
+   *    cancel a queued deliberate unread), and its same-view waterline replaces the older
+   *    entry's. Rewriting a narrowed body under the SAME Idempotency-Key is safe on exactly
+   *    these routes: `PATCH /messages` stores no idempotency row (naturally idempotent, the
+   *    route says so), so no stored-hash 409 can meet the new body.
+   *  · NOTHING ELSE. Cross-kind conflicts (a move racing a delete) converge through the
+   *    server's own write-ownership; `mail_send` is never touched (the reservation machinery
+   *    owns it); creates supersede nothing.
    */
   /**
    * A NEWER VERB ALSO RETIRES AN ABANDONED RECORD FOR THE SAME TARGET — marked, never deleted. `supersedeQueued`
