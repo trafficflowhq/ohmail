@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.17.0] — 2026-09-12
+
 ### A large mailbox no longer costs the desktop window the whole mailbox
 
 Opening a big account could take the app past four gigabytes and hold a CPU core for minutes after
@@ -213,11 +220,6 @@ its job, not an incident.
 There is also `POST /internal/fault`, which makes the server answer one deliberate 5xx so you
 can confirm the record and the alerts work on your own install. It needs the internal shared
 secret, and it is absent unless the server has somewhere to record faults.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.16.2] — 2026-09-11
 
@@ -6016,7 +6018,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.16.2...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.17.0
 [0.16.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.2
 [0.16.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.1
 [0.16.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.0
