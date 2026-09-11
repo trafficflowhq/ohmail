@@ -75,42 +75,16 @@ export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow
   });
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE SENDER IDENTITY OF A SUGGESTION — asked in ONE place, because three callers need it
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   ── WHY THE ROW IS PER MESSAGE AND THE QUESTION IS PER SENDER ───────────────────────────────
-
-   A suggestion is stored against a MESSAGE — `routing_decisions.message_id` is the only key the
-   table has — and it is ABOUT A SENDER: the question bought is "does this sender belong in this
-   person's Ohbox", the verdict is applied to the sender's whole held bag, and the surface draws one
-   row per sender. Those two facts sat unreconciled and one of them was load-bearing for money.
-
-   The Screener picks a REPRESENTATIVE per sender (their newest held message) and every layer keyed
-   off it: the ledger source, the stored-suggestion skip, the surface's "already answered". So a
-   sender who simply SENT AGAIN promoted a new representative that carried no suggestion row, was
-   admitted by every skip, and was bought a second time — once per message, on a path with no press
-   anywhere in it. The bound the automatic path advertised ("one model call per NEW held sender,
-   ever") was really "one per message", and the party choosing how many messages there are is the
-   sender.
-
-   So the identity below is `lower(from_address)` — the same normalisation `heldSenderPage`,
-   `heldRowsForSender` and `core/rules.ts#matches` use, and the one
-   `messages_account_from_addr_idx` is built on. `account_id` LEADS every predicate here: a sender
-   address is attacker-choosable, so it is never a filter applied to a cross-account result.
-
-   ── AND WHY THE LEDGER SOURCE DID NOT MOVE ──────────────────────────────────────────────────
-
-   The obvious fix is to re-key `screenerLedgerSource` on the sender. It is the wrong one, for two
-   reasons that only appear when you write it out — both recorded at
-   {@link ../src/ledger-source.ts screenerLedgerSource}. In short: a ledger `source` is APPEND-ONLY
-   and a normalised address is remote-controlled and guessable, so it would build the confirmation
-   oracle `classifyLedgerSource` destroyed its plaintexts to close; and one source shared by the
-   cron and the button is what makes the exclusive claim serialise them, which two namespaces
-   would undo (two credits and two model calls for one sender, seen once).
-
-   The entitlement lives here instead: a QUERY over rows we already hold, which cannot leak an
-   identifier because it writes nothing. */
+/**
+ * The sender identity of a suggestion — asked in ONE place for three callers. A suggestion is
+ * stored against a MESSAGE and is ABOUT A SENDER: every layer keyed off the per-sender
+ * representative, so a sender who simply SENT AGAIN was bought again — once per message, the
+ * sender choosing how many. The identity is `lower(from_address)`; `account_id` LEADS every
+ * predicate. The ledger source did NOT move to the sender: an append-only `source` with a
+ * guessable identifier would rebuild the oracle `classifyLedgerSource` destroyed its plaintexts
+ * to close, and one shared source serialises the cron and the button. The entitlement is a QUERY
+ * over rows we already hold — it writes nothing and cannot leak.
+ */
 
 /**
  * Does this account already hold Screener advice about this sender? — as an `EXISTS` fragment,
