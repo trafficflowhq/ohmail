@@ -28,7 +28,18 @@ import {
 } from "../src/theme";
 import { usePrefs } from "../src/state/store";
 import { useWorld } from "../src/state/world";
-import { Button, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
+import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
+import { Sheet, SheetRow } from "../src/ui/Sheet";
+import { phoneEngineStart } from "../src/engine/engine-artifact";
+import { standaloneAvailable } from "../src/engine/standalone-door";
+import { releaseMailbox } from "../src/net/mailboxes";
+import { useConnection } from "../src/net/connection";
+import {
+  claimChipLabel,
+  claimFrom,
+  mayStopHere,
+  platformRuleLine,
+} from "../src/ui/standalone-form";
 import { useLocale, useLocaleControls } from "../src/i18n/LocaleProvider";
 import { type AppLocale } from "../src/i18n/locale";
 import { DetailBar } from "../src/ui/chrome";
@@ -134,6 +145,9 @@ function SettingsBody() {
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.settings}</Txt>
         </View>
+
+        {/* this phone — first, because it is the only block that says what this phone IS */}
+        <ThisPhonePanel />
 
         {/* appearance */}
         <Panel style={{ paddingBottom: 16, marginBottom: 14 }}>
@@ -301,6 +315,108 @@ function SettingsBody() {
  * local), and a refused account write leaves the segmented control on this device's real face
  * with one sentence under it.
  */
+/**
+ * ═══ SETTINGS → THIS PHONE ═════════════════════════════════════════════════════════════════════
+ *
+ * One card per mailbox: its address, the claim state as a chip, the platform rule line, and — where
+ * there is a claim of ours to give up — the hand-back. The MAILBOXES-COMPACT idiom, in the phone's
+ * own primitives.
+ *
+ * ── IT RENDERS ONLY WHERE THIS PHONE COULD ORGANIZE, AND ONLY OVER A READ ──────────────────────
+ *
+ * `standaloneAvailable` is the build's answer and `known` is the read's. A phone with no engine has
+ * nothing to say here; a phone that has not read yet must say nothing about who organizes anything,
+ * which is the rule `world.mailboxes.known` exists for. Both absences are silence, not a placeholder.
+ *
+ * The five chip states are the desktop's own keys, and the verb is plain: the consequence and the
+ * danger-styled confirm are in the sheet, where a press is deliberate.
+ */
+function ThisPhonePanel() {
+  const w = useWorld();
+  const conn = useConnection();
+  const session = conn.state.k === "live" ? conn.state.session : null;
+  /* WHICH MAILBOXES THIS PHONE HAS ASKED TO HAND BACK — by id, held for this screen's life. The
+     press is the newest word until the row carries the release; the desktop's `stopQueued` rule. */
+  const [asked, setAsked] = useState<readonly string[]>([]);
+  const [confirming, setConfirming] = useState<string | null>(null);
+
+  if (!standaloneAvailable({ startEngine: phoneEngineStart() })) return null;
+  if (!w.mailboxes.known || w.mailboxes.rows.length === 0) return null;
+
+  return (
+    <>
+      <Panel style={{ paddingVertical: 18, marginBottom: 14 }}>
+        <Section>{Copy.phoneThisPhone}</Section>
+        {w.mailboxes.rows.map((row, i) => {
+          const claim = claimFrom(
+            { known: w.mailboxes.known, organizer: holderFor(row) },
+            Copy.phoneThisPhone,
+            asked.includes(row.id),
+          );
+          const chip = claimChipLabel(claim);
+          return (
+            <View key={row.id}>
+              {i > 0 ? <Rule inset={20} /> : null}
+              <View style={{ paddingHorizontal: 20, paddingTop: 10, gap: 6 }}>
+                <Txt variant="settingsLabel">{row.address}</Txt>
+                {/* NO CHIP FOR `unknown`, rather than a chip that guesses — `claimChipLabel`
+                    answers null there and this renders the absence. */}
+                {chip === null ? null : (
+                  <Chip style={{ alignSelf: "flex-start" }}>{chip}</Chip>
+                )}
+                <Txt variant="note" tone="ink2">
+                  {platformRuleLine(Platform.OS)}
+                </Txt>
+                {mayStopHere(claim) ? (
+                  <Button
+                    label={Copy.settingsStopHere}
+                    variant="quiet"
+                    onPress={() => setConfirming(row.id)}
+                    style={{ alignSelf: "flex-start", marginTop: 4 }}
+                  />
+                ) : null}
+              </View>
+            </View>
+          );
+        })}
+      </Panel>
+
+      {/* THE CONSEQUENCE, THEN THE ONE DELIBERATE PRESS — the app's own destructive idiom
+          (`FoldersGroup`'s delete confirm). The danger is on the confirm and nowhere else. */}
+      {confirming !== null ? (
+        <Sheet open onClose={() => setConfirming(null)} label={Copy.settingsStopHere}>
+          <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
+            {Copy.settingsStopHereWhat}
+          </Txt>
+          <SheetRow
+            icon="pause"
+            label={Copy.settingsStopHereConfirm}
+            onPress={() => {
+              const id = confirming;
+              setConfirming(null);
+              /* RECORDED BEFORE THE REQUEST LEAVES, so the chip stops saying "Organizing" the
+                 moment the press lands rather than a poll later — and a refusal is not a reason
+                 to claim the mailbox is still being filed by a phone that asked to stop. */
+              setAsked((cur) => (cur.includes(id) ? cur : [...cur, id]));
+              if (session !== null) void releaseMailbox(session, id);
+            }}
+          />
+          <SheetRow icon="x" label={Copy.settingsStopHereCancel} onPress={() => setConfirming(null)} />
+        </Sheet>
+      ) : null}
+    </>
+  );
+}
+
+/** One row's holder in `claimFrom`'s shape — a named holder, or nothing. */
+function holderFor(row: {
+  organizedBy: { kind: string | null; name: string | null } | null;
+  organizerState: "held" | "stopped" | null;
+}): { name: string; stopped: boolean } | null {
+  const name = row.organizedBy?.name ?? "";
+  return name === "" ? null : { name, stopped: row.organizerState === "stopped" };
+}
+
 function FacePanel({
   pin,
   account,

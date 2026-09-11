@@ -160,6 +160,14 @@ export interface World {
     ownAddresses: readonly string[];
     /** Who organizes them, when one holder organizes all of them and is named. */
     organizer: PhoneOrganizer | null;
+    /**
+     * THE ROWS THE READ ALREADY FETCHED — kept rather than discarded after deriving `organizer`.
+     *
+     * Settings → This phone names a mailbox by ADDRESS and hands it back by ID, and neither is
+     * derivable from `organizer` or `ownAddresses`. The read has both; it was throwing them away.
+     * Empty where nothing has been read, which `known` is what distinguishes.
+     */
+    rows: readonly PhoneMailbox[];
   };
   ohbox: {
     resurfaced: WorldMail[];
@@ -368,7 +376,7 @@ function emptyWorld(actions: WorldActions): World {
     account: { name: "", email: "" },
     // Nothing has been asked on the empty world, so `known` is false and the banner is withheld
     // — the same honest-unknown the boot facts keep between a teardown and the redirect.
-    mailboxes: { known: false, ownAddresses: [], organizer: null },
+    mailboxes: { known: false, ownAddresses: [], organizer: null, rows: [] },
     ohbox: { resurfaced: [], fresh: [], seen: [], unread: 0, total: 0, meta: "" },
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, waterLabel: Copy.waterline, newCount: 0, meta: "" },
@@ -929,6 +937,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         known: mailboxes !== null,
         ownAddresses: addressesNow.current,
         organizer: mailboxes === null ? null : phoneOrganizer(mailboxes),
+        /* The same value `known` and `organizer` are derived from, so the three cannot disagree:
+           `freshestRead` keeps the last successful answer, and a failed read changes none of them. */
+        rows: mailboxes ?? [],
       },
       ohbox: { ...ohbox, meta: Copy.metaUnreadOf(ohbox.unread, ohbox.total) },
       doorbell: {

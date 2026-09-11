@@ -120,3 +120,29 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
     return null;
   }
 }
+
+/**
+ * HAND A MAILBOX BACK — `POST /mailboxes/:id/release`, the hosted route's local twin.
+ *
+ * 202 is the honest success: the claim lives in the customer's IMAP folder and the organizer's own
+ * next pass is what expunges it, so this returns "asked for" and never "done". Anything else is a
+ * refusal, and the caller keeps saying "Organizing" rather than a state nothing confirmed.
+ *
+ * No step-up, mirroring the route: this direction GIVES UP control, keeps every credential and
+ * every message, and is reversible with the press beside it.
+ */
+export async function releaseMailbox(
+  session: ConnectedSession,
+  mailboxId: string,
+): Promise<"requested" | "already" | "refused"> {
+  try {
+    const res = await session.bearer.fetch(
+      `${session.profile.origin}/mailboxes/${encodeURIComponent(mailboxId)}/release`,
+      { method: "POST" },
+    );
+    if (res.status === 202) return "requested";
+    return res.status === 200 ? "already" : "refused";
+  } catch {
+    return "refused";
+  }
+}
