@@ -870,6 +870,30 @@ async function releaseOwnClaim(
 }
 
 /**
+ * WHY THE HOLDER OF THIS MAILBOX IS NOT US — the term of the lease's own-claim check that refused
+ * the winning claim (`rawOurs` / `isOurs` in `organizer-lease.ts`: install id, then nonce).
+ *
+ * A stand-down reports `organized_elsewhere:*` and says nothing about which of three states it
+ * is, and they want opposite fixes: a stranger holds it, a restored copy of us holds it, or WE
+ * hold it and failed to recognise ourselves. `ours` is the state that must be unreachable — the
+ * holder carries this install's id and this install's nonce and the gate stood down anyway, which
+ * is a composition with two identities rather than a contested mailbox.
+ */
+function ownClaimTerm(
+  by: { installId: string; nonce: string } | null,
+  installId: string,
+  lastNonce: string | null,
+): "no_holder" | "install_id" | "nonce" | "ours" | "own_id_nonce_unarmed" {
+  if (by === null) return "no_holder";
+  if (by.installId !== installId) return "install_id";
+  /* THE UNARMED CASE IS ITS OWN ANSWER, not folded into `ours`. This install's nonce is armed only
+     by a gate that SAID organize, so on the first gate of a launch it is null while the gate's own
+     freshly written nonce is not — collapsing the two would report a nonce match nobody made. */
+  if (lastNonce === null) return "own_id_nonce_unarmed";
+  return by.nonce === lastNonce ? "ours" : "nonce";
+}
+
+/**
  * The service bag, rebuilt PER REQUEST so the two AI slots can be present or absent according to
  * what this install can actually do at the moment it is asked.
  *
@@ -4730,6 +4754,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // nothing about the state it exists to name. `reconcile-cron.ts:259` already carries the
           // same correction in the same words for the same value on the hosted door.
           state: outcome.state,
+          // WHICH TERM REFUSED THE HOLDER — see {@link ownClaimTerm}. `ours` on this line is an
+          // install that stood down against its own claim, which no contested mailbox can produce.
+          ownClaimTerm: ownClaimTerm(outcome.by, installId, leaseNonce),
           reason: "another organizer holds this mailbox; this install becomes a READER of it — it " +
             "keeps its login and its poll timer, its mirror goes on growing, it can mark mail read " +
             "and send, and it moves, files and deletes nothing",
