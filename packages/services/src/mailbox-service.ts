@@ -76,15 +76,13 @@ export type MailboxTakeoverResult =
    */
   | { outcome: "authorized"; previousReason: string | null }
   /**
-   * This install already organizes it, and consent is already recorded — so no stamp is written
-   * and none may be: a second press is not a second becoming.
-   *
-   * NOT "nothing written", which is what this line said until 2026-09-02 and what every caller
-   * reasoned from. A `screening` block on this outcome IS applied — the window and the scope are
-   * the answer the person just gave, and a re-run of setup is the ordinary way to reach this
-   * branch. It can also throw a 400 from that write, on the same bounds as the first-consent
-   * path. See the branch itself in {@link MailboxService.organizeHere} for why the refusal and
-   * the write are separable.
+   * This install already organizes it, and consent is already recorded — no stamp is written and
+   * none may be: a second press is not a second becoming. NOT "nothing written", which is what
+   * this line once said and what every caller reasoned from: a `screening` block on this outcome
+   * IS applied — the window and the scope are the answer the person just gave, and a re-run of
+   * setup is the ordinary way to reach this branch. It can also throw a 400 from that write, on
+   * the same bounds as the first-consent path. See the branch in {@link
+   * MailboxService.organizeHere} for why the refusal and the write are separable.
    */
   | { outcome: "already_organizing" }
   /** Disconnected by the user, which is not a stand-down. Reconnect it instead. Nothing written. */
@@ -116,49 +114,25 @@ export type MailboxReleaseResult =
 
 /**
  * The optional credential half of {@link MailboxService.organizeHere} — a password re-entered
- * inside the claim ceremony.
- *
- * ── THE DEFECT THIS CLOSES (`QAR-TAKEOVER-NEEDS-A-READABLE-CREDENTIAL`) ────────────────────
- *
- * A takeover authorized a becoming and wrote a stamp. It said nothing about whether the mailbox
- * still had a credential the worker could USE — and on the standalone door, the exact path a
- * person takes is: organize on machine A, machine B demotes to reader, months later claim back on
- * B, whose stored password the provider has since invalidated. The stamp landed, the gate
- * promoted, the login failed, and the mailbox quarantined with a backoff — an action that looked
- * like it worked and left the mailbox worse than before.
- *
- * So the ceremony takes a password when the caller has one, PROVES it against the real server,
- * and stores it in the SAME transaction as the stamp. A wrong password is refused naming the
- * probe, before anything is written; a right one means the promotion the worker performs is one
- * it can actually carry out. Omitted ⇒ the stored credential stands, which is the ordinary Cloud
- * case where nothing about the login has changed.
+ * inside the claim ceremony. The defect: a takeover wrote a stamp saying nothing about whether
+ * the mailbox still had a credential the worker could USE — claim back on a machine whose stored
+ * password the provider has since invalidated: the stamp landed, the login failed, the mailbox
+ * quarantined — an action that looked like it worked and left the mailbox worse. So the ceremony
+ * takes a password when the caller has one, PROVES it against the real server, and stores it in
+ * the SAME transaction as the stamp; a wrong password is refused before anything is written.
+ * Omitted means the stored credential stands — the ordinary Cloud case.
  */
 export interface OrganizeHereInput {
   imap?: { pass: string };
   /**
-   * THE SCREENING WINDOW, CHOSEN IN THE SAME BREATH AS CONSENT — and it must ride the same
-   * transaction, which is why it is on this input rather than left to `PATCH /consent/settings`.
-   *
-   * ── THE DEFECT THIS CLOSES, AND IT IS NOT THE WINDOW ─────────────────────────────────────
-   *
-   * `account_settings.screening_baseline_at` is the instant the window is measured back from, and
-   * it is written by THE FIRST SCREENER DECIDE and by nothing else. So between consenting and
-   * making a first decision there is NO baseline, and with no baseline there is NO cutoff — the
-   * router holds every unruled sender's mail whatever its date. On a mailbox with years of
-   * history that is the entire backlog moved into `ohmail/Screener`, physically, one IMAP move
-   * per message, before the person has answered a single card. The window they just chose had no
-   * effect at all, because the thing it is measured from did not exist yet.
-   *
-   * So consent WRITES THE BASELINE, `COALESCE`d so an account that already has one keeps it (the
-   * column's own guard — "written once, by the account's first screener decide, in that decide's
-   * own transaction and only while still NULL"). Re-running onboarding therefore does not slide
-   * a live account's cutline forward, which would silently re-open its Screener queue.
-   *
-   * ── ABSENT ⇒ NOTHING IS WRITTEN TO `account_settings` AT ALL ─────────────────────────────
-   *
-   * A claim-back on a mailbox whose account has been screening for months carries no window, and
-   * must not: the person pressed "organize here", not "reconsider my history depth". Only the
-   * onboarding flow sends this half.
+   * The screening window, chosen in the same breath as consent — it must ride the same
+   * transaction. The defect is not the window: `screening_baseline_at` is written by THE FIRST
+   * SCREENER DECIDE and nothing else, so between consenting and a first decision there is no
+   * baseline and no cutoff — on a mailbox with years of history, the entire backlog moved into
+   * `ohmail/Screener` physically before the person answered a single card. So consent WRITES THE
+   * BASELINE, `COALESCE`d so an account that already has one keeps it — re-running onboarding
+   * does not slide a live cutline forward. Absent means nothing is written at all: a claim-back
+   * carries no window — the person pressed "organize here", not "reconsider my history depth".
    */
   screening?: {
     /**
@@ -173,63 +147,14 @@ export interface OrganizeHereInput {
 }
 
 /**
- * The stored form of a mailbox address — TRIMMED, and nothing else.
- *
- * THE BYPASS THIS CLOSES. Mail 0021's partial unique index canonicalizes with `lower()`, and
- * the service wrote `body.address` verbatim. So `"victim@example.com"` and
- * `" victim@example.com "` are different keys to the index and identical to every IMAP server
- * on earth: submit the second after the first and you get two rows, two allowance slots, and
- * two worker runtimes against one physical mailbox — the exact production failure 0021 was
- * written to stop, still reachable through the public API.
- *
- * TRIM ONLY, deliberately. Case is NOT folded here even though the index folds it: the local
- * part of an address is case-sensitive per RFC 5321, providers disagree about whether they
- * honour that, and this column is what the connect forms offer as the default IMAP username.
- * Rewriting somebody's stored identity to satisfy an index is how a login breaks against a
- * case-sensitive server. Trimming is the part the product can define without guessing —
- * leading and trailing whitespace is never meaningful in an address and is almost always a
- * copy-paste artefact.
- *
- * The residual gap is named rather than papered over: two genuinely distinct case variants on
- * one account still collide at the index and answer 409. That is a narrower wrong than
- * silently running two organizers, and the real fix for physical-mailbox exclusivity is the
- * IMAP-resident lease, not a uniqueness constraint on a text column.
- *
- * ── WHAT `lower(address)` IS NOT, STATED SO NOBODY MISTAKES IT FOR MORE ──
- *
- * The index key is `lower(address)`. That is a *deduplication heuristic for one account's own
- * connect form*, and it is neither an address canonicalizer nor a stable function:
- *
- *  · **It is collation-dependent.** `lower()` folds according to the collation of its argument
- *    — the column's, which defaults to the database's `LC_CTYPE`. Two deployments with
- *    different locales can fold the same non-ASCII address differently (the Turkish dotted/
- *    dotless I is the standard example), so the set of addresses the index treats as equal is
- *    a property of the SERVER, not of the schema. It also means the usual functional-index
- *    caveat applies: restoring this database under a different collation, or a glibc/ICU
- *    upgrade that changes case folding, requires `REINDEX` — an index built under one folding
- *    can silently stop enforcing uniqueness under another. Every address ohmail has seen is
- *    ASCII, where the folding is fixed, which is why this is a note and not a defect.
- *  · **It is not RFC canonicalization, in either direction.** RFC 5321 makes the LOCAL part
- *    case-SENSITIVE and only the domain case-insensitive, so folding the whole string is
- *    over-eager on the left of the `@` — two genuinely distinct mailboxes on a case-sensitive
- *    server collide. And it is under-eager everywhere else: no IDNA/punycode folding of the
- *    domain, no Unicode NFC normalization, no provider-specific equivalence (`a.b+tag@gmail`
- *    and `ab@gmail` are one physical mailbox and two keys here).
- *
- * Both directions are acceptable for what 0021 claims and only for that: it is narrow
- * duplicate-request defence for repeated submissions of the same connect form. Treating it as
- * "one organizer per physical mailbox" is the mistake — that invariant is the IMAP-resident
- * lease's, and **as of mail 0027 it is enforced**: the hosted sync worker runs `runLeaseGate`
- * at attach and again at the top of every sync cycle, and `apps/sidecar/src/engine.ts` does the
- * same before its first move, so a mailbox two organizers both believe they hold is stood down by
- * whichever loses the claim in `ohmail/_meta` (`status='disabled'`, `disabled_reason` =
- * `organized_elsewhere:*`).
- *
- * The distinction this note started as still holds and is the reason it stays: the index and the
- * lease guard DIFFERENT things, and neither substitutes for the other. `lower(address)` is one
- * account's own connect form, in one database. The lease is the physical mailbox, across two
- * databases that can never see each other — which is the only place the invariant can live,
- * because the mailbox is the master.
+ * The stored form of a mailbox address — TRIMMED, and nothing else. Mail 0021's partial unique
+ * index canonicalizes with `lower()` while the service wrote the address verbatim, so a leading
+ * space made a second key identical to every IMAP server on earth — two rows, two slots, two
+ * organizers on one physical mailbox. TRIM ONLY: the local part is case-sensitive per RFC 5321
+ * and this column is the connect form's default IMAP username. `lower(address)` is a
+ * deduplication heuristic for one account's connect form, NOT a canonicalizer. "One organizer per
+ * physical mailbox" is the LEASE's invariant (mail 0027): `runLeaseGate` stands the loser down.
+ * The index and the lease guard different things.
  */
 export const canonicalAddress = (raw: string): string => raw.trim();
 
@@ -243,61 +168,25 @@ export interface TransportInput {
   user?: string;
   pass?: string;
   /**
-   * THE SUBMISSION HOST THIS PASSWORD IS BEING SEALED FOR — recorded, never dialled.
-   *
-   * ── WHAT IT IS FOR ────────────────────────────────────────────────────────────────────────
-   *
-   * An install that holds the whole mailbox itself reads its outgoing server from its own
-   * configuration, not from a stored row: there is one password for both transports, so there is
-   * no second credential to hold submission coordinates. That leaves nothing recording WHICH
-   * outgoing server the password was stored for, and therefore nothing for the sending path to
-   * compare its configuration against. A configuration that moves the outgoing server alone then
-   * offers the password to a server the person never named.
-   *
-   * This is that missing left-hand side, and it is the whole of what it is: the caller states the
-   * outgoing host it is configured for at the moment it seals, and the value is stored beside the
-   * rest of the credential's non-secret half. Nothing reads it as coordinates.
-   *
-   * ── HONOURED ON THE INCOMING BLOCK ONLY ───────────────────────────────────────────────────
-   *
-   * It rides on {@link TransportInput} because that is the one shape both blocks share, and
-   * {@link mergedTransportMeta} carries it for the `imap` transport and drops it for `smtp`. A
-   * mailbox that DOES own an outgoing credential row records its host in that row's own `host`,
-   * and a witness there would be the same fact written twice.
-   *
-   * Absent means "this caller says nothing about it", which leaves whatever is stored alone —
-   * so a deployment that never sends it stores nothing new and behaves exactly as before.
-   *
-   * THE EMPTY STRING IS A DIFFERENT AND STRONGER STATEMENT: it records that the credential was
-   * saved for a pair with NO outgoing server. A reader of this field must treat that as "none
-   * authorized", not as "unknown" — the two are the difference between a fresh statement and a
-   * credential written before the field existed, and collapsing them lets an install acquire a
-   * submission server the password was never saved for.
+   * The submission host this password is being SEALED for — recorded, never dialled. Nothing
+   * recorded WHICH outgoing server the password was stored for, so a configuration that moves the
+   * outgoing server alone offered the password to a server the person never named. This is that
+   * missing left-hand side: the caller states the outgoing host at the moment it seals; nothing
+   * reads it as coordinates. Honoured on the INCOMING block only ({@link mergedTransportMeta}
+   * drops it for `smtp`). Absent leaves what is stored alone. THE EMPTY STRING IS STRONGER: it
+   * records a pair with NO outgoing server — "none authorized", never "unknown"; collapsing the
+   * two lets an install acquire a submission server the password was never saved for.
    */
   smtpHost?: string;
   /**
-   * WHY THE SUBMISSION SERVER IS NOT SETTLED — a reason code, or `""` to say it now is.
-   *
-   * ── AN OUTGOING SERVER IS NOT A REASON TO STOP RECEIVING ──────────────────────────────────
-   *
-   * The standalone door proves both transports before it stores anything, and a refused
-   * submission dial used to abort the whole write: the IMAP credential the person had just proved
-   * was never stored, so a mailbox whose incoming server works perfectly could not be connected
-   * because its outgoing one was blocked, guessed wrong by a preset, or wanted a different login.
-   * That is the send-host contract read backwards.
-   *
-   * So the incoming credential is stored and the outgoing half is recorded as UNSETTLED, with the
-   * probe's own reason. Nothing is written to the `smtp` transport — an unproven submission
-   * credential is exactly what this service refuses to store — and the send path reads this key to
-   * refuse honestly instead of guessing at `imap host:587`.
-   *
-   * `""` SETTLES IT, and that spelling is deliberate: `undefined` leaves whatever is stored alone
-   * (every unrestated key does), so a repair has to say so positively or a mailbox would carry its
-   * first refusal for ever. A caller that proves the submission server writes `""` in the same
-   * patch that writes the `smtp` row.
-   *
-   * INCOMING TRANSPORT ONLY, on {@link smtpHost}'s rule: the outgoing row, when there is one,
-   * records its own state by existing.
+   * Why the submission server is not settled — a reason code, or `""` to say it now is. An
+   * outgoing server is not a reason to stop receiving: a refused submission dial used to abort
+   * the whole write. Now the incoming credential is stored and the outgoing half is recorded
+   * UNSETTLED with the probe's own reason; nothing is written to the `smtp` transport — an
+   * unproven submission credential is what this service refuses to store — and the send path
+   * reads this key to refuse honestly instead of guessing at `imap host:587`. `""` SETTLES it:
+   * `undefined` leaves what is stored alone, so a repair must say so positively or a mailbox
+   * carries its first refusal for ever. Incoming transport only, on {@link smtpHost}'s rule.
    */
   smtpUnsettled?: string;
 }
@@ -423,25 +312,14 @@ export interface ProvenEndpoint {
 }
 
 /**
- * THE THREE ANSWERS, AND WHY "STORE UNVERIFIED" IS ONE OF THEM.
- *
- * A two-value answer would force the decision this seam exists to avoid. "We reached the server
- * and it refused you" and "we could not reach the server" are both failures and must not be
- * stored — but a server that answers `NO [UNAVAILABLE]` or `NO [LIMIT]`, or sends `BYE` and hangs
- * up, has been REACHED: it parsed our LOGIN and declined to serve it right now. That is positive
- * evidence the host, the port and the TLS mode are right, and no evidence at all about the
- * password.
- *
- * Refusing that case would be its own defect, and a specific one for this product: iCloud caps
- * concurrent connections across ALL of an account's clients, so a user whose phone and Mac are
- * holding connections could not add their mailbox at all, from a form that offers no way to
- * clear the condition. Storing it costs the pre-probe behaviour for that one case only, and
- * `MailboxSection.statusKey` already renders a row that has never completed a cycle as
- * "connecting" rather than "connected".
- *
- * `code` is a {@link MailboxErrorCode} — the SAME closed taxonomy the worker's
- * `classifyMailboxError` emits and the same one `en.json`'s `err_*` copy is keyed on.
- * A parallel vocabulary here would mean two sets of sentences for one set of failures.
+ * The three answers, and why "store unverified" is one of them. A server answering `NO
+ * [UNAVAILABLE]`/`NO [LIMIT]`, or sending `BYE`, has been REACHED — positive evidence the host,
+ * port and TLS mode are right, and none about the password. Refusing that case is its own defect:
+ * iCloud caps concurrent connections across ALL of an account's clients, so a user whose phone
+ * and Mac hold connections could not add their mailbox at all, from a form with no way to clear
+ * the condition. The client renders a row that has never completed a cycle as "connecting".
+ * `code` is a {@link MailboxErrorCode} — the SAME closed taxonomy the worker emits and
+ * `en.json`'s `err_*` copy is keyed on.
  */
 export type MailboxProbeVerdict =
   | {
@@ -527,16 +405,14 @@ export interface ConnectOAuthMailboxInput {
     /** The Azure AD tenant SEGMENT, validated before it ever reaches a URL. */
     tenant: string;
     /**
-     * WHICH APPLICATION REGISTRATION ISSUED THIS TOKEN — `"public"` or `"confidential"`. Omitted
-     * means confidential, which is the redirect ceremony's door and the only one that existed
-     * before the device-code flow.
-     *
-     * It is stored in the credential meta because a refresh token is bound to the client that
-     * obtained it, and one install can legitimately hold both kinds: a mailbox connected through
-     * the operator's own confidential registration and one connected through the shared public
-     * client. A host-wide setting would be right for one of them and would silently kill the
-     * other — Microsoft's refusal of a mismatched client renews nothing and quarantines nothing,
-     * so the mailbox would simply stop receiving mail an hour after it was connected.
+     * Which application registration issued this token — `"public"` or `"confidential"`. Omitted
+     * means confidential, the redirect ceremony's door and the only one that existed before the
+     * device-code flow. Stored in the credential meta because a refresh token is bound to the
+     * client that obtained it, and one install can legitimately hold both kinds: a mailbox
+     * connected through the operator's own confidential registration and one through the shared
+     * public client. A host-wide setting would be right for one and silently kill the other —
+     * Microsoft's refusal of a mismatched client renews nothing and quarantines nothing, so the
+     * mailbox would simply stop receiving mail an hour after it was connected.
      */
     clientKind?: "public" | "confidential";
     /** Stored as `secret_enc`. THE credential — an oauth mailbox has no other. */
@@ -568,26 +444,14 @@ export interface ConnectOAuthResult {
 }
 
 /**
- * The same, for the OTHER door into `mailbox_credentials`.
- *
- * `create` was made to require a probe and `update` was not, which left `PATCH /mailboxes/:id`
- * re-encrypting whatever it was sent with zero connection attempts — the identical defect, one
- * screen later, against a mailbox that was already working. It is not a backwater path: the
- * sidecar mounts `createApp(apiRoutes)`, and `apps/sidecar/src/engine.ts` names this PATCH as the
- * desktop's credential-recovery route for a sealed login the install's key can no longer open.
- *
- * ── REQUIRED IN THE SIGNATURE, ENFORCED AT RUN TIME, AND THE SECOND HALF IS THE REAL GUARD ──
- *
- * `create`'s docblock says a required parameter means "a new call site has to decide out loud".
- * That is true only where the signature is COMPILED, and here it largely is not: `packages/services`
- * compiles `src` only, so its ~17 `update` call sites are never typechecked — the same shape that
- * put `tsconfig.contract.json` in `packages/api`. A parameter that is required in a type nobody
- * compiles is a guard that does not guard.
- *
- * So the type says required AND {@link probeMissing} throws when a credential write arrives
- * without one. The throw is the half that executes, and it is the half a mutation test can watch
- * go red. Non-credential patches — a rename, a status flip — never reach it, which is why the
- * fourteen existing call sites that carry no secret keep working unchanged.
+ * The same, for the OTHER door into `mailbox_credentials`. `create` required a probe and `update`
+ * did not, leaving `PATCH /mailboxes/:id` re-encrypting whatever it was sent with zero connection
+ * attempts — the identical defect one screen later; the sidecar names this PATCH as the desktop's
+ * credential-recovery route. Required in the signature AND enforced at run time — the second half
+ * is the real guard: `packages/services` compiles `src` only, so the `update` call sites are
+ * never typechecked, and a parameter required in a type nobody compiles is a guard that does not
+ * guard. {@link probeMissing} throws when a credential write arrives without one — the half a
+ * mutation test can watch go red. Non-credential patches never reach it.
  */
 export interface UpdateMailboxOptions {
   probe: MailboxProbe;
@@ -597,15 +461,12 @@ export interface UpdateMailboxOptions {
 
 /**
  * The refusal, per taxonomy member. FOUR DISTINCT SENTENCES, because a mistyped host and a wrong
- * password producing the same words is the failure the probe exists to end — it is the same
- * conflation the worker had to unpick, one screen earlier.
- *
- * Each names an OUTCOME the user can act on rather than a mechanism we would have to be right
- * about: "we could not reach that server" holds for a name that does not resolve, a port with
- * nothing behind it and a host that is simply down, and none of those is "the password is wrong".
- *
- * `status` splits on WHOSE input is at fault. The four the user typed are 400; a throw we cannot
- * name is 502, because "we could not tell" is a statement about us.
+ * password producing the same words is the failure the probe exists to end — the same conflation
+ * the worker had to unpick, one screen earlier. Each names an OUTCOME the user can act on rather
+ * than a mechanism we would have to be right about: "we could not reach that server" holds for a
+ * name that does not resolve, a dead port and a host that is down, and none of those is "the
+ * password is wrong". `status` splits on WHOSE input is at fault: the four the user typed are
+ * 400; a throw we cannot name is 502, because "we could not tell" is a statement about us.
  */
 const PROBE_REFUSAL: Record<MailboxErrorCode, { status: number; message: string; retryable?: boolean }> = {
   auth: {
@@ -646,21 +507,14 @@ const PROBE_REFUSAL: Record<MailboxErrorCode, { status: number; message: string;
 };
 
 /**
- * The `tls` refusal, split by WHY the certificate (or its absence) stopped the dial. Every
- * sentence keeps the guarantee the generic one made — the password was never sent — and adds
- * the one fact the user (or their server's admin) can act on.
- *
- * ── THE SERVER MESSAGE NAMES NO HOST FROM THE DIALED CERTIFICATE ──────────────────────────────
- *
- * The `hostname_mismatch` sentence USED to read "certificate is for {certHost}, not {expectedHost}
- * … use {suggestedHost}", echoing the CN/SAN of whatever answered at the dialed `host:port` and a
- * CNAME-derived suggestion. Behind a verified session that is a caller-driven disclosure of an
- * internal hostname — point the probe at an internal server and read its certificate identity back
- * out of the refusal. So this message names NEITHER `certHost` NOR `suggestedHost`; it states only
- * that the certificate did not match and how to act on it. The structured `details.tls` still
- * carries those fields for the client's own vanity-CNAME suggestion UX, and on the hosted
- * deployment the probe's SSRF host guard (`imap-probe.ts#makeProbeHostGuard`) means the dialed host
- * is public in the first place — but the server's own sentence leaks nothing regardless.
+ * The `tls` refusal, split by WHY the certificate stopped the dial. Every sentence keeps the
+ * guarantee — the password was never sent — and adds the one fact the user can act on. The server
+ * message names NO host from the dialed certificate: the `hostname_mismatch` sentence used to
+ * echo the CN/SAN of whatever answered and a CNAME-derived suggestion — behind a verified
+ * session, a caller-driven disclosure of an internal hostname. The message now states only that
+ * the certificate did not match; the structured `details.tls` still carries the fields for the
+ * client's own vanity-CNAME UX, and the hosted probe's SSRF host guard means the dialed host is
+ * public anyway — but the server's own sentence leaks nothing regardless.
  */
 const tlsRefusalMessage = (tls: ProbeTlsDetail, transport: ProbeTransport): string => {
   const server = transport === "smtp" ? "That outgoing (SMTP) mail server" : "That mail server";
@@ -732,21 +586,14 @@ const probeMissing = (): ServiceError => new ServiceError(
 );
 
 /**
- * THE ALLOWANCE GATE, AS A POLICY — because "how many mailboxes may this account have" is a
- * question for whoever operates the service, and one of the two tiers has nobody operating it.
- *
- * The default counts the account's mailboxes under a `FOR UPDATE` lock and refuses past the
- * limit a verdict named. That is exactly right for a hosted deployment and it is the wrong
- * question on a desktop install, which has no such verdict and no program to ask — before this
- * seam the local engine 500ed on every mailbox write, and the only reason it had ever worked was
- * that the engine used to migrate the hosted journal too. The green was produced by the
- * defect.
- *
- * ── WHY A POLICY AND NOT A FLAG ───────────────────────────────────────────────────────────
- *
- * `if (local) skip` puts the decision inside the money path, where every future reader has to
- * re-derive which branch a given deployment takes. A policy makes the tier a thing the HOST
- * states once, at construction, and makes the paid gate the value you get by saying nothing.
+ * The allowance gate, as a POLICY — "how many mailboxes may this account have" is a question for
+ * whoever operates the service, and one of the two tiers has nobody operating it. The default
+ * counts under a `FOR UPDATE` lock and refuses past the limit — right for a hosted deployment,
+ * the wrong question on a desktop install with no verdict and no program to ask: before this seam
+ * the local engine 500ed on every mailbox write, and it had only worked because the engine used
+ * to migrate the hosted journal too — the green was produced by the defect. A policy, not a flag:
+ * `if (local) skip` puts the decision inside the money path; a policy makes the tier a thing the
+ * HOST states once, and makes the paid gate the value you get by saying nothing.
  */
 export type MailboxAllowancePolicy = (
   tx: LedgerTx,
@@ -763,48 +610,37 @@ export type MailboxAllowancePolicy = (
 
 export interface MailboxServiceDeps {
   /**
-   * WHO THIS DEPLOYMENT IS TO A MAILBOX — the id it writes into a claim.
-   *
-   * The release asks "is the claim on this mailbox OURS", and that is an identity question. It was
-   * answered with `organized_by_kind === "cloud"`, which is a CATEGORY: a second Cloud deployment
-   * is also `cloud`, and `resolveCloudInstallId` scopes the id by environment precisely because
-   * two of them over one mailbox is a designed-for state. So the API cleared rows over claims it
-   * could not remove — the removal has always matched on the install id.
-   *
-   * Resolved from the same inputs the worker resolves it from, through the same function, so the
-   * two halves cannot drift. Absent means this deployment does not know who it is, and every
-   * comparison against it is then false — the safe direction, since a refused hand-back costs a
-   * sentence and a silent one costs the trust of every sentence beside it.
+   * Who this deployment is to a mailbox — the id it writes into a claim. The release asks "is the
+   * claim OURS", an identity question, and it was answered with `organized_by_kind === "cloud"` —
+   * a CATEGORY: a second Cloud deployment is also `cloud`, and two of them over one mailbox is a
+   * designed-for state. So the API cleared rows over claims it could not remove — the removal has
+   * always matched on the install id. Resolved through the same function the worker uses, so the
+   * halves cannot drift. Absent means this deployment does not know who it is, and every
+   * comparison is then false — the safe direction: a refused hand-back costs a sentence, a silent
+   * one costs the trust of every sentence beside it.
    */
   installId?: string;
   /** Envelope-encryption provider. REQUIRED for the write methods; the read
    *  methods (list/get/requestResync) never touch it — inject, don't reach global. */
   keyProvider?: KeyProvider;
   /**
-   * Who may add a mailbox. **Absent means the PAID GATE, and that direction is the whole point.**
-   *
-   * A deployment that forgets to inject gets METERED behaviour — it refuses past the limit and
-   * refuses an account with no verdict at all. The failure mode of the opposite default is an
-   * account with no limit on a service that meters, silently, with no error anywhere; the
-   * failure mode of this one is a desktop build that refuses to add a mailbox, which is loud,
-   * immediate, and caught by the engine's own end-to-end tests.
-   *
-   * There is deliberately **no permissive policy exported from this package.** The only one that
-   * exists is `UNMETERED_MAILBOX_ALLOWANCE` in `apps/sidecar`, which the hosted API does not and
-   * cannot import — a bypass the Cloud host has no way to name is a bypass it cannot take by
-   * accident. A test in this package holds that as an assertion.
+   * Who may add a mailbox. Absent means the PAID GATE, and that direction is the point: a
+   * deployment that forgets to inject gets METERED behaviour. The opposite default's failure mode
+   * is an account with no limit on a service that meters, silently; this one's is a desktop build
+   * that refuses to add a mailbox — loud, immediate, caught by the engine's own end-to-end tests.
+   * There is deliberately NO permissive policy exported from this package: the only one is
+   * `UNMETERED_MAILBOX_ALLOWANCE` in `apps/sidecar`, which the hosted API cannot import — a
+   * bypass the Cloud host has no way to name is one it cannot take by accident. A test holds that
+   * as an assertion.
    */
   allowance?: MailboxAllowancePolicy;
   /**
-   * THE ACCOUNT'S ACCESS VERDICT, read once per write BEFORE the transaction opens.
-   *
-   * Injected for the reason {@link MailboxServiceDeps.allowance} is: on the hosted tier the answer
-   * comes from whoever operates the service and may be a network hop, and this module is inside the
-   * desktop engine's import graph.
-   *
-   * ABSENT IS NOT UNMETERED. A host that means unmetered supplies a reader answering
-   * `UNMETERED_ACCESS`; absent means nobody wired one, and the paid gate refuses rather than
-   * admitting an unbounded create. See {@link MailboxService.access}.
+   * The account's access verdict, read once per write BEFORE the transaction opens. Injected for
+   * the reason {@link MailboxServiceDeps.allowance} is: on the hosted tier the answer may be a
+   * network hop, and this module is inside the desktop engine's import graph. ABSENT IS NOT
+   * UNMETERED: a host that means unmetered supplies a reader answering `UNMETERED_ACCESS`; absent
+   * means nobody wired one, and the paid gate refuses rather than admitting an unbounded create.
+   * See {@link MailboxService.access}.
    */
   accessOf?: (accountId: string) => Promise<AccessVerdict>;
   /**
