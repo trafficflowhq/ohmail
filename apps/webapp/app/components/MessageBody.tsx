@@ -2932,29 +2932,23 @@ export const MIN_FIT_SCALE = 0.6;
 
 /**
  * The uniform scale that fits `naturalPx` of content into `columnPx` of column — 1 when it
- * already fits, and never below {@link MIN_FIT_SCALE}.
- *
- * SEPARATED FROM {@link measure} ON PURPOSE. jsdom performs no layout, so every number the
- * measurement reads is 0 there and the fitting can only be proven in a real engine — except
- * for this, which is arithmetic and is watched in the unit suite. What the browser check has
- * to prove is that the right numbers reach it.
- *
- * A zero or negative reading (a frame that is not laid out, a detached document, jsdom) is 1:
- * "do not scale" is the only safe answer to "I could not measure", and it is what keeps this
- * from writing a transform under the unit suite.
- *
- * ── `reflow` IS THE FIRST TERM, AND IT IS AN ANSWER RATHER THAN A HINT ──────────────────
- *
- * A reflowed mail has already been laid out at the column's width (see the reflow block in
- * {@link FRAME_CSS}), so a scale is not a second-best fit for it — it is a shrink applied to a
- * document that already fits, which is exactly the reported defect. There is deliberately no
- * "reflow first, then scale whatever still overflows" fallback: that would put every mail back
- * one long word away from being rendered at 0.6, and the residual case is a genuinely wide
- * element (a data table, a code block) which gets a scrollbar and stays readable. Readability
- * wins over fit here for the same reason {@link MIN_FIT_SCALE} exists.
- *
- * The term lives HERE and not in {@link measure} so that the decision is arithmetic that a unit
- * test can watch fail. Deleting it leaves a simple mail scaled, and the guard goes red.
+ * already fits, never below {@link MIN_FIT_SCALE}. Separated from {@link measure} on purpose:
+ * jsdom performs no layout, so every number the measurement reads is 0 there and the fitting
+ * can only be proven in a real engine — except this, which is arithmetic and watched in the
+ * unit suite. A zero or negative reading (a frame not laid out, a detached document, jsdom) is
+ * 1: "do not scale" is the only safe answer to "I could not measure", and it keeps this from
+ * writing a transform under the unit suite.
+ */
+
+/**
+ * `reflow` is the first term, and it is an answer rather than a hint: a reflowed mail has
+ * already been laid out at the column's width (the reflow block in {@link FRAME_CSS}), so a
+ * scale for it is a shrink applied to a document that already fits — exactly the reported
+ * defect. Deliberately no "reflow first, then scale whatever still overflows" fallback: that
+ * would put every mail back one long word away from 0.6, and the residual case — a genuinely
+ * wide element, a data table, a code block — gets a scrollbar and stays readable. The term
+ * lives HERE and not in {@link measure} so the decision is arithmetic a unit test can watch
+ * fail: deleting it leaves a simple mail scaled, and the guard goes red.
  */
 export function fitScale(columnPx: number, naturalPx: number, reflow = false): number {
   if (reflow) return 1;
@@ -3112,25 +3106,19 @@ export interface MessageBodyProps {
    */
   onCidImages?: (contentIds: string[]) => void;
   /**
-   * HOW THIS MESSAGE IS ACTUALLY BEING DRAWN, reported to whoever mounted the component.
-   *
-   * `"prose"` is the frameless path — {@link BodyText} in the app's own type, over the walker's
-   * rich nodes or the text part, and it draws **no images at all** either way (`img` is absent
-   * from the walker's allow-list). `"framed"` is the sandboxed `srcdoc`, where the sender's
-   * html paints its own pictures.
-   *
-   * A CALLBACK AND NOT A PROP THE CALLER COMPUTES, because the caller cannot compute it. The
-   * classification is a field of `sanitizeMailHtml`'s result (`prose`), a pass this component
-   * already runs and memoizes; running it a second time in the pane to ask one boolean would
-   * sanitize every message twice per render. Two of the three terms are this component's own
-   * anyway — an empty text part, and the reader's "Show original" press, which is per mount.
-   *
-   * It exists for the attachment strip. The frameless rendering drawing no images means a `cid:`
-   * picture the sender embedded is on screen NOWHERE unless the strip lists it, and the strip is
-   * a sibling of this component rather than a child of it. Optional, and every surface that does
-   * not have that problem omits it and is unchanged.
-   *
-   * Fired after mount and on every change, never during render.
+   * How this message is actually being drawn, reported to whoever mounted the component. `"prose"` is the frameless
+   * path — {@link BodyText} in the app's own type, drawing no images at all (`img` is absent from the walker's
+   * allow-list); `"framed"` is the sandboxed `srcdoc`, where the sender's html paints its own pictures. A callback
+   * and not a prop the caller computes, because the caller cannot: the classification is a field of
+   * `sanitizeMailHtml`'s result, a pass this component already runs and memoizes — running it again in the pane for
+   * one boolean would sanitize every message twice per render — and two of the three terms are this component's own
+   * anyway (an empty text part, and the reader's per-mount "Show original").
+   */
+
+  /**
+   * It exists for the attachment strip: frameless drawing no images means a `cid:` picture is on screen NOWHERE
+   * unless the strip lists it, and the strip is a sibling of this component. Optional; surfaces without that problem
+   * omit it. Fired after mount and on every change, never during render.
    */
   onRenderMode?: (mode: "prose" | "framed") => void;
   /**
@@ -3346,66 +3334,50 @@ export function MessageBody({
   }, [dark, ready, mail]);
 
   /**
-   * SIZE THE FRAME TO THE MAIL — AND THE OBVIOUS WAY TO DO IT RUNS AWAY.
-   *
-   * A fixed-height frame with its own scrollbar is the thing every reader hates about webmail;
-   * a mail client's message is as tall as the message and the PANE scrolls. Reading
-   * `contentDocument` is what `allow-same-origin` is for, and it is safe for the reason in the
-   * header — there is no script inside to abuse it.
-   *
-   * ── THE RUNAWAY, MEASURED IN A REAL BROWSER ─────────────────────────────────────────────
-   *
-   * This was `Math.max(documentElement.scrollHeight, body.scrollHeight)`, re-run from a
-   * `ResizeObserver` that observed the IFRAME. Both halves of that are wrong, and together
-   * they are a monotonic growth loop. Measured on a real newsletter in a 390 px column, 2.5 s
-   * after load:
-   *
-   *   frame.style.height   899px  ·  documentElement.scrollHeight  899  ·  body.scrollHeight  634
-   *   (hostile fixture)   1617px  ·                               1617  ·                     159
-   *
-   * `documentElement.scrollHeight` is `max(content, VIEWPORT)`, and inside a frame the
-   * viewport IS the height we just set — so every measurement returned at least the previous
-   * answer, the observer on the iframe fired on our own write, and the frame grew forever. A
-   * 159 px message occupied 1 617 px of the pane and climbing.
-   *
-   * **No unit test could have seen this.** jsdom performs no layout: every one of those
-   * numbers is 0 there, and `test/message-body.test.ts` can only assert that no fixed `height`
-   * attribute is set. It took driving Chrome at the acceptance fixture.
-   *
-   * ── AND `height:auto!important` DID NOT CLOSE IT. MEASURED AGAIN ─────────────────────────
-   *
-   * That rule says nothing about a CHILD. `<div style="height:150vh">` measured
-   * `frame.style.height` = **33 554 400 px** — Chrome's own layout ceiling — because inside the
-   * frame the viewport IS the height written a moment earlier, so 150vh grows with every pass.
-   * And `<style>html,body{height:300vh!important}</style>` reached the same number by beating
-   * the rule head-on: equal specificity, later in the document. The host page's `scrollHeight`
-   * reached 33 554 432. A message is not allowed to do that to the tab it is opened in.
-   *
-   * ── SO THE MEASUREMENT STOPS READING A VIEWPORT THE SENDER CAN MOVE ─────────────────────
-   *
-   *  1. The frame is set to {@link PROBE_PX} — a CONSTANT — and read under it. Every viewport
-   *     unit in the mail then resolves against a number this component chose and the sender
-   *     cannot influence, so the reading is a pure function of the content and the column
-   *     width. There is no feedback edge left to run away along.
-   *  2. `documentElement.offsetHeight` — the html box, content-sized, never clamped up to the
-   *     viewport the way `scrollHeight` is.
-   *  3. {@link MAX_FRAME_PX}, which the sender also cannot influence. A mail that still wants
-   *     more than that gets the frame's own scrollbar, which is a bad reading experience and
-   *     not a hung tab.
-   *  4. The observer watches the mail's `body` (its content reflowing) and this component's
-   *     own container (the app's column changing width). It must NEVER watch the iframe,
-   *     because the iframe's size is what this function WRITES.
-   *
-   * ── THE PROBE AND THE FINAL WRITE ARE ONE STRAIGHT LINE, AND NOTHING MAY SIT BETWEEN ────
-   *
+   * Size the frame to the mail — and the obvious way to do it runs away. A fixed-height frame with its own scrollbar
+   * is the thing every reader hates about webmail; a mail client's message is as tall as the message and the PANE
+   * scrolls. Reading `contentDocument` is what `allow-same-origin` is for, and safe for the header's reason — no
+   * script inside to abuse it. The runaway, measured in a real browser: this was
+   * `Math.max(documentElement.scrollHeight, body.scrollHeight)`, re-run from a `ResizeObserver` observing the IFRAME.
+   * `documentElement.scrollHeight` is `max(content, VIEWPORT)`, and inside a frame the viewport IS the height just
+   * set — every measurement returned at least the previous answer, the observer fired on our own write, and a 159 px
+   * message occupied 1 617 px and climbing.
+   */
+
+  /**
+   * No unit test could see this: jsdom performs no layout, so every number is 0 there; it took driving Chrome at the
+   * acceptance fixture.
+   */
+
+  /**
+   * `height:auto!important` did not close it, measured again: the rule says nothing about a
+   * CHILD. `<div style="height:150vh">` measured `frame.style.height` = 33 554 400 px —
+   * Chrome's layout ceiling — because inside the frame the viewport is the height written a
+   * moment earlier, so 150vh grows with every pass; and
+   * `<style>html,body{height:300vh!important}</style>` reached the same number by beating the
+   * rule head-on (equal specificity, later in the document). A message is not allowed to do
+   * that to the tab it is opened in.
+   */
+
+  /**
+   * So the measurement stops reading a viewport the sender can move: (1) the frame is set to
+   * {@link PROBE_PX} — a CONSTANT — and read under it, so every viewport unit resolves against a
+   * number the sender cannot influence and no feedback edge remains; (2)
+   * `documentElement.offsetHeight` — the html box, content-sized, never clamped up to the
+   * viewport the way `scrollHeight` is; (3) {@link MAX_FRAME_PX}, also sender-proof — a mail
+   * wanting more gets the frame's own scrollbar, a bad reading experience and not a hung tab;
+   * (4) the observer watches the mail's `body` and this component's own container — NEVER the
+   * iframe, because the iframe's size is what this function WRITES.
+   */
+
+  /**
+   * The probe and the final write are one straight line, and nothing may sit between:
    * `ResizeObserver` reports against the box it last reported, and both writes happen inside
-   * one task — so the probe is never observed and (4) stays safe. An early `return` in between
-   * would leave the frame AT the probe height and start a permanent oscillation, which is why
-   * the only branch here is on the write itself.
-   *
-   * The 1 px epsilon and the remembered height are both GONE with the feedback edge that
-   * needed them: the reading is a pure function of the content, so a re-measure that changes
-   * nothing writes the same string, and that is a no-op.
+   * one task, so the probe is never observed and (4) stays safe. An early `return` in between
+   * would leave the frame AT the probe height and start a permanent oscillation — the only
+   * branch here is on the write itself. The 1 px epsilon and the remembered height are GONE
+   * with the feedback edge that needed them: the reading is a pure function of the content, so
+   * a re-measure that changes nothing writes the same string, a no-op.
    */
   const measure = useCallback(() => {
     const frame = frameRef.current;
@@ -3549,28 +3521,20 @@ export function MessageBody({
   const sheets = okMail ? okMail.sheets : NO_SHEETS;
   const pixels = remote.filter((b) => b.pixel).length;
   /**
-   * ── DID THE PICTURES ACTUALLY LOAD? NOT THE SAME QUESTION AS `remoteLoaded` ─────────────
-   *
-   * `remoteLoaded` is the READER's answer — the stored flag, this session's press, or the
-   * account's auto mode. Whether anything then loaded is a second fact, and the bar is about
-   * the second one: it is the surface that tells a reader what was withheld, so keying it on
-   * consent means a message can show blanked boxes while the bar says nothing at all.
-   *
-   * The two disagree in exactly the cases the sanitizer was ALSO given no proxy — a client
-   * with no image proxy (the demo, any build with no API), and the fail-closed branch where
-   * {@link proxyImgSource} cannot state a source the frame's policy would accept. In both, the
-   * pictures are counted in `mail.blocked` and must be reported as blocked. Reading `proxy`
-   * rather than re-deriving the terms is what keeps that impossible to get wrong: it is the
-   * same value the rewrite was performed with, so the sentence cannot disagree with the
-   * document it describes.
-   *
-   * The one measured case behind the second half: an app served from an IPv6 literal origin.
-   * `http://[::1]:3000` has no expressible CSP host-source — checked in Chromium, not assumed:
-   * `img-src http://[::1]:45365/api/img` refused BOTH a matching and a non-matching url, while
-   * `'self'` fetched both, so the source contributes nothing and the whole directive is a
-   * refusal. There is no spelling that would work (CSP3's `host-char` is ALPHA/DIGIT/"-"), so
-   * `null` is the only truthful answer and this term is what keeps its consequence visible
-   * instead of silent. Production is a domain; this is a development topology.
+   * Did the pictures actually load? Not the same question as `remoteLoaded`. `remoteLoaded` is
+   * the READER's answer — the stored flag, this session's press, the account's auto mode;
+   * whether anything then loaded is a second fact, and the bar is about that one: keying it on
+   * consent means a message can show blanked boxes while the bar says nothing. The two disagree
+   * exactly where the sanitizer was also given no proxy — a client with no image proxy (the
+   * demo, any build with no API) and the fail-closed branch where {@link proxyImgSource} cannot
+   * state a source the frame's policy would accept; in both, the pictures are counted in
+   * `mail.blocked` and must be reported as blocked. Reading `proxy` rather than re-deriving is
+   * what makes that impossible to get wrong — it is the value the rewrite was performed with.
+   * The measured case behind the second half: an app served from an IPv6 literal origin —
+   * `img-src http://[::1]:45365/api/img` refused BOTH a matching and a non-matching url in
+   * Chromium while `'self'` fetched both, and CSP3's `host-char` (ALPHA/DIGIT/"-") offers no
+   * spelling that works, so `null` is the only truthful answer. Production is a domain; this is
+   * a development topology.
    */
   const remoteShown = proxy !== null;
   // UNDER THE LOADED MODES THE BEACONS ALONE WERE REFUSED — and that refusal is still said, in a
