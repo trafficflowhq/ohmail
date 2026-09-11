@@ -569,8 +569,7 @@ export function ComposeView({
                 named at all (`from.address` null), because a From line is a claim. The value is
                 a MAILBOX ID: `from.choices` holds sendable mailboxes only, so a disconnected
                 address is never offered — the server refuses it too (`drafts-service.ts` →
-                `validMailbox`), and a control offering what the server refuses is an inert
-                affordance with extra steps. */}
+                `validMailbox`), and a control offering what the server refuses is inert. */}
             {from.address !== null ? (
               <div className="c-field">
                 <label htmlFor="compose-from">{t("from")}</label>
@@ -642,16 +641,15 @@ export function ComposeView({
                 onDragActive={onChipDrag}
               />
               {/* The affordance is in the row it acts on, at its right edge. It had a strip of
-                  its own between To and Subject — a full-width row whose entire content was one
-                  11.5px word, costing a band of vertical space and reading as a fourth field.
-                  Cc and Bcc ARE recipients, so the way to more recipients belongs on the
-                  recipient row — the reasoning that keeps Move's destinations on the bar. Still
-                  a button and not a checkbox, because it does one thing: show two more inputs;
-                  `aria-expanded` names the state, and it vanishes once the rows are open. It
-                  must stay inside this `.c-field`: lifted out, the row's `:focus-within`
-                  hairline stops covering it. `test/compose-composition.test.ts` asserts the
-                  CONTAINMENT (`#compose-to`'s `.c-field` holds the button) — the weaker
-                  "a Cc/Bcc button exists" passes against the layout this replaces. */}
+                  its own between To and Subject — a full-width row whose content was one 11.5px
+                  word, reading as a fourth field. Cc and Bcc ARE recipients, so the way to more
+                  recipients belongs on the recipient row — the reasoning that keeps Move's
+                  destinations on the bar. A button, not a checkbox: it does one thing, show two
+                  more inputs; `aria-expanded` names the state, and it vanishes once the rows are
+                  open. It must stay inside this `.c-field` — lifted out, the row's
+                  `:focus-within` hairline stops covering it. `test/compose-composition.test.ts`
+                  asserts the CONTAINMENT (`#compose-to`'s `.c-field` holds the button); the
+                  weaker "a Cc/Bcc button exists" passes against the layout this replaces. */}
               {!ccBccShown ? (
                 <button
                   type="button"
