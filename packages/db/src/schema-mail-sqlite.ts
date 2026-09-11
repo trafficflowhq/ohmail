@@ -105,47 +105,29 @@ export const mailboxes = sqliteTable("mailboxes", {
   status: text("status").notNull().default("connected"),                   // connected|error|disabled
   lastSyncAt: integer("last_sync_at", { mode: "timestamp_ms" }),           // last successful worker cycle (nullable)
   authKind: text("auth_kind").notNull().default("password"),               // password|oauth
-  // ── Mail 0023 — WHY a mailbox failed, not merely THAT it did ──
-  //
-  // `status` alone was the whole record, so an operator and the account holder's own Settings pane
-  // could both say "something went wrong" and nothing more — which is how a disk-full incident
-  // once stayed opaque for hours. The four columns are evidence, never control flow: nothing
-  // reads them to make a decision, and every consumer treats NULL as "not recorded".
-  //
-  // `errorDetail` IS NEVER A RAW ERROR STRING. It is a member of a CLOSED allowlist held by the
-  // worker's mailbox-error classifier — an IMAP response code, a Node
-  // errno, a TLS constant, an SQLSTATE — checked at the single write site (`markMailboxFailed`),
-  // because a throw out of the sync cycle can embed RFC822 header bytes (raw message content) and a
-  // login failure's server text can echo the credential. Same contract `packages/core/src/log.ts`
-  // already holds every log line to.
-  //
-  // MEMBERSHIP, NOT SHAPE, and the difference is a finding. This used to be a regex plus "or our
-  // own host:port"; imapflow derives `serverResponseCode` from the SERVER's own bracket atom, so
-  // a hostile endpoint answering `NO [SECRETPASSWORD123]` chose a value that passed the shape
-  // test and reached both the account holder's Settings pane and the admin console. Nothing here has
-  // ever written a host:port and nothing may: an unrecognised token stores NULL.
+  // Mail 0023 — WHY a mailbox failed, not merely THAT it did. `status` alone was the whole
+  // record, so Settings could only say "something went wrong" — a disk-full incident once stayed
+  // opaque for hours. The four columns are evidence, never control flow: nothing reads them to
+  // decide, and NULL is "not recorded". `errorDetail` IS NEVER A RAW ERROR STRING: a member of a
+  // CLOSED allowlist held by the worker's classifier (an IMAP response code, a Node errno, a TLS
+  // constant), checked at the single write site, because a throw out of the sync cycle can embed
+  // message bytes and a login failure's server text can echo the credential. MEMBERSHIP, not
+  // shape: imapflow derives `serverResponseCode` from the SERVER's own bracket atom, so a hostile
+  // endpoint answering `NO [SECRETPASSWORD123]` passed the old regex and reached the Settings
+  // pane. An unrecognised token stores NULL.
   errorCode: text("error_code"),                                           // a MAILBOX_ERROR_CODES member, or null
   errorDetail: text("error_detail"),                                       // allowlisted token, or null
   failedAt: integer("failed_at", { mode: "timestamp_ms" }),                // when the CURRENT outage began (COALESCE on write)
   retryCount: integer("retry_count").notNull().default(0),                 // attempts within the current outage
-  // ── Mail 0039 — WHEN the leader may next try this mailbox, and who else can change it ──
-  //
-  // The quarantine backoff, made durable. It used to live only in the worker's in-process
-  // `Map<string, Quarantine>`, which meant a parked mailbox had exactly two exits: the ladder
-  // expiring, or a restart of the sync process. No database write could clear it, so nothing
-  // outside that process could release a mailbox — not an operator, not the account's owner —
-  // and "restart the sync worker" was the only release mechanism there was.
-  //
-  // NULL means no backoff is in force: never quarantined, or a completed sync cleared it, or an
-  // operator released it. Written by the worker (`markMailboxFailed`), cleared by every writer
-  // that makes a backoff untrue (`markMailboxConnected`, `markMailboxStoodDown`,
-  // `MailboxService.update` on the way out of `error`) and by the admin release write.
-  //
-  // IT IS NOT A SECOND `retry_count`, and the difference is the point. `retry_count` above is
-  // the SIZE of the current outage and is deliberately allowed to disagree with the worker's
-  // in-memory attempt count after a restart; this is the one fact neither carries — WHEN. The
-  // ladder's attempt count stays in memory, so a release does not reset it: an operator freeing
-  // a mailbox must not hand a struggling provider a fresh minimum-interval retry loop.
+  // Mail 0039 — WHEN the leader may next try this mailbox. The quarantine backoff, made durable:
+  // it used to live only in the worker's in-process map, so a parked mailbox had two exits — the
+  // ladder expiring, or a restart — and nothing outside that process could release one. NULL
+  // means no backoff: never quarantined, cleared by a completed sync, or released by an operator.
+  // Written by `markMailboxFailed`; cleared by every writer that makes a backoff untrue and by
+  // the admin release. NOT a second `retry_count`: that is the SIZE of the current outage; this
+  // is the one fact neither carries — WHEN. The ladder's attempt count stays in memory, so a
+  // release does not reset it: freeing a mailbox must not hand a struggling provider a fresh
+  // minimum-interval retry loop.
   retryAfter: integer("retry_after", { mode: "timestamp_ms" }),
   // ── Mail 0025 — the once-per-mailbox inbox-shaping kickstart ran ──
   //
@@ -156,66 +138,40 @@ export const mailboxes = sqliteTable("mailboxes", {
   // worker writes it only AFTER the pass succeeds, so a crash mid-kickstart retries on the next
   // attach rather than leaving a half-shaped mailbox marked complete.
   kickstartAt: integer("kickstart_at", { mode: "timestamp_ms" }),
-  // ── Mail 0027 — the organizer lease ──
-  //
-  // `disabledReason` is WHY this mailbox is `status='disabled'`, when the reason is the lease
-  // rather than a person. A CLOSED set (`MAILBOX_DISABLED_REASONS`, mailbox-errors.ts)
-  // and a CHECK constraint behind it, because it is read by the account's own user and must
-  // never be able to hold a string a mail server chose — the same finding that closed
-  // `error_detail`, applied before it can happen here. NULL for every non-lease disable, which
-  // is what makes "Organized by Cloud" and "Cloud stopped organizing" tellable apart from
-  // an ordinary disabled mailbox.
-  //
-  // It is EVIDENCE plus one decision, and the decision is the user's: nothing re-enables a
-  // mailbox except an explicit PATCH, because the lease principle is "ceasing to organize is always
-  // automatic; BECOMING an organizer always requires an explicit human action".
+  // Mail 0027 — the organizer lease. `disabledReason` is WHY this mailbox is `status='disabled'`
+  // when the reason is the lease rather than a person. A CLOSED set (`MAILBOX_DISABLED_REASONS`)
+  // with a CHECK, because it is read by the account's own user and must never hold a string a
+  // mail server chose — the finding that closed `error_detail`, applied before it can happen
+  // here. NULL for every non-lease disable, which is what tells "Organized by Cloud" apart from
+  // an ordinary disabled mailbox. EVIDENCE plus one decision, and the decision is the user's:
+  // nothing re-enables a mailbox except an explicit PATCH — ceasing to organize is always
+  // automatic; BECOMING an organizer always requires an explicit human action.
   disabledReason: text("disabled_reason"),
   // When a human explicitly asked THIS organizer to take this mailbox over from another one.
   // Consumed on the first successful gate: it authorizes one BECOMING, never a standing right,
   // or a lapse-then-resubscribe would silently seize a mailbox back from a deliberate local
   // choice (the lease's "No seize-back" rule).
   takeoverAuthorizedAt: integer("takeover_authorized_at", { mode: "timestamp_ms" }),
-  // ── Mail 0083 — THE ORGANIZING ROLE, WHICH IS NOT THE CONNECTION ──
-  //
-  // A row carries two independent facts and `status` used to hold both. `status` is whether
-  // ohmail can REACH this mailbox; this column is whether ohmail ORGANIZES it. The stand-down
-  // encoded the second in the first (`disabled` + `disabledReason`), which was right while the
-  // only two states were "ours" and "not ours at all", and is wrong now that the answer to
-  // "somebody else organizes this" is BE ANOTHER MAIL CLIENT: read it, search it, mark it read,
-  // send from it, and touch nothing else. That install is connected and syncing, so it cannot be
-  // `disabled` — `loadEnabledMailboxes` filters those out and a reader needs the roster to have
-  // a mirror at all.
-  //
-  // NOT NULL with the pre-migration behaviour as its default, which is what makes the deploy
-  // safe in both directions: an un-updated worker binary organizes exactly what it organized
-  // yesterday, and a new binary against a row nobody has touched reads 'organizer'.
-  //
-  // 'reader' IS THE PRE-CONSENT STATE AS WELL AS THE LOST-THE-LEASE ONE, and that is the design
-  // rather than an overload. `POST /mailboxes` creates a consent-less reader, so a fresh connect
-  // builds its mirror at once, creates no `ohmail/*` and moves nothing — there is no
-  // half-applied mailbox because the reader mode IS the pre-consent state. What separates the
-  // two is {@link organizeConsentedAt}, not this column.
-  //
-  // The set is closed by `mailboxes_organizer_role_closed`; members are `ORGANIZER_ROLES`
-  // (organizer-role.ts) and a real-Postgres test reconciles the two.
+  // Mail 0083 — the ORGANIZING ROLE, which is not the connection. A row carries two independent
+  // facts and `status` used to hold both: `status` is whether ohmail can REACH this mailbox; this
+  // column is whether ohmail ORGANIZES it. Encoding the second in the first was right while the
+  // only states were "ours" and "not ours at all", and wrong once "somebody else organizes this"
+  // means BE ANOTHER MAIL CLIENT — connected and syncing, so it cannot be `disabled`. NOT NULL
+  // with the pre-migration behaviour as default, safe in both deploy directions. `reader` IS the
+  // pre-consent state as well as the lost-the-lease one, by design: `POST /mailboxes` creates a
+  // consent-less reader, so a fresh connect mirrors at once and moves nothing; what separates the
+  // two is {@link organizeConsentedAt}. Closed by `mailboxes_organizer_role_closed`; members are
+  // `ORGANIZER_ROLES`, reconciled by a real-Postgres test.
   organizerRole: text("organizer_role").notNull().default("organizer"),
-  // WHO holds the lease when we do not — the three columns a banner needs, written from
-  // `StandDownVerdict.by` at the stand-down and refreshed each reader cycle.
-  //
-  // `organizedByKind` is the same closed set as `disabledReason`'s suffix ('cloud' | 'local' |
-  // 'mobile' | 'unknown'), behind `mailboxes_organized_by_kind_closed`, for `disabledReason`'s own
-  // reason:
-  // it is read by the account's own user and must never be able to hold a string a mail server
-  // chose.
-  //
-  // `organizedByName` is the holder's `X-Ohmail-Display-Name` — A CUSTOMER'S MACHINE NAME. It is
-  // header-safe and capped at `ORGANIZED_BY_NAME_MAX` at the single write site, and it is on the
-  // admin DTO deny-list: staff see the role and the kind, never the name. No CHECK, because free
-  // text closes no set — the bound is at the write site, exactly as `signature`'s is.
-  //
-  // `organizedSince` is the holder's `X-Ohmail-Claimed-At`: when they BECAME the organizer, as
-  // distinct from when they were last seen. The heartbeat is deliberately not persisted — see
-  // {@link organizerState}.
+  // WHO holds the lease when we do not — the columns a banner needs, written from
+  // `StandDownVerdict.by` at the stand-down and refreshed each reader cycle. `organizedByKind` is
+  // the same closed set as `disabledReason`'s suffix, behind a CHECK, for the same reason: read
+  // by the account's own user, so it must never hold a string a mail server chose.
+  // `organizedByName` is the holder's `X-Ohmail-Display-Name` — a customer's machine name:
+  // header-safe and capped at `ORGANIZED_BY_NAME_MAX` at the single write site, and on the admin
+  // DTO deny-list (staff see role and kind, never the name). No CHECK — free text closes no set.
+  // `organizedSince` is the holder's `X-Ohmail-Claimed-At`: when they BECAME organizer, distinct
+  // from when last seen — the heartbeat is deliberately not persisted.
   organizedByKind: text("organized_by_kind"),
   organizedByName: text("organized_by_name"),
   /* WHICH INSTALL, not which kind. `organized_by_kind` is one word about a CATEGORY and answers "what
@@ -228,312 +184,173 @@ export const mailboxes = sqliteTable("mailboxes", {
   organizedSince: integer("organized_since", { mode: "timestamp_ms" }),
   /**
    * The lease's `LeaseOccupancyState` — `'held'` (somebody is renewing) or `'stopped'` (somebody
-   * WAS organizing and nothing has renewed since). NULL is "we have not looked".
-   *
-   * **`apps/worker/src/lease.ts` argued this value must NEVER be persisted, and the premise it
-   * argued from has moved.** Its reason was that a stood-down mailbox left the roster, so nothing
-   * would ever refresh the column and it would keep saying "somebody is organizing this" long
-   * after they stopped. A READER stays connected and cycles, so there is a later writer: every
-   * reader cycle refreshes this from a `peekLease` read — the APPEND-less IO, so looking costs no
-   * claim. The value is therefore never older than one poll interval. The mailbox with no writer
-   * for it is a tombstone, which nothing displays.
-   *
-   * Closed by `mailboxes_organizer_state_closed`.
+   * WAS organizing and nothing has renewed since). NULL is "we have not looked". The old argument
+   * that this must never be persisted rested on a premise that moved: a stood-down mailbox used
+   * to leave the roster, so nothing would refresh the column. A READER stays connected and
+   * cycles, so there is a later writer — every reader cycle refreshes this from a `peekLease`
+   * read (the APPEND-less IO, so looking costs no claim), and the value is never older than one
+   * poll interval. The mailbox with no writer is a tombstone, which nothing displays. Closed by
+   * `mailboxes_organizer_state_closed`.
    */
   organizerState: text("organizer_state"),
   /**
-   * ── Mail 0089 — WHAT THE HOLDER OFFERS A READER ──────────────────────────────────────────
-   *
-   * `X-Ohmail-Capabilities` off the holder's own claim, comma-joined and lowercased (see
-   * {@link capabilitiesColumn}, `organizer-role.ts`) — the fifth holder column, refreshed at the
-   * same three write sites as {@link organizerState} and for the same reason: the API tier has no
-   * live IMAP connection, so whether a reader's decision may become a REQUEST rather than a
-   * refusal has to be answerable from this row alone.
-   *
-   * NULL means "we have not looked" OR "the holder advertises nothing" — the same two-fact
-   * conflation {@link organizerState}'s own NULL already carries, and it is safe for the same
-   * reason: both read as "do not offer a request", which is the fail-safe direction. NO CHECK —
-   * see the migration header for why a closed set is wrong here.
+   * Mail 0089 — what the holder OFFERS a reader. `X-Ohmail-Capabilities` off the holder's own
+   * claim, comma-joined and lowercased ({@link capabilitiesColumn}) — the fifth holder column,
+   * refreshed at the same three write sites as {@link organizerState} and for the same reason:
+   * the API tier has no live IMAP connection, so whether a reader's decision may become a REQUEST
+   * has to be answerable from this row alone. NULL means "we have not looked" OR "the holder
+   * advertises nothing" — the same two-fact conflation {@link organizerState}'s NULL carries,
+   * safe for the same reason: both read as "do not offer a request", the fail-safe direction. No
+   * CHECK — see the migration header for why a closed set is wrong here.
    */
   organizedByCapabilities: text("organized_by_capabilities"),
   /**
-   * WHEN A HUMAN ASKED THIS INSTALL TO ORGANIZE THIS MAILBOX — the consent event, per mailbox.
-   *
-   * NULL means nobody has. That is the state `POST /mailboxes` now creates and the state a fresh
-   * standalone launch is in: the mirror builds, and not one message moves. It is written by
-   * `MailboxService.organizeHere` (the one ceremony, every door) in the same transaction as
-   * `takeoverAuthorizedAt` and the account's screening window — and, crucially, in the same
-   * transaction as `accountSettings.screeningBaselineAt` while that is still NULL, because
-   * without a baseline there is no cutoff and the ENTIRE backlog goes to the Screener whatever
-   * window the person chose.
-   *
-   * `COALESCE(., now())` on write: consent is the FIRST time, and re-running onboarding must not
-   * move the record of when the person agreed.
-   *
-   * Backfilled by the mailbox-removal design to `created_at` for every connected row, because connecting a
-   * mailbox WAS the consent under the old copy — a record of something that happened, which is
-   * the line 0027 drew when it refused to invent a `takeover_authorized_at`.
+   * When a human asked THIS install to organize THIS mailbox — the consent event, per mailbox.
+   * NULL means nobody has: the state `POST /mailboxes` creates — the mirror builds, and not one
+   * message moves. Written by `MailboxService.organizeHere` (the one ceremony, every door) in the
+   * same transaction as `takeoverAuthorizedAt` and as `accountSettings.screeningBaselineAt` while
+   * that is still NULL: without a baseline there is no cutoff and the ENTIRE backlog goes to the
+   * Screener. `COALESCE(., now())` on write: consent is the FIRST time, and re-running onboarding
+   * must not move the record. Backfilled to `created_at` for connected rows: connecting WAS the
+   * consent under the old copy.
    */
   organizeConsentedAt: integer("organize_consented_at", { mode: "timestamp_ms" }),
   /**
-   * ── Mail 0088 — WHEN THE ORGANIZING SITUATION LAST CHANGED, AND WHEN IT WAS ACKNOWLEDGED ──
-   *
-   * The pair is a NOTICE expressed as two instants rather than as a flag, and the derivation is
-   * the whole design: a client shows the line iff `organizerEventAt > coalesce(organizerEventSeenAt,
-   * -infinity)`. Three properties follow from that shape and none of them would follow from a
-   * boolean:
-   *
-   *  · ONCE PER EVENT, on every door at once. A phone, a browser and a desktop reading one row
-   *    agree about whether the person has seen this change; a per-client flag would show the same
-   *    sentence once per client.
-   *  · TWO EVENTS BETWEEN TWO READS COLLAPSE TO THE LATER ONE, by construction. There is no queue
-   *    to drain, so a mailbox that changed hands twice while nobody looked produces one notice
-   *    describing where it ended up — which is the only statement that is still true.
-   *  · A DISMISSAL CANNOT SUPPRESS A LATER EVENT. Stamping `seenAt` answers the event that stood
-   *    when the press happened and nothing after it, because the comparison is against instants
-   *    rather than against a state.
-   *
-   * `organizerEventAt` is written by EVERY writer of the (role, state, holder) triple, and that is
-   * a census rather than a convention: a writer that changes who organizes a mailbox and does not
-   * stamp this leaves a client showing yesterday's sentence with no way to notice.
-   *
-   * NO KIND COLUMN beside them. The sentence a client renders is derived at read time from the
-   * role, `organizerState` and the holder columns, which are the same facts a stored kind would
-   * copy — and a copy is a thing that drifts the first time one writer updates one and not the
-   * other.
+   * Mail 0088 — when the organizing situation last changed, and when acknowledged. A NOTICE as
+   * two instants rather than a flag: a client shows the line iff `organizerEventAt >
+   * coalesce(organizerEventSeenAt, -infinity)`. Three properties a boolean loses: once per event
+   * on every door at once; two events between two reads collapse to the later one; a dismissal
+   * cannot suppress a LATER event. `organizerEventAt` is written by EVERY writer of the (role,
+   * state, holder) triple — a census: a writer that changes who organizes and does not stamp this
+   * leaves a client showing yesterday's sentence. No kind column beside them: the sentence is
+   * derived at read time from facts a stored kind would copy, and a copy drifts.
    */
   organizerEventAt: integer("organizer_event_at", { mode: "timestamp_ms" }),
   organizerEventSeenAt: integer("organizer_event_seen_at", { mode: "timestamp_ms" }),
   /**
-   * ── Mail 0088 — "STOP ORGANIZING THIS MAILBOX, KEEP MY MAIL", AS A REQUEST ────────────────
-   *
-   * The mirror image of {@link takeoverAuthorizedAt}, and it is a one-shot for the same reason:
-   * it authorizes one CEASING, not a standing refusal to organize. The route that writes it opens
-   * no socket and touches no role — expunging the claim is an IMAP write, and IMAP writes belong
-   * to the process holding the connection. The organizer's own next pass honours it FIRST, before
-   * it reads the lease at all: it releases the claim, writes the reader role with the holder
-   * columns cleared, closes the appointments it can no longer keep, and clears this column.
-   *
-   * Written under the same `FOR UPDATE` on the mailbox row that `organizeHere` and `delete` take,
-   * so the three serialize: a release racing a claim-back cannot leave a row that is both asking
-   * to stop and authorized to start.
+   * Mail 0088 — "stop organizing this mailbox, keep my mail", as a REQUEST. The mirror of {@link
+   * takeoverAuthorizedAt}, a one-shot for the same reason: it authorizes one CEASING, not a
+   * standing refusal. The route that writes it opens no socket — expunging the claim is an IMAP
+   * write, and those belong to the process holding the connection. The organizer's next pass
+   * honours it FIRST, before it reads the lease: releases the claim, writes the reader role with
+   * holder columns cleared, closes the appointments it can no longer keep, clears this column.
+   * Written under the same `FOR UPDATE` as `organizeHere` and `delete`, so a release racing a
+   * claim-back cannot leave a row both asking to stop and authorized to start.
    */
   releaseRequestedAt: integer("release_requested_at", { mode: "timestamp_ms" }),
   /**
-   * ── Mail 0088 — AND THE RECORD THAT THE CEASING HAPPENED ─────────────────────────────────
-   *
-   * {@link releaseRequestedAt} is the ASK and is cleared the instant it is honoured. This is what
-   * the row keeps afterwards, and it exists because the state a release leaves behind is otherwise
-   * INDISTINGUISHABLE from the state a stand-down leaves behind once the winner goes away.
-   *
-   * Both are `organizer_role='reader'` with a consent stamp and four NULL holder columns — because
-   * the reader's own per-cycle peek (`refreshOrganizerHolder`, and the sidecar's twin) writes those
-   * four NULL whenever it looks and finds an empty folder, which is exactly what a stood-down
-   * reader sees the moment the install that beat it releases or is removed.
-   *
-   * Telling them apart is not cosmetic. "Somebody took this mailbox from you" and "you stopped
-   * organizing it here" are different sentences on the claim-back screen, and the first owes a
-   * pending scheduled send an ending that the second has already given it. {@link standDownMemory}
-   * is the one reader, and it answers `null` for a released row precisely so that neither the
-   * sentence nor the launch catch-up fires for a ceasing nobody else caused.
-   *
-   * Cleared by every promotion, so it describes the CURRENT state and never a history: a mailbox
-   * organized here again is not a released one.
+   * Mail 0088 — and the record that the ceasing HAPPENED. {@link releaseRequestedAt} is the ASK,
+   * cleared when honoured; this is what the row keeps afterwards, because a release is otherwise
+   * INDISTINGUISHABLE from a stand-down whose winner went away — both are `reader` with a consent
+   * stamp and four NULL holder columns (the per-cycle peek NULLs them on an empty folder).
+   * "Somebody took this mailbox" and "you stopped organizing it here" are different sentences on
+   * the claim-back screen, and the first owes a pending scheduled send an ending. {@link
+   * standDownMemory} answers `null` for a released row, so neither fires for a ceasing nobody
+   * else caused. Cleared by every promotion, so it describes the CURRENT state.
    */
   organizerReleasedAt: integer("organizer_released_at", { mode: "timestamp_ms" }),
-  // ── Mail 0065 — the provider's OWN Junk and Trash folders, as discovered at connect ──
-  //
-  // Canonical (`/`-delimited) paths, resolved by the worker's connect-time discovery
-  // (`ImapAdapter.findSpecialFolders`: SPECIAL-USE first, then the name belts) and re-written on
-  // every connect, so a mailbox that gains or renames the folder heals on its next attach. NULL
-  // means the mailbox genuinely has neither the flag nor a recognisable name — never "not yet
-  // asked" for a mailbox the worker has attached since this column landed.
-  //
+  // Mail 0065 — the provider's OWN Junk and Trash folders, as discovered at connect. Canonical
+  // `/`-delimited paths, resolved by `ImapAdapter.findSpecialFolders` (SPECIAL-USE first, then
+  // the name belts) and re-written on every connect, so a mailbox that gains or renames the
+  // folder heals on its next attach. NULL means the mailbox genuinely has neither the flag nor a
+  // recognisable name — never "not yet asked" for a mailbox attached since this column landed.
   // They exist because the API may never open IMAP: a delete must be refused UP FRONT when the
   // mailbox has no Trash (`no_trash_folder`), and the reconciler must know where a spam verdict
-  // physically files without a LIST per pending row. EVIDENCE for those two decisions only;
-  // nothing else reads them, and the folders they name are never watched (imap-types.ts carries
-  // the product rule and its 2026-08-22 amendment).
+  // files without a LIST per pending row. Evidence for those two decisions only; the folders they
+  // name are never watched.
   junkFolder: text("junk_folder"),
   trashFolder: text("trash_folder"),
-  // ── Mail 0073 — per-mailbox "Use folders", stored as the EXCEPTION (FOLDERS-SPEC.md §17;
-  // owner ruling 2026-08-25) ──
-  //
-  // The account's `account_settings.folders_enabled_at` stays the master switch; under it every
-  // mailbox participates BY DEFAULT, so NULL — and a failed read — mean "this mailbox's folders
-  // show", and a timestamp is "when this mailbox was switched OFF" (the support question). The
-  // sign is deliberately the master's opposite: the FEATURE defaults closed, but within an
-  // opted-in account the per-mailbox default is open, because all-mailboxes-showing is what the
-  // account just asked for. Read through the mailbox join `listUserFolders` already makes
-  // (`packages/services/src/folders.ts`); written only by `setMailboxFoldersEnabled`
-  // (consent-seed.ts), whose transaction also writes the folder create/delete change rows so a
-  // live rail follows the switch. The worker neither reads nor writes it — `mailbox_folders`
-  // keeps its cursors either way (the passive read is not consent-gated; SHOWING is).
+  // Mail 0073 — per-mailbox "Use folders", stored as the EXCEPTION (FOLDERS-SPEC.md §17). The
+  // account's `folders_enabled_at` stays the master switch; under it every mailbox participates
+  // BY DEFAULT, so NULL — and a failed read — mean "this mailbox's folders show", and a timestamp
+  // is "when this mailbox was switched OFF" (the support question). The sign is deliberately the
+  // master's opposite: the feature defaults closed, but within an opted-in account the
+  // per-mailbox default is open, because all-mailboxes-showing is what the account just asked
+  // for. Read through the mailbox join `listUserFolders` already makes; written only by
+  // `setMailboxFoldersEnabled`, whose transaction also writes the folder change rows so a live
+  // rail follows the switch. The worker neither reads nor writes it — the passive read is not
+  // consent-gated; SHOWING is.
   foldersDisabledAt: integer("folders_disabled_at", { mode: "timestamp_ms" }),
-  // ── Mail 0075 — the per-mailbox SIGNATURE (owner ruling 2026-08-27) ──
-  //
-  // The text a compose offers under the message when this mailbox is the sender. NULL is "no
-  // signature" — the default, costing nothing anywhere. STORED TEXT ONLY: whether an outgoing
-  // message carries it is the compose surface's decision (the signature is a visible, removable
-  // block there and serializes into the body at send exactly as shown), so the send path never
-  // reads this column. Written by `setMailboxSignature` (consent-seed.ts), whose transaction
-  // moves the account-settings stamp and appends the `settings` change row — the same wake the
-  // per-mailbox folders dial rides — so open composers everywhere re-read `GET /consent` and
-  // swap to the new text live. Length is bounded at the write site
-  // (`MAILBOX_SIGNATURE_MAX_CHARS`, a 400), not by a CHECK: free text closes no set, and a
-  // byte bound in the database would answer 23514 to a person typing.
+  // Mail 0075 — the per-mailbox SIGNATURE. The text a compose offers under the message when this
+  // mailbox is the sender; NULL is "no signature", the default. STORED TEXT ONLY: whether an
+  // outgoing message carries it is the compose surface's decision (the signature is a visible,
+  // removable block that serializes into the body at send exactly as shown), so the send path
+  // never reads this column. Written by `setMailboxSignature`, whose transaction moves the
+  // account-settings stamp and appends the `settings` change row — the same wake the folders dial
+  // rides — so open composers everywhere re-read `GET /consent` and swap to the new text live.
+  // Bounded at the write site (`MAILBOX_SIGNATURE_MAX_CHARS`, a 400), not by a CHECK: free text
+  // closes no set, and a byte bound in the database would answer 23514 to a person typing.
   signature: text("signature"),
-  // ── Mail 0076 — THE ONE-TIME QUARANTINE→\Junk SWEEP, RECORDED AS A COMMAND (FOLDERS-SPEC.md
-  // §16.1: "an optional ONE-TIME sweep offers to move the old ohmail/Quarantine pile into
-  // native Junk … One press, one direction, then the offer is gone") ──
-  //
-  // A DOORBELL WITH A NAME, on `sync_requested_at`'s exact shape: the API stamps it when the
-  // account's user presses the offer (`POST /screener/junk/sweep`), the worker consumes it at
-  // the top of the mailbox's serial cycle — runs `junkSweepPass` under the organizer lease, then
-  // clears ONLY the value it observed — and NULL is "no sweep owed", the state of every row. The
-  // §16.1 carve-out is why it is a stamp the WORKER serves rather than a move the API performs:
-  // the sweep is user-commanded, but it is the one junk write that is a bulk organization act
-  // over mirrored rows (`folder_state`, husks, locators), and those the API never applies
-  // itself — it records the command and the always-on organizer executes it, like every move.
-  // Nothing reads it to route mail; the offer's visibility is the CANDIDATE COUNT (mail still
-  // physically in `ohmail/Quarantine`), so "never offered twice" needs no second column — a
-  // swept pile has no candidates, and a pile that grows again (a flag-off verdict) is offered
-  // again honestly.
+  // Mail 0076 — the one-time Quarantine to Junk sweep, recorded as a COMMAND (FOLDERS-SPEC.md
+  // §16.1: one press, one direction, then the offer is gone). A doorbell with a name, on
+  // `sync_requested_at`'s exact shape: the API stamps it when the user presses the offer, the
+  // worker consumes it at the top of the mailbox's serial cycle — runs `junkSweepPass` under the
+  // organizer lease, then clears ONLY the value it observed — and NULL is "no sweep owed". A
+  // stamp the WORKER serves rather than a move the API performs: the sweep is user-commanded but
+  // is a bulk organization act over mirrored rows, and those the API never applies itself. The
+  // offer's visibility is the CANDIDATE COUNT (mail still physically in `ohmail/Quarantine`), so
+  // "never offered twice" needs no second column — a swept pile has no candidates, and a pile
+  // that grows again is offered again honestly.
   junkSweepRequestedAt: integer("junk_sweep_requested_at", { mode: "timestamp_ms" }),
-  // ── Mail 0078 — THE FORWARDING-DETECTION NOTICE's two columns ──
-  //
-  // Born from a real incident: a mailbox synced perfectly for weeks while a provider-level
-  // forward (no "keep a copy") diverted every inbound mail before IMAP storage — the product
-  // was healthy and said nothing, and two days of debugging pointed at ohmail when the answer
-  // was upstream. These columns are how the product notices that shape and says it.
-  //
-  // `inboundQuietSince` is EVIDENCE, and the worker's inbound-quiet pass
-  // (`apps/worker/src/inbound-quiet.ts`) is its single owner: when a connected,
-  // healthily-syncing, fully-imported mailbox's GENUINE inbound (From ≠ the mailbox's own
-  // address; ohmail's own moves create no message rows and so never count) has been zero for
-  // the pass's generous window while evidence says mail should be arriving — a sibling mailbox
-  // receiving normally, or the newest genuine inbound being months old — the pass stamps the
-  // newest genuine inbound `date` the mailbox holds (`created_at` when it never held one).
-  // NULL is "no quiet episode". COALESCED for the episode's life (`failed_at`'s discipline) and
-  // cleared only when genuine inbound RESUMES — several arrivals inside the window, so one
-  // stray mail can neither end an episode nor re-arm the notice against a standing dismissal.
-  //
-  // `inboundQuietDismissedAt` is the USER's per-mailbox dismissal
-  // (`POST /mailboxes/:id/inbound-quiet/dismiss`). The server never reads it and the worker
-  // NEVER clears it; the client shows the notice only while `dismissedAt < since`. That pair of
-  // instants is the renotify discipline in two columns: an undisturbed episode never re-notifies
-  // (sameness holds), and a NEW episode's `since` — a newer inbound date, which can only exist
-  // because mail actually flowed after the dismissal — re-notifies (a state change).
+  // Mail 0078 — the forwarding-detection notice's two columns. Born from an incident: a
+  // provider-level forward diverted every inbound mail before IMAP storage for weeks — the
+  // product was healthy and said nothing. `inboundQuietSince` is EVIDENCE, owned by the worker's
+  // inbound-quiet pass: when a connected, fully-imported mailbox's GENUINE inbound (From not its
+  // own address) has been zero for the generous window while evidence says mail should arrive,
+  // the pass stamps the newest genuine inbound date. NULL is "no quiet episode"; COALESCED for
+  // the episode's life, cleared only when genuine inbound RESUMES — several arrivals, so one
+  // stray mail neither ends an episode nor re-arms the notice. `inboundQuietDismissedAt` is the
+  // user's dismissal; the worker never clears it, and the client shows the notice only while
+  // `dismissedAt < since` — an undisturbed episode never re-notifies, a NEW one does.
   inboundQuietSince: integer("inbound_quiet_since", { mode: "timestamp_ms" }),
   inboundQuietDismissedAt: integer("inbound_quiet_dismissed_at", { mode: "timestamp_ms" }),
-  // ── Mail 0029 — WHY A `connected` MAILBOX IS NOT BEING SYNCED ──
-  //
-  // The other half of that outage. The adoption bug (a `FETCH 1:*` against an empty
-  // `ohmail/_meta`, which Dovecot refuses and GreenMail tolerates) has since been fixed; this is
-  // the stretch of time a user spent looking at a spinner while the worker knew exactly what was
-  // wrong and wrote it ONLY TO A LOG. Three branches declined to serve a mailbox they knew was
-  // expected and left the row pristine: `LeaseUnavailableError`, `awaitingCreds` (which announced
-  // itself once EVER), and the `maxMailboxes` cap.
-  //
-  // A CLOSED set of three (`MAILBOX_SYNC_BLOCK_REASONS`, mailbox-errors.ts) with a CHECK behind
-  // it, and closed for a reason `error_code`'s "taxonomies grow" does not touch: these are the
-  // ways OUR OWN infrastructure declines, so the set is enumerable by reading the worker and no
-  // member can ever be chosen by a mail server. There is deliberately no `no_organizer` member —
-  // read the header of the constant before adding one.
-  //
-  // ── IT IS ORTHOGONAL TO `status`, AND THAT IS THE WHOLE POINT ──
-  //
-  // `status` stays `connected`. Three designs were killed on evidence before this one: an
-  // `error_code` value is INVISIBLE on the wire (`MailboxService.toDTO` and `admin-service`'s
-  // `lastError` both gate on `status === 'error'`); a fourth `status` value breaks the webapp at
-  // runtime (a missing i18n key, a 3-member DTO union, `mailboxes_active_address_uq`'s partial
-  // predicate); and deriving it from the hosted sync fleet's liveness table cannot answer a
-  // PER-MAILBOX question, because that table holds one row per SHARD.
-  //
-  // NOT a failure and NOT a disable: no `error_code`, no `failed_at`, no retry backoff — an
-  // infrastructure fault must never quarantine a mailbox. Every writer that makes the statement
-  // untrue clears BOTH columns in the same statement (`markMailboxConnected`,
-  // `markMailboxStoodDown`, `markMailboxFailed`, `MailboxService.update`).
+  // Mail 0029 — WHY a `connected` mailbox is not being synced. The stretch of time a user spent
+  // looking at a spinner while the worker knew what was wrong and wrote it ONLY TO A LOG: three
+  // branches declined to serve an expected mailbox and left the row pristine
+  // (`LeaseUnavailableError`, `awaitingCreds`, the `maxMailboxes` cap). A CLOSED set with a CHECK
+  // (`MAILBOX_SYNC_BLOCK_REASONS`): these are the ways OUR OWN infrastructure declines,
+  // enumerable by reading the worker. No `no_organizer` member — read the constant's header
+  // before adding one. Orthogonal to `status`, which stays `connected`: an `error_code` value is
+  // invisible on the wire, a fourth status value breaks the webapp, and the fleet's liveness
+  // table cannot answer a per-mailbox question. Not a failure, not a disable: no `error_code`, no
+  // backoff; every writer that makes the statement untrue clears BOTH columns in one statement.
   syncBlockedReason: text("sync_blocked_reason"),
   // When the CURRENT block began — `coalesce(sync_blocked_since, now)` on write, exactly as
   // `failed_at` does, so a mailbox blocked for three days reports three days instead of "just
   // now, again" on every roster pass.
   syncBlockedSince: integer("sync_blocked_since", { mode: "timestamp_ms" }),
-  // ── Mail 0049 — ENFORCED SYNC: "the mailbox owes a reconcile RIGHT NOW", set by the API ──
-  //
-  // The worker's ordinary rhythm is a poll every `pollIntervalMs` (60 s) plus an IDLE push from
-  // the server. That is fine for mail arriving, and too slow for a change the USER just made and is
-  // watching for: a send whose Sent copy has to appear, a folder move whose desired-state write the
-  // mirror should reflect. Waiting up to a minute for the worker's next cycle is the gap between
-  // "I did that" and "I can see I did that".
-  //
-  // So the API STAMPS this column the instant it finalizes such a write — `now()` — and a short
-  // worker scan (`sync-kick.ts`, ~3 s) picks up any stamped mailbox IT SERVES and triggers an
-  // out-of-band cycle, then clears the stamp. NULL is the resting state: nothing owed. A timestamp
-  // means "a user-visible write landed at this instant; reconcile and clear".
-  //
-  // ── IT IS A REQUEST, NOT A SCHEDULE, AND THE CLEAR IS COMPARE-AND-CLEAR ──────────────────────
-  //
-  // The kick clears ONLY the exact value it observed (`WHERE sync_requested_at = <observed>`), so a
-  // second stamp that lands WHILE the kick is running is not lost — the clear misses, and the next
-  // scan re-kicks. That is the whole of its convergence: a stamp is either being served or will be
-  // on the next pass, and a burst of stamps collapses to at most one extra cycle. Nothing reads it
-  // to make a routing decision; it is a doorbell, not state.
-  //
-  // Additive, nullable, no default, no CHECK — a timestamp closes no set (0030's rule). Only the
-  // API writes it and only the worker clears it; a deploy in either order is safe, because an
-  // unstamped mailbox is exactly today's poll-only behaviour.
+  // Mail 0049 — enforced sync: "the mailbox owes a reconcile RIGHT NOW", set by the API. The
+  // worker's rhythm is a 60 s poll plus IDLE — fine for arriving mail, too slow for a change the
+  // USER just made and is watching for: a send whose Sent copy must appear, a move the mirror
+  // should reflect. The API stamps this the instant it finalizes such a write; the worker's ~3 s
+  // kick scan (`sync-kick.ts`) picks up any stamped mailbox IT SERVES, triggers an out-of-band
+  // cycle, and clears the stamp. NULL is the resting state. A REQUEST, not a schedule, and the
+  // clear is compare-and-clear: the kick clears ONLY the exact value it observed, so a second
+  // stamp landing while the kick runs is not lost — the clear misses and the next scan re-kicks;
+  // a burst collapses to at most one extra cycle. Only the API writes it and only the worker
+  // clears it; a deploy in either order is safe.
   syncRequestedAt: integer("sync_requested_at", { mode: "timestamp_ms" }),
-  // ── Mail 0055 — WHAT THE SENDING SERVER SAID IT WILL ACCEPT (RFC 1870 `SIZE`) ──
-  //
-  // The attachment ceiling used to be one product constant, and it was reasoned from the HOSTED
-  // API's serverless request-body limit — attachment bytes ride the send request as base64, so
-  // 3 MB of raw bytes encodes to about 4 MB and clears a ~4.5 MB body cap. That is a true fact
-  // about one deployment and no fact at all about a LOCAL install, which runs the same
-  // `SendService` in its own process and hands the message straight to SMTP with no request body
-  // anywhere in the path. It was refusing attachments the user's own mail server would have taken.
-  //
-  // This is the number that actually governs: the ceiling the submission server announces in its
-  // EHLO reply. It is written by the connect-time SMTP probe, which already runs a full EHLO
-  // before it stores a credential, and read on the send path and in the mailbox DTO.
-  //
-  // NULL IS "NOT KNOWN", AND IT IS READ AS THE STRICT ANSWER. Three servers write NULL and are
-  // deliberately not told apart — one that never advertised `SIZE`, one that advertised the bare
-  // keyword, and one that advertised `SIZE 0` (RFC 1870 §6: "no fixed maximum"). All three answer
-  // *"is there a ceiling I must stay under?"* with "none that I stated". `SendService` resolves an
-  // unknown ceiling to the product's own 3 MB rather than to "unbounded": an unknown limit read as
-  // no limit is a message the user composes, waits for, and has bounced by their own provider.
-  //
-  // `bigint` and not `integer` because the value is an unbounded decimal in somebody else's reply
-  // and an eccentric announcement above 2^31 must be storable rather than raise 22003 inside the
-  // connect flow's transaction. No CHECK (a size closes no set) and no index — it is read off a row
-  // already fetched by primary key and is never a predicate.
+  // Mail 0055 — what the sending server said it will accept (RFC 1870 `SIZE`). The attachment
+  // ceiling used to be one product constant reasoned from the HOSTED API's request-body limit —
+  // no fact about a LOCAL install, which hands the message straight to SMTP: it refused
+  // attachments the user's own server would have taken. This is the number that governs: the
+  // ceiling the submission server announces in its EHLO reply, written by the connect-time SMTP
+  // probe. NULL is "not known", read as the STRICT answer: no `SIZE`, bare `SIZE`, and `SIZE 0`
+  // all answer "none that I stated", and `SendService` resolves unknown to the product's own 3 MB
+  // rather than "unbounded" — an unknown limit read as no limit is a message the user composes
+  // and has bounced. `bigint`, not `integer`: the value is an unbounded decimal in somebody
+  // else's reply, and an announcement above 2^31 must be storable rather than raise 22003.
   smtpMaxSizeBytes: integer("smtp_max_size_bytes"),
-  // ── Mail 0063 — WHEN THE `SIZE` BACK-FILL LAST ASKED, AND WHAT IT HEARD ──
-  //
-  // The pair that turns the back-fill's selection from "every row that still announces nothing"
-  // into a backoff. The column above stays NULL for three outcomes that are not failures of the
-  // pass — a server that advertises no `SIZE`, a login it refuses, a mailbox with nothing to dial
-  // — so a selection keyed on `IS NULL` alone re-picked exactly those rows on every scheduled run,
-  // for ever: a permanently silent submission server cost a real login a day, and once a batch's
-  // worth of them existed no learnable mailbox was ever reached again.
-  //
-  // NOT A TERMINAL STATE, and the asymmetry with `smtp_max_size_bytes` is deliberate: nothing here
-  // ever says "never ask again". `smtp_size_probed_at` is WHEN we last asked and
-  // `smtp_size_probe_code` is what came back, and the pass re-asks on an interval chosen from the
-  // code (a month for a server that answered and named nothing, a week for anything else). A
-  // provider that raises its limit is picked up on the next interval, and a person who re-enters
-  // their password gets the real number immediately, because that path writes the column directly.
-  //
-  // ONLY THE API HOST WRITES THESE. The sync host's arm of the same back-fill deliberately does
-  // not: on the managed deployment its platform blocks outbound submission, so a stamp from there
-  // would record "unreachable" for every mailbox and suppress the one host whose egress works.
-  //
-  // `smtp_size_probe_code` carries a CHECK (`SMTP_SIZE_PROBE_CODES` in `mailbox-errors.ts`) because
-  // the value is derived from an SMTP AUTH failure, and a submission server's own response line —
-  // which can carry the username, an echoed credential, or arbitrary provider text — must not be
-  // able to reach a column through a write site nobody has reviewed yet. Same reasoning as
-  // `sync_blocked_reason`'s constraint, with a sharper origin.
+  // Mail 0063 — when the `SIZE` back-fill last asked, and what it heard. The pair that turns the
+  // back-fill's selection into a backoff: the column above stays NULL for three outcomes that are
+  // not failures (no `SIZE` advertised, a refused login, nothing to dial), so a selection keyed
+  // on `IS NULL` alone re-picked exactly those rows on every run, forever — a permanently silent
+  // server cost a real login a day. NOT a terminal state: `smtp_size_probed_at` is when we last
+  // asked, `smtp_size_probe_code` what came back, and the pass re-asks on an interval chosen from
+  // the code (a month for answered-and-named-nothing, a week otherwise). Only the API host writes
+  // these: the sync host's platform blocks outbound submission, so a stamp from there would
+  // record `unreachable` for every mailbox. The code carries a CHECK (`SMTP_SIZE_PROBE_CODES`):
+  // the value derives from an SMTP AUTH failure — a server's own text can echo the credential.
   smtpSizeProbedAt: integer("smtp_size_probed_at", { mode: "timestamp_ms" }),
   smtpSizeProbeCode: text("smtp_size_probe_code"),
   // ── Mail 0030 — the ONE-TIME re-evaluation of mail the sensitivity override already misrouted ──
