@@ -101,7 +101,7 @@ const TABLE = {
    *    false wherever the pinning module's native half is absent, which today is iOS, and the
    *    seam REFUSES rather than connecting unpinned. The Tailscale address works on both.
    */
-  doorsLead: "One question — which machine does the organizing?",
+  doorsLead: "One question, four answers — which machine does the organizing?",
 
   doorCloud: "ohmail Cloud",
   doorCloudSay:
