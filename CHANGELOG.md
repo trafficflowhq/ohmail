@@ -13,6 +13,12 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The phone shows History
+
+The phone shows History — old mail from senders you never screened — like the desktop does.
+It sits under More. Everything in it is read, and nothing in it has moved: each row says which
+folder on your mail server the message is still in.
+
 ### The phone shows the same waiting senders as the web
 
 Your Screener settings — when screening started, how far back it looks, and whether it looks all
