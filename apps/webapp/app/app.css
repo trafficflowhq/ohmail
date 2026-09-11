@@ -1630,7 +1630,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 .trash-live-read-subj {
   margin: 6px 0 0;
-  font-size: calc(16px + var(--type-up));
+  font-size: 16px;
   font-weight: 600;
   color: var(--ink);
 }
